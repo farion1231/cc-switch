@@ -236,11 +236,24 @@ export const SessionToolGroup = memo(function SessionToolGroup({
   searchQuery,
 }: SessionToolGroupProps) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [showAll, setShowAll] = useState(false);
+  const [openByUser, setOpenByUser] = useState(false);
+  const [showAllByUser, setShowAllByUser] = useState(false);
   const outputId = `session-tool-output-${item.key}`;
   const lines = item.output ? item.output.split(/\r?\n/) : [];
   const hidden = Math.max(0, lines.length - TOOL_OUTPUT_PREVIEW_LINES);
+  // 查找命中在工具输出里：和长消息一样自动展开，否则高亮藏在折叠里看不见；
+  // 命中不在预览行里就连「还有 N 行」一起展开
+  const query = searchQuery?.toLowerCase() ?? "";
+  const outputHit = !!query && !!item.output?.toLowerCase().includes(query);
+  const previewHit =
+    outputHit &&
+    lines
+      .slice(0, TOOL_OUTPUT_PREVIEW_LINES)
+      .join("\n")
+      .toLowerCase()
+      .includes(query);
+  const open = openByUser || outputHit;
+  const showAll = showAllByUser || (outputHit && !previewHit);
   const shownLines =
     showAll || hidden === 0 ? lines : lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES);
   const shownText = shownLines.join("\n");
@@ -267,7 +280,7 @@ export const SessionToolGroup = memo(function SessionToolGroup({
             type="button"
             aria-expanded={open}
             aria-controls={outputId}
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => setOpenByUser(!open)}
             className="-ms-1 inline-flex h-6 items-center gap-1 rounded-control pe-2 ps-1 text-caption text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
           >
             {open ? (
@@ -308,7 +321,7 @@ export const SessionToolGroup = memo(function SessionToolGroup({
                     })}
                   <button
                     type="button"
-                    onClick={() => setShowAll((v) => !v)}
+                    onClick={() => setShowAllByUser(!showAll)}
                     className="text-fg-2 underline underline-offset-2 hover:text-fg-1"
                   >
                     {showAll
