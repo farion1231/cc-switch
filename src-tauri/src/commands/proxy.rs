@@ -203,26 +203,16 @@ pub async fn get_global_proxy_config(
 
 /// 更新全局代理配置
 ///
-/// 更新统一的全局配置字段，会同时更新三行（claude/codex/gemini）。设置页的按钮写着
-/// 「保存并重启服务」：监听地址、端口和日志开关合进完整配置走 `update_config`，服务在跑时
-/// 地址或端口变了就重启、再按新地址重写接上路由的客户端（含 Claude Desktop 的模型映射卡），
-/// 日志开关实时生效；只写库的话服务还在旧端口上听、客户端也还指着旧端口。
+/// 更新统一的全局配置字段，四行镜像写，各应用自己的重试和超时不碰。设置页的按钮写着
+/// 「保存并重启服务」：服务在跑时地址或端口变了就重启、再按新地址重写接上路由的客户端
+/// （含 Claude Desktop 的模型映射卡），日志开关实时生效；只写库的话服务还在旧端口上听、
+/// 客户端也还指着旧端口。
 #[tauri::command]
 pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
-    let mut full = state.proxy_service.get_config().await?;
-    full.listen_address = config.listen_address.clone();
-    full.listen_port = config.listen_port;
-    full.enable_logging = config.enable_logging;
-    let restarted = state.proxy_service.update_config(&full).await?;
-    // proxy_enabled 不在 ProxyConfig 里，仍走镜像写
-    state
-        .db
-        .update_global_proxy_config(config)
-        .await
-        .map_err(|e| e.to_string())?;
+    let restarted = state.proxy_service.update_global_config(&config).await?;
     if restarted {
         let mut failures = Vec::new();
         if let Err(error) = crate::mode::controller::resync_routes(state.inner()).await {
