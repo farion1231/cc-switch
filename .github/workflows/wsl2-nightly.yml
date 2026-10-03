@@ -3,9 +3,19 @@ name: WSL2 Nightly
 # The full backend suite takes 50+ minutes on a \\wsl.localhost 9P filesystem,
 # so it runs nightly instead of per PR. The per-PR gate in ci.yml only runs the
 # atomic-write contract test against the same WSL2-backed environment.
+# NOTE: The scheduled nightly run is paused as of 2026-09-30.
+# Through that date the workflow completed 30 scheduled runs with 0 successes:
+#   - 28 hit the 90-minute job timeout
+#   - 2 lost communication with the hosted runner
+# Typical runs entered the full serial test suite ~5 minutes in and were
+# still running around minute 84 when the job was terminated.
+# The schedule will be restored once the suite is sharded or parallelized,
+# or once a deliberately higher timeout is adopted. `workflow_dispatch` is
+# kept available so the nightly workflow can still be triggered manually
+# for diagnostics. See #6233 for context.
 on:
-  schedule:
-    - cron: "23 18 * * *" # 02:23 Beijing time
+  # schedule:
+  #   - cron: "23 18 * * *" # 02:23 Beijing time (paused — see header)
   workflow_dispatch:
 
 jobs:
