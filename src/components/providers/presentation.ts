@@ -5,6 +5,7 @@ import type { AppMode } from "@/types/proxy";
 import {
   isOfficialAccount,
   providerNeedsRouting,
+  supportsFailover,
   supportsOfficialProxyTakeover,
 } from "@/utils/providerCapabilities";
 
@@ -358,6 +359,13 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
         .map((p) => {
           if (blockedFromRouting(app, p))
             return blocked(p, t("providerCard.action.addToQueue"), noRoute);
+          // Codex 官方账号卡能路由，但后端不让它进队列（靠客户端自己的登录，不能和别家轮换）
+          if (!supportsFailover(app, p))
+            return blocked(
+              p,
+              t("providerCard.action.addToQueue"),
+              t("providerCard.reason.noFailover"),
+            );
           const chips = officialOnly(p);
           if (p.id === directId) chips.push(chip.directWhenDirect());
           return {

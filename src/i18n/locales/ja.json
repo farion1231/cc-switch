@@ -3227,6 +3227,8 @@
     "enabled": "{{app}} フェイルオーバーが有効になりました",
     "disabled": "{{app}} フェイルオーバーが無効になりました",
     "toggleFailed": "操作に失敗しました: {{detail}}",
+    "queueAddFailed": "キューへの追加に失敗しました: {{detail}}",
+    "queueRemoveFailed": "キューからの削除に失敗しました: {{detail}}",
     "inQueue": "キュー内",
     "addQueue": "追加",
     "priority": {
@@ -3922,7 +3924,8 @@
       "needsRoute": "ルーティングが必要：{{reason}}。直接接続はできません。",
       "defaultCannotRemove": "既定のプロバイダーは削除できません。先にほかを既定にしてください。",
       "currentCannotRemove": "使用中のプロバイダーは削除できません。先にほかを有効にしてください。",
-      "inUseCannotDelete": "使用中のプロバイダーは削除できません。先にほかへ切り替えてください。"
+      "inUseCannotDelete": "使用中のプロバイダーは削除できません。先にほかへ切り替えてください。",
+      "noFailover": "公式アカウントはフェイルオーバーキューに入れられません。クライアント自身のログインを使うため、ほかと交代できません。"
     },
     "section": {
       "queue": "キュー · 優先順（{{count}}）",

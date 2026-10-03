@@ -3227,6 +3227,8 @@
     "enabled": "{{app}} failover enabled",
     "disabled": "{{app}} failover disabled",
     "toggleFailed": "Operation failed: {{detail}}",
+    "queueAddFailed": "Failed to add to the queue: {{detail}}",
+    "queueRemoveFailed": "Failed to remove from the queue: {{detail}}",
     "inQueue": "In queue",
     "addQueue": "Add",
     "priority": {
@@ -3922,7 +3924,8 @@
       "needsRoute": "Needs routing: {{reason}}; can't connect directly.",
       "defaultCannotRemove": "The default can't be removed. Make another provider the default first.",
       "currentCannotRemove": "The provider in use can't be removed. Enable another one first.",
-      "inUseCannotDelete": "The provider in use can't be deleted. Switch to another one first."
+      "inUseCannotDelete": "The provider in use can't be deleted. Switch to another one first.",
+      "noFailover": "Official accounts can't join the failover queue: they use the client's own login and can't rotate with other providers."
     },
     "section": {
       "queue": "Queue · by priority ({{count}})",
