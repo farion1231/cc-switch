@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::SystemTime;
 
-use super::content::SourceLocation;
+use super::content::{SourceLocation, ValidatedSource, GROK_CHAT_HISTORY};
 use super::model::{EventKind, SessionBlock, SessionMessage, ToolStatus, TurnIndex};
 
 /// 最多缓存的会话数
@@ -105,6 +105,23 @@ pub fn fingerprint(location: &SourceLocation) -> io::Result<Fingerprint> {
             Ok(fp)
         }
     }
+}
+
+/// 会话源的指纹：在 [`fingerprint`] 的基础上补上「正文不在 sourcePath 里」的情况。
+///
+/// Grok Build 的 sourcePath 是 `summary.json`，正文在同目录的 `chat_history.jsonl`，
+/// 而 `summary.json` 只在一轮结束时改写——只看它的话，一轮进行中刷新会命中旧缓存。
+pub fn source_fingerprint(source: &ValidatedSource) -> io::Result<Fingerprint> {
+    let mut fp = fingerprint(&source.location)?;
+    if source.provider_id == "grokbuild" {
+        if let SourceLocation::Path { path, .. } = &source.location {
+            let history = path.with_file_name(GROK_CHAT_HISTORY);
+            if let Ok(meta) = fs::metadata(&history) {
+                fp.merge(Fingerprint::of_metadata(&meta));
+            }
+        }
+    }
+    Ok(fp)
 }
 
 fn sqlite_wal_path(db: &Path) -> Option<std::path::PathBuf> {
@@ -403,6 +420,42 @@ mod tests {
         let big = CHUNK_MAX_BYTES;
         let ranges = chunk_ranges(&[100, big, 100, big / 2, big / 2, 1]);
         assert_eq!(ranges, vec![(0, 1), (1, 2), (2, 4), (4, 6)]);
+    }
+
+    /// 审查 #7825：Grok 一轮进行中只往 chat_history.jsonl 追加，summary.json 不变，
+    /// 指纹也必须变；其它 provider 不受影响
+    #[test]
+    fn grok_fingerprint_follows_chat_history() {
+        use std::io::Write;
+
+        let dir = tempdir().unwrap();
+        let summary = dir.path().join("summary.json");
+        let history = dir.path().join(GROK_CHAT_HISTORY);
+        std::fs::write(&summary, "{}").unwrap();
+        std::fs::write(&history, "{\"role\":\"user\"}\n").unwrap();
+        let source = |provider: &str| ValidatedSource {
+            provider_id: provider.to_string(),
+            raw: summary.to_string_lossy().into_owned(),
+            location: SourceLocation::Path {
+                path: summary.clone(),
+                root: dir.path().to_path_buf(),
+            },
+        };
+
+        let grok_before = source_fingerprint(&source("grokbuild")).unwrap();
+        let other_before = source_fingerprint(&source("claude")).unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&history)
+            .unwrap()
+            .write_all(b"{\"role\":\"assistant\"}\n")
+            .unwrap();
+
+        assert_ne!(
+            source_fingerprint(&source("grokbuild")).unwrap(),
+            grok_before
+        );
+        assert_eq!(source_fingerprint(&source("claude")).unwrap(), other_before);
     }
 
     #[test]

@@ -278,7 +278,7 @@ pub fn resolve_content_ref(
 }
 
 /// Grok Build 的会话正文文件名：sourcePath 是同目录的 `summary.json`
-const GROK_CHAT_HISTORY: &str = "chat_history.jsonl";
+pub(crate) const GROK_CHAT_HISTORY: &str = "chat_history.jsonl";
 
 /// `ContentRef::Jsonl` 指向的文件。一般就是会话源本身；Grok Build 的源是 `summary.json`，
 /// 正文在同目录固定名的 `chat_history.jsonl`——只认这一个文件名，规范化后仍须在会话根内。

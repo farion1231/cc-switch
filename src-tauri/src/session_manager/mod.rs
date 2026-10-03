@@ -133,7 +133,7 @@ pub struct LoadedTranscript {
 pub fn load_transcript(provider_id: &str, source_path: &str) -> Result<LoadedTranscript, String> {
     let started = Instant::now();
     let source = content::validate_source(provider_id, source_path)?;
-    let fingerprint = cache::fingerprint(&source.location)
+    let fingerprint = cache::source_fingerprint(&source)
         .map_err(|e| format!("Failed to read session source: {e}"))?;
     let key = (source.provider_id.clone(), source.raw.clone());
     let (transcript, cached) = cache::global().get_or_load(key, fingerprint, || {
