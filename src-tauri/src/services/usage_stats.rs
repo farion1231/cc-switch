@@ -61,6 +61,43 @@ fn derive_real_total_and_hit_rate(
     (real_total, hit_rate)
 }
 
+/// 汇总查询的一行（请求数、花费、四类 Token、成功数）转成 [`UsageSummary`]。
+/// 列顺序须与 `get_usage_summary` / `get_session_usage_summary` 的 SELECT 一致。
+fn usage_summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UsageSummary> {
+    let total_requests: i64 = row.get(0)?;
+    let total_cost: f64 = row.get(1)?;
+    let total_input_tokens: i64 = row.get(2)?;
+    let total_output_tokens: i64 = row.get(3)?;
+    let total_cache_creation_tokens: i64 = row.get(4)?;
+    let total_cache_read_tokens: i64 = row.get(5)?;
+    let success_count: i64 = row.get(6)?;
+
+    let success_rate = if total_requests > 0 {
+        (success_count as f32 / total_requests as f32) * 100.0
+    } else {
+        0.0
+    };
+
+    let (real_total_tokens, cache_hit_rate) = derive_real_total_and_hit_rate(
+        total_input_tokens as u64,
+        total_output_tokens as u64,
+        total_cache_creation_tokens as u64,
+        total_cache_read_tokens as u64,
+    );
+
+    Ok(UsageSummary {
+        total_requests: total_requests as u64,
+        total_cost: format!("{total_cost:.6}"),
+        total_input_tokens: total_input_tokens as u64,
+        total_output_tokens: total_output_tokens as u64,
+        total_cache_creation_tokens: total_cache_creation_tokens as u64,
+        total_cache_read_tokens: total_cache_read_tokens as u64,
+        success_rate,
+        real_total_tokens,
+        cache_hit_rate,
+    })
+}
+
 /// 每日统计
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -911,40 +948,43 @@ impl Database {
         all_params.extend(rollup_params);
         let param_refs: Vec<&dyn rusqlite::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
 
-        let result = conn.query_row(&sql, param_refs.as_slice(), |row| {
-            let total_requests: i64 = row.get(0)?;
-            let total_cost: f64 = row.get(1)?;
-            let total_input_tokens: i64 = row.get(2)?;
-            let total_output_tokens: i64 = row.get(3)?;
-            let total_cache_creation_tokens: i64 = row.get(4)?;
-            let total_cache_read_tokens: i64 = row.get(5)?;
-            let success_count: i64 = row.get(6)?;
+        let result = conn.query_row(&sql, param_refs.as_slice(), usage_summary_from_row)?;
 
-            let success_rate = if total_requests > 0 {
-                (success_count as f32 / total_requests as f32) * 100.0
-            } else {
-                0.0
-            };
+        Ok(result)
+    }
 
-            let (real_total_tokens, cache_hit_rate) = derive_real_total_and_hit_rate(
-                total_input_tokens as u64,
-                total_output_tokens as u64,
-                total_cache_creation_tokens as u64,
-                total_cache_read_tokens as u64,
-            );
+    /// 单个会话的用量汇总（会话阅读页头部）：总 Token 和花费的口径同 Dashboard。
+    ///
+    /// 只数会话日志导入的行：它们带客户端自己的会话 ID，经不经过路由都会导入；
+    /// 代理行的会话 ID 是代理侧推断的，未必对得上，两边都数还会重复。
+    /// 明细 30 天后汇总进按天表并删除（按天表没有会话维度），更早的会话查不到。
+    pub fn get_session_usage_summary(
+        &self,
+        app_type: &str,
+        session_id: &str,
+    ) -> Result<UsageSummary, AppError> {
+        let conn = lock_conn!(self.conn);
+        let fresh_input = fresh_input_sql("l");
+        let app_type_expr = folded_app_type_sql("l.app_type");
+        let data_source = data_source_expr("l");
+        let sql = format!(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0),
+                COALESCE(SUM({fresh_input}), 0),
+                COALESCE(SUM(l.output_tokens), 0),
+                COALESCE(SUM(l.cache_creation_tokens), 0),
+                COALESCE(SUM(l.cache_read_tokens), 0),
+                COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0)
+             FROM proxy_request_logs l
+             WHERE l.session_id = ?1 AND {app_type_expr} = ?2 AND {data_source} <> 'proxy'"
+        );
 
-            Ok(UsageSummary {
-                total_requests: total_requests as u64,
-                total_cost: format!("{total_cost:.6}"),
-                total_input_tokens: total_input_tokens as u64,
-                total_output_tokens: total_output_tokens as u64,
-                total_cache_creation_tokens: total_cache_creation_tokens as u64,
-                total_cache_read_tokens: total_cache_read_tokens as u64,
-                success_rate,
-                real_total_tokens,
-                cache_hit_rate,
-            })
-        })?;
+        let result = conn.query_row(
+            &sql,
+            rusqlite::params![session_id, app_type],
+            usage_summary_from_row,
+        )?;
 
         Ok(result)
     }
@@ -3713,6 +3753,62 @@ mod tests {
         let summary = db.get_usage_summary(None, None, None, None, None)?;
         assert_eq!(summary.total_requests, 2);
         assert_eq!(summary.success_rate, 100.0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_session_usage_summary_counts_only_session_log_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            // (request_id, app_type, session_id, data_source, input, output, cache_read, cost)
+            let rows = [
+                (
+                    "s1",
+                    "claude",
+                    "sess-a",
+                    "session_log",
+                    10,
+                    200,
+                    5000,
+                    "0.10",
+                ),
+                (
+                    "s2",
+                    "claude-desktop",
+                    "sess-a",
+                    "session_log",
+                    20,
+                    300,
+                    7000,
+                    "0.20",
+                ),
+                // 代理行即便会话 ID 相同也不数，避免与会话日志重复
+                ("p1", "claude", "sess-a", "proxy", 10, 200, 5000, "0.10"),
+                ("s3", "claude", "sess-b", "session_log", 1, 1, 1, "9.00"),
+                ("s4", "codex", "sess-a", "codex_session", 1, 1, 0, "9.00"),
+            ];
+            for (id, app, session, source, input, output, cache_read, cost) in rows {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, cache_read_tokens, total_cost_usd,
+                        latency_ms, status_code, created_at, session_id, data_source
+                    ) VALUES (?, 'p1', ?, 'claude-x', ?, ?, ?, ?, 0, 200, 1000, ?, ?)",
+                    params![id, app, input, output, cache_read, cost, session, source],
+                )?;
+            }
+        }
+
+        let summary = db.get_session_usage_summary("claude", "sess-a")?;
+        assert_eq!(summary.total_requests, 2);
+        assert_eq!(summary.real_total_tokens, 10 + 200 + 5000 + 20 + 300 + 7000);
+        assert_eq!(summary.total_cost, "0.300000");
+
+        let empty = db.get_session_usage_summary("claude", "missing")?;
+        assert_eq!(empty.total_requests, 0);
 
         Ok(())
     }

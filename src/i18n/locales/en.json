@@ -1335,6 +1335,10 @@
       "turnsCount": "{{turns}} turns · {{messages}} messages",
       "questionsCount": "{{count}} prompts",
       "toolsCount": "{{count}} tool calls",
+      "usage": {
+        "tokens": "{{tokens}} tokens",
+        "detail": "{{requests}} requests · estimated at API prices\nInput {{input}} · Output {{output}}\nCache write {{cacheWrite}} · Cache read {{cacheRead}}"
+      },
       "loadingProgress": "Loaded {{loaded}} / {{total}}",
       "verb": {
         "run": "Run",

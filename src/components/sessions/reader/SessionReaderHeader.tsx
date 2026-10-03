@@ -33,8 +33,17 @@ import {
 import { HoverTip } from "@/components/ui/hover-tip";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { fieldClass } from "@/components/ui/input";
+import { useSessionUsageSummary } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import type { SessionMeta, TurnIndex } from "@/types";
+import {
+  fmtInt,
+  fmtUsd,
+  formatTokensCompact,
+  getLocaleFromLanguage,
+  getResolvedLang,
+  parseFiniteNumber,
+} from "@/components/usage/format";
 import { sessionMenuItemClass } from "../SessionItem";
 import {
   buildCdResumeCommand,
@@ -489,6 +498,47 @@ const Sep = () => (
   </span>
 );
 
+/**
+ * 这个会话的总 Token 和 API 价花费，口径同用量统计（会话日志导入的用量）。
+ * 没导入过（扫描关着、超过 30 天被汇总、应用没有用量来源）时不显示。
+ */
+function SessionUsageSummary({ session }: { session: SessionMeta }) {
+  const { i18n } = useTranslation();
+  const rt = useReaderT();
+  const { data } = useSessionUsageSummary(
+    session.providerId,
+    session.sessionId,
+  );
+  if (!data || data.totalRequests === 0) return null;
+
+  const locale = getLocaleFromLanguage(getResolvedLang(i18n));
+  const cost = parseFiniteNumber(data.totalCost);
+  const tokens = (value: number) => formatTokensCompact(value, locale);
+  return (
+    <>
+      <Sep />
+      <span
+        className="shrink-0 whitespace-nowrap"
+        title={rt("usage.detail", {
+          requests: fmtInt(data.totalRequests, locale),
+          input: tokens(data.totalInputTokens),
+          output: tokens(data.totalOutputTokens),
+          cacheWrite: tokens(data.totalCacheCreationTokens),
+          cacheRead: tokens(data.totalCacheReadTokens),
+        })}
+      >
+        {rt("usage.tokens", { tokens: tokens(data.realTotalTokens) })}
+        {cost !== null && (
+          <>
+            {" · "}
+            {fmtUsd(cost, 2)}
+          </>
+        )}
+      </span>
+    </>
+  );
+}
+
 export const SessionReaderToolbar = memo(function SessionReaderToolbar({
   session,
   failed,
@@ -591,6 +641,7 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
               </span>
             </>
           )}
+          <SessionUsageSummary session={session} />
         </div>
 
         {!failed && (
