@@ -170,7 +170,7 @@ export function StructuredOptionsEditor({
       className={cn("space-y-2 border-l border-border pl-3", className)}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 max-w-3xl flex-1 space-y-1">
+        <div className="min-w-0 flex-1 space-y-1">
           <span className="block text-sm font-medium text-fg-1">{title}</span>
           <p className="text-xs text-fg-2">{hint}</p>
         </div>
@@ -187,7 +187,7 @@ export function StructuredOptionsEditor({
         </Button>
       </div>
 
-      <div className="max-w-3xl space-y-2">
+      <div className="space-y-2">
         {!hasRows ? (
           <p className="py-1 text-sm text-fg-2">{emptyLabel}</p>
         ) : (

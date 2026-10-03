@@ -628,7 +628,7 @@ export function OpenCodeFormFields({
       {/* Extra Options Editor */}
       <div className="space-y-2 border-l border-border pl-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="max-w-3xl space-y-1">
+          <div className="space-y-1">
             <FormLabel>
               {t("opencode.extraOptions", {
                 defaultValue: "Extra SDK Options",
@@ -653,7 +653,7 @@ export function OpenCodeFormFields({
           </Button>
         </div>
 
-        <div className="max-w-3xl">
+        <div>
           {Object.keys(extraOptions).length === 0 ? (
             <p className="text-sm text-fg-2 py-1">
               {t("opencode.noExtraOptions", {
