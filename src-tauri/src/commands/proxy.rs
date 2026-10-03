@@ -155,7 +155,7 @@ pub async fn set_proxy_stack_member(
         .map_err(crate::mode::controller::StackWriteError::unchanged)?;
     let result =
         crate::mode::controller::set_stack_member(state.inner(), &app, &provider_id, enabled).await;
-    // 托盘的叠加子菜单只列名单成员；部分写入也已经改了名单，一律重建。
+    // 托盘的聚合子菜单只列名单成员；部分写入也已经改了名单，一律重建。
     // 不重建的话，托盘里还列着刚移出的那家，点一下会把它重新加回并设为默认
     crate::tray::refresh_tray_menu(&app_handle);
     result

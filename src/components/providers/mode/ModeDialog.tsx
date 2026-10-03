@@ -38,11 +38,11 @@ interface ModeDialogProps {
   state: ModeDialogState | null;
   active: AppMode;
   providers: Provider[];
-  /** 能做路由目标 / 叠加默认的供应商 */
+  /** 能做路由目标 / 聚合默认的供应商 */
   eligibleIds: string[];
-  /** 默认选中：路由用上次的路由目标，叠加用当前默认那家 */
+  /** 默认选中：路由用上次的路由目标，聚合用当前默认那家 */
   defaultPick: { route: string | null; stack: string | null };
-  /** 叠加里除了默认那家以外的成员及其模型数 */
+  /** 聚合里除了默认那家以外的成员及其模型数 */
   stackMembers: { name: string; models: number }[];
   onClose: () => void;
   onEnter: (target: Exclude<AppMode, "direct">, pick: string) => Promise<void>;
@@ -52,8 +52,8 @@ interface ModeDialogProps {
 
 /**
  * 模式切换确认框（B4.4 的 A / C / D / E，以及 F「需要路由」）。确认键 = 入口按钮去掉「…」。
- * 出错时就地显示，不关框。路由可以在框里换目标；叠加的默认供应商在列表里定（卡片上的
- * 「以这家为默认开始叠加…」或预览里的默认那家），框里只显示、不再选。
+ * 出错时就地显示，不关框。路由可以在框里换目标；聚合的默认供应商在列表里定（卡片上的
+ * 「以这家为默认开始聚合…」或预览里的默认那家），框里只显示、不再选。
  */
 export function ModeDialog(props: ModeDialogProps) {
   const { state, onClose } = props;
@@ -160,7 +160,7 @@ function EnterBody({
     : target === "route"
       ? t("mode.dialog.routeTitle", { app: appName })
       : t("mode.dialog.stackTitle", { app: appName });
-  // 从路由 / 叠加互换时后端一步完成（先写回直连再接入只是实现细节），不再列步骤
+  // 从路由 / 聚合互换时后端一步完成（先写回直连再接入只是实现细节），不再列步骤
   const lead =
     target === "route"
       ? t("mode.dialog.routeLead")

@@ -19,7 +19,7 @@ export interface ModeSnapshot {
 }
 
 /**
- * 进入 / 离开路由和叠加模式。进入要先在确认框里确认；回到直连不弹框，toast 里给「撤销」，
+ * 进入 / 离开路由和聚合模式。进入要先在确认框里确认；回到直连不弹框，toast 里给「撤销」，
  * 撤销按原来的模式和路由目标重新进入。
  */
 export function useModeActions(app: AppId) {
@@ -40,7 +40,7 @@ export function useModeActions(app: AppId) {
     providersApi.updateTrayMenu().catch(() => undefined);
   }, [app, queryClient]);
 
-  /** 进入路由 / 叠加模式；已经在另一种代理模式时后端一次写完，不经过直连。抛出错误给确认框显示。 */
+  /** 进入路由 / 聚合模式；已经在另一种代理模式时后端一次写完，不经过直连。抛出错误给确认框显示。 */
   const enter = useCallback(
     async (
       mode: Exclude<AppMode, "direct">,

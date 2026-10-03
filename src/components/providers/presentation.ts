@@ -95,7 +95,7 @@ export interface SwitchModeInput {
   failoverOn: boolean;
   /** 队列里的 id，按优先级 */
   queue: string[];
-  /** 叠加名单（含默认那家）：id → 发布的模型数 */
+  /** 聚合名单（含默认那家）：id → 发布的模型数 */
   stackMembers: Map<string, number>;
   /** 需要路由的原因（悬停「需要路由」时的说明） */
   routingReason: (provider: Provider) => string;
@@ -106,7 +106,7 @@ export interface SwitchModeInput {
     exitAndUse: (provider: Provider) => void;
     routeTo: (provider: Provider) => void;
     startRouteFrom: (provider: Provider) => void;
-    /** 没进叠加时，以这家为默认打开进叠加的确认框（同路由预览的「从这家开始路由」） */
+    /** 没进聚合时，以这家为默认打开进聚合的确认框（同路由预览的「从这家开始路由」） */
     startStackFrom: (provider: Provider) => void;
     queueAdd: (provider: Provider) => void;
     queueRemove: (provider: Provider) => void;
@@ -119,7 +119,7 @@ export interface SwitchModeInput {
 
 export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
   const { t, active, directId, routeId } = input;
-  // 后端 is_referenced：直连指针指着的、路由 / 叠加模式下正在路由的，都删不掉。
+  // 后端 is_referenced：直连指针指着的、路由 / 聚合模式下正在路由的，都删不掉。
   // 不管当前看的是哪个视图都要标出来，否则确认后后端拒绝、确认框还卡在原地
   const inUse = (id: string) =>
     id === directId || (active !== "direct" && id === routeId);
@@ -237,7 +237,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
               },
             };
           }
-          // 实际在路由 / 叠加，正在查看直连
+          // 实际在路由 / 聚合，正在查看直连
           if (p.id === directId) chips.push(chip.directWhenDirect());
           return {
             provider: p,
@@ -401,7 +401,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
       ];
     }
 
-    // 实际在直连 / 叠加，正在查看路由
+    // 实际在直连 / 聚合，正在查看路由
     return [
       {
         key: "all",
@@ -436,8 +436,8 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
 
   // view === "stack"
   const on = active === "stack";
-  // 没进叠加时每行的主操作是「以这家为默认开始叠加…」（和路由预览的「从这家开始路由」对齐）；
-  // 进了叠加后才是「设为默认」，当场生效
+  // 没进聚合时每行的主操作是「以这家为默认开始聚合…」（和路由预览的「从这家开始路由」对齐）；
+  // 进了聚合后才是「设为默认」，当场生效
   const defaultButton = (p: Provider): CardButton =>
     on
       ? {

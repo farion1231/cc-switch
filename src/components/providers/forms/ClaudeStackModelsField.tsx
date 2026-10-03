@@ -189,7 +189,7 @@ export function ClaudeStackModelsField({
         <p className="text-xs leading-relaxed text-fg-2">
           {t("providerForm.stackModelsEmpty", {
             defaultValue:
-              "未配置模型：叠加这家后，模型选择器里不会多出它的模型",
+              "未配置模型：把这家加入聚合后，模型选择器里不会多出它的模型",
           })}
         </p>
       ) : (

@@ -115,7 +115,7 @@ describe("buildSwitchSections — direct", () => {
 });
 
 describe("buildSwitchSections — delete guard", () => {
-  // 后端 is_referenced：直连指针、路由 / 叠加模式下的当前路由都删不掉，哪个视图都要标出来
+  // 后端 is_referenced：直连指针、路由 / 聚合模式下的当前路由都删不掉，哪个视图都要标出来
   it("disables delete on the direct provider in every view", () => {
     for (const view of ["direct", "route", "stack"] as AppMode[]) {
       const { sections } = build({ active: "direct", view });
@@ -314,7 +314,7 @@ describe("buildSwitchSections — stack", () => {
 
     button(sections, "converted", "add").onClick();
     expect(input.actions.stackAdd).toHaveBeenCalledWith(converted);
-    // Claude 官方订阅不能进叠加
+    // Claude 官方订阅不能进聚合
     expect(button(sections, "official", "blocked").disabledReason).toBe(
       "providerCard.reason.noStack",
     );

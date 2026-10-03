@@ -196,7 +196,7 @@ function App() {
     void checkToolUpdatesInBackground();
   }, [checkToolUpdatesOnStartup]);
 
-  // 启动时没能接上路由 / 叠加、已退回直连的应用：在对应的应用页提示一次并给「重试」
+  // 启动时没能接上路由 / 聚合、已退回直连的应用：在对应的应用页提示一次并给「重试」
   const [startupFailures, setStartupFailures] = useState<
     StartupAttachFailure[]
   >([]);

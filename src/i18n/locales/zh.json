@@ -106,20 +106,20 @@
     "needsRouting": "需要路由",
     "directProvider": "直连",
     "directProviderHint": "退出路由后恢复为这个供应商",
-    "stackBadge": "叠加",
+    "stackBadge": "聚合",
     "stackBadgeHint": "在 {{client}} 的模型选择器里选择：{{models}}",
     "stackBadgeNoModels": "这家没有配置模型，不会出现在模型选择器里",
     "stackSaved": "已保存，重启 {{client}} 后生效",
-    "stackModelsChanged": "叠加的模型有变化，重启 {{client}} 后生效",
-    "stackReselectHint": "CC Switch 每次改写客户端配置后，如果模型选择器里选的是叠加的模型，需要重新选一次",
+    "stackModelsChanged": "聚合的模型有变化，重启 {{client}} 后生效",
+    "stackReselectHint": "CC Switch 每次改写客户端配置后，如果模型选择器里选的是聚合的模型，需要重新选一次",
     "stackPartial": "已部分写入，将在下次操作或重启 CC Switch 时补完",
-    "stackFailed": "叠加的模型保存失败：{{error}}",
+    "stackFailed": "聚合的模型保存失败：{{error}}",
     "stackDefaultCannotRemove": "默认供应商不能移除，请先把别的供应商设为默认",
     "stackDefaultHint": "它是默认供应商：列表里的第一个模型负责 Claude Code 启动和后台任务",
     "officialModelsBundled": "官方模型列表暂未取到，暂用 Codex 内置列表，可能缺少账号专属模型",
-    "officialModelsUnavailable": "叠加的模型暂不可用：读取不到 Codex 模型列表",
-    "routeOwnsCatalog": "叠加的模型不会出现在 Codex 里：路由供应商使用自己的模型目录文件（model_catalog_json）",
-    "configOwnsCatalog": "叠加的模型不会出现在 Codex 里：config.toml 的 model_catalog_json 指向了别的模型目录文件",
+    "officialModelsUnavailable": "聚合的模型暂不可用：读取不到 Codex 模型列表",
+    "routeOwnsCatalog": "聚合的模型不会出现在 Codex 里：路由供应商使用自己的模型目录文件（model_catalog_json）",
+    "configOwnsCatalog": "聚合的模型不会出现在 Codex 里：config.toml 的 model_catalog_json 指向了别的模型目录文件",
     "noRoutingSupport": "不支持路由",
     "blockedByProxyHint": "路由模式下不能切换到官方供应商",
     "editProvider": "编辑供应商",
@@ -383,8 +383,8 @@
         "description": "控制路由服务开关、查看状态与端口信息",
         "enableFeature": "在主页面显示本地路由开关",
         "enableFeatureDescription": "开启后，主页面顶部将显示路由和故障转移开关",
-        "enableStackMode": "在主页面显示叠加模式开关",
-        "enableStackModeDescription": "开启后，Claude Code 和 Codex 的主页面开关换成叠加模式：像 OpenCode 一样添加多家供应商，它们的模型都会出现在客户端的模型列表里（重启客户端后生效），不做故障转移。和本地路由开关二选一，切换时已开启的 Claude Code、Codex 会先退回直连",
+        "enableStackMode": "在主页面显示聚合模式开关",
+        "enableStackModeDescription": "开启后，Claude Code 和 Codex 的主页面开关换成聚合模式：像 OpenCode 一样添加多家供应商，它们的模型都会出现在客户端的模型列表里（重启客户端后生效），不做故障转移。和本地路由开关二选一，切换时已开启的 Claude Code、Codex 会先退回直连",
         "enableFailoverToggle": "在主页面显示故障转移开关",
         "enableFailoverToggleDescription": "开启后，主页面顶部将独立显示故障转移开关",
         "running": "运行中",
@@ -1416,15 +1416,15 @@
     "stackModelsLabel": "模型列表",
     "addStackModel": "添加模型",
     "stackModelsHint": "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。修改后需要重启 Claude Code。",
-    "stackModelsEmpty": "未配置模型：叠加这家后，模型选择器里不会多出它的模型",
+    "stackModelsEmpty": "未配置模型：把这家加入聚合后，模型选择器里不会多出它的模型",
     "stackModelPlaceholder": "例如 deepseek-v4-pro",
     "stackModelDefault": "默认模型",
     "stackModelMakeDefault": "设为默认模型",
     "stackLayout": {
       "fullForm": "显示完整表单",
-      "simpleForm": "返回叠加模式的简化表单",
+      "simpleForm": "返回聚合模式的简化表单",
       "advancedHint": "自定义 User-Agent 与请求覆盖，一般无需修改。",
-      "noModels": "模型列表为空：叠加这家后，模型选择器里不会多出它的模型"
+      "noModels": "模型列表为空：把这家加入聚合后，模型选择器里不会多出它的模型"
     },
     "modelRoleLabel": "模型角色",
     "modelRoleSonnet": "Sonnet",
@@ -1677,7 +1677,7 @@
     "stackModelListHint": "这些模型会出现在 Codex 的 /model 里，选中后请求直达这家。★ 是这家的默认模型：这家被设为默认时 Codex 默认用它。修改后需要重启 Codex。",
     "stackDefaultNotInList": "默认模型 {{model}} 不在列表里：Codex 默认仍请求它，但 /model 里没有这一项。",
     "addToModelList": "加入列表",
-    "modelListEmpty": "未配置模型：叠加模式下只发布这家的默认模型（config.toml 的 model）。",
+    "modelListEmpty": "未配置模型：聚合模式下只发布这家的默认模型（config.toml 的 model）。",
     "stackAdvancedHint": "思考能力、Anthropic 专有项、自定义 User-Agent 与请求覆盖，一般无需修改。",
     "catalogDisplayName": "显示名称",
     "catalogDisplayNamePlaceholder": "例如: DeepSeek V4 Flash",
@@ -3353,23 +3353,23 @@
       }
     },
     "stackMode": {
-      "enabled": "{{app}} 已进入叠加模式",
+      "enabled": "{{app}} 已进入聚合模式",
       "exitedToDirect": "{{apps}} 已退回直连",
       "tooltip": {
-        "active": "{{appLabel}} 已开启叠加模式：添加的供应商的模型出现在模型列表里，重启客户端后生效",
-        "inactive": "进入叠加模式：添加多家供应商，它们的模型都出现在 {{appLabel}} 的模型列表里"
+        "active": "{{appLabel}} 已开启聚合模式：添加的供应商的模型出现在模型列表里，重启客户端后生效",
+        "inactive": "进入聚合模式：添加多家供应商，它们的模型都出现在 {{appLabel}} 的模型列表里"
       },
-      "ariaLabel": "{{appLabel}} 叠加模式",
-      "failoverUnavailable": "{{appLabel}} 在叠加模式下不做故障转移。队列和设置保留，回到路由模式后恢复",
+      "ariaLabel": "{{appLabel}} 聚合模式",
+      "failoverUnavailable": "{{appLabel}} 在聚合模式下不做故障转移。队列和设置保留，回到路由模式后恢复",
       "codexStale": {
-        "title": "Codex 还在用旧的模型列表，叠加的模型不会出现",
+        "title": "Codex 还在用旧的模型列表，聚合的模型不会出现",
         "daemon": "命令行：重开 codex 不够，要重启后台的守护进程。",
         "others": "桌面版：要彻底退出再重开（macOS 上按 ⌘Q，只关窗口不行）；编辑器插件要重开编辑器窗口。",
         "restart": "重启 Codex 守护进程",
         "confirmTitle": "重启 Codex 守护进程？",
-        "confirmMessage": "所有终端里的 codex 共用这个守护进程，正在运行的任务会被中断。重启之后重新打开 codex，就能看到叠加的模型。",
+        "confirmMessage": "所有终端里的 codex 共用这个守护进程，正在运行的任务会被中断。重启之后重新打开 codex，就能看到聚合的模型。",
         "confirm": "重启",
-        "restarted": "Codex 守护进程已重启，重新打开 codex 就能看到叠加的模型",
+        "restarted": "Codex 守护进程已重启，重新打开 codex 就能看到聚合的模型",
         "notRunning": "Codex 守护进程没在运行，下次打开 codex 时会读到新的模型列表",
         "failed": "重启 Codex 守护进程失败：{{error}}"
       }
@@ -3750,7 +3750,7 @@
     "settingsHasUpdate": "设置 · CC Switch 有新版本",
     "mode": {
       "route": "路由",
-      "stack": "叠加",
+      "stack": "聚合",
       "mapping": "映射",
       "mappingFull": "模型映射"
     },
@@ -3810,7 +3810,7 @@
     "names": {
       "direct": "直连",
       "route": "路由",
-      "stack": "叠加"
+      "stack": "聚合"
     },
     "active": "生效中",
     "activeTitle": "{{mode}}生效中",
@@ -3824,13 +3824,13 @@
       "directLead": "直连生效中 · 直接连接",
       "routeLead": "路由生效中",
       "byQueue": "按队列",
-      "stackLead": "叠加生效中 · 默认",
+      "stackLead": "聚合生效中 · 默认",
       "stackValue": "{{name}} · 另有 {{count}} 家共 {{models}} 个模型"
     },
     "activate": {
       "viewing": "你在查看「{{view}}」，{{app}} 目前是{{active}}。",
       "route": "开始路由",
-      "stack": "切换到叠加模式",
+      "stack": "切换到聚合模式",
       "direct": "回到直连"
     },
     "notice": {
@@ -3841,7 +3841,7 @@
     },
     "toast": {
       "enteredRoute": "{{app}} 已开始路由 → {{provider}}。",
-      "enteredStack": "{{app}} 已切换到叠加模式。重启 {{app}} 后，叠加的模型出现在 /model 里。",
+      "enteredStack": "{{app}} 已切换到聚合模式。重启 {{app}} 后，聚合的模型出现在 /model 里。",
       "exited": "已回到直连：{{app}} 现在直接连接 {{provider}}。",
       "restartHint": "重启 {{app}} 后生效。",
       "undo": "撤销",
@@ -3849,7 +3849,7 @@
     },
     "dialog": {
       "routeTitle": "让 {{app}} 使用路由模式？",
-      "stackTitle": "让 {{app}} 使用叠加模式？",
+      "stackTitle": "让 {{app}} 使用聚合模式？",
       "switchTitle": "把 {{app}} 从「{{from}}」切换到「{{to}}」？",
       "routeLead": "请求会先经过本机的 CC Switch，再转给你选的供应商。",
       "stackLead": "默认供应商承接不带前缀的请求。",
@@ -3860,13 +3860,13 @@
       "routeNoteSwitch": "之后在「路由」页签里换供应商，不再改写配置文件。",
       "routeNoteKeepRunning": "CC Switch 需要保持运行；退出时自动写回直连，下次启动再接上。",
       "stackNoteMembers": "另有 {{names}} 共 {{count}} 个模型，会以 ccs- 前缀出现在 /model 里。",
-      "stackNoteEmpty": "还没有添加其他供应商，切换后只有默认供应商；可以之后在「叠加」页签里添加。",
-      "stackNoteNoFailover": "叠加模式不做故障转移；队列和设置会保留，回到路由模式后恢复。",
-      "stackNoteRestart": "需要重启 {{app}} 才能看到叠加的模型。",
-      "stackNoteRestartCodex": "需要重启 {{app}} 才能看到叠加的模型；桌面版要彻底退出后重新打开。",
-      "stackToRouteNote": "叠加的模型会从 /model 撤下（名单保留）；已选中的叠加模型需要改回普通模型。",
+      "stackNoteEmpty": "还没有添加其他供应商，切换后只有默认供应商；可以之后在「聚合」页签里添加。",
+      "stackNoteNoFailover": "聚合模式不做故障转移；队列和设置会保留，回到路由模式后恢复。",
+      "stackNoteRestart": "需要重启 {{app}} 才能看到聚合的模型。",
+      "stackNoteRestartCodex": "需要重启 {{app}} 才能看到聚合的模型；桌面版要彻底退出后重新打开。",
+      "stackToRouteNote": "聚合的模型会从 /model 撤下（名单保留）；已选中的聚合模型需要改回普通模型。",
       "confirmRoute": "开始路由",
-      "confirmStack": "切换到叠加模式",
+      "confirmStack": "切换到聚合模式",
       "needsRouteTitle": "{{provider}} 需要路由",
       "needsRouteLead": "{{provider}}：{{reason}}。直连切换过去，{{app}} 会无法使用它。",
       "switchAnyway": "仍然直连切换",
@@ -3876,7 +3876,7 @@
       "title": "连接模式的区别",
       "direct": "直连：客户端直接连所选那家，切换即改写配置。",
       "route": "路由：请求先过本机的 CC Switch，可开故障转移。",
-      "stack": "叠加：多家模型同列在 /model，不做故障转移。"
+      "stack": "聚合：多家模型同列在 /model，不做故障转移。"
     }
   },
   "providerCard": {
@@ -3904,7 +3904,7 @@
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
       "moveDown": "{{name}} 下移一位",
-      "startStackFrom": "以这家为默认开始叠加"
+      "startStackFrom": "以这家为默认开始聚合"
     },
     "chip": {
       "official": "官方",
@@ -3921,8 +3921,8 @@
     },
     "reason": {
       "noRoute": "官方订阅不经过路由，回到直连后可用。",
-      "noStack": "官方订阅不能用于叠加模式。",
-      "officialStack": "官方账号只能做默认，不能叠加。",
+      "noStack": "官方订阅不能用于聚合模式。",
+      "officialStack": "官方账号只能做默认，不能加入聚合。",
       "needsRoute": "需要路由：{{reason}}，不能直连。",
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
       "currentCannotRemove": "正在用的这家不能移除，先启用别家。",
@@ -3936,7 +3936,7 @@
       "queueEmpty": "队列是空的，从下面加入供应商。",
       "notInQueue": "不在队列（{{count}}）",
       "stackDefault": "默认供应商",
-      "stackDefaultAfterSwitch": "切换到叠加模式后的默认供应商",
+      "stackDefaultAfterSwitch": "切换到聚合模式后的默认供应商",
       "stackDefaultHelp": "不带前缀的请求都发给它；其他已添加的供应商以 ccs- 前缀出现在 /model 里。",
       "stackEmpty": "还没有添加其他供应商。",
       "added": "已添加 · {{count}}",
@@ -3944,7 +3944,7 @@
       "addedHelp": "已添加的供应商会同时写进 {{app}} 的配置，在 {{app}} 里选模型即可。",
       "addedEmpty": "还没有添加供应商。",
       "available": "可添加 · {{count}}",
-      "stackNoDefault": "还没有默认供应商；在下面选一家，点「以这家为默认开始叠加…」。"
+      "stackNoDefault": "还没有默认供应商；在下面选一家，点「以这家为默认开始聚合…」。"
     }
   },
   "desktopAccess": {
@@ -3961,7 +3961,7 @@
   "routingSettings": {
     "service": "服务",
     "serviceName": "路由服务",
-    "serviceHelp": "路由模式和叠加模式下，请求先经过本机的路由服务再转给供应商。进入这两种模式、或 Claude Desktop 用模型映射时会自动启动。",
+    "serviceHelp": "路由模式和聚合模式下，请求先经过本机的路由服务再转给供应商。进入这两种模式、或 Claude Desktop 用模型映射时会自动启动。",
     "runningFor": "运行中 · 已运行 {{uptime}}",
     "uptimeHours": "{{hours}} 小时 {{minutes}} 分",
     "uptimeMinutes": "{{minutes}} 分钟",
@@ -3980,7 +3980,7 @@
     "logging": "记录请求用量",
     "loggingHelp": "关闭后，用量统计里没有经路由的请求明细。",
     "usingApps": "正在使用路由的应用 · {{count}}",
-    "noApps": "没有应用在用路由。在应用页的「路由」或「叠加」页签里进入。",
+    "noApps": "没有应用在用路由。在应用页的「路由」或「聚合」页签里进入。",
     "routeDetail": "路由到 {{name}}",
     "stackDetail": "默认 {{name}}",
     "desktopMode": "模型映射 · 自动保持运行",
@@ -3988,7 +3988,7 @@
     "goTo": "前往",
     "exitAll": "全部回到直连",
     "exitAllTitle": "让所有应用回到直连？",
-    "exitAllMessage": "在路由和叠加模式下的应用都会写回直连配置，然后停止路由服务。路由目标、队列和叠加名单会保留。",
+    "exitAllMessage": "在路由和聚合模式下的应用都会写回直连配置，然后停止路由服务。路由目标、队列和聚合名单会保留。",
     "exitAllConfirm": "全部回到直连",
     "failoverHelp": "这里调各应用的超时、重试和熔断。队列在各应用页的「路由」页签里管理。"
   },

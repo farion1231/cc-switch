@@ -68,7 +68,7 @@ interface SwitchModePanelProps extends ListCallbacks {
   onNeedsRouteHandled?: () => void;
 }
 
-/** Gemini CLI、Grok Build 没有叠加模式（Q6）：那一格隐藏，前两格位置不变。 */
+/** Gemini CLI、Grok Build 没有聚合模式（Q6）：那一格隐藏，前两格位置不变。 */
 const modesFor = (app: ProxyAppId): AppMode[] =>
   isStackAppId(app) ? ["direct", "route", "stack"] : ["direct", "route"];
 

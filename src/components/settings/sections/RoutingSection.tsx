@@ -384,7 +384,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
         </div>
       </SettingsBlock>
 
-      {/* 可恢复的操作（路由目标、队列、叠加名单都保留），不用红色 */}
+      {/* 可恢复的操作（路由目标、队列、聚合名单都保留），不用红色 */}
       <ConfirmDialog
         isOpen={confirmExitAll}
         variant="info"
