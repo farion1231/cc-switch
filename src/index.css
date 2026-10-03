@@ -29,8 +29,8 @@
 
     --border: 240 10.2% 90.4%;
     --input: 240 10.2% 90.4%;
-    /* 焦点环 = 主题色 #F97315（docs/design-system.html） */
-    --ring: 24.8 94.9% 52.9%;
+    /* 焦点环 = 主题色 #F97316（docs/design-system.html） */
+    --ring: 24.6 95% 53.1%;
 
     --radius: 0.5rem;
   }
@@ -65,7 +65,7 @@
 
   /* v7 设计 token（docs/research/2026-09-30-ui-design-v7/project/tokens.css）。
      --border / --ring 沿用上面的 HSL 版本，其余照设计稿的名字。
-     --action-* 是实心按钮、开关的开、勾选框的操作色；主题色 #F97315 只覆盖这一组和 --ring。
+     --action-* 是实心按钮、开关的开、勾选框的操作色；主题色 #F97316 只覆盖这一组和 --ring。
      --action-text：橙色当文字用（链接）时用深一档，保证对比度。 */
   :root {
     --bg-app: #ffffff;
@@ -77,7 +77,7 @@
     --text-1: #18181b;
     --text-2: #52525b;
     --text-3: #65656e;
-    --action-bg: #f97315;
+    --action-bg: #f97316;
     --action-fg: #ffffff;
     --action-hover: #ea620a;
     --action-text: #c2410c;
