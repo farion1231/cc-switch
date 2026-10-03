@@ -181,6 +181,9 @@ export interface ProviderMeta {
   claudeDesktopMode?: "direct" | "proxy";
   // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
   claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
+  // Claude Desktop 本地路由模式：用户显式配置的主路由（UI 第一行的 route），
+  // 缺失角色回退时优先使用，避免按字母序回退到非主模型
+  claudeDesktopPrimaryRoute?: string;
   // 用量查询脚本配置
   usage_script?: UsageScript;
   // 请求地址管理：测速后自动选择最佳端点
