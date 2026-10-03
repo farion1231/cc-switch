@@ -221,22 +221,22 @@ function MainDirectory({
     trailing?: string;
     alert?: string;
   }[] = [
-    {
-      page: "usage",
-      label: t("nav.usage"),
-      icon: ChartColumn,
-      trailing: todayLabel,
-    },
+    { page: "mcp", label: "MCP", icon: Server },
+    { page: "skills", label: "Skills", icon: SkillsIcon },
+    { page: "prompts", label: t("nav.prompts"), icon: BookOpen },
+    { page: "sessions", label: t("nav.sessions"), icon: History },
     {
       page: "auth",
       label: t("nav.auth"),
       icon: KeyRound,
       alert: authNeedsAttention ? t("nav.authNeedsReauth") : undefined,
     },
-    { page: "mcp", label: "MCP", icon: Server },
-    { page: "skills", label: "Skills", icon: SkillsIcon },
-    { page: "prompts", label: t("nav.prompts"), icon: BookOpen },
-    { page: "sessions", label: t("nav.sessions"), icon: History },
+    {
+      page: "usage",
+      label: t("nav.usage"),
+      icon: ChartColumn,
+      trailing: todayLabel,
+    },
   ];
 
   const isGlobalSelected = (page: GlobalPage) =>
