@@ -79,10 +79,13 @@ export function SettingsPage({
     resolvedDirs,
     updateSettings,
     updateDirectory,
+    updateDeepseekHarnessSessionDir,
     updateAppConfigDir,
     browseDirectory,
+    browseDeepseekHarnessSessionDir,
     browseAppConfigDir,
     resetDirectory,
+    resetDeepseekHarnessSessionDir,
     resetAppConfigDir,
     saveSettings,
     autoSaveSettings,
@@ -355,9 +358,21 @@ export function SettingsPage({
                             openclawDir={settings.openclawConfigDir}
                             hermesDir={settings.hermesConfigDir}
                             piDir={settings.piConfigDir}
+                            deepseekHarnessSessionDir={
+                              settings.deepseekHarnessSessionDir
+                            }
                             onDirectoryChange={updateDirectory}
+                            onDeepseekHarnessSessionDirChange={
+                              updateDeepseekHarnessSessionDir
+                            }
                             onBrowseDirectory={browseDirectory}
+                            onBrowseDeepseekHarnessSessionDir={
+                              browseDeepseekHarnessSessionDir
+                            }
                             onResetDirectory={resetDirectory}
+                            onResetDeepseekHarnessSessionDir={
+                              resetDeepseekHarnessSessionDir
+                            }
                           />
                         </AccordionContent>
                       </AccordionItem>
