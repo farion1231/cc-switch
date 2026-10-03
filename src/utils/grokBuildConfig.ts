@@ -92,7 +92,16 @@ export function updateGrokBuildConfig(
 
   const existingModels = asRecord(config.models) ?? {};
   const previousProfile = asString(existingModels.default, profile);
-  config.models = { ...existingModels, default: profile };
+  const sessionSummary = existingModels.session_summary;
+  config.models = {
+    ...existingModels,
+    default: profile,
+    // Title generation selects its model independently of the main session.
+    session_summary:
+      sessionSummary === undefined || sessionSummary === previousProfile
+        ? profile
+        : sessionSummary,
+  };
 
   const modelTables = asRecord(config.model) ?? {};
   const existingSelected =
