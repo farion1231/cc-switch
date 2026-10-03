@@ -306,50 +306,55 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
     }
 
     if (active === "route") {
-      // 故障转移开着：队列 + 不在队列
-      const known = new Set(providers.map((p) => p.id));
-      const queued = queue.filter((id) => known.has(id));
+      // 故障转移开着：队列 + 不在队列。P 序号和上下移按完整队列算，`providers`
+      // 可能被搜索过滤过、只决定画哪些卡；「路由中」是后端记下的那家（转移成功后
+      // 会换），不一定是队首
       const byId = new Map(providers.map((p) => [p.id, p]));
-      const queueItems = queued.map((id, index) => {
-        const p = byId.get(id)!;
-        return {
-          provider: p,
-          presentation: {
-            tone: index === 0 ? "route" : undefined,
-            status:
-              index === 0
+      const routing =
+        routeId !== null && queue.includes(routeId) ? routeId : queue[0];
+      const queueItems = queue.flatMap((id, index) => {
+        const p = byId.get(id);
+        if (!p) return [];
+        const current = id === routing;
+        return [
+          {
+            provider: p,
+            presentation: {
+              tone: current ? "route" : undefined,
+              status: current
                 ? {
                     label: t("providerCard.status.routing"),
                     dot: "route" as const,
                   }
                 : undefined,
-            chips: [
-              {
-                key: "priority",
-                label: `P${index + 1}`,
-                tone: "outline" as const,
+              chips: [
+                {
+                  key: "priority",
+                  label: `P${index + 1}`,
+                  tone: "outline" as const,
+                },
+              ],
+              showHealth: input.serviceRunning,
+              buttons: [
+                {
+                  key: "queueRemove",
+                  label: t("providerCard.action.removeFromQueue"),
+                  onClick: () => actions.queueRemove(p),
+                },
+              ],
+              move: {
+                onUp: index > 0 ? () => actions.queueMove(p, -1) : undefined,
+                onDown:
+                  index < queue.length - 1
+                    ? () => actions.queueMove(p, 1)
+                    : undefined,
               },
-            ],
-            showHealth: input.serviceRunning,
-            buttons: [
-              {
-                key: "queueRemove",
-                label: t("providerCard.action.removeFromQueue"),
-                onClick: () => actions.queueRemove(p),
-              },
-            ],
-            move: {
-              onUp: index > 0 ? () => actions.queueMove(p, -1) : undefined,
-              onDown:
-                index < queued.length - 1
-                  ? () => actions.queueMove(p, 1)
-                  : undefined,
-            },
-          } satisfies CardPresentation,
-        };
+            } satisfies CardPresentation,
+          },
+        ];
       });
       const rest = providers
-        .filter((p) => !queued.includes(p.id))
+        .filter((p) => !queue.includes(p.id))
         .map((p) => {
           if (blockedFromRouting(app, p))
             return blocked(p, t("providerCard.action.addToQueue"), noRoute);
