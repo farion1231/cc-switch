@@ -160,6 +160,8 @@ describe("buildSwitchSections — route", () => {
     });
     button(sections, "relay", "routeHere").onClick();
     expect(input.actions.routeTo).toHaveBeenCalledWith(relay);
+    // 路由页上没有跟直连那家有关的操作，不标「直连时使用」
+    expect(item(sections, "relay").chips).toEqual([]);
     expect(item(sections, "official").dim).toBe(true);
     expect(button(sections, "official", "blocked").disabledReason).toBe(
       "providerCard.reason.noRoute",
@@ -193,6 +195,19 @@ describe("buildSwitchSections — route", () => {
     expect(input.actions.queueAdd).toHaveBeenCalledWith(converted);
     button(sections, "backup", "queueRemove").onClick();
     expect(input.actions.queueRemove).toHaveBeenCalledWith(backup);
+
+    // 直连那家不在队列里时也不标「直连时使用」
+    const outside = build({
+      active: "route",
+      view: "route",
+      routeId: "backup",
+      failoverOn: true,
+      queue: ["backup"],
+    });
+    expect(item(outside.sections, "relay")).toMatchObject({
+      section: "rest",
+      chips: [],
+    });
   });
 
   it("numbers the queue by its full order and marks the recorded route, not the first visible card", () => {
@@ -270,12 +285,11 @@ describe("buildSwitchSections — route", () => {
       routeId: "backup",
     });
 
-    expect(item(sections, "backup").chips.map((c) => c.key)).toContain(
-      "lastRoute",
-    );
-    // 进入路由只有通知条一个入口（目标在确认框里选），行上没有主操作
+    // 进入路由只有通知条一个入口（目标在确认框里选、预选上次那家），行上没有主操作，
+    // 也不标上次路由的那家和直连那家
     for (const id of ["relay", "backup", "converted"]) {
       expect(item(sections, id).buttons).toEqual([]);
+      expect(item(sections, id).chips).toEqual([]);
     }
     // 不能路由的官方订阅没有按钮可挂原因，原因在「官方」徽标上
     expect(item(sections, "official")).toMatchObject({

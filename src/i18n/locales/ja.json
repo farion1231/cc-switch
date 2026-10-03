@@ -3909,7 +3909,6 @@
       "official": "公式",
       "needsRoute": "ルーティングが必要",
       "directWhenDirect": "直接接続時に使用",
-      "lastRoute": "前回の転送先",
       "default": "既定",
       "models": "{{count}} モデル",
       "noModels": "モデルなし",
