@@ -10,7 +10,10 @@ import {
   DRAG_REGION_ATTR,
   DRAG_REGION_STYLE,
 } from "@/lib/platform";
-import { isTextEditableTarget } from "@/utils/domUtils";
+import {
+  FULL_SCREEN_PANEL_ATTRIBUTE,
+  isTextEditableTarget,
+} from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
 
 interface FullScreenPanelProps {
@@ -113,6 +116,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div
+          {...{ [FULL_SCREEN_PANEL_ATTRIBUTE]: "" }}
           initial={
             prefersReducedMotion
               ? false
