@@ -192,11 +192,11 @@ impl TrayTexts {
                 header_direct: "Direct",
                 header_route: "Routing",
                 header_failover: "Routing · Failover on",
-                header_stack: "Stack · Default provider",
-                header_stack_default: "Stack · Default: {name}",
+                header_stack: "Aggregation · Default provider",
+                header_stack_default: "Aggregation · Default: {name}",
                 failover_note: "Picked from the queue automatically; change it on the app page",
                 mode_route: "Routing",
-                mode_stack: "Stack",
+                mode_stack: "Aggregation",
                 mode_mapping: "Model mapping",
                 needs_routing_suffix: " (needs routing)…",
                 official_blocked_suffix: " (official plans don't go through routing)",
@@ -251,11 +251,11 @@ impl TrayTexts {
                 header_direct: "直接接続",
                 header_route: "ルーティング",
                 header_failover: "ルーティング · フェイルオーバー有効",
-                header_stack: "Stack · デフォルトのプロバイダー",
-                header_stack_default: "Stack · デフォルト：{name}",
+                header_stack: "集約 · デフォルトのプロバイダー",
+                header_stack_default: "集約 · デフォルト：{name}",
                 failover_note: "キューの順に自動で選ばれます（変更はアプリのページで）",
                 mode_route: "ルーティング",
-                mode_stack: "Stack",
+                mode_stack: "集約",
                 mode_mapping: "モデルマッピング",
                 needs_routing_suffix: "（ルーティングが必要）…",
                 official_blocked_suffix: "（公式サブスクリプションはルーティングを通りません）",
@@ -2940,7 +2940,7 @@ mod tests {
         let en = en();
         assert_eq!(
             (en.header_direct, en.mode_route, en.mode_stack),
-            ("Direct", "Routing", "Stack")
+            ("Direct", "Routing", "Aggregation")
         );
         let ja = TrayTexts::from_language("ja");
         assert_eq!(ja.mode_route, "ルーティング");
@@ -3961,7 +3961,7 @@ mod tests {
         app.current_id = Some("deepseek".to_string());
         let menu = build_menu_model(&en(), &MenuStatus::default(), &[app], false, now());
         let children = children_of(&menu, &AppType::Claude);
-        assert_eq!(text_of(&children[0]), "Stack · Default: DeepSeek");
+        assert_eq!(text_of(&children[0]), "Aggregation · Default: DeepSeek");
     }
 
     #[test]
