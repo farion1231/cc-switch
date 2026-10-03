@@ -117,5 +117,6 @@ panic = "unwind"
 strip = "symbols"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 serial_test = "3"
 tempfile = "3"
