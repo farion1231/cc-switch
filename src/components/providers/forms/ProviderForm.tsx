@@ -366,6 +366,7 @@ function ProviderFormFull({
     isPartner?: boolean;
     partnerPromotionKey?: string;
     suggestedDefaults?: OpenClawSuggestedDefaults;
+    meta?: ProviderMeta;
   } | null>(null);
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
   const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] =
@@ -1680,6 +1681,9 @@ function ProviderFormFull({
               )
             : activePreset.suggestedDefaults;
       }
+      if (!isEditMode && appId === "opencode" && activePreset.meta) {
+        payload.meta = { ...activePreset.meta };
+      }
     }
 
     if (!isEditMode && isCodexOfficialManagedOauthBound) {
@@ -1716,9 +1720,10 @@ function ProviderFormFull({
       const needsClearEndpoints =
         hadEndpoints && draftCustomEndpoints.length === 0;
 
+      const metadataSource = payload.meta ?? initialData?.meta;
       let mergedMeta = needsClearEndpoints
-        ? mergeProviderMeta(initialData?.meta, {})
-        : mergeProviderMeta(initialData?.meta, customEndpointsToSave);
+        ? mergeProviderMeta(metadataSource, {})
+        : mergeProviderMeta(metadataSource, customEndpointsToSave);
 
       if (activePreset?.isPartner) {
         mergedMeta = {
@@ -2081,6 +2086,10 @@ function ProviderFormFull({
     if (appId === "opencode") {
       const preset = entry.preset as OpenCodeProviderPreset;
       const config = preset.settingsConfig;
+
+      setActivePreset((current) =>
+        current ? { ...current, meta: preset.meta } : current,
+      );
 
       if (preset.category === "omo" || preset.category === "omo-slim") {
         omoDraft.resetOmoDraftState();
