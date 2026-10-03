@@ -362,9 +362,13 @@ describe("SessionReader", () => {
     expect(screen.getByText(/^1 \/ \d+$/)).toBeInTheDocument();
   });
 
-  it("只看对话 / 只看改动", () => {
+  it("全部 / 对话 / 改动 三选一", () => {
     renderReader("claude", fixtures.claude);
-    fireEvent.click(screen.getByRole("switch", { name: "只看对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
+    expect(screen.getByRole("button", { name: "对话" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(
       screen.queryByRole("button", { name: /Bash\(/ }),
     ).not.toBeInTheDocument();
@@ -372,9 +376,9 @@ describe("SessionReader", () => {
       screen.getByText(/cargo build 一直报 tokio_util 找不到/),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("switch", { name: "只看改动" }));
-    expect(screen.getByRole("switch", { name: "只看对话" })).toHaveAttribute(
-      "aria-checked",
+    fireEvent.click(screen.getByRole("button", { name: "改动" }));
+    expect(screen.getByRole("button", { name: "对话" })).toHaveAttribute(
+      "aria-pressed",
       "false",
     );
     expect(stepButton(/Update\(Cargo\.toml\)/)).toBeInTheDocument();
@@ -382,6 +386,12 @@ describe("SessionReader", () => {
     expect(
       screen.queryByRole("button", { name: /Bash\(/ }),
     ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "全部" }));
+    expect(screen.getByRole("button", { name: "全部" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("复制 Markdown 含步骤列表，默认不含思考", async () => {

@@ -29,8 +29,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { fieldClass } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { SessionMeta, TurnIndex } from "@/types";
 import { sessionMenuItemClass } from "../SessionItem";
@@ -509,9 +509,13 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
   return (
     <div className="flex shrink-0 flex-col border-b border-border py-1.5 pe-4 ps-6">
       <div className="flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1">
-        <div className="flex min-w-0 flex-1 basis-72 items-center gap-1.5 overflow-hidden whitespace-nowrap text-caption tabular-nums text-fg-2">
+        {/* 各段整体换行，不再整行截断：路径标签留最小宽度，避免被挤到只剩图标、压住日期 */}
+        <div className="flex min-w-0 flex-1 basis-72 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-caption tabular-nums text-fg-2">
           {session.projectDir ? (
-            <PathChip path={session.projectDir} className="min-w-0 shrink" />
+            <PathChip
+              path={session.projectDir}
+              className="min-w-[120px] max-w-[45%] shrink"
+            />
           ) : (
             <span>
               {t("sessionManager.unknownDirectory", {
@@ -522,7 +526,7 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
           {range && (
             <>
               <Sep />
-              <span className="shrink-0">
+              <span className="shrink-0 whitespace-nowrap">
                 {range}
                 {duration && <span className="text-fg-3"> ({duration})</span>}
               </span>
@@ -547,7 +551,7 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
             <>
               <Sep />
               <span
-                className="shrink-0"
+                className="shrink-0 whitespace-nowrap"
                 title={rt("turnsCount", {
                   turns: turnIndex.length,
                   messages: messageCount,
@@ -579,24 +583,19 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
               items={turnIndex}
               onItemClick={onJumpToTurn}
             />
-            <label className="flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-control px-1.5 text-body text-fg-1">
-              {t("sessionManager.onlyChat", { defaultValue: "只看对话" })}
-              <Switch
-                checked={filter === "conversation"}
-                onCheckedChange={(value) =>
-                  onFilterChange(value ? "conversation" : "all")
-                }
-              />
-            </label>
-            <label className="flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-control px-1.5 text-body text-fg-1">
-              {rt("onlyChanges")}
-              <Switch
-                checked={filter === "changes"}
-                onCheckedChange={(value) =>
-                  onFilterChange(value ? "changes" : "all")
-                }
-              />
-            </label>
+            {/* 全部 / 对话 / 改动 三选一（原来两个互斥的开关），省出信息栏的宽度 */}
+            <SegmentedControl<ReaderFilter>
+              size="sm"
+              aria-label={rt("filterLabel")}
+              value={filter}
+              onValueChange={onFilterChange}
+              items={[
+                { value: "all", label: rt("filterAll") },
+                { value: "conversation", label: rt("filterChat") },
+                { value: "changes", label: rt("filterChanges") },
+              ]}
+              className="mx-1"
+            />
             <DropdownMenu>
               <HoverTip content={rt("viewOptions")}>
                 <DropdownMenuTrigger asChild>

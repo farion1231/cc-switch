@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { HoverTip } from "@/components/ui/hover-tip";
 import { cn } from "@/lib/utils";
-import { formatClock, highlightText } from "../utils";
+import { highlightText } from "../utils";
 import { useReaderContext } from "./context";
 import { useReaderT } from "./i18n";
 import {
@@ -57,8 +57,7 @@ export const SessionFinalReply = memo(function SessionFinalReply({
 }: SessionFinalReplyProps) {
   const { t } = useTranslation();
   const rt = useReaderT();
-  const { style, appName, projectDir, searchQuery, onCopy } =
-    useReaderContext();
+  const { style, projectDir, searchQuery, onCopy } = useReaderContext();
   const [expanded, setExpanded] = useState(false);
   const text = final.text;
   const long = text.length > COLLAPSE_THRESHOLD;
@@ -95,39 +94,9 @@ export const SessionFinalReply = memo(function SessionFinalReply({
   const cost = style.showStepCost ? final.cost : undefined;
 
   return (
-    <div className="group/final min-w-0 px-1.5 py-1">
-      <div className="flex h-6 min-w-0 items-center gap-1.5 text-caption">
-        {style.assistantGlyph && (
-          <span
-            aria-hidden
-            className="inline-flex w-4 shrink-0 justify-center font-mono text-[var(--reader-accent)]"
-          >
-            {style.assistantGlyph}
-          </span>
-        )}
-        <span className="shrink-0 font-semibold text-fg-1">{appName}</span>
-        {final.ts ? (
-          <time
-            dateTime={new Date(final.ts).toISOString()}
-            title={new Date(final.ts).toLocaleString()}
-            className="shrink-0 tabular-nums text-fg-3"
-          >
-            {formatClock(final.ts)}
-          </time>
-        ) : null}
-        {final.model && (
-          <span className="min-w-0 truncate font-mono text-fg-3">
-            · {final.model}
-          </span>
-        )}
-        {cost && (cost.tokens !== undefined || cost.costUsd !== undefined) && (
-          <span className="shrink-0 tabular-nums text-fg-3">
-            {cost.tokens !== undefined &&
-              ` · ${rt("summaryTokens", { tokens: formatTokens(cost.tokens) })}`}
-            {cost.costUsd !== undefined && ` · ${formatCost(cost.costUsd)}`}
-          </span>
-        )}
-        <div className="flex-1" />
+    <div className="group/final relative min-w-0 px-1.5 py-1">
+      {/* Agent 名、时间、模型已在头像旁那一行显示；这里只留悬停出现的复制 */}
+      <div className="absolute end-0 top-0">
         <HoverTip
           content={t("sessionManager.copyShort", { defaultValue: "复制" })}
         >
@@ -144,13 +113,13 @@ export const SessionFinalReply = memo(function SessionFinalReply({
                 }),
               )
             }
-            className={cn(rowIconButton, "-me-1 group-hover/final:opacity-100")}
+            className={cn(rowIconButton, "group-hover/final:opacity-100")}
           >
             <Copy aria-hidden className="h-3.5 w-3.5" strokeWidth={1.5} />
           </button>
         </HoverTip>
       </div>
-      <div className={cn("mt-1", style.assistantGlyph && "ps-[22px]")}>
+      <div className="pe-7">
         {text && (
           <SessionMarkdown
             content={shown}
@@ -171,6 +140,14 @@ export const SessionFinalReply = memo(function SessionFinalReply({
           variant="result"
           className="mt-2"
         />
+        {cost && (cost.tokens !== undefined || cost.costUsd !== undefined) && (
+          <div className="mt-1.5 text-caption tabular-nums text-fg-3">
+            {cost.tokens !== undefined &&
+              rt("summaryTokens", { tokens: formatTokens(cost.tokens) })}
+            {cost.tokens !== undefined && cost.costUsd !== undefined && " · "}
+            {cost.costUsd !== undefined && formatCost(cost.costUsd)}
+          </div>
+        )}
         {hiddenMatches.length > 0 && searchQuery && (
           <div className="mt-2 rounded-[8px] border border-border px-3 py-2 text-caption text-fg-2">
             <div className="mb-1 font-medium text-fg-3">{rt("rawMatch")}</div>

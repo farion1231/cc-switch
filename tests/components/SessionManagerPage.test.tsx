@@ -355,7 +355,7 @@ describe("SessionManagerPage", () => {
     expect(screen.queryByRole("region", { name: "会话列表" })).toBeNull();
 
     // 只看对话：工具调用隐藏
-    fireEvent.click(screen.getByRole("switch", { name: "只看对话" }));
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
     expect(screen.queryByText("shell")).not.toBeInTheDocument();
     expect(screen.getByText("alpha question")).toBeInTheDocument();
 

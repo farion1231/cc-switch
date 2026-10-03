@@ -63,15 +63,15 @@ export interface SessionQuestionProps {
 }
 
 /**
- * 提问气泡：靠右显示（左右对话布局），底色是 Agent 主题色的淡色，右上角收小做出气泡尖角；
- * 纯文本 + 围栏代码（决策 D7），贴图缩略图，复制按钮悬停出现。
+ * 提问气泡：靠右显示（左右对话布局），时间和复制按钮在气泡外上方；气泡只放正文，
+ * 底色是 Agent 主题色的浅色，右上角收小做出尖角。纯文本 + 围栏代码（决策 D7）、贴图缩略图。
  */
 export const SessionQuestion = memo(function SessionQuestion({
   question,
   forceExpanded,
 }: SessionQuestionProps) {
   const { t } = useTranslation();
-  const { style, searchQuery, onCopy } = useReaderContext();
+  const { searchQuery, onCopy } = useReaderContext();
   const [expanded, setExpanded] = useState(false);
   const text = question.text;
   const long = text.length > COLLAPSE_THRESHOLD;
@@ -82,15 +82,12 @@ export const SessionQuestion = memo(function SessionQuestion({
       : text;
 
   return (
-    <div
-      className="group/question relative min-w-0 rounded-[14px] rounded-se-[4px] border border-border px-3.5 py-2.5"
-      style={{
-        // 主题色淡淡铺一层，深浅色下都能和 Agent 一侧的无底色内容区分开
-        background:
-          "color-mix(in srgb, var(--reader-accent) 10%, var(--bg-card))",
-      }}
-    >
-      <div className="flex h-6 items-center justify-end gap-1.5">
+    <div className="group/question flex min-w-0 flex-col items-end gap-1">
+      {/* 时间与复制放在气泡外：气泡里只放正文；靠右本身就表示「你」，读屏另给文字 */}
+      <div className="flex h-5 items-center gap-1 text-caption text-fg-3">
+        <span className="sr-only">
+          {t("sessionManager.you", { defaultValue: "你" })}
+        </span>
         <HoverTip
           content={t("sessionManager.copyShort", { defaultValue: "复制" })}
         >
@@ -109,49 +106,43 @@ export const SessionQuestion = memo(function SessionQuestion({
             }
             className={cn(
               rowIconButton,
-              "-ms-1 group-hover/question:opacity-100",
+              "h-5 w-5 group-hover/question:opacity-100",
             )}
           >
             <Copy aria-hidden className="h-3.5 w-3.5" strokeWidth={1.5} />
           </button>
         </HoverTip>
-        <div className="flex-1" />
-        {style.userGlyph && (
-          <span
-            aria-hidden
-            className="font-mono text-caption font-semibold text-[var(--reader-accent)]"
-          >
-            {style.userGlyph}
-          </span>
-        )}
-        <span className="text-caption font-semibold text-fg-1">
-          {t("sessionManager.you", { defaultValue: "你" })}
-        </span>
         {question.ts ? (
           <time
             dateTime={new Date(question.ts).toISOString()}
             title={new Date(question.ts).toLocaleString()}
-            className="text-caption tabular-nums text-fg-3"
+            className="tabular-nums"
           >
             {formatClock(question.ts)}
           </time>
         ) : null}
       </div>
-      {text && (
-        <SessionPlainText
-          content={shown}
-          searchQuery={searchQuery}
-          className="mt-0.5"
+      <div
+        className="min-w-0 max-w-full rounded-[16px] rounded-se-[4px] px-3.5 py-2 text-fg-1"
+        style={{
+          // Agent 主题色铺一层浅色：深浅两套下都和左侧无底色的 Agent 输出区分开
+          background:
+            "color-mix(in srgb, var(--reader-accent) 14%, var(--bg-subtle))",
+        }}
+      >
+        {text && <SessionPlainText content={shown} searchQuery={searchQuery} />}
+        {long && !forceExpanded && (
+          <CollapseToggle
+            expanded={expanded}
+            total={text.length}
+            onToggle={() => setExpanded((value) => !value)}
+          />
+        )}
+        <SessionImageGrid
+          images={question.images}
+          className={text ? "mt-2" : undefined}
         />
-      )}
-      {long && !forceExpanded && (
-        <CollapseToggle
-          expanded={expanded}
-          total={text.length}
-          onToggle={() => setExpanded((value) => !value)}
-        />
-      )}
-      <SessionImageGrid images={question.images} className="mt-2" />
+      </div>
     </div>
   );
 });

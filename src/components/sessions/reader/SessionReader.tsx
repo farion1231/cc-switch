@@ -23,7 +23,11 @@ import { ReaderContext, type ReaderContextValue } from "./context";
 import { transcriptToMarkdown, turnToMarkdown } from "./exportMarkdown";
 import { useReaderT } from "./i18n";
 import { SessionEventRow, SessionInjectedRow } from "./SessionEventRow";
-import { SessionAgentAvatar } from "./SessionAgentAvatar";
+import {
+  SessionAgentAvatar,
+  SessionAgentHeader,
+  agentTurnTs,
+} from "./SessionAgentAvatar";
 import { SessionFinalReply } from "./SessionFinalReply";
 import { SessionQuestion } from "./SessionQuestion";
 import {
@@ -449,16 +453,27 @@ export function SessionReader({
     (atBottom === null ? rows.length >= 8 : !atBottom);
 
   /** Agent 输出一侧：左边 40px 头像列，右边留白和人的气泡错开 */
-  const renderAgentRow = (row: ReaderRow, content: ReactNode): ReactNode => (
-    <div className="relative pe-10 ps-10">
-      {agentStartKeys.has(row.key) && (
-        <span className="absolute start-0 top-0.5">
-          <SessionAgentAvatar />
-        </span>
-      )}
-      {content}
-    </div>
-  );
+  const renderAgentRow = (row: ReaderRow, content: ReactNode): ReactNode => {
+    const start = agentStartKeys.has(row.key);
+    const turn = turns[row.turn];
+    return (
+      <div className="relative pe-10 ps-10">
+        {start && (
+          <>
+            <span className="absolute start-0 top-0">
+              <SessionAgentAvatar />
+            </span>
+            {/* Agent 名 · 时间 · 模型 与头像同一行；最终回复不再重复这一行 */}
+            <SessionAgentHeader
+              ts={agentTurnTs(turn, messages)}
+              model={turn.final?.model}
+            />
+          </>
+        )}
+        {content}
+      </div>
+    );
+  };
 
   const renderRow = (row: ReaderRow): ReactNode => {
     const content = renderRowContent(row);
@@ -473,8 +488,8 @@ export function SessionReader({
       case "question":
         // 人的输入靠右，气泡最宽 85%，左边留出 Agent 侧的空间
         return turn.question ? (
-          <div className="flex justify-end pb-3 ps-12">
-            <div className="min-w-0 max-w-[85%]">
+          <div className="flex justify-end pb-3 ps-16">
+            <div className="min-w-0 max-w-[72%]">
               <SessionQuestion
                 question={turn.question}
                 forceExpanded={row.forceExpanded}
