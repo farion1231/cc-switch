@@ -8,6 +8,11 @@ use crate::services::sql_helpers::{fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH}
 use crate::services::usage_stats::effective_usage_log_filter;
 use chrono::{Duration, Local, TimeZone};
 
+/// 明细保留窗口（天）：`proxy_request_logs` 中早于该窗口的数据会被
+/// 汇总进 `usage_daily_rollups` 并从明细表删除。只读明细表的查询
+/// （如趋势子天桶）引用同一常量做保留期护栏。
+pub const DETAIL_RETENTION_DAYS: i64 = 30;
+
 /// Compute the rollup/prune cutoff aligned to a local-day boundary.
 ///
 /// Anything strictly older than the returned timestamp will be aggregated into

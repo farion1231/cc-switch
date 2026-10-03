@@ -37,6 +37,7 @@ pub(crate) use dao::providers_seed::{
     GROKBUILD_OFFICIAL_PROVIDER_ID,
 };
 pub(crate) use dao::proxy::{PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
+pub use dao::usage_rollup::DETAIL_RETENTION_DAYS;
 pub use dao::FailoverQueueItem;
 pub use dao::Profile;
 
@@ -149,7 +150,7 @@ impl Database {
         if let Err(e) = db.cleanup_old_stream_check_logs(7) {
             log::warn!("Startup stream_check_logs cleanup failed: {e}");
         }
-        if let Err(e) = db.rollup_and_prune(30) {
+        if let Err(e) = db.rollup_and_prune(DETAIL_RETENTION_DAYS) {
             log::warn!("Startup rollup_and_prune failed: {e}");
         }
         // Reclaim disk space after cleanup

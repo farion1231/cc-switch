@@ -14,6 +14,9 @@ import type {
   PaginatedLogs,
   SessionSyncResult,
   DataSourceSummary,
+  UsageTrendSeriesResponse,
+  TrendGranularityOption,
+  TrendGroupBy,
 } from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
@@ -90,6 +93,26 @@ export const usageApi = {
     return invoke("get_usage_trends", {
       startDate,
       endDate,
+      appType,
+      providerName,
+      model,
+    });
+  },
+
+  getUsageTrendSeries: async (
+    startDate?: number,
+    endDate?: number,
+    granularity?: TrendGranularityOption,
+    groupBy?: TrendGroupBy,
+    appType?: string,
+    providerName?: string,
+    model?: string,
+  ): Promise<UsageTrendSeriesResponse> => {
+    return invoke("get_usage_trend_series", {
+      startDate,
+      endDate,
+      granularity,
+      groupBy,
       appType,
       providerName,
       model,

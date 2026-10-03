@@ -3,6 +3,8 @@ import { usageApi } from "@/lib/api/usage";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type {
   LogFilters,
+  TrendGranularityOption,
+  TrendGroupBy,
   UsageRangeSelection,
   UsageScopeFilters,
 } from "@/types/usage";
@@ -88,6 +90,28 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+    ] as const,
+  trendSeries: (
+    preset: UsageRangeSelection["preset"],
+    customStartDate: number | undefined,
+    customEndDate: number | undefined,
+    filters?: UsageScopeFilters,
+    liveEndTime?: boolean,
+    granularity?: TrendGranularityOption,
+    groupBy?: TrendGroupBy,
+  ) =>
+    [
+      ...usageKeys.all,
+      "trend-series",
+      preset,
+      customStartDate ?? 0,
+      customEndDate ?? 0,
+      liveEndTime ?? false,
+      filters?.appType ?? null,
+      filters?.providerName ?? null,
+      filters?.model ?? null,
+      granularity ?? "auto",
+      groupBy ?? "token_type",
     ] as const,
   providerStats: (
     preset: UsageRangeSelection["preset"],
@@ -234,6 +258,41 @@ export function useUsageTrends(
       return usageApi.getUsageTrends(
         startDate,
         endDate,
+        effective.appType,
+        effective.providerName,
+        effective.model,
+      );
+    },
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+export function useUsageTrendSeries(
+  range: UsageRangeSelection,
+  filters?: UsageScopeFilters,
+  granularity: TrendGranularityOption = "auto",
+  groupBy: TrendGroupBy = "token_type",
+  options?: UsageQueryOptions,
+) {
+  const effective = normalizeScopeFilters(filters);
+  return useQuery({
+    queryKey: usageKeys.trendSeries(
+      range.preset,
+      range.customStartDate,
+      range.customEndDate,
+      effective,
+      range.liveEndTime,
+      granularity,
+      groupBy,
+    ),
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getUsageTrendSeries(
+        startDate,
+        endDate,
+        granularity,
+        groupBy,
         effective.appType,
         effective.providerName,
         effective.model,
