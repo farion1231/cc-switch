@@ -119,7 +119,10 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   if (quota.credentialStatus === "parse_error") return null;
 
   if (!quota.success) {
-    const expired = quota.credentialStatus === "expired";
+    // 登录过期和令牌待刷新都是运行一次 CLI 就能解决，展开时给同一条提示
+    const expired =
+      quota.credentialStatus === "expired" ||
+      quota.credentialStatus === "refresh_pending";
     const reason = quotaFailureReason(t, quota);
     const lines = failedLines(t, reason);
     if (inline) {
