@@ -106,20 +106,20 @@
     "needsRouting": "ルーティングが必要",
     "directProvider": "直接接続",
     "directProviderHint": "ルーティングを終了するとこのプロバイダに戻ります",
-    "stackBadge": "Stack",
+    "stackBadge": "集約",
     "stackBadgeHint": "{{client}} のモデル選択で選べます：{{models}}",
     "stackBadgeNoModels": "モデルが設定されていないため、モデル選択には表示されません",
     "stackSaved": "保存しました。{{client}} を再起動すると反映されます",
-    "stackModelsChanged": "Stack モデルが変わりました。{{client}} を再起動すると反映されます",
-    "stackReselectHint": "CC Switch がクライアント設定を書き換えるたびに、モデル選択で Stack モデルを選び直してください",
+    "stackModelsChanged": "集約したモデルが変わりました。{{client}} を再起動すると反映されます",
+    "stackReselectHint": "CC Switch がクライアント設定を書き換えるたびに、モデル選択で集約したモデルを選び直してください",
     "stackPartial": "一部だけ書き込まれました。次の操作時または CC Switch の再起動時に完了します",
-    "stackFailed": "Stack モデルの保存に失敗しました：{{error}}",
+    "stackFailed": "集約したモデルの保存に失敗しました：{{error}}",
     "stackDefaultCannotRemove": "デフォルトのプロバイダーは削除できません。先に別のプロバイダーをデフォルトに設定してください",
     "stackDefaultHint": "デフォルトのプロバイダーです：一覧の先頭のモデルが Claude Code の起動時とバックグラウンドタスクを担当します",
     "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
-    "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、Stack モデルは現在使用できません",
-    "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、Stack モデルは Codex に表示されません",
-    "configOwnsCatalog": "config.toml の model_catalog_json が別のモデルカタログファイルを指しているため、Stack モデルは Codex に表示されません",
+    "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、集約したモデルは現在使用できません",
+    "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、集約したモデルは Codex に表示されません",
+    "configOwnsCatalog": "config.toml の model_catalog_json が別のモデルカタログファイルを指しているため、集約したモデルは Codex に表示されません",
     "noRoutingSupport": "ルーティング非対応",
     "blockedByProxyHint": "ルーティングモードでは公式プロバイダーに切り替えできません",
     "editProvider": "プロバイダーを編集",
@@ -383,8 +383,8 @@
         "description": "ルーティングサービスの切り替え、ステータスとポート情報を表示",
         "enableFeature": "メインページにルーティング切り替えを表示",
         "enableFeatureDescription": "有効にすると、メインページ上部にルーティングとフェイルオーバーの切り替えが表示されます",
-        "enableStackMode": "メインページに Stack モードのスイッチを表示",
-        "enableStackModeDescription": "オンにすると、Claude Code と Codex のメインページのスイッチが Stack モードになります。OpenCode のように複数のプロバイダーを追加でき、それらのモデルがすべてクライアントのモデル一覧に表示されます（クライアント再起動後に反映）。フェイルオーバーは行いません。ローカルルーティングのスイッチとはどちらか一方のみで、切り替え時はオンになっている Claude Code、Codex をいったん直接接続に戻します",
+        "enableStackMode": "メインページに集約モードのスイッチを表示",
+        "enableStackModeDescription": "オンにすると、Claude Code と Codex のメインページのスイッチが集約モードになります。OpenCode のように複数のプロバイダーを追加でき、それらのモデルがすべてクライアントのモデル一覧に表示されます（クライアント再起動後に反映）。フェイルオーバーは行いません。ローカルルーティングのスイッチとはどちらか一方のみで、切り替え時はオンになっている Claude Code、Codex をいったん直接接続に戻します",
         "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
         "running": "実行中",
@@ -1416,15 +1416,15 @@
     "stackModelsLabel": "モデル一覧",
     "addStackModel": "モデルを追加",
     "stackModelsHint": "これらのモデルは Claude Code の /model に表示され、選ぶとリクエストがこのプロバイダーへ直接送られます。先頭（★）がこのプロバイダーのデフォルトモデルで、このプロバイダーがデフォルトのとき Claude Code の起動時とバックグラウンドタスクで使われます。変更後は Claude Code を再起動してください。",
-    "stackModelsEmpty": "モデルが未設定です：Stack に追加してもモデル選択には表示されません",
+    "stackModelsEmpty": "モデルが未設定です：集約に追加してもモデル選択には表示されません",
     "stackModelPlaceholder": "例: deepseek-v4-pro",
     "stackModelDefault": "デフォルトモデル",
     "stackModelMakeDefault": "デフォルトモデルにする",
     "stackLayout": {
       "fullForm": "完全なフォームを表示",
-      "simpleForm": "Stack 簡易フォームに戻る",
+      "simpleForm": "集約簡易フォームに戻る",
       "advancedHint": "カスタム User-Agent とリクエスト上書き。通常は変更不要です。",
-      "noModels": "モデル一覧が空です：Stack に追加してもモデル選択には表示されません"
+      "noModels": "モデル一覧が空です：集約に追加してもモデル選択には表示されません"
     },
     "modelRoleLabel": "モデル役割",
     "modelRoleSonnet": "Sonnet",
@@ -1677,7 +1677,7 @@
     "stackModelListHint": "これらのモデルは Codex の /model に表示され、選ぶとリクエストがこのプロバイダーへ直接送られます。★ の付いたモデルがこのプロバイダーのデフォルトモデルで、このプロバイダーがデフォルトのとき Codex はこれを既定で使います。変更後は Codex を再起動してください。",
     "stackDefaultNotInList": "デフォルトモデル {{model}} は一覧にありません。Codex は既定でこれをリクエストしますが、/model には表示されません。",
     "addToModelList": "一覧に追加",
-    "modelListEmpty": "モデル未設定：Stack モードではこのプロバイダーのデフォルトモデル（config.toml の model）だけが公開されます。",
+    "modelListEmpty": "モデル未設定：集約モードではこのプロバイダーのデフォルトモデル（config.toml の model）だけが公開されます。",
     "stackAdvancedHint": "思考能力、Anthropic 固有の項目、カスタム User-Agent とリクエスト上書き。通常は変更不要です。",
     "catalogDisplayName": "表示名",
     "catalogDisplayNamePlaceholder": "例: DeepSeek V4 Flash",
@@ -3353,23 +3353,23 @@
       }
     },
     "stackMode": {
-      "enabled": "{{app}} を Stack モードにしました",
+      "enabled": "{{app}} を集約モードにしました",
       "exitedToDirect": "{{apps}} を直接接続に戻しました",
       "tooltip": {
-        "active": "{{appLabel}} の Stack モードがオンです：追加したプロバイダーのモデルがモデル一覧に表示されます（クライアント再起動後に反映）",
-        "inactive": "Stack モードに入る：複数のプロバイダーを追加し、それらのモデルをすべて {{appLabel}} のモデル一覧に表示します"
+        "active": "{{appLabel}} の集約モードがオンです：追加したプロバイダーのモデルがモデル一覧に表示されます（クライアント再起動後に反映）",
+        "inactive": "集約モードに入る：複数のプロバイダーを追加し、それらのモデルをすべて {{appLabel}} のモデル一覧に表示します"
       },
-      "ariaLabel": "{{appLabel}} の Stack モード",
-      "failoverUnavailable": "{{appLabel}} は Stack モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります",
+      "ariaLabel": "{{appLabel}} の集約モード",
+      "failoverUnavailable": "{{appLabel}} は集約モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります",
       "codexStale": {
-        "title": "Codex が古いモデル一覧を使っているため、Stack モデルが表示されません",
+        "title": "Codex が古いモデル一覧を使っているため、集約したモデルが表示されません",
         "daemon": "CLI：codex を開き直すだけでは反映されません。バックグラウンドのデーモンを再起動する必要があります。",
         "others": "デスクトップ版：完全に終了してから開き直してください（macOS では ⌘Q。ウィンドウを閉じるだけでは不十分です）。エディター拡張：エディターのウィンドウを開き直してください。",
         "restart": "Codex デーモンを再起動",
         "confirmTitle": "Codex デーモンを再起動しますか？",
-        "confirmMessage": "ターミナルで動いているすべての codex がこのデーモンを共有しているため、実行中のタスクは中断されます。再起動後に codex を開き直すと Stack モデルが表示されます。",
+        "confirmMessage": "ターミナルで動いているすべての codex がこのデーモンを共有しているため、実行中のタスクは中断されます。再起動後に codex を開き直すと集約したモデルが表示されます。",
         "confirm": "再起動",
-        "restarted": "Codex デーモンを再起動しました。codex を開き直すと Stack モデルが表示されます",
+        "restarted": "Codex デーモンを再起動しました。codex を開き直すと集約したモデルが表示されます",
         "notRunning": "Codex デーモンは動いていません。次に codex を起動したときに新しいモデル一覧が読み込まれます",
         "failed": "Codex デーモンの再起動に失敗しました：{{error}}"
       }
@@ -3750,7 +3750,7 @@
     "settingsHasUpdate": "設定 · CC Switch の新しいバージョンがあります",
     "mode": {
       "route": "ルーティング",
-      "stack": "Stack",
+      "stack": "集約",
       "mapping": "マッピング",
       "mappingFull": "モデルマッピング"
     },
@@ -3810,7 +3810,7 @@
     "names": {
       "direct": "直接接続",
       "route": "ルーティング",
-      "stack": "Stack"
+      "stack": "集約"
     },
     "active": "有効",
     "activeTitle": "{{mode}}が有効",
@@ -3824,13 +3824,13 @@
       "directLead": "直接接続が有効 · 接続先",
       "routeLead": "ルーティングが有効",
       "byQueue": "キュー順",
-      "stackLead": "Stack が有効 · 既定",
+      "stackLead": "集約が有効 · 既定",
       "stackValue": "{{name}} · ほか {{count}} 社、{{models}} モデル"
     },
     "activate": {
       "viewing": "「{{view}}」を表示中です。{{app}} は現在{{active}}です。",
       "route": "ルーティングを開始",
-      "stack": "Stack に切り替え",
+      "stack": "集約に切り替え",
       "direct": "直接接続に戻す"
     },
     "notice": {
@@ -3841,7 +3841,7 @@
     },
     "toast": {
       "enteredRoute": "{{app}} のルーティングを開始しました → {{provider}}。",
-      "enteredStack": "{{app}} を Stack に切り替えました。{{app}} を再起動すると /model に Stack のモデルが表示されます。",
+      "enteredStack": "{{app}} を集約に切り替えました。{{app}} を再起動すると /model に集約したモデルが表示されます。",
       "exited": "直接接続に戻しました：{{app}} は {{provider}} に直接接続しています。",
       "restartHint": "{{app}} の再起動後に反映されます。",
       "undo": "元に戻す",
@@ -3849,7 +3849,7 @@
     },
     "dialog": {
       "routeTitle": "{{app}} でルーティングを使いますか？",
-      "stackTitle": "{{app}} で Stack を使いますか？",
+      "stackTitle": "{{app}} で集約を使いますか？",
       "switchTitle": "{{app}} を「{{from}}」から「{{to}}」に切り替えますか？",
       "routeLead": "リクエストはまずこのマシンの CC Switch を経由し、選んだプロバイダーに転送されます。",
       "stackLead": "既定のプロバイダーがプレフィックスなしのリクエストを受けます。",
@@ -3860,13 +3860,13 @@
       "routeNoteSwitch": "以後「ルーティング」タブでプロバイダーを変えても設定ファイルは書き換えません。",
       "routeNoteKeepRunning": "CC Switch を起動したままにしてください。終了時に直接接続へ書き戻し、次回起動時に再接続します。",
       "stackNoteMembers": "ほかに {{names}} の計 {{count}} モデルが、ccs- プレフィックス付きで /model に表示されます。",
-      "stackNoteEmpty": "ほかのプロバイダーはまだ追加されていないため、切り替え後は既定のプロバイダーだけです。あとで「Stack」タブで追加できます。",
-      "stackNoteNoFailover": "Stack ではフェイルオーバーしません。キューと設定は保持され、ルーティングに戻すと復元されます。",
-      "stackNoteRestart": "{{app}} を再起動すると Stack のモデルが表示されます。",
-      "stackNoteRestartCodex": "{{app}} を再起動すると Stack のモデルが表示されます。デスクトップ版は完全に終了してから開き直してください。",
-      "stackToRouteNote": "Stack のモデルは /model から外れます（リストは保持）。選択中の Stack モデルは通常のモデルに戻す必要があります。",
+      "stackNoteEmpty": "ほかのプロバイダーはまだ追加されていないため、切り替え後は既定のプロバイダーだけです。あとで「集約」タブで追加できます。",
+      "stackNoteNoFailover": "集約ではフェイルオーバーしません。キューと設定は保持され、ルーティングに戻すと復元されます。",
+      "stackNoteRestart": "{{app}} を再起動すると集約したモデルが表示されます。",
+      "stackNoteRestartCodex": "{{app}} を再起動すると集約したモデルが表示されます。デスクトップ版は完全に終了してから開き直してください。",
+      "stackToRouteNote": "集約したモデルは /model から外れます（リストは保持）。選択中の集約したモデルは通常のモデルに戻す必要があります。",
       "confirmRoute": "ルーティングを開始",
-      "confirmStack": "Stack に切り替え",
+      "confirmStack": "集約に切り替え",
       "needsRouteTitle": "{{provider}} にはルーティングが必要です",
       "needsRouteLead": "{{provider}}：{{reason}}。直接接続で切り替えると {{app}} では使えません。",
       "switchAnyway": "それでも直接切り替える",
@@ -3876,7 +3876,7 @@
       "title": "接続モードの違い",
       "direct": "直接接続：クライアントが選んだプロバイダーに直接つながります。切り替えると設定を書き換えます。",
       "route": "ルーティング：リクエストはまずこのマシンの CC Switch を通ります。フェイルオーバーを使えます。",
-      "stack": "Stack：複数のプロバイダーのモデルを /model に並べます。フェイルオーバーはしません。"
+      "stack": "集約：複数のプロバイダーのモデルを /model に並べます。フェイルオーバーはしません。"
     }
   },
   "providerCard": {
@@ -3904,7 +3904,7 @@
       "more": "{{name}} のその他の操作",
       "moveUp": "{{name}} を上へ",
       "moveDown": "{{name}} を下へ",
-      "startStackFrom": "ここを既定にして Stack を開始"
+      "startStackFrom": "ここを既定にして集約を開始"
     },
     "chip": {
       "official": "公式",
@@ -3921,8 +3921,8 @@
     },
     "reason": {
       "noRoute": "公式サブスクリプションはルーティングを通りません。直接接続に戻すと使えます。",
-      "noStack": "公式サブスクリプションは Stack では使えません。",
-      "officialStack": "公式アカウントは既定にだけでき、Stack には追加できません。",
+      "noStack": "公式サブスクリプションは集約では使えません。",
+      "officialStack": "公式アカウントは既定にだけでき、集約には追加できません。",
       "needsRoute": "ルーティングが必要：{{reason}}。直接接続はできません。",
       "defaultCannotRemove": "既定のプロバイダーは削除できません。先にほかを既定にしてください。",
       "currentCannotRemove": "使用中のプロバイダーは削除できません。先にほかを有効にしてください。",
@@ -3936,7 +3936,7 @@
       "queueEmpty": "キューは空です。下から追加してください。",
       "notInQueue": "キュー外（{{count}}）",
       "stackDefault": "既定のプロバイダー",
-      "stackDefaultAfterSwitch": "Stack に切り替えた後の既定のプロバイダー",
+      "stackDefaultAfterSwitch": "集約に切り替えた後の既定のプロバイダー",
       "stackDefaultHelp": "プレフィックスなしのリクエストはここに送られます。ほかの追加済みプロバイダーは ccs- プレフィックス付きで /model に表示されます。",
       "stackEmpty": "ほかのプロバイダーはまだ追加されていません。",
       "added": "追加済み · {{count}}",
@@ -3944,7 +3944,7 @@
       "addedHelp": "追加したプロバイダーはすべて {{app}} の設定に書き込まれます。モデルは {{app}} の中で選びます。",
       "addedEmpty": "まだプロバイダーを追加していません。",
       "available": "追加できるもの · {{count}}",
-      "stackNoDefault": "既定のプロバイダーはまだありません。下から選んで「ここを既定にして Stack を開始…」を押してください。"
+      "stackNoDefault": "既定のプロバイダーはまだありません。下から選んで「ここを既定にして集約を開始…」を押してください。"
     }
   },
   "desktopAccess": {
@@ -3961,7 +3961,7 @@
   "routingSettings": {
     "service": "サービス",
     "serviceName": "ルーティングサービス",
-    "serviceHelp": "ルーティングモードと Stack モードでは、リクエストはこのマシンのルーティングサービスを経由してプロバイダーに届きます。どちらかのモードに入ったとき、または Claude Desktop がモデルマッピングを使うときに自動で起動します。",
+    "serviceHelp": "ルーティングモードと集約モードでは、リクエストはこのマシンのルーティングサービスを経由してプロバイダーに届きます。どちらかのモードに入ったとき、または Claude Desktop がモデルマッピングを使うときに自動で起動します。",
     "runningFor": "実行中 · 稼働 {{uptime}}",
     "uptimeHours": "{{hours}} 時間 {{minutes}} 分",
     "uptimeMinutes": "{{minutes}} 分",
@@ -3980,7 +3980,7 @@
     "logging": "リクエストの使用量を記録",
     "loggingHelp": "オフにすると、使用量にルーティング経由のリクエストの明細が残りません。",
     "usingApps": "ルーティングを使用中のアプリ · {{count}}",
-    "noApps": "ルーティングを使っているアプリはありません。アプリページの「ルーティング」か「Stack」タブから開始します。",
+    "noApps": "ルーティングを使っているアプリはありません。アプリページの「ルーティング」か「集約」タブから開始します。",
     "routeDetail": "転送先 {{name}}",
     "stackDetail": "既定 {{name}}",
     "desktopMode": "モデルマッピング · 自動で稼働を維持",
@@ -3988,7 +3988,7 @@
     "goTo": "開く",
     "exitAll": "すべて直接接続に戻す",
     "exitAllTitle": "すべてのアプリを直接接続に戻しますか？",
-    "exitAllMessage": "ルーティング・Stack モードのアプリに直接接続の設定を書き戻し、ルーティングサービスを停止します。転送先・キュー・Stack のリストは保持されます。",
+    "exitAllMessage": "ルーティング・集約モードのアプリに直接接続の設定を書き戻し、ルーティングサービスを停止します。転送先・キュー・集約のリストは保持されます。",
     "exitAllConfirm": "すべて直接接続に戻す",
     "failoverHelp": "ここでは各アプリのタイムアウト・再試行・サーキットブレーカーを調整します。キューは各アプリページの「ルーティング」タブで管理します。"
   },
