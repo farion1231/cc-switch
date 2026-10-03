@@ -2467,6 +2467,9 @@ mod transcript_tests {
             let temp = tempdir().expect("tempdir");
             let path = temp.path().join("session.jsonl");
             let sidecar = path.with_extension("");
+            // 替换发生在序列化之后，路径要按 JSON 字符串转义（Windows 的反斜杠）
+            let sidecar_json = serde_json::to_string(&sidecar.to_string_lossy()).unwrap();
+            let sidecar_json = &sidecar_json[1..sidecar_json.len() - 1];
             let lines = [
                 user("u1", json!("跑测试")),
                 assistant(
@@ -2494,7 +2497,7 @@ mod transcript_tests {
                 body.push_str(
                     &serde_json::to_string(line)
                         .unwrap()
-                        .replace(temp_marker, &sidecar.to_string_lossy()),
+                        .replace(temp_marker, sidecar_json),
                 );
                 body.push('\n');
             }
