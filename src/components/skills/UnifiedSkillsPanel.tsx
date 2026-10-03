@@ -59,14 +59,22 @@ import {
 const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
 
 /**
- * 涓€娆℃覆鏌撳灏戣銆傚垪琛ㄥ彲鑳借涓嬪嚑鐧炬潯 skill锛屽叏閲忔寕杞戒細鎶婇灞忔椂闂? * 鍏ㄩ儴鑺卞湪 DOM 涓婏紱鍒嗛〉鍚庢瘡椤典粛鏄父鏁版垚鏈€? */
+ * 一次渲染多少行。列表里可能装着成百上千条 skill，全量挂载会把首屏时间
+ * 全部花在 DOM 上；分页之后每一页都是常数成本。
+ */
 const SKILLS_PAGE_SIZE = 60;
+
+/**
+ * 确认框点名隐藏选中项的名字数量上限：选择集可以无限积累，确认框不能。
+ * 超出的部分折叠成省略号，反正下面还有真实卸载对象的完整列表兜底。
+ */
+const BULK_UNINSTALL_HIDDEN_NAMES_LIMIT = 8;
 
 type SkillAppFilter = AppId;
 type SkillSourceFilter = "repo" | "local";
 type SkillUpdateFilter = "updated";
 
-/** ManagementFilterChips 鐨勯€夐」绫诲瀷鍒悕锛堣缁勪欢鏄?app 鏃犲叧鐨勶級銆?*/
+/** ManagementFilterChips 的选项类型别名（该组件是 app 无关的）。 */
 type SourceFilterOption = ManagementFilterOption;
 type UpdateFilterOption = ManagementFilterOption;
 
@@ -376,14 +384,78 @@ const UnifiedSkillsPanel = React.forwardRef<
     showMore: loadMoreSkills,
   } = usePagedList(filteredSkills, SKILLS_PAGE_SIZE, activeFilterKey);
 
-  // 选择集跟随可选项收敛：列表刷新或筛选后，已不存在的 id 不应留在选中态里。
+  // 选择集按 skill 本体保留，跨筛选不清空：常见工作流是"筛一处勾几个、换
+  // 筛选再勾几个、最后一次卸完"。收敛到筛选结果会直接砍掉这个流程。
+  //
+  // 代价是选择集里可能有当前看不见的行，所以 UI 必须把三件事分开讲清楚：
+  //   1. 列表刷新时丢掉已不存在的 id（skill 被卸掉了）；
+  //   2. 工具栏分子用「可见集合中的已选数」，分母用可见总数——描述屏幕；
+  //   3. 隐藏的选中单独计数并明示，全选判定只看当前筛选项，确认框列出真实
+  //      卸载对象（含筛掉的），而不是只报一个总数。
+  // 此前那版把选择集收敛到筛选结果，计数/全选/卸载三者虽然一致了，却把跨
+  // 筛选多选这一整类用法弄没了。
+  const knownSkillIds = useMemo(
+    () => new Set((skills ?? []).map((skill) => skill.id)),
+    [skills],
+  );
+
+  // id → skill 本体：给隐藏选中项点名用（确认框要报名字，不是 id）。
+  const skillById = useMemo(
+    () => new Map((skills ?? []).map((skill) => [skill.id, skill])),
+    [skills],
+  );
+
   useEffect(() => {
     setSelectedIds((previous) => {
-      const available = new Set((skills ?? []).map((skill) => skill.id));
-      const next = previous.filter((id) => available.has(id));
+      const next = previous.filter((id) => knownSkillIds.has(id));
       return next.length === previous.length ? previous : next;
     });
-  }, [skills]);
+  }, [knownSkillIds]);
+
+  const visibleSkillIds = useMemo(
+    () => filteredSkills.map((skill) => skill.id),
+    [filteredSkills],
+  );
+
+  // 筛选结果可能上千行、选择集也可能积累到很大，includes 式成员判定是
+  // O(n*m)，一律换 Set。
+  const visibleSkillIdSet = useMemo(
+    () => new Set(visibleSkillIds),
+    [visibleSkillIds],
+  );
+
+  /** 当前可见行里被选中的数量（工具栏的分子，描述屏幕）。 */
+  const visibleSelectedCount = useMemo(
+    () => selectedIds.filter((id) => visibleSkillIdSet.has(id)).length,
+    [selectedIds, visibleSkillIdSet],
+  );
+
+  /**
+   * 被当前筛选藏起来的选中项本体，不只是计数：确认框必须点出真实卸载对象，
+   * 「只报一个总数」等于让用户盲删看不见的东西。
+   *
+   * 用真实 skill 对象算，而不是 selectedIds.length - visibleSelectedCount：
+   * 那样会把「正在被裁剪的 id」（已在 selectedIds 里但 skill 已消失）算成
+   * 「隐藏」，确认框于是多报一个马上就不存在的卸载对象。
+   */
+  const hiddenSelectedSkills = useMemo<InstalledSkill[]>(
+    () =>
+      selectedIds
+        .filter((id) => !visibleSkillIdSet.has(id))
+        .map((id) => skillById.get(id))
+        .filter((skill): skill is InstalledSkill => Boolean(skill)),
+    [selectedIds, visibleSkillIdSet, skillById],
+  );
+
+  /** 行级 checkbox 的受控判定也走 Set：每页 60 行 × 选择集大小，别做乘法。 */
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  /**
+   * 分子（可见选中数）只描述屏幕，而清空/卸载按钮作用于整个选择集。只要
+   * 有隐藏选中，按钮文案必须自报范围，否则「3 / 12」旁边的「卸载（5）」
+   * 会让用户以为只有屏幕上那 3 个受影响。
+   */
+  const hiddenSelectedCount = hiddenSelectedSkills.length;
 
   const toggleSelected = useCallback((id: string) => {
     setSelectedIds((previous) =>
@@ -396,8 +468,15 @@ const UnifiedSkillsPanel = React.forwardRef<
   const clearSelection = useCallback(() => setSelectedIds([]), []);
 
   const selectAllFiltered = useCallback(() => {
-    setSelectedIds(filteredSkills.map((skill) => skill.id));
-  }, [filteredSkills]);
+    // 只并入当前筛选项，不动跨筛选积累的其他选择。
+    setSelectedIds((previous) => {
+      const existing = new Set(previous);
+      return [
+        ...previous,
+        ...visibleSkillIds.filter((id) => !existing.has(id)),
+      ];
+    });
+  }, [visibleSkillIds]);
 
   const resetFilters = useCallback(() => {
     setFilterApps([]);
@@ -516,12 +595,39 @@ const UnifiedSkillsPanel = React.forwardRef<
     ) {
       return;
     }
+    // 被筛选藏起来的选中项必须逐个点名：屏幕上看不到的东西只报一个总数，
+    // 用户无从核对就要删。可见的选中项屏幕上本来就有，不必重复。
+    const hiddenNames = hiddenSelectedSkills.map((skill) => skill.name);
+    const listedNames = hiddenNames.slice(0, BULK_UNINSTALL_HIDDEN_NAMES_LIMIT);
+    const unlistedCount = hiddenNames.length - listedNames.length;
+    // 名字行不进 i18n 插值：封顶逻辑与语言无关，而且名字是数据不是文案。
+    const hiddenNotice =
+      hiddenNames.length > 0
+        ? [
+            t("skills.manage.bulkUninstallHidden", {
+              count: hiddenNames.length,
+            }),
+            listedNames.join(", ") + (unlistedCount > 0 ? "…" : ""),
+          ].join("\n")
+        : null;
+    // 截断时必须点破「没列全」，否则省略号读起来像「隐藏集合已知」，40 个
+    // 藏起来的也能悄悄溜过确认。
+    const unlistedNotice =
+      unlistedCount > 0
+        ? t("skills.manage.hiddenSelectedUnlisted", { count: unlistedCount })
+        : null;
     setConfirmDialog({
       isOpen: true,
       title: t("skills.uninstall"),
-      message: t("skills.manage.bulkUninstallConfirm", {
-        count: selectedIds.length,
-      }),
+      message: [
+        t("skills.manage.bulkUninstallConfirm", {
+          count: selectedIds.length,
+        }),
+        hiddenNotice,
+        unlistedNotice,
+      ]
+        .filter((part): part is string => part !== null)
+        .join("\n"),
       confirmText: t("skills.manage.bulkUninstall", {
         count: selectedIds.length,
       }),
@@ -532,14 +638,16 @@ const UnifiedSkillsPanel = React.forwardRef<
         try {
           const result = await bulkUninstallMutation.mutateAsync(ids);
           setConfirmDialog(null);
-          if (result.failed.length === 0) {
-            toast.success(
-              t("skills.manage.bulkUninstallSuccess", {
-                count: result.succeeded.length,
-              }),
-              { closeButton: true },
-            );
-          } else {
+          // 后端在 Pi 目录无法解析、同名副本归属不明或删除失败时，仍会删掉
+          // 管理记录，但通过 Ok 响应里的 piCleanupIncomplete / preservedPiPath
+          // 告知还有文件没清。这类"记录已删、文件残留"必须让用户知道，否则
+          // 界面显示全部成功而残留目录无人处理。
+          const cleanup = result.succeeded.filter(
+            (entry) =>
+              entry.result.piCleanupIncomplete || entry.result.preservedPiPath,
+          );
+
+          if (result.failed.length > 0) {
             toast.warning(
               t("skills.manage.bulkUninstallPartial", {
                 succeeded: result.succeeded.length,
@@ -550,7 +658,39 @@ const UnifiedSkillsPanel = React.forwardRef<
                 closeButton: true,
               },
             );
+          } else if (cleanup.length > 0) {
+            toast.warning(
+              t("skills.manage.bulkUninstallSuccess", {
+                count: result.succeeded.length,
+              }),
+              {
+                description: cleanup[0].result.preservedPiPath
+                  ? t("skills.uninstallPiPreserved", {
+                      path: cleanup[0].result.preservedPiPath,
+                    })
+                  : t("skills.uninstallPiCleanupIncomplete"),
+                closeButton: true,
+              },
+            );
+          } else {
+            toast.success(
+              t("skills.manage.bulkUninstallSuccess", {
+                count: result.succeeded.length,
+              }),
+              { closeButton: true },
+            );
           }
+
+          // 多于一条残留时补一句总量，避免只报第一条造成"只有一条有问题"的误解。
+          if (cleanup.length > 1) {
+            toast.info(
+              t("skills.manage.bulkUninstallCleanupMore", {
+                count: cleanup.length - 1,
+              }),
+              { closeButton: true },
+            );
+          }
+
           clearSelection();
         } catch (error) {
           toast.error(t("skills.manage.bulkUninstallFailed"), {
@@ -873,7 +1013,7 @@ const UnifiedSkillsPanel = React.forwardRef<
         clearLabel={t("common.clear")}
       />
 
-      {/* 绛涢€夎姱鐗囪锛歛pp / 鏉ユ簮 / 鏈夋洿鏂?*/}
+      {/* 筛选芯片行：app / 来源 / 有更新 */}
       {skills && skills.length > 0 && (
         <div className="mb-3 space-y-2">
           <ManagementFilterChips
@@ -953,15 +1093,26 @@ const UnifiedSkillsPanel = React.forwardRef<
       )}
 
       <ManagementBulkBar
-        selectedCount={selectedIds.length}
+        selectedCount={visibleSelectedCount}
         totalCount={filteredTotal}
         onSelectAll={selectAllFiltered}
         onClear={clearSelection}
+        clearLabel={
+          hiddenSelectedCount > 0
+            ? t("skills.manage.clearSelectionAll", {
+                count: hiddenSelectedCount,
+              })
+            : t("skills.manage.clearSelection")
+        }
         selectAllLabel={t("skills.manage.selectAll")}
-        clearLabel={t("skills.manage.clearSelection")}
         toolbarLabel={t("skills.manage.bulkActions")}
         disabled={interactionBlocked}
       >
+        {hiddenSelectedCount > 0 && (
+          <span className="text-xs text-muted-foreground">
+            {t("skills.manage.hiddenSelected", { count: hiddenSelectedCount })}
+          </span>
+        )}
         <Button
           type="button"
           variant="destructive"
@@ -971,7 +1122,12 @@ const UnifiedSkillsPanel = React.forwardRef<
           onClick={handleBulkUninstall}
         >
           <Trash2 size={12} className="mr-1" />
-          {t("skills.manage.bulkUninstall", { count: selectedIds.length })}
+          {hiddenSelectedCount > 0
+            ? t("skills.manage.bulkUninstallAll", {
+                count: selectedIds.length,
+                hidden: hiddenSelectedCount,
+              })
+            : t("skills.manage.bulkUninstall", { count: selectedIds.length })}
         </Button>
       </ManagementBulkBar>
 
@@ -1005,7 +1161,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                   <InstalledSkillListItem
                     key={skill.id}
                     skill={skill}
-                    selected={selectedIds.includes(skill.id)}
+                    selected={selectedIdSet.has(skill.id)}
                     onSelectedChange={() => toggleSelected(skill.id)}
                     hasUpdate={!!updatesMap[skill.id]}
                     isUpdating={
@@ -1093,8 +1249,12 @@ interface InstalledSkillListItemProps {
 }
 
 /**
- * 宸插畨瑁?skill 鐨勮銆? *
- * 鐢?React.memo 鍖呬綇锛氱埗缁勪欢姣?2 绉掕疆璇竴娆′唬鐞嗙姸鎬併€侀敭鍏ユ悳绱㈣瘝杩樹細璁╂暣琛? * 閲嶇瓫锛岃嫢涓嶈蹇嗗寲锛屽嚑鐧捐閮戒細鍦ㄦ瘡娆℃寜閿椂閲嶅缓銆傚洖璋?props 鐢辩埗缁勪欢鐢? * useCallback 绋冲畾浣忥紝鍥犳鍙湁鑷韩鐩稿叧瀛楁鍙樺寲鏃舵墠閲嶆覆鏌撱€? */
+ * 已安装 skill 的行。
+ *
+ * 用 React.memo 包住：父组件每约 2 秒轮询一次代理状态，搜索框里每个按键
+ * 也会让整表重筛——不记忆化的话几百行都要在每次按键时重建。回调 props 由
+ * 父组件用 useCallback 稳定住，因此只有自身相关字段变化时才会重渲染。
+ */
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> =
   React.memo(
     ({

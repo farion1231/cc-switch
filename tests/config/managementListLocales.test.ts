@@ -11,6 +11,14 @@ const requiredPaths = [
   "skills.installedSearchPlaceholder",
   "skills.installedSearchAriaLabel",
   "skills.noInstalledSearchResults",
+  // Bulk-selection disclosure keys: rendered only while part of the selection
+  // is hidden by the active filter, so an untranslated key would surface as raw
+  // text exactly when the user is about to confirm a destructive action.
+  "skills.manage.clearSelectionAll",
+  "skills.manage.hiddenSelected",
+  "skills.manage.bulkUninstallAll",
+  "skills.manage.bulkUninstallHidden",
+  "skills.manage.hiddenSelectedUnlisted",
   "mcp.unifiedPanel.searchPlaceholder",
   "mcp.unifiedPanel.searchAriaLabel",
   "mcp.unifiedPanel.noSearchResults",

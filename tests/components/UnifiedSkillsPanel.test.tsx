@@ -25,13 +25,13 @@ const bulkToggleSkillAppMock = vi.fn();
 const checkUpdatesMock = vi.fn();
 const updateSkillMock = vi.fn();
 const refetchSkillBackupsMock = vi.fn();
-const { toastErrorMock, toastSuccessMock, toastWarningMock } = vi.hoisted(
-  () => ({
+const { toastErrorMock, toastSuccessMock, toastWarningMock, toastInfoMock } =
+  vi.hoisted(() => ({
     toastErrorMock: vi.fn(),
     toastSuccessMock: vi.fn(),
     toastWarningMock: vi.fn(),
-  }),
-);
+    toastInfoMock: vi.fn(),
+  }));
 let installedSkillsMock: InstalledSkill[] = [];
 let skillBackupsMock: SkillBackupEntry[] = [];
 let skillUpdatesMock: SkillUpdateInfo[] = [];
@@ -50,7 +50,7 @@ vi.mock("sonner", () => ({
     success: toastSuccessMock,
     error: toastErrorMock,
     warning: toastWarningMock,
-    info: vi.fn(),
+    info: toastInfoMock,
   },
 }));
 
@@ -184,6 +184,7 @@ describe("UnifiedSkillsPanel", () => {
     toastErrorMock.mockReset();
     toastSuccessMock.mockReset();
     toastWarningMock.mockReset();
+    toastInfoMock.mockReset();
     uninstallSkillMock.mockReset();
     bulkUninstallSkillMock.mockReset();
     bulkUninstallSkillMock.mockResolvedValue({ succeeded: [], failed: [] });
@@ -984,7 +985,10 @@ describe("UnifiedSkillsPanel", () => {
     it("uninstalls exactly the selected rows through the bulk action", async () => {
       threeSkills();
       bulkUninstallSkillMock.mockResolvedValue({
-        succeeded: ["repo/enabled-claude", "repo/local-only"],
+        succeeded: [
+          { item: "repo/enabled-claude", result: {} },
+          { item: "repo/local-only", result: {} },
+        ],
         failed: [],
       });
       renderPanel();
@@ -1015,7 +1019,45 @@ describe("UnifiedSkillsPanel", () => {
       );
     });
 
-    it("keeps the selection valid when the filtered set changes", async () => {
+    it("keeps earlier ticks when the filter changes and comes back", async () => {
+      threeSkills();
+      renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[0]);
+      await user.click(rowCheckboxes()[1]);
+      await waitFor(() => expect(bulkCountText()).toBe("2 / 3"));
+
+      // Narrowing the filter hides the first tick but must not drop it: the
+      // numerator follows the screen ("1 / 1") and the hidden tick is
+      // disclosed separately instead of silently removed.
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "skills.installedSearchAriaLabel",
+        }),
+        { target: { value: "Local Only" } },
+      );
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 1"));
+      expect(
+        screen.getByText("skills.manage.hiddenSelected"),
+      ).toBeInTheDocument();
+
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "skills.installedSearchAriaLabel",
+        }),
+        { target: { value: "" } },
+      );
+      await waitFor(() => expect(bulkCountText()).toBe("2 / 3"));
+      // Both ticks survived the round trip.
+      expect(rowCheckboxes()[0]).toBeChecked();
+      expect(rowCheckboxes()[1]).toBeChecked();
+      expect(
+        screen.queryByText("skills.manage.hiddenSelected"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not disclose hidden selections when every selected row is on screen", async () => {
       threeSkills();
       renderPanel();
 
@@ -1023,16 +1065,222 @@ describe("UnifiedSkillsPanel", () => {
       await user.click(rowCheckboxes()[1]);
       await waitFor(() => expect(bulkCountText()).toBe("1 / 3"));
 
-      // Narrowing the list narrows the bar's denominator too: one selected row,
-      // shown against the one row that still matches. The stale selection
-      // survives, which is the point — clearing the search brings it back.
+      // Filtering down to the selected row itself: numerator and denominator
+      // agree, nothing is hidden, so no disclosure may appear.
       fireEvent.change(
         screen.getByRole("textbox", {
           name: "skills.installedSearchAriaLabel",
         }),
-        { target: { value: "Repo Claude" } },
+        { target: { value: "Local Only" } },
       );
       await waitFor(() => expect(bulkCountText()).toBe("1 / 1"));
+      expect(
+        screen.queryByText("skills.manage.hiddenSelected"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("switches clear and uninstall labels to scope-declaring keys when ticks are hidden", async () => {
+      threeSkills();
+      renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[0]);
+      await user.click(rowCheckboxes()[1]);
+
+      // Nothing hidden: the plain labels describe the screen set, and that is
+      // exactly what the buttons act on.
+      await waitFor(() => expect(bulkCountText()).toBe("2 / 3"));
+      expect(
+        screen.getByRole("button", { name: "skills.manage.clearSelection" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("skills.manage.bulkUninstall"),
+      ).toBeInTheDocument();
+
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "skills.installedSearchAriaLabel",
+        }),
+        { target: { value: "Local Only" } },
+      );
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 1"));
+
+      // One tick hidden: both controls must self-declare that they act on the
+      // whole selection, not just the "1 / 1" on screen.
+      expect(
+        screen.getByRole("button", {
+          name: "skills.manage.clearSelectionAll",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("skills.manage.bulkUninstallAll"),
+      ).toBeInTheDocument();
+    });
+
+    it("names the skills hidden by the filter in the bulk uninstall confirm", async () => {
+      threeSkills();
+      bulkUninstallSkillMock.mockResolvedValue({ succeeded: [], failed: [] });
+      renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[0]);
+      await user.click(rowCheckboxes()[1]);
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "skills.installedSearchAriaLabel",
+        }),
+        { target: { value: "Local Only" } },
+      );
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 1"));
+
+      // With a hidden tick the destructive button must self-declare its scope
+      // instead of showing a bare number next to the screen-scoped fraction.
+      await user.click(screen.getByText("skills.manage.bulkUninstallAll"));
+      // The description carries the count sentence, the hidden lead-in and the
+      // name list as ONE text node, so match by substring.
+      const dialog = screen
+        .getByText(/skills\.manage\.bulkUninstallConfirm/)
+        .closest<HTMLElement>('[role="dialog"]');
+      expect(dialog).not.toBeNull();
+      // The count sentence stays, and the tick the search hid is named
+      // verbatim instead of hiding behind the total. Only the hidden ones are
+      // named — the visible tick can be cross-checked on screen.
+      expect(dialog!.textContent).toContain(
+        "skills.manage.bulkUninstallHidden",
+      );
+      expect(dialog!.textContent).toContain("Repo Claude Skill");
+      expect(dialog!.textContent).not.toContain("Local Only Skill");
+
+      await user.click(
+        within(dialog!).getByRole("button", {
+          name: "skills.manage.bulkUninstall",
+        }),
+      );
+      // The uninstall still targets the whole accumulated selection, including
+      // the row that is off screen right now.
+      await waitFor(() => {
+        expect(bulkUninstallSkillMock).toHaveBeenCalledWith([
+          "repo/enabled-claude",
+          "repo/local-only",
+        ]);
+      });
+    });
+
+    it("states how many hidden names the confirm dialog left out past the cap", async () => {
+      installedSkillsMock = [
+        makeInstalledSkill({ id: "shown/visible", name: "Shown Visible" }),
+        ...Array.from({ length: 10 }, (_, index) =>
+          makeInstalledSkill({
+            id: `hidden/skill-${index}`,
+            name: `Hidden Skill ${index}`,
+          }),
+        ),
+      ];
+      renderPanel();
+
+      const user = userEvent.setup();
+      // Tick all eleven rows, then hide ten of them behind the search.
+      for (let index = 0; index < 11; index++) {
+        await user.click(rowCheckboxes()[index]);
+      }
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "skills.installedSearchAriaLabel",
+        }),
+        { target: { value: "Shown Visible" } },
+      );
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 1"));
+
+      await user.click(screen.getByText("skills.manage.bulkUninstallAll"));
+      const dialog = screen
+        .getByText(/skills\.manage\.bulkUninstallConfirm/)
+        .closest<HTMLElement>('[role="dialog"]');
+      expect(dialog).not.toBeNull();
+      // The cap stays at 8 names, but the ellipsis must not read as "that was
+      // everything": the leftover count is spelled out, and the two names past
+      // the cap really are absent.
+      expect(dialog!.textContent).toContain("…");
+      expect(dialog!.textContent).toContain("Hidden Skill 7");
+      expect(dialog!.textContent).toContain(
+        "skills.manage.hiddenSelectedUnlisted",
+      );
+      expect(dialog!.textContent).not.toContain("Hidden Skill 8");
+      expect(dialog!.textContent).not.toContain("Hidden Skill 9");
+    });
+
+    it("merges the visible rows on select-all without dropping hidden ticks", async () => {
+      threeSkills();
+      renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[1]);
+
+      const chipButton = (label: string) =>
+        screen
+          .getAllByRole("button")
+          .find((button) => button.textContent?.includes(label))!;
+
+      // The app filter hides the ticked local skill while narrowing to the
+      // two claude-enabled rows.
+      fireEvent.click(chipButton("claude"));
+      expect(screen.queryByText("Local Only Skill")).not.toBeInTheDocument();
+      await user.click(rowCheckboxes()[1]);
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 2"));
+      expect(
+        screen.getByText("skills.manage.hiddenSelected"),
+      ).toBeInTheDocument();
+
+      // Select-all merges what is on screen and leaves the hidden tick alone.
+      await user.click(
+        screen.getByRole("button", { name: "skills.manage.selectAll" }),
+      );
+      fireEvent.click(chipButton("claude"));
+      await waitFor(() => expect(bulkCountText()).toBe("3 / 3"));
+      expect(rowCheckboxes()[1]).toBeChecked();
+      expect(
+        screen.queryByText("skills.manage.hiddenSelected"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("offers select-all while the visible rows are only partly selected", async () => {
+      threeSkills();
+      renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[0]);
+
+      // Two visible rows, one selected: select-all must stay available. The bug
+      // this guards was a hidden selection inflating the count so the list
+      // looked fully selected and the button vanished.
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 3"));
+      expect(
+        screen.getByRole("button", { name: "skills.manage.selectAll" }),
+      ).toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole("button", { name: "skills.manage.selectAll" }),
+      );
+      await waitFor(() => expect(bulkCountText()).toBe("3 / 3"));
+    });
+
+    it("hides the bulk bar while every selected row is filtered out, and restores it after", async () => {
+      threeSkills();
+      renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[0]);
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 3"));
+
+      // With every tick hidden the visible selection is empty, so the shared
+      // bulk bar renders nothing — but the selection itself survives the
+      // detour and comes back with the tick intact.
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "skills.installedSearchAriaLabel",
+        }),
+        { target: { value: "Local Only" } },
+      );
+      await waitFor(() => expect(screen.queryByRole("toolbar")).toBeNull());
 
       fireEvent.change(
         screen.getByRole("textbox", {
@@ -1041,6 +1289,123 @@ describe("UnifiedSkillsPanel", () => {
         { target: { value: "" } },
       );
       await waitFor(() => expect(bulkCountText()).toBe("1 / 3"));
+      expect(rowCheckboxes()[0]).toBeChecked();
+      expect(
+        screen.queryByText("skills.manage.hiddenSelected"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("prunes selections whose skill no longer exists after a refresh", async () => {
+      threeSkills();
+      bulkUninstallSkillMock.mockResolvedValue({ succeeded: [], failed: [] });
+      const { rerender } = renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[0]);
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 3"));
+
+      // The ticked skill disappears from the installed list (uninstalled
+      // elsewhere); the next refresh must drop it from the selection instead
+      // of keeping a ghost target around for the next bulk action.
+      installedSkillsMock = [
+        makeInstalledSkill({
+          id: "repo/local-only",
+          name: "Local Only Skill",
+          description: "imported manually",
+          repoOwner: undefined,
+          repoName: undefined,
+        }),
+      ];
+      rerender(
+        <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+      );
+
+      await user.click(rowCheckboxes()[0]);
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 1"));
+      // No disclosure: the ghost id was pruned, not silently kept hidden.
+      expect(
+        screen.queryByText("skills.manage.hiddenSelected"),
+      ).not.toBeInTheDocument();
+
+      await user.click(screen.getByText("skills.manage.bulkUninstall"));
+      await user.click(
+        screen.getByRole("button", { name: "skills.manage.bulkUninstall" }),
+      );
+      await waitFor(() => {
+        expect(bulkUninstallSkillMock).toHaveBeenCalledWith([
+          "repo/local-only",
+        ]);
+      });
+    });
+
+    it("surfaces the Pi cleanup warning a successful bulk uninstall returns", async () => {
+      threeSkills();
+      // No rejection at all: the backend removed the managed record but says in
+      // the body that a directory was preserved. Reporting plain success here
+      // would hide a directory the user has to clean up by hand.
+      bulkUninstallSkillMock.mockResolvedValue({
+        succeeded: [
+          {
+            item: "repo/enabled-claude",
+            result: {
+              backupPath: "/tmp/backup",
+              preservedPiPath: "/tmp/pi/skills/repo",
+            },
+          },
+        ],
+        failed: [],
+      });
+      renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[0]);
+      await user.click(screen.getByText("skills.manage.bulkUninstall"));
+      await user.click(
+        screen.getByRole("button", { name: "skills.manage.bulkUninstall" }),
+      );
+
+      await waitFor(() => {
+        expect(toastWarningMock).toHaveBeenCalledWith(
+          "skills.manage.bulkUninstallSuccess",
+          expect.objectContaining({
+            description: "skills.uninstallPiPreserved",
+          }),
+        );
+      });
+      expect(toastSuccessMock).not.toHaveBeenCalled();
+    });
+
+    it("reports the extra count when several skills left files behind", async () => {
+      threeSkills();
+      bulkUninstallSkillMock.mockResolvedValue({
+        succeeded: [
+          {
+            item: "repo/enabled-claude",
+            result: { piCleanupIncomplete: true },
+          },
+          {
+            item: "repo/local-only",
+            result: { piCleanupIncomplete: true },
+          },
+        ],
+        failed: [],
+      });
+      renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[0]);
+      await user.click(rowCheckboxes()[1]);
+      await user.click(screen.getByText("skills.manage.bulkUninstall"));
+      await user.click(
+        screen.getByRole("button", { name: "skills.manage.bulkUninstall" }),
+      );
+
+      await waitFor(() => {
+        expect(toastInfoMock).toHaveBeenCalledWith(
+          "skills.manage.bulkUninstallCleanupMore",
+          { closeButton: true },
+        );
+      });
     });
 
     it("shows a Load more control once the list exceeds one page", () => {
