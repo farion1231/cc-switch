@@ -399,6 +399,113 @@ describe("ClaudeDesktopProviderForm", () => {
     });
   });
 
+  it("直连模式不渲染认证字段选择器（直连固定 bearer，选了也无效）", () => {
+    renderForm({
+      name: "Direct Provider",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.example.com",
+          ANTHROPIC_AUTH_TOKEN: "sk-test",
+        },
+      },
+      meta: {
+        claudeDesktopMode: "direct",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "claude-sonnet-5" },
+        },
+      },
+    });
+
+    expect(screen.queryByText("认证字段")).not.toBeInTheDocument();
+  });
+
+  it("代理模式渲染认证字段选择器", () => {
+    renderForm({
+      name: "Proxy Provider",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.example.com",
+          ANTHROPIC_AUTH_TOKEN: "sk-test",
+        },
+      },
+      meta: {
+        claudeDesktopMode: "proxy",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "upstream-sonnet" },
+        },
+      },
+    });
+
+    expect(screen.getByText("认证字段")).toBeInTheDocument();
+  });
+
+  it("直连模式保存时把认证字段归一化成 ANTHROPIC_AUTH_TOKEN", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Direct Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.example.com",
+            ANTHROPIC_API_KEY: "sk-test",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "direct",
+          // 旧数据（或 direct 预设）残留的非默认认证字段
+          apiKeyField: "ANTHROPIC_API_KEY",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "claude-sonnet-5" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0][0];
+    const env = JSON.parse(submitted.settingsConfig).env;
+    // 后端 direct_gateway_credentials 只认 ANTHROPIC_AUTH_TOKEN
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("sk-test");
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(submitted.meta.apiKeyField).toBeUndefined();
+  });
+
+  it("代理模式保存时保留 ANTHROPIC_API_KEY 选择", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Proxy Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.example.com",
+            ANTHROPIC_API_KEY: "sk-test",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          apiKeyField: "ANTHROPIC_API_KEY",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "upstream-sonnet" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0][0];
+    const env = JSON.parse(submitted.settingsConfig).env;
+    // 代理模式下 env 变量名决定本地代理发 x-api-key 还是 Bearer
+    expect(env.ANTHROPIC_API_KEY).toBe("sk-test");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(submitted.meta.apiKeyField).toBe("ANTHROPIC_API_KEY");
+  });
+
   it("保存直连模型列表时不会保留旧 route 作为隐藏映射目标", async () => {
     const onSubmit = vi.fn();
     renderForm(
