@@ -9,6 +9,7 @@ import {
   setCurrentProviderId,
   setLiveProviderIds,
   setProviders,
+  setSettings,
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
@@ -175,6 +176,12 @@ vi.mock("@/components/UpdateBadge", () => ({
   ),
 }));
 
+vi.mock("@/components/settings/SettingsPage", () => ({
+  SettingsPage: ({ defaultTab }: any) => (
+    <div data-testid="settings-page" data-default-tab={defaultTab} />
+  ),
+}));
+
 vi.mock("@/components/mcp/McpPanel", () => ({
   default: ({ open, onOpenChange }: any) =>
     open ? (
@@ -206,6 +213,27 @@ describe("App integration with MSW", () => {
     skillsPanelMocks.openDiscovery.mockReset();
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
+  });
+
+  it("resets the settings tab to general when reopened with the keyboard shortcut", async () => {
+    setSettings({ firstRunNoticeConfirmed: true });
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    fireEvent.click(screen.getByText("update-badge"));
+    expect(await screen.findByTestId("settings-page")).toHaveAttribute(
+      "data-default-tab",
+      "about",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "common.back" }));
+    await screen.findByTestId("provider-list");
+
+    fireEvent.keyDown(window, { key: ",", ctrlKey: true });
+    expect(await screen.findByTestId("settings-page")).toHaveAttribute(
+      "data-default-tab",
+      "general",
+    );
   });
 
   it("covers basic provider flows via real hooks", async () => {

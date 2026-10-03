@@ -682,6 +682,7 @@ function App() {
           return;
         }
         event.preventDefault();
+        setSettingsDefaultTab("general");
         setCurrentView("settings");
         return;
       }
