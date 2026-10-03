@@ -319,7 +319,7 @@ paru -S cc-switch-bin
 | OpenCode | 共存 | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | OpenClaw | 共存 | – | – | – | – | 工作区编辑器 | ✓ | – |
 | Hermes | 共存 | – | – | ✓ | ✓ | 记忆管理 | ✓ | – |
-| Pi | 共存 | – | – | – | ✓ | AGENTS.md、SYSTEM.md、提示词模板 | ✓ | ✓ |
+| Pi | 共存 | – | – | ✓ | ✓ | AGENTS.md、SYSTEM.md、提示词模板 | ✓ | ✓ |
 | MiniMax Code | 共存 | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 
 - **切换**：同一时间只启用一个供应商；**共存**：多个供应商同时写入工具自身的配置，在工具里选择使用。

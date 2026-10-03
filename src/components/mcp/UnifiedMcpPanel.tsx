@@ -23,6 +23,10 @@ import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
 import { ManagementListSearch } from "@/components/common/ManagementListSearch";
+import {
+  extractErrorMessage,
+  translateMcpBackendError,
+} from "@/utils/errorUtils";
 
 function getMcpSearchText(id: string, server: McpServer): string {
   const spec = server.server ?? {};
@@ -119,6 +123,10 @@ const UnifiedMcpPanel = React.forwardRef<
     setWritePending(false);
   };
 
+  const describeError = (error: unknown): string => {
+    const detail = extractErrorMessage(error);
+    return translateMcpBackendError(detail, t) || detail || t("common.error");
+  };
   const serverEntries = useMemo((): Array<[string, McpServer]> => {
     if (!serversMap) return [];
     return Object.entries(serversMap);
@@ -143,6 +151,7 @@ const UnifiedMcpPanel = React.forwardRef<
       openclaw: 0,
       hermes: 0,
       mcode: 0,
+      pi: 0,
     };
     serverEntries.forEach(([_, server]) => {
       for (const app of MCP_APP_IDS) {
@@ -168,7 +177,7 @@ const UnifiedMcpPanel = React.forwardRef<
     try {
       await toggleAppMutation.mutateAsync({ serverId, app, enabled });
     } catch (error) {
-      toast.error(t("common.error"), { description: String(error) });
+      toast.error(t("common.error"), { description: describeError(error) });
     } finally {
       endWrite();
     }
@@ -202,7 +211,7 @@ const UnifiedMcpPanel = React.forwardRef<
       }
     } catch (error) {
       toast.error(t("common.bulkToggleFailed", { count: serverIds.length }), {
-        description: String(error),
+        description: describeError(error),
         closeButton: true,
       });
     } finally {
@@ -236,7 +245,7 @@ const UnifiedMcpPanel = React.forwardRef<
         });
       }
     } catch (error) {
-      toast.error(t("common.error"), { description: String(error) });
+      toast.error(t("common.error"), { description: describeError(error) });
     } finally {
       endWrite();
     }
@@ -260,7 +269,7 @@ const UnifiedMcpPanel = React.forwardRef<
           setConfirmDialog(null);
           toast.success(t("common.success"), { closeButton: true });
         } catch (error) {
-          toast.error(t("common.error"), { description: String(error) });
+          toast.error(t("common.error"), { description: describeError(error) });
         } finally {
           endWrite();
         }

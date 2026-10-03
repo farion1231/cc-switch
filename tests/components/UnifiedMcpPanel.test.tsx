@@ -77,6 +77,7 @@ function makeServer(id: string, overrides: ServerOverrides = {}): McpServer {
       opencode: false,
       openclaw: false,
       hermes: false,
+      pi: false,
       ...apps,
     },
   } as McpServer;

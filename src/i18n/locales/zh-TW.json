@@ -2039,6 +2039,7 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
+        "pi": "Pi",
         "mcode": "MiniMax Code"
       }
     },
@@ -2085,7 +2086,8 @@
       "useWizard": "設定精靈",
       "syncOtherSide": "同步至 {{target}}",
       "syncOtherSideHint": "勾選後會把目前設定同時寫入 {{target}}，若存在同名設定將被覆寫",
-      "willOverwriteWarning": "將覆寫 {{target}} 中的同名設定"
+      "willOverwriteWarning": "將覆寫 {{target}} 中的同名設定",
+      "piExposureHint": "Pi 預設透過 codemode 暴露 MCP 工具。在 Pi 裡使用 /mcp 或者設定 `exposure` 到 JSON 中即可按需配置。詳情請查閱 Pi 官方文件。"
     },
     "wizard": {
       "title": "MCP 設定精靈",
@@ -2130,6 +2132,7 @@
       "jsonInvalid": "JSON 格式錯誤，請檢查",
       "tomlInvalid": "TOML 格式錯誤，請檢查",
       "commandRequired": "請填寫命令",
+      "piSseUnsupported": "Pi MCP 暫不支援 SSE 傳輸",
       "singleServerObjectRequired": "此處只需單個伺服器物件，請不要貼上包含 mcpServers 的整份設定",
       "saveFailed": "儲存失敗",
       "deleteFailed": "刪除失敗"

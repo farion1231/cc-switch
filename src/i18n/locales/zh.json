@@ -2038,6 +2038,7 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
+        "pi": "Pi",
         "mcode": "MiniMax Code"
       }
     },
@@ -2084,7 +2085,8 @@
       "useWizard": "配置向导",
       "syncOtherSide": "同步到 {{target}}",
       "syncOtherSideHint": "勾选后会把当前配置同时写入 {{target}}，若存在同名配置将被覆盖",
-      "willOverwriteWarning": "将覆盖 {{target}} 中的同名配置"
+      "willOverwriteWarning": "将覆盖 {{target}} 中的同名配置",
+      "piExposureHint": "Pi 默认通过 codemode 暴露 MCP 工具。在 Pi 里使用 /mcp 或者配置 `exposure` 到 JSON 中即可按需配置。详情请查阅 Pi 官方文档。"
     },
     "wizard": {
       "title": "MCP 配置向导",
@@ -2129,6 +2131,7 @@
       "jsonInvalid": "JSON 格式错误，请检查",
       "tomlInvalid": "TOML 格式错误，请检查",
       "commandRequired": "请填写命令",
+      "piSseUnsupported": "Pi MCP 暂不支持 SSE 传输",
       "singleServerObjectRequired": "此处只需单个服务器对象，请不要粘贴包含 mcpServers 的整份配置",
       "saveFailed": "保存失败",
       "deleteFailed": "删除失败"

@@ -2,6 +2,7 @@ use super::{ProviderService, SwitchResult};
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta, UsageScript};
+use crate::services::mcp::McpService;
 use crate::store::AppState;
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -210,11 +211,19 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
         let mut synced = provider;
         merge_native_config(&mut synced, native);
         state.db.save_provider(app_type.as_str(), &synced)?;
-        return Ok(SwitchResult::default());
+    } else {
+        ProviderService::validate_provider_settings(&app_type, &provider)?;
+        crate::pi_config::insert_pi_provider(id, &provider.settings_config)?;
     }
 
-    ProviderService::validate_provider_settings(&app_type, &provider)?;
-    crate::pi_config::insert_pi_provider(id, &provider.settings_config)?;
+    // Pi's provider file and its MCP file are independent, and MCP projection is
+    // idempotent, so re-projecting here is maintenance: it repairs a projection that
+    // failed earlier. Every other app's switch path does the same. The failure stays a
+    // warning because the provider change is already committed.
+    if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Pi) {
+        log::warn!("Failed to re-project MCP after a Pi provider change (the next MCP sync repairs it): {err}");
+    }
+
     Ok(SwitchResult::default())
 }
 

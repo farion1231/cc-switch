@@ -2038,6 +2038,7 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
+        "pi": "Pi",
         "mcode": "MiniMax Code"
       }
     },
@@ -2084,7 +2085,8 @@
       "useWizard": "設定ウィザード",
       "syncOtherSide": "{{target}} にも反映",
       "syncOtherSideHint": "{{target}} に同じ設定を書き込みます。既存の同一 ID は上書きされます。",
-      "willOverwriteWarning": "{{target}} の既存設定を上書きします"
+      "willOverwriteWarning": "{{target}} の既存設定を上書きします",
+      "piExposureHint": "Pi は既定で codemode 経由で MCP ツールを公開します。Pi 内の /mcp を使うか、JSON に `exposure` を設定することで必要に応じて設定できます。詳しくは Pi の公式ドキュメントを参照してください。"
     },
     "wizard": {
       "title": "MCP 設定ウィザード",
@@ -2129,6 +2131,7 @@
       "jsonInvalid": "JSON 形式が無効です",
       "tomlInvalid": "TOML 形式が無効です",
       "commandRequired": "コマンドを入力してください",
+      "piSseUnsupported": "Pi MCP は SSE トランスポートに対応していません",
       "singleServerObjectRequired": "単一の MCP サーバーオブジェクトを貼り付けてください（トップレベルの mcpServers は不要）",
       "saveFailed": "保存に失敗しました",
       "deleteFailed": "削除に失敗しました"

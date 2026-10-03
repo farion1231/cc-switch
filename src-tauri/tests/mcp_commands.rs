@@ -6,7 +6,8 @@ use serde_json::json;
 use cc_switch_lib::{
     get_claude_mcp_path, get_claude_mcp_status, get_claude_settings_path, get_grok_config_path,
     import_default_config_test_hook, read_claude_mcp_config, update_settings, AppError,
-    AppSettings, AppType, McpApps, McpServer, McpService, MultiAppConfig, ProviderService,
+    AppSettings, AppType, McpApps, McpServer, McpService, MultiAppConfig, Provider,
+    ProviderService,
 };
 
 #[path = "support.rs"]
@@ -588,6 +589,7 @@ command = "echo"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -734,6 +736,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -801,6 +804,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -848,6 +852,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -884,6 +889,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1066,6 +1072,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1123,6 +1130,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1180,6 +1188,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1238,6 +1247,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1319,6 +1329,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1460,6 +1471,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1484,6 +1496,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1512,5 +1525,768 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
     assert!(
         servers.contains_key("external-only"),
         "live entries unknown to DB should be preserved"
+    );
+}
+
+// =========================================================================
+// Pi (global MCP config `<agent dir>/mcp.json`)
+// =========================================================================
+
+/// Pi's default global MCP config path under the test HOME.
+fn pi_mcp_path() -> std::path::PathBuf {
+    ensure_test_home()
+        .join(".pi")
+        .join("agent")
+        .join("mcp.json")
+}
+
+/// Makes Pi look installed: the gate only checks that the agent dir exists.
+fn seed_pi_agent_dir() {
+    fs::create_dir_all(pi_mcp_path().parent().unwrap()).expect("create ~/.pi/agent");
+}
+
+/// Reads and parses Pi's MCP config.
+fn read_pi_mcp() -> serde_json::Value {
+    let text = fs::read_to_string(pi_mcp_path()).expect("read pi mcp");
+    serde_json::from_str(&text).expect("parse pi mcp")
+}
+
+/// Builds a test MCP server with only the Pi flag set.
+fn pi_server(id: &str, server: serde_json::Value, pi_enabled: bool) -> McpServer {
+    McpServer {
+        id: id.to_string(),
+        name: id.to_string(),
+        server,
+        apps: McpApps {
+            pi: pi_enabled,
+            ..McpApps::default()
+        },
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: Vec::new(),
+    }
+}
+
+#[test]
+fn pi_toggle_writes_the_connection_fields_and_only_touches_its_own_id() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+    let original = json!({
+        "autoEnableCodemode": true,
+        "mcpServers": {
+            "handwritten": {"command": "handwritten", "exposure": "codemode"}
+        }
+    });
+    fs::write(&path, serde_json::to_string_pretty(&original).unwrap()).unwrap();
+
+    let state = create_test_state().expect("create test state");
+    // Pi has no entry for this id yet, so there is nothing to merge: the connection fields and the
+    // Pi settings CC Switch carries are written, and adapter metadata in the spec
+    // (`directTools`/`lifecycle`) never reaches Pi.
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "managed",
+            json!({
+                "type": "http",
+                "url": "https://example.com/mcp",
+                "headers": {"Authorization": "Bearer secret"},
+                "exposure": "direct",
+                "timeout": 5000,
+                "enabled": true,
+                "directTools": ["ping"],
+                "lifecycle": {"start": "auto"}
+            }),
+            true,
+        ),
+    )
+    .expect("enable pi");
+
+    let written = read_pi_mcp();
+    assert_eq!(written["autoEnableCodemode"], json!(true));
+    assert_eq!(
+        written["mcpServers"]["handwritten"],
+        original["mcpServers"]["handwritten"]
+    );
+    assert_eq!(
+        written["mcpServers"]["managed"],
+        json!({
+            "url": "https://example.com/mcp",
+            "headers": {"Authorization": "Bearer secret"},
+            "exposure": "direct",
+            "timeout": 5000,
+            "enabled": true
+        }),
+        "a new entry carries the connection fields and Pi's settings only"
+    );
+
+    // The enable flag is persisted in CC Switch.
+    assert!(state.db.get_all_mcp_servers().unwrap()["managed"].apps.pi);
+
+    // Unchecking removes only its own entry; other entries and top-level keys stay.
+    McpService::toggle_app(&state, "managed", AppType::Pi, false).expect("disable pi");
+    let written = read_pi_mcp();
+    assert!(written["mcpServers"].get("managed").is_none());
+    assert_eq!(
+        written["mcpServers"]["handwritten"],
+        original["mcpServers"]["handwritten"]
+    );
+    assert_eq!(written["autoEnableCodemode"], json!(true));
+    assert!(!state.db.get_all_mcp_servers().unwrap()["managed"].apps.pi);
+
+    // The form saves through upsert, so unchecking Pi there removes the entry the same way.
+    McpService::toggle_app(&state, "managed", AppType::Pi, true).expect("re-enable pi");
+    assert!(read_pi_mcp()["mcpServers"].get("managed").is_some());
+    McpService::upsert_server(
+        &state,
+        pi_server("managed", json!({"command": "node"}), false),
+    )
+    .expect("save with pi unchecked");
+    assert!(read_pi_mcp()["mcpServers"].get("managed").is_none());
+    McpService::toggle_app(&state, "managed", AppType::Pi, true)
+        .expect("re-enable the server for the delete check");
+
+    // Deleting the server after re-enabling removes the entry too.
+    assert!(McpService::delete_server(&state, "managed").expect("delete server"));
+    let written = read_pi_mcp();
+    assert!(written["mcpServers"].get("managed").is_none());
+    assert_eq!(
+        written["mcpServers"]["handwritten"],
+        original["mcpServers"]["handwritten"]
+    );
+}
+
+/// Pi 0.99.2 added a per-server `description` and `auth`, and `pi mcp add --oauth-client-*` writes
+/// the `oauth` block. The MCP form has no control for any of them, so a projection that changes the
+/// connection parameters must leave them where Pi put them.
+#[test]
+fn pi_projection_keeps_fields_pi_owns() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    fs::write(
+        pi_mcp_path(),
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {"managed": {
+                "command": "old",
+                "exposure": "direct",
+                "description": "Search the product documentation",
+                "auth": {"provider": "anthropic"},
+                "oauth": {"clientId": "abc", "clientName": "Claude Code"},
+                "timeout": 30,
+                "enabled": false,
+                "futureKey": {"a": 1}
+            }}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "managed",
+            json!({"command": "node", "args": ["s.js"]}),
+            true,
+        ),
+    )
+    .expect("upsert");
+
+    let expected = json!({
+        "command": "node",
+        "args": ["s.js"],
+        "exposure": "direct",
+        "description": "Search the product documentation",
+        "auth": {"provider": "anthropic"},
+        "oauth": {"clientId": "abc", "clientName": "Claude Code"},
+        "timeout": 30,
+        "enabled": false,
+        "futureKey": {"a": 1}
+    });
+    assert_eq!(read_pi_mcp()["mcpServers"]["managed"], expected);
+
+    // The full projection (app start, provider switch) keeps them too.
+    McpService::sync_all_enabled(&state).expect("sync all");
+    assert_eq!(read_pi_mcp()["mcpServers"]["managed"], expected);
+
+    // A value CC Switch does carry wins over the file's, and the keys it does not carry stay.
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "managed",
+            json!({
+                "command": "node",
+                "args": ["s.js"],
+                "description": "set in CC Switch",
+                "oauth": {"clientId": "from-cc-switch"},
+                "timeout": 9000,
+                "toolExposure": {"ping": "direct"}
+            }),
+            true,
+        ),
+    )
+    .expect("upsert with Pi settings");
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["managed"],
+        json!({
+            "command": "node",
+            "args": ["s.js"],
+            "exposure": "direct",
+            "description": "set in CC Switch",
+            "auth": {"provider": "anthropic"},
+            "oauth": {"clientId": "from-cc-switch"},
+            "timeout": 9000,
+            "toolExposure": {"ping": "direct"},
+            "enabled": false,
+            "futureKey": {"a": 1}
+        })
+    );
+}
+
+/// The `description` CC Switch keeps on the row is metadata for its own server list, so it never
+/// reaches Pi. A `description` written into the server's JSON config is a Pi field and is written.
+#[test]
+fn pi_projection_writes_the_spec_description_but_not_the_row_one() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+
+    let state = create_test_state().expect("create test state");
+    let mut server = pi_server(
+        "managed",
+        json!({"command": "node", "args": ["s.js"]}),
+        true,
+    );
+    server.description = Some("Card text for the CC Switch list".to_string());
+    McpService::upsert_server(&state, server).expect("upsert");
+
+    assert!(
+        read_pi_mcp()["mcpServers"]["managed"]
+            .get("description")
+            .is_none(),
+        "row metadata must not reach Pi"
+    );
+
+    let mut server = pi_server(
+        "managed",
+        json!({
+            "command": "node",
+            "args": ["s.js"],
+            "description": "Written into Pi"
+        }),
+        true,
+    );
+    server.description = Some("Card text for the CC Switch list".to_string());
+    McpService::upsert_server(&state, server).expect("upsert with spec description");
+
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["managed"]["description"],
+        json!("Written into Pi")
+    );
+}
+
+/// A managed entry that Pi holds over the other transport, or with a `type` Pi rejects, is repaired
+/// in place instead of keeping a stale half or being skipped by Pi.
+#[test]
+fn pi_projection_repairs_the_transport_and_drops_type() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    // Hand-written in Pi: `type: "sse"` (which Pi rejects) on top of an HTTP entry.
+    fs::write(
+        pi_mcp_path(),
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {"managed": {
+                "type": "sse",
+                "url": "https://old.example.com/mcp",
+                "headers": {"Authorization": "Bearer old"}
+            }}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let state = create_test_state().expect("create test state");
+    // CC Switch holds the same id over stdio.
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "managed",
+            json!({"command": "node", "args": ["s.js"]}),
+            true,
+        ),
+    )
+    .expect("upsert stdio");
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["managed"],
+        json!({"command": "node", "args": ["s.js"]}),
+        "the HTTP half and the rejected type are gone"
+    );
+
+    // Back to HTTP: the stdio half goes the same way.
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "managed",
+            json!({
+                "url": "https://example.com/mcp",
+                "headers": {"Authorization": "Bearer new"}
+            }),
+            true,
+        ),
+    )
+    .expect("upsert http");
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["managed"],
+        json!({
+            "url": "https://example.com/mcp",
+            "headers": {"Authorization": "Bearer new"}
+        })
+    );
+}
+
+#[test]
+fn pi_sync_is_skipped_when_agent_dir_missing() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    assert!(
+        !home.join(".pi").exists(),
+        "~/.pi should not exist in a fresh test environment"
+    );
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        pi_server("pi-server", json!({"command": "echo"}), true),
+    )
+    .expect("enabling pi without an agent dir must not error");
+
+    assert!(
+        !home.join(".pi").exists(),
+        "skipped sync must not create ~/.pi/agent"
+    );
+
+    // Removal is a silent no-op too.
+    McpService::toggle_app(&state, "pi-server", AppType::Pi, false).expect("disable pi");
+    assert!(!home.join(".pi").exists());
+}
+
+#[test]
+fn pi_enable_fails_closed_and_leaves_unparsable_file_untouched() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+    let broken = "{ \"mcpServers\": {";
+    fs::write(&path, broken).unwrap();
+
+    let state = create_test_state().expect("create test state");
+    let error = McpService::upsert_server(
+        &state,
+        pi_server("pi-server", json!({"command": "echo"}), true),
+    )
+    .expect_err("a broken Pi config must not be silently overwritten");
+    assert!(error.to_string().contains("Invalid Pi MCP JSON"), "{error}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+}
+
+#[cfg(unix)]
+#[test]
+fn pi_writes_global_mcp_config_with_owner_only_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "secret",
+            json!({"command": "node", "env": {"API_KEY": "sk-secret"}}),
+            true,
+        ),
+    )
+    .expect("enable pi");
+
+    let mode = fs::metadata(pi_mcp_path())
+        .expect("stat pi mcp")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o600,
+        "Pi's MCP config can hold plaintext credentials, so it must be 0600"
+    );
+}
+
+#[test]
+fn pi_projection_aligns_with_panel_and_preserves_unmanaged_entries() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+    let original = json!({
+        "autoEnableCodemode": true,
+        "mcpServers": {
+            // Hand-written entry CC Switch does not know about: projection must not touch it.
+            "external-only": {"command": "external", "exposure": "direct"},
+            // Same id as a server stored in CC Switch but not enabled for Pi: shared ownership removes it.
+            "disabled-for-pi": {"command": "handwritten"}
+        }
+    });
+    fs::write(&path, serde_json::to_string_pretty(&original).unwrap()).unwrap();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&pi_server(
+            "enabled-for-pi",
+            json!({"command": "node"}),
+            true,
+        ))
+        .expect("seed enabled server");
+    state
+        .db
+        .save_mcp_server(&pi_server(
+            "disabled-for-pi",
+            json!({"command": "node"}),
+            false,
+        ))
+        .expect("seed disabled server");
+
+    McpService::sync_all_enabled(&state).expect("project mcp to every app");
+
+    let written = read_pi_mcp();
+    assert!(
+        written["mcpServers"].get("enabled-for-pi").is_some(),
+        "servers enabled in the panel must be written"
+    );
+    assert!(
+        written["mcpServers"].get("disabled-for-pi").is_none(),
+        "a stored entry not enabled for Pi is removed by shared ownership"
+    );
+    assert_eq!(
+        written["mcpServers"]["external-only"], original["mcpServers"]["external-only"],
+        "an unknown live entry must be preserved verbatim"
+    );
+    assert_eq!(
+        written["autoEnableCodemode"],
+        json!(true),
+        "top-level keys must be preserved verbatim"
+    );
+}
+
+#[test]
+fn pi_import_adopts_native_servers_and_normalizes_type() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+    // Three shapes: url only (no type), command only (no type), and an id CC Switch already stores.
+    fs::write(
+        &path,
+        json!({
+            "mcpServers": {
+                "http-native": {"url": "https://example.com/mcp", "exposure": "direct"},
+                "stdio-native": {
+                    "command": "node",
+                    "args": ["s.js"],
+                    "timeout": 3000,
+                    "enabled": false
+                },
+                "shared": {"command": "native", "exposure": "toolExposure"},
+                "not-a-server": {"timeout": 1000}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&pi_server(
+            "shared",
+            json!({"command": "managed", "args": ["kept"]}),
+            false,
+        ))
+        .expect("seed existing server");
+
+    // `not-a-server` has no valid transport: skipped and reported, the rest still imports.
+    let error = McpService::import_from_all_apps(&state)
+        .expect_err("invalid native entry must be reported")
+        .to_string();
+    assert!(error.contains("not-a-server"), "{error}");
+
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(
+        servers["http-native"].apps.pi,
+        "imported entries must be marked as enabled for Pi"
+    );
+    assert_eq!(
+        servers["http-native"].server["type"],
+        json!("http"),
+        "a url-only entry must import as type=http, or CC Switch's validator rejects it"
+    );
+    assert_eq!(servers["stdio-native"].server["type"], json!("stdio"));
+    // `enabled` is a value Pi's own /mcp manager writes, so it stays in the file instead of entering
+    // the shared spec: the clients that pass unknown keys through would copy it.
+    assert!(servers["stdio-native"].server.get("enabled").is_none());
+    // An existing id only gets its Pi flag set; connection params are not rewritten.
+    assert!(servers["shared"].apps.pi);
+    assert_eq!(
+        servers["shared"].server,
+        json!({"command": "managed", "args": ["kept"]})
+    );
+    assert!(!servers.contains_key("not-a-server"));
+
+    // Pi-only fields stay in CC Switch and are written back to Pi.
+    McpService::sync_enabled_for_app(&state, &AppType::Pi).expect("project pi");
+    let written = read_pi_mcp();
+    assert_eq!(
+        written["mcpServers"]["http-native"]["exposure"],
+        json!("direct")
+    );
+    assert_eq!(
+        written["mcpServers"]["stdio-native"]["timeout"],
+        json!(3000)
+    );
+    assert_eq!(
+        written["mcpServers"]["stdio-native"]["enabled"],
+        json!(false),
+        "an entry the user disabled inside Pi stays disabled after the round trip"
+    );
+    assert!(
+        written["mcpServers"]["http-native"].get("type").is_none(),
+        "entries written back to Pi never carry type"
+    );
+}
+
+/// A Pi provider change re-projects Pi's MCP file, the way every other app's switch does.
+/// Projection is idempotent maintenance, so this repairs a file that drifted earlier.
+#[test]
+fn pi_provider_change_reprojects_mcp_file() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+    // Stale projection: the enabled server is missing and a disabled one is still there.
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {"stale": {"command": "node"}}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&pi_server("kept", json!({"command": "node"}), true))
+        .expect("seed an enabled server");
+    state
+        .db
+        .save_mcp_server(&pi_server("stale", json!({"command": "node"}), false))
+        .expect("seed a disabled server");
+    state
+        .db
+        .save_provider(
+            AppType::Pi.as_str(),
+            &Provider::with_id(
+                "pi-1".to_string(),
+                "PI-1".to_string(),
+                json!({"baseUrl": "https://api.test", "models": [{"id": "m1"}]}),
+                None,
+            ),
+        )
+        .expect("seed the Pi provider");
+
+    ProviderService::switch(&state, AppType::Pi, "pi-1").expect("add the provider to Pi");
+
+    let live = read_pi_mcp();
+    assert_eq!(
+        live["mcpServers"]["kept"]["command"], "node",
+        "an enabled server must be written when a Pi provider changes"
+    );
+    assert!(
+        live["mcpServers"].get("stale").is_none(),
+        "a disabled server must be removed so the file matches the panel again"
+    );
+}
+
+#[test]
+fn deeplink_mcp_import_accepts_pi_app() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    // base64 of `{"mcpServers":{"pi-shared":{"command":"echo"}}}`.
+    let config_b64 = "eyJtY3BTZXJ2ZXJzIjp7InBpLXNoYXJlZCI6eyJjb21tYW5kIjoiZWNobyJ9fX0=";
+    let url = format!("ccswitch://v1/import?resource=mcp&apps=pi&config={config_b64}&enabled=true");
+    let request = cc_switch_lib::parse_deeplink_url(&url).expect("parse deeplink url");
+
+    let state = create_test_state().expect("create test state");
+    let result =
+        cc_switch_lib::import_mcp_from_deeplink(&state, request).expect("import mcp from deeplink");
+    assert_eq!(result.imported_ids, vec!["pi-shared".to_string()]);
+    assert!(result.failed.is_empty());
+
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(
+        servers["pi-shared"].apps.pi,
+        "apps=pi must be stored as enabled for Pi"
+    );
+    assert!(!servers["pi-shared"].apps.claude);
+}
+
+#[test]
+fn pi_refuses_a_server_id_it_cannot_key() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&pi_server("my.server", json!({"command": "node"}), false))
+        .expect("seed server");
+
+    let error = McpService::toggle_app(&state, "my.server", AppType::Pi, true)
+        .expect_err("an id Pi cannot key must be refused")
+        .to_string();
+    assert!(error.contains("my.server"), "{error}");
+    assert!(!state.db.get_all_mcp_servers().unwrap()["my.server"].apps.pi);
+    assert!(!path.exists(), "a refused id must not write anything");
+
+    // The form path refuses it before the row is saved, so the DB never holds the bad flag.
+    assert!(McpService::upsert_server(
+        &state,
+        pi_server("my.server", json!({"command": "node"}), true)
+    )
+    .is_err());
+}
+
+/// Pi has no legacy SSE transport. The shared store keeps accepting an SSE spec so the other Apps
+/// can hold it, but enabling Pi for that spec is refused before anything is persisted or written.
+/// The streamable HTTP transport is loaded, under either spelling the shared store can hold.
+#[test]
+fn pi_refuses_sse_and_accepts_streamable_http() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+    let sse = json!({"type": "sse", "url": "https://example.com/sse"});
+
+    let state = create_test_state().expect("create test state");
+
+    // Another App stores the same spec unchanged: the App boundary is where the rule lives.
+    let mut gemini_only = pi_server("sse-for-gemini", sse.clone(), false);
+    gemini_only.apps.gemini = true;
+    McpService::upsert_server(&state, gemini_only).expect("Gemini keeps the legacy transport");
+    assert_eq!(
+        state.db.get_all_mcp_servers().unwrap()["sse-for-gemini"].server["type"],
+        json!("sse")
+    );
+    assert!(
+        !path.exists(),
+        "enabling another App must not write Pi's file"
+    );
+
+    // The form path: refused before the row is saved, so the DB never holds the bad flag.
+    let error = McpService::upsert_server(&state, pi_server("sse-for-pi", sse.clone(), true))
+        .expect_err("Pi cannot load the legacy SSE transport")
+        .to_string();
+    assert!(error.contains("sse"), "{error}");
+    assert!(!state
+        .db
+        .get_all_mcp_servers()
+        .unwrap()
+        .contains_key("sse-for-pi"));
+
+    // The list path: refused before the flag is persisted.
+    state
+        .db
+        .save_mcp_server(&pi_server("sse-toggled", sse, false))
+        .expect("seed server");
+    let error = McpService::toggle_app(&state, "sse-toggled", AppType::Pi, true)
+        .expect_err("an SSE spec must not be enabled for Pi")
+        .to_string();
+    assert!(error.contains("sse"), "{error}");
+    assert!(
+        !state.db.get_all_mcp_servers().unwrap()["sse-toggled"]
+            .apps
+            .pi
+    );
+    assert!(!path.exists(), "a refused entry must not write anything");
+
+    // The other App adapters spell the very same transport `streamable-http`, so a spec carrying
+    // that spelling must still be loadable in Pi — and `type` is never written out.
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "remote",
+            json!({"type": "streamable-http", "url": "https://example.com/mcp"}),
+            true,
+        ),
+    )
+    .expect("Pi loads the streamable HTTP transport");
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["remote"],
+        json!({"url": "https://example.com/mcp"})
+    );
+}
+
+/// A row that holds an SSE spec with the Pi flag on — stored before this rule, or by any path that
+/// bypasses the form — must not be projected: dropping `type` would hand Pi an HTTP entry that
+/// speaks another protocol. The refused entry is reported, and the servers behind it still get
+/// projected, the way Pi itself skips one bad entry and loads the rest.
+#[test]
+fn pi_projection_refuses_a_stored_sse_entry_without_starving_the_rest() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&pi_server(
+            "legacy",
+            json!({"type": "sse", "url": "https://example.com/sse"}),
+            true,
+        ))
+        .expect("seed server");
+    // Sorts after the refused one (rows come back by name), so it is the entry an abort strands.
+    state
+        .db
+        .save_mcp_server(&pi_server(
+            "zz-after-legacy",
+            json!({"type": "http", "url": "https://example.com/mcp"}),
+            true,
+        ))
+        .expect("seed server");
+
+    let error = McpService::sync_enabled_for_app(&state, &AppType::Pi)
+        .expect_err("a stored SSE entry must be reported")
+        .to_string();
+    assert!(error.contains("legacy") && error.contains("sse"), "{error}");
+
+    let written = read_pi_mcp();
+    assert!(
+        written["mcpServers"].get("legacy").is_none(),
+        "the refused entry must not be written"
+    );
+    assert_eq!(
+        written["mcpServers"]["zz-after-legacy"],
+        json!({"url": "https://example.com/mcp"}),
+        "one refused entry must not strand the servers after it"
     );
 }

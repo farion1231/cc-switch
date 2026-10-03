@@ -2038,6 +2038,7 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
+        "pi": "Pi",
         "mcode": "MiniMax Code"
       }
     },
@@ -2084,7 +2085,8 @@
       "useWizard": "Config Wizard",
       "syncOtherSide": "Mirror to {{target}}",
       "syncOtherSideHint": "Apply the same settings to {{target}}; existing entries with the same id will be overwritten.",
-      "willOverwriteWarning": "Will overwrite existing config in {{target}}"
+      "willOverwriteWarning": "Will overwrite existing config in {{target}}",
+      "piExposureHint": "Pi exposes MCP tools through codemode by default. Use /mcp inside Pi, or set `exposure` in the JSON, to configure this as needed. See Pi's official documentation for details."
     },
     "wizard": {
       "title": "MCP Configuration Wizard",
@@ -2129,6 +2131,7 @@
       "jsonInvalid": "Invalid JSON format",
       "tomlInvalid": "Invalid TOML format",
       "commandRequired": "Please enter command",
+      "piSseUnsupported": "Pi MCP does not support the SSE transport yet",
       "singleServerObjectRequired": "Please paste a single MCP server object (do not include top-level mcpServers)",
       "saveFailed": "Save failed",
       "deleteFailed": "Delete failed"

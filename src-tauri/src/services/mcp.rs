@@ -25,6 +25,12 @@ impl McpService {
             .map(|s| s.apps.clone())
             .unwrap_or_default();
 
+        // Pi keys MCP servers by name, so an id Pi would skip must be refused before it is
+        // persisted — otherwise the panel would show "enabled for Pi" with nothing in Pi to load.
+        if server.apps.pi {
+            mcp::pi::validate_server(&server.id, &server.server)?;
+        }
+
         if server.apps.mcode || prev_apps.mcode {
             mcp::mcode::sync_and_commit(
                 &server.id,
@@ -53,6 +59,9 @@ impl McpService {
         }
         if prev_apps.hermes && !server.apps.hermes {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
+        }
+        if prev_apps.pi && !server.apps.pi {
+            Self::remove_server_from_app(state, &server.id, &AppType::Pi)?;
         }
 
         // 同步到各个启用的应用
@@ -96,6 +105,13 @@ impl McpService {
                 })?;
             }
             return Ok(());
+        }
+        // Pi keys MCP servers by name: validate before the flag is persisted, so a toggle fails
+        // loudly instead of leaving a server the panel claims is on and Pi never loads.
+        if enabled && app == AppType::Pi {
+            if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
+                mcp::pi::validate_server(server_id, &server.server)?;
+            }
         }
         if let Some(server) = state
             .db
@@ -171,7 +187,7 @@ impl McpService {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
-            AppType::Pi => {}
+            AppType::Pi => mcp::pi::sync_single_server_to_pi(&server.id, &server.server)?,
         }
         Ok(())
     }
@@ -212,7 +228,7 @@ impl McpService {
                 mcp::remove_server_from_hermes(id)?;
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
-            AppType::Pi => {}
+            AppType::Pi => mcp::pi::remove_server_from_pi(id)?,
         }
         Ok(())
     }
@@ -257,10 +273,7 @@ impl McpService {
         servers: &IndexMap<String, McpServer>,
         app: &AppType,
     ) -> Result<(), AppError> {
-        if matches!(
-            app,
-            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Pi
-        ) {
+        if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
             return Ok(());
         }
 
@@ -575,7 +588,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 7] = [
+        let results: [(&str, Result<usize, AppError>); 8] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -583,6 +596,7 @@ impl McpService {
             ("opencode", Self::import_from_opencode(state)),
             ("hermes", Self::import_from_hermes(state)),
             ("mcode", mcp::mcode::import(state)),
+            ("pi", mcp::pi::import(state)),
         ];
         for (app, result) in results {
             match result {

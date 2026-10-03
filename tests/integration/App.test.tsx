@@ -686,4 +686,17 @@ describe("App integration with MSW", () => {
     expect(skillsPanelMocks.openDiscovery).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("unified-skills-panel")).toBeInTheDocument();
   });
+
+  it("keeps the user on the MCP view when the active app is Pi", async () => {
+    localStorage.setItem("cc-switch-last-app", "pi");
+    localStorage.setItem("cc-switch-last-view", "mcp");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    // The MCP view header is rendered by App, proving the user is on the MCP view.
+    expect(
+      await screen.findByRole("heading", { name: "mcp.unifiedPanel.title" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("provider-list")).not.toBeInTheDocument();
+  });
 });

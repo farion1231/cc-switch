@@ -318,7 +318,7 @@ Ausführliche Anleitungen zu allen Funktionen finden Sie im **[Benutzerhandbuch]
 | OpenCode | Parallel | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | OpenClaw | Parallel | – | – | – | – | Workspace-Editor | ✓ | – |
 | Hermes | Parallel | – | – | ✓ | ✓ | Memory-Verwaltung | ✓ | – |
-| Pi | Parallel | – | – | – | ✓ | AGENTS.md, SYSTEM.md, Prompt-Vorlagen | ✓ | ✓ |
+| Pi | Parallel | – | – | ✓ | ✓ | AGENTS.md, SYSTEM.md, Prompt-Vorlagen | ✓ | ✓ |
 | MiniMax Code | Parallel | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 
 - **Wechsel**: Es ist jeweils nur ein Anbieter aktiv; **Parallel**: Mehrere Anbieter werden gleichzeitig in die eigene Konfiguration des Werkzeugs geschrieben; welcher verwendet wird, wählen Sie im Werkzeug aus.
