@@ -24,7 +24,6 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
-import { TablePagination, useClientPagination } from "./TablePagination";
 import { proxyApi } from "@/lib/api/proxy";
 import type { ModelPricing } from "@/types/usage";
 import { cn } from "@/lib/utils";
@@ -330,7 +329,6 @@ export function PricingConfigPanel() {
   };
 
   const rows = pricing ?? [];
-  const pagination = useClientPagination(rows);
 
   return (
     <div className="flex flex-col gap-3 pt-3">
@@ -405,7 +403,7 @@ export function PricingConfigPanel() {
                   </td>
                 </tr>
               ) : (
-                pagination.pageRows.map((model) => {
+                rows.map((model) => {
                   const name = model.displayName || model.modelId;
                   return (
                     <tr
@@ -480,14 +478,6 @@ export function PricingConfigPanel() {
             </tbody>
           </table>
         </div>
-      )}
-      {!isLoading && !error && (
-        <TablePagination
-          page={pagination.page}
-          totalPages={pagination.totalPages}
-          total={pagination.total}
-          onPageChange={pagination.setPage}
-        />
       )}
 
       {editingModel && (
