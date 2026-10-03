@@ -2218,6 +2218,7 @@
     "inFlight": "推理流",
     "inFlightHint": "该供应商当前正在进行中的推理流条数（实时，含流式响应）",
     "inFlightUnfilteredHint": "按供应商统计（含全部模型）——上方的模型筛选不会收窄这个数字。",
+    "inFlightNoRowsYet": "正在进行中的推理流：{{streams}} 条。本时段还没有已完成的记录——实时状态见代理面板。",
     "successRate": "成功率",
     "requestId": "请求 ID",
     "never": "从不",

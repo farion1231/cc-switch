@@ -2218,6 +2218,7 @@
     "inFlight": "In-flight",
     "inFlightHint": "Inference streams currently in progress for this provider (live, includes streaming responses)",
     "inFlightUnfilteredHint": "Counted per provider across all models — the model filter above does not narrow this number.",
+    "inFlightNoRowsYet": "Inference streams currently in flight: {{streams}}. Nothing has completed in this range yet — live status lives in the proxy panel.",
     "successRate": "Success Rate",
     "requestId": "Request ID",
     "never": "Never",
