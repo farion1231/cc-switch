@@ -129,8 +129,6 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
-  const visibleSkillAppIds =
-    currentApp === "pi" ? SKILLS_APP_IDS : IMPORT_SKILLS_APP_IDS;
 
   const mutationPending =
     deleteBackupMutation.isPending ||
@@ -627,7 +625,7 @@ const UnifiedSkillsPanel = React.forwardRef<
           <AppCountBar
             totalLabel={t("skills.installed", { count: skills?.length || 0 })}
             counts={enabledCounts}
-            appIds={visibleSkillAppIds}
+            appIds={SKILLS_APP_IDS}
             totalCount={skills?.length ?? 0}
             onToggleAll={handleToggleAll}
             pendingApp={pendingApp}
@@ -707,7 +705,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                       updateSkillMutation.variables === skill.id
                     }
                     actionsDisabled={interactionBlocked}
-                    appIds={visibleSkillAppIds}
+                    appIds={SKILLS_APP_IDS}
                     onToggleApp={handleToggleApp}
                     onUninstall={() => handleUninstall(skill)}
                     onUpdate={() => handleUpdateSkill(skill)}
