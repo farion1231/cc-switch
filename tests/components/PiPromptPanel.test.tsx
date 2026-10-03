@@ -138,6 +138,11 @@ describe("Pi prompts page", () => {
         expect.anything(),
       ),
     );
+    // 导入的那条按内容相等就是启用中的，删不掉：不给一个一定失败的「撤销」
+    const options = mocks.toastSuccess.mock.calls.find(
+      (call) => call[0] === "prompts.toast.importedPi",
+    )?.[1];
+    expect(options?.action).toBeUndefined();
   });
 
   it("enables a library prompt and says AGENTS.md was written", async () => {

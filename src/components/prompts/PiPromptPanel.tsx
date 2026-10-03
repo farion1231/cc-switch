@@ -252,14 +252,10 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
   const handleImport = () => {
     if (interactionBlocked) return;
     void runWrite(async () => {
-      const id = await importFromFile();
-      showPromptToast(t, {
-        title: t("prompts.toast.importedPi"),
-        onUndo: async () => {
-          await promptsApi.deletePrompt("pi", id);
-          afterUndo();
-        },
-      });
+      await importFromFile();
+      // 不给「撤销」：导入的那条和 AGENTS.md 一字不差，Pi 按内容相等判定它就是
+      // 启用中的，delete_pi_prompt 一定拒绝（无法删除已启用的提示词）
+      showPromptToast(t, { title: t("prompts.toast.importedPi") });
     });
   };
 
