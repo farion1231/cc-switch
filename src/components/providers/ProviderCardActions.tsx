@@ -2,7 +2,6 @@ import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowDown,
-  ArrowLeftRight,
   ArrowUp,
   ChevronDown,
   CircleDot,
@@ -12,6 +11,7 @@ import {
   Minus,
   MoreHorizontal,
   Pencil,
+  Play,
   Plug,
   Plus,
   Power,
@@ -44,7 +44,7 @@ const DOT: Record<CardTone | "muted", string> = {
 
 /** 主操作位只放图标，名字由 HoverTip 悬停即显（key 见 presentation.ts）。 */
 const BUTTON_ICON: Record<string, LucideIcon> = {
-  switch: ArrowLeftRight,
+  switch: Play,
   exitAndUse: Plug,
   routeHere: Route,
   queueAdd: ListPlus,
