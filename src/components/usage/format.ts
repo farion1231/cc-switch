@@ -36,6 +36,15 @@ interface OutputTokensPerSecondInput {
   latencyMs: unknown;
   firstTokenMs?: unknown;
   durationMs?: unknown;
+  dataSource?: string;
+}
+
+export function formatAverageRequestDuration(value: unknown): string | null {
+  const ms = parseFiniteNumber(value);
+  if (ms == null || ms < 0) return null;
+  return ms >= 1000
+    ? `${(ms / 1000).toFixed(2)}s`
+    : `${Number(ms.toFixed(2))}ms`;
 }
 
 function getOutputGenerationDurationMs(
@@ -52,6 +61,8 @@ function getOutputGenerationDurationMs(
     return generationMs > 0 ? generationMs : null;
   }
 
+  // A session import needs a known output window; full request time includes waiting.
+  if (log.dataSource === "codex_session") return null;
   const latencyMs = parseFiniteNumber(log.latencyMs);
   return latencyMs != null && latencyMs > 0 ? latencyMs : null;
 }
@@ -144,4 +155,12 @@ export function formatTokensShort(
   if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
   if (value >= 1e3) return `${(value / 1e3).toFixed(decimals)}K`;
   return value.toLocaleString();
+}
+
+// Session imports use 0 as the legacy sentinel for unrecorded request timing.
+export function hasRequestTiming(log: {
+  latencyMs: number;
+  dataSource?: string;
+}): boolean {
+  return log.latencyMs > 0 || !log.dataSource || log.dataSource === "proxy";
 }

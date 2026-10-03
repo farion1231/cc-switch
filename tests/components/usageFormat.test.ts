@@ -4,9 +4,19 @@ import {
   formatTokensShort,
   getOutputTokensPerSecond,
   getLocaleFromLanguage,
+  hasRequestTiming,
 } from "@/components/usage/format";
 
 describe("usage format helpers", () => {
+  it("distinguishes missing session timing from a measured zero in the proxy", () => {
+    expect(
+      hasRequestTiming({ latencyMs: 0, dataSource: "codex_session" }),
+    ).toBe(false);
+    expect(
+      hasRequestTiming({ latencyMs: 1000, dataSource: "codex_session" }),
+    ).toBe(true);
+    expect(hasRequestTiming({ latencyMs: 0, dataSource: "proxy" })).toBe(true);
+  });
   it("formats Traditional Chinese token units with Traditional characters", () => {
     expect(formatTokensShort(12_345, "zh-TW")).toBe("1.2 萬");
     expect(formatTokensShort(123_456_789, "zh-Hant", 2)).toBe("1.23 億");
@@ -36,6 +46,17 @@ describe("usage format helpers", () => {
         durationMs: 3_000,
       }),
     ).toBe(40);
+  });
+
+  it("does not substitute total latency for an unknown Codex output window", () => {
+    const log = {
+      outputTokens: 120,
+      latencyMs: 10_000,
+      dataSource: "codex_session",
+    };
+    expect(getOutputTokensPerSecond(log)).toBeNull();
+    expect(getOutputTokensPerSecond({ ...log, firstTokenMs: 4_000 })).toBe(20);
+    expect(getOutputTokensPerSecond({ ...log, durationMs: 3_000 })).toBe(40);
   });
 
   it("falls back to full latency when first token timing is missing", () => {

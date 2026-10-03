@@ -118,7 +118,8 @@ export interface ProviderStats {
   totalTokens: number;
   totalCost: string;
   successRate: number;
-  avgLatencyMs: number;
+  avgLatencyMs: number | null;
+  latencySampleCount: number;
 }
 
 export interface ModelStats {

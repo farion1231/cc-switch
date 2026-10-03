@@ -1714,7 +1714,7 @@
     "outputTokens": "輸出",
     "cacheReadTokens": "快取命中",
     "cacheCreationTokens": "快取建立",
-    "timingInfo": "耗時/首字",
+    "timingInfo": "用時/首輸出",
     "status": "狀態",
     "multiplier": "倍率",
     "requestModel": "請求模型",
@@ -1823,7 +1823,9 @@
     "requests": "請求數",
     "tokens": "Tokens",
     "avgCost": "平均成本",
-    "avgLatency": "平均延遲",
+    "avgLatency": "平均請求用時",
+    "avgRequestDurationHint": "請求發起至回應完成，包含等待和輸出時間。僅統計已記錄用時的請求；無法恢復有效用時樣本的歷史彙總不計入平均值。",
+    "timingSampleCoverage": "已記錄 {{count}}/{{total}} 筆",
     "successRate": "成功率",
     "requestId": "請求 ID",
     "never": "從不",
@@ -1888,7 +1890,12 @@
       "syncNow": "立即同步"
     },
     "cacheReadCostPerMillion": "快取讀取成本 (每百萬 tokens, USD)",
-    "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)"
+    "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)",
+    "notRecorded": "未記錄",
+    "firstToken": "首字延遲",
+    "firstOutput": "首輸出（含推理）",
+    "sessionTimingHint": "用時為本機請求開始至回應完成。首輸出為第一個輸出項開始，可能是推理，不一定是可見文字。TPS 按已記錄的輸出區間估算，包含推理 Token。缺失或存在歧義的計時顯示為未記錄。",
+    "sessionCostHint": "按官方 API 單價估算，區分服務檔位和長上下文。Codex 訂閱帳單不按此金額收費；工具費用及區域加價未計入。"
   },
   "usageScript": {
     "title": "設定用量查詢",

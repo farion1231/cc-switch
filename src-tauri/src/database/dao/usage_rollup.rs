@@ -5,7 +5,7 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::services::sql_helpers::{fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH};
-use crate::services::usage_stats::effective_usage_log_filter;
+use crate::services::usage_stats::{effective_usage_log_filter, known_request_timing_sql};
 use chrono::{Duration, Local, TimeZone};
 
 /// Compute the rollup/prune cutoff aligned to a local-day boundary.
@@ -118,6 +118,7 @@ impl Database {
         let effective_filter = effective_usage_log_filter("l");
         let fresh_detail_input = fresh_input_sql("l");
         let fresh_old_input = fresh_input_sql("old");
+        let known_timing = known_request_timing_sql("l");
         // request_model 维度保留路由接管的「客户端别名 → 真实模型」映射，
         // pricing_model 维度保留写入时的计价基准（request 计价模式下与 model 分叉）；
         // 明细行的这两列可能为 NULL（历史/手工数据），归一为 ''。
@@ -127,7 +128,8 @@ impl Database {
                  request_count, success_count,
                  input_tokens, output_tokens,
                  cache_read_tokens, cache_creation_tokens,
-                 input_token_semantics, total_cost_usd, avg_latency_ms)
+                 input_token_semantics, total_cost_usd, avg_latency_ms,
+                 latency_sum_ms, latency_sample_count)
             SELECT
                 d, a, p, m, rm, pm,
                 COALESCE(old.request_count, 0) + new_req,
@@ -142,7 +144,9 @@ impl Database {
                     THEN (COALESCE(old.avg_latency_ms, 0) * COALESCE(old.request_count, 0)
                           + new_lat * new_req)
                          / (COALESCE(old.request_count, 0) + new_req)
-                    ELSE 0 END
+                    ELSE 0 END,
+                COALESCE(old.latency_sum_ms, 0) + new_latency_sum,
+                COALESCE(old.latency_sample_count, 0) + new_latency_samples
             FROM (
                 SELECT
                     date(l.created_at, 'unixepoch', 'localtime') as d,
@@ -156,7 +160,9 @@ impl Database {
                     COALESCE(SUM(l.cache_read_tokens), 0) as new_cr,
                     COALESCE(SUM(l.cache_creation_tokens), 0) as new_cc,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as new_cost,
-                    COALESCE(AVG(l.latency_ms), 0) as new_lat
+                    COALESCE(AVG(l.latency_ms), 0) as new_lat,
+                    COALESCE(SUM(CASE WHEN {known_timing} THEN l.latency_ms ELSE 0 END), 0) as new_latency_sum,
+                    COALESCE(SUM(CASE WHEN {known_timing} THEN 1 ELSE 0 END), 0) as new_latency_samples
                 FROM proxy_request_logs l
                 WHERE l.created_at < ?1 AND {effective_filter}
                 GROUP BY d, a, p, m, rm, pm
@@ -186,7 +192,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::compute_local_midnight_cutoff;
-    use crate::database::Database;
+    use crate::database::{lock_conn, Database};
     use crate::error::AppError;
     use chrono::{Local, TimeZone};
 
@@ -520,6 +526,63 @@ mod tests {
     fn test_rollup_noop_when_no_old_data() -> Result<(), AppError> {
         let db = Database::memory()?;
         assert_eq!(db.rollup_and_prune(30)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn rollup_preserves_known_timing_across_merges_without_guessing_legacy_samples(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+        let day = Local
+            .timestamp_opt(old_ts, 0)
+            .single()
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string();
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups
+                 (date, app_type, provider_id, model, request_count, avg_latency_ms)
+                 VALUES (?1, 'codex', 'p1', 'model', 7, 999)",
+                [&day],
+            )?;
+            for (id, latency) in [("a", 1001), ("b", 2000), ("unknown", 0)] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs
+                     (request_id, provider_id, app_type, model, latency_ms, status_code, created_at, data_source)
+                     VALUES (?1, 'p1', 'codex', 'model', ?2, 200, ?3, 'codex_session')",
+                    rusqlite::params![id, latency, old_ts],
+                )?;
+            }
+        }
+        assert_eq!(db.rollup_and_prune(30)?, 3);
+        let stats = db.get_provider_stats(None, None, None, None, None)?;
+        assert_eq!(stats[0].request_count, 10);
+        assert_eq!(stats[0].latency_sample_count, 2);
+        assert_eq!(stats[0].avg_latency_ms, Some(1500.5));
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs
+                 (request_id, provider_id, app_type, model, latency_ms, status_code, created_at, data_source)
+                 VALUES ('second-pass', 'p1', 'codex', 'model', 4000, 200, ?1, 'codex_session')",
+                [old_ts],
+            )?;
+        }
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+        assert_eq!(db.rollup_and_prune(30)?, 0);
+        let stats = db.get_provider_stats(None, None, None, None, None)?;
+        assert_eq!(stats[0].request_count, 11);
+        assert_eq!(stats[0].latency_sample_count, 3);
+        assert_eq!(stats[0].avg_latency_ms, Some(7001.0 / 3.0));
+        let conn = lock_conn!(db.conn);
+        let counters: (i64, i64) = conn.query_row(
+            "SELECT latency_sum_ms, latency_sample_count FROM usage_daily_rollups WHERE provider_id='p1'",
+            [], |row| Ok((row.get(0)?,row.get(1)?)),
+        )?;
+        assert_eq!(counters, (7001, 3));
         Ok(())
     }
 

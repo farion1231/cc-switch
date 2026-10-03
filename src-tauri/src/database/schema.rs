@@ -292,6 +292,8 @@ impl Database {
                 input_token_semantics INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                latency_sum_ms INTEGER NOT NULL DEFAULT 0,
+                latency_sample_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
             )",
             [],
@@ -312,7 +314,8 @@ impl Database {
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL,
                 last_byte_offset INTEGER,
-                last_tail_fingerprint INTEGER
+                last_tail_fingerprint INTEGER,
+                codex_metrics_version INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )
@@ -432,6 +435,31 @@ impl Database {
             [],
         );
 
+        Self::ensure_usage_metric_columns(conn)?;
+        Ok(())
+    }
+
+    /// v19 -> v20: preserve known durations and per-file Codex enrichment state.
+    /// Legacy averages cannot reveal how many zero values meant unknown timing.
+    fn ensure_usage_metric_columns(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            for column in ["latency_sum_ms", "latency_sample_count"] {
+                Self::add_column_if_missing(
+                    conn,
+                    "usage_daily_rollups",
+                    column,
+                    "INTEGER NOT NULL DEFAULT 0",
+                )?;
+            }
+        }
+        if Self::table_exists(conn, "session_log_sync")? {
+            Self::add_column_if_missing(
+                conn,
+                "session_log_sync",
+                "codex_metrics_version",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
         Ok(())
     }
 
@@ -563,6 +591,10 @@ impl Database {
                             }
                         }
                         Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        Self::ensure_usage_metric_columns(conn)?;
+                        Self::set_user_version(conn, 20)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -2809,6 +2841,49 @@ impl Database {
             .map_err(|e| AppError::Database(format!("插入模型定价失败: {e}")))?;
         }
 
+        // Official API reference prices, verified 2026-10-03:
+        // https://developers.openai.com/api/docs/pricing
+        for (id, name, input, output, read, write) in pricing_data
+            .iter()
+            .filter(|row| matches!(row.0, "gpt-6.1-sol" | "gpt-6-astra" | "gpt-6-luna"))
+        {
+            for (suffix, multiplier, long) in [
+                ("long", 1u32, true),
+                ("fast", 2, false),
+                ("fast-long", 2, true),
+                ("flex", 1, false),
+                ("flex-long", 1, true),
+            ] {
+                let factor = rust_decimal::Decimal::from(multiplier)
+                    / rust_decimal::Decimal::from(if suffix.starts_with("flex") {
+                        2u32
+                    } else {
+                        1u32
+                    });
+                let parse = |price: &str| {
+                    price
+                        .parse::<rust_decimal::Decimal>()
+                        .expect("static pricing decimal")
+                };
+                let input_factor =
+                    factor * rust_decimal::Decimal::from(if long { 2u32 } else { 1u32 });
+                let output_factor = factor
+                    * if long {
+                        rust_decimal::Decimal::new(15, 1)
+                    } else {
+                        rust_decimal::Decimal::ONE
+                    };
+                stmt.execute(rusqlite::params![
+                    format!("{id}-{suffix}"),
+                    format!("{name} ({suffix}, API estimate)"),
+                    (parse(input) * input_factor).to_string(),
+                    (parse(output) * output_factor).to_string(),
+                    (parse(read) * input_factor).to_string(),
+                    (parse(write) * input_factor).to_string()
+                ])
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
         log::info!("已插入 {} 条默认模型定价数据", pricing_data.len());
         Ok(())
     }
@@ -3712,6 +3787,34 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migrate_v19_to_v20_is_idempotent_and_does_not_invent_legacy_samples() -> Result<(), AppError>
+    {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE usage_daily_rollups(date TEXT PRIMARY KEY, request_count INTEGER, avg_latency_ms INTEGER);
+             INSERT INTO usage_daily_rollups VALUES('2024-01-01', 10, 3000);
+             CREATE TABLE session_log_sync(file_path TEXT PRIMARY KEY);
+             INSERT INTO session_log_sync VALUES('legacy-rollout.jsonl');",
+        )?;
+        Database::set_user_version(&conn, 19)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let row: (i64,i64,i64,i64) = conn.query_row(
+            "SELECT request_count, avg_latency_ms, latency_sum_ms, latency_sample_count FROM usage_daily_rollups",
+            [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+        )?;
+        assert_eq!(row, (10, 3000, 0, 0));
+        let metrics_version: i64 = conn.query_row(
+            "SELECT codex_metrics_version FROM session_log_sync",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(metrics_version, 0);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
 
     #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
