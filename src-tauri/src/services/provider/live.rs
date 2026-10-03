@@ -754,8 +754,9 @@ pub(crate) enum LiveSyncOutcome {
 
 /// 把 `provider` 同步到 live，按应用的模式处理：
 /// - 直连模式：按直连投影写 live；
-/// - 代理模式：live 是代理契约。`provider` 是代理路由的那家时按新契约重写（契约没变
-///   就不动）；其余供应商（包括直连指针那家）只在退出代理时写回，这里不碰 live。
+/// - 代理模式：live 是代理契约。`provider` 是代理路由的那家、或在 Stack 名单里时按新契约
+///   重写（契约没变就不动）；其余供应商（包括直连指针那家）只在退出代理时写回，这里不碰
+///   live。
 ///
 /// `prev` 是 live 现在对应的那一版供应商行（编辑前的行），Claude 按它删上一版带进来的
 /// 独有字段；`None` 表示 live 对应的就是 `provider` 自己。调用方持有这个应用的代理切换锁
@@ -767,14 +768,11 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
     provider: &Provider,
     prev: Option<&Provider>,
 ) -> Result<LiveSyncOutcome, AppError> {
-    let mode = crate::mode::current::mode_state(app_type);
-    if mode.is_proxy() {
-        if mode.proxy_route.as_deref() == Some(provider.id.as_str()) {
-            futures::executor::block_on(crate::mode::controller::resync_route_locked(
-                state, app_type,
-            ))
-            .map_err(AppError::Message)?;
-        }
+    if crate::mode::current::is_proxy(app_type) {
+        futures::executor::block_on(crate::mode::controller::resync_saved_row_locked(
+            state, app_type, provider,
+        ))
+        .map_err(AppError::Message)?;
         return Ok(LiveSyncOutcome::ProxyMode);
     }
     if matches!(app_type, AppType::Claude) {
@@ -936,10 +934,10 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             }))
         }
         AppType::OpenCode => {
-            use crate::opencode_config::{get_opencode_config_path, read_opencode_config};
+            use crate::opencode_config::{get_opencode_config_path, read_opencode_config_from_path};
 
-            let config_path = get_opencode_config_path();
-            if !config_path.exists() {
+            let config_path = get_opencode_config_path()?;
+            if !config_path.try_exists().map_err(|e| AppError::io(&config_path, e))? {
                 return Err(AppError::localized(
                     "opencode.config.missing",
                     "OpenCode 配置文件不存在",
@@ -947,7 +945,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                 ));
             }
 
-            let config = read_opencode_config()?;
+            let config = read_opencode_config_from_path(&config_path)?;
             Ok(config)
         }
         AppType::GrokBuild => crate::grok_config::read_grok_live_settings(),

@@ -63,6 +63,24 @@ describe("usage format helpers", () => {
     ).toBeNull();
   });
 
+  it("hides TPS when the generation window is a transport burst", () => {
+    // 2842 tps 实例：54 tokens 在首事件后 19ms 内全部到达
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 54,
+        latencyMs: 3_444,
+        firstTokenMs: 3_425,
+      }),
+    ).toBeNull();
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 50,
+        latencyMs: 1_100,
+        firstTokenMs: 1_000,
+      }),
+    ).toBe(500);
+  });
+
   it("formats TPS with integer or single-decimal precision", () => {
     expect(
       formatOutputTokensPerSecond({

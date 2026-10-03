@@ -71,6 +71,15 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
   return (PROXY_APP_IDS as string[]).includes(appId);
 }
 
+/** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack` 的镜像）。 */
+export type StackAppId = Extract<ProxyAppId, "claude" | "codex">;
+
+export const STACK_APP_IDS: StackAppId[] = ["claude", "codex"];
+
+export function isStackAppId(appId: string): appId is StackAppId {
+  return (STACK_APP_IDS as string[]).includes(appId);
+}
+
 export type AdditiveAppId = Extract<
   AppId,
   "opencode" | "openclaw" | "hermes" | "pi" | "mcode"
