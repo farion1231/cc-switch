@@ -1130,6 +1130,17 @@ async fn handle_responses_for_app(
         .await;
     }
 
+    if super::providers::provider_needs_responses_late_arguments_repair(&ctx.provider) {
+        return handle_codex_late_arguments_repair(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            connection_guard,
+        )
+        .await;
+    }
+
     process_response(
         response,
         &ctx,
@@ -1433,6 +1444,17 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
+    if super::providers::provider_needs_responses_late_arguments_repair(&ctx.provider) {
+        return handle_codex_late_arguments_repair(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            connection_guard,
+        )
+        .await;
+    }
+
     process_response(
         response,
         &ctx,
@@ -1442,6 +1464,49 @@ async fn handle_responses_compact_for_app(
         connection_guard,
     )
     .await
+}
+
+/// 原生 Responses 透传到官方以外的上游：流式响应补齐迟到的函数调用
+/// 参数（`responses_late_arguments`）。错误体、非流式响应走通用透传，用量按同一套配置统计。
+async fn handle_codex_late_arguments_repair(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    is_stream: bool,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+    if !status.is_success() || !response.is_sse() {
+        return process_response(
+            response,
+            ctx,
+            state,
+            &CODEX_PARSER_CONFIG,
+            is_stream,
+            connection_guard,
+        )
+        .await;
+    }
+
+    let builder = rewritten_sse_response_builder(status, response.headers());
+    let repair_stream =
+        super::providers::responses_late_arguments::create_late_arguments_repair_stream(
+            response.bytes_stream(),
+        );
+    let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
+    let logged_stream = create_logged_passthrough_stream(
+        repair_stream,
+        ctx.tag,
+        usage_collector,
+        ctx.streaming_timeout_config(),
+        connection_guard,
+    );
+    builder
+        .body(axum::body::Body::from_stream(logged_stream))
+        .map_err(|e| {
+            log::error!("[{}] 构建补参数流式响应失败: {e}", ctx.tag);
+            ProxyError::Internal(format!("Failed to build streaming response: {e}"))
+        })
 }
 
 /// Response handler for the native Responses passthrough to xAI: restore
