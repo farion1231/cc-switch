@@ -3856,6 +3856,7 @@
       "routeTo": "Route to",
       "stackDefault": "Default provider",
       "officialOption": "{{name}} (official)",
+      "stackOfficialNote": "An official account can only be the default. With another provider as the default, the official subscription's models won't be part of the aggregation.",
       "routeNoteFile": "Rewrites the address and key in {{file}}. The real key stays in CC Switch; other settings are untouched.",
       "routeNoteSwitch": "Changing providers later on the Routing tab won't rewrite the config file.",
       "routeNoteKeepRunning": "Keep CC Switch running. Quitting writes the direct config back; it reconnects on the next start.",
@@ -3891,7 +3892,6 @@
     "action": {
       "switch": "Switch",
       "routeHere": "Route here",
-      "startRouteFrom": "Start routing here",
       "backToDirectAndUse": "Back to direct and use",
       "addToQueue": "Add to queue",
       "removeFromQueue": "Remove from queue",
@@ -3903,8 +3903,7 @@
       "edit": "Edit {{name}}",
       "more": "More actions for {{name}}",
       "moveUp": "Move {{name}} up",
-      "moveDown": "Move {{name}} down",
-      "startStackFrom": "Start Aggregation with this as default"
+      "moveDown": "Move {{name}} down"
     },
     "chip": {
       "official": "Official",
@@ -3944,7 +3943,7 @@
       "addedHelp": "Added providers are all written into {{app}}'s config; pick the model inside {{app}}.",
       "addedEmpty": "No providers added yet.",
       "available": "Available · {{count}}",
-      "stackNoDefault": "No default provider yet. Pick one below and choose \"Start Aggregation with this as default…\"."
+      "stackNoDefault": "No default provider yet. You pick one when switching to Aggregation."
     }
   },
   "desktopAccess": {

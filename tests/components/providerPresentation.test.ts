@@ -34,8 +34,6 @@ function actions() {
     needsRouteDialog: vi.fn(),
     exitAndUse: vi.fn(),
     routeTo: vi.fn(),
-    startRouteFrom: vi.fn(),
-    startStackFrom: vi.fn(),
     queueAdd: vi.fn(),
     queueRemove: vi.fn(),
     queueMove: vi.fn(),
@@ -265,8 +263,8 @@ describe("buildSwitchSections — route", () => {
     expect(input.actions.queueAdd).toHaveBeenCalledWith(backup);
   });
 
-  it("starts routing from a card while viewing route from direct", () => {
-    const { sections, input } = build({
+  it("offers no row action while previewing route from direct", () => {
+    const { sections } = build({
       active: "direct",
       view: "route",
       routeId: "backup",
@@ -275,8 +273,16 @@ describe("buildSwitchSections — route", () => {
     expect(item(sections, "backup").chips.map((c) => c.key)).toContain(
       "lastRoute",
     );
-    button(sections, "relay", "startRouteFrom").onClick();
-    expect(input.actions.startRouteFrom).toHaveBeenCalledWith(relay);
+    // 进入路由只有通知条一个入口（目标在确认框里选），行上没有主操作
+    for (const id of ["relay", "backup", "converted"]) {
+      expect(item(sections, id).buttons).toEqual([]);
+    }
+    // 不能路由的官方订阅没有按钮可挂原因，原因在「官方」徽标上
+    expect(item(sections, "official")).toMatchObject({
+      dim: true,
+      buttons: [],
+      chips: [{ key: "official", title: "providerCard.reason.noRoute" }],
+    });
   });
 });
 
@@ -320,7 +326,7 @@ describe("buildSwitchSections — stack", () => {
     );
   });
 
-  it("previews the stack outside Stack mode: each row starts Stack with itself as the default", () => {
+  it("previews the stack outside Stack mode: rows only edit the list", () => {
     const { sections, input } = build({
       active: "direct",
       view: "stack",
@@ -334,18 +340,12 @@ describe("buildSwitchSections — stack", () => {
       tone: undefined,
       status: { label: "providerCard.status.defaultAfterSwitch" },
     });
-    // 和路由预览的「从这家开始路由」对齐：没有不能点的「设为默认」
+    // 默认那家在确认框里选：行上没有「设为默认」，也没有会切模式的按钮
     expect(item(sections, "backup").buttons.map((b) => b.key)).toEqual([
-      "startStackFrom",
       "remove",
     ]);
-    const start = button(sections, "backup", "startStackFrom");
-    expect(start.disabledReason).toBeUndefined();
-    start.onClick();
-    expect(input.actions.startStackFrom).toHaveBeenCalledWith(backup);
     // 名单的添加 / 移除照旧能点
     expect(item(sections, "converted").buttons.map((b) => b.key)).toEqual([
-      "startStackFrom",
       "add",
     ]);
     button(sections, "converted", "add").onClick();
@@ -353,6 +353,27 @@ describe("buildSwitchSections — stack", () => {
     button(sections, "backup", "remove").onClick();
     expect(input.actions.stackRemove).toHaveBeenCalledWith(backup);
     expect(input.actions.stackSetDefault).not.toHaveBeenCalled();
+  });
+
+  it("shows a Codex official account outside Stack mode with only the reason it cannot be added", () => {
+    const account = provider("account", {
+      category: "official",
+      settingsConfig: { auth: {}, config: "" },
+    });
+    const { sections } = build({
+      app: "codex",
+      active: "direct",
+      view: "stack",
+      providers: [relay, account],
+    });
+
+    expect(item(sections, "account").section).toBe("available");
+    expect(item(sections, "account").buttons.map((b) => b.key)).toEqual([
+      "add",
+    ]);
+    expect(button(sections, "account", "add").disabledReason).toBe(
+      "providerCard.reason.officialStack",
+    );
   });
 
   it("never lets ChatGPT accounts be added in Codex Stack mode, even legacy cards without a category", () => {

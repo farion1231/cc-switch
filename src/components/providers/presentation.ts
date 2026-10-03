@@ -105,9 +105,6 @@ export interface SwitchModeInput {
     needsRouteDialog: (provider: Provider) => void;
     exitAndUse: (provider: Provider) => void;
     routeTo: (provider: Provider) => void;
-    startRouteFrom: (provider: Provider) => void;
-    /** 没进聚合时，以这家为默认打开进聚合的确认框（同路由预览的「从这家开始路由」） */
-    startStackFrom: (provider: Provider) => void;
     queueAdd: (provider: Provider) => void;
     queueRemove: (provider: Provider) => void;
     queueMove: (provider: Provider, delta: -1 | 1) => void;
@@ -401,13 +398,21 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
       ];
     }
 
-    // 实际在直连 / 聚合，正在查看路由
+    // 实际在直连 / 聚合，正在查看路由：行上没有主操作，要生效只有通知条的「开始路由」，
+    // 路由到哪家在确认框里选。不能路由的官方订阅没有按钮可挂原因，原因挂在「官方」徽标上
     return [
       {
         key: "all",
         items: providers.map((p) => {
           if (blockedFromRouting(app, p))
-            return blocked(p, t("providerCard.action.startRouteFrom"), noRoute);
+            return {
+              provider: p,
+              presentation: {
+                chips: [{ ...chip.official(), title: noRoute }],
+                dim: true,
+                buttons: [],
+              } satisfies CardPresentation,
+            };
           const chips = officialOnly(p);
           if (p.id === routeId)
             chips.push({
@@ -418,16 +423,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
           if (p.id === directId) chips.push(chip.directWhenDirect());
           return {
             provider: p,
-            presentation: {
-              chips,
-              buttons: [
-                {
-                  key: "startRouteFrom",
-                  label: t("providerCard.action.startRouteFrom"),
-                  onClick: () => actions.startRouteFrom(p),
-                },
-              ],
-            },
+            presentation: { chips, buttons: [] } satisfies CardPresentation,
           };
         }),
       },
@@ -436,20 +432,18 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
 
   // view === "stack"
   const on = active === "stack";
-  // 没进聚合时每行的主操作是「以这家为默认开始聚合…」（和路由预览的「从这家开始路由」对齐）；
-  // 进了聚合后才是「设为默认」，当场生效
-  const defaultButton = (p: Provider): CardButton =>
+  // 进了聚合后「设为默认」当场生效；没进聚合时默认那家在确认框里选，行上只留名单的
+  // 添加 / 移除（只改名单，不切模式）
+  const defaultButtons = (p: Provider): CardButton[] =>
     on
-      ? {
-          key: "setDefault",
-          label: t("providerCard.action.setDefault"),
-          onClick: () => actions.stackSetDefault(p),
-        }
-      : {
-          key: "startStackFrom",
-          label: t("providerCard.action.startStackFrom"),
-          onClick: () => actions.startStackFrom(p),
-        };
+      ? [
+          {
+            key: "setDefault",
+            label: t("providerCard.action.setDefault"),
+            onClick: () => actions.stackSetDefault(p),
+          },
+        ]
+      : [];
   const defaultId = (() => {
     const candidate = on ? routeId : (routeId ?? directId);
     const p = providers.find((x) => x.id === candidate);
@@ -511,7 +505,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
       presentation: {
         chips: [modelsChip(p)],
         buttons: [
-          defaultButton(p),
+          ...defaultButtons(p),
           {
             key: "remove",
             label: t("providerCard.action.remove"),
@@ -538,7 +532,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
           presentation: {
             chips: [chip.official()],
             buttons: [
-              defaultButton(p),
+              ...defaultButtons(p),
               {
                 key: "add",
                 label: t("providerCard.action.add"),
@@ -554,7 +548,6 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
         presentation: {
           chips: providerNeedsRouting(app, p) ? [chip.needsRoute(p)] : [],
           buttons: [
-            ...(on ? [] : [defaultButton(p)]),
             {
               key: "add",
               label: t("providerCard.action.add"),

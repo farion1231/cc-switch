@@ -5,6 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClientProvider, focusManager } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
@@ -55,14 +56,18 @@ const provider = (id: string): Provider => ({
   settingsConfig: {},
 });
 
-function mockMode(mode: AppMode, routeProviderId: string | null) {
+function mockMode(
+  mode: AppMode,
+  routeProviderId: string | null,
+  directProviderId: string | null = routeProviderId,
+) {
   server.use(
     http.post(`${TAURI_ENDPOINT}/get_app_mode`, () =>
       HttpResponse.json({
         mode,
         attached: mode !== "direct",
         routeProviderId,
-        directProviderId: routeProviderId,
+        directProviderId,
       }),
     ),
     http.post(`${TAURI_ENDPOINT}/get_proxy_status`, () =>
@@ -93,6 +98,8 @@ function renderPanel(app: ProxyAppId, providers: Record<string, Provider>) {
 
 beforeEach(() => {
   vi.mocked(toast.info).mockClear();
+  // jsdom 没有 scrollIntoView，确认框里的下拉打开时会调
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 describe("SwitchModePanel — Stack mode", () => {
@@ -242,8 +249,9 @@ describe("SwitchModePanel — mode layer", () => {
     return calls;
   }
 
-  it("starts Stack from a preview row with that provider as the fixed default", async () => {
-    mockMode("direct", null);
+  it("enters Stack from the notice and picks the default in the dialog", async () => {
+    const user = userEvent.setup();
+    mockMode("direct", null, "a");
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({ active: false, members: [] }),
@@ -252,19 +260,32 @@ describe("SwitchModePanel — mode layer", () => {
     const calls = captureTakeover();
     renderPanel("claude", { a: provider("a"), kimi: provider("kimi") });
 
-    fireEvent.click(
+    await user.click(
       await screen.findByRole("button", { name: /mode\.names\.stack/ }),
     );
-    // 名单的添加照旧能点；没有不能点的「设为默认」
-    expect(await screen.findByTestId("add-kimi")).not.toBeDisabled();
-    expect(screen.queryByTestId("setDefault-kimi")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("startStackFrom-kimi"));
+    // 行上只有名单的添加：没有「设为默认」，也没有会切模式的按钮
+    const row = await screen.findByTestId("card-kimi");
+    expect(
+      Array.from(row.querySelectorAll("button")).map((b) => b.dataset.testid),
+    ).toEqual(["add-kimi"]);
+    expect(screen.getByTestId("add-kimi")).not.toBeDisabled();
 
+    await user.click(
+      screen.getByRole("button", { name: "mode.activate.stack" }),
+    );
     expect(await screen.findByText("mode.dialog.stackTitle")).toBeVisible();
-    // 默认那家就是点的这家，框里不再让选
-    expect(screen.getByTestId("stack-default")).toHaveTextContent("kimi");
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("mode.dialog.confirmStack"));
+    // 预选直连那家，可以在框里换
+    const select = screen.getByRole("combobox", {
+      name: "mode.dialog.stackDefault",
+    });
+    expect(select).toHaveTextContent("a");
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "kimi" }));
+    expect(select).toHaveTextContent("kimi");
+    // Claude 官方订阅进不了聚合，没有「官方只能做默认」的提示
+    expect(screen.queryByTestId("stack-official-note")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("mode.dialog.confirmStack"));
     await waitFor(() =>
       expect(calls).toEqual([
         { appType: "claude", enabled: true, stack: true, route: "kimi" },
@@ -272,16 +293,61 @@ describe("SwitchModePanel — mode layer", () => {
     );
   });
 
-  it("enters routing without an acknowledgement checkbox", async () => {
-    mockMode("direct", null);
+  it("warns that a Codex official account drops out of the Stack unless it is the default", async () => {
+    const user = userEvent.setup();
+    mockMode("direct", null, "kimi");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: false, members: [] }),
+      ),
+    );
+    const account: Provider = {
+      ...provider("account"),
+      category: "official",
+      settingsConfig: { auth: {}, config: "" },
+    };
+    renderPanel("codex", { account, kimi: provider("kimi") });
+
+    await user.click(
+      await screen.findByRole("button", { name: /mode\.names\.stack/ }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "mode.activate.stack" }),
+    );
+    const select = await screen.findByRole("combobox", {
+      name: "mode.dialog.stackDefault",
+    });
+    expect(select).toHaveTextContent("kimi");
+    expect(screen.getByTestId("stack-official-note")).toHaveTextContent(
+      "mode.dialog.stackOfficialNote",
+    );
+
+    await user.click(select);
+    await user.click(
+      await screen.findByRole("option", { name: "mode.dialog.officialOption" }),
+    );
+    expect(screen.queryByTestId("stack-official-note")).not.toBeInTheDocument();
+  });
+
+  it("enters routing from the notice with the direct provider preselected, without an acknowledgement checkbox", async () => {
+    mockMode("direct", null, "b");
     const calls = captureTakeover();
     renderPanel("claude", { a: provider("a"), b: provider("b") });
 
     fireEvent.click(
       await screen.findByRole("button", { name: /mode\.names\.route/ }),
     );
-    fireEvent.click(await screen.findByTestId("startRouteFrom-b"));
+    // 行上没有进入路由的按钮，入口只有通知条
+    await screen.findByTestId("card-b");
+    expect(screen.getByTestId("card-b").querySelector("button")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "mode.activate.route" }),
+    );
     expect(await screen.findByText("mode.dialog.routeTitle")).toBeVisible();
+    // 没有上次的路由目标时，预选直连那家
+    expect(
+      screen.getByRole("combobox", { name: "mode.dialog.routeTo" }),
+    ).toHaveTextContent("b");
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     const confirm = screen.getByText("mode.dialog.confirmRoute");
     expect(confirm.closest("button")).not.toBeDisabled();

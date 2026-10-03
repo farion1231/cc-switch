@@ -3856,6 +3856,7 @@
       "routeTo": "路由到",
       "stackDefault": "默认供应商",
       "officialOption": "{{name}}（官方）",
+      "stackOfficialNote": "官方账号只能做默认；选别家做默认后，官方订阅的模型不会出现在聚合里。",
       "routeNoteFile": "会改写 {{file}} 里的地址和密钥；真实密钥留在 CC Switch 里，其他设置不动。",
       "routeNoteSwitch": "之后在「路由」页签里换供应商，不再改写配置文件。",
       "routeNoteKeepRunning": "CC Switch 需要保持运行；退出时自动写回直连，下次启动再接上。",
@@ -3891,7 +3892,6 @@
     "action": {
       "switch": "切换",
       "routeHere": "路由到此",
-      "startRouteFrom": "从这家开始路由",
       "backToDirectAndUse": "回到直连并使用",
       "addToQueue": "加入队列",
       "removeFromQueue": "移出队列",
@@ -3903,8 +3903,7 @@
       "edit": "编辑 {{name}}",
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
-      "moveDown": "{{name}} 下移一位",
-      "startStackFrom": "以这家为默认开始聚合"
+      "moveDown": "{{name}} 下移一位"
     },
     "chip": {
       "official": "官方",
@@ -3944,7 +3943,7 @@
       "addedHelp": "已添加的供应商会同时写进 {{app}} 的配置，在 {{app}} 里选模型即可。",
       "addedEmpty": "还没有添加供应商。",
       "available": "可添加 · {{count}}",
-      "stackNoDefault": "还没有默认供应商；在下面选一家，点「以这家为默认开始聚合…」。"
+      "stackNoDefault": "还没有默认供应商；切换到聚合模式时选一家。"
     }
   },
   "desktopAccess": {
