@@ -242,18 +242,18 @@ export const SessionToolGroup = memo(function SessionToolGroup({
   const lines = item.output ? item.output.split(/\r?\n/) : [];
   const hidden = Math.max(0, lines.length - TOOL_OUTPUT_PREVIEW_LINES);
   // 查找命中在工具输出里：和长消息一样自动展开，否则高亮藏在折叠里看不见；
-  // 命中不在预览行里就连「还有 N 行」一起展开
+  // 预览行之外也有命中就连「还有 N 行」一起展开（只问预览里有没有，会把后面的命中藏住）
   const query = searchQuery?.toLowerCase() ?? "";
   const outputHit = !!query && !!item.output?.toLowerCase().includes(query);
-  const previewHit =
+  const tailHit =
     outputHit &&
     lines
-      .slice(0, TOOL_OUTPUT_PREVIEW_LINES)
+      .slice(TOOL_OUTPUT_PREVIEW_LINES)
       .join("\n")
       .toLowerCase()
       .includes(query);
   const open = openByUser || outputHit;
-  const showAll = showAllByUser || (outputHit && !previewHit);
+  const showAll = showAllByUser || tailHit;
   const shownLines =
     showAll || hidden === 0 ? lines : lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES);
   const shownText = shownLines.join("\n");
