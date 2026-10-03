@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { History, KeyRound } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { SettingsFormState } from "@/hooks/useSettings";
-import { ToggleRow } from "@/components/ui/toggle-row";
+import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api";
 
@@ -88,27 +87,27 @@ export function CodexAuthSettings({
     }
   };
 
+  // 设置 → 应用配置 → Codex 卡片里的两行
   return (
-    <section className="space-y-4">
-      <div className="flex items-center gap-2 pb-2 border-b border-border/40">
-        <KeyRound className="h-4 w-4 text-primary" />
-        <h3 className="text-sm font-medium">{t("settings.codexAuth")}</h3>
-      </div>
-
-      <ToggleRow
-        icon={<KeyRound className="h-4 w-4 text-emerald-500" />}
-        title={t("settings.preserveCodexOfficialAuthOnSwitch")}
-        description={t("settings.preserveCodexOfficialAuthOnSwitchDescription")}
+    <>
+      <SettingsSwitchRow
+        label={t("settings.preserveCodexOfficialAuthOnSwitch")}
+        help={{
+          title: t("settings.preserveCodexOfficialAuthOnSwitch"),
+          body: t("settings.preserveCodexOfficialAuthOnSwitchDescription"),
+        }}
         checked={settings.preserveCodexOfficialAuthOnSwitch ?? false}
         onCheckedChange={(value) =>
           onChange({ preserveCodexOfficialAuthOnSwitch: value })
         }
       />
 
-      <ToggleRow
-        icon={<History className="h-4 w-4 text-sky-500" />}
-        title={t("settings.unifyCodexSessionHistory")}
-        description={t("settings.unifyCodexSessionHistoryDescription")}
+      <SettingsSwitchRow
+        label={t("settings.unifyCodexSessionHistory")}
+        help={{
+          title: t("settings.unifyCodexSessionHistory"),
+          body: t("settings.unifyCodexSessionHistoryDescription"),
+        }}
         checked={settings.unifyCodexSessionHistory ?? false}
         onCheckedChange={handleUnifyHistoryChange}
       />
@@ -119,6 +118,7 @@ export function CodexAuthSettings({
         message={t("confirm.unifyCodexHistory.message")}
         checkboxLabel={t("confirm.unifyCodexHistory.migrateExisting")}
         confirmText={t("confirm.unifyCodexHistory.confirm")}
+        variant="info"
         onConfirm={handleEnableConfirm}
         onCancel={() => setShowEnableConfirm(false)}
       />
@@ -134,9 +134,10 @@ export function CodexAuthSettings({
         }
         checkboxDefaultChecked
         confirmText={t("confirm.unifyCodexHistoryOff.confirm")}
+        variant="info"
         onConfirm={(restoreBackup) => void handleDisableConfirm(restoreBackup)}
         onCancel={() => setShowDisableConfirm(false)}
       />
-    </section>
+    </>
   );
 }

@@ -3,6 +3,7 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
+use super::inline_think::split_leading_think_block;
 use crate::proxy::{
     error::ProxyError,
     json_canonical::canonical_json_string,
@@ -66,8 +67,9 @@ pub fn is_openai_o_series(model: &str) -> bool {
 /// Supported families:
 /// - o-series: o1, o3, o4-mini, etc.
 /// - GPT-5+: gpt-5, gpt-5.1, gpt-5.4, gpt-5-codex, etc.
-/// - xAI Grok Build models. `grok-4.5`/`grok-4.6` are the documented Grok
-///   Build models; retain the previous `grok-build-*` family for saved providers.
+/// - xAI Grok 4.5+ (`grok-4.x` with numeric minor version x ≥ 5,
+///   so future releases like grok-4.10 need no whitelist update); retain the
+///   previous `grok-build-*` family for saved providers.
 pub fn supports_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_lowercase();
     is_openai_o_series(&normalized)
@@ -75,10 +77,11 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
             .strip_prefix("gpt-")
             .and_then(|rest| rest.chars().next())
             .is_some_and(|c| c.is_ascii_digit() && c >= '5')
-        || normalized == "grok-4.5"
-        || normalized.starts_with("grok-4.5-")
-        || normalized == "grok-4.6"
-        || normalized.starts_with("grok-4.6-")
+        || normalized
+            .strip_prefix("grok-4.")
+            .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|minor| minor.parse::<u32>().ok())
+            .is_some_and(|minor| minor >= 5)
         || normalized.starts_with("grok-build-")
 }
 
@@ -87,7 +90,10 @@ fn supports_max_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_ascii_lowercase();
     matches!(
         normalized.as_str(),
-        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-6-astra"
+        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+    ) || matches!(
+        normalized.as_str(),
+        "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna"
     )
 }
 
@@ -549,11 +555,31 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         }
     }
 
-    // 文本/拒绝内容
+    // 文本/拒绝内容。正文开头内联的 <think>/<thinking> 块（DeepSeek 系、MiniMax M3 等
+    // Chat 兼容上游）拆成 thinking 块，与流式路径一致；只看第一段文本。
+    let mut leading_text = true;
+    let mut push_text = |content: &mut Vec<Value>, text: &str| {
+        let split = if leading_text {
+            leading_text = false;
+            split_leading_think_block(text)
+        } else {
+            None
+        };
+        let Some((thinking, answer)) = split else {
+            content.push(json!({"type": "text", "text": text}));
+            return;
+        };
+        if !thinking.is_empty() {
+            content.push(json!({"type": "thinking", "thinking": thinking}));
+        }
+        if !answer.is_empty() {
+            content.push(json!({"type": "text", "text": answer}));
+        }
+    };
     if let Some(msg_content) = message.get("content") {
         if let Some(text) = msg_content.as_str() {
             if !text.is_empty() {
-                content.push(json!({"type": "text", "text": text}));
+                push_text(&mut content, text);
             }
         } else if let Some(parts) = msg_content.as_array() {
             for part in parts {
@@ -562,7 +588,7 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
                     "text" | "output_text" => {
                         if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
                             if !text.is_empty() {
-                                content.push(json!({"type": "text", "text": text}));
+                                push_text(&mut content, text);
                             }
                         }
                     }
@@ -1374,6 +1400,69 @@ mod tests {
         assert_eq!(result["usage"]["output_tokens"], 5);
     }
 
+    fn chat_response_with_content(content: Value) -> Value {
+        json!({
+            "id": "chatcmpl-think",
+            "object": "chat.completion",
+            "model": "deepseek-v4.1-flash",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        })
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_splits_leading_inline_think_block() {
+        // #7722：上游把思考内联进 content 开头，两种标签都要拆成 thinking 块
+        for content in [
+            "<thinking>tool call</thinking>\n日志很大。",
+            "<think>tool call</think>\n\n日志很大。",
+        ] {
+            let result = openai_to_anthropic(chat_response_with_content(json!(content))).unwrap();
+            assert_eq!(
+                result["content"],
+                json!([
+                    {"type": "thinking", "thinking": "tool call"},
+                    {"type": "text", "text": "日志很大。"}
+                ]),
+                "content {content:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_splits_inline_think_in_first_text_part_only() {
+        let result = openai_to_anthropic(chat_response_with_content(json!([
+            {"type": "text", "text": "<think>plan</think>answer"},
+            {"type": "text", "text": "<think>kept</think>"}
+        ])))
+        .unwrap();
+        assert_eq!(
+            result["content"],
+            json!([
+                {"type": "thinking", "thinking": "plan"},
+                {"type": "text", "text": "answer"},
+                {"type": "text", "text": "<think>kept</think>"}
+            ])
+        );
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_keeps_text_that_is_not_a_leading_think_block() {
+        // 未闭合的块、正文中途出现的标签都原样保留
+        for content in ["<think>unclosed", "see the <thinking>x</thinking> tag"] {
+            let result = openai_to_anthropic(chat_response_with_content(json!(content))).unwrap();
+            assert_eq!(
+                result["content"],
+                json!([{"type": "text", "text": content}]),
+                "content {content:?}"
+            );
+        }
+    }
+
     #[test]
     fn test_openai_to_anthropic_preserves_id_for_usage_dedup() {
         let input = json!({
@@ -1791,6 +1880,16 @@ mod tests {
         assert!(supports_reasoning_effort("grok-4.6"));
         assert!(supports_reasoning_effort("grok-4.6-build"));
         assert!(supports_reasoning_effort("grok-build-0.1"));
+        // The rule covers the whole grok-4.x (x >= 5) family, so future
+        // releases need no whitelist update.
+        assert!(supports_reasoning_effort("grok-4.7"));
+        assert!(supports_reasoning_effort("grok-4.7-build"));
+        assert!(supports_reasoning_effort("grok-4.10"));
+        assert!(supports_reasoning_effort("grok-4.10-build"));
+        assert!(supports_reasoning_effort("GROK-4.10-BUILD"));
+        assert!(!supports_reasoning_effort("grok-4."));
+        assert!(!supports_reasoning_effort("grok-4.build"));
+        assert!(!supports_reasoning_effort("grok-4.4"));
         assert!(!supports_reasoning_effort("gpt-4o"));
         assert!(!supports_reasoning_effort("claude-sonnet-4-6"));
         assert!(!supports_reasoning_effort("grok-4"));
@@ -1824,6 +1923,8 @@ mod tests {
             "gpt-5.6-terra",
             "gpt-5.6-luna",
             "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-luna",
         ] {
             let body = json!({
                 "model": model,

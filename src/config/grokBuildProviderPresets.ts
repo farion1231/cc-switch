@@ -24,8 +24,9 @@
 import type { ProviderCategory } from "../types";
 import type { CodexApiFormat } from "../types";
 import { GROK_BUILD_DEFAULT_MODEL } from "../utils/grokBuildConfig";
+import type { PresetFamilyFields } from "./presetFamilies";
 
-export interface GrokBuildProviderPreset {
+export interface GrokBuildProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
@@ -322,6 +323,8 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "Compshare",
+    family: "compshare",
+    planKey: "payg",
     nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
@@ -337,6 +340,8 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "Compshare Coding Plan",
+    family: "compshare",
+    planKey: "codingPlan",
     nameKey: "providerForm.presets.ucloudCoding",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
@@ -423,19 +428,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     iconColor: "#E96B2C",
   },
   {
-    name: "ETok.ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    auth: grokAuth(),
-    config: grokPresetConfig("ETok.ai", "https://api.etok.ai/v1"),
-    endpointCandidates: ["https://api.etok.ai/v1"],
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "etok",
-    icon: "etok",
-    iconColor: "#000000",
-  },
-  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
@@ -477,6 +469,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "SudoCode.chat",
+    family: "sudocode",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
       "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
@@ -494,6 +487,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "SudoCode.us",
+    family: "sudocode",
     websiteUrl: "https://sudocode.us",
     apiKeyUrl: "https://sudocode.us",
     auth: grokAuth(),

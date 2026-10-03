@@ -1,49 +1,52 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
-import { createRef } from "react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import PromptPanel, {
-  type PromptPanelHandle,
+  type PromptPanelProps,
 } from "@/components/prompts/PromptPanel";
-import type { AppId, Prompt } from "@/lib/api";
+import { promptsApi, type AppId, type Prompt } from "@/lib/api";
 
 const mocks = vi.hoisted(() => ({
   state: {
-    prompts: {} as Record<
-      string,
-      {
-        id: string;
-        name: string;
-        content: string;
-        description?: string;
-        enabled: boolean;
-      }
-    >,
+    prompts: {} as Record<string, Prompt>,
     loading: false,
+    currentFileContent: null as string | null,
+    latest: null as Record<string, Prompt> | null,
   },
   reload: vi.fn(),
   getReload: vi.fn(),
   savePrompt: vi.fn(),
   deletePrompt: vi.fn(),
   toggleEnabled: vi.fn(),
+  importFromFile: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
 }));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
-      if (key === "prompts.count") return `${key}:${options?.count}`;
-      if (key === "prompts.enabledName") return `${key}:${options?.name}`;
-      if (key === "prompts.confirm.deleteMessage") {
-        return `${key}:${options?.name}`;
-      }
-      return key;
+      const value = options?.name ?? options?.path ?? options?.app;
+      return value === undefined ? key : `${key}:${String(value)}`;
     },
+    i18n: { language: "en" },
+  }),
+}));
+
+vi.mock("sonner", () => ({
+  toast: Object.assign(vi.fn(), {
+    success: mocks.toastSuccess,
+    error: mocks.toastError,
+    dismiss: vi.fn(),
   }),
 }));
 
@@ -51,10 +54,14 @@ vi.mock("@/hooks/usePromptActions", () => ({
   usePromptActions: (appId: AppId) => ({
     prompts: mocks.state.prompts,
     loading: mocks.state.loading,
+    currentFileContent: mocks.state.currentFileContent,
+    togglingId: null,
     reload: mocks.getReload(appId),
     savePrompt: mocks.savePrompt,
     deletePrompt: mocks.deletePrompt,
     toggleEnabled: mocks.toggleEnabled,
+    importFromFile: mocks.importFromFile,
+    getLatestPrompts: () => mocks.state.latest,
   }),
 }));
 
@@ -62,69 +69,59 @@ vi.mock("@/hooks/useTauriEvent", () => ({
   useTauriEvent: vi.fn(),
 }));
 
-vi.mock("@/components/prompts/PromptFormPanel", () => ({
-  default: ({
-    editingId,
-    initialData,
-    onSave,
-    onClose,
-  }: {
-    editingId?: string;
-    initialData?: Prompt;
-    onSave: (id: string, prompt: Prompt) => Promise<void | boolean>;
-    onClose: () => void;
-  }) => (
-    <div data-testid="prompt-form">
-      {editingId}:{initialData?.name}
-      <button
-        type="button"
-        onClick={async () => {
-          const saved = await onSave(
-            editingId ?? "new-prompt",
-            initialData ?? {
-              id: "new-prompt",
-              name: "New Prompt",
-              content: "New content",
-              enabled: false,
-            },
-          );
-          if (saved !== false) onClose();
-        }}
-      >
-        form-save
-      </button>
-      <button type="button" onClick={onClose}>
-        form-close
-      </button>
-    </div>
-  ),
-}));
+vi.mock("@/components/prompts/PromptFormPanel", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/components/prompts/PromptFormPanel")
+    >();
+  return {
+    ...actual,
+    default: ({
+      editingId,
+      initialData,
+      onSave,
+      onClose,
+      onDelete,
+    }: {
+      editingId?: string;
+      initialData?: Prompt;
+      onSave: (id: string, prompt: Prompt) => Promise<void | boolean>;
+      onClose: () => void;
+      onDelete?: (id: string) => void;
+    }) => (
+      <div data-testid="prompt-form">
+        {editingId}:{initialData?.name}
+        <button
+          type="button"
+          onClick={async () => {
+            const saved = await onSave(
+              editingId ?? "new-prompt",
+              initialData ?? {
+                id: "new-prompt",
+                name: "New Prompt",
+                content: "New content",
+                enabled: false,
+              },
+            );
+            if (saved !== false) onClose();
+          }}
+        >
+          form-save
+        </button>
+        <button type="button" onClick={onClose}>
+          form-close
+        </button>
+        {editingId && onDelete ? (
+          <button type="button" onClick={() => onDelete(editingId)}>
+            form-delete
+          </button>
+        ) : null}
+      </div>
+    ),
+  };
+});
 
-vi.mock("@/components/ConfirmDialog", () => ({
-  ConfirmDialog: ({
-    message,
-    onConfirm,
-    onCancel,
-    pending,
-  }: {
-    message: string;
-    onConfirm: (checked: boolean) => void;
-    onCancel: () => void;
-    pending?: boolean;
-  }) => (
-    <div role="dialog">
-      <span>{message}</span>
-      <button type="button" disabled={pending} onClick={() => onConfirm(false)}>
-        confirm-dialog
-      </button>
-      <button type="button" disabled={pending} onClick={onCancel}>
-        cancel-dialog
-      </button>
-    </div>
-  ),
-}));
-
-const createPrompts = () => ({
+const createPrompts = (): Record<string, Prompt> => ({
   "record-index-47": {
     id: "payload-identifier-92",
     name: "Aurora Prompt",
@@ -141,10 +138,32 @@ const createPrompts = () => ({
   },
 });
 
-function renderPanel(appId: AppId = "claude") {
-  return render(
-    <PromptPanel open appId={appId} onOpenChange={() => undefined} />,
+const APPS: AppId[] = ["claude", "codex", "gemini", "hermes"];
+
+function Harness(props: Partial<PromptPanelProps> & { client: QueryClient }) {
+  const { client, ...rest } = props;
+  return (
+    <QueryClientProvider client={client}>
+      <PromptPanel
+        appId="claude"
+        apps={APPS}
+        onAppChange={() => undefined}
+        {...rest}
+      />
+    </QueryClientProvider>
   );
+}
+
+function renderPanel(props: Partial<PromptPanelProps> = {}) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const view = render(<Harness client={client} {...props} />);
+  return {
+    ...view,
+    rerenderWith: (next: Partial<PromptPanelProps>) =>
+      view.rerender(<Harness client={client} {...next} />),
+  };
 }
 
 function searchFor(value: string) {
@@ -154,16 +173,40 @@ function searchFor(value: string) {
   );
 }
 
+const enableButton = (name: string) =>
+  screen.getByRole("button", { name: `prompts.enableAria:${name}` });
+const disableButton = (name: string) =>
+  screen.getByRole("button", { name: `prompts.disableAria:${name}` });
+const editButton = (name: string) =>
+  screen.getByRole("button", { name: `prompts.editAria:${name}` });
+
 async function waitForPanelReady() {
   await waitFor(() => {
-    expect(screen.getAllByRole("switch")[0]).toBeEnabled();
+    expect(editButton("Harbor Prompt")).toBeEnabled();
   });
+}
+
+async function openRowMenu(name: string) {
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: `prompts.rowMoreActions:${name}` }),
+  );
+  return { user, menu: await screen.findByRole("menu") };
+}
+
+/** 最后一次 toast.success 的「撤销」 */
+function lastUndo(): (() => void) | undefined {
+  const call = mocks.toastSuccess.mock.calls.at(-1);
+  return call?.[1]?.action?.onClick;
 }
 
 describe("PromptPanel", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     mocks.state.prompts = createPrompts();
     mocks.state.loading = false;
+    mocks.state.currentFileContent = "Follow the quasar instruction exactly.";
+    mocks.state.latest = null;
     mocks.reload.mockReset();
     mocks.reload.mockResolvedValue(true);
     mocks.getReload.mockReset();
@@ -174,6 +217,18 @@ describe("PromptPanel", () => {
     mocks.deletePrompt.mockResolvedValue(true);
     mocks.toggleEnabled.mockReset();
     mocks.toggleEnabled.mockResolvedValue(true);
+    mocks.importFromFile.mockReset();
+    mocks.importFromFile.mockResolvedValue("imported-1");
+    mocks.toastSuccess.mockReset();
+    mocks.toastError.mockReset();
+    vi.spyOn(promptsApi, "getFileLocation").mockImplementation(async (app) => ({
+      path: `/Users/me/.${app}/CLAUDE.md`,
+      displayPath: `~/.${app}/CLAUDE.md`,
+    }));
+    vi.spyOn(promptsApi, "getPrompts").mockResolvedValue({});
+    vi.spyOn(promptsApi, "upsertPrompt").mockResolvedValue(undefined);
+    vi.spyOn(promptsApi, "enablePrompt").mockResolvedValue(undefined);
+    vi.spyOn(promptsApi, "deletePrompt").mockResolvedValue(undefined);
   });
 
   it.each([
@@ -198,107 +253,317 @@ describe("PromptPanel", () => {
 
     searchFor("does-not-exist");
     expect(screen.getByText("prompts.noSearchResults")).toBeInTheDocument();
-    expect(screen.queryByText("prompts.empty")).not.toBeInTheDocument();
 
     mocks.state.prompts = {};
-    view.rerender(
-      <PromptPanel open appId="claude" onOpenChange={() => undefined} />,
-    );
+    view.rerenderWith({});
 
-    expect(screen.getByText("prompts.empty")).toBeInTheDocument();
+    expect(
+      screen.getByText("prompts.emptyTitle:Claude Code"),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText("prompts.noSearchResults"),
     ).not.toBeInTheDocument();
+    // 列表空了就不显示搜索框
+    expect(
+      screen.queryByRole("textbox", { name: "prompts.searchAriaLabel" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("clears the query and restores all prompts", async () => {
+  it("clears the query from the no-match state and restores all prompts", async () => {
     renderPanel();
     await waitForPanelReady();
-    const input = screen.getByRole("textbox", {
-      name: "prompts.searchAriaLabel",
-    });
 
-    searchFor("aurora");
-    expect(screen.queryByText("Harbor Prompt")).not.toBeInTheDocument();
+    searchFor("zzz");
+    const noMatch = screen.getByText("prompts.noSearchResults").parentElement!;
+    fireEvent.click(
+      within(noMatch).getByRole("button", { name: "prompts.clearSearch" }),
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: "common.clear" }));
-
-    expect(input).toHaveValue("");
+    expect(
+      screen.getByRole("textbox", { name: "prompts.searchAriaLabel" }),
+    ).toHaveValue("");
     expect(screen.getByText("Aurora Prompt")).toBeInTheDocument();
     expect(screen.getByText("Harbor Prompt")).toBeInTheDocument();
   });
 
   it("clears the query when the app changes", async () => {
-    const view = renderPanel("claude");
+    const view = renderPanel();
     await waitForPanelReady();
     searchFor("aurora");
 
-    view.rerender(
-      <PromptPanel open appId="codex" onOpenChange={() => undefined} />,
-    );
+    view.rerenderWith({ appId: "codex" });
 
     await waitFor(() => {
       expect(
         screen.getByRole("textbox", { name: "prompts.searchAriaLabel" }),
       ).toHaveValue("");
     });
-    await waitForPanelReady();
-    expect(screen.getByText("Aurora Prompt")).toBeInTheDocument();
     expect(screen.getByText("Harbor Prompt")).toBeInTheDocument();
   });
 
-  it("keeps totals and the enabled prompt based on the full collection", async () => {
-    const { container } = renderPanel();
+  it("shows the target file, its size and the enabled badge", async () => {
+    renderPanel();
     await waitForPanelReady();
 
-    searchFor("harbor");
-
-    const summary = container.querySelector(".glass .text-sm");
-    expect(summary).toHaveTextContent("prompts.count:2");
-    expect(summary).toHaveTextContent("prompts.enabledName:Aurora Prompt");
-    expect(screen.queryByText("Aurora Prompt")).not.toBeInTheDocument();
+    expect(await screen.findByText("~/.claude/CLAUDE.md")).toBeInTheDocument();
+    expect(
+      screen.getByTitle("prompts.targetFile ~/.claude/CLAUDE.md · 38 B"),
+    ).toBeInTheDocument();
+    const activeRow = screen.getByTestId("prompt-row-record-index-47");
+    expect(within(activeRow).getByText("prompts.enabled")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("prompt-row-second-record")).queryByText(
+        "prompts.enabled",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("preserves record IDs for filtered toggle, edit, and delete actions", async () => {
     renderPanel();
     await waitForPanelReady();
-    searchFor("quasar instruction");
+    searchFor("deployment");
 
-    fireEvent.click(screen.getByRole("switch"));
-    expect(mocks.toggleEnabled).toHaveBeenCalledWith("record-index-47", false);
-    await waitFor(() => {
-      expect(screen.getByTitle("common.edit")).toBeEnabled();
-    });
+    fireEvent.click(enableButton("Harbor Prompt"));
+    expect(mocks.toggleEnabled).toHaveBeenCalledWith("second-record", true);
+    await waitForPanelReady();
 
-    fireEvent.click(screen.getByTitle("common.edit"));
+    fireEvent.click(editButton("Harbor Prompt"));
     expect(screen.getByTestId("prompt-form")).toHaveTextContent(
-      "record-index-47:Aurora Prompt",
+      "second-record:Harbor Prompt",
     );
     fireEvent.click(screen.getByRole("button", { name: "form-close" }));
 
-    fireEvent.click(screen.getByTitle("common.delete"));
-    expect(
-      screen.getByText("prompts.confirm.deleteMessage:Aurora Prompt"),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "confirm-dialog" }));
+    const { user, menu } = await openRowMenu("Harbor Prompt");
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "common.delete" }),
+    );
 
     await waitFor(() => {
-      expect(mocks.deletePrompt).toHaveBeenCalledWith("record-index-47");
+      expect(mocks.deletePrompt).toHaveBeenCalledWith("second-record");
     });
   });
 
-  it("keeps the search field outside the scrollable viewport", async () => {
-    const { container } = renderPanel();
+  it("deletes without a confirmation and restores the same record on undo", async () => {
+    renderPanel();
     await waitForPanelReady();
-    const input = screen.getByRole("textbox", {
-      name: "prompts.searchAriaLabel",
-    });
-    const viewport = container.querySelector(
-      "[data-radix-scroll-area-viewport]",
+    const original = mocks.state.prompts["second-record"];
+
+    const { user, menu } = await openRowMenu("Harbor Prompt");
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "common.delete" }),
     );
 
-    expect(viewport).not.toBeNull();
-    expect(viewport).not.toContainElement(input);
+    await waitFor(() =>
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        "prompts.toast.deleted:Harbor Prompt",
+        expect.objectContaining({
+          description: "prompts.toast.deletedSub:~/.claude/CLAUDE.md",
+        }),
+      ),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    act(() => lastUndo()?.());
+    await waitFor(() =>
+      expect(promptsApi.upsertPrompt).toHaveBeenCalledWith(
+        "claude",
+        "second-record",
+        original,
+      ),
+    );
+  });
+
+  it("keeps the enabled prompt from being deleted and says why", async () => {
+    renderPanel();
+    await waitForPanelReady();
+
+    const { menu } = await openRowMenu("Aurora Prompt");
+    const item = within(menu).getByRole("menuitem", {
+      name: /common.delete/,
+    });
+    expect(item).toHaveAttribute("data-disabled");
+    expect(within(menu).getByText("prompts.deleteBlocked")).toBeInTheDocument();
+  });
+
+  it("deletes from the drawer after closing it", async () => {
+    renderPanel();
+    await waitForPanelReady();
+
+    fireEvent.click(editButton("Harbor Prompt"));
+    fireEvent.click(screen.getByRole("button", { name: "form-delete" }));
+
+    await waitFor(() =>
+      expect(mocks.deletePrompt).toHaveBeenCalledWith("second-record"),
+    );
+    expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
+  });
+
+  it("disabling says the file was emptied and undo re-enables it", async () => {
+    renderPanel({ appId: "hermes" });
+    await waitForPanelReady();
+
+    fireEvent.click(disableButton("Aurora Prompt"));
+
+    await waitFor(() =>
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        "prompts.toast.disabled:Aurora Prompt",
+        expect.objectContaining({
+          description: "prompts.toast.hermesOff",
+        }),
+      ),
+    );
+    act(() => lastUndo()?.());
+    await waitFor(() =>
+      expect(promptsApi.enablePrompt).toHaveBeenCalledWith(
+        "hermes",
+        "record-index-47",
+      ),
+    );
+  });
+
+  it("enabling reports a backup of the file and undo switches back", async () => {
+    mocks.state.latest = {
+      ...createPrompts(),
+      "backup-1": {
+        id: "backup-1",
+        name: "Original 1",
+        content: "x",
+        enabled: false,
+      },
+    };
+    renderPanel();
+    await waitForPanelReady();
+
+    fireEvent.click(enableButton("Harbor Prompt"));
+
+    await waitFor(() =>
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        "prompts.toast.enabled:Harbor Prompt",
+        expect.objectContaining({
+          description: "prompts.toast.backup:Original 1",
+        }),
+      ),
+    );
+    act(() => lastUndo()?.());
+    await waitFor(() =>
+      expect(promptsApi.enablePrompt).toHaveBeenCalledWith(
+        "claude",
+        "record-index-47",
+      ),
+    );
+  });
+
+  it("offers no undo when enabling would lose a hand-written file", async () => {
+    mocks.state.prompts = {
+      draft: { id: "draft", name: "Draft", content: "d", enabled: false },
+    };
+    mocks.state.currentFileContent = "hand-written";
+    mocks.state.latest = {
+      ...mocks.state.prompts,
+      "backup-9": {
+        id: "backup-9",
+        name: "Orig",
+        content: "x",
+        enabled: false,
+      },
+    };
+    renderPanel();
+    await waitFor(() => expect(enableButton("Draft")).toBeEnabled());
+
+    fireEvent.click(enableButton("Draft"));
+
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    expect(lastUndo()).toBeUndefined();
+  });
+
+  it("imports the existing file from the empty state with an undo", async () => {
+    mocks.state.prompts = {};
+    mocks.state.currentFileContent = "# Rules\n\nBe brief.";
+    renderPanel({ appId: "grokbuild" });
+
+    expect(
+      await screen.findByText("prompts.emptyTitle:Grok Build"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/# Rules\s+Be brief\./)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "prompts.importExisting" }),
+    );
+
+    await waitFor(() => expect(mocks.importFromFile).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        "prompts.toast.imported:~/.grokbuild/CLAUDE.md",
+        expect.anything(),
+      ),
+    );
+    act(() => lastUndo()?.());
+    await waitFor(() =>
+      expect(promptsApi.deletePrompt).toHaveBeenCalledWith(
+        "grokbuild",
+        "imported-1",
+      ),
+    );
+  });
+
+  it("hides the import entry on an empty file", async () => {
+    mocks.state.prompts = {};
+    mocks.state.currentFileContent = "  \n";
+    renderPanel();
+
+    await screen.findByText("prompts.emptyTitle:Claude Code");
+    expect(
+      screen.queryByRole("button", { name: "prompts.importExisting" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("copies a prompt to other apps, leaving Hermes unchecked by default", async () => {
+    vi.mocked(promptsApi.getPrompts).mockImplementation(
+      async (app): Promise<Record<string, Prompt>> =>
+        app === "codex"
+          ? {
+              same: {
+                id: "same",
+                name: "Harbor Prompt",
+                content: "",
+                enabled: false,
+              },
+            }
+          : {},
+    );
+    renderPanel();
+    await waitForPanelReady();
+
+    const { user, menu } = await openRowMenu("Harbor Prompt");
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "prompts.copyToApps" }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText(/Gemini CLI/)).toBeChecked(),
+    );
+    expect(within(dialog).getByLabelText(/Codex/)).not.toBeChecked();
+    expect(within(dialog).getByLabelText(/Hermes/)).not.toBeChecked();
+    expect(
+      within(dialog).getByText("prompts.copyDialog.sameName"),
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "prompts.copyDialog.go" }),
+    );
+
+    await waitFor(() =>
+      expect(promptsApi.upsertPrompt).toHaveBeenCalledWith(
+        "gemini",
+        expect.any(String),
+        expect.objectContaining({
+          name: "Harbor Prompt",
+          content: "Prepare the release notes.",
+          enabled: false,
+        }),
+      ),
+    );
+    expect(promptsApi.upsertPrompt).toHaveBeenCalledTimes(1);
   });
 
   it("serializes toggle writes and reports the interaction as blocked", async () => {
@@ -309,19 +574,10 @@ describe("PromptPanel", () => {
       }),
     );
     const onInteractionBlockedChange = vi.fn();
-    const ref = createRef<PromptPanelHandle>();
-    render(
-      <PromptPanel
-        ref={ref}
-        open
-        appId="claude"
-        onOpenChange={() => undefined}
-        onInteractionBlockedChange={onInteractionBlockedChange}
-      />,
-    );
+    renderPanel({ onInteractionBlockedChange });
     await waitForPanelReady();
 
-    const toggle = screen.getAllByRole("switch")[0];
+    const toggle = enableButton("Harbor Prompt");
     fireEvent.click(toggle);
     fireEvent.click(toggle);
 
@@ -329,12 +585,10 @@ describe("PromptPanel", () => {
     await waitFor(() => {
       expect(onInteractionBlockedChange).toHaveBeenLastCalledWith(true);
     });
-    expect(toggle).toBeDisabled();
-    expect(screen.getAllByTitle("common.edit")[0]).toBeDisabled();
-    expect(screen.getAllByTitle("common.delete")[0]).toBeDisabled();
-
-    act(() => ref.current?.openAdd());
-    expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
+    // 外观上的禁用晚 300ms 出现（useDelayedFlag），拦截本身是立即的
+    await waitFor(() => expect(toggle).toBeDisabled());
+    expect(editButton("Harbor Prompt")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "prompts.add" })).toBeDisabled();
 
     await act(async () => {
       resolveToggle();
@@ -347,30 +601,21 @@ describe("PromptPanel", () => {
 
   it("blocks all prompt actions while the collection is loading", async () => {
     mocks.state.loading = true;
-    const ref = createRef<PromptPanelHandle>();
+    mocks.state.prompts = {};
     const onInteractionBlockedChange = vi.fn();
-    render(
-      <PromptPanel
-        ref={ref}
-        open
-        appId="claude"
-        onOpenChange={() => undefined}
-        onInteractionBlockedChange={onInteractionBlockedChange}
-      />,
-    );
+    renderPanel({ onInteractionBlockedChange });
 
     await waitFor(() => {
       expect(onInteractionBlockedChange).toHaveBeenLastCalledWith(true);
     });
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("common.edit")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("common.delete")).not.toBeInTheDocument();
-
-    act(() => ref.current?.openAdd());
+    expect(screen.getByText("prompts.loading")).toBeInTheDocument();
+    const add = screen.getByRole("button", { name: "prompts.add" });
+    fireEvent.click(add);
+    expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
+    await waitFor(() => expect(add).toBeDisabled());
+    fireEvent.click(add);
     expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
     expect(mocks.toggleEnabled).not.toHaveBeenCalled();
-    expect(mocks.savePrompt).not.toHaveBeenCalled();
-    expect(mocks.deletePrompt).not.toHaveBeenCalled();
   });
 
   it("queues external reloads until the active write finishes", async () => {
@@ -385,7 +630,7 @@ describe("PromptPanel", () => {
         resolveToggle = resolve;
       }),
     );
-    fireEvent.click(screen.getAllByRole("switch")[0]);
+    fireEvent.click(enableButton("Harbor Prompt"));
 
     act(() => {
       window.dispatchEvent(
@@ -410,19 +655,7 @@ describe("PromptPanel", () => {
     mocks.reload.mockClear();
     mocks.toggleEnabled.mockResolvedValueOnce(false);
 
-    fireEvent.click(screen.getAllByRole("switch")[0]);
-
-    await waitFor(() => expect(mocks.reload).toHaveBeenCalledTimes(1));
-  });
-
-  it("runs one compensating reload when a delete write cannot refresh", async () => {
-    renderPanel();
-    await waitForPanelReady();
-    mocks.reload.mockClear();
-    mocks.deletePrompt.mockResolvedValueOnce(false);
-
-    fireEvent.click(screen.getAllByTitle("common.delete")[0]);
-    fireEvent.click(screen.getByRole("button", { name: "confirm-dialog" }));
+    fireEvent.click(enableButton("Harbor Prompt"));
 
     await waitFor(() => expect(mocks.reload).toHaveBeenCalledTimes(1));
   });
@@ -433,7 +666,7 @@ describe("PromptPanel", () => {
     mocks.reload.mockClear();
     mocks.savePrompt.mockResolvedValueOnce(false);
 
-    fireEvent.click(screen.getAllByTitle("common.edit")[0]);
+    fireEvent.click(editButton("Harbor Prompt"));
     fireEvent.click(screen.getByRole("button", { name: "form-save" }));
 
     await waitFor(() => expect(mocks.reload).toHaveBeenCalledTimes(1));
@@ -448,16 +681,7 @@ describe("PromptPanel", () => {
     );
     const onInteractionBlockedChange = vi.fn();
     const onNavigationBlockedChange = vi.fn();
-
-    render(
-      <PromptPanel
-        open
-        appId="claude"
-        onOpenChange={() => undefined}
-        onInteractionBlockedChange={onInteractionBlockedChange}
-        onNavigationBlockedChange={onNavigationBlockedChange}
-      />,
-    );
+    renderPanel({ onInteractionBlockedChange, onNavigationBlockedChange });
 
     await waitFor(() => {
       expect(mocks.reload).toHaveBeenCalledTimes(1);
@@ -489,14 +713,37 @@ describe("PromptPanel", () => {
     expect(mocks.reload).not.toHaveBeenCalled();
   });
 
+  it("keeps controls enabled through a quick focus reload but still blocks clicks", async () => {
+    renderPanel();
+    await waitForPanelReady();
+
+    let resolveReload!: () => void;
+    mocks.reload.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveReload = resolve;
+      }),
+    );
+    fireEvent(window, new Event("focus"));
+    const add = screen.getByRole("button", { name: "prompts.add" });
+    expect(add).not.toBeDisabled();
+    fireEvent.click(add);
+    expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveReload();
+      await Promise.resolve();
+    });
+    expect(add).not.toBeDisabled();
+  });
+
   it.each(["focus", "prompt-imported"])(
-    "queues %s reloads while an edit or confirmation is open",
+    "queues %s reloads while the drawer is open",
     async (trigger) => {
       renderPanel();
       await waitForPanelReady();
       mocks.reload.mockClear();
 
-      fireEvent.click(screen.getAllByTitle("common.edit")[0]);
+      fireEvent.click(editButton("Harbor Prompt"));
       fireEvent(
         window,
         trigger === "focus"
@@ -506,19 +753,6 @@ describe("PromptPanel", () => {
       expect(mocks.reload).not.toHaveBeenCalled();
 
       fireEvent.click(screen.getByRole("button", { name: "form-close" }));
-      await waitFor(() => expect(mocks.reload).toHaveBeenCalledTimes(1));
-      mocks.reload.mockClear();
-      await waitForPanelReady();
-
-      fireEvent.click(screen.getAllByTitle("common.delete")[0]);
-      act(() => {
-        window.dispatchEvent(
-          new CustomEvent("prompt-imported", { detail: { app: "claude" } }),
-        );
-      });
-      expect(mocks.reload).not.toHaveBeenCalled();
-
-      fireEvent.click(screen.getByRole("button", { name: "cancel-dialog" }));
       await waitFor(() => expect(mocks.reload).toHaveBeenCalledTimes(1));
     },
   );
@@ -536,27 +770,15 @@ describe("PromptPanel", () => {
       appId === "codex" ? codexReload : claudeReload,
     );
 
-    const ref = createRef<PromptPanelHandle>();
-    const view = render(
-      <PromptPanel
-        ref={ref}
-        open
-        appId="claude"
-        onOpenChange={() => undefined}
-      />,
-    );
+    const view = renderPanel();
     await waitFor(() => expect(claudeReload).toHaveBeenCalledTimes(1));
-    act(() => ref.current?.openAdd());
-    expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
-
-    view.rerender(
-      <PromptPanel
-        ref={ref}
-        open
-        appId="codex"
-        onOpenChange={() => undefined}
-      />,
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "prompts.add" }),
+      ).toBeDisabled(),
     );
+
+    view.rerenderWith({ appId: "codex" });
     await waitFor(() => expect(codexReload).toHaveBeenCalledTimes(1));
     expect(claudeReload).toHaveBeenCalledTimes(1);
 
@@ -567,37 +789,6 @@ describe("PromptPanel", () => {
     expect(codexReload).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps delete confirmation pending and ignores duplicate confirms", async () => {
-    let resolveDelete!: () => void;
-    mocks.deletePrompt.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        resolveDelete = resolve;
-      }),
-    );
-    renderPanel();
-    await waitForPanelReady();
-
-    fireEvent.click(screen.getAllByTitle("common.delete")[0]);
-    const confirm = screen.getByRole("button", { name: "confirm-dialog" });
-    const cancel = screen.getByRole("button", { name: "cancel-dialog" });
-    fireEvent.click(confirm);
-    fireEvent.click(confirm);
-
-    expect(mocks.deletePrompt).toHaveBeenCalledTimes(1);
-    await waitFor(() => {
-      expect(confirm).toBeDisabled();
-      expect(cancel).toBeDisabled();
-    });
-
-    await act(async () => {
-      resolveDelete();
-      await Promise.resolve();
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    });
-  });
-
   it("locks form saves and cannot close the form while a save is pending", async () => {
     let resolveSave!: () => void;
     mocks.savePrompt.mockReturnValueOnce(
@@ -606,17 +797,10 @@ describe("PromptPanel", () => {
       }),
     );
     const onInteractionBlockedChange = vi.fn();
-    render(
-      <PromptPanel
-        open
-        appId="claude"
-        onOpenChange={() => undefined}
-        onInteractionBlockedChange={onInteractionBlockedChange}
-      />,
-    );
+    renderPanel({ onInteractionBlockedChange });
     await waitForPanelReady();
 
-    fireEvent.click(screen.getAllByTitle("common.edit")[0]);
+    fireEvent.click(editButton("Harbor Prompt"));
     const save = screen.getByRole("button", { name: "form-save" });
     fireEvent.click(save);
     fireEvent.click(save);
@@ -636,31 +820,43 @@ describe("PromptPanel", () => {
       expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
       expect(onInteractionBlockedChange).toHaveBeenLastCalledWith(false);
     });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "prompts.toast.saved:Harbor Prompt",
+      expect.anything(),
+    );
   });
 
-  it("closes stale forms and confirmations when the app changes", async () => {
-    const view = renderPanel("claude");
+  it("closes stale drawers when the app changes", async () => {
+    const view = renderPanel();
     await waitForPanelReady();
 
-    fireEvent.click(screen.getAllByTitle("common.edit")[0]);
+    fireEvent.click(editButton("Harbor Prompt"));
     expect(screen.getByTestId("prompt-form")).toBeInTheDocument();
 
-    view.rerender(
-      <PromptPanel open appId="codex" onOpenChange={() => undefined} />,
-    );
+    view.rerenderWith({ appId: "codex" });
     await waitFor(() => {
       expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
     });
+  });
+
+  it("uses the Hermes rule in the page help", async () => {
+    renderPanel({ appId: "hermes" });
     await waitForPanelReady();
 
-    fireEvent.click(screen.getAllByTitle("common.delete")[0]);
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "prompts.helpHermesTitle" }),
+    ).toBeInTheDocument();
+  });
 
-    view.rerender(
-      <PromptPanel open appId="gemini" onOpenChange={() => undefined} />,
-    );
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    });
+  it("switches apps from the picker", async () => {
+    const onAppChange = vi.fn();
+    renderPanel({ onAppChange });
+    await waitForPanelReady();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: /Claude Code/ }));
+    await user.click(await screen.findByRole("button", { name: /Hermes/ }));
+
+    expect(onAppChange).toHaveBeenCalledWith("hermes");
   });
 });

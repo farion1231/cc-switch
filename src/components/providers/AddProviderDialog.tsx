@@ -1,13 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Plus } from "lucide-react";
-import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import {
+  PresetStepContext,
+  type PresetStepState,
+} from "@/components/providers/forms/presetStep";
 import type { Provider, CustomEndpoint, UniversalProvider } from "@/types";
 import type { AppId } from "@/lib/api";
-import { universalProvidersApi } from "@/lib/api";
+import { providersApi, universalProvidersApi } from "@/lib/api";
+import type {
+  EditorConflictPolicy,
+  ProviderEditorSave,
+} from "@/lib/api/providers";
+import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
+import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
+import { usesEditorView } from "@/config/appConfig";
 import {
   ProviderForm,
   type ProviderFormValues,
@@ -36,6 +47,7 @@ interface AddProviderDialogProps {
       suggestedDefaults?: OpenClawSuggestedDefaults;
       ensureClaudeDesktopOfficialSeed?: boolean;
       ensureGrokBuildOfficialSeed?: boolean;
+      editorSave?: ProviderEditorSave;
     },
   ) => Promise<void> | void;
 }
@@ -56,8 +68,23 @@ export function AddProviderDialog({
     appId !== "mcode" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
-  const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
-    "app-specific",
+  // 两步：先选预设，再填写（每次打开都从第 1 步开始）
+  const [step, setStep] = useState<"pick" | "form">("pick");
+  const [pickerHost, setPickerHost] = useState<HTMLDivElement | null>(null);
+  const [manageUniversalOpen, setManageUniversalOpen] = useState(false);
+  useEffect(() => {
+    if (open) setStep("pick");
+  }, [open, appId]);
+  const selectorCount = useRef(0);
+  const registerSelector = useCallback(() => {
+    selectorCount.current += 1;
+    return () => {
+      selectorCount.current -= 1;
+    };
+  }, []);
+  const stepState = useMemo<PresetStepState>(
+    () => ({ appId, step, setStep, host: pickerHost, registerSelector }),
+    [appId, step, pickerHost, registerSelector],
   );
   const [universalFormOpen, setUniversalFormOpen] = useState(false);
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
@@ -70,8 +97,60 @@ export function AddProviderDialog({
     setAuthSettingsTarget(null);
   }, [appId, open]);
 
+  // Claude：预设的关键字段套在当前 live 上显示（去掉当前供应商的关键字段），保存时
+  // 其余部分的改动写进 live，这份底也用来三方比较。
+  const [claudeLiveBase, setClaudeLiveBase] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const [claudeBaseLoaded, setClaudeBaseLoaded] = useState(false);
+  // Codex、Gemini CLI、Grok Build：表单把预设投影到当前配置文件上显示，投影结果就是保存时
+  // 三方比较的底（投影进行中或失败时为 null，保存只存供应商）。投影成它的草稿一起留着，
+  // 后端按草稿分开预设带的字段和从 live 带进来的字段。
+  const [draftEditorBase, setDraftEditorBase] = useState<{
+    base: Record<string, unknown>;
+    draft?: Record<string, unknown>;
+  } | null>(null);
+  const handleDraftEditorBase = useCallback(
+    (base: Record<string, unknown> | null, draft?: Record<string, unknown>) =>
+      setDraftEditorBase(base ? { base, draft } : null),
+    [],
+  );
+  // 新增时表单自己把预设投影到配置文件上的应用（Claude Code 在对话框里取底，见上）。
+  const projectsDraft = appId !== "claude" && usesEditorView(appId);
+  const { submitWithConflictRetry, conflictDialog } = useLiveEditConflict();
+
+  useEffect(() => {
+    if (!open || appId !== "claude") {
+      setClaudeLiveBase(null);
+      setClaudeBaseLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    providersApi
+      .getEditorView(appId, {})
+      .then((view) => {
+        if (!cancelled) setClaudeLiveBase(view.settings);
+      })
+      .catch((error: unknown) => {
+        // 读不了 settings.json：退回只显示预设。
+        if (!cancelled) {
+          setClaudeLiveBase(null);
+          toastEditorViewFailed(t, error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setClaudeBaseLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, appId, t]);
+
   const closeDialog = useCallback(() => {
     setAuthSettingsTarget(null);
+    // 表单每次打开都会重新投影；这里清掉，免得下次打开时先用上一次的底。
+    setDraftEditorBase(null);
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -80,8 +159,13 @@ export function AddProviderDialog({
       setAuthSettingsTarget(null);
       return;
     }
+    // 第 2 步的返回回到选预设
+    if (step === "form") {
+      setStep("pick");
+      return;
+    }
     closeDialog();
-  }, [authSettingsTarget, closeDialog]);
+  }, [authSettingsTarget, closeDialog, step]);
   const formReadyToken = useMemo(
     () => Symbol("provider-form-ready"),
     [appId, open],
@@ -351,110 +435,128 @@ export function AddProviderDialog({
         providerData.suggestedDefaults = values.suggestedDefaults;
       }
 
-      await onSubmit(providerData);
-      closeDialog();
+      const editorBase =
+        appId === "claude"
+          ? claudeLiveBase && { base: claudeLiveBase }
+          : projectsDraft
+            ? draftEditorBase
+            : null;
+      const submit = async (onConflict: EditorConflictPolicy) => {
+        await onSubmit({
+          ...providerData,
+          ...(editorBase ? { editorSave: { ...editorBase, onConflict } } : {}),
+        });
+        closeDialog();
+      };
+      await submitWithConflictRetry(submit);
     },
-    [appId, onSubmit, closeDialog],
+    [
+      appId,
+      onSubmit,
+      closeDialog,
+      claudeLiveBase,
+      projectsDraft,
+      draftEditorBase,
+      submitWithConflictRetry,
+    ],
   );
 
+  const waitingForClaudeBase = appId === "claude" && !claudeBaseLoaded;
+
+  // 表单已经挂上、却没有预设选择器（没有预设可选的表单）：直接进第 2 步。
+  // 子组件的 effect 先于这里执行，选择器在同一次提交里已经登记过了。
+  useEffect(() => {
+    if (open && !waitingForClaudeBase && selectorCount.current === 0) {
+      setStep("form");
+    }
+  }, [open, waitingForClaudeBase, appId]);
+
   const footer =
-    !showUniversalTab || activeTab === "app-specific" ? (
+    step === "form" ? (
       <>
-        <span className="mr-auto min-w-0 text-xs text-muted-foreground truncate">
-          {t("provider.addFooterHint")}
-        </span>
         <Button
-          variant="outline"
+          type="button"
+          variant="neutral"
+          size="regular"
           onClick={closeDialog}
-          className="border-border/20 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
         </Button>
         <Button
           type="submit"
           form="provider-form"
+          variant="solid"
+          size="regular"
           disabled={isFormSubmitting || !isFormReady}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
-          {isFormSubmitting ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Plus className="mr-2 h-4 w-4" />
-          )}
+          {isFormSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
           {t("common.add")}
         </Button>
       </>
-    ) : (
-      <>
-        <Button
-          variant="outline"
-          onClick={closeDialog}
-          className="border-border/20 hover:bg-accent hover:text-accent-foreground"
-        >
-          {t("common.cancel")}
-        </Button>
-        <Button
-          onClick={() => setUniversalFormOpen(true)}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          {t("universalProvider.add")}
-        </Button>
-      </>
-    );
+    ) : null;
+
+  const form = (
+    <ProviderForm
+      appId={appId}
+      submitLabel={t("common.add")}
+      onSubmit={handleSubmit}
+      onCancel={closeDialog}
+      onManageAuthAccounts={setAuthSettingsTarget}
+      onSubmittingChange={setIsFormSubmitting}
+      onSubmitReadyChange={handleSubmitReadyChange}
+      showButtons={false}
+      claudeLiveBase={
+        appId === "claude" ? (claudeLiveBase ?? undefined) : undefined
+      }
+      onEditorBaseChange={projectsDraft ? handleDraftEditorBase : undefined}
+      onUniversalPresetSelect={
+        showUniversalTab
+          ? (preset) => {
+              setSelectedUniversalPreset(preset);
+              setUniversalFormOpen(true);
+            }
+          : undefined
+      }
+      onManageUniversalProviders={
+        showUniversalTab ? () => setManageUniversalOpen(true) : undefined
+      }
+    />
+  );
 
   return (
     <FullScreenPanel
       isOpen={open}
       title={t("provider.addNewProvider")}
+      subtitle={APP_DISPLAY_NAME[appId]}
+      backLabel={
+        step === "form"
+          ? t("providerPreset.backToPick")
+          : t("provider.backToList")
+      }
       onClose={handlePanelClose}
       footer={footer}
-      contentClassName={appId === "pi" ? "pt-3 pb-0" : "pt-3"}
+      contentClassName={
+        step === "pick"
+          ? "flex h-full flex-col space-y-0 p-0"
+          : appId === "pi"
+            ? "mx-0 max-w-[1008px] pb-0 pt-4"
+            : "mx-0 max-w-[1008px] pt-4"
+      }
     >
-      {showUniversalTab ? (
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) => setActiveTab(v as "app-specific" | "universal")}
-        >
-          <TabsList className="grid w-full grid-cols-2 mb-6">
-            <TabsTrigger value="app-specific">
-              {t(`apps.${appId}`)} {t("provider.tabProvider")}
-            </TabsTrigger>
-            <TabsTrigger value="universal">
-              {t("provider.tabUniversal")}
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="app-specific" className="mt-0">
-            <ProviderForm
-              appId={appId}
-              submitLabel={t("common.add")}
-              onSubmit={handleSubmit}
-              onCancel={closeDialog}
-              onManageAuthAccounts={setAuthSettingsTarget}
-              onSubmittingChange={setIsFormSubmitting}
-              onSubmitReadyChange={handleSubmitReadyChange}
-              showButtons={false}
-            />
-          </TabsContent>
-
-          <TabsContent value="universal" className="mt-0">
-            <UniversalProviderPanel />
-          </TabsContent>
-        </Tabs>
-      ) : (
-        // OpenCode/OpenClaw: directly show form without tabs
-        <ProviderForm
-          appId={appId}
-          submitLabel={t("common.add")}
-          onSubmit={handleSubmit}
-          onCancel={closeDialog}
-          onManageAuthAccounts={setAuthSettingsTarget}
-          onSubmittingChange={setIsFormSubmitting}
-          onSubmitReadyChange={handleSubmitReadyChange}
-          showButtons={false}
-        />
-      )}
+      <PresetStepContext.Provider value={stepState}>
+        {step === "pick" && (
+          <div ref={setPickerHost} className="min-h-0 flex-1" />
+        )}
+        <div className={step === "pick" ? "hidden" : undefined}>
+          {waitingForClaudeBase ? (
+            <div className="py-12 text-center text-body text-fg-2">
+              {t("common.loading")}
+            </div>
+          ) : (
+            form
+          )}
+        </div>
+      </PresetStepContext.Provider>
 
       {showUniversalTab && (
         <UniversalProviderFormModal
@@ -465,10 +567,21 @@ export function AddProviderDialog({
         />
       )}
 
+      {showUniversalTab && (
+        <FullScreenPanel
+          isOpen={manageUniversalOpen}
+          title={t("universalProvider.manage")}
+          onClose={() => setManageUniversalOpen(false)}
+        >
+          <UniversalProviderPanel />
+        </FullScreenPanel>
+      )}
+
       <AuthSettingsPanel
         target={authSettingsTarget}
         onClose={() => setAuthSettingsTarget(null)}
       />
+      {conflictDialog}
     </FullScreenPanel>
   );
 }
