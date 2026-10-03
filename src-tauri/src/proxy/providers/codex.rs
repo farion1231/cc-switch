@@ -243,6 +243,15 @@ fn provider_is_xai_native_responses(provider: &Provider) -> bool {
         .is_some_and(|url| url.contains("api.x.ai"))
 }
 
+/// 原生 Responses 透传的响应要不要补迟到的函数调用参数（见 `responses_late_arguments`）：
+/// 官方以外的上游都补。触发条件是协议违规本身（结束事件参数为空、增量排在后面，实测
+/// MiniMax），不按厂商名：转发 MiniMax 原生流的中转站同样会带过来。顺序正常的流原样放行。
+///
+/// 只在转 Chat / 转 Anthropic / xAI 改写之外的原生透传分支里调用。
+pub fn provider_needs_responses_late_arguments_repair(provider: &Provider) -> bool {
+    !is_codex_official_provider(provider)
+}
+
 fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
     let non_empty_setting = |key: &str| {
         provider
