@@ -202,6 +202,12 @@ function App() {
     localStorage.setItem(VIEW_STORAGE_KEY, currentView);
   }, [currentView]);
 
+  useEffect(() => {
+    if (activeApp) {
+      localStorage.setItem(STORAGE_KEY, activeApp);
+    }
+  }, [activeApp]);
+
   const { data: settingsData } = useSettingsQuery();
   const useAppWindowControls =
     isLinux() && (settingsData?.useAppWindowControls ?? false);
@@ -220,10 +226,11 @@ function App() {
   };
 
   useEffect(() => {
+    if (!settingsData) return;
     if (!visibleApps[activeApp]) {
       setActiveApp(getFirstVisibleApp());
     }
-  }, [visibleApps, activeApp]);
+  }, [visibleApps, activeApp, settingsData]);
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
