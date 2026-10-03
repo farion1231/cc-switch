@@ -380,7 +380,7 @@ fn update_model_pricing_batch_inner(
         .collect::<Vec<_>>();
 
     sync_local_model_pricing(db)?;
-    let changed = {
+    let (changed, repriced_model_ids) = {
         let _file_guard = file_lock()
             .lock()
             .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
@@ -404,16 +404,28 @@ fn update_model_pricing_batch_inner(
         let mut conn = lock_conn!(db.conn);
         let transaction = conn.transaction()?;
         let mut changed = 0;
+        let mut repriced_model_ids = Vec::new();
         for entry in &entries {
-            changed += upsert_pricing(&transaction, entry)?;
+            let updated = upsert_pricing(&transaction, entry)?;
+            if updated > 0 {
+                repriced_model_ids.push(entry.model_id.clone());
+            }
+            changed += updated;
         }
         write_file_unlocked(&file)?;
         transaction.commit()?;
-        changed
+        (changed, repriced_model_ids)
     };
 
     if changed > 0 {
         if backfill_all {
+            // models.dev 批量同步改价后，历史行可能仍带着启动回填按旧价固化的
+            // 成本；零成本回填碰不到它们，必须先清零再按新价补回。
+            for model_id in &repriced_model_ids {
+                if let Err(error) = db.reprice_usage_costs_for_model(model_id) {
+                    log::warn!("模型改价后重算历史用量成本失败 (model_id={model_id}): {error}");
+                }
+            }
             if let Err(error) = db.backfill_missing_usage_costs() {
                 log::warn!("批量更新模型定价后回填历史用量成本失败: {error}");
             }
@@ -719,6 +731,232 @@ mod tests {
                 .expect("query pending usage cost");
             assert_eq!(deleted_count, 0);
             assert_eq!(total_cost, 0.0);
+        });
+    }
+
+    fn insert_usage_row(conn: &rusqlite::Connection, request_id: &str, model: &str) -> usize {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                cache_creation_cost_usd, total_cost_usd, latency_ms,
+                status_code, created_at, data_source
+            ) VALUES (
+                ?1, 'test-provider', 'claude', ?2, ?2,
+                1000000, 1000000, 500000, 250000, '0', '0', '0', '0', '0', 100, 200, 1, 'proxy'
+            )",
+            params![request_id, model],
+        )
+        .expect("insert usage row")
+    }
+
+    fn usage_costs(conn: &rusqlite::Connection, request_id: &str) -> String {
+        conn.query_row(
+            "SELECT input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                    cache_creation_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = ?1",
+            params![request_id],
+            |row| {
+                Ok(format!(
+                    "{},{},{},{},{}",
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?
+                ))
+            },
+        )
+        .expect("query usage costs")
+    }
+
+    fn repriced_pricing() -> ModelPricingInfo {
+        ModelPricingInfo {
+            model_id: "custom-model".to_string(),
+            display_name: "Custom Model".to_string(),
+            input_cost_per_million: "4".to_string(),
+            output_cost_per_million: "8".to_string(),
+            cache_read_cost_per_million: "0.2".to_string(),
+            cache_creation_cost_per_million: "3".to_string(),
+        }
+    }
+
+    const V1_COSTS: &str = "1.250000,5.000000,0.050000,0.375000,6.675000";
+    const V2_COSTS: &str = "4.000000,8.000000,0.100000,0.750000,12.850000";
+
+    #[test]
+    #[serial]
+    fn batch_reprice_recalculates_history_rows_at_new_price() {
+        with_test_home(|db, _path| {
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                insert_usage_row(&conn, "reprice-target", "custom-model");
+            }
+
+            // 启动回填语义：先按旧价把零成本行固化出成本。
+            update_model_pricing(db, sample_pricing()).expect("seed v1 pricing");
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                assert_eq!(usage_costs(&conn, "reprice-target"), V1_COSTS);
+            }
+
+            // models.dev 批量同步改价：历史行必须按新价重算。
+            assert_eq!(
+                update_model_pricing_batch(db, vec![repriced_pricing()]).expect("batch reprice"),
+                1
+            );
+            let conn = db.conn.lock().expect("lock test database");
+            assert_eq!(usage_costs(&conn, "reprice-target"), V2_COSTS);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn batch_reprice_leaves_unchanged_models_untouched() {
+        with_test_home(|db, _path| {
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                insert_usage_row(&conn, "reprice-target", "custom-model");
+                insert_usage_row(&conn, "steady-row", "steady-model");
+            }
+
+            let steady = ModelPricingInfo {
+                model_id: "steady-model".to_string(),
+                display_name: "Steady Model".to_string(),
+                input_cost_per_million: "1.25".to_string(),
+                output_cost_per_million: "5".to_string(),
+                cache_read_cost_per_million: "0.1".to_string(),
+                cache_creation_cost_per_million: "1.5".to_string(),
+            };
+            update_model_pricing_batch(db, vec![sample_pricing(), steady.clone()])
+                .expect("seed batch v1");
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                assert_eq!(usage_costs(&conn, "reprice-target"), V1_COSTS);
+                assert_eq!(usage_costs(&conn, "steady-row"), V1_COSTS);
+            }
+
+            // 批次里 steady 的值原样重发：upsert 判定未变化，不得触发重算。
+            update_model_pricing_batch(db, vec![repriced_pricing(), steady])
+                .expect("batch with unchanged steady");
+            let conn = db.conn.lock().expect("lock test database");
+            assert_eq!(usage_costs(&conn, "reprice-target"), V2_COSTS);
+            assert_eq!(usage_costs(&conn, "steady-row"), V1_COSTS);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn manual_single_price_edit_keeps_existing_costs() {
+        with_test_home(|db, _path| {
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                insert_usage_row(&conn, "manual-target", "custom-model");
+            }
+
+            update_model_pricing(db, sample_pricing()).expect("seed v1 pricing");
+            // 手动单条改价行为不变：只补零成本行，已有成本分毫不动。
+            update_model_pricing(db, repriced_pricing()).expect("manual reprice");
+            let conn = db.conn.lock().expect("lock test database");
+            assert_eq!(usage_costs(&conn, "manual-target"), V1_COSTS);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn deleting_pricing_does_not_touch_existing_costs() {
+        with_test_home(|db, _path| {
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                insert_usage_row(&conn, "delete-target", "custom-model");
+            }
+
+            update_model_pricing(db, sample_pricing()).expect("seed v1 pricing");
+            delete_model_pricing(db, "custom-model").expect("delete pricing");
+            let conn = db.conn.lock().expect("lock test database");
+            assert_eq!(usage_costs(&conn, "delete-target"), V1_COSTS);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn batch_reprice_preserves_provider_reported_costs() {
+        // Pi and GrokBuild session imports may carry provider-reported costs
+        // (record.costs.reported()). Repricing must not zero and overwrite
+        // those authoritative values with locally-calculated pricing.
+        with_test_home(|db, _path| {
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                // Standard proxy row: locally-calculated costs → repriced.
+                insert_usage_row(&conn, "proxy-target", "custom-model");
+                // Pi session row with provider-reported costs → must be left alone.
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                        cache_creation_cost_usd, total_cost_usd, latency_ms,
+                        status_code, created_at, data_source
+                    ) VALUES (
+                        'pi-reported', 'pi-provider', 'pi', 'custom-model', 'custom-model',
+                        1000000, 1000000, 500000, 250000,
+                        '0.50', '2.00', '0.10', '0.75', '3.35', 100, 200, 1, 'pi_session'
+                    )",
+                    [],
+                )
+                .expect("insert pi row");
+                // GrokBuild session row with provider-reported total → must be left alone.
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                        cache_creation_cost_usd, total_cost_usd, latency_ms,
+                        status_code, created_at, data_source
+                    ) VALUES (
+                        'grok-reported', 'xai', 'grokbuild', 'custom-model', 'custom-model',
+                        1000000, 1000000, 500000, 250000,
+                        '0.40', '1.60', '0.08', '0.60', '2.68', 100, 200, 1, 'grok_session'
+                    )",
+                    [],
+                )
+                .expect("insert grok row");
+            }
+
+            // Seed v1 pricing → backfill zero-cost proxy row.
+            update_model_pricing(db, sample_pricing()).expect("seed v1 pricing");
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                assert_eq!(usage_costs(&conn, "proxy-target"), V1_COSTS);
+                // Provider-reported rows keep their original costs.
+                assert_eq!(
+                    usage_costs(&conn, "pi-reported"),
+                    "0.50,2.00,0.10,0.75,3.35"
+                );
+                assert_eq!(
+                    usage_costs(&conn, "grok-reported"),
+                    "0.40,1.60,0.08,0.60,2.68"
+                );
+            }
+
+            // Batch repricing: proxy row gets new price, provider-reported
+            // rows are untouched.
+            assert_eq!(
+                update_model_pricing_batch(db, vec![repriced_pricing()]).expect("batch reprice"),
+                1
+            );
+            let conn = db.conn.lock().expect("lock test database");
+            assert_eq!(usage_costs(&conn, "proxy-target"), V2_COSTS);
+            // Provider-reported costs preserved — not zeroed or recalculated.
+            assert_eq!(
+                usage_costs(&conn, "pi-reported"),
+                "0.50,2.00,0.10,0.75,3.35"
+            );
+            assert_eq!(
+                usage_costs(&conn, "grok-reported"),
+                "0.40,1.60,0.08,0.60,2.68"
+            );
         });
     }
 
