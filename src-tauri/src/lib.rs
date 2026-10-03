@@ -1624,6 +1624,7 @@ pub fn run() {
             commands::stream_check_provider,
             // Session manager
             commands::list_sessions,
+            commands::search_sessions,
             commands::get_session_messages,
             commands::delete_session,
             commands::delete_sessions,
