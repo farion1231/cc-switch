@@ -555,8 +555,24 @@ fn scan_sessions_jsonl() -> Vec<SessionMeta> {
     sessions
 }
 
+/// 一行 JSONL 里的消息角色和非空正文（扁平和 `{type:"message", message:{…}}` 两种格式）。
+fn jsonl_message(value: &Value) -> Option<(&str, String)> {
+    let role = value
+        .get("role")
+        .or_else(|| value.get("message").and_then(|m| m.get("role")))
+        .and_then(Value::as_str)?;
+    let content = value
+        .get("content")
+        .or_else(|| value.get("message").and_then(|m| m.get("content")))?;
+    let text = extract_text(content);
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some((role, text))
+}
+
 fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
-    // Read head (metadata + first user message) and tail (last timestamp)
+    // Read head (metadata + first user message) and tail (last timestamp + last message)
     let (head, tail) = read_head_tail_lines(path, 30, 10).ok()?;
 
     let mut first_user_msg: Option<String> = None;
@@ -615,26 +631,16 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
         }
 
         if first_user_msg.is_none() {
-            let role = value
-                .get("role")
-                .or_else(|| value.get("message").and_then(|m| m.get("role")))
-                .and_then(Value::as_str);
-
-            if role == Some("user") {
-                let content = value
-                    .get("content")
-                    .or_else(|| value.get("message").and_then(|m| m.get("content")));
-                if let Some(c) = content {
-                    let text = extract_text(c);
-                    if !text.trim().is_empty() {
-                        first_user_msg = Some(truncate_summary(&text, TITLE_MAX_CHARS).to_string());
-                    }
-                }
+            if let Some(("user", text)) = jsonl_message(&value) {
+                first_user_msg = Some(truncate_summary(&text, TITLE_MAX_CHARS));
             }
         }
     }
 
-    // Process tail lines for the most recent timestamp
+    // Process tail lines for the most recent timestamp and the last displayable message:
+    // the summary is the last user/assistant message, same as the SQLite scan.
+    let mut tail_ts: Option<i64> = None;
+    let mut last_msg: Option<String> = None;
     for line in tail.iter().rev() {
         if line.trim().is_empty() {
             continue;
@@ -643,15 +649,22 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        let ts = value
-            .get("timestamp")
-            .or_else(|| value.get("ts"))
-            .and_then(parse_timestamp_to_ms);
-        if let Some(t) = ts {
-            last_ts = Some(t);
+        if tail_ts.is_none() {
+            tail_ts = value
+                .get("timestamp")
+                .or_else(|| value.get("ts"))
+                .and_then(parse_timestamp_to_ms);
+        }
+        if last_msg.is_none() {
+            if let Some(("user" | "assistant", text)) = jsonl_message(&value) {
+                last_msg = Some(truncate_summary(&text, 160));
+            }
+        }
+        if tail_ts.is_some() && last_msg.is_some() {
             break;
         }
     }
+    let last_ts = tail_ts.or(last_ts);
 
     // Fall back to filename as session ID
     let session_id = session_id.unwrap_or_else(|| {
@@ -667,7 +680,7 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
         provider_id: PROVIDER_ID.to_string(),
         session_id,
         title: title.or_else(|| first_user_msg.clone()),
-        summary: first_user_msg,
+        summary: last_msg.or(first_user_msg),
         project_dir: cwd,
         created_at: first_ts,
         last_active_at: last_ts.or(first_ts),
@@ -784,6 +797,25 @@ mod tests {
         assert_eq!(meta.project_dir.as_deref(), Some("/home/user/project"));
         assert!(meta.created_at.is_some());
         assert!(meta.last_active_at.is_some());
+    }
+
+    /// JSONL 行和 SQLite 行并排显示：摘要同样取最后一条 user/assistant，首条只做标题回退。
+    #[test]
+    fn parse_jsonl_session_summary_is_the_last_message() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("s2.jsonl");
+        let mut f = File::create(&path).expect("create");
+        writeln!(f, r#"{{"type":"session","id":"s2"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"message","message":{{"role":"user","content":"first question"}},"timestamp":"2026-01-01T00:00:00Z"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"message","message":{{"role":"assistant","content":"first answer"}},"timestamp":"2026-01-01T00:01:00Z"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"message","message":{{"role":"user","content":"second question"}},"timestamp":"2026-01-01T00:02:00Z"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"message","message":{{"role":"assistant","content":"last answer"}},"timestamp":"2026-01-01T00:03:00Z"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"message","message":{{"role":"tool","content":"ignored"}},"timestamp":"2026-01-01T00:04:00Z"}}"#).unwrap();
+        f.flush().unwrap();
+
+        let meta = parse_jsonl_session(&path).expect("should parse");
+        assert_eq!(meta.title.as_deref(), Some("first question"));
+        assert_eq!(meta.summary.as_deref(), Some("last answer"));
     }
 
     #[test]
