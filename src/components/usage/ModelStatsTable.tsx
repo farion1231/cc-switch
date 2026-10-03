@@ -1,4 +1,6 @@
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -10,6 +12,21 @@ import {
 import { useModelStats } from "@/lib/query/usage";
 import { fmtUsd } from "./format";
 import type { UsageRangeSelection } from "@/types/usage";
+
+type SortKey =
+  | "requestCount"
+  | "totalTokens"
+  | "totalCost"
+  | "avgCostPerRequest";
+type SortDirection = "asc" | "desc";
+type SortState = { key: SortKey; direction: SortDirection };
+
+const DEFAULT_SORT: SortState = { key: "totalCost", direction: "desc" };
+
+const numericValue = (value: number | string) => {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
 interface ModelStatsTableProps {
   range: UsageRangeSelection;
@@ -27,50 +44,98 @@ export function ModelStatsTable({
   refreshIntervalMs,
 }: ModelStatsTableProps) {
   const { t } = useTranslation();
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const { data: stats, isLoading } = useModelStats(
     range,
     { appType, providerName, model },
-    {
-      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-    },
+    { refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false },
   );
+
+  const sortedStats = useMemo(
+    () =>
+      [...(stats ?? [])].sort((left, right) => {
+        const difference =
+          numericValue(left[sort.key]) - numericValue(right[sort.key]);
+        if (difference !== 0) {
+          return sort.direction === "asc" ? difference : -difference;
+        }
+        return left.model.localeCompare(right.model);
+      }),
+    [sort, stats],
+  );
+
+  const toggleSort = (key: SortKey) => {
+    setSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === "desc" ? "asc" : "desc",
+    }));
+  };
+
+  const sortIcon = (key: SortKey) => {
+    if (sort.key !== key) {
+      return <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />;
+    }
+    return sort.direction === "asc" ? (
+      <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+    ) : (
+      <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+    );
+  };
 
   if (isLoading) {
     return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;
   }
+
+  const sortableColumns: ReadonlyArray<readonly [SortKey, string]> = [
+    ["requestCount", t("usage.requests")],
+    ["totalTokens", t("usage.tokens")],
+    ["totalCost", t("usage.totalCost")],
+    ["avgCostPerRequest", t("usage.avgCost")],
+  ];
 
   return (
     <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>{t("usage.model", "模型")}</TableHead>
-            <TableHead className="text-right">
-              {t("usage.requests", "请求数")}
-            </TableHead>
-            <TableHead className="text-right">
-              {t("usage.tokens", "Tokens")}
-            </TableHead>
-            <TableHead className="text-right">
-              {t("usage.totalCost", "总成本")}
-            </TableHead>
-            <TableHead className="text-right">
-              {t("usage.avgCost", "平均成本")}
-            </TableHead>
+            <TableHead>{t("usage.model")}</TableHead>
+            {sortableColumns.map(([key, label]) => (
+              <TableHead
+                key={key}
+                className="text-right"
+                aria-sort={
+                  sort.key === key
+                    ? sort.direction === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : "none"
+                }
+              >
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 hover:text-foreground"
+                  onClick={() => toggleSort(key)}
+                >
+                  {label}
+                  {sortIcon(key)}
+                </button>
+              </TableHead>
+            ))}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {stats?.length === 0 ? (
+          {sortedStats.length === 0 ? (
             <TableRow>
               <TableCell
                 colSpan={5}
                 className="text-center text-muted-foreground"
               >
-                {t("usage.noData", "暂无数据")}
+                {t("usage.noData")}
               </TableCell>
             </TableRow>
           ) : (
-            stats?.map((stat) => (
+            sortedStats.map((stat) => (
               <TableRow key={stat.model}>
                 <TableCell className="font-mono text-sm">
                   {stat.model}
