@@ -287,6 +287,9 @@ export function UsageDashboard({
             {t("usage.title")}
           </h2>
           <p className="text-sm text-muted-foreground">{t("usage.subtitle")}</p>
+          <p className="text-xs text-muted-foreground">
+            {t("usage.sessionCostHint")}
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

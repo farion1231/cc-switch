@@ -1713,7 +1713,7 @@
     "outputTokens": "出力",
     "cacheReadTokens": "キャッシュヒット",
     "cacheCreationTokens": "キャッシュ作成",
-    "timingInfo": "応答時間/TTFT",
+    "timingInfo": "所要時間 / 初回出力",
     "status": "ステータス",
     "multiplier": "倍率",
     "requestModel": "リクエストモデル",
@@ -1822,7 +1822,9 @@
     "requests": "リクエスト数",
     "tokens": "トークン",
     "avgCost": "平均コスト",
-    "avgLatency": "平均レイテンシ",
+    "avgLatency": "平均リクエスト時間",
+    "avgRequestDurationHint": "リクエスト開始から応答完了までの時間で、待機と出力を含みます。計測済みのリクエストのみを平均し、有効な計測件数を復元できない過去の集計は除外します。",
+    "timingSampleCoverage": "{{count}}/{{total}} 件計測済み",
     "successRate": "成功率",
     "requestId": "リクエスト ID",
     "never": "なし",
@@ -1887,7 +1889,12 @@
       "syncNow": "今すぐ同期"
     },
     "cacheReadCostPerMillion": "キャッシュ読み取りコスト（100万トークンあたり、USD）",
-    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）"
+    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）",
+    "notRecorded": "未記録",
+    "firstToken": "最初のトークン",
+    "firstOutput": "初回出力（推論を含む）",
+    "sessionTimingHint": "所要時間はローカルのリクエスト開始から応答完了までです。初回出力は最初の出力項目の開始で、推論の場合もあり、表示テキストとは限りません。TPS は記録された出力区間から推定し、推論トークンを含みます。不明または曖昧な計測は未記録と表示します。",
+    "sessionCostHint": "サービス階層とコンテキスト長に応じた公式 API 料金による概算です。Codex サブスクリプションの請求額ではありません。ツール料金と地域加算は含みません。"
   },
   "usageScript": {
     "title": "利用状況を設定",

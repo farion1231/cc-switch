@@ -85,7 +85,17 @@ pub struct ProviderStats {
     pub total_tokens: u64,
     pub total_cost: String,
     pub success_rate: f32,
-    pub avg_latency_ms: u64,
+    pub avg_latency_ms: Option<f64>,
+    pub latency_sample_count: u64,
+}
+
+/// Imported zero values mean missing timing; native proxy requests can finish
+/// within the timer's millisecond resolution and legitimately report zero.
+pub(crate) fn known_request_timing_sql(alias: &str) -> String {
+    format!(
+        "({alias}.latency_ms > 0 OR ({alias}.latency_ms = 0 AND \
+         COALESCE({alias}.data_source, 'proxy') = 'proxy'))"
+    )
 }
 
 /// 模型统计
@@ -1333,6 +1343,7 @@ impl Database {
         let rollup_pname = provider_name_coalesce("r", "p2");
         let fresh_input_detail = fresh_input_sql("l");
         let fresh_input_rollup = fresh_input_sql("r");
+        let known_timing = known_request_timing_sql("l");
         let sql = format!(
             "SELECT
                 provider_id, app_type, provider_name,
@@ -1340,9 +1351,10 @@ impl Database {
                 SUM(total_tokens) as total_tokens,
                 SUM(total_cost) as total_cost,
                 SUM(success_count) as success_count,
-                CASE WHEN SUM(request_count) > 0
-                    THEN SUM(latency_sum) / SUM(request_count)
-                    ELSE 0 END as avg_latency
+                CASE WHEN SUM(latency_sample_count) > 0
+                    THEN 1.0 * SUM(latency_sum) / SUM(latency_sample_count)
+                    ELSE NULL END as avg_latency,
+                SUM(latency_sample_count)
             FROM (
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
@@ -1350,7 +1362,8 @@ impl Database {
                     COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
-                    COALESCE(SUM(l.latency_ms), 0) as latency_sum
+                    COALESCE(SUM(CASE WHEN {known_timing} THEN l.latency_ms ELSE 0 END), 0) as latency_sum,
+                    COALESCE(SUM(CASE WHEN {known_timing} THEN 1 ELSE 0 END), 0) as latency_sample_count
                 FROM proxy_request_logs l
                 LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
                 {detail_where}
@@ -1362,7 +1375,8 @@ impl Database {
                     COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.success_count), 0),
-                    COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
+                    COALESCE(SUM(r.latency_sum_ms), 0),
+                    COALESCE(SUM(r.latency_sample_count), 0)
                 FROM usage_daily_rollups r
                 LEFT JOIN providers p2 ON r.provider_id = p2.id AND r.app_type = p2.app_type
                 {rollup_where}
@@ -1392,7 +1406,8 @@ impl Database {
                 total_tokens: row.get::<_, i64>(4)? as u64,
                 total_cost: format!("{:.6}", row.get::<_, f64>(5)?),
                 success_rate,
-                avg_latency_ms: row.get::<_, f64>(7)? as u64,
+                avg_latency_ms: row.get(7)?,
+                latency_sample_count: row.get::<_, i64>(8)? as u64,
             })
         };
 
@@ -2007,6 +2022,15 @@ impl Database {
             .as_deref()
             .filter(|pm| !is_placeholder_pricing_model(pm))
         {
+            // Session tier/context variants require an exact price, including
+            // during later backfills. Alias stripping could otherwise turn an
+            // unsupported tier named "high" into a Standard model price.
+            if log.data_source.as_deref() == Some("codex_session")
+                && pricing_model != log.model
+                && query_model_pricing_exact(conn, pricing_model)?.is_none()
+            {
+                return Ok(None);
+            }
             return Self::get_model_pricing_cached(conn, cache, pricing_model);
         }
 
@@ -2098,7 +2122,7 @@ pub(crate) fn is_placeholder_pricing_model(model_id: &str) -> bool {
     normalized.is_empty() || matches!(normalized.as_str(), "unknown" | "null" | "none")
 }
 
-fn query_model_pricing_exact(
+pub(crate) fn query_model_pricing_exact(
     conn: &Connection,
     model_id: &str,
 ) -> Result<Option<(String, String, String, String)>, AppError> {
@@ -2734,7 +2758,8 @@ mod tests {
             conn.execute(
                 "DELETE FROM model_pricing WHERE model_id IN
                  ('claude-opus-5-5', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6-cyber',
-                  'gpt-5.5-pro', 'gpt-4o-mini')",
+                  'gpt-5.5-pro', 'gpt-4o-mini')
+                 OR model_id LIKE 'gpt-6.1-sol-%' OR model_id LIKE 'gpt-6-luna-%'",
                 [],
             )?;
             for (model, app, input, _) in &cases {
@@ -3952,6 +3977,101 @@ mod tests {
         assert_eq!(stats[0].request_count, 1);
         assert_eq!(stats[0].total_tokens, 275);
 
+        Ok(())
+    }
+
+    #[test]
+    fn provider_duration_excludes_unknown_imports_and_keeps_fractional_mean() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, latency, provider) in [
+                ("known-a", 2000, "p1"),
+                ("known-b", 4001, "p1"),
+                ("unknown", 0, "p1"),
+                ("unknown-only", 0, "p2"),
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs
+                     (request_id, provider_id, app_type, model, latency_ms,
+                      input_tokens, output_tokens, total_cost_usd, status_code, created_at, data_source)
+                     VALUES (?1, ?2, 'codex', 'gpt-6.1-sol', ?3, 100, 10, '0.01', 200, 1000, 'codex_session')",
+                    params![id, provider, latency],
+                )?;
+            }
+        }
+        let stats = db.get_provider_stats(None, None, None, None, None)?;
+        let measured = stats.iter().find(|s| s.provider_id == "p1").unwrap();
+        assert_eq!(measured.request_count, 3);
+        assert_eq!(measured.latency_sample_count, 2);
+        assert_eq!(measured.avg_latency_ms, Some(3000.5));
+        assert_eq!(measured.total_tokens, 330);
+        assert_eq!(measured.total_cost, "0.030000");
+        let unknown = stats.iter().find(|s| s.provider_id == "p2").unwrap();
+        assert_eq!(unknown.latency_sample_count, 0);
+        assert_eq!(unknown.avg_latency_ms, None);
+        assert_eq!(
+            serde_json::to_value(unknown).unwrap()["avgLatencyMs"],
+            serde_json::Value::Null
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn provider_duration_preserves_measured_zero_in_native_proxy() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, source, latency) in [
+                ("proxy-zero", Some("proxy"), 0),
+                ("proxy-measured", Some("proxy"), 1000),
+                ("import-unknown", Some("session_log"), 0),
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs
+                     (request_id, provider_id, app_type, model, latency_ms, status_code, created_at, data_source)
+                     VALUES (?1, 'p1', 'claude', 'model', ?2, 200, 1000, ?3)",
+                    params![id, latency, source],
+                )?;
+            }
+        }
+        let stats = db.get_provider_stats(None, None, None, None, None)?;
+        assert_eq!(stats[0].latency_sample_count, 2);
+        assert_eq!(stats[0].avg_latency_ms, Some(500.0));
+        Ok(())
+    }
+
+    #[test]
+    fn provider_duration_weights_detail_and_rollup_by_known_samples() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups
+                 (date, app_type, provider_id, model, request_count, avg_latency_ms,
+                  latency_sum_ms, latency_sample_count)
+                 VALUES ('2024-01-01', 'codex', 'p1', 'model', 10, 12345, 7001, 3)",
+                [],
+            )?;
+            // A legacy nonzero average cannot identify the valid sample count.
+            conn.execute(
+                "INSERT INTO usage_daily_rollups
+                 (date, app_type, provider_id, model, request_count, avg_latency_ms)
+                 VALUES ('2024-01-02', 'codex', 'p1', 'model', 100, 90000)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs
+                 (request_id, app_type, provider_id, model, latency_ms, status_code, created_at, data_source)
+                 VALUES ('detail', 'codex', 'p1', 'model', 1000, 200, 1000, 'codex_session')",
+                [],
+            )?;
+        }
+        let stats = db.get_provider_stats(None, None, None, None, None)?;
+        assert_eq!(stats[0].request_count, 111);
+        assert_eq!(stats[0].latency_sample_count, 4);
+        assert_eq!(stats[0].avg_latency_ms, Some(2000.25));
         Ok(())
     }
 

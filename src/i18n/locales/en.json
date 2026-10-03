@@ -1713,7 +1713,7 @@
     "outputTokens": "Output",
     "cacheReadTokens": "Cache Hit",
     "cacheCreationTokens": "Cache Creation",
-    "timingInfo": "Duration/TTFT",
+    "timingInfo": "Duration / first output",
     "status": "Status",
     "multiplier": "Multiplier",
     "requestModel": "Request Model",
@@ -1822,7 +1822,9 @@
     "requests": "Requests",
     "tokens": "Tokens",
     "avgCost": "Average Cost",
-    "avgLatency": "Average Latency",
+    "avgLatency": "Average Request Duration",
+    "avgRequestDurationHint": "From request start to response completion, including waiting and output. Only requests with recorded timing are averaged; historical aggregates without recoverable timing samples are excluded.",
+    "timingSampleCoverage": "{{count}}/{{total}} recorded",
     "successRate": "Success Rate",
     "requestId": "Request ID",
     "never": "Never",
@@ -1887,7 +1889,12 @@
       "syncNow": "Sync now"
     },
     "cacheReadCostPerMillion": "Cache Read Cost (per million tokens, USD)",
-    "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)"
+    "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)",
+    "notRecorded": "Not recorded",
+    "firstToken": "First token",
+    "firstOutput": "First output (including reasoning)",
+    "sessionTimingHint": "Elapsed time runs from local request start to response completion. First output is the first output item start, which may be reasoning, not necessarily visible text. TPS uses the known output window and includes reasoning tokens. Missing or ambiguous telemetry is not recorded.",
+    "sessionCostHint": "Estimated at official API rates for the service tier and context length. This is not a Codex subscription charge; tool charges and regional uplifts are excluded."
   },
   "usageScript": {
     "title": "Configure Usage Query",

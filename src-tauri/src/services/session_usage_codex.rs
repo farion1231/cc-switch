@@ -12,7 +12,11 @@
 //! - `session_meta` → 提取唯一 thread_id（子代理的 session_id 指向父线程）
 //! - `turn_context` → 提取当前 model
 //! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
+//! - `token_usage_record` + item timestamps + optional local telemetry → 请求计时
 
+use super::codex_session_metrics::{
+    load_request_starts, pricing_model, request_timing, RequestStart,
+};
 use crate::codex_config::get_codex_config_dir;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
@@ -22,9 +26,11 @@ use crate::services::session_usage::{
     metadata_modified_nanos, update_sync_state, update_sync_state_on_conn, SessionSyncResult,
 };
 use crate::services::usage_stats::{
-    find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,
+    find_model_pricing, has_suspected_codex_session_duplicate, query_model_pricing_exact,
+    should_skip_session_insert, DedupKey,
 };
 use chrono::{DateTime, Utc};
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::fs;
@@ -191,6 +197,8 @@ struct CachedReplayPrefix {
 
 #[derive(Debug)]
 struct ParsedTokenEvent {
+    timing: Option<(i64, Option<i64>, Option<i64>)>,
+    pricing_model: String,
     line_offset: i64,
     signature: TokenUsageSignature,
     delta: DeltaTokens,
@@ -499,6 +507,7 @@ fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
 struct CodexSyncPass {
     cursors: HashMap<String, (i64, i64)>,
     byte_offsets: HashMap<String, Option<i64>>,
+    metrics_versions: HashMap<String, i64>,
     pricing: HashMap<String, Option<ModelPricing>>,
 }
 
@@ -523,7 +532,15 @@ impl CodexSyncPass {
                 Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
             })?
             .collect::<Result<HashMap<_, _>, _>>()?;
+        let mut stmt =
+            conn.prepare("SELECT file_path, codex_metrics_version FROM session_log_sync")?;
+        let metrics_versions = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<Result<HashMap<_, _>, _>>()?;
         Ok(Self {
+            metrics_versions,
             cursors,
             byte_offsets,
             pricing: HashMap::new(),
@@ -678,6 +695,7 @@ type RolloutIndex = HashMap<String, Vec<PathBuf>>;
 
 #[derive(Debug, Default)]
 struct CodexFileSyncResult {
+    enriched: bool,
     imported: u32,
     skipped: u32,
     suspected_duplicates: u32,
@@ -690,6 +708,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let files = collect_codex_session_files(&codex_dir);
     let rollout_index = build_rollout_index(&files);
     let mut pass = CodexSyncPass::load(db)?;
+    let mut enriched = false;
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -703,6 +722,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     for file_path in &files {
         match sync_single_codex_file(db, file_path, &rollout_index, &mut pass) {
             Ok(file_result) => {
+                enriched |= file_result.enriched;
                 result.imported = result.imported.saturating_add(file_result.imported);
                 result.skipped = result.skipped.saturating_add(file_result.skipped);
                 result.suspected_duplicates = result
@@ -718,6 +738,10 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
                 result.errors.push(msg);
             }
         }
+    }
+
+    if enriched {
+        crate::usage_events::notify_log_recorded();
     }
 
     if result.imported > 0 || result.deferred_files > 0 {
@@ -794,6 +818,18 @@ fn parse_codex_file(
     file_path: &Path,
     root_thread_id: Option<String>,
 ) -> Result<ParsedCodexFile, AppError> {
+    let starts = root_thread_id
+        .as_deref()
+        .map(|id| load_request_starts(&get_codex_config_dir(), id))
+        .unwrap_or_default();
+    parse_codex_file_with_starts(file_path, root_thread_id, &starts)
+}
+
+fn parse_codex_file_with_starts(
+    file_path: &Path,
+    root_thread_id: Option<String>,
+    starts: &[RequestStart],
+) -> Result<ParsedCodexFile, AppError> {
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
     let mut reader = BufReader::new(file);
@@ -802,6 +838,10 @@ fn parse_codex_file(
     let mut meta_thread_id = None;
     let mut parent = ParentResolution::None;
     let mut current_model = "unknown".to_string();
+    let mut service_tier = "default".to_owned();
+    let mut first_output_ms: Option<i64> = None;
+    let mut previous_end_ms: Option<i64> = None;
+    let mut pending_timing = None;
     // `total_token_usage` is session-cumulative, including across model and
     // rate-limit bucket changes. Divergent snapshots are handled by preferring
     // exact `last_token_usage`, not by splitting the cumulative baseline.
@@ -848,10 +888,8 @@ fn parse_codex_file(
         let is_event_msg = line.contains("\"event_msg\"");
         let is_turn_context = line.contains("\"turn_context\"");
         let is_session_meta = line.contains("\"session_meta\"");
-        if !is_event_msg && !is_turn_context && !is_session_meta {
-            continue;
-        }
-        if is_event_msg && !line.contains("\"token_count\"") {
+        let is_usage_record = line.contains("\"token_usage_record\"");
+        if !is_event_msg && !is_turn_context && !is_session_meta && !is_usage_record {
             continue;
         }
 
@@ -911,8 +949,27 @@ fn parse_codex_file(
                     );
                 }
             }
+            "token_usage_record" => {
+                pending_timing = None;
+                if let (Some(end), Some(turn)) = (
+                    parse_timestamp(value.get("timestamp")),
+                    value
+                        .pointer("/payload/turn_id")
+                        .and_then(serde_json::Value::as_str),
+                ) {
+                    let end = end.timestamp_millis();
+                    pending_timing =
+                        request_timing(starts, turn, previous_end_ms, end, first_output_ms);
+                    previous_end_ms = Some(end);
+                }
+                first_output_ms = None;
+            }
             "turn_context" => {
                 if let Some(payload) = value.get("payload") {
+                    if let Some(tier) = payload.get("service_tier") {
+                        // Explicit null clears a previously enabled Fast/Flex tier.
+                        service_tier = tier.as_str().unwrap_or("default").to_owned();
+                    }
                     if let Some(model) = payload
                         .get("model")
                         .or_else(|| payload.get("info").and_then(|info| info.get("model")))
@@ -926,6 +983,36 @@ fn parse_codex_file(
                 let Some(payload) = value.get("payload") else {
                     continue;
                 };
+                match payload.get("type").and_then(serde_json::Value::as_str) {
+                    Some("task_started") | Some("turn_aborted") => {
+                        first_output_ms = None;
+                        pending_timing = None;
+                        previous_end_ms =
+                            parse_timestamp(value.get("timestamp")).map(|t| t.timestamp_millis());
+                    }
+                    Some("thread_settings_applied") => {
+                        if let Some(tier) = payload.pointer("/thread_settings/service_tier") {
+                            service_tier = tier.as_str().unwrap_or("default").to_owned();
+                        }
+                    }
+                    Some("item_completed") => {
+                        if matches!(
+                            payload
+                                .pointer("/item/type")
+                                .and_then(serde_json::Value::as_str),
+                            Some("Reasoning" | "AgentMessage")
+                        ) {
+                            if let Some(start) = payload
+                                .get("started_at_ms")
+                                .and_then(serde_json::Value::as_i64)
+                            {
+                                first_output_ms =
+                                    Some(first_output_ms.map_or(start, |old| old.min(start)));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
                 if payload.get("type").and_then(serde_json::Value::as_str) != Some("token_count") {
                     continue;
                 }
@@ -1004,6 +1091,8 @@ fn parse_codex_file(
                 };
 
                 token_events.push(ParsedTokenEvent {
+                    timing: pending_timing.take().filter(|_| nonzero_index.is_some()),
+                    pricing_model: pricing_model(&current_model, delta.input, &service_tier),
                     line_offset,
                     signature,
                     delta,
@@ -1203,7 +1292,7 @@ fn update_codex_sync_state_on_conn(
 ) -> Result<(), AppError> {
     update_sync_state_on_conn(conn, file_path, modified, parsed.line_offset)?;
     conn.execute(
-        "UPDATE session_log_sync SET last_byte_offset = ?1 WHERE file_path = ?2",
+        "UPDATE session_log_sync SET last_byte_offset = ?1, codex_metrics_version = 1 WHERE file_path = ?2",
         rusqlite::params![parsed.observed_bytes, file_path],
     )?;
     Ok(())
@@ -1243,7 +1332,18 @@ fn sync_single_codex_file(
     // Windows may keep mtime unchanged while Codex holds its write handle open.
     // Legacy cursors have no byte offset: rescan once to catch up and persist it.
     let last_byte_offset = pass.byte_offsets.get(&file_path_str).copied().flatten();
-    if file_modified == last_modified && last_byte_offset == i64::try_from(file_size).ok() {
+    // Local, per-file state is preserved during configuration sync. A global
+    // settings marker could incorrectly skip another machine's enrichment.
+    let enrich_existing = pass
+        .metrics_versions
+        .get(&file_path_str)
+        .copied()
+        .unwrap_or(0)
+        < 1;
+    if !enrich_existing
+        && file_modified == last_modified
+        && last_byte_offset == i64::try_from(file_size).ok()
+    {
         return Ok(CodexFileSyncResult::default());
     }
 
@@ -1369,7 +1469,26 @@ fn sync_single_codex_file(
         caches.pending.remove(file_path);
     }
 
-    let mut result = CodexFileSyncResult::default();
+    // Backfill existing retained rows without resetting the import cursor.
+    // Resetting it would reinsert pruned requests already represented in rollups.
+    if enrich_existing {
+        let conn = lock_conn!(db.conn);
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for event in parsed.token_events.iter().skip(replay_prefix) {
+            if let Some(index) = event.event_index {
+                let request_id =
+                    format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root_thread_id}:{index}");
+                enrich_codex_entry(&tx, &request_id, event)?;
+            }
+        }
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+    }
+    let mut result = CodexFileSyncResult {
+        enriched: enrich_existing,
+        ..Default::default()
+    };
     let mut to_insert: Vec<(&ParsedTokenEvent, u32)> = Vec::new();
     for (token_offset, event) in parsed.token_events.iter().enumerate() {
         let Some(event_index) = event.event_index else {
@@ -1411,6 +1530,7 @@ fn sync_single_codex_file(
         for (event, event_index) in batch {
             let request_id =
                 format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root_thread_id}:{event_index}");
+            enrich_codex_entry(&tx, &request_id, event)?;
             match insert_codex_session_entry_on_conn(
                 &tx,
                 &request_id,
@@ -1421,7 +1541,10 @@ fn sync_single_codex_file(
                 &mut batch_suspected,
                 &mut pass.pricing,
             ) {
-                Ok(true) => batch_imported += 1,
+                Ok(true) => {
+                    enrich_codex_entry(&tx, &request_id, event)?;
+                    batch_imported += 1;
+                }
                 Ok(false) => batch_skipped += 1,
                 Err(e) => {
                     log::warn!("[CODEX-SYNC] 插入失败 ({request_id}): {e}");
@@ -1446,6 +1569,67 @@ fn sync_single_codex_file(
         update_codex_sync_state(db, &file_path_str, file_modified, &parsed)?;
     }
     Ok(result)
+}
+
+// Exact per-request usage remains unchanged. Only timing and the API reference
+// price are enriched, including previously imported rows.
+fn enrich_codex_entry(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    event: &ParsedTokenEvent,
+) -> Result<(), AppError> {
+    // Price the retained usage, including cache writes imported independently.
+    // Do not create rows or replace token counts during metadata enrichment.
+    let usage = conn
+        .query_row(
+            "SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+         FROM proxy_request_logs WHERE request_id=?1 AND data_source='codex_session'",
+            [request_id],
+            |row| {
+                Ok(TokenUsage {
+                    input_tokens: row.get(0)?,
+                    output_tokens: row.get(1)?,
+                    cache_read_tokens: row.get(2)?,
+                    cache_creation_tokens: row.get(3)?,
+                    model: Some(event.model.clone()),
+                    message_id: None,
+                })
+            },
+        )
+        .optional()?;
+    let Some(usage) = usage else {
+        return Ok(());
+    };
+    if let Some((latency, first, duration)) = event.timing {
+        conn.execute("UPDATE proxy_request_logs SET latency_ms=?1, first_token_ms=?2, duration_ms=?3 WHERE request_id=?4 AND data_source='codex_session'",
+            rusqlite::params![latency, first, duration, request_id]).map_err(|e| AppError::Database(e.to_string()))?;
+    }
+    // Tier/context variants must never fall back to a different price tier.
+    let pricing = if event.pricing_model == event.model {
+        find_codex_pricing(conn, &event.model)
+    } else {
+        query_model_pricing_exact(conn, &event.pricing_model)?.and_then(
+            |(input, output, read, write)| {
+                ModelPricing::from_strings(&input, &output, &read, &write).ok()
+            },
+        )
+    };
+    let cost = pricing
+        .map(|pricing| CostCalculator::calculate_for_app("codex", &usage, &pricing, Decimal::ONE));
+    let (input, output, read, write, total) = cost
+        .map(|c| {
+            (
+                c.input_cost.to_string(),
+                c.output_cost.to_string(),
+                c.cache_read_cost.to_string(),
+                c.cache_creation_cost.to_string(),
+                c.total_cost.to_string(),
+            )
+        })
+        .unwrap_or_else(|| ("0".into(), "0".into(), "0".into(), "0".into(), "0".into()));
+    conn.execute("UPDATE proxy_request_logs SET pricing_model=?1, input_cost_usd=?2, output_cost_usd=?3, cache_read_cost_usd=?4, cache_creation_cost_usd=?5, total_cost_usd=?6 WHERE request_id=?7 AND data_source='codex_session'",
+        rusqlite::params![event.pricing_model, input, output, read, write, total, request_id]).map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(())
 }
 
 /// 插入单条 Codex 会话记录到 proxy_request_logs（自取锁的便捷包装，测试专用；
@@ -1578,7 +1762,7 @@ fn insert_codex_session_entry_on_conn(
                 delta.input,
                 delta.output,
                 delta.cached_input,
-                0i64,                // cache_creation_tokens: Codex 日志无此数据
+                0i64,                // cache_creation_tokens: handled separately from timing enrichment
                 input_cost,
                 output_cost,
                 cache_read_cost,
@@ -1608,6 +1792,226 @@ fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Mod
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rollout_timing_matches_requests_without_counting_tools_or_retries() -> Result<(), AppError> {
+        let dir = tempfile::tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let timestamp = |ms| {
+            chrono::DateTime::from_timestamp_millis(ms)
+                .unwrap()
+                .to_rfc3339()
+        };
+        let item = |kind: &str, start: i64| {
+            serde_json::json!({
+                "type": "event_msg", "timestamp": timestamp(start + 100),
+                "payload": {"type": "item_completed", "item": {"type": kind}, "started_at_ms": start}
+            })
+        };
+        let end = |ms| {
+            serde_json::json!({
+                "type": "token_usage_record", "timestamp": timestamp(ms),
+                "payload": {"turn_id": "turn"}
+            })
+        };
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                item("CommandExecution", 2500),
+                item("Reasoning", 3000),
+                item("AgentMessage", 3500),
+                end(5000),
+                token_count(100, 50, 10),
+                end(10000),
+                token_count(200, 100, 20),
+                item("Reasoning", 11500),
+                end(16000),
+                token_count(300, 150, 30),
+            ],
+        );
+        let starts = [2000, 6000, 11000, 12000].map(|timestamp_ms| RequestStart {
+            timestamp_ms,
+            turn_id: "turn".into(),
+        });
+        let parsed = parse_codex_file_with_starts(&file, Some(PARENT_ID.into()), &starts)?;
+        assert_eq!(
+            parsed.token_events[0].timing,
+            Some((3000, Some(1000), Some(2000)))
+        );
+        assert_eq!(parsed.token_events[1].timing, Some((4000, None, None)));
+        // A retry after the first item must still make the request ambiguous.
+        assert_eq!(parsed.token_events[2].timing, None);
+        Ok(())
+    }
+
+    #[test]
+    fn unrecognized_tiers_remain_unpriced_and_custom_variant_prices_are_respected(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempfile::tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut context = turn_context_for_model_at("gpt-6.1-sol", "2026-07-10T03:00:01Z");
+        context["payload"]["service_tier"] = serde_json::json!("high");
+        write_jsonl(
+            &file,
+            &[session_meta(PARENT_ID), context, token_count(100, 50, 10)],
+        );
+        sync_test_file(&db, &file, &[&file])?;
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let mut pass = CodexSyncPass::load(&db)?;
+        pass.metrics_versions
+            .insert(file.to_string_lossy().into_owned(), 0);
+        let index = build_rollout_index(std::slice::from_ref(&file));
+        {
+            let conn = lock_conn!(db.conn);
+            let cost: String =
+                conn.query_row("SELECT total_cost_usd FROM proxy_request_logs", [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(cost, "0");
+            conn.execute("INSERT INTO model_pricing VALUES('gpt-6.1-sol-high', 'Custom tier', '4', '20', '0.2', '5')", [])?;
+        }
+        sync_single_codex_file(&db, &file, &index, &mut pass)?;
+        let conn = lock_conn!(db.conn);
+        let cost: String =
+            conn.query_row("SELECT total_cost_usd FROM proxy_request_logs", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(cost.parse::<Decimal>().unwrap(), Decimal::new(41, 5));
+        Ok(())
+    }
+
+    #[test]
+    fn clearing_service_tier_does_not_reuse_the_previous_fast_price() -> Result<(), AppError> {
+        let dir = tempfile::tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut context = turn_context_for_model_at("gpt-6.1-sol", "2026-07-10T03:00:01Z");
+        context["payload"]["service_tier"] = serde_json::json!("priority");
+        let mut reset = context.clone();
+        reset["payload"]["service_tier"] = serde_json::Value::Null;
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                context,
+                token_count(100, 50, 10),
+                reset,
+                token_count(200, 100, 20),
+            ],
+        );
+        let parsed = parse_codex_file_with_starts(&file, Some(PARENT_ID.into()), &[])?;
+        assert_eq!(parsed.token_events[0].pricing_model, "gpt-6.1-sol-fast");
+        assert_eq!(parsed.token_events[1].pricing_model, "gpt-6.1-sol");
+        Ok(())
+    }
+
+    #[test]
+    fn session_enrichment_prices_long_fast_context() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempfile::tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut context = turn_context_for_model_at("gpt-6.1-sol", "2026-07-10T03:00:01Z");
+        context["payload"]["service_tier"] = serde_json::json!("priority");
+        let usage = token_count_with_last_at(
+            300000,
+            200000,
+            1000,
+            300000,
+            200000,
+            1000,
+            "codex",
+            "2026-07-10T03:00:02Z",
+        );
+        write_jsonl(&file, &[session_meta(PARENT_ID), context, usage]);
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+        let conn = lock_conn!(db.conn);
+        let (model, input, cache, total, semantics): (String, String, i64, String, i64) = conn.query_row(
+            "SELECT pricing_model, input_cost_usd, cache_creation_tokens, total_cost_usd, input_token_semantics FROM proxy_request_logs", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        assert_eq!(model, "gpt-6.1-sol-fast-long");
+        assert_eq!(input.parse::<Decimal>().unwrap(), Decimal::new(8, 1));
+        assert_eq!(cache, 0);
+        // 100K fresh * $8 + 200K cached * $0.40 + 1K output * $30.
+        assert_eq!(total.parse::<Decimal>().unwrap(), Decimal::new(91, 2));
+        // Metadata enrichment also preserves the stored token semantics.
+        assert_eq!(semantics, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_file_metadata_is_enriched_once_even_if_global_settings_were_synced(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempfile::tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count(100, 50, 10),
+            ],
+        );
+        sync_test_file(&db, &file, &[&file])?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("UPDATE session_log_sync SET codex_metrics_version=0", [])?;
+            conn.execute("UPDATE proxy_request_logs SET pricing_model=NULL", [])?;
+            // An old local-build marker may arrive through configuration sync.
+            conn.execute("INSERT INTO settings VALUES('codex_metrics_v1', '1')", [])?;
+        }
+        let first = sync_test_file(&db, &file, &[&file])?;
+        assert_eq!(first.imported, 0);
+        assert!(first.enriched);
+        assert!(!sync_test_file(&db, &file, &[&file])?.enriched);
+        let conn = lock_conn!(db.conn);
+        let model: String =
+            conn.query_row("SELECT pricing_model FROM proxy_request_logs", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(model, "gpt-5.6-sol");
+        Ok(())
+    }
+
+    #[test]
+    fn enrichment_does_not_reinsert_pruned_requests() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempfile::tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count(100, 50, 10),
+                token_count(250, 100, 30),
+            ],
+        );
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 2);
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "DELETE FROM proxy_request_logs WHERE request_id=?1",
+                [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:1")],
+            )?;
+        }
+        let mut pass = CodexSyncPass::load(&db)?;
+        pass.metrics_versions
+            .insert(file.to_string_lossy().into_owned(), 0);
+        let index = build_rollout_index(std::slice::from_ref(&file));
+        assert_eq!(
+            sync_single_codex_file(&db, &file, &index, &mut pass)?.imported,
+            0
+        );
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!(count, 1);
+        Ok(())
+    }
     use crate::services::session_usage::get_sync_state;
     use tempfile::tempdir;
 

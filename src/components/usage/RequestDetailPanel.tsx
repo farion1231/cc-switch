@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { useRequestDetail } from "@/lib/query/usage";
 import { getFreshInputTokens, isUnpricedUsage } from "@/types/usage";
-import { formatOutputTokensPerSecond } from "./format";
+import { formatOutputTokensPerSecond, hasRequestTiming } from "./format";
 
 interface RequestDetailPanelProps {
   requestId: string;
@@ -292,9 +292,18 @@ export function RequestDetailPanel({
                     unpriced ? "text-muted-foreground" : "text-primary"
                   }`}
                 >
-                  {unpriced
-                    ? t("usage.unpriced", "未定价")
-                    : `$${parseFloat(request.totalCostUsd).toFixed(6)}`}
+                  <span
+                    title={
+                      request.dataSource === "codex_session"
+                        ? t("usage.sessionCostHint")
+                        : undefined
+                    }
+                  >
+                    {request.dataSource === "codex_session" && !unpriced && "≈"}
+                    {unpriced
+                      ? t("usage.unpriced", "未定价")
+                      : `$${parseFloat(request.totalCostUsd).toFixed(6)}`}
+                  </span>
                 </dd>
               </div>
             </dl>
@@ -310,10 +319,35 @@ export function RequestDetailPanel({
                 <dt className="text-muted-foreground">
                   {t("usage.latency", "延迟")}
                 </dt>
-                <dd className="font-mono">{request.latencyMs}ms</dd>
+                <dd className="font-mono">
+                  {hasRequestTiming(request)
+                    ? `${request.latencyMs}ms`
+                    : t("usage.notRecorded")}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">
+                  {t(
+                    request.dataSource === "codex_session"
+                      ? "usage.firstOutput"
+                      : "usage.firstToken",
+                  )}
+                </dt>
+                <dd className="font-mono">
+                  {request.firstTokenMs != null
+                    ? `${request.firstTokenMs}ms`
+                    : t("usage.notRecorded")}
+                </dd>
               </div>
             </dl>
           </div>
+
+          {request.dataSource === "codex_session" && (
+            <div className="text-xs text-muted-foreground space-y-1">
+              <p>{t("usage.sessionTimingHint")}</p>
+              <p>{t("usage.sessionCostHint")}</p>
+            </div>
+          )}
 
           {/* 错误信息 */}
           {request.errorMessage && (

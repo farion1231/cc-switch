@@ -28,6 +28,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import {
   formatOutputTokensPerSecond,
+  hasRequestTiming,
   fmtInt,
   fmtUsd,
   getLocaleFromLanguage,
@@ -288,9 +289,20 @@ export function RequestLogTable({
                               unpriced ? "text-muted-foreground" : ""
                             }`}
                           >
-                            {unpriced
-                              ? t("usage.unpriced", "未定价")
-                              : fmtUsd(log.totalCostUsd, 4)}
+                            <span
+                              title={
+                                log.dataSource === "codex_session"
+                                  ? t("usage.sessionCostHint")
+                                  : undefined
+                              }
+                            >
+                              {log.dataSource === "codex_session" &&
+                                !unpriced &&
+                                "≈"}
+                              {unpriced
+                                ? t("usage.unpriced", "未定价")
+                                : fmtUsd(log.totalCostUsd, 4)}
+                            </span>
                           </div>
                           {parseFiniteNumber(log.costMultiplier) != null &&
                             parseFiniteNumber(log.costMultiplier) !== 1 && (
@@ -303,12 +315,23 @@ export function RequestLogTable({
                             )}
                         </TableCell>
                         <TableCell className="text-center whitespace-nowrap text-xs tabular-nums">
-                          {(log.latencyMs / 1000).toFixed(1)}s
-                          {log.firstTokenMs != null && (
+                          <span
+                            title={
+                              log.dataSource === "codex_session"
+                                ? t("usage.sessionTimingHint")
+                                : undefined
+                            }
+                          >
+                            {hasRequestTiming(log)
+                              ? `${(log.latencyMs / 1000).toFixed(1)}s`
+                              : t("usage.notRecorded")}
                             <span className="text-muted-foreground">
-                              /{(log.firstTokenMs / 1000).toFixed(1)}s
+                              /
+                              {log.firstTokenMs != null
+                                ? `${(log.firstTokenMs / 1000).toFixed(1)}s`
+                                : t("usage.notRecorded")}
                             </span>
-                          )}
+                          </span>
                         </TableCell>
                         <TableCell className="text-center">
                           <span

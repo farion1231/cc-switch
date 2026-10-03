@@ -8,7 +8,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useProviderStats } from "@/lib/query/usage";
-import { fmtUsd } from "./format";
+import { fmtUsd, formatAverageRequestDuration } from "./format";
 import type { UsageRangeSelection } from "@/types/usage";
 
 interface ProviderStatsTableProps {
@@ -57,8 +57,11 @@ export function ProviderStatsTable({
             <TableHead className="text-right">
               {t("usage.successRate", "成功率")}
             </TableHead>
-            <TableHead className="text-right">
-              {t("usage.avgLatency", "平均延迟")}
+            <TableHead
+              className="text-right whitespace-nowrap"
+              title={t("usage.avgRequestDurationHint")}
+            >
+              {t("usage.avgLatency", "平均请求用时")}
             </TableHead>
           </TableRow>
         </TableHeader>
@@ -90,8 +93,20 @@ export function ProviderStatsTable({
                 <TableCell className="text-right">
                   {stat.successRate.toFixed(1)}%
                 </TableCell>
-                <TableCell className="text-right">
-                  {stat.avgLatencyMs}ms
+                <TableCell
+                  className="text-right whitespace-nowrap"
+                  title={t("usage.avgRequestDurationHint")}
+                >
+                  <div>
+                    {formatAverageRequestDuration(stat.avgLatencyMs) ??
+                      t("usage.notRecorded")}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {t("usage.timingSampleCoverage", {
+                      count: stat.latencySampleCount,
+                      total: stat.requestCount,
+                    })}
+                  </div>
                 </TableCell>
               </TableRow>
             ))
