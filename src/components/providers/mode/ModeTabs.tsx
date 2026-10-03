@@ -43,7 +43,7 @@ interface ModeTabsProps {
   active: AppMode;
   view: AppMode;
   onView: (mode: AppMode) => void;
-  /** 状态行：「前导 + 值」，空间不够时先截前导，地址和供应商名保持完整 */
+  /** 状态行：「前导 + 值」，空间不够先截前导；值仅在独自超出整栏时才截断 */
   status?: { lead: string; value: string };
   failover?: {
     enabled: boolean;
@@ -137,7 +137,9 @@ export function ModeTabs({
       {status && (status.lead || status.value) && (
         <div className="flex min-w-0 flex-1 items-center gap-1 text-caption text-fg-2">
           {status.lead && <span className="truncate">{status.lead}</span>}
-          <span className="shrink-0 truncate">{status.value}</span>
+          <span className="max-w-full shrink-0 truncate" title={status.value}>
+            {status.value}
+          </span>
         </div>
       )}
       {!status && <div className="flex-1" />}
