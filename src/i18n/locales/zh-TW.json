@@ -3823,6 +3823,20 @@
   },
   "subscription": {
     "title": "訂閱額度",
+    "short": {
+      "fiveHour": "5 小時",
+      "sevenDay": "每週",
+      "sevenDayFable": "Fable",
+      "sevenDayOpus": "Opus",
+      "sevenDaySonnet": "Sonnet",
+      "thirtyDay": "30 天",
+      "geminiPro": "Pro",
+      "geminiFlash": "Flash",
+      "geminiFlashLite": "Lite",
+      "monthly": "每月",
+      "credits": "額度",
+      "copilotPremium": "進階請求"
+    },
     "fiveHour": "5 小時",
     "sevenDay": "每週",
     "sevenDayOpus": "每週 Opus",
@@ -4106,6 +4120,7 @@
     "failoverHelp": "這裡調整各應用的逾時、重試和熔斷。佇列在各應用頁的「路由」分頁裡管理。"
   },
   "quota": {
+    "tierShort": "{{label}} {{value}}%",
     "tierLeft": "{{labelSp}}剩餘 {{value}}%",
     "tierUsedUp": "{{labelSp}}已用完",
     "left": "剩餘 {{value}}%",

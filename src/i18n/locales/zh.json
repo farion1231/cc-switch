@@ -3822,6 +3822,20 @@
   },
   "subscription": {
     "title": "订阅额度",
+    "short": {
+      "fiveHour": "5 小时",
+      "sevenDay": "每周",
+      "sevenDayFable": "Fable",
+      "sevenDayOpus": "Opus",
+      "sevenDaySonnet": "Sonnet",
+      "thirtyDay": "30 天",
+      "geminiPro": "Pro",
+      "geminiFlash": "Flash",
+      "geminiFlashLite": "Lite",
+      "monthly": "每月",
+      "credits": "额度",
+      "copilotPremium": "高级请求"
+    },
     "fiveHour": "5 小时",
     "sevenDay": "每周",
     "sevenDayFable": "Fable",
@@ -4105,6 +4119,7 @@
     "failoverHelp": "这里调各应用的超时、重试和熔断。队列在各应用页的「路由」页签里管理。"
   },
   "quota": {
+    "tierShort": "{{label}} {{value}}%",
     "tierLeft": "{{labelSp}}剩余 {{value}}%",
     "tierUsedUp": "{{labelSp}}已用完",
     "left": "剩余 {{value}}%",

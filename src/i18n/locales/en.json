@@ -3822,6 +3822,20 @@
   },
   "subscription": {
     "title": "Subscription Quota",
+    "short": {
+      "fiveHour": "5h",
+      "sevenDay": "Wk",
+      "sevenDayFable": "Fable",
+      "sevenDayOpus": "Opus",
+      "sevenDaySonnet": "Sonnet",
+      "thirtyDay": "30d",
+      "geminiPro": "Pro",
+      "geminiFlash": "Flash",
+      "geminiFlashLite": "Lite",
+      "monthly": "Mo",
+      "credits": "Credits",
+      "copilotPremium": "Premium"
+    },
     "fiveHour": "5-hour",
     "sevenDay": "Weekly",
     "sevenDayFable": "Fable",
@@ -4105,6 +4119,7 @@
     "failoverHelp": "Tune each app's timeouts, retries and circuit breaker here. Queues are managed on each app's Routing tab."
   },
   "quota": {
+    "tierShort": "{{label}} {{value}}%",
     "tierLeft": "{{label}} {{value}}% left",
     "tierUsedUp": "{{label}} used up",
     "left": "{{value}}% left",

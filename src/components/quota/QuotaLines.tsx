@@ -4,8 +4,8 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
+  cardRows,
   formatRelativeTime,
-  pickLines,
   type QuotaLine,
   type QuotaTone,
 } from "./quotaRules";
@@ -44,7 +44,8 @@ interface QuotaLinesProps {
 }
 
 /**
- * 卡片右侧的额度列（v7）：最多两行、右对齐、平时灰色。点一下重查，悬停说明更新时间和重置时间。
+ * 卡片右侧的额度列（v7）：最多两行、右对齐、平时灰色；档数多时第一行写窗口最短的那档，
+ * 其余并成一行、每段各自上色（cardRows）。点一下重查，悬停说明每档、更新时间和重置时间。
  */
 export function QuotaLines({
   lines,
@@ -55,8 +56,8 @@ export function QuotaLines({
 }: QuotaLinesProps) {
   const { t } = useTranslation();
   const now = useNow(Boolean(queriedAt));
-  const shown = pickLines(lines, max);
-  if (shown.length === 0) return null;
+  const rows = cardRows(lines, max);
+  if (rows.length === 0) return null;
 
   const title = [
     ...lines.map((line) => line.detail ?? line.text),
@@ -68,14 +69,28 @@ export function QuotaLines({
     .filter(Boolean)
     .join("\n");
 
-  const body = shown.map((line) => (
-    <span
-      key={line.key}
-      className={cn("max-w-full truncate", TONE_TEXT[line.tone])}
-    >
-      {line.text}
-    </span>
-  ));
+  const body = rows.map((row) =>
+    row.length === 1 ? (
+      <span
+        key={row[0].key}
+        className={cn("max-w-full truncate", TONE_TEXT[row[0].tone])}
+      >
+        {row[0].text}
+      </span>
+    ) : (
+      <span
+        key={row.map((line) => line.key).join("+")}
+        className="max-w-full truncate text-fg-2"
+      >
+        {row.map((line, index) => (
+          <span key={line.key}>
+            {index > 0 && " · "}
+            <span className={TONE_TEXT[line.tone]}>{line.short}</span>
+          </span>
+        ))}
+      </span>
+    ),
+  );
 
   const className = cn(
     "flex w-[136px] shrink-0 flex-col items-end text-caption leading-[18px] tabular-nums whitespace-nowrap",

@@ -59,6 +59,12 @@ export function tierLabel(t: TFunction, name: string): string {
   return TIER_I18N_KEYS[name] ? t(TIER_I18N_KEYS[name]) : name;
 }
 
+/** 卡片合并行里的短档名（`subscription.short.*`，英日用缩写） */
+export function tierShortLabel(t: TFunction, name: string): string {
+  const key = TIER_I18N_KEYS[name];
+  return key ? t(key.replace("subscription.", "subscription.short.")) : name;
+}
+
 /** 已知档位 → 额度行 */
 export function tierLines(
   t: TFunction,
@@ -70,7 +76,10 @@ export function tierLines(
     .filter((tier) => !inline || !HIDDEN_INLINE_TIERS.has(tier.name))
     .map((tier) => {
       const label = tierLabel(t, tier.name);
-      return { label, line: tierLine(t, tier, label) };
+      return {
+        label,
+        line: tierLine(t, tier, label, tierShortLabel(t, tier.name)),
+      };
     });
 }
 

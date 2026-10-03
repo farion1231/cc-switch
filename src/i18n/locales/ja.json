@@ -3822,6 +3822,20 @@
   },
   "subscription": {
     "title": "サブスクリプションクォータ",
+    "short": {
+      "fiveHour": "5h",
+      "sevenDay": "週",
+      "sevenDayFable": "Fable",
+      "sevenDayOpus": "Opus",
+      "sevenDaySonnet": "Sonnet",
+      "thirtyDay": "30日",
+      "geminiPro": "Pro",
+      "geminiFlash": "Flash",
+      "geminiFlashLite": "Lite",
+      "monthly": "月",
+      "credits": "クレジット",
+      "copilotPremium": "プレミアム"
+    },
     "fiveHour": "5時間",
     "sevenDay": "週間",
     "sevenDayOpus": "週間 Opus",
@@ -4105,6 +4119,7 @@
     "failoverHelp": "ここでは各アプリのタイムアウト・再試行・サーキットブレーカーを調整します。キューは各アプリページの「ルーティング」タブで管理します。"
   },
   "quota": {
+    "tierShort": "{{label}} {{value}}%",
     "tierLeft": "{{label}} 残り {{value}}%",
     "tierUsedUp": "{{label}} 使い切り",
     "left": "残り {{value}}%",

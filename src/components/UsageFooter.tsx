@@ -4,7 +4,10 @@ import { useTranslation } from "react-i18next";
 import { type AppId } from "@/lib/api";
 import { useUsageQuery } from "@/lib/query/queries";
 import { UsageData, Provider } from "@/types";
-import { tierLabel } from "@/components/SubscriptionQuotaFooter";
+import {
+  tierLabel,
+  tierShortLabel,
+} from "@/components/SubscriptionQuotaFooter";
 import type { QuotaTier } from "@/types/subscription";
 import { isAdditiveAppId } from "@/config/appConfig";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
@@ -171,7 +174,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     const planLabel = tiers[0]?.planLabel;
     const rows = tiers.map((tier, index) => {
       const label = tierLabel(t, tier.name);
-      const line = tierLine(t, tier, label);
+      const line = tierLine(t, tier, label, tierShortLabel(t, tier.name));
       return {
         label,
         line: {

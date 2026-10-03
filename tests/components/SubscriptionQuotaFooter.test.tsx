@@ -75,7 +75,7 @@ function renderQuota(
 }
 
 describe("Claude Fable subscription quota", () => {
-  it("writes what is left on the card and keeps the two lowest tiers", () => {
+  it("pins the shortest window first and merges the rest into one line", () => {
     renderQuota([
       ...baseTiers,
       {
@@ -84,15 +84,34 @@ describe("Claude Fable subscription quota", () => {
         resetsAt: "2026-09-12T00:00:00Z",
       },
     ]);
-    // 三档里留剩余最少的两档；快用完的那档橙色
-    expect(screen.queryByText("5 小时剩余 88%")).not.toBeInTheDocument();
-    expect(screen.getByText("每周剩余 75%")).toHaveClass("text-fg-2");
-    expect(screen.getByText("Fable 剩余 5%")).toHaveClass("text-warning-text");
+    // 第一行固定是 5 小时，哪怕它剩得最多；其余两档并成一行，快用完的那段单独橙色
+    const lines = screen.getByRole("button").children;
+    expect(lines[0]).toHaveTextContent("5 小时剩余 88%");
+    expect(lines[1]).toHaveTextContent("每周 75% · Fable 5%");
+    expect(screen.getByText("每周 75%")).toHaveClass("text-fg-2");
+    expect(screen.getByText("Fable 5%")).toHaveClass("text-warning-text");
     // 重置时间在悬停说明里
     expect(screen.getByRole("button").getAttribute("title")).toContain(
       "Fable · 2d12h后重置",
     );
   });
+
+  it.each([
+    ["en", "5-hour 88% left", "Wk 75% · Fable 5%"],
+    ["ja", "5時間 残り 88%", "週 75% · Fable 5%"],
+  ])(
+    "uses short tier names on the merged line in %s",
+    async (language, first, merged) => {
+      await i18n.changeLanguage(language);
+      renderQuota([
+        ...baseTiers,
+        { name: "seven_day_fable", utilization: 95, resetsAt: null },
+      ]);
+      const lines = screen.getByRole("button").children;
+      expect(lines[0]).toHaveTextContent(first);
+      expect(lines[1]).toHaveTextContent(merged);
+    },
+  );
 
   it("shows every tier as a bar when expanded", () => {
     renderQuota(

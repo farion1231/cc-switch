@@ -3,7 +3,8 @@ import type { QuotaTier } from "@/types/subscription";
 
 /**
  * 额度的文字和颜色（v7 QuotaSpec）：一律写「剩余」，平时灰色；任一档剩余不到 10%（余额不到
- * 总额 10%）橙色；用完 / 过期 / 没查到红色。卡片最多两行，档数更多时留剩余最少的两档。
+ * 总额 10%）橙色；用完 / 过期 / 没查到红色。卡片最多两行：档数更多时，第一行固定写窗口
+ * 最短的那档，其余并成一行（见 cardRows）。
  */
 export type QuotaTone = "normal" | "warning" | "danger" | "muted";
 
@@ -17,6 +18,10 @@ export interface QuotaLine {
   left: number;
   /** 悬停时补充的一句（重置时间、套餐名） */
   detail?: string;
+  /** 并进卡片合并行时的写法（「每周 64%」）；只有按档的额度行才有 */
+  short?: string;
+  /** 档位窗口的长短次序，越小越短（见 TIER_WINDOW_ORDER） */
+  window?: number;
 }
 
 export const WARN_BELOW_PERCENT = 10;
@@ -47,10 +52,30 @@ export function countdownStr(resetsAt: string | null | undefined) {
   return `${minutes}m`;
 }
 
+/** 档位窗口的长短：卡片第一行写最短的那档；不认识的档排最后 */
+const TIER_WINDOW_ORDER: Record<string, number> = {
+  five_hour: 0,
+  gemini_pro: 1,
+  gemini_flash: 1,
+  gemini_flash_lite: 1,
+  seven_day: 2,
+  seven_day_fable: 2,
+  seven_day_opus: 2,
+  seven_day_sonnet: 2,
+  weekly_limit: 2,
+  "30_day": 3,
+  monthly: 3,
+  credits: 3,
+  premium: 3,
+};
+const UNKNOWN_WINDOW = 9;
+
+/** `shortLabel` 给了才能并进卡片的合并行（英日用短档名，放得下 136px 那一列） */
 export function tierLine(
   t: TFunction,
   tier: Pick<QuotaTier, "name" | "utilization" | "resetsAt">,
   label: string,
+  shortLabel?: string,
 ): QuotaLine {
   const left = Math.max(0, Math.round(100 - (tier.utilization ?? 0)));
   const params = labelParams(label);
@@ -67,6 +92,11 @@ export function tierLine(
     detail: countdown
       ? `${label} · ${t("subscription.resetsIn", { time: countdown })}`
       : undefined,
+    short:
+      shortLabel === undefined
+        ? undefined
+        : t("quota.tierShort", { label: shortLabel, value: left }),
+    window: TIER_WINDOW_ORDER[tier.name] ?? UNKNOWN_WINDOW,
   };
 }
 
@@ -133,6 +163,32 @@ export function pickLines(lines: QuotaLine[], max = 2): QuotaLine[] {
     .slice(0, max)
     .sort((a, b) => a.index - b.index)
     .map(({ line }) => line);
+}
+
+/** 合并行最多几段，再多就放不下了 */
+const MERGED_MAX = 2;
+
+/**
+ * 卡片上的各行，每行一段或几段。放得下就一档一行；放不下时，按档的额度第一行固定写窗口
+ * 最短的那档（位置不随用量跳），其余并成一行（多于两段留剩余最少的）；其他额度行
+ * （余额、失败）照旧留剩余最少的几行
+ */
+export function cardRows(lines: QuotaLine[], max = 2): QuotaLine[][] {
+  if (lines.length <= max) return lines.map((line) => [line]);
+  if (max < 2 || !lines.every((line) => line.short)) {
+    return pickLines(lines, max).map((line) => [line]);
+  }
+  const heads = lines
+    .map((line, index) => ({ line, index }))
+    .sort(
+      (a, b) =>
+        (a.line.window ?? UNKNOWN_WINDOW) - (b.line.window ?? UNKNOWN_WINDOW) ||
+        a.index - b.index,
+    )
+    .slice(0, max - 1)
+    .map(({ line }) => line);
+  const rest = lines.filter((line) => !heads.includes(line));
+  return [...heads.map((line) => [line]), pickLines(rest, MERGED_MAX)];
 }
 
 /** 相对时间（「3 分钟前」） */

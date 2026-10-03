@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
 import {
   balanceLine,
+  cardRows,
   expiredLine,
   failedLines,
   pickLines,
@@ -15,6 +16,7 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     "quota.tierUsedUp": "{{labelSp}}已用完",
     "quota.left": "剩余 {{value}}%",
     "quota.balance": "余额 {{value}}",
+    "quota.tierShort": "{{label}} {{value}}%",
   };
   const template = templates[key] ?? key;
   return template.replace(/\{\{(\w+)\}\}/g, (_, name) =>
@@ -88,5 +90,45 @@ describe("quota lines", () => {
       tierLine(t, { name: "c", utilization: 60, resetsAt: null }, "C"),
     ];
     expect(pickLines(lines, 2).map((line) => line.key)).toEqual(["b", "c"]);
+  });
+
+  it("pins the shortest window on the card and merges the other tiers", () => {
+    const tier = (name: string, utilization: number) =>
+      tierLine(t, { name, utilization, resetsAt: null }, name, name);
+    const keys = (rows: ReturnType<typeof cardRows>) =>
+      rows.map((row) => row.map((line) => line.key));
+
+    // 两档以内一档一行
+    expect(
+      keys(cardRows([tier("seven_day", 20), tier("five_hour", 10)])),
+    ).toEqual([["seven_day"], ["five_hour"]]);
+    // 三档：最短的窗口在第一行，其余按原顺序并成一行
+    expect(
+      keys(
+        cardRows([
+          tier("seven_day", 30),
+          tier("five_hour", 10),
+          tier("seven_day_fable", 95),
+        ]),
+      ),
+    ).toEqual([["five_hour"], ["seven_day", "seven_day_fable"]]);
+    // 合并行最多两段，多了留剩余最少的
+    expect(
+      keys(
+        cardRows([
+          tier("five_hour", 10),
+          tier("seven_day", 30),
+          tier("seven_day_opus", 5),
+          tier("seven_day_fable", 95),
+        ]),
+      ),
+    ).toEqual([["five_hour"], ["seven_day", "seven_day_fable"]]);
+    // 没有短写法的行（余额等）照旧留剩余最少的
+    const plain = [
+      tierLine(t, { name: "a", utilization: 10, resetsAt: null }, "A"),
+      tierLine(t, { name: "b", utilization: 95, resetsAt: null }, "B"),
+      tierLine(t, { name: "c", utilization: 60, resetsAt: null }, "C"),
+    ];
+    expect(keys(cardRows(plain))).toEqual([["b"], ["c"]]);
   });
 });
