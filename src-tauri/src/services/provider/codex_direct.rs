@@ -634,7 +634,14 @@ pub(crate) fn plan(
             plan_codex_model_catalog(
                 &provider.settings_config,
                 &projection.catalog_input_text(),
-                crate::proxy::providers::resolve_codex_catalog_tool_profile(provider),
+                match target {
+                    Target::Proxy { .. } => {
+                        crate::proxy::providers::resolve_codex_proxy_catalog_tool_profile(provider)
+                    }
+                    Target::Direct(_) => {
+                        crate::proxy::providers::resolve_codex_catalog_tool_profile(provider)
+                    }
+                },
             )?
             .catalog
         }
@@ -744,7 +751,7 @@ fn stack_catalog(
         CodexStackRoute::ThirdParty(CodexCatalogRow {
             settings: &route.settings_config,
             config_text: &route_text,
-            profile: crate::proxy::providers::resolve_codex_catalog_tool_profile(route),
+            profile: crate::proxy::providers::resolve_codex_proxy_catalog_tool_profile(route),
         })
     };
 
@@ -756,7 +763,7 @@ fn stack_catalog(
             Ok(projection) => Some((
                 member,
                 projection.catalog_input_text(),
-                crate::proxy::providers::resolve_codex_catalog_tool_profile(&member.provider),
+                crate::proxy::providers::resolve_codex_proxy_catalog_tool_profile(&member.provider),
             )),
             Err(error) => {
                 log::warn!(
@@ -1135,6 +1142,57 @@ pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppErr
 #[cfg(test)]
 mod tests {
     use super::is_proxy_base_url;
+
+    #[test]
+    fn stacked_catalog_advertises_tool_search_for_each_proxied_transport() {
+        let provider = |id: &str, format: &str| {
+            crate::provider::Provider::with_id(
+                id.to_string(),
+                id.to_string(),
+                serde_json::json!({
+                    "apiFormat": format,
+                    "auth": { "OPENAI_API_KEY": "sk-test" },
+                    "config": format!(
+                        "model = \"{id}-model\"\nmodel_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://{id}.example/v1\"\nwire_api = \"responses\"\n"
+                    ),
+                    "modelCatalog": { "models": [{ "model": format!("{id}-model") }] }
+                }),
+                None,
+            )
+        };
+        let route = provider("route", "openai_responses");
+        let stack = [
+            super::Member {
+                provider: provider("native", "openai_responses"),
+                key: "native".to_string(),
+                route: false,
+                model_ids: vec![],
+            },
+            super::Member {
+                provider: provider("anthropic", "anthropic"),
+                key: "anthropic".to_string(),
+                route: false,
+                model_ids: vec![],
+            },
+        ];
+        let catalog = super::stack_catalog(
+            &route,
+            &super::project(&route).unwrap(),
+            &stack,
+            &super::Prepared::default(),
+        )
+        .unwrap()
+        .unwrap();
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models.len(), 3);
+        for model in models {
+            assert_eq!(model["supports_search_tool"], true, "{model}");
+            assert!(model.get("apply_patch_tool_type").is_none(), "{model}");
+        }
+        assert_eq!(models[0]["slug"], "route-model");
+        assert_eq!(models[1]["slug"], "ccs-native/native-model");
+        assert_eq!(models[2]["slug"], "ccs-anthropic/anthropic-model");
+    }
 
     #[test]
     fn the_proxy_base_url_matches_the_listen_address() {

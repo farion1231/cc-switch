@@ -1495,6 +1495,42 @@ impl RequestForwarder {
         // suffix and add the context-1m beta header.
         let mut codex_anthropic_one_m = false;
 
+        // This compatibility hook only runs after the local proxy has selected
+        // the actual third-party provider. Direct/non-takeover Codex routing
+        // bypasses this forwarder, while official ChatGPT/OAuth providers are
+        // explicitly excluded by the provider gate.
+        let allow_tool_search_compat = super::supports_codex_tool_search_compat(app_type);
+        if allow_tool_search_compat
+            && super::providers::should_inject_codex_tool_search_shim(provider, endpoint)
+        {
+            let action = super::providers::transform_codex_chat::ensure_responses_tool_search_shim(
+                &mut mapped_body,
+                should_replace_native_tool_search(
+                    codex_responses_to_chat,
+                    codex_responses_to_anthropic,
+                ),
+            );
+            let provider_type = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.provider_type.as_deref())
+                .unwrap_or("custom");
+            let compatibility_path = if codex_responses_to_chat {
+                "responses_to_chat"
+            } else if codex_responses_to_anthropic {
+                "responses_to_anthropic"
+            } else {
+                "native_responses"
+            };
+            log::debug!(
+                "[Codex] tool_search shim provider={} provider_type={} path={} action={}",
+                provider.id,
+                provider_type,
+                compatibility_path,
+                action.as_str()
+            );
+        }
+
         // 转换请求体（如果需要）
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
@@ -1516,9 +1552,10 @@ impl RequestForwarder {
             }
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning_and_tool_search_compat(
                 mapped_body,
                 reasoning_config.as_ref(),
+                allow_tool_search_compat,
             )?;
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
@@ -1557,9 +1594,10 @@ impl RequestForwarder {
             // transform clamps any thinking budget below this value.
             const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
             let mut anthropic_body =
-                super::providers::transform_codex_anthropic::responses_request_to_anthropic(
+                super::providers::transform_codex_anthropic::responses_request_to_anthropic_with_tool_search_compat(
                     mapped_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
+                    allow_tool_search_compat,
                 )?;
             // Handle the 1M-context marker [1m]: strip the model-name suffix (the
             // gateway doesn't recognize it) and set the flag so the beta header is
@@ -1606,6 +1644,44 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Native Responses passthrough: preserve the xAI request sanitizer while
+        // normalizing synthetic ToolSearch follow-ups for other third-party gateways.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            let needs_xai_compat =
+                super::providers::provider_needs_responses_namespace_flatten(provider);
+            let needs_tool_search_compat = super::supports_codex_tool_search_compat(app_type)
+                && super::providers::should_inject_codex_tool_search_shim(provider, endpoint);
+            if needs_xai_compat || needs_tool_search_compat {
+                if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
+                    &mut request_body,
+                )? {
+                    log::debug!(
+                        "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
+                        provider.id
+                    );
+                }
+                if needs_xai_compat {
+                    // Stack requests keep the model already resolved by the router.
+                    let upstream_model = if self.keeps_resolved_model() {
+                        None
+                    } else {
+                        super::providers::codex_provider_upstream_model(provider)
+                    };
+                    super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+                        &mut request_body,
+                        &provider.id,
+                        upstream_model.as_deref(),
+                        &provider.settings_config,
+                    );
+                }
+            }
+        }
+
+        // Run after namespace/ToolSearch promotion and xAI normalization so a
+        // compaction turn cannot re-enable tools discovered in replayed history.
         // Codex 远程压缩，以及同一线程里别家回合留下的状态（见 `codex_compaction`）。
         // Chat / Anthropic 转换在转换器里处理；这里管原样转发的两种上游：官方清掉
         // CC Switch 产出、官方一定会拒的条目，原生 Responses 第三方把压缩触发和
@@ -1634,35 +1710,31 @@ impl RequestForwarder {
             }
         }
 
-        // Native Responses passthrough to a strict third-party gateway (xAI).
-        // One gate so rebase conflicts stay here plus the isolate file, not
-        // scattered across sanitizers. Flatten namespaces first; then apply
-        // xAI request rewrites (schema, agent_message, unknown models).
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
-            && super::providers::provider_needs_responses_namespace_flatten(provider)
         {
-            if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
-                &mut request_body,
-            )? {
-                log::debug!(
-                    "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
-                    provider.id
+            let activated_names: Vec<&str> = request_body
+                .get("tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+                .filter(|name| name.contains("__") && *name != "tool_search")
+                .collect();
+            if !activated_names.is_empty() {
+                let tool_choice = request_body
+                    .get("tool_choice")
+                    .map(crate::proxy::json_canonical::canonical_json_string)
+                    .unwrap_or_else(|| "<absent>".to_string());
+                log::info!(
+                    "[Codex] Activated deferred tools for native Responses upstream                      (provider={}, count={}, tool_choice={}, names={:?})",
+                    provider.id,
+                    activated_names.len(),
+                    tool_choice,
+                    activated_names
                 );
             }
-            // Stack 请求只做字段兼容。
-            let upstream_model = if self.keeps_resolved_model() {
-                None
-            } else {
-                super::providers::codex_provider_upstream_model(provider)
-            };
-            super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
-                &mut request_body,
-                &provider.id,
-                upstream_model.as_deref(),
-                &provider.settings_config,
-            );
         }
 
         // Stack 请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
@@ -3882,6 +3954,14 @@ fn value_for_log(value: &Value) -> String {
         Value::Object(values) => format!("object(len={})", values.len()),
     }
 }
+/// Native Responses routes use the function shim because third-party gateways
+/// cannot be assumed to implement Codex's private native tool_search carrier.
+fn should_replace_native_tool_search(
+    codex_responses_to_chat: bool,
+    codex_responses_to_anthropic: bool,
+) -> bool {
+    !codex_responses_to_chat && !codex_responses_to_anthropic
+}
 
 #[cfg(test)]
 mod tests {
@@ -3914,6 +3994,18 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn native_tool_search_replacement_is_not_xai_only() {
+        assert!(!should_replace_native_tool_search(true, false));
+        assert!(!should_replace_native_tool_search(false, true));
+        let replace_native = should_replace_native_tool_search(false, false);
+
+        assert!(
+            replace_native,
+            "every shimmed native Responses route needs replacement"
+        );
     }
 
     fn test_forwarder(
@@ -5687,6 +5779,20 @@ mod tests {
             })
         }
 
+        fn assert_tools_with_search_shim(seen: &Seen, original_tools: &Value) {
+            let original_tools = original_tools.as_array().expect("original tools");
+            let tools = seen.body["tools"].as_array().expect("forwarded tools");
+            assert_eq!(tools.len(), original_tools.len() + 1, "{}", seen.body);
+            assert_eq!(&tools[..original_tools.len()], original_tools.as_slice());
+
+            // Third-party Responses requests retain their tools and gain exactly
+            // one callable search shim, including on the Stack proxy path.
+            let shim = tools.last().expect("search shim");
+            assert_eq!(shim["type"], "function");
+            assert_eq!(shim["name"], "tool_search");
+            assert_eq!(shim["parameters"]["required"], json!(["query"]));
+        }
+
         async fn send(
             forwarder: &RequestForwarder,
             upstream: &Upstream,
@@ -5808,7 +5914,7 @@ mod tests {
             .await;
             assert_eq!(seen.body["input"], own_history["input"]);
 
-            // 对照：普通请求逐字节不改。
+            // 对照：普通请求保留原工具和输入，仅追加 ToolSearch 兼容工具。
             let plain = body(
                 "listed",
                 json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
@@ -5821,7 +5927,7 @@ mod tests {
                 plain.clone(),
             )
             .await;
-            assert_eq!(seen.body["tools"], plain["tools"]);
+            assert_tools_with_search_shim(&seen, &plain["tools"]);
             assert_eq!(seen.body["input"], plain["input"]);
         }
 
@@ -5918,11 +6024,11 @@ mod tests {
                     with_choice("glm-5.2"),
                 )
                 .await;
-                assert_eq!(seen.body["tools"], json!([function.clone()]), "{endpoint}");
+                assert_tools_with_search_shim(&seen, &json!([function.clone()]));
                 assert!(seen.body.get("tool_choice").is_none(), "{endpoint}");
             }
 
-            // 只剩它一个工具时整个 `tools` 删掉。
+            // 只有托管搜索时删掉它，仅保留 ToolSearch 兼容工具。
             let seen = send(
                 &forwarder(true),
                 &upstream,
@@ -5931,9 +6037,9 @@ mod tests {
                 body("glm-5.2", json!([{ "type": "web_search" }])),
             )
             .await;
-            assert!(seen.body.get("tools").is_none(), "{}", seen.body);
+            assert_tools_with_search_shim(&seen, &json!([]));
 
-            // 对照：支持的上游、路由请求都原样转发。
+            // 对照：支持的上游、路由请求保留托管搜索，并追加 ToolSearch 兼容工具。
             for (stack, model) in [(true, "deepseek-v4-pro"), (false, "glm-5.2")] {
                 let seen = send(
                     &forwarder(stack),
@@ -5943,7 +6049,7 @@ mod tests {
                     with_choice(model),
                 )
                 .await;
-                assert_eq!(seen.body["tools"], tools, "stack={stack} {model}");
+                assert_tools_with_search_shim(&seen, &tools);
                 assert_eq!(seen.body["tool_choice"]["type"], "web_search");
             }
         }
