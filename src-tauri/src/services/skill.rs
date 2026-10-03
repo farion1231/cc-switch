@@ -2771,12 +2771,23 @@ impl SkillService {
         Self::sync_to_app_unlocked(db, app).map(|_| ())
     }
 
+    /// Skills 不由 `sync_to_app` 投影的应用：Claude Desktop、OpenClaw 不支持 Skills，
+    /// Pi 没有数据库列、按目录是否存在现算。这些应用的 skills 目录不归 CC Switch 管，
+    /// 同步时一个字节都不能碰——OpenClaw 自己的 `~/.openclaw/skills` 里和受管
+    /// Skill 同名的真实目录，否则会被当成「已关掉的投影」删掉。
+    fn is_sync_managed_app(app: &AppType) -> bool {
+        !matches!(
+            app,
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi
+        )
+    }
+
     /// 「立即重新同步」：按数据库里的开关和当前同步方式，把 Skill 重新投影到各应用目录，
-    /// 逐应用报告结果（Claude Desktop、Pi 不由这里同步，不在结果里）。
+    /// 逐应用报告结果（Claude Desktop、OpenClaw、Pi 不由这里同步，不在结果里）。
     pub fn resync_all_apps(db: &Arc<Database>) -> Vec<SkillAppSyncOutcome> {
         let _state_guard = skill_state_read_guard();
         AppType::all()
-            .filter(|app| !matches!(app, AppType::ClaudeDesktop | AppType::Pi))
+            .filter(Self::is_sync_managed_app)
             .map(|app| {
                 let (error, failed_skills) = match Self::sync_to_app_unlocked(db, &app) {
                     Ok(failed) => (None, failed),
@@ -2799,7 +2810,7 @@ impl SkillService {
     /// 返回同步失败、被跳过的 Skill（整个应用失败时返回 Err）。
     fn sync_to_app_unlocked(db: &Arc<Database>, app: &AppType) -> Result<Vec<SkillSyncFailure>> {
         let mut failed = Vec::new();
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        if !Self::is_sync_managed_app(app) {
             return Ok(failed);
         }
 
@@ -7310,5 +7321,42 @@ mod tests {
             assert!(dir.join("good-skill").join("SKILL.md").exists());
         }
         assert!(outcomes.iter().filter(|o| o.app != "claude").all(|o| o.ok));
+    }
+
+    /// OpenClaw 不支持 Skills，`~/.openclaw/skills` 归它自己：里面和受管 Skill 同名的
+    /// 真实目录不能被当成「已关掉的投影」删掉。
+    #[test]
+    #[serial_test::serial]
+    fn resync_all_apps_leaves_openclaw_skills_dir_alone() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let ssot_dir = SkillService::get_ssot_dir().expect("ssot dir");
+        write_skill(&ssot_dir.join("shared-name"), "managed copy");
+
+        let openclaw_dir = SkillService::get_app_skills_dir(&AppType::OpenClaw).expect("dir");
+        let own_skill = openclaw_dir.join("shared-name").join("SKILL.md");
+        fs::create_dir_all(own_skill.parent().unwrap()).unwrap();
+        fs::write(&own_skill, "openclaw's own skill").unwrap();
+        write_skill(&openclaw_dir.join("other"), "untouched");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let mut skill = poisoned_skill("owner/repo:shared", "shared-name");
+        skill.name = "shared".to_string();
+        skill.apps = SkillApps::only(&AppType::Claude);
+        db.save_skill(&skill).expect("seed row");
+
+        let outcomes = SkillService::resync_all_apps(&db);
+
+        assert!(outcomes.iter().all(|o| o.app != "openclaw"));
+        assert!(outcomes.iter().all(|o| o.ok), "{outcomes:?}");
+        assert_eq!(
+            fs::read_to_string(&own_skill).unwrap(),
+            "openclaw's own skill"
+        );
+        assert!(openclaw_dir.join("other").join("SKILL.md").exists());
+
+        // 切换供应商走的同一条同步也不能碰它
+        SkillService::sync_to_app(&db, &AppType::OpenClaw).expect("no-op sync");
+        assert!(own_skill.exists());
     }
 }
