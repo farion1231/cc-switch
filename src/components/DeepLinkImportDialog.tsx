@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { DeepLinkImportRequest, deeplinkApi } from "@/lib/api/deeplink";
+import { providersApi } from "@/lib/api/providers";
 import { parseDeepLinkConfigPreview } from "@/utils/deepLinkConfigPreview";
 import {
   Dialog,
@@ -145,12 +146,34 @@ export function DeepLinkImportDialog() {
           await queryClient.invalidateQueries({
             queryKey: ["providers", request.app],
           });
+          if (request.app === "claude-desktop") {
+            await queryClient.invalidateQueries({
+              queryKey: ["claudeDesktopStatus"],
+            });
+          }
           toast.success(t("deeplink.importSuccess"), {
             description: t("deeplink.importSuccessDescription", {
               name: request.name,
             }),
             closeButton: true,
           });
+          if (request.app === "claude-desktop" && request.enabled === true) {
+            try {
+              const status = await providersApi.getClaudeDesktopStatus();
+              if (status.mode === "proxy" && !status.proxyRunning) {
+                toast.warning(
+                  t("notifications.proxyRequiredForSwitch", {
+                    reason: t("notifications.proxyReasonClaudeDesktop"),
+                  }),
+                );
+              }
+            } catch (error) {
+              console.warn(
+                "Failed to check Claude Desktop routing status:",
+                error,
+              );
+            }
+          }
         } else if (result.type === "prompt") {
           // Prompts don't use React Query, trigger a custom event for refresh
           window.dispatchEvent(
@@ -405,7 +428,8 @@ export function DeepLinkImportDialog() {
                   </div>
 
                   {/* Model Fields - 根据应用类型显示不同的模型字段 */}
-                  {request.app === "claude" ? (
+                  {request.app === "claude" ||
+                  request.app === "claude-desktop" ? (
                     <>
                       {/* Claude 四种模型字段 */}
                       {request.haikuModel && (

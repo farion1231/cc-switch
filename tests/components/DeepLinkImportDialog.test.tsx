@@ -1,8 +1,28 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { http, HttpResponse } from "msw";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import { server } from "../msw/server";
+
+const toastMocks = vi.hoisted(() => ({
+  warning: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    warning: toastMocks.warning,
+    error: vi.fn(),
+  },
+}));
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => (
@@ -32,6 +52,59 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
 );
 
 describe("DeepLinkImportDialog", () => {
+  it("warns when an enabled Desktop proxy import has no running route", async () => {
+    server.use(
+      http.post("http://tauri.local/import_from_deeplink_unified", () =>
+        HttpResponse.json({ type: "provider", id: "desktop-test" }),
+      ),
+      http.post("http://tauri.local/get_claude_desktop_status", () =>
+        HttpResponse.json({ mode: "proxy", proxyRunning: false }),
+      ),
+    );
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+    act(() => {
+      emitTauriEvent("deeplink-import", {
+        version: "v1",
+        resource: "provider",
+        app: "claude-desktop",
+        name: "Desktop Provider",
+        endpoint: "https://api.example.com",
+        apiKey: "sk-test",
+        enabled: true,
+      });
+    });
+    fireEvent.click(await screen.findByText("deeplink.import"));
+
+    await waitFor(() =>
+      expect(toastMocks.warning).toHaveBeenCalledWith(
+        "notifications.proxyRequiredForSwitch",
+      ),
+    );
+  });
+
+  it("shows Claude Desktop model mappings before import", async () => {
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+    act(() => {
+      emitTauriEvent("deeplink-import", {
+        version: "v1",
+        resource: "provider",
+        app: "claude-desktop",
+        name: "Desktop Provider",
+        endpoint: "https://api.example.com",
+        apiKey: "sk-test",
+        haikuModel: "haiku-test",
+        sonnetModel: "sonnet-test",
+        opusModel: "opus-test",
+      });
+    });
+
+    expect(await screen.findByText("haiku-test")).toBeInTheDocument();
+    expect(screen.getByText("sonnet-test")).toBeInTheDocument();
+    expect(screen.getByText("opus-test")).toBeInTheDocument();
+  });
+
   it("renders masked usage access token and user id for provider imports", async () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
 

@@ -79,6 +79,127 @@ fn test_parse_valid_claude_deeplink() {
 }
 
 #[test]
+fn test_parse_claude_desktop_provider_aliases() {
+    for app in ["claude-desktop", "claude_desktop", "claudedesktop"] {
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app={app}&name=Desktop&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&haikuModel=haiku-test&sonnetModel=sonnet-test&opusModel=opus-test&enabled=false"
+        );
+        let request = parse_deeplink_url(&url).unwrap();
+
+        assert_eq!(request.app.as_deref(), Some("claude-desktop"));
+        assert_eq!(request.enabled, Some(false));
+        let provider =
+            super::provider::build_provider_from_request(&AppType::ClaudeDesktop, &request)
+                .unwrap();
+        let env = &provider.settings_config["env"];
+        assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-test");
+        assert_eq!(env["ANTHROPIC_BASE_URL"], "https://api.example.com");
+        assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "haiku-test");
+        assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "sonnet-test");
+        assert_eq!(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], "opus-test");
+        let routes = crate::claude_desktop_config::proxy_model_routes(&provider).unwrap();
+        let mut models = routes
+            .iter()
+            .map(|route| route.upstream_model.as_str())
+            .collect::<Vec<_>>();
+        models.sort();
+        assert_eq!(models, ["haiku-test", "opus-test", "sonnet-test"]);
+        assert_eq!(
+            provider.meta.as_ref().unwrap().claude_desktop_mode,
+            Some(crate::provider::ClaudeDesktopMode::Proxy)
+        );
+    }
+}
+
+#[test]
+fn test_merge_claude_desktop_inline_config() {
+    let config = BASE64_STANDARD.encode(
+        serde_json::json!({"env": {
+            "ANTHROPIC_AUTH_TOKEN": "sk-config",
+            "ANTHROPIC_BASE_URL": "https://config.example.com",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-config",
+            "CUSTOM_ENV": "preserved"
+        }})
+        .to_string(),
+    );
+
+    for app in ["claude-desktop", "claude_desktop", "claudedesktop"] {
+        let request = DeepLinkImportRequest {
+            version: "v1".to_string(),
+            resource: "provider".to_string(),
+            app: Some(app.to_string()),
+            name: Some("Desktop".to_string()),
+            api_key: Some("sk-url".to_string()),
+            config: Some(config.clone()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        assert_eq!(merged.api_key.as_deref(), Some("sk-url"));
+        assert_eq!(
+            merged.endpoint.as_deref(),
+            Some("https://config.example.com")
+        );
+        assert_eq!(merged.sonnet_model.as_deref(), Some("sonnet-config"));
+
+        let provider =
+            super::provider::build_provider_from_request(&AppType::ClaudeDesktop, &merged).unwrap();
+        assert_eq!(provider.settings_config["env"]["CUSTOM_ENV"], "preserved");
+        assert_eq!(
+            provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+            "sk-url"
+        );
+    }
+}
+
+#[test]
+fn test_claude_desktop_models_become_direct_or_proxy_routes() {
+    use crate::claude_desktop_config::{is_claude_safe_model_id, proxy_model_routes};
+    use crate::provider::ClaudeDesktopMode;
+
+    for (model, expected_mode, upstream) in [
+        (
+            "claude-sonnet-4-6",
+            ClaudeDesktopMode::Direct,
+            "claude-sonnet-4-6",
+        ),
+        (
+            "claude-sonnet-4-6[1M]",
+            ClaudeDesktopMode::Direct,
+            "claude-sonnet-4-6",
+        ),
+        ("deepseek-v4", ClaudeDesktopMode::Proxy, "deepseek-v4"),
+    ] {
+        let request = DeepLinkImportRequest {
+            model: Some(model.to_string()),
+            endpoint: Some("https://api.example.com".to_string()),
+            api_key: Some("sk-test".to_string()),
+            ..Default::default()
+        };
+        let provider =
+            super::provider::build_provider_from_request(&AppType::ClaudeDesktop, &request)
+                .unwrap();
+        let meta = provider.meta.as_ref().unwrap();
+        assert_eq!(meta.claude_desktop_mode, Some(expected_mode.clone()));
+        assert_eq!(meta.claude_desktop_model_routes.len(), 1);
+        let (route_id, route) = meta.claude_desktop_model_routes.iter().next().unwrap();
+        assert!(is_claude_safe_model_id(route_id));
+        assert_eq!(route.model, upstream);
+        if expected_mode == ClaudeDesktopMode::Direct {
+            assert_eq!(route_id, upstream);
+        } else {
+            assert_eq!(
+                proxy_model_routes(&provider).unwrap()[0].upstream_model,
+                upstream
+            );
+        }
+        if model.ends_with("[1M]") {
+            assert_eq!(route.supports_1m, Some(true));
+        }
+        crate::claude_desktop_config::validate_provider(&provider).unwrap();
+    }
+}
+
+#[test]
 fn test_parse_deeplink_with_notes() {
     let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&homepage=https%3A%2F%2Fcodex.com&endpoint=https%3A%2F%2Fapi.codex.com&apiKey=key123&notes=Test%20notes";
 
