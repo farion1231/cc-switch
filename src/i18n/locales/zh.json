@@ -2177,7 +2177,8 @@
     },
     "empty": {
       "title": "还没有用量数据",
-      "body": "会话日志和经路由服务的请求都会记在这里。"
+      "body": "会话日志和经路由服务的请求都会记在这里。",
+      "configurePricing": "配置模型定价"
     },
     "pricing": {
       "modelsDevTitle": "models.dev 同步 · {{status}}",

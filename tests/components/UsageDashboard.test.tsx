@@ -471,4 +471,26 @@ describe("UsageDashboard", () => {
     expect(await screen.findByText("usage.empty.title")).toBeInTheDocument();
     expect(screen.queryByTestId("usage-hero")).not.toBeInTheDocument();
   });
+
+  it("still lets the pricing tab be opened from the empty state", async () => {
+    usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 0 });
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await screen.findByText("usage.empty.title");
+    expect(
+      screen.queryByTestId("pricing-config-panel"),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "usage.empty.configurePricing" }),
+    );
+    expect(
+      await screen.findByTestId("pricing-config-panel"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+    ).toHaveAttribute("aria-selected", "true");
+    // 空库里没有可看的概览，不画全是 0 的卡
+    expect(screen.queryByTestId("usage-hero")).not.toBeInTheDocument();
+  });
 });

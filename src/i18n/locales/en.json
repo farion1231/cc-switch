@@ -2177,7 +2177,8 @@
     },
     "empty": {
       "title": "No usage data yet",
-      "body": "Usage from session logs and from requests through the routing service shows up here."
+      "body": "Usage from session logs and from requests through the routing service shows up here.",
+      "configurePricing": "Configure model pricing"
     },
     "pricing": {
       "modelsDevTitle": "models.dev sync · {{status}}",
