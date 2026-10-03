@@ -71,7 +71,8 @@ interface ProviderCardActionsProps {
 
 /**
  * 卡片右侧（v7）：主操作位（状态文字或按钮）→ 上移 / 下移（故障转移队列）→ 编辑 → ⋯。
- * 次要操作都在 ⋯ 里：复制、检测连通、配置用量查询、打开终端、删除。
+ * 次要操作都在 ⋯ 里：跟当前模式有关的（聚合页的「设为默认」）在最前，然后是复制、检测连通、
+ * 配置用量查询、打开终端、删除。
  * 按钮一律纯图标 + HoverTip；有禁用原因时改由 DisabledReason 的说明卡报原因。
  */
 export function ProviderCardActions({
@@ -86,7 +87,7 @@ export function ProviderCardActions({
   onOpenTerminal,
 }: ProviderCardActionsProps) {
   const { t } = useTranslation();
-  const { status, buttons, move } = presentation;
+  const { status, buttons, move, menuItems = [] } = presentation;
 
   return (
     <div className="flex shrink-0 items-center gap-2">
@@ -169,6 +170,28 @@ export function ProviderCardActions({
           </DropdownMenuTrigger>
         </HoverTip>
         <DropdownMenuContent align="end" className="min-w-[180px]">
+          {menuItems.map((item) => (
+            <DropdownMenuItem
+              key={item.key}
+              disabled={Boolean(item.disabledReason)}
+              onSelect={item.onSelect}
+              className="flex-col items-start gap-0.5"
+            >
+              {item.label}
+              {item.disabledReason ? (
+                <span className="max-w-64 text-caption text-fg-3">
+                  {item.disabledReason}
+                </span>
+              ) : (
+                item.detail && (
+                  <span className="max-w-64 text-caption text-warning-text">
+                    {item.detail}
+                  </span>
+                )
+              )}
+            </DropdownMenuItem>
+          ))}
+          {menuItems.length > 0 && <DropdownMenuSeparator />}
           {onDuplicate && (
             <DropdownMenuItem onSelect={onDuplicate}>
               {t("provider.duplicate")}

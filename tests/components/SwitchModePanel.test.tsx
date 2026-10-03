@@ -26,7 +26,7 @@ vi.mock("sonner", () => ({
   },
 }));
 
-// 只关心模式层：卡片画成按钮，按 presentation 的 key 找
+// 只关心模式层：卡片画成按钮，按 presentation 的 key 找；「更多」菜单里的项加 menu- 前缀
 vi.mock("@/components/providers/ProviderCard", () => ({
   ProviderCard: ({ provider, presentation }: any) => (
     <div data-testid={`card-${provider.id}`}>
@@ -38,6 +38,16 @@ vi.mock("@/components/providers/ProviderCard", () => ({
           onClick={button.onClick}
         >
           {button.label}
+        </button>
+      ))}
+      {(presentation.menuItems ?? []).map((item: any) => (
+        <button
+          key={item.key}
+          data-testid={`menu-${item.key}-${provider.id}`}
+          disabled={Boolean(item.disabledReason)}
+          onClick={item.onSelect}
+        >
+          {item.label}
         </button>
       ))}
     </div>
@@ -76,7 +86,11 @@ function mockMode(
   );
 }
 
-function renderPanel(app: ProxyAppId, providers: Record<string, Provider>) {
+function renderPanel(
+  app: ProxyAppId,
+  providers: Record<string, Provider>,
+  onSwitch = vi.fn(),
+) {
   const queryClient = createTestQueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
@@ -85,7 +99,7 @@ function renderPanel(app: ProxyAppId, providers: Record<string, Provider>) {
         providers={providers}
         currentProviderId={Object.keys(providers)[0] ?? ""}
         isLoading={false}
-        onSwitch={vi.fn()}
+        onSwitch={onSwitch}
         onOpenRoutingSettings={vi.fn()}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
@@ -98,6 +112,7 @@ function renderPanel(app: ProxyAppId, providers: Record<string, Provider>) {
 
 beforeEach(() => {
   vi.mocked(toast.info).mockClear();
+  vi.mocked(toast.success).mockClear();
   // jsdom 没有 scrollIntoView，确认框里的下拉打开时会调
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -263,11 +278,11 @@ describe("SwitchModePanel — mode layer", () => {
     await user.click(
       await screen.findByRole("button", { name: /mode\.names\.stack/ }),
     );
-    // 行上只有名单的添加：没有「设为默认」，也没有会切模式的按钮
+    // 行上只有名单的添加，「设为默认」在「更多」菜单里；没有会切模式的按钮
     const row = await screen.findByTestId("card-kimi");
     expect(
       Array.from(row.querySelectorAll("button")).map((b) => b.dataset.testid),
-    ).toEqual(["add-kimi"]);
+    ).toEqual(["add-kimi", "menu-setDefault-kimi"]);
     expect(screen.getByTestId("add-kimi")).not.toBeDisabled();
 
     await user.click(
@@ -291,6 +306,110 @@ describe("SwitchModePanel — mode layer", () => {
         { appType: "claude", enabled: true, stack: true, route: "kimi" },
       ]),
     );
+  });
+
+  it("records the Stack default from the card menu while direct, without entering the mode", async () => {
+    const user = userEvent.setup();
+    let route: string | null = null;
+    const routeCalls: unknown[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_app_mode`, () =>
+        HttpResponse.json({
+          mode: "direct",
+          attached: false,
+          routeProviderId: route,
+          directProviderId: "a",
+        }),
+      ),
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: false, members: [] }),
+      ),
+      http.post(`${TAURI_ENDPOINT}/set_proxy_route`, async ({ request }) => {
+        const body = (await request.json()) as { providerId: string };
+        routeCalls.push(body);
+        route = body.providerId;
+        return HttpResponse.json(null);
+      }),
+    );
+    const takeover = captureTakeover();
+    const onSwitch = vi.fn();
+    renderPanel("claude", { a: provider("a"), kimi: provider("kimi") }, onSwitch);
+
+    await user.click(
+      await screen.findByRole("button", { name: /mode\.names\.stack/ }),
+    );
+    await user.click(await screen.findByTestId("menu-setDefault-kimi"));
+
+    // 只记下选择：不进聚合、不走切换供应商
+    await waitFor(() =>
+      expect(routeCalls).toEqual([{ appType: "claude", providerId: "kimi" }]),
+    );
+    expect(takeover).toEqual([]);
+    expect(onSwitch).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "mode.toast.defaultRemembered",
+        expect.anything(),
+      ),
+    );
+    // 记下的那家成了「切换后的默认」：自己不再有「设为默认」，原来那家有了
+    await screen.findByTestId("menu-setDefault-a");
+    expect(screen.queryByTestId("menu-setDefault-kimi")).not.toBeInTheDocument();
+
+    // 确认框预选它
+    await user.click(
+      screen.getByRole("button", { name: "mode.activate.stack" }),
+    );
+    expect(
+      await screen.findByRole("combobox", { name: "mode.dialog.stackDefault" }),
+    ).toHaveTextContent("kimi");
+  });
+
+  it("changes the Stack default right away once Stack mode is on", async () => {
+    mockMode("stack", "route");
+    const routeCalls: unknown[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: true,
+          members: [
+            { providerId: "route", modelIds: ["m-route"], route: true },
+            { providerId: "kimi", modelIds: ["m-kimi"], route: false },
+          ],
+        }),
+      ),
+      http.post(`${TAURI_ENDPOINT}/set_proxy_route`, async ({ request }) => {
+        routeCalls.push(await request.json());
+        return HttpResponse.json(null);
+      }),
+    );
+    const onSwitch = vi.fn();
+    const kimi = provider("kimi");
+    const other = provider("other");
+    renderPanel("claude", { route: provider("route"), kimi, other }, onSwitch);
+
+    // 已添加的、还没添加的都能直接设为默认，走的是切换供应商（当场生效）
+    fireEvent.click(await screen.findByTestId("menu-setDefault-kimi"));
+    fireEvent.click(screen.getByTestId("menu-setDefault-other"));
+    expect(onSwitch.mock.calls.map(([p]) => p)).toEqual([kimi, other]);
+    expect(screen.queryByTestId("menu-setDefault-route")).not.toBeInTheDocument();
+    expect(routeCalls).toEqual([]);
+  });
+
+  it("cannot change the Stack default from the preview while routing", async () => {
+    mockMode("route", "a");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: false, members: [] }),
+      ),
+    );
+    renderPanel("claude", { a: provider("a"), kimi: provider("kimi") });
+
+    // 等模式读到了再换页签：生效的模式一变，查看的那格会跳回生效的那格
+    await screen.findByText("→ a");
+    fireEvent.click(screen.getByRole("button", { name: /mode\.names\.stack/ }));
+    // 默认和路由目标是同一个指针：路由中改它就是当场换路由，只能在切换时的确认框里选
+    expect(await screen.findByTestId("menu-setDefault-kimi")).toBeDisabled();
   });
 
   it("warns that a Codex official account drops out of the Stack unless it is the default", async () => {

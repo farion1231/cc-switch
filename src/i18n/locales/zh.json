@@ -3843,6 +3843,7 @@
       "enteredRoute": "{{app}} 已开始路由 → {{provider}}。",
       "enteredStack": "{{app}} 已切换到聚合模式。重启 {{app}} 后，聚合的模型出现在 /model 里。",
       "exited": "已回到直连：{{app}} 现在直接连接 {{provider}}。",
+      "defaultRemembered": "切换到聚合模式后，默认供应商是 {{provider}}。",
       "restartHint": "重启 {{app}} 后生效。",
       "undo": "撤销",
       "failed": "切换失败：{{detail}}"
@@ -3921,6 +3922,8 @@
       "noRoute": "官方订阅不经过路由，回到直连后可用。",
       "noStack": "官方订阅不能用于聚合模式。",
       "officialStack": "官方账号只能做默认，不能加入聚合。",
+      "defaultDropsOfficial": "官方订阅的模型不会出现在聚合里。",
+      "defaultWhileRouting": "正在路由时，默认就是路由到的那家；切换到聚合模式时可以另选。",
       "needsRoute": "需要路由：{{reason}}，不能直连。",
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
       "currentCannotRemove": "正在用的这家不能移除，先启用别家。",

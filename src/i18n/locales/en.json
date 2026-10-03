@@ -3843,6 +3843,7 @@
       "enteredRoute": "{{app}} is now routing → {{provider}}.",
       "enteredStack": "{{app}} switched to Aggregation. Restart {{app}} to see the aggregated models in /model.",
       "exited": "Back to direct: {{app}} now connects to {{provider}} directly.",
+      "defaultRemembered": "{{provider}} will be the default provider once you switch to Aggregation.",
       "restartHint": " Restart {{app}} to apply.",
       "undo": "Undo",
       "failed": "Couldn't switch: {{detail}}"
@@ -3921,6 +3922,8 @@
       "noRoute": "Official subscriptions don't go through routing; available again in direct mode.",
       "noStack": "Official subscriptions can't be used in Aggregation.",
       "officialStack": "Official accounts can only be the default; they can't join the aggregation.",
+      "defaultDropsOfficial": "The official subscription's models won't be part of the aggregation.",
+      "defaultWhileRouting": "While routing, the default is the provider you route to. You can pick another one when switching to Aggregation.",
       "needsRoute": "Needs routing: {{reason}}; can't connect directly.",
       "defaultCannotRemove": "The default can't be removed. Make another provider the default first.",
       "currentCannotRemove": "The provider in use can't be removed. Enable another one first.",

@@ -422,6 +422,7 @@ export const handlers = [
       directProviderId: getCurrentProviderId(appType) || null,
     });
   }),
+  http.post(`${TAURI_ENDPOINT}/set_proxy_route`, () => success(null)),
   http.post(`${TAURI_ENDPOINT}/take_startup_attach_failures`, () =>
     success([]),
   ),
