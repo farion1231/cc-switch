@@ -89,13 +89,25 @@ pub struct ProxyStatus {
     /// 当前活跃的代理目标列表
     #[serde(default)]
     pub active_targets: Vec<ActiveTarget>,
-    /// 每个 provider 当前活跃的推理流条数（按 provider ID 计）。
+    /// 每个 (app_type, provider_id) 当前活跃的推理流条数。
     ///
     /// 只统计「正在进行」的请求，不累计历史：一条推理流从上游请求发出起计，
     /// 到响应体（含流式 SSE）结束才归还，因此流式长响应会被如实计入。
     /// 代理重启后清零。
+    ///
+    /// 必须是嵌套结构而不是 `HashMap<String, usize>`：`providers` 的主键是
+    /// `(id, app_type)`（见 `database/schema.rs`），导入 Claude/Codex/Gemini
+    /// 配置时三个应用会各自创建 ID 同为 `default` 的 provider。只按 provider
+    /// ID 记账会把它们混成一坨——Claude/default 有 1 条在飞而 Codex/default
+    /// 没有时，切到 Codex 统计页也会显示 1。
+    ///
+    /// 内层 map 在该 provider 归零时整体移除，外层同理，因此 map 大小只反映
+    /// 当前真有在飞流量的组合，不随 provider 增删无限增长。
     #[serde(default)]
-    pub in_flight_by_provider: std::collections::HashMap<String, usize>,
+    pub in_flight_by_provider: std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, usize>,
+    >,
 }
 
 /// 活跃的代理目标信息
