@@ -1,16 +1,65 @@
 import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
 
 const DAY_SECONDS = 24 * 60 * 60;
-const DAY_MS = DAY_SECONDS * 1000;
 
 export interface ResolvedUsageRange {
   startDate: number;
   endDate: number;
 }
 
-function getStartOfLocalDayDate(nowMs: number): Date {
+/** unix 秒 ↔ Date 互转,与 picker 内部 toTs/fromTs 共享同一精度语义。 */
+export function tsToDate(ts: number): Date {
+  return new Date(ts * 1000);
+}
+
+export function dateToTs(date: Date): number {
+  return Math.floor(date.getTime() / 1000);
+}
+
+/** 把任意时间戳归到本地当天 00:00:00 的 Date 对象。用 setHours(0,0,0,0) 处理 DST 边界。 */
+export function getStartOfLocalDayDate(nowMs: number): Date {
   const date = new Date(nowMs);
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+/** 判断两个 Date 是否是同一天(本地时间)。 */
+export function isSameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/**
+ * 把任意时间戳归到本地当天 23:59:59.999 的 Date 对象。
+ * 用 "次日 00:00 − 1ms" 模式，自动适配 DST 缩短/拉长那一天。
+ */
+function getEndOfLocalDayDate(nowMs: number): Date {
+  const d = new Date(nowMs);
+  d.setDate(d.getDate() + 1);
+  d.setHours(0, 0, 0, 0);
+  return new Date(d.getTime() - 1);
+}
+
+/**
+ * Picker 写路径的统一归一化(start 00:00 / end today→now / end 过去→23:59)。
+ * 所有写入 draft* 的入口(打开 reset、日历点选、input 框)都过此函数,
+ * 避免任意 ts 逃逸到后端 compute_rollup_date_bounds。
+ */
+export function normalizePickerStart(startTs: number): number {
+  return dateToTs(getStartOfLocalDayDate(startTs * 1000));
+}
+
+export function normalizePickerEnd(
+  endTs: number,
+  nowMs: number = Date.now(),
+): number {
+  if (isSameDay(tsToDate(endTs), new Date(nowMs))) {
+    return Math.floor(nowMs / 1000);
+  }
+  return dateToTs(getEndOfLocalDayDate(endTs * 1000));
 }
 
 function getPresetLookbackStart(
@@ -18,9 +67,9 @@ function getPresetLookbackStart(
   nowMs: number,
 ): number {
   const dayCount = preset === "7d" ? 7 : preset === "14d" ? 14 : 30;
-  return Math.floor(
-    getStartOfLocalDayDate(nowMs - (dayCount - 1) * DAY_MS).getTime() / 1000,
-  );
+  const start = getStartOfLocalDayDate(nowMs);
+  start.setDate(start.getDate() - (dayCount - 1));
+  return dateToTs(start);
 }
 
 export function resolveUsageRange(
@@ -32,7 +81,7 @@ export function resolveUsageRange(
   switch (selection.preset) {
     case "today":
       return {
-        startDate: Math.floor(getStartOfLocalDayDate(nowMs).getTime() / 1000),
+        startDate: dateToTs(getStartOfLocalDayDate(nowMs)),
         endDate,
       };
     case "1d":
@@ -48,10 +97,11 @@ export function resolveUsageRange(
         endDate,
       };
     case "custom": {
-      const startDate = selection.customStartDate ?? endDate - DAY_SECONDS;
+      const startDate =
+        selection.customStartDate ?? dateToTs(getStartOfLocalDayDate(nowMs));
       const customEndDate = selection.liveEndTime
         ? endDate
-        : (selection.customEndDate ?? endDate);
+        : (selection.customEndDate ?? dateToTs(getEndOfLocalDayDate(nowMs)));
       return {
         startDate,
         endDate: customEndDate,
