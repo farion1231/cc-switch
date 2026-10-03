@@ -25,6 +25,7 @@ export interface DeepLinkImportRequest {
   apiKey?: string;
   icon?: string;
   model?: string;
+  supportsWebsockets?: boolean;
   notes?: string;
   haikuModel?: string;
   sonnetModel?: string;
