@@ -34,11 +34,22 @@ describe("SessionToolGroup", () => {
 
   it("only expands the preview when the hit is within it", () => {
     render(
-      <SessionToolGroup item={item} isActive={false} searchQuery="line 2" />,
+      <SessionToolGroup item={item} isActive={false} searchQuery="line 3" />,
     );
     const region = screen.getByRole("region");
-    expect(region).toHaveTextContent("line 2");
+    expect(region).toHaveTextContent("line 3");
     expect(region).not.toHaveTextContent("needle here");
+  });
+
+  it("shows the tail when the query hits both inside and past the preview", () => {
+    // "line 1" 在第 1 行就命中，但第 13–18 行也命中：只问预览里有没有会把后面的藏住，
+    // 而查找计数把它们都算了进去，跳到第二个结果却看不见
+    render(
+      <SessionToolGroup item={item} isActive={false} searchQuery="line 1" />,
+    );
+    const region = screen.getByRole("region");
+    expect(region).toHaveTextContent("line 18");
+    expect(region).toHaveTextContent("line 20");
   });
 
   it("stays collapsed when the query only matches the tool name", async () => {
