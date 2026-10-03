@@ -807,9 +807,10 @@ impl RequestForwarder {
                         if rectified.applied {
                             let _ = std::mem::replace(&mut opaque_rectifier_retried, true);
                             log::info!(
-                                "[{app_type_str}] [RECT-020] 上游拒绝了请求里别家签发的状态，去掉 {} 个推理条目、{} 个加密片段，换掉 {} 个压缩条目后对 provider={} 重试一次",
+                                "[{app_type_str}] [RECT-020] 上游拒绝了请求里别家签发的状态，去掉 {} 个推理条目、{} 个加密片段、{} 个别家 id，换掉 {} 个压缩条目后对 provider={} 重试一次",
                                 rectified.removed_reasoning_items,
                                 rectified.replaced_encrypted_parts,
+                                rectified.removed_foreign_ids,
                                 rectified.replaced_compaction_items,
                                 provider.id
                             );

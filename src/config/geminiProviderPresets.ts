@@ -1,4 +1,5 @@
 import type { ProviderCategory } from "@/types";
+import type { PresetFamilyFields } from "./presetFamilies";
 
 /**
  * Gemini 预设供应商的视觉主题配置
@@ -12,7 +13,7 @@ export interface GeminiPresetTheme {
   textColor?: string;
 }
 
-export interface GeminiProviderPreset {
+export interface GeminiProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string; // i18n key for localized display name
   websiteUrl: string;

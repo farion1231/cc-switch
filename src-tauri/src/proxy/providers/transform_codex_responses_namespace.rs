@@ -686,8 +686,8 @@ fn restore_output_item(
 }
 
 /// Wrap a native Responses SSE byte stream, restoring flattened namespace
-/// calls and synthetic tool-search calls. Unaffected events pass through with
-/// their inner content preserved verbatim.
+/// calls and synthetic tool-search calls. Repair late arguments before changing
+/// function-call types or item IDs. Unaffected events preserve their inner content.
 pub(crate) fn create_tool_call_restore_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     map: HashMap<String, NamespacedName>,
@@ -696,6 +696,7 @@ pub(crate) fn create_tool_call_restore_sse_stream<E>(
 where
     E: std::error::Error + Send + 'static,
 {
+    let stream = super::responses_late_arguments::create_late_arguments_repair_stream(stream);
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
@@ -1405,6 +1406,105 @@ mod tests {
         // Unrelated events preserved verbatim.
         assert!(collected.contains("\"delta\":\"hi\""));
         assert!(collected.contains("[DONE]"));
+    }
+
+    #[tokio::test]
+    async fn sse_stream_repairs_late_arguments_before_tool_search_restore() {
+        let item = |arguments: &str| {
+            json!({
+                "id": "fc_search-1", "type": "function_call", "name": "tool_search",
+                "call_id": "search-1", "status": "completed", "arguments": arguments
+            })
+        };
+        let arguments = r#"{"query":"thread tools","limit":"2"}"#;
+        let events = vec![
+            json!({ "type": "response.output_item.added", "output_index": 0,
+                    "item": item("") }),
+            json!({ "type": "response.function_call_arguments.done", "output_index": 0,
+                    "item_id": "fc_search-1", "arguments": "" }),
+            json!({ "type": "response.output_item.done", "output_index": 0,
+                    "item": item("") }),
+            json!({ "type": "response.function_call_arguments.delta", "output_index": 0,
+                    "item_id": "fc_search-1", "delta": r#"{"query":"thread tools","# }),
+            json!({ "type": "response.function_call_arguments.delta", "output_index": 0,
+                    "item_id": "fc_search-1", "delta": r#""limit":"2"}"# }),
+            json!({ "type": "response.completed", "response": { "output": [item(arguments)] } }),
+        ];
+        let input =
+            stream::iter(events.into_iter().map(|event| {
+                Ok::<Bytes, std::io::Error>(Bytes::from(format!("data: {event}\n\n")))
+            }));
+        let out = create_tool_call_restore_sse_stream(input, HashMap::new(), true);
+        futures::pin_mut!(out);
+        let mut collected = String::new();
+        while let Some(chunk) = out.next().await {
+            collected.push_str(std::str::from_utf8(&chunk.unwrap()).unwrap());
+        }
+        let events: Vec<Value> = collected
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|data| serde_json::from_str(data).unwrap())
+            .collect();
+
+        assert_eq!(events[1]["type"], "response.function_call_arguments.delta");
+        assert_eq!(events[2]["type"], "response.function_call_arguments.delta");
+        assert_eq!(events[3]["type"], "response.function_call_arguments.done");
+        assert_eq!(events[3]["arguments"], arguments);
+        for event in &events[1..=3] {
+            assert_eq!(event["item_id"], "tsc_search-1");
+        }
+        let restored = &events[4]["item"];
+        assert_eq!(restored["type"], "tool_search_call");
+        assert_eq!(restored["id"], "tsc_search-1");
+        assert_eq!(restored["execution"], "client");
+        assert_eq!(
+            restored["arguments"],
+            json!({ "query": "thread tools", "limit": 2 })
+        );
+        assert_eq!(events[5]["response"]["output"][0], *restored);
+    }
+
+    #[tokio::test]
+    async fn sse_stream_repairs_late_arguments_before_namespace_restore() {
+        let map = namespace_restore_map(&namespace_request());
+        let item = |arguments: &str| {
+            json!({
+                "id": "fc_read", "type": "function_call", "name": "mcp__files____read",
+                "call_id": "read-1", "arguments": arguments
+            })
+        };
+        let arguments = r#"{"path":"notes.txt"}"#;
+        // Some gateways provide the arguments only in response.completed.
+        let events = vec![
+            json!({ "type": "response.output_item.added", "item": item("") }),
+            json!({ "type": "response.function_call_arguments.done",
+                    "item_id": "fc_read", "arguments": "" }),
+            json!({ "type": "response.output_item.done", "item": item("") }),
+            json!({ "type": "response.completed", "response": { "output": [item(arguments)] } }),
+        ];
+        let input =
+            stream::iter(events.into_iter().map(|event| {
+                Ok::<Bytes, std::io::Error>(Bytes::from(format!("data: {event}\n\n")))
+            }));
+        let out = create_tool_call_restore_sse_stream(input, map, false);
+        futures::pin_mut!(out);
+        let mut collected = String::new();
+        while let Some(chunk) = out.next().await {
+            collected.push_str(std::str::from_utf8(&chunk.unwrap()).unwrap());
+        }
+        let events: Vec<Value> = collected
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|data| serde_json::from_str(data).unwrap())
+            .collect();
+
+        assert_eq!(events[1]["arguments"], arguments);
+        let restored = &events[2]["item"];
+        assert_eq!(restored["type"], "function_call");
+        assert_eq!(restored["name"], "read");
+        assert_eq!(restored["namespace"], "mcp__files__");
+        assert_eq!(restored["arguments"], arguments);
+        assert_eq!(events[3]["response"]["output"][0], *restored);
     }
 
     #[tokio::test]

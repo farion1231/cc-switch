@@ -15,6 +15,7 @@ interface ProviderIconProps {
   size?: number | string; // 尺寸
   className?: string;
   showFallback?: boolean; // 是否显示 fallback
+  fallbackClassName?: string; // 覆盖首字母 fallback 的底色 / 文字色
 }
 
 export const ProviderIcon: React.FC<ProviderIconProps> = ({
@@ -24,6 +25,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   size = 32,
   className,
   showFallback = true,
+  fallbackClassName,
 }) => {
   // 获取内联 SVG 字符串
   const iconSvg = useMemo(() => {
@@ -111,9 +113,10 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     return (
       <span
         className={cn(
-          "inline-flex items-center justify-center flex-shrink-0 rounded-lg",
+          "inline-flex items-center justify-center flex-shrink-0 rounded-lg whitespace-nowrap",
           "bg-muted text-muted-foreground font-semibold",
           className,
+          fallbackClassName,
         )}
         title={name}
         style={sizeStyle}

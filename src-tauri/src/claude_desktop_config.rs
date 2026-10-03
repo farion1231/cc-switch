@@ -226,6 +226,20 @@ pub fn is_official_provider(provider: &Provider) -> bool {
     provider.id == CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID
 }
 
+/// 当前供应商是不是模型映射卡：Claude Desktop 的请求要经本地路由服务转发，服务得一直在跑。
+pub fn current_provider_uses_proxy(db: &Database) -> bool {
+    if current_platform_paths().is_err() {
+        return false;
+    }
+    crate::mode::current::direct_provider(db, &crate::app_config::AppType::ClaudeDesktop)
+        .ok()
+        .flatten()
+        .is_some_and(|provider| {
+            !is_official_provider(&provider)
+                && matches!(provider_mode(&provider), ClaudeDesktopMode::Proxy)
+        })
+}
+
 pub fn provider_mode(provider: &Provider) -> ClaudeDesktopMode {
     provider
         .meta

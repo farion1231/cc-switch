@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Play, Wand2, Eye, EyeOff, Save, ExternalLink } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
@@ -543,7 +543,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
-            .join(", ");
+            .join(",");
           toast.success(`${t("usageScript.testSuccess")}${summary}`, {
             duration: 3000,
             closeButton: true,
@@ -578,7 +578,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 used: t("usage.used"),
               }),
             )
-            .join(", ");
+            .join(",");
           toast.success(`${t("usageScript.testSuccess")}${summary}`, {
             duration: 3000,
             closeButton: true,
@@ -619,7 +619,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
-            .join(", ");
+            .join(",");
           toast.success(`${t("usageScript.testSuccess")}${summary}`, {
             duration: 3000,
             closeButton: true,
@@ -697,7 +697,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               used: t("usage.used"),
             }),
           )
-          .join(", ");
+          .join(",");
         toast.success(`${t("usageScript.testSuccess")}${summary}`, {
           duration: 3000,
           closeButton: true,
@@ -866,7 +866,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             !script.enabled ||
             NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "")
           }
-          title={t("usageScript.format")}
         >
           <Wand2 size={14} className="mr-1" />
           {t("usageScript.format")}
@@ -877,14 +876,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         <Button
           variant="outline"
           onClick={onClose}
-          className="border-border/20 hover:bg-accent hover:text-accent-foreground"
+          className="border-border/20 hover:bg-subtle hover:text-accent-foreground"
         >
           {t("common.cancel")}
         </Button>
-        <Button
-          onClick={handleSave}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
+        <Button onClick={handleSave}>
           <Save size={16} className="mr-2" />
           {t("usageScript.saveConfig")}
         </Button>
@@ -900,7 +896,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       footer={footer}
     >
       <div className="glass rounded-xl border border-white/10 px-6 py-4 flex items-center justify-between gap-4">
-        <p className="text-base font-medium leading-none text-foreground">
+        <p className="text-base font-medium leading-none text-fg-1">
           {t("usageScript.enableUsageQuery")}
         </p>
         <Switch
@@ -948,7 +944,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                         "rounded-lg border",
                         isSelected
                           ? "shadow-sm"
-                          : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                          : "bg-surface text-fg-2 hover:bg-subtle hover:text-accent-foreground",
                       )}
                       onClick={() => handleUsePreset(name)}
                     >
@@ -961,22 +957,22 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {/* 自定义模式：变量提示和具体值 */}
             {selectedTemplate === TEMPLATE_TYPES.CUSTOM && (
               <div className="space-y-2 border-t border-white/10 pt-3">
-                <h4 className="text-sm font-medium text-foreground">
+                <h4 className="text-sm font-medium text-fg-1">
                   {t("usageScript.supportedVariables")}
                 </h4>
                 <div className="space-y-1 text-xs">
                   {/* baseUrl */}
                   <div className="flex items-center gap-2 py-1">
-                    <code className="text-emerald-500 dark:text-emerald-400 font-mono shrink-0">
+                    <code className="text-success-text font-mono shrink-0">
                       {"{{baseUrl}}"}
                     </code>
-                    <span className="text-muted-foreground/50">=</span>
+                    <span className="text-fg-3">=</span>
                     {effectiveScriptCredentials.baseUrl ? (
-                      <code className="text-foreground/70 break-all font-mono">
+                      <code className="text-fg-1 break-all font-mono">
                         {effectiveScriptCredentials.baseUrl}
                       </code>
                     ) : (
-                      <span className="text-muted-foreground/50 italic">
+                      <span className="text-fg-3 italic">
                         {t("common.notSet") || "未设置"}
                       </span>
                     )}
@@ -984,25 +980,23 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
                   {/* apiKey */}
                   <div className="flex items-center gap-2 py-1">
-                    <code className="text-emerald-500 dark:text-emerald-400 font-mono shrink-0">
+                    <code className="text-success-text font-mono shrink-0">
                       {"{{apiKey}}"}
                     </code>
-                    <span className="text-muted-foreground/50">=</span>
+                    <span className="text-fg-3">=</span>
                     {effectiveScriptCredentials.apiKey ? (
                       <>
                         {showApiKey ? (
-                          <code className="text-foreground/70 break-all font-mono">
+                          <code className="text-fg-1 break-all font-mono">
                             {effectiveScriptCredentials.apiKey}
                           </code>
                         ) : (
-                          <code className="text-foreground/70 font-mono">
-                            ••••••••
-                          </code>
+                          <code className="text-fg-1 font-mono">••••••••</code>
                         )}
                         <button
                           type="button"
                           onClick={() => setShowApiKey(!showApiKey)}
-                          className="text-muted-foreground hover:text-foreground transition-colors ml-1"
+                          className="text-fg-2 hover:text-fg-1 transition-colors ml-1"
                           aria-label={
                             showApiKey
                               ? t("apiKeyInput.hide")
@@ -1017,7 +1011,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                         </button>
                       </>
                     ) : (
-                      <span className="text-muted-foreground/50 italic">
+                      <span className="text-fg-3 italic">
                         {t("common.notSet") || "未设置"}
                       </span>
                     )}
@@ -1029,7 +1023,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {/* Copilot 模式：自动认证提示 */}
             {selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT && (
               <div className="space-y-2 border-t border-white/10 pt-3">
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-fg-2">
                   {t("usageScript.copilotAutoAuth")}
                 </p>
               </div>
@@ -1038,7 +1032,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {/* 官方余额查询模式：自动提示 */}
             {selectedTemplate === TEMPLATE_TYPES.BALANCE && (
               <div className="space-y-3 border-t border-white/10 pt-3">
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-fg-2">
                   {t("usageScript.balanceHint")}
                 </p>
                 <div className="flex gap-2 flex-wrap">
@@ -1059,7 +1053,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {/* 官方订阅额度模式：自动提示 */}
             {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
               <div className="space-y-2 border-t border-white/10 pt-3">
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-fg-2">
                   {t("usageScript.officialSubscriptionHint")}
                 </p>
               </div>
@@ -1068,7 +1062,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {/* Coding Plan 模式：供应商选择 */}
             {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN && (
               <div className="space-y-3 border-t border-white/10 pt-3">
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-fg-2">
                   {t("usageScript.tokenPlanHint")}
                 </p>
                 <div className="flex gap-2 flex-wrap">
@@ -1086,7 +1080,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                         "rounded-lg border",
                         script.codingPlanProvider === cp.id
                           ? "shadow-sm"
-                          : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                          : "bg-surface text-fg-2 hover:bg-subtle hover:text-accent-foreground",
                       )}
                       onClick={() =>
                         setScript({
@@ -1106,10 +1100,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {shouldShowCredentialsConfig && (
               <div className="space-y-4">
                 <div className="flex items-start justify-between">
-                  <h4 className="text-sm font-medium text-foreground">
+                  <h4 className="text-sm font-medium text-fg-1">
                     {t("usageScript.credentialsConfig")}
                   </h4>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-fg-2">
                     {t("usageScript.credentialsHint")}
                   </p>
                 </div>
@@ -1119,8 +1113,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                     <>
                       <div className="space-y-2">
                         <Label htmlFor="usage-api-key">
-                          API Key{" "}
-                          <span className="text-xs text-muted-foreground font-normal">
+                          API Key{""}
+                          <span className="text-xs text-fg-2 font-normal">
                             ({t("usageScript.optional")})
                           </span>
                         </Label>
@@ -1140,7 +1134,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                             <button
                               type="button"
                               onClick={() => setShowApiKey(!showApiKey)}
-                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-fg-2 hover:text-fg-1 transition-colors"
                               aria-label={
                                 showApiKey
                                   ? t("apiKeyInput.hide")
@@ -1159,8 +1153,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
                       <div className="space-y-2">
                         <Label htmlFor="usage-base-url">
-                          {t("usageScript.baseUrl")}{" "}
-                          <span className="text-xs text-muted-foreground font-normal">
+                          {t("usageScript.baseUrl")}
+                          {""}
+                          <span className="text-xs text-fg-2 font-normal">
                             ({t("usageScript.optional")})
                           </span>
                         </Label>
@@ -1225,7 +1220,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                               onClick={() =>
                                 setShowAccessToken(!showAccessToken)
                               }
-                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-fg-2 hover:text-fg-1 transition-colors"
                               aria-label={
                                 showAccessToken
                                   ? t("apiKeyInput.hide")
@@ -1302,7 +1297,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                               <button
                                 type="button"
                                 onClick={() => setShowApiKey(!showApiKey)}
-                                className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                                className="absolute inset-y-0 right-0 flex items-center pr-3 text-fg-2 hover:text-fg-1 transition-colors"
                                 aria-label={
                                   showApiKey
                                     ? t("apiKeyInput.hide")
@@ -1329,20 +1324,21 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               script.codingPlanProvider === "volcengine" && (
                 <div className="space-y-4">
                   <div>
-                    <h4 className="text-sm font-medium text-foreground">
+                    <h4 className="text-sm font-medium text-fg-1">
                       {t("usageScript.credentialsConfig")}
                     </h4>
-                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                    <p className="text-xs text-fg-2 mt-1 leading-relaxed">
                       {t("usageScript.volcengineAkSkHint")}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1.5">
-                      {t("usageScript.volcengineKeyConsoleLink")}{" "}
+                    <p className="text-xs text-fg-2 mt-1.5">
+                      {t("usageScript.volcengineKeyConsoleLink")}
+                      {""}
                       <button
                         type="button"
                         onClick={() =>
                           settingsApi.openExternal(VOLCENGINE_KEY_CONSOLE_URL)
                         }
-                        className="inline-flex items-center gap-1 text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors break-all align-baseline underline-offset-2 hover:underline"
+                        className="inline-flex items-center gap-1 text-fg-1 hover:text-fg-1 transition-colors break-all align-baseline underline-offset-2 hover:underline"
                       >
                         {VOLCENGINE_KEY_CONSOLE_URL}
                         <ExternalLink size={12} className="shrink-0" />
@@ -1394,7 +1390,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           <button
                             type="button"
                             onClick={() => setShowApiKey(!showApiKey)}
-                            className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                            className="absolute inset-y-0 right-0 flex items-center pr-3 text-fg-2 hover:text-fg-1 transition-colors"
                             aria-label={
                               showApiKey
                                 ? t("apiKeyInput.hide")
@@ -1419,20 +1415,21 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               script.codingPlanProvider === "zhipu_team" && (
                 <div className="space-y-4">
                   <div>
-                    <h4 className="text-sm font-medium text-foreground">
+                    <h4 className="text-sm font-medium text-fg-1">
                       {t("usageScript.credentialsConfig")}
                     </h4>
-                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                    <p className="text-xs text-fg-2 mt-1 leading-relaxed">
                       {t("usageScript.zhipuTeamHint")}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1.5">
-                      {t("usageScript.zhipuTeamConsoleLink")}{" "}
+                    <p className="text-xs text-fg-2 mt-1.5">
+                      {t("usageScript.zhipuTeamConsoleLink")}
+                      {""}
                       <button
                         type="button"
                         onClick={() =>
                           settingsApi.openExternal(ZHIPU_TEAM_USAGE_URL)
                         }
-                        className="inline-flex items-center gap-1 text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors break-all align-baseline underline-offset-2 hover:underline"
+                        className="inline-flex items-center gap-1 text-fg-1 hover:text-fg-1 transition-colors break-all align-baseline underline-offset-2 hover:underline"
                       >
                         {ZHIPU_TEAM_USAGE_URL}
                         <ExternalLink size={12} className="shrink-0" />
@@ -1558,7 +1555,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 <Label className="text-base font-medium">
                   {t("usageScript.extractorCode")}
                 </Label>
-                <div className="text-xs text-muted-foreground">
+                <div className="text-xs text-fg-2">
                   {t("usageScript.extractorHint")}
                 </div>
               </div>
@@ -1578,14 +1575,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
           {/* 帮助信息 - 专用模板不需要 */}
           {!NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "") && (
-            <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
+            <div className="glass rounded-xl border border-white/10 p-6 text-sm text-fg-1">
               <h4 className="font-medium mb-2">
                 {t("usageScript.scriptHelp")}
               </h4>
               <div className="space-y-3 text-xs">
                 <div>
                   <strong>{t("usageScript.configFormat")}</strong>
-                  <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
+                  <pre className="mt-1 p-2 bg-black/20 text-fg-1 rounded border border-white/10 text-badge overflow-x-auto">
                     {`({
   request: {
     url: "{{baseUrl}}/api/usage",
@@ -1620,7 +1617,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   </ul>
                 </div>
 
-                <div className="text-muted-foreground">
+                <div className="text-fg-2">
                   <strong>{t("usageScript.tips")}</strong>
                   <ul className="mt-1 space-y-0.5 ml-2">
                     <li>

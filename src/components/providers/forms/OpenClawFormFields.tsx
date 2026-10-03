@@ -4,6 +4,7 @@ import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -12,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ApiKeySection, ModelDropdown } from "./shared";
@@ -249,7 +250,7 @@ export function OpenClawFormFields({
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t("openclaw.apiProtocolHint", {
             defaultValue:
               "选择与供应商 API 兼容的协议类型。大多数供应商使用 OpenAI Completions 格式。",
@@ -268,7 +269,7 @@ export function OpenClawFormFields({
           onValueChange={onBaseUrlChange}
           placeholder="https://api.example.com/v1"
         />
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t("openclaw.baseUrlHint", {
             defaultValue: "供应商的 API 端点地址。",
           })}
@@ -289,12 +290,12 @@ export function OpenClawFormFields({
       />
 
       {/* User-Agent */}
-      <div className="flex items-center justify-between border-l border-border-default pl-3">
+      <div className="flex items-center justify-between border-l border-border pl-3">
         <div className="space-y-0.5">
           <FormLabel>
             {t("openclaw.userAgent", { defaultValue: "发送 User-Agent" })}
           </FormLabel>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-fg-2">
             {t("openclaw.userAgentHint", {
               defaultValue: "部分供应商需要浏览器 User-Agent 才能正常访问。",
             })}
@@ -304,7 +305,7 @@ export function OpenClawFormFields({
       </div>
 
       {/* Models Editor */}
-      <div className="space-y-3 border-l border-border-default pl-3">
+      <div className="space-y-3 border-l border-border pl-3">
         <div className="flex items-center justify-between gap-3">
           <FormLabel>
             {t("openclaw.models", { defaultValue: "模型配置" })}
@@ -339,14 +340,14 @@ export function OpenClawFormFields({
         </div>
 
         {models.length === 0 ? (
-          <p role="status" className="py-2 text-sm text-muted-foreground">
+          <p role="status" className="py-2 text-sm text-fg-2">
             {t("openclaw.noModels", {
               defaultValue: "暂无模型配置",
             })}
           </p>
         ) : (
           <div className="space-y-2">
-            <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 px-1 text-xs text-fg-2">
               <span className="w-9" />
               <span className="flex-1">
                 {t("openclaw.modelId", { defaultValue: "模型 ID" })}
@@ -413,18 +414,24 @@ export function OpenClawFormFields({
                       })}
                       className="min-w-0 flex-1"
                     />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveModel(index)}
-                      aria-label={t("openclaw.removeModel", {
+                    <HoverTip
+                      content={t("openclaw.removeModel", {
                         defaultValue: "移除模型",
                       })}
-                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
                     >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleRemoveModel(index)}
+                        aria-label={t("openclaw.removeModel", {
+                          defaultValue: "移除模型",
+                        })}
+                        className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </HoverTip>
                   </div>
 
                   {isExpanded && (
@@ -479,7 +486,7 @@ export function OpenClawFormFields({
                       <div className="space-y-1">
                         <FormLabel
                           htmlFor={`openclaw-model-context-${modelKey}`}
-                          className="text-xs text-muted-foreground"
+                          className="text-xs text-fg-2"
                         >
                           {t("openclaw.contextWindow", {
                             defaultValue: "上下文长度",
@@ -506,7 +513,7 @@ export function OpenClawFormFields({
                       <div className="space-y-1">
                         <FormLabel
                           htmlFor={`openclaw-model-max-tokens-${modelKey}`}
-                          className="text-xs text-muted-foreground"
+                          className="text-xs text-fg-2"
                         >
                           {t("openclaw.maxTokens", {
                             defaultValue: "最大输出 Token 数",
@@ -532,7 +539,7 @@ export function OpenClawFormFields({
                       </div>
 
                       <div className="space-y-2 sm:col-span-2">
-                        <span className="text-xs font-medium text-muted-foreground">
+                        <span className="text-xs font-medium text-fg-2">
                           {t("openclaw.modelCost", {
                             defaultValue: "成本（$/百万 Token）",
                           })}
@@ -541,7 +548,7 @@ export function OpenClawFormFields({
                           <div className="space-y-1">
                             <FormLabel
                               htmlFor={`openclaw-model-input-cost-${modelKey}`}
-                              className="text-xs text-muted-foreground"
+                              className="text-xs text-fg-2"
                             >
                               {t("openclaw.inputCost", {
                                 defaultValue: "输入",
@@ -566,7 +573,7 @@ export function OpenClawFormFields({
                           <div className="space-y-1">
                             <FormLabel
                               htmlFor={`openclaw-model-output-cost-${modelKey}`}
-                              className="text-xs text-muted-foreground"
+                              className="text-xs text-fg-2"
                             >
                               {t("openclaw.outputCost", {
                                 defaultValue: "输出",
@@ -591,7 +598,7 @@ export function OpenClawFormFields({
                           <div className="space-y-1">
                             <FormLabel
                               htmlFor={`openclaw-model-cache-read-${modelKey}`}
-                              className="text-xs text-muted-foreground"
+                              className="text-xs text-fg-2"
                             >
                               {t("openclaw.cacheReadCost", {
                                 defaultValue: "缓存读取",
@@ -616,7 +623,7 @@ export function OpenClawFormFields({
                           <div className="space-y-1">
                             <FormLabel
                               htmlFor={`openclaw-model-cache-write-${modelKey}`}
-                              className="text-xs text-muted-foreground"
+                              className="text-xs text-fg-2"
                             >
                               {t("openclaw.cacheWriteCost", {
                                 defaultValue: "缓存写入",

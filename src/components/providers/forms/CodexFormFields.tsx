@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -29,7 +30,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Check,
   ChevronDown,
@@ -269,7 +270,7 @@ function ReasoningLevelsEditor({
 
   const triggerLabel =
     selected.length > 0
-      ? selected.join(", ")
+      ? selected.join(",")
       : t("codexConfig.reasoningLevelsNotSet", {
           defaultValue: "Not set",
         });
@@ -281,13 +282,10 @@ function ReasoningLevelsEditor({
           type="button"
           role="combobox"
           aria-expanded={open}
-          className="flex h-9 w-full items-center justify-between gap-1 rounded-md border border-border-default bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus-visible:outline-none focus:border-border-default focus-visible:border-border-default focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-9 w-full items-center justify-between gap-1 rounded-md border border-border bg-surface px-3 py-1 text-sm shadow-sm focus:outline-none focus-visible:outline-none focus:border-border focus-visible:border-border focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <span
-            className={cn(
-              "truncate",
-              selected.length === 0 && "text-muted-foreground",
-            )}
+            className={cn("truncate", selected.length === 0 && "text-fg-2")}
           >
             {triggerLabel}
           </span>
@@ -300,7 +298,7 @@ function ReasoningLevelsEditor({
         sideOffset={6}
         avoidCollisions
         collisionPadding={8}
-        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border-default"
+        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border"
       >
         <Command>
           <CommandInput
@@ -334,8 +332,8 @@ function ReasoningLevelsEditor({
           </CommandList>
         </Command>
         {selected.length > 0 && (
-          <div className="border-t border-border-default p-2">
-            <span className="text-xs text-muted-foreground">
+          <div className="border-t border-border p-2">
+            <span className="text-xs text-fg-2">
               {t("codexConfig.defaultReasoningLevelLabel", {
                 defaultValue: "Default level",
               })}
@@ -897,7 +895,7 @@ export function CodexFormFields({
           </SelectItem>
         </SelectContent>
       </Select>
-      <p className="text-xs leading-relaxed text-muted-foreground">
+      <p className="text-xs leading-relaxed text-fg-2">
         {t("codexConfig.upstreamFormatHint", {
           defaultValue:
             "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
@@ -935,7 +933,7 @@ export function CodexFormFields({
           </SelectItem>
         </SelectContent>
       </Select>
-      <p className="text-xs leading-relaxed text-muted-foreground">
+      <p className="text-xs leading-relaxed text-fg-2">
         {t("codexConfig.anthropicAuthFieldHint", {
           defaultValue:
             "选择网关接收 API Key 的请求头：ANTHROPIC_AUTH_TOKEN 发送 Authorization: Bearer；ANTHROPIC_API_KEY 发送 x-api-key。两者只发其一。",
@@ -945,14 +943,14 @@ export function CodexFormFields({
   );
 
   const impersonateClaudeCodeToggle = (
-    <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+    <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
       <div className="space-y-1">
         <FormLabel>
           {t("codexConfig.impersonateClaudeCodeLabel", {
             defaultValue: "模拟 Claude Code 客户端",
           })}
         </FormLabel>
-        <p className="text-xs leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-fg-2">
           {t("codexConfig.impersonateClaudeCodeHint", {
             defaultValue:
               "网关或其上游限制只能通过 Claude Code 使用时开启：伪装 User-Agent、anthropic-beta、x-app 请求头，并在系统提示首行注入 Claude Code 身份。",
@@ -970,7 +968,7 @@ export function CodexFormFields({
   );
 
   const maxOutputTokensField = (
-    <div className="space-y-1.5 border-t border-border-default pt-3">
+    <div className="space-y-1.5 border-t border-border pt-3">
       <FormLabel htmlFor="codex-anthropic-max-output-tokens">
         {t("codexConfig.maxOutputTokensLabel", {
           defaultValue: "最大输出 tokens",
@@ -989,7 +987,7 @@ export function CodexFormFields({
           defaultValue: "留空则使用默认 8192",
         })}
       />
-      <p className="text-xs leading-relaxed text-muted-foreground">
+      <p className="text-xs leading-relaxed text-fg-2">
         {isGrokBuild
           ? t("grokBuild.maxOutputTokensHint", {
               defaultValue:
@@ -1038,7 +1036,7 @@ export function CodexFormFields({
             </SelectItem>
           </SelectContent>
         </Select>
-        <p className="text-xs leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-fg-2">
           {t("codexConfig.promptCacheRoutingHint", {
             defaultValue:
               "自动模式仅对已确认兼容的上游发送 prompt_cache_key；开启可用于其他兼容网关，关闭可避免严格网关因未知字段返回 400。只使用客户端提供的稳定会话 ID。",
@@ -1052,7 +1050,7 @@ export function CodexFormFields({
             defaultValue: "思考能力",
           })}
         </FormLabel>
-        <p className="text-xs leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-fg-2">
           {t("codexConfig.reasoningSectionHint", {
             defaultValue:
               "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
@@ -1067,7 +1065,7 @@ export function CodexFormFields({
               defaultValue: "支持思考模式",
             })}
           </FormLabel>
-          <p className="text-xs leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-fg-2">
             {t("codexConfig.reasoningModeHint", {
               defaultValue:
                 "上游 Chat Completions 接口支持开启或关闭 thinking 时启用。Kimi、GLM、Qwen 等通常属于这一类。",
@@ -1083,14 +1081,14 @@ export function CodexFormFields({
         />
       </div>
 
-      <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+      <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
         <div className="space-y-1">
           <FormLabel>
             {t("codexConfig.reasoningEffortToggle", {
               defaultValue: "支持思考等级",
             })}
           </FormLabel>
-          <p className="text-xs leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-fg-2">
             {isGrokBuild
               ? t("grokBuild.reasoningEffortHint", {
                   defaultValue:
@@ -1120,7 +1118,7 @@ export function CodexFormFields({
         value={customUserAgent}
         onChange={onCustomUserAgentChange}
       />
-      <div className="border-t border-border-default pt-3">
+      <div className="border-t border-border pt-3">
         <LocalProxyRequestOverridesField
           headersJson={localProxyHeadersOverride}
           bodyJson={localProxyBodyOverride}
@@ -1140,23 +1138,24 @@ export function CodexFormFields({
           defaultValue: "设为默认模型",
         });
     return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        onClick={() => handleMakeCatalogRowDefault(index)}
-        disabled={isDefault || !catalogRows[index]?.model.trim()}
-        aria-label={label}
-        aria-pressed={isDefault}
-        title={label}
-        className="h-9 w-9 text-muted-foreground hover:text-amber-500 disabled:opacity-100"
-      >
-        <Star
-          className={
-            isDefault ? "h-4 w-4 fill-amber-400 text-amber-500" : "h-4 w-4"
-          }
-        />
-      </Button>
+      <HoverTip content={label}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={() => handleMakeCatalogRowDefault(index)}
+          disabled={isDefault || !catalogRows[index]?.model.trim()}
+          aria-label={label}
+          aria-pressed={isDefault}
+          className="h-9 w-9 text-fg-2 hover:text-warning-text disabled:opacity-100"
+        >
+          <Star
+            className={
+              isDefault ? "h-4 w-4 fill-warning text-warning-text" : "h-4 w-4"
+            }
+          />
+        </Button>
+      </HoverTip>
     );
   };
 
@@ -1166,7 +1165,7 @@ export function CodexFormFields({
       {/* 列头：md+ 显示 */}
       <div
         className={cn(
-          "hidden gap-2 px-1 text-xs font-medium text-muted-foreground md:grid",
+          "hidden gap-2 px-1 text-xs font-medium text-fg-2 md:grid",
           withDefault
             ? "grid-cols-[36px_1fr_1fr_140px_1fr_36px]"
             : "grid-cols-[1fr_1fr_140px_1fr_36px]",
@@ -1277,16 +1276,18 @@ export function CodexFormFields({
               })
             }
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 text-muted-foreground hover:text-destructive"
-            onClick={() => handleRemoveCatalogRow(index)}
-            title={t("common.delete", { defaultValue: "删除" })}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          <HoverTip content={t("common.delete", { defaultValue: "删除" })}>
+            <Button
+              aria-label={t("common.delete", { defaultValue: "删除" })}
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 text-fg-2 hover:text-destructive"
+              onClick={() => handleRemoveCatalogRow(index)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </HoverTip>
         </div>
       ))}
     </div>
@@ -1423,7 +1424,7 @@ export function CodexFormFields({
                   }),
                 )}
               </div>
-              <p className="text-xs leading-relaxed text-muted-foreground">
+              <p className="text-xs leading-relaxed text-fg-2">
                 {t("codexConfig.stackModelListHint", {
                   defaultValue:
                     "这些模型会出现在 Codex 的 /model 里，选中后请求直达这家。★ 是这家的默认模型：这家被设为默认时 Codex 默认用它。修改后需要重启 Codex。",
@@ -1438,7 +1439,7 @@ export function CodexFormFields({
               />
             )}
             {isDefaultModelOutsideCatalog && (
-              <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-muted-foreground">
+              <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-fg-2">
                 {t("codexConfig.stackDefaultNotInList", {
                   model: trimmedDefaultModel,
                   defaultValue:
@@ -1460,10 +1461,10 @@ export function CodexFormFields({
             {catalogRows.length > 0 ? (
               renderCatalogRows(true)
             ) : (
-              <p className="text-xs leading-relaxed text-muted-foreground">
+              <p className="text-xs leading-relaxed text-fg-2">
                 {t("codexConfig.modelListEmpty", {
                   defaultValue:
-                    "未配置模型：叠加模式下只发布这家的默认模型（config.toml 的 model）。",
+                    "未配置模型：聚合模式下只发布这家的默认模型（config.toml 的 model）。",
                 })}
               </p>
             )}
@@ -1473,14 +1474,14 @@ export function CodexFormFields({
         <Collapsible
           open={stackAdvancedExpanded}
           onOpenChange={setStackAdvancedExpanded}
-          className="rounded-lg border border-border-default p-4"
+          className="rounded-lg border border-border p-4"
         >
           <CollapsibleTrigger asChild>
             <Button
               type="button"
               variant={null}
               size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
             >
               {stackAdvancedExpanded ? (
                 <ChevronDown className="h-4 w-4" />
@@ -1493,7 +1494,7 @@ export function CodexFormFields({
             </Button>
           </CollapsibleTrigger>
           {!stackAdvancedExpanded && (
-            <p className="mt-1 ml-1 text-xs text-muted-foreground">
+            <p className="mt-1 ml-1 text-xs text-fg-2">
               {t("codexConfig.stackAdvancedHint", {
                 defaultValue:
                   "思考能力、Anthropic 专有项、自定义 User-Agent 与请求覆盖，一般无需修改。",
@@ -1511,7 +1512,7 @@ export function CodexFormFields({
                   "space-y-3",
                   showFormatFields &&
                     isAnthropicFormat &&
-                    "border-t border-border-default pt-3",
+                    "border-t border-border pt-3",
                 )}
               >
                 {reasoningFields}
@@ -1521,7 +1522,7 @@ export function CodexFormFields({
               className={cn(
                 "space-y-3",
                 ((showFormatFields && isAnthropicFormat) || showReasoning) &&
-                  "border-t border-border-default pt-3",
+                  "border-t border-border pt-3",
               )}
             >
               {userAgentAndOverrides}
@@ -1563,21 +1564,23 @@ export function CodexFormFields({
               }
               className="flex-1"
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              onClick={handleFetchModels}
-              disabled={isFetchingModels}
-              className="shrink-0"
-              title={t("providerForm.fetchModels")}
-            >
-              {isFetchingModels ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-            </Button>
+            <HoverTip content={t("providerForm.fetchModels")}>
+              <Button
+                aria-label={t("providerForm.fetchModels")}
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={handleFetchModels}
+                disabled={isFetchingModels}
+                className="shrink-0"
+              >
+                {isFetchingModels ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+              </Button>
+            </HoverTip>
             {defaultModelSuggestions.length > 0 && (
               <ModelDropdown
                 models={defaultModelSuggestions}
@@ -1585,7 +1588,7 @@ export function CodexFormFields({
               />
             )}
           </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-fg-2">
             {isGrokBuild
               ? t("grokBuild.defaultModelHint", {
                   defaultValue:
@@ -1597,7 +1600,7 @@ export function CodexFormFields({
                 })}
           </p>
           {isDefaultModelOutsideCatalog && (
-            <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-muted-foreground">
+            <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-fg-2">
               {t("codexConfig.defaultModelNotInCatalog", {
                 defaultValue:
                   "该模型不在模型映射中，Codex 的 /model 菜单不会列出它（直接请求仍然有效）。",
@@ -1623,14 +1626,14 @@ export function CodexFormFields({
         <Collapsible
           open={advancedExpanded}
           onOpenChange={setAdvancedExpanded}
-          className="rounded-lg border border-border-default p-4"
+          className="rounded-lg border border-border p-4"
         >
           <CollapsibleTrigger asChild>
             <Button
               type="button"
               variant={null}
               size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
             >
               {advancedExpanded ? (
                 <ChevronDown className="h-4 w-4" />
@@ -1643,7 +1646,7 @@ export function CodexFormFields({
             </Button>
           </CollapsibleTrigger>
           {!advancedExpanded && (
-            <p className="mt-1 ml-1 text-xs text-muted-foreground">
+            <p className="mt-1 ml-1 text-xs text-fg-2">
               {isGrokBuild
                 ? t("grokBuild.advancedSectionHint", {
                     defaultValue:
@@ -1672,7 +1675,7 @@ export function CodexFormFields({
               <div
                 className={cn(
                   "space-y-3",
-                  shouldShowSpeedTest && "border-t border-border-default pt-3",
+                  shouldShowSpeedTest && "border-t border-border pt-3",
                 )}
               >
                 {reasoningFields}
@@ -1687,7 +1690,7 @@ export function CodexFormFields({
                 className={cn(
                   "space-y-4",
                   (shouldShowSpeedTest || (isChatFormat && canEditReasoning)) &&
-                    "border-t border-border-default pt-3",
+                    "border-t border-border pt-3",
                 )}
               >
                 <div className="space-y-1">
@@ -1704,7 +1707,7 @@ export function CodexFormFields({
                       }),
                     )}
                   </div>
-                  <p className="text-xs leading-relaxed text-muted-foreground">
+                  <p className="text-xs leading-relaxed text-fg-2">
                     {t("codexConfig.modelMappingHint", {
                       defaultValue:
                         "选择模型角色后，CC Switch 会自动生成 Codex 兼容路由；菜单显示名可以填 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
@@ -1722,7 +1725,7 @@ export function CodexFormFields({
                 (shouldShowSpeedTest ||
                   (isChatFormat && canEditReasoning) ||
                   canEditCatalog) &&
-                  "border-t border-border-default pt-3",
+                  "border-t border-border pt-3",
               )}
             >
               {userAgentAndOverrides}
