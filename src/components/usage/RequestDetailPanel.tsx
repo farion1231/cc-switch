@@ -367,7 +367,11 @@ export function RequestDetailPanel({
         if (!open) onClose();
       }}
     >
-      <SheetContent width={420} closeLabel={t("common.close")}>
+      <SheetContent
+        width={420}
+        closeLabel={t("common.close")}
+        dismissOnOutsideClick
+      >
         <SheetHeader className="pb-3">
           <SheetTitle>{t("usage.requestDetail")}</SheetTitle>
           <SheetDescription className={subtitle ? "truncate" : "sr-only"}>

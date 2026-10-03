@@ -104,7 +104,11 @@ export function UsageDataSourcesSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent width={400} closeLabel={t("common.close")}>
+      <SheetContent
+        width={400}
+        closeLabel={t("common.close")}
+        dismissOnOutsideClick
+      >
         <SheetHeader className="pb-3">
           <SheetTitle>{t("usage.dataSources")}</SheetTitle>
           <SheetDescription className="sr-only">
