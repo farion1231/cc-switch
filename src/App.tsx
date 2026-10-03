@@ -8,7 +8,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
-import { proxyKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import {
+  providersQueryOptions,
+  proxyKeys,
+  useProvidersQuery,
+  useSettingsQuery,
+} from "@/lib/query";
 import {
   piApi,
   providersApi,
@@ -184,6 +189,18 @@ function App() {
       setActiveApp(getFirstVisibleApp());
     }
   }, [visibleApps, activeApp]);
+
+  // 启动后把其他可见应用的供应商列表预取进缓存：第一次切过去直接有数据，不先画骨架
+  const providersPrefetchedRef = useRef(false);
+  useEffect(() => {
+    if (!settingsData || providersPrefetchedRef.current) return;
+    providersPrefetchedRef.current = true;
+    for (const app of APP_IDS) {
+      if (app !== activeApp && visibleApps[app]) {
+        void queryClient.prefetchQuery(providersQueryOptions(app));
+      }
+    }
+  }, [settingsData, visibleApps, activeApp, queryClient]);
 
   // 「启动时检查应用更新」（默认关）：打开了才在后台查一次，查到新版本侧栏「应用」上出现圆点
   const checkToolUpdatesOnStartup =
