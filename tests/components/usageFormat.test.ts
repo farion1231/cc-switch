@@ -17,6 +17,11 @@ describe("usage format helpers", () => {
     expect(getLocaleFromLanguage("zh-HK")).toBe("zh-TW");
   });
 
+  it("resolves Russian locale tags", () => {
+    expect(getLocaleFromLanguage("ru")).toBe("ru-RU");
+    expect(getLocaleFromLanguage("ru-RU")).toBe("ru-RU");
+  });
+
   it("calculates streaming TPS from generation duration after first token", () => {
     expect(
       getOutputTokensPerSecond({

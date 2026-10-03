@@ -27,7 +27,9 @@ export function RequestDetailPanel({
         ? "zh-TW"
         : i18n.language === "ja"
           ? "ja-JP"
-          : "en-US";
+          : i18n.language === "ru"
+            ? "ru-RU"
+            : "en-US";
 
   if (isLoading) {
     return (
