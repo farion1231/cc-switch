@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   Loader2,
   RefreshCw,
+  Database,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -107,6 +108,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import SharedMemoryPanel from "@/components/sharedMemory/SharedMemoryPanel";
 import {
   APP_IDS,
   DEFAULT_VISIBLE_APPS,
@@ -128,7 +130,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "sharedMemory";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -164,6 +167,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "sharedMemory",
 ];
 
 const getInitialView = (): View => {
@@ -1082,6 +1086,8 @@ function App() {
           );
         case "hermesMemory":
           return <HermesMemoryPanel />;
+        case "sharedMemory":
+          return <SharedMemoryPanel />;
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1375,6 +1381,7 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "sharedMemory" && t("sharedMemory.title")}
                 </h1>
               </div>
             ) : (
@@ -1386,6 +1393,15 @@ function App() {
                     proxyStatus !== undefined && takeoverStatus !== undefined
                   }
                 />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCurrentView("sharedMemory")}
+                  title={t("sharedMemory.title")}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Database className="w-4 h-4" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"

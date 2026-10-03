@@ -43,6 +43,19 @@ fn merge_settings_for_save(
         }
         _ => {}
     }
+    match (&mut incoming.shared_memory, &existing.shared_memory) {
+        // incoming 没有 shared_memory → 保留现有
+        (None, _) => {
+            incoming.shared_memory = existing.shared_memory.clone();
+        }
+        // incoming 有 shared_memory 但 token 为空，且现有有 token → 填回现有 token
+        (Some(incoming_sm), Some(existing_sm))
+            if incoming_sm.token.is_empty() && !existing_sm.token.is_empty() =>
+        {
+            incoming_sm.token = existing_sm.token.clone();
+        }
+        _ => {}
+    }
     // local_migrations 是纯后端状态（迁移完成标记），前端没有合法的修改场景，
     // 无条件取现有值。若按 incoming 透传：后端清掉 marker（如关闭统一会话
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
@@ -318,7 +331,7 @@ mod tests {
     use crate::settings::{
         AppSettings, CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
-        WebDavSyncSettings,
+        SharedMemorySettings, WebDavSyncSettings,
     };
 
     #[test]
@@ -500,6 +513,106 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn save_settings_should_preserve_existing_shared_memory_when_payload_omits_it() {
+        let existing = AppSettings {
+            shared_memory: Some(SharedMemorySettings {
+                url: "https://memory.example.com".to_string(),
+                token: "secret".to_string(),
+                ..SharedMemorySettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert!(merged.shared_memory.is_some());
+        assert_eq!(
+            merged
+                .shared_memory
+                .as_ref()
+                .map(|settings| settings.url.as_str()),
+            Some("https://memory.example.com")
+        );
+        assert_eq!(
+            merged
+                .shared_memory
+                .as_ref()
+                .map(|settings| settings.token.as_str()),
+            Some("secret")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_shared_memory_token_when_incoming_token_empty() {
+        let existing = AppSettings {
+            shared_memory: Some(SharedMemorySettings {
+                url: "https://memory.example.com".to_string(),
+                token: "secret".to_string(),
+                ..SharedMemorySettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        // 前端拿到的设置对象 token 总是为空（get_settings_for_frontend 清空）
+        let incoming = AppSettings {
+            shared_memory: Some(SharedMemorySettings {
+                url: "https://memory.example.com".to_string(),
+                token: String::new(),
+                ..SharedMemorySettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged
+                .shared_memory
+                .as_ref()
+                .map(|settings| settings.token.as_str()),
+            Some("secret")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_keep_incoming_shared_memory_when_present() {
+        let existing = AppSettings {
+            shared_memory: Some(SharedMemorySettings {
+                url: "https://memory.old.example.com".to_string(),
+                token: "old-token".to_string(),
+                ..SharedMemorySettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings {
+            shared_memory: Some(SharedMemorySettings {
+                url: "https://memory.new.example.com".to_string(),
+                token: "new-token".to_string(),
+                ..SharedMemorySettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged
+                .shared_memory
+                .as_ref()
+                .map(|settings| settings.url.as_str()),
+            Some("https://memory.new.example.com")
+        );
+        assert_eq!(
+            merged
+                .shared_memory
+                .as_ref()
+                .map(|settings| settings.token.as_str()),
+            Some("new-token")
+        );
+    }
     fn save_settings_should_preserve_local_migrations_when_payload_omits_it() {
         let existing = AppSettings {
             local_migrations: Some(LocalMigrations {
