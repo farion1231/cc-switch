@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Sparkles,
@@ -19,6 +19,7 @@ import {
   useSkillBackups,
   useRestoreSkillBackup,
   useBulkToggleSkillApp,
+  useBulkUninstallSkill,
   useToggleSkillApp,
   useUninstallSkill,
   useScanUnmanagedSkills,
@@ -35,10 +36,16 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { usePagedList } from "@/hooks/usePagedList";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
 import { ManagementListSearch } from "@/components/common/ManagementListSearch";
+import {
+  ManagementFilterChips,
+  type ManagementFilterOption,
+} from "@/components/common/ManagementFilterChips";
+import { ManagementBulkBar } from "@/components/common/ManagementBulkBar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
@@ -50,6 +57,26 @@ import {
 } from "@/components/ui/dialog";
 
 const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
+
+/**
+ * 一次渲染多少行。列表里可能装着成百上千条 skill，全量挂载会把首屏时间
+ * 全部花在 DOM 上；分页之后每一页都是常数成本。
+ */
+const SKILLS_PAGE_SIZE = 60;
+
+/**
+ * 确认框点名隐藏选中项的名字数量上限：选择集可以无限积累，确认框不能。
+ * 超出的部分折叠成省略号，反正下面还有真实卸载对象的完整列表兜底。
+ */
+const BULK_UNINSTALL_HIDDEN_NAMES_LIMIT = 8;
+
+type SkillAppFilter = AppId;
+type SkillSourceFilter = "repo" | "local";
+type SkillUpdateFilter = "updated";
+
+/** ManagementFilterChips 的选项类型别名（该组件是 app 无关的）。 */
+type SourceFilterOption = ManagementFilterOption;
+type UpdateFilterOption = ManagementFilterOption;
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
@@ -102,6 +129,11 @@ const UnifiedSkillsPanel = React.forwardRef<
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filterApps, setFilterApps] = useState<SkillAppFilter[]>([]);
+  const [filterAppMode, setFilterAppMode] = useState<"any" | "all">("any");
+  const [filterSources, setFilterSources] = useState<SkillSourceFilter[]>([]);
+  const [filterUpdates, setFilterUpdates] = useState<SkillUpdateFilter[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [writePending, setWritePending] = useState(false);
   const writeLockRef = React.useRef(false);
   const checkUpdatesLockRef = React.useRef(false);
@@ -115,9 +147,10 @@ const UnifiedSkillsPanel = React.forwardRef<
   const deleteBackupMutation = useDeleteSkillBackup();
   const toggleAppMutation = useToggleSkillApp();
   const bulkToggleAppMutation = useBulkToggleSkillApp();
+  const bulkUninstallMutation = useBulkUninstallSkill();
   const uninstallMutation = useUninstallSkill();
   const restoreBackupMutation = useRestoreSkillBackup();
-  // enabled: true —— 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
+  // enabled: true — 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
   const { data: unmanagedSkills, refetch: scanUnmanaged } =
     useScanUnmanagedSkills({ enabled: true });
   const importMutation = useImportSkillsFromApps();
@@ -136,6 +169,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     deleteBackupMutation.isPending ||
     toggleAppMutation.isPending ||
     bulkToggleAppMutation.isPending ||
+    bulkUninstallMutation.isPending ||
     uninstallMutation.isPending ||
     restoreBackupMutation.isPending ||
     importMutation.isPending ||
@@ -178,25 +212,30 @@ const UnifiedSkillsPanel = React.forwardRef<
     [onCheckUpdatesStateChange],
   );
 
-  const beginWrite = (allowOpenDialog = false) => {
-    if (
-      checkUpdatesLockRef.current ||
-      isCheckingUpdates ||
-      writeLockRef.current ||
-      mutationPending ||
-      (!allowOpenDialog && dialogOpen)
-    ) {
-      return false;
-    }
-    writeLockRef.current = true;
-    setWritePending(true);
-    return true;
-  };
+  // 行回调走 useCallback 是 React.memo 生效的前提：引用不稳定的话，每次
+  // 轮询/按键都会把整表行重建成纯浪费。
+  const beginWrite = useCallback(
+    (allowOpenDialog = false) => {
+      if (
+        checkUpdatesLockRef.current ||
+        isCheckingUpdates ||
+        writeLockRef.current ||
+        mutationPending ||
+        (!allowOpenDialog && dialogOpen)
+      ) {
+        return false;
+      }
+      writeLockRef.current = true;
+      setWritePending(true);
+      return true;
+    },
+    [dialogOpen, isCheckingUpdates, mutationPending],
+  );
 
-  const endWrite = () => {
+  const endWrite = useCallback(() => {
     writeLockRef.current = false;
     setWritePending(false);
-  };
+  }, []);
 
   const applicableSkillUpdates = useMemo(() => {
     const installedIds = new Set((skills ?? []).map((skill) => skill.id));
@@ -235,13 +274,74 @@ const UnifiedSkillsPanel = React.forwardRef<
     return counts;
   }, [skills]);
 
+  // 已安装 skill 的可筛选维度（app / 来源 / 有更新）与其计数。
+  const appFilterOptions = useMemo(() => {
+    if (!skills) return [];
+    return visibleSkillAppIds.map((app) => ({
+      value: app,
+      label: t("skills.apps." + app, app),
+      count: skills.filter((skill) => skill.apps[app]).length,
+    }));
+  }, [skills, visibleSkillAppIds, t]);
+
+  const sourceFilterOptions = useMemo<SourceFilterOption[]>(() => {
+    if (!skills) return [];
+    const repoCount = skills.filter(
+      (skill) => skill.repoOwner && skill.repoName,
+    ).length;
+    return [
+      { value: "repo", label: t("skills.manage.sourceRepo"), count: repoCount },
+      {
+        value: "local",
+        label: t("skills.manage.sourceLocal"),
+        count: skills.length - repoCount,
+      },
+    ];
+  }, [skills, t]);
+
+  const updateFilterOptions = useMemo<UpdateFilterOption[]>(() => {
+    if (!applicableSkillUpdates.length) return [];
+    return [
+      {
+        value: "updated",
+        label: t("skills.manage.updatedAvailable"),
+        count: applicableSkillUpdates.length,
+      },
+    ];
+  }, [applicableSkillUpdates, t]);
+
+  const hasActiveFilters =
+    filterApps.length > 0 ||
+    filterSources.length > 0 ||
+    filterUpdates.length > 0 ||
+    searchQuery.trim() !== "";
+
   const filteredSkills = useMemo(() => {
     if (!skills) return [];
 
     const query = searchQuery.trim().toLocaleLowerCase();
-    if (!query) return skills;
+    const updatesMatch = filterUpdates.includes("updated");
+    const sourcesMatch = filterSources.map(String);
 
     return skills.filter((skill) => {
+      if (
+        filterApps.length > 0 &&
+        !(filterAppMode === "any"
+          ? filterApps.some((app) => skill.apps[app])
+          : filterApps.every((app) => skill.apps[app]))
+      ) {
+        return false;
+      }
+
+      if (filterSources.length > 0) {
+        const isRepo = Boolean(skill.repoOwner && skill.repoName);
+        if (!sourcesMatch.includes(isRepo ? "repo" : "local")) return false;
+      }
+
+      if (updatesMatch && !updatesMap[skill.id]) return false;
+
+      if (!query) return true;
+
       const searchableValues = [
         skill.name,
         skill.id,
@@ -258,7 +358,137 @@ const UnifiedSkillsPanel = React.forwardRef<
         value?.toLocaleLowerCase().includes(query),
       );
     });
-  }, [searchQuery, skills]);
+  }, [
+    skills,
+    searchQuery,
+    filterApps,
+    filterAppMode,
+    filterSources,
+    filterUpdates,
+    updatesMap,
+  ]);
+
+  // 筛选签名：任一维度变化都让分页回到第一页。
+  const activeFilterKey = useMemo(
+    () =>
+      [
+        searchQuery.trim().toLocaleLowerCase(),
+        filterAppMode,
+        [...filterApps].sort().join(","),
+        [...filterSources].sort().join(","),
+        [...filterUpdates].sort().join(","),
+      ].join("|"),
+    [searchQuery, filterAppMode, filterApps, filterSources, filterUpdates],
+  );
+
+  // 筛选变化时分页回到第一页（filterKey 变了就是结果集换了）。
+  const {
+    page: pagedSkills,
+    total: filteredTotal,
+    hasMore,
+    showMore: loadMoreSkills,
+  } = usePagedList(filteredSkills, SKILLS_PAGE_SIZE, activeFilterKey);
+
+  // 选择集按 skill 本体保留，跨筛选不清空：常见工作流是"筛一处勾几个、换
+  // 筛选再勾几个、最后一次卸完"。收敛到筛选结果会直接砍掉这个流程。
+  //
+  // 代价是选择集里可能有当前看不见的行，所以 UI 必须把三件事分开讲清楚：
+  //   1. 列表刷新时丢掉已不存在的 id（skill 被卸掉了）；
+  //   2. 工具栏分子用「可见集合中的已选数」，分母用可见总数——描述屏幕；
+  //   3. 隐藏的选中单独计数并明示，全选判定只看当前筛选项，确认框列出真实
+  //      卸载对象（含筛掉的），而不是只报一个总数。
+  // 此前那版把选择集收敛到筛选结果，计数/全选/卸载三者虽然一致了，却把跨
+  // 筛选多选这一整类用法弄没了。
+  const knownSkillIds = useMemo(
+    () => new Set((skills ?? []).map((skill) => skill.id)),
+    [skills],
+  );
+
+  // id → skill 本体：给隐藏选中项点名用（确认框要报名字，不是 id）。
+  const skillById = useMemo(
+    () => new Map((skills ?? []).map((skill) => [skill.id, skill])),
+    [skills],
+  );
+
+  useEffect(() => {
+    setSelectedIds((previous) => {
+      const next = previous.filter((id) => knownSkillIds.has(id));
+      return next.length === previous.length ? previous : next;
+    });
+  }, [knownSkillIds]);
+
+  const visibleSkillIds = useMemo(
+    () => filteredSkills.map((skill) => skill.id),
+    [filteredSkills],
+  );
+
+  // 筛选结果可能上千行、选择集也可能积累到很大，includes 式成员判定是
+  // O(n*m)，一律换 Set。
+  const visibleSkillIdSet = useMemo(
+    () => new Set(visibleSkillIds),
+    [visibleSkillIds],
+  );
+
+  /** 当前可见行里被选中的数量（工具栏的分子，描述屏幕）。 */
+  const visibleSelectedCount = useMemo(
+    () => selectedIds.filter((id) => visibleSkillIdSet.has(id)).length,
+    [selectedIds, visibleSkillIdSet],
+  );
+
+  /**
+   * 被当前筛选藏起来的选中项本体，不只是计数：确认框必须点出真实卸载对象，
+   * 「只报一个总数」等于让用户盲删看不见的东西。
+   *
+   * 用真实 skill 对象算，而不是 selectedIds.length - visibleSelectedCount：
+   * 那样会把「正在被裁剪的 id」（已在 selectedIds 里但 skill 已消失）算成
+   * 「隐藏」，确认框于是多报一个马上就不存在的卸载对象。
+   */
+  const hiddenSelectedSkills = useMemo<InstalledSkill[]>(
+    () =>
+      selectedIds
+        .filter((id) => !visibleSkillIdSet.has(id))
+        .map((id) => skillById.get(id))
+        .filter((skill): skill is InstalledSkill => Boolean(skill)),
+    [selectedIds, visibleSkillIdSet, skillById],
+  );
+
+  /** 行级 checkbox 的受控判定也走 Set：每页 60 行 × 选择集大小，别做乘法。 */
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  /**
+   * 分子（可见选中数）只描述屏幕，而清空/卸载按钮作用于整个选择集。只要
+   * 有隐藏选中，按钮文案必须自报范围，否则「3 / 12」旁边的「卸载（5）」
+   * 会让用户以为只有屏幕上那 3 个受影响。
+   */
+  const hiddenSelectedCount = hiddenSelectedSkills.length;
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds((previous) =>
+      previous.includes(id)
+        ? previous.filter((item) => item !== id)
+        : [...previous, id],
+    );
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds([]), []);
+
+  const selectAllFiltered = useCallback(() => {
+    // 只并入当前筛选项，不动跨筛选积累的其他选择。
+    setSelectedIds((previous) => {
+      const existing = new Set(previous);
+      return [
+        ...previous,
+        ...visibleSkillIds.filter((id) => !existing.has(id)),
+      ];
+    });
+  }, [visibleSkillIds]);
+
+  const resetFilters = useCallback(() => {
+    setFilterApps([]);
+    setFilterSources([]);
+    setFilterUpdates([]);
+    setSearchQuery("");
+  }, []);
 
   const pendingApp = bulkToggleAppMutation.isPending
     ? bulkToggleAppMutation.variables?.app
@@ -266,17 +496,20 @@ const UnifiedSkillsPanel = React.forwardRef<
       ? toggleAppMutation.variables?.app
       : null;
 
-  const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
-    if (!beginWrite()) return;
+  const handleToggleApp = useCallback(
+    async (id: string, app: AppId, enabled: boolean) => {
+      if (!beginWrite()) return;
 
-    try {
-      await toggleAppMutation.mutateAsync({ id, app, enabled });
-    } catch (error) {
-      toast.error(t("common.error"), { description: String(error) });
-    } finally {
-      endWrite();
-    }
-  };
+      try {
+        await toggleAppMutation.mutateAsync({ id, app, enabled });
+      } catch (error) {
+        toast.error(t("common.error"), { description: String(error) });
+      } finally {
+        endWrite();
+      }
+    },
+    [beginWrite, endWrite, t, toggleAppMutation.mutateAsync],
+  );
 
   const handleToggleAll = async (app: AppId, enabled: boolean) => {
     if (!skills || !beginWrite()) return;
@@ -310,7 +543,74 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
-  const handleUninstall = (skill: InstalledSkill) => {
+  // id 参数契约：行组件只交出 skill.id，本体由 skillById 反查。这样回调
+  // 引用可以稳定下来，React.memo 才真正拦得住轮询和按键带来的整表重渲染。
+  const handleUninstall = useCallback(
+    (id: string) => {
+      if (
+        checkUpdatesLockRef.current ||
+        writeLockRef.current ||
+        interactionBlocked
+      ) {
+        return;
+      }
+      const skill = skillById.get(id);
+      if (!skill) return;
+      setConfirmDialog({
+        isOpen: true,
+        title: t("skills.uninstall"),
+        message: t("skills.uninstallConfirm", { name: skill.name }),
+        onConfirm: async () => {
+          if (!beginWrite(true)) return;
+          try {
+            const result = await uninstallMutation.mutateAsync(skill.id);
+            setConfirmDialog(null);
+            const piCleanupIncomplete =
+              result.piCleanupIncomplete || Boolean(result.preservedPiPath);
+            const toastOptions = {
+              description: result.preservedPiPath
+                ? t("skills.uninstallPiPreserved", {
+                    path: result.preservedPiPath,
+                  })
+                : result.piCleanupIncomplete
+                  ? t("skills.uninstallPiCleanupIncomplete")
+                  : result.backupPath
+                    ? t("skills.backup.location", { path: result.backupPath })
+                    : undefined,
+              closeButton: true,
+            };
+            if (piCleanupIncomplete) {
+              toast.warning(
+                t("skills.uninstallSuccess", { name: skill.name }),
+                toastOptions,
+              );
+            } else {
+              toast.success(
+                t("skills.uninstallSuccess", { name: skill.name }),
+                toastOptions,
+              );
+            }
+          } catch (error) {
+            toast.error(t("common.error"), { description: String(error) });
+          } finally {
+            endWrite();
+          }
+        },
+      });
+    },
+    [
+      beginWrite,
+      endWrite,
+      interactionBlocked,
+      setConfirmDialog,
+      skillById,
+      t,
+      uninstallMutation.mutateAsync,
+    ],
+  );
+
+  const handleBulkUninstall = () => {
+    if (selectedIds.length === 0) return;
     if (
       checkUpdatesLockRef.current ||
       writeLockRef.current ||
@@ -318,42 +618,107 @@ const UnifiedSkillsPanel = React.forwardRef<
     ) {
       return;
     }
+    // 被筛选藏起来的选中项必须逐个点名：屏幕上看不到的东西只报一个总数，
+    // 用户无从核对就要删。可见的选中项屏幕上本来就有，不必重复。
+    const hiddenNames = hiddenSelectedSkills.map((skill) => skill.name);
+    const listedNames = hiddenNames.slice(0, BULK_UNINSTALL_HIDDEN_NAMES_LIMIT);
+    const unlistedCount = hiddenNames.length - listedNames.length;
+    // 名字行不进 i18n 插值：封顶逻辑与语言无关，而且名字是数据不是文案。
+    const hiddenNotice =
+      hiddenNames.length > 0
+        ? [
+            t("skills.manage.bulkUninstallHidden", {
+              count: hiddenNames.length,
+            }),
+            listedNames.join(", ") + (unlistedCount > 0 ? "…" : ""),
+          ].join("\n")
+        : null;
+    // 截断时必须点破「没列全」，否则省略号读起来像「隐藏集合已知」，40 个
+    // 藏起来的也能悄悄溜过确认。
+    const unlistedNotice =
+      unlistedCount > 0
+        ? t("skills.manage.hiddenSelectedUnlisted", { count: unlistedCount })
+        : null;
     setConfirmDialog({
       isOpen: true,
       title: t("skills.uninstall"),
-      message: t("skills.uninstallConfirm", { name: skill.name }),
+      message: [
+        t("skills.manage.bulkUninstallConfirm", {
+          count: selectedIds.length,
+        }),
+        hiddenNotice,
+        unlistedNotice,
+      ]
+        .filter((part): part is string => part !== null)
+        .join("\n"),
+      confirmText: t("skills.manage.bulkUninstall", {
+        count: selectedIds.length,
+      }),
+      variant: "destructive",
       onConfirm: async () => {
         if (!beginWrite(true)) return;
+        const ids = [...selectedIds];
         try {
-          const result = await uninstallMutation.mutateAsync(skill.id);
+          const result = await bulkUninstallMutation.mutateAsync(ids);
           setConfirmDialog(null);
-          const piCleanupIncomplete =
-            result.piCleanupIncomplete || Boolean(result.preservedPiPath);
-          const toastOptions = {
-            description: result.preservedPiPath
-              ? t("skills.uninstallPiPreserved", {
-                  path: result.preservedPiPath,
-                })
-              : result.piCleanupIncomplete
-                ? t("skills.uninstallPiCleanupIncomplete")
-                : result.backupPath
-                  ? t("skills.backup.location", { path: result.backupPath })
-                  : undefined,
-            closeButton: true,
-          };
-          if (piCleanupIncomplete) {
+          // 后端在 Pi 目录无法解析、同名副本归属不明或删除失败时，仍会删掉
+          // 管理记录，但通过 Ok 响应里的 piCleanupIncomplete / preservedPiPath
+          // 告知还有文件没清。这类"记录已删、文件残留"必须让用户知道，否则
+          // 界面显示全部成功而残留目录无人处理。
+          const cleanup = result.succeeded.filter(
+            (entry) =>
+              entry.result.piCleanupIncomplete || entry.result.preservedPiPath,
+          );
+
+          if (result.failed.length > 0) {
             toast.warning(
-              t("skills.uninstallSuccess", { name: skill.name }),
-              toastOptions,
+              t("skills.manage.bulkUninstallPartial", {
+                succeeded: result.succeeded.length,
+                failed: result.failed.length,
+              }),
+              {
+                description: String(result.failed[0].error),
+                closeButton: true,
+              },
+            );
+          } else if (cleanup.length > 0) {
+            toast.warning(
+              t("skills.manage.bulkUninstallSuccess", {
+                count: result.succeeded.length,
+              }),
+              {
+                description: cleanup[0].result.preservedPiPath
+                  ? t("skills.uninstallPiPreserved", {
+                      path: cleanup[0].result.preservedPiPath,
+                    })
+                  : t("skills.uninstallPiCleanupIncomplete"),
+                closeButton: true,
+              },
             );
           } else {
             toast.success(
-              t("skills.uninstallSuccess", { name: skill.name }),
-              toastOptions,
+              t("skills.manage.bulkUninstallSuccess", {
+                count: result.succeeded.length,
+              }),
+              { closeButton: true },
             );
           }
+
+          // 多于一条残留时补一句总量，避免只报第一条造成"只有一条有问题"的误解。
+          if (cleanup.length > 1) {
+            toast.info(
+              t("skills.manage.bulkUninstallCleanupMore", {
+                count: cleanup.length - 1,
+              }),
+              { closeButton: true },
+            );
+          }
+
+          clearSelection();
         } catch (error) {
-          toast.error(t("common.error"), { description: String(error) });
+          toast.error(t("skills.manage.bulkUninstallFailed"), {
+            description: String(error),
+          });
         } finally {
           endWrite();
         }
@@ -455,19 +820,22 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
-  const handleUpdateSkill = async (skill: InstalledSkill) => {
-    if (!beginWrite()) return;
-    try {
-      const updated = await updateSkillMutation.mutateAsync(skill.id);
-      toast.success(t("skills.updateSuccess", { name: updated.name }), {
-        closeButton: true,
-      });
-    } catch (error) {
-      toast.error(t("skills.updateFailed"), { description: String(error) });
-    } finally {
-      endWrite();
-    }
-  };
+  const handleUpdateSkill = useCallback(
+    async (id: string) => {
+      if (!beginWrite()) return;
+      try {
+        const updated = await updateSkillMutation.mutateAsync(id);
+        toast.success(t("skills.updateSuccess", { name: updated.name }), {
+          closeButton: true,
+        });
+      } catch (error) {
+        toast.error(t("skills.updateFailed"), { description: String(error) });
+      } finally {
+        endWrite();
+      }
+    },
+    [beginWrite, endWrite, t, updateSkillMutation.mutateAsync],
+  );
 
   const handleUpdateAll = async () => {
     if (applicableSkillUpdates.length === 0 || !beginWrite()) {
@@ -671,6 +1039,125 @@ const UnifiedSkillsPanel = React.forwardRef<
         clearLabel={t("common.clear")}
       />
 
+      {/* 筛选芯片行：app / 来源 / 有更新 */}
+      {skills && skills.length > 0 && (
+        <div className="mb-3 space-y-2">
+          <ManagementFilterChips
+            label={t("skills.manage.filterApp")}
+            options={appFilterOptions}
+            selected={filterApps}
+            onSelectionChange={(next) =>
+              setFilterApps(next as SkillAppFilter[])
+            }
+            disabled={interactionBlocked}
+          />
+          {filterApps.length > 1 && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{t("skills.manage.filterAppMode")}</span>
+              {(["any", "all"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={filterAppMode === mode}
+                  onClick={() => setFilterAppMode(mode)}
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                    filterAppMode === mode
+                      ? "border-primary/40 bg-primary/10 text-foreground"
+                      : "border-border-default hover:bg-muted",
+                  )}
+                >
+                  {t(
+                    mode === "any"
+                      ? "skills.manage.filterAppModeAny"
+                      : "skills.manage.filterAppModeAll",
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <ManagementFilterChips
+              label={t("skills.manage.filterSource")}
+              options={sourceFilterOptions}
+              selected={filterSources}
+              onSelectionChange={(next) =>
+                setFilterSources(next as SkillSourceFilter[])
+              }
+              disabled={interactionBlocked}
+            />
+            {updateFilterOptions.length > 0 && (
+              <ManagementFilterChips
+                label={t("skills.manage.filterUpdated")}
+                options={updateFilterOptions}
+                selected={filterUpdates}
+                onSelectionChange={(next) =>
+                  setFilterUpdates(next as SkillUpdateFilter[])
+                }
+                disabled={interactionBlocked}
+              />
+            )}
+            {hasActiveFilters && (
+              <div className="flex items-center gap-2 pl-1 text-xs text-muted-foreground">
+                <span>
+                  {t("skills.manage.visibleCount", {
+                    visible: pagedSkills.length,
+                    total: filteredTotal,
+                  })}
+                </span>
+                <button
+                  type="button"
+                  className="underline hover:text-foreground"
+                  onClick={resetFilters}
+                >
+                  {t("common.reset")}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <ManagementBulkBar
+        selectedCount={visibleSelectedCount}
+        hiddenCount={hiddenSelectedCount}
+        totalCount={filteredTotal}
+        onSelectAll={selectAllFiltered}
+        onClear={clearSelection}
+        clearLabel={
+          hiddenSelectedCount > 0
+            ? t("skills.manage.clearSelectionAll", {
+                count: hiddenSelectedCount,
+              })
+            : t("skills.manage.clearSelection")
+        }
+        selectAllLabel={t("skills.manage.selectAll")}
+        toolbarLabel={t("skills.manage.bulkActions")}
+        disabled={interactionBlocked}
+      >
+        {hiddenSelectedCount > 0 && (
+          <span className="text-xs text-muted-foreground">
+            {t("skills.manage.hiddenSelected", { count: hiddenSelectedCount })}
+          </span>
+        )}
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          className="h-7 text-xs"
+          disabled={interactionBlocked}
+          onClick={handleBulkUninstall}
+        >
+          <Trash2 size={12} className="mr-1" />
+          {hiddenSelectedCount > 0
+            ? t("skills.manage.bulkUninstallAll", {
+                count: selectedIds.length,
+                hidden: hiddenSelectedCount,
+              })
+            : t("skills.manage.bulkUninstall", { count: selectedIds.length })}
+        </Button>
+      </ManagementBulkBar>
+
       <ScrollArea className="-mr-3 flex-1 min-h-0" type="auto">
         <div className="pb-24 pr-3">
           {isLoading ? (
@@ -697,10 +1184,12 @@ const UnifiedSkillsPanel = React.forwardRef<
           ) : (
             <TooltipProvider delayDuration={300}>
               <div className="rounded-xl border border-border-default overflow-hidden">
-                {filteredSkills.map((skill, index) => (
+                {pagedSkills.map((skill, index) => (
                   <InstalledSkillListItem
                     key={skill.id}
                     skill={skill}
+                    selected={selectedIdSet.has(skill.id)}
+                    onSelectedChange={toggleSelected}
                     hasUpdate={!!updatesMap[skill.id]}
                     isUpdating={
                       updateSkillMutation.isPending &&
@@ -709,12 +1198,25 @@ const UnifiedSkillsPanel = React.forwardRef<
                     actionsDisabled={interactionBlocked}
                     appIds={visibleSkillAppIds}
                     onToggleApp={handleToggleApp}
-                    onUninstall={() => handleUninstall(skill)}
-                    onUpdate={() => handleUpdateSkill(skill)}
-                    isLast={index === filteredSkills.length - 1}
+                    onUninstall={handleUninstall}
+                    onUpdate={handleUpdateSkill}
+                    isLast={index === pagedSkills.length - 1 && !hasMore}
                   />
                 ))}
               </div>
+              {hasMore && (
+                <div className="mt-3 flex justify-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={interactionBlocked}
+                    onClick={loadMoreSkills}
+                  >
+                    {t("skills.manage.loadMore")}
+                  </Button>
+                </div>
+              )}
             </TooltipProvider>
           )}
         </div>
@@ -765,125 +1267,150 @@ interface InstalledSkillListItemProps {
   hasUpdate?: boolean;
   isUpdating?: boolean;
   actionsDisabled?: boolean;
+  selected?: boolean;
+  /** 行回调一律传 skill.id，父组件反查本体——引用稳定是 memo 生效的前提。 */
+  onSelectedChange?: (id: string) => void;
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
-  onUninstall: () => void;
-  onUpdate?: () => void;
+  onUninstall: (id: string) => void;
+  onUpdate?: (id: string) => void;
   isLast?: boolean;
 }
 
-const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
-  skill,
-  appIds,
-  hasUpdate,
-  isUpdating,
-  actionsDisabled,
-  onToggleApp,
-  onUninstall,
-  onUpdate,
-  isLast,
-}) => {
-  const { t } = useTranslation();
+/**
+ * 已安装 skill 的行。
+ *
+ * 用 React.memo 包住：父组件每约 2 秒轮询一次代理状态，搜索框里每个按键
+ * 也会让整表重筛——不记忆化的话几百行都要在每次按键时重建。回调 props 走
+ * id 参数契约（行内回调交出 skill.id），由父组件用 useCallback 稳定住引用，
+ * 因此只有自身相关字段变化时才会重渲染。
+ */
+const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> =
+  React.memo(
+    ({
+      skill,
+      appIds,
+      hasUpdate,
+      isUpdating,
+      actionsDisabled,
+      selected = false,
+      onSelectedChange,
+      onToggleApp,
+      onUninstall,
+      onUpdate,
+      isLast,
+    }) => {
+      const { t } = useTranslation();
 
-  const openDocs = async () => {
-    if (!skill.readmeUrl) return;
-    try {
-      await settingsApi.openExternal(skill.readmeUrl);
-    } catch {
-      // ignore
-    }
-  };
+      const openDocs = async () => {
+        if (!skill.readmeUrl) return;
+        try {
+          await settingsApi.openExternal(skill.readmeUrl);
+        } catch {
+          // ignore
+        }
+      };
 
-  const sourceLabel = useMemo(() => {
-    if (skill.repoOwner && skill.repoName) {
-      return `${skill.repoOwner}/${skill.repoName}`;
-    }
-    return t("skills.local");
-  }, [skill.repoOwner, skill.repoName, t]);
+      const sourceLabel = useMemo(() => {
+        if (skill.repoOwner && skill.repoName) {
+          return `${skill.repoOwner}/${skill.repoName}`;
+        }
+        return t("skills.local");
+      }, [skill.repoOwner, skill.repoName, t]);
 
-  return (
-    <ListItemRow isLast={isLast}>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="font-medium text-sm text-foreground truncate">
-            {skill.name}
-          </span>
-          {skill.readmeUrl && (
-            <button
+      return (
+        <ListItemRow isLast={isLast}>
+          <input
+            type="checkbox"
+            className="h-3.5 w-3.5 flex-shrink-0 accent-primary"
+            checked={selected}
+            disabled={actionsDisabled}
+            onChange={() => onSelectedChange?.(skill.id)}
+            aria-label={t("skills.manage.selectSkill", { name: skill.name })}
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="font-medium text-sm text-foreground truncate">
+                {skill.name}
+              </span>
+              {skill.readmeUrl && (
+                <button
+                  type="button"
+                  onClick={openDocs}
+                  className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
+                >
+                  <ExternalLink size={12} />
+                </button>
+              )}
+              <span className="text-xs text-muted-foreground/50 flex-shrink-0">
+                {sourceLabel}
+              </span>
+              {hasUpdate && (
+                <Badge
+                  variant="outline"
+                  className="shrink-0 text-[10px] px-1.5 py-0 h-4 border-amber-500 text-amber-600 dark:text-amber-400"
+                >
+                  {t("skills.updateAvailable")}
+                </Badge>
+              )}
+            </div>
+            {skill.description && (
+              <p
+                className="text-xs text-muted-foreground truncate"
+                title={skill.description}
+              >
+                {skill.description}
+              </p>
+            )}
+          </div>
+
+          <AppToggleGroup
+            apps={skill.apps}
+            onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
+            appIds={appIds}
+            disabled={actionsDisabled}
+          />
+
+          <div
+            className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+            style={hasUpdate ? { opacity: 1 } : undefined}
+          >
+            {hasUpdate && onUpdate && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10",
+                  actionsDisabled && !isUpdating && "disabled:opacity-100",
+                )}
+                onClick={() => onUpdate?.(skill.id)}
+                disabled={actionsDisabled || isUpdating}
+                title={t("skills.update")}
+              >
+                {isUpdating ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+              </Button>
+            )}
+            <Button
               type="button"
-              onClick={openDocs}
-              className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 hover:text-red-500 hover:bg-red-100 disabled:opacity-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+              onClick={() => onUninstall(skill.id)}
+              disabled={actionsDisabled}
+              title={t("skills.uninstall")}
             >
-              <ExternalLink size={12} />
-            </button>
-          )}
-          <span className="text-xs text-muted-foreground/50 flex-shrink-0">
-            {sourceLabel}
-          </span>
-          {hasUpdate && (
-            <Badge
-              variant="outline"
-              className="shrink-0 text-[10px] px-1.5 py-0 h-4 border-amber-500 text-amber-600 dark:text-amber-400"
-            >
-              {t("skills.updateAvailable")}
-            </Badge>
-          )}
-        </div>
-        {skill.description && (
-          <p
-            className="text-xs text-muted-foreground truncate"
-            title={skill.description}
-          >
-            {skill.description}
-          </p>
-        )}
-      </div>
-
-      <AppToggleGroup
-        apps={skill.apps}
-        onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
-        appIds={appIds}
-        disabled={actionsDisabled}
-      />
-
-      <div
-        className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-        style={hasUpdate ? { opacity: 1 } : undefined}
-      >
-        {hasUpdate && onUpdate && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className={cn(
-              "h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10",
-              actionsDisabled && !isUpdating && "disabled:opacity-100",
-            )}
-            onClick={onUpdate}
-            disabled={actionsDisabled || isUpdating}
-            title={t("skills.update")}
-          >
-            {isUpdating ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <RefreshCw size={14} />
-            )}
-          </Button>
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 disabled:opacity-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
-          onClick={onUninstall}
-          disabled={actionsDisabled}
-          title={t("skills.uninstall")}
-        >
-          <Trash2 size={14} />
-        </Button>
-      </div>
-    </ListItemRow>
+              <Trash2 size={14} />
+            </Button>
+          </div>
+        </ListItemRow>
+      );
+    },
   );
-};
+InstalledSkillListItem.displayName = "InstalledSkillListItem";
 
 interface ImportSkillsDialogProps {
   skills: Array<{

@@ -2030,6 +2030,7 @@
       "searchPlaceholder": "Search MCP name, description, tag, or command...",
       "searchAriaLabel": "Search managed MCP servers",
       "noSearchResults": "No MCP servers match your search",
+      "loadMore": "Load more",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -2661,6 +2662,34 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
+    },
+    "manage": {
+      "filterApp": "Filter by app",
+      "filterAppMode": "Match mode",
+      "filterAppModeAny": "Any",
+      "filterAppModeAll": "All",
+      "filterSource": "Filter by source",
+      "sourceRepo": "Repository",
+      "sourceLocal": "Local",
+      "filterUpdated": "Filter by update",
+      "updatedAvailable": "Update available",
+      "selectSkill": "Select {{name}}",
+      "selectAll": "Select all",
+      "clearSelection": "Clear selection",
+      "clearSelectionAll": "Clear all (including {{count}} hidden)",
+      "bulkActions": "Bulk actions",
+      "hiddenSelected": "{{count}} more selected hidden by the current filter",
+      "bulkUninstall": "Uninstall ({{count}})",
+      "bulkUninstallAll": "Uninstall all ({{count}}, {{hidden}} hidden)",
+      "bulkUninstallConfirm": "Uninstall {{count}} selected skills? Each one is backed up locally first.",
+      "bulkUninstallHidden": "{{count}} more selected item(s) are hidden by the current filter and will also be uninstalled:",
+      "hiddenSelectedUnlisted": "{{count}} more not listed individually",
+      "bulkUninstallSuccess": "Uninstalled {{count}} skills",
+      "bulkUninstallPartial": "{{succeeded}} uninstalled, {{failed}} failed",
+      "bulkUninstallFailed": "Failed to uninstall skills",
+      "bulkUninstallCleanupMore": "{{count}} more skill(s) left files behind — check the Pi skill directory",
+      "visibleCount": "{{visible}} of {{total}} shown",
+      "loadMore": "Load more"
     }
   },
   "deeplink": {

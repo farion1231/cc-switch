@@ -2031,6 +2031,7 @@
       "searchPlaceholder": "搜尋 MCP 名稱、描述、標籤或命令...",
       "searchAriaLabel": "搜尋已管理的 MCP 伺服器",
       "noSearchResults": "未找到相符的 MCP 伺服器",
+      "loadMore": "載入更多",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -2662,6 +2663,34 @@
       "successSingle": "技能 {{name}} 已安裝",
       "successMultiple": "成功安裝 {{count}} 個技能",
       "noSkillsFound": "ZIP 檔案中未找到技能（需包含 SKILL.md 檔案）"
+    },
+    "manage": {
+      "filterApp": "依應用程式篩選",
+      "filterAppMode": "比對方式",
+      "filterAppModeAny": "任一",
+      "filterAppModeAll": "全部",
+      "filterSource": "依來源篩選",
+      "sourceRepo": "倉庫",
+      "sourceLocal": "本機",
+      "filterUpdated": "依更新篩選",
+      "updatedAvailable": "有可用更新",
+      "selectSkill": "選取 {{name}}",
+      "selectAll": "全選",
+      "clearSelection": "清除選取",
+      "clearSelectionAll": "清除全部（含隱藏 {{count}} 項）",
+      "bulkActions": "批次操作",
+      "hiddenSelected": "另有 {{count}} 個已選被目前篩選隱藏",
+      "bulkUninstall": "解除安裝（{{count}}）",
+      "bulkUninstallAll": "解除安裝全部已選（{{count}}，含隱藏 {{hidden}} 項）",
+      "bulkUninstallConfirm": "確定要解除安裝選取的 {{count}} 個技能？每個都會先在本機備份。",
+      "bulkUninstallHidden": "另有 {{count}} 個選取項被目前篩選隱藏、畫面上不可見，也會一併解除安裝：",
+      "hiddenSelectedUnlisted": "其餘 {{count}} 項未逐一列出",
+      "bulkUninstallSuccess": "已解除安裝 {{count}} 個技能",
+      "bulkUninstallPartial": "成功 {{succeeded}} 個，失敗 {{failed}} 個",
+      "bulkUninstallFailed": "解除安裝技能失敗",
+      "bulkUninstallCleanupMore": "還有 {{count}} 個技能留下了檔案——請檢查 Pi 技能目錄",
+      "visibleCount": "已顯示 {{visible}} / {{total}}",
+      "loadMore": "載入更多"
     }
   },
   "deeplink": {

@@ -15,7 +15,10 @@ import {
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
-import { runSequentialBulkAction } from "@/lib/utils/sequentialBulkAction";
+import {
+  runSequentialBulkAction,
+  runSequentialBulkActionCollect,
+} from "@/lib/utils/sequentialBulkAction";
 
 /**
  * 查询所有已安装的 Skills
@@ -132,6 +135,34 @@ export function useUninstallSkill() {
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+      ]),
+  });
+}
+
+/**
+ * 批量卸载 Skill
+ *
+ * 复用单条卸载的缓存收敛逻辑（移除 installed 条目、清理 updates、收敛
+ * backups/unmanaged），因此逐条调用 useUninstallSkill 的缓存分支即可；用
+ * 串行执行是因为每条卸载都会写应用配置文件与本地备份。
+ *
+ * 返回值保留每条的 `SkillUninstallResult`：卸载可能删掉管理记录却留下文件，
+ * 后端通过 `piCleanupIncomplete` / `preservedPiPath` 在 **Ok 响应** 里告知。
+ * 只统计成功条数会把这层提示吞掉，界面显示"全部成功"而用户不知道要手动清理。
+ */
+export function useBulkUninstallSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      runSequentialBulkActionCollect(ids, (id) =>
+        skillsApi.uninstallUnified(id),
+      ),
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "updates"] }),
       ]),
   });
 }

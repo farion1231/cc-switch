@@ -2030,6 +2030,7 @@
       "searchPlaceholder": "MCP の名前、説明、タグ、コマンドを検索...",
       "searchAriaLabel": "管理中の MCP サーバーを検索",
       "noSearchResults": "検索に一致する MCP サーバーがありません",
+      "loadMore": "さらに読み込む",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -2661,6 +2662,34 @@
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
       "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
+    },
+    "manage": {
+      "filterApp": "アプリで絞り込み",
+      "filterAppMode": "一致条件",
+      "filterAppModeAny": "いずれか",
+      "filterAppModeAll": "すべて",
+      "filterSource": "取得元で絞り込み",
+      "sourceRepo": "リポジトリ",
+      "sourceLocal": "ローカル",
+      "filterUpdated": "更新で絞り込み",
+      "updatedAvailable": "更新あり",
+      "selectSkill": "{{name}} を選択",
+      "selectAll": "すべて選択",
+      "clearSelection": "選択を解除",
+      "clearSelectionAll": "すべて解除（非表示 {{count}} 件を含む）",
+      "bulkActions": "一括操作",
+      "hiddenSelected": "他に {{count}} 件の選択がフィルターで非表示です",
+      "bulkUninstall": "アンインストール（{{count}}）",
+      "bulkUninstallAll": "すべてアンインストール（{{count}}、非表示 {{hidden}} 件）",
+      "bulkUninstallConfirm": "選択した {{count}} 件のスキルをアンインストールしますか？各スキルは先にローカルへバックアップされます。",
+      "bulkUninstallHidden": "他に {{count}} 件の選択項目が現在のフィルターで非表示になっており、これらもアンインストールされます:",
+      "hiddenSelectedUnlisted": "他に {{count}} 件は個別に記載していません",
+      "bulkUninstallSuccess": "{{count}} 件のスキルをアンインストールしました",
+      "bulkUninstallPartial": "成功 {{succeeded}} 件、失敗 {{failed}} 件",
+      "bulkUninstallFailed": "スキルのアンインストールに失敗しました",
+      "bulkUninstallCleanupMore": "他に {{count}} 件のスキルがファイルを残しています — Pi のスキルディレクトリを確認してください",
+      "visibleCount": "{{total}} 件中 {{visible}} 件を表示",
+      "loadMore": "さらに読み込む"
     }
   },
   "deeplink": {
