@@ -550,12 +550,13 @@ export function AddProviderDialog({
       }
       onClose={handlePanelClose}
       footer={footer}
+      width={step === "pick" ? "full" : "form"}
       contentClassName={
         step === "pick"
           ? "flex h-full flex-col space-y-0 p-0"
           : appId === "pi"
-            ? "mx-0 max-w-[1008px] pb-0 pt-4"
-            : "mx-0 max-w-[1008px] pt-4"
+            ? "pb-0 pt-4"
+            : "pt-4"
       }
     >
       <PresetStepContext.Provider value={stepState}>
