@@ -747,6 +747,16 @@ pub async fn ensure_desktop_mapping_service(state: &AppState) {
     }
 }
 
+/// Claude Desktop 换卡（切换、应用项目）之后对齐代理服务：从映射卡换走时，别人也不用就停掉；
+/// 换上映射卡时拉起来。`was_mapping` 是换卡前的 `current_provider_uses_proxy`：只在映射卡
+/// 被换走时才去停，别的换卡不碰服务，免得停掉用户在设置页手动开的服务。
+pub async fn sync_desktop_mapping_service(state: &AppState, was_mapping: bool) {
+    if was_mapping && !crate::claude_desktop_config::current_provider_uses_proxy(&state.db) {
+        stop_server_if_unused(state).await;
+    }
+    ensure_desktop_mapping_service(state).await;
+}
+
 /// 「关闭本地路由」：全部退回直连，再停掉代理服务。
 pub async fn exit_all(state: &AppState) -> Result<(), String> {
     let mut errors = Vec::new();
@@ -5276,13 +5286,25 @@ model_provider = "c"
         ensure_desktop_mapping_service(&state).await;
         assert!(state.proxy_service.is_running().await);
 
-        // 换成直连卡后不再算在用。
+        // 从映射卡换走时 Claude Code 还在路由：服务留着，等它退出路由时再停。
+        enter(&state, &AppType::Claude, false).await.expect("enter");
         crate::settings::set_current_provider(&desktop, None).expect("clear desktop current");
         state
             .db
             .delete_provider(desktop.as_str(), "map")
             .expect("drop mapping");
-        stop_server_if_unused(&state).await;
+        sync_desktop_mapping_service(&state, true).await;
+        assert!(state.proxy_service.is_running().await);
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert!(!state.proxy_service.is_running().await);
+
+        // 换卡前就不是映射卡：用户在设置页手动开的服务不碰。
+        state.proxy_service.start().await.expect("manual start");
+        sync_desktop_mapping_service(&state, false).await;
+        assert!(state.proxy_service.is_running().await);
+
+        // 从映射卡换走、没人在用：顺手停掉。
+        sync_desktop_mapping_service(&state, true).await;
         assert!(!state.proxy_service.is_running().await);
     }
 

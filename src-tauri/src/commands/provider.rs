@@ -166,6 +166,10 @@ pub async fn switch_provider(
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let is_desktop = matches!(app_type, AppType::ClaudeDesktop);
+    let desktop_was_mapping = is_desktop
+        && app_handle.try_state::<AppState>().is_some_and(|state| {
+            crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
+        });
     let handle = app_handle.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = handle
@@ -177,7 +181,11 @@ pub async fn switch_provider(
     .map_err(|e| format!("供应商切换任务执行失败: {e}"))??;
     if is_desktop {
         if let Some(state) = app_handle.try_state::<AppState>() {
-            crate::mode::controller::ensure_desktop_mapping_service(state.inner()).await;
+            crate::mode::controller::sync_desktop_mapping_service(
+                state.inner(),
+                desktop_was_mapping,
+            )
+            .await;
         }
     }
     Ok(result)

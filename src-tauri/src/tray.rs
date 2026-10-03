@@ -2460,6 +2460,7 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
         let Some(app_state) = app_handle.try_state::<AppState>() else {
             return;
         };
+        let desktop_was_mapping = crate::commands::desktop_uses_mapping(app_state.inner(), scope);
         match crate::services::profile::ProfileService::apply(app_state.inner(), &profile_id, scope)
         {
             Ok(warnings) => {
@@ -2490,6 +2491,7 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
                     app_state.inner(),
                     &profile_id,
                     scope,
+                    desktop_was_mapping,
                 );
             }
             Err(e) => {
@@ -2521,6 +2523,10 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
     let app_handle = app.clone();
     let provider_id = provider_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
+        let desktop_was_mapping = app_type == AppType::ClaudeDesktop
+            && app_handle.try_state::<AppState>().is_some_and(|state| {
+                crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
+            });
         match handle_provider_click(&app_handle, &app_type, &provider_id) {
             Ok(ClickOutcome::Switched { mode, name }) => {
                 clear_app_problems(&app_type);
@@ -2529,12 +2535,16 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
                 }
                 emit_switched(&app_handle, &app_type, &provider_id);
                 if app_type == AppType::ClaudeDesktop {
-                    // 选了模型映射卡要把路由服务拉起来（同主界面 `switch_provider`），起来之后再重建一次。
+                    // 换上模型映射卡要把路由服务拉起来、换走时别人不用就停掉（同主界面
+                    // `switch_provider`），对齐之后再重建一次。
                     let handle = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
                         if let Some(state) = handle.try_state::<AppState>() {
-                            crate::mode::controller::ensure_desktop_mapping_service(state.inner())
-                                .await;
+                            crate::mode::controller::sync_desktop_mapping_service(
+                                state.inner(),
+                                desktop_was_mapping,
+                            )
+                            .await;
                         }
                         refresh_tray_menu(&handle);
                     });
