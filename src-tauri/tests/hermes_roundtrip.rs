@@ -122,3 +122,90 @@ fn get_providers_surfaces_rate_limit_delay_and_key_env() {
         );
     });
 }
+
+#[test]
+fn set_provider_injects_default_api_mode_when_missing() {
+    with_temp_hermes_dir(|dir| {
+        let config_path = dir.join("config.yaml");
+        std::fs::write(&config_path, "custom_providers: []\n").expect("seed config.yaml");
+
+        // Simulate the UI payload sent when the user never touched the
+        // API Mode dropdown (#4011): no `api_mode` field at all.
+        let patch = serde_json::json!({
+            "name": "selfuse",
+            "base_url": "https://api.example.com/v1",
+            "api_key": "sk-xxx",
+            "models": [{ "id": "gpt-4" }]
+        });
+
+        hermes_config::set_provider("selfuse", patch).expect("set_provider");
+
+        let written = std::fs::read_to_string(&config_path).expect("read written config");
+        assert!(
+            written.contains("api_mode: chat_completions"),
+            "default api_mode was not injected:\n{written}"
+        );
+    });
+}
+
+#[test]
+fn set_provider_preserves_explicit_api_mode() {
+    with_temp_hermes_dir(|dir| {
+        let config_path = dir.join("config.yaml");
+        std::fs::write(&config_path, "custom_providers: []\n").expect("seed config.yaml");
+
+        let patch = serde_json::json!({
+            "name": "anthropic-host",
+            "base_url": "https://api.example.com/v1",
+            "api_key": "sk-xxx",
+            "api_mode": "anthropic_messages",
+            "models": [{ "id": "claude-sonnet-5" }]
+        });
+
+        hermes_config::set_provider("anthropic-host", patch).expect("set_provider");
+
+        let written = std::fs::read_to_string(&config_path).expect("read written config");
+        assert!(
+            written.contains("api_mode: anthropic_messages"),
+            "explicit api_mode was lost:\n{written}"
+        );
+    });
+}
+
+#[test]
+fn set_provider_edit_keeps_on_disk_api_mode_when_payload_omits_it() {
+    with_temp_hermes_dir(|dir| {
+        // Provider on disk carries an api_mode the user set outside the UI
+        // (Hermes Web UI / hand-edited YAML). The DB-era UI payload predates
+        // the field and omits it entirely.
+        let yaml = r#"custom_providers:
+  - name: myhost
+    base_url: https://api.example.com/v1
+    api_key: sk-old
+    api_mode: anthropic_messages
+    models:
+      claude-sonnet-5: {}
+"#;
+        let config_path = dir.join("config.yaml");
+        std::fs::write(&config_path, yaml).expect("seed config.yaml");
+
+        let patch = serde_json::json!({
+            "name": "myhost",
+            "base_url": "https://api.example.com/v1",
+            "api_key": "sk-new",
+            "models": [{ "id": "claude-sonnet-5" }]
+        });
+
+        hermes_config::set_provider("myhost", patch).expect("set_provider");
+
+        let written = std::fs::read_to_string(&config_path).expect("read written config");
+        assert!(
+            written.contains("api_mode: anthropic_messages"),
+            "on-disk api_mode was reset to the default:\n{written}"
+        );
+        assert!(
+            written.contains("sk-new"),
+            "api_key was not updated:\n{written}"
+        );
+    });
+}

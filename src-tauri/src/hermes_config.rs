@@ -776,6 +776,28 @@ pub fn get_provider(name: &str) -> Result<Option<serde_json::Value>, AppError> {
     Ok(get_providers()?.get(name).cloned())
 }
 
+/// Forward-compat default for `api_mode` (#4011): the API Mode dropdown only
+/// serializes the field once touched, so a UI-created provider can omit it
+/// entirely. Hermes then falls back to its URL heuristics, which only
+/// recognize a handful of official endpoints — third-party gateways silently
+/// get the wrong protocol. The deeplink import path already writes
+/// `api_mode` explicitly for exactly this reason; the UI path now matches.
+///
+/// MUST run after the on-disk forward-compat merge, not before it — otherwise
+/// the injected default would occupy the key and an `api_mode` the user set
+/// outside the UI (Hermes Web UI / hand-edited YAML) would be reset.
+fn ensure_api_mode(provider: &mut serde_yaml::Value) {
+    const DEFAULT_API_MODE: &str = "chat_completions";
+    if provider.get("api_mode").is_none() {
+        if let serde_yaml::Value::Mapping(m) = provider {
+            m.insert(
+                serde_yaml::Value::String("api_mode".to_string()),
+                serde_yaml::Value::String(DEFAULT_API_MODE.to_string()),
+            );
+        }
+    }
+}
+
 /// Set (upsert) a custom provider by name.
 ///
 /// Upserts into the `custom_providers:` YAML sequence (matched by `name`).
@@ -851,8 +873,11 @@ pub fn set_provider(
                 new_map.entry(k.clone()).or_insert_with(|| v.clone());
             }
         }
+        // On-disk values already had their chance via the merge above.
+        ensure_api_mode(&mut yaml_val);
         *existing = yaml_val;
     } else {
+        ensure_api_mode(&mut yaml_val);
         providers.push(yaml_val);
     }
 
