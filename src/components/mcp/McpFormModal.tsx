@@ -297,9 +297,11 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   const jsonErrorText = (error: JsonParseError) =>
     error.kind === "notObject"
       ? t("mcpPage.drawer.jsonNotObject")
-      : error.line
-        ? t("mcpPage.drawer.jsonSyntaxLine", { line: error.line })
-        : t("mcpPage.drawer.jsonSyntax");
+      : error.kind === "maskedUnknown"
+        ? t("mcpPage.drawer.jsonMaskedUnknown", { key: error.key })
+        : error.line
+          ? t("mcpPage.drawer.jsonSyntaxLine", { line: error.line })
+          : t("mcpPage.drawer.jsonSyntax");
 
   // ─── 连接字段编辑 ───────────────────────────────────────────────────
   const patchConn = (patch: Partial<McpDraftConnection>) =>

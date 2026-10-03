@@ -4174,6 +4174,7 @@
       "jsonSyntaxLine": "第 {{line}} 行附近有语法错误",
       "jsonNotObject": "最外层要是一个对象，例如 {\"command\": \"npx\"}",
       "jsonBlocksForm": "修好后才能切回表单。",
+      "jsonMaskedUnknown": "「{{key}}」的值还是占位符，但草稿里没有这个键的原值：填入真实值，或先点「显示值」再改键名。",
       "writeTo": "写入到",
       "writeToHelpTitle": "怎么写进各应用",
       "writeToHelp": "同一份配置原样写进勾选的每个应用；某个应用要不同参数时，另建一条只勾它。MiniMax Code 只替换连接字段，mcp.json 里的其他字段保留。",

@@ -299,7 +299,9 @@ export function recognizePaste(text: string): PasteResult | null {
 // ─── JSON 页签的文字 → spec ─────────────────────────────────────────────
 export type JsonParseError =
   | { kind: "syntax"; line: number | null }
-  | { kind: "notObject" };
+  | { kind: "notObject" }
+  /** 值还是占位符，但草稿里没有这个键的原值可换回（改了键名、或新加的键） */
+  | { kind: "maskedUnknown"; field: "env" | "headers"; key: string };
 
 export type JsonParseResult =
   | { ok: true; spec: McpServerSpec }
@@ -314,7 +316,10 @@ function lineOfError(error: unknown, text: string): number | null {
   return null;
 }
 
-/** 解析 JSON 页签；占位符的值换回草稿里的原值。 */
+/**
+ * 解析 JSON 页签；占位符的值换回草稿里的原值。原值按键名找：改了键名、或新加的键
+ * 还留着占位符，就没有原值可换，不能悄悄存成空串（凭据会丢），报错让用户填真实值。
+ */
 export function parseJsonText(
   text: string,
   previous: McpDraftConnection,
@@ -337,9 +342,12 @@ export function parseJsonText(
     const map = parsed[field];
     if (!isObject(map)) continue;
     for (const key of Object.keys(map)) {
-      if (map[key] === SECRET_MASK) {
-        map[key] = before[field][key] ?? "";
+      if (map[key] !== SECRET_MASK) continue;
+      const original = before[field][key];
+      if (original === undefined) {
+        return { ok: false, error: { kind: "maskedUnknown", field, key } };
       }
+      map[key] = original;
     }
   }
   return { ok: true, spec: normalizeSpec(parsed) };
