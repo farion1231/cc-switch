@@ -179,7 +179,7 @@ export function UsageTrendChart({
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
-  const [metric, setMetric] = useState<TrendMetric>("requests");
+  const [metric, setMetric] = useState<TrendMetric>("tokens");
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
     range,
@@ -274,8 +274,8 @@ export function UsageTrendChart({
           value={metric}
           onValueChange={setMetric}
           items={[
-            { value: "requests", label: t("usage.trend.requests") },
             { value: "tokens", label: t("usage.trend.tokens") },
+            { value: "requests", label: t("usage.trend.requests") },
             { value: "cost", label: t("usage.trend.cost") },
           ]}
         />
