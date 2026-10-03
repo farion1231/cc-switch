@@ -39,6 +39,10 @@ mod session_manager;
 mod settings;
 mod store;
 
+#[cfg(test)]
+#[path = "../tests/support/fs_links.rs"]
+mod test_fs_links;
+
 mod tray;
 mod usage_events;
 mod usage_script;
@@ -64,6 +68,7 @@ pub use mcp::{
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
+pub use services::vps;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::{reapply_current_codex_official_live, EditorSave, EditorView},
@@ -731,6 +736,10 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
             }
 
+            if let Err(error) = services::vps::VpsService::new().get_servers_with_skills(&app_state.db) {
+                log::warn!("VPS Skill startup recovery is incomplete: {error:#}");
+            }
+
             // 1.5. 自动导入 live 配置 + seed 官方预设供应商（Claude / Codex / Gemini）
             //
             // 先 import 后 seed 是有意为之：先把用户手动配置的 settings.json / auth.json / .env
@@ -1159,6 +1168,7 @@ pub fn run() {
             // 初始化 SkillService
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
+            app.manage(services::vps::ssh::VpsSshState::default());
 
             // 初始化 CopilotAuthManager
             {
@@ -1560,6 +1570,14 @@ pub fn run() {
             commands::add_skill_repo,
             commands::remove_skill_repo,
             commands::install_skills_from_zip,
+            // Global VPS host management
+            commands::get_vps_servers,
+            commands::save_vps_server,
+            commands::delete_vps_server,
+            // VPS connection probes (explicit user action only)
+            commands::test_vps_connection,
+            commands::cancel_vps_connection_test,
+            commands::confirm_vps_host_key,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,
@@ -1753,9 +1771,13 @@ pub fn run() {
                 //   - 窗口状态：插件 Exit 钩子在主线程保存（同线程读取窗口几何，无死锁）
                 //   - 托盘图标：Tauri 内部 cleanup_before_exit 清理，正常走 Drop
                 //   - 代理/Live 配置：无需恢复，重启后新实例立即接管并恢复代理状态
+                //   - VPS 探测：同步取消并等待本进程的 SSH 子进程回收，不调用窗口 API
                 //   - 100ms 落盘等待：重启前的 DB 写入均为命令驱动、此刻已完成，
                 //     与所有 Tauri 应用默认重启路径的行为一致，无需额外等待
                 ExitRequestAction::DeferToTauriRestart => {
+                    if let Some(state) = app_handle.try_state::<services::vps::ssh::VpsSshState>() {
+                        state.shutdown();
+                    }
                     log::info!("收到重启请求 (code={code:?})，交由 Tauri 默认重启流程 re-exec");
                     return;
                 }
@@ -1893,6 +1915,12 @@ pub fn run() {
 /// 把接上代理的客户端都指回直连（模式和代理路由保留，下次启动再接上），再停止代理。
 /// 客户端不能一直指着代理：开机自启默认关闭，CC Switch 一关客户端就连不上了。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
+    if let Some(state) = app_handle.try_state::<services::vps::ssh::VpsSshState>() {
+        let state = state.inner().clone();
+        if let Err(error) = tauri::async_runtime::spawn_blocking(move || state.shutdown()).await {
+            log::warn!("VPS probe cleanup worker failed: {error}");
+        }
+    }
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         crate::mode::controller::detach_all(state.inner()).await;
         log::info!("退出清理完成：客户端已指回直连，代理已停止");
@@ -2194,12 +2222,15 @@ pub fn destroy_single_instance_lock(app_handle: &tauri::AppHandle) {
 /// 直接走 `tauri::process::restart`（spawn 新进程 + `exit(0)`），不经过事件
 /// 循环退出，因此 Tauri 内部的 `cleanup_before_exit` 和各插件的
 /// `RunEvent::Exit` 钩子都不会执行。需要的清理由调用方与本函数显式补偿：
-/// 窗口状态、代理/Live 恢复（调用方）；托盘图标、single-instance 锁（本函数）。
+/// 窗口状态、代理/Live 恢复（调用方）；VPS 探测、托盘图标、single-instance 锁（本函数）。
 ///
 /// 有意不调 `AppHandle::cleanup_before_exit()`：它会在调用线程上 Drop 托盘
 /// 图标，而 macOS 的 NSStatusItem 操作要求主线程；`set_visible(false)` 走
 /// `run_item_main_thread` 代理，跨线程安全（见 `remove_tray_icon_before_exit`）。
 pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
+    if let Some(state) = app_handle.try_state::<services::vps::ssh::VpsSshState>() {
+        state.shutdown();
+    }
     remove_tray_icon_before_exit(app_handle);
     destroy_single_instance_lock(app_handle);
     tauri::process::restart(&app_handle.env());

@@ -3,6 +3,105 @@
     "title": "CC Switch",
     "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
   },
+  "vps": {
+    "title": "VPS",
+    "add": "Add host",
+    "edit": "Edit host",
+    "editServer": "Edit {{name}}",
+    "deleteServer": "Delete {{name}}",
+    "deleteConfirm": "Delete {{name}} and remove its client bindings? Other hosts and existing SSH sessions are not affected.",
+    "search": "Search hosts",
+    "noResults": "No matching hosts",
+    "retry": "Retry",
+    "clientsFor": "Clients for {{name}}",
+    "testConnection": "Test connection",
+    "cancelTest": "Cancel test",
+    "cancelFailed": "Could not cancel the connection test",
+    "loadFailed": "Could not load or recover the VPS configuration",
+    "saveFailed": "VPS configuration is incomplete",
+    "deleteFailed": "Host deletion or client cleanup is incomplete",
+    "formDescription": "Choose which clients can discover this host. Saving automatically configures the catalog and VPS Skill; no separate Skill switch is needed.",
+    "sections": {
+      "host": "Host details",
+      "authentication": "SSH authentication"
+    },
+    "fields": {
+      "name": "Name",
+      "host": "Host",
+      "hostPlaceholder": "IP address or DNS hostname",
+      "port": "Port",
+      "user": "SSH username",
+      "identityFile": "Private-key file path",
+      "identityPlaceholder": "Absolute path to the private-key file",
+      "identityHelp": "Only the private-key file path is referenced. Its contents are not imported.",
+      "purpose": "Purpose (optional)",
+      "clients": "Clients"
+    },
+    "auth": {
+      "method": "Authentication",
+      "password": "Password",
+      "privateKey": "Private-key file",
+      "certificate": "SSH user certificate",
+      "legacy": "Keep existing authentication",
+      "passwordPlaceholder": "Enter the SSH login password",
+      "keepPassword": "Leave blank to keep the saved password",
+      "passwordHelp": "Saved in this machine's system credential store. Bound clients on the same machine reuse it automatically through CC Switch's local SSH execution entry point. Not written to configuration files or Skills; not shared with models. If the password is missing or the fingerprint changes, return to the VPS page. WSL and containers are not supported automatically. Windows credential roaming follows OS policy.",
+      "certificateFile": "SSH certificate file path",
+      "certificatePlaceholder": "Absolute certificate path, usually ending in -cert.pub",
+      "certificateHelp": "Use an OpenSSH user certificate and its matching private key, not a website's TLS/SSL certificate."
+    },
+    "empty": {
+      "title": "No VPS hosts yet",
+      "description": "Add a host to manage its connection details and client access here."
+    },
+    "discard": {
+      "title": "Discard unsaved changes?",
+      "message": "Close this editor and discard the draft? Configuration already written by a previous save will not be undone.",
+      "confirm": "Discard changes"
+    },
+    "connection": {
+      "success": "Connection test succeeded",
+      "hostKeyChanged": "The host fingerprint changed. Connection blocked; verify the server identity before continuing.",
+      "targetChanged": "Connection details differ from the saved host or confirmed target. Connection blocked. Reopen the host and check its address, port, username and authentication method; add a separate host to connect to a different server.",
+      "authenticationFailed": "SSH authentication failed. Check the password, private key or certificate.",
+      "credentialsUnavailable": "The local credential store is unavailable. Check the system credential service and retry.",
+      "passwordRequired": "No saved password is available. Edit the host, enter a password and retry.",
+      "sshNotFound": "Required OpenSSH tools were not found",
+      "timeout": "Connection test timed out",
+      "cancelled": "Connection test cancelled",
+      "failed": "Connection test failed"
+    },
+    "cli": {
+      "usage": "cc-switch vps exec --root <VPS-directory> --app <client> --server <UUID> [--timeout <seconds>] -- <remote-command>\nPass exactly one remote shell command string after --. No TTY is allocated; the default timeout is 300 seconds. stdin accepts scripts. Verify and confirm the host fingerprint using Test connection on the VPS page first.",
+      "invalidArguments": "Invalid arguments. Run cc-switch vps --help for usage.",
+      "dataInvalid": "The host file is missing, damaged or modified, or the VPS directory is incorrect. Return to the VPS page to check the configuration.",
+      "hostUnavailable": "The host does not exist or is not bound to this client. Check the host and client selection on the VPS page.",
+      "trustRequired": "The host fingerprint has not been confirmed. Test the connection on the VPS page and verify the fingerprint before confirming it.",
+      "trustInvalid": "The local trust records are invalid or recovery is incomplete. Return to the VPS page and test the connection again.",
+      "targetChanged": "The configuration changed while preparing execution. Refresh the VPS page, check the host and retry.",
+      "passwordRequired": "No saved password is available. Save the host password on the VPS page before retrying.",
+      "credentialsUnavailable": "The system credential store cannot be read; there is no plaintext fallback. Check the system credential service, then return to the VPS page to retry.",
+      "prepareFailed": "Could not prepare the private SSH configuration for this execution. Check local directory permissions, then return to the VPS page to retry.",
+      "sshNotFound": "System OpenSSH was not found. Install or enable OpenSSH and make sure ssh is available on PATH.",
+      "executionFailed": "Local SSH execution failed. Check the local SSH environment and retry. Remote errors are passed through unchanged on stderr with their exit status.",
+      "timeout": "Execution timed out and local SSH was stopped. The remote command may already have had effects; check the remote state before retrying.",
+      "cancelled": "Execution was cancelled and local SSH was stopped. The remote command may already have had effects; check the remote state before retrying."
+    },
+    "hostKey": {
+      "title": "Confirm host fingerprint",
+      "description": "Compare this fingerprint for {{name}} with a trusted source before accepting. Retrieving a host key does not prove the server's identity.",
+      "confirm": "Trust this fingerprint",
+      "confirmFailed": "Could not confirm the host fingerprint",
+      "retryHint": "The confirmation may have expired, or the local trust files could not be written. Test the connection again; if a fingerprint is shown, verify it again before confirming."
+    },
+    "help": {
+      "title": "About VPS client access",
+      "access": "Choosing a client automatically configures a local host catalog and one VPS-managed Skill. This automatic Skill is hidden from the ordinary Skills page.",
+      "scope": "Client selection controls discovery, not a security sandbox. Other programs under the same OS account may still use available SSH credentials.",
+      "sessions": "Removing a binding does not stop SSH sessions that are already running. A successful test only describes that one probe.",
+      "cloud": "If a client uses a cloud model, remote command output may be sent to that model provider."
+    }
+  },
   "common": {
     "add": "Add",
     "edit": "Edit",
@@ -2540,6 +2639,7 @@
       "skillPathNotFound": "Skill path '{{path}}' not found in repository {{owner}}/{{name}}",
       "skillDirNotFound": "Skill directory not found: {{path}}",
       "directoryConflict": "Skill directory '{{directory}}' is already occupied by {{existing_repo}}, cannot install from {{new_repo}}",
+      "managedByVps": "Skill '{{directory}}' is managed by VPS and cannot be changed or overwritten here.",
       "emptyArchive": "Downloaded archive is empty",
       "invalidRepoRef": "Invalid repository reference: {{owner}}/{{name}}",
       "archiveTooLarge": "Archive exceeds the {{limit_mb}} MB extraction limit; aborted",
@@ -2563,6 +2663,7 @@
         "checkRepoUrl": "Please check repository URL and branch name",
         "checkDiskSpace": "Please check disk space",
         "checkPermission": "Please check directory permissions",
+        "manageInVps": "Manage client access on the VPS page. A separate manual Skill must use a different ID and directory.",
         "uninstallFirst": "Please uninstall the existing skill with the same name first",
         "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)"
       }

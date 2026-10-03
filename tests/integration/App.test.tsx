@@ -3,18 +3,21 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
+import App from "@/App";
 import { providersApi } from "@/lib/api/providers";
 import {
   resetProviderState,
   setCurrentProviderId,
   setLiveProviderIds,
   setProviders,
+  setSettings,
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
+const vpsPanelMocks = vi.hoisted(() => ({ openAdd: vi.fn(), props: vi.fn() }));
 const skillsPanelMocks = vi.hoisted(() => ({
   checkUpdates: vi.fn(),
   openDiscovery: vi.fn(),
@@ -169,6 +172,35 @@ vi.mock("@/components/skills/UnifiedSkillsPanel", async () => {
   return { default: MockUnifiedSkillsPanel };
 });
 
+vi.mock("@/components/vps/VpsPanel", async () => {
+  const React = await import("react");
+  const MockVpsPanel = React.forwardRef((props: any, ref) => {
+    vpsPanelMocks.props(props);
+    React.useImperativeHandle(ref, () => ({ openAdd: vpsPanelMocks.openAdd }));
+    React.useEffect(
+      () => () => {
+        props.onInteractionBlockedChange?.(false);
+        props.onNavigationBlockedChange?.(false);
+      },
+      [props.onInteractionBlockedChange, props.onNavigationBlockedChange],
+    );
+    return (
+      <div data-testid="vps-panel">
+        <button
+          onClick={() => {
+            props.onInteractionBlockedChange?.(true);
+            props.onNavigationBlockedChange?.(true);
+          }}
+        >
+          block-vps-navigation
+        </button>
+      </div>
+    );
+  });
+  MockVpsPanel.displayName = "MockVpsPanel";
+  return { default: MockVpsPanel };
+});
+
 vi.mock("@/components/UpdateBadge", () => ({
   UpdateBadge: ({ onClick }: any) => (
     <button onClick={onClick}>update-badge</button>
@@ -204,12 +236,13 @@ describe("App integration with MSW", () => {
     toastErrorMock.mockReset();
     skillsPanelMocks.checkUpdates.mockReset();
     skillsPanelMocks.openDiscovery.mockReset();
+    vpsPanelMocks.openAdd.mockReset();
+    vpsPanelMocks.props.mockReset();
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
   });
 
   it("covers basic provider flows via real hooks", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -265,8 +298,64 @@ describe("App integration with MSW", () => {
     expect(toastSuccessMock).toHaveBeenCalled();
   }, 10_000);
 
+  it.each(["claude", "claude-desktop", "hermes", "openclaw"])(
+    "opens the same global VPS page from %s",
+    async (app) => {
+      setSettings({ firstRunNoticeConfirmed: true });
+      localStorage.setItem("cc-switch-last-app", app);
+      renderApp(App);
+      const entry = screen.getByRole("button", { name: "vps.title" });
+      expect(screen.getAllByRole("button", { name: "vps.title" })).toHaveLength(
+        1,
+      );
+      expect(entry).toBe(entry.parentElement?.lastElementChild);
+      if (app === "claude") {
+        expect(
+          Array.from(entry.parentElement!.querySelectorAll("button")).map(
+            (button) => button.title,
+          ),
+        ).toEqual([
+          "skills.manage",
+          "prompts.manage",
+          "sessionManager.title",
+          "mcp.title",
+          "vps.title",
+        ]);
+      }
+      fireEvent.click(entry);
+      await screen.findByTestId("vps-panel");
+      expect(localStorage.getItem("cc-switch-last-view")).toBe("vps");
+      const props =
+        vpsPanelMocks.props.mock.calls[
+          vpsPanelMocks.props.mock.calls.length - 1
+        ][0];
+      expect(props).not.toHaveProperty("activeApp");
+      expect(props).not.toHaveProperty("currentApp");
+      expect(props).not.toHaveProperty("appId");
+      fireEvent.click(screen.getByRole("button", { name: "vps.add" }));
+      expect(vpsPanelMocks.openAdd).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("restores the VPS view and respects its pending/unsaved navigation guard", async () => {
+    setSettings({ firstRunNoticeConfirmed: true });
+    localStorage.setItem("cc-switch-last-view", "vps");
+    localStorage.setItem("cc-switch-last-app", "claude-desktop");
+    renderApp(App);
+    await screen.findByTestId("vps-panel");
+    expect(
+      screen.getByRole("heading", { name: "vps.title" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText("block-vps-navigation"));
+    expect(screen.getByRole("button", { name: "common.back" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "vps.add" })).toBeDisabled();
+    fireEvent.keyDown(window, { key: ",", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByTestId("vps-panel")).toBeInTheDocument();
+    expect(localStorage.getItem("cc-switch-last-view")).toBe("vps");
+  });
+
   it("resets provider view scroll when switching apps", async () => {
-    const { default: App } = await import("@/App");
     const { container } = renderApp(App);
 
     await waitFor(() =>
@@ -306,7 +395,6 @@ describe("App integration with MSW", () => {
   }, 10_000);
 
   it("shows toast when auto sync fails in background", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -366,7 +454,6 @@ describe("App integration with MSW", () => {
     setCurrentProviderId("openclaw", "deepseek");
     setLiveProviderIds("openclaw", ["deepseek-copy"]);
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(screen.getByText("switch-openclaw"));
@@ -484,7 +571,6 @@ describe("App integration with MSW", () => {
     });
     setCurrentProviderId("mcode", "kimi");
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -532,7 +618,6 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -585,7 +670,6 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -626,7 +710,6 @@ describe("App integration with MSW", () => {
       .spyOn(providersApi, "getOpenClawLiveProviderIds")
       .mockRejectedValueOnce(new Error("broken config"));
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(screen.getByText("switch-openclaw"));
@@ -654,7 +737,6 @@ describe("App integration with MSW", () => {
 
   it("hosts the Skills check-update action in the App toolbar", async () => {
     localStorage.setItem("cc-switch-last-view", "skills");
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     expect(
@@ -671,7 +753,6 @@ describe("App integration with MSW", () => {
 
   it("routes the Skills discover toolbar action through the panel guard", async () => {
     localStorage.setItem("cc-switch-last-view", "skills");
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     expect(

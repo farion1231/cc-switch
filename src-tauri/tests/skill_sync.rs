@@ -4,6 +4,9 @@ use cc_switch_lib::{
     migrate_skills_to_ssot, AppType, ImportSkillSelection, InstalledSkill, SkillApps, SkillService,
 };
 
+#[path = "support/fs_links.rs"]
+mod fs_links;
+
 #[path = "support.rs"]
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
@@ -17,14 +20,8 @@ fn write_skill(dir: &std::path::Path, name: &str) {
     .expect("write SKILL.md");
 }
 
-#[cfg(unix)]
 fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
-    std::os::unix::fs::symlink(src, dest).expect("create symlink");
-}
-
-#[cfg(windows)]
-fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
-    std::os::windows::fs::symlink_dir(src, dest).expect("create symlink");
+    fs_links::symlink_dir(src, dest).expect("create directory link");
 }
 
 #[test]
@@ -152,6 +149,7 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
             installed_at: 0,
             content_hash: None,
             updated_at: 0,
+            managed_by: None,
         })
         .expect("save disabled skill");
 
@@ -196,6 +194,7 @@ fn uninstall_skill_creates_backup_before_removing_ssot() {
             installed_at: 123,
             content_hash: None,
             updated_at: 0,
+            managed_by: None,
         })
         .expect("save skill");
 
@@ -264,6 +263,7 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
             installed_at: 456,
             content_hash: None,
             updated_at: 0,
+            managed_by: None,
         })
         .expect("save skill");
 
@@ -345,6 +345,7 @@ fn delete_skill_backup_removes_backup_directory() {
             installed_at: 789,
             content_hash: None,
             updated_at: 0,
+            managed_by: None,
         })
         .expect("save skill");
 

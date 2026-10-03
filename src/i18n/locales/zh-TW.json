@@ -3,6 +3,105 @@
     "title": "CC Switch",
     "description": "Claude Code / Codex / Gemini CLI 全方位輔助工具"
   },
+  "vps": {
+    "title": "VPS",
+    "add": "新增主機",
+    "edit": "編輯主機",
+    "editServer": "編輯 {{name}}",
+    "deleteServer": "刪除 {{name}}",
+    "deleteConfirm": "刪除 {{name}} 並移除其用戶端綁定？其他主機及已執行的 SSH 工作階段不受影響。",
+    "search": "搜尋主機",
+    "noResults": "沒有符合的主機",
+    "retry": "重試",
+    "clientsFor": "{{name}} 的用戶端",
+    "testConnection": "測試連線",
+    "cancelTest": "取消測試",
+    "cancelFailed": "無法取消連線測試",
+    "loadFailed": "VPS 設定載入或復原失敗",
+    "saveFailed": "VPS 設定尚未完成",
+    "deleteFailed": "主機刪除或用戶端清理尚未完成",
+    "formDescription": "選擇需要探索此主機的用戶端。儲存後自動設定主機目錄和 VPS Skill，無須另行啟用 Skill。",
+    "sections": {
+      "host": "主機資訊",
+      "authentication": "SSH 驗證"
+    },
+    "fields": {
+      "name": "名稱",
+      "host": "主機位址",
+      "hostPlaceholder": "IP 位址或 DNS 主機名稱",
+      "port": "連接埠",
+      "user": "SSH 使用者名稱",
+      "identityFile": "私密金鑰檔案路徑",
+      "identityPlaceholder": "私密金鑰檔案的絕對路徑",
+      "identityHelp": "僅引用私密金鑰檔案路徑，不匯入檔案內容。",
+      "purpose": "用途（選填）",
+      "clients": "用戶端"
+    },
+    "auth": {
+      "method": "驗證方式",
+      "password": "密碼",
+      "privateKey": "私密金鑰檔案",
+      "certificate": "SSH 使用者憑證",
+      "legacy": "保留原有驗證方式",
+      "passwordPlaceholder": "輸入 SSH 登入密碼",
+      "keepPassword": "留空以保留已儲存的密碼",
+      "passwordHelp": "密碼儲存在本機系統認證資料庫，已綁定的同機用戶端透過 CC Switch 本機 SSH 執行入口自動使用。不寫入設定或 Skill，也不會交給模型。密碼遺失或主機指紋變更時，請回 VPS 頁面處理。WSL 和容器不自動支援；Windows 認證資料漫遊依作業系統政策執行。",
+      "certificateFile": "SSH 憑證檔案路徑",
+      "certificatePlaceholder": "憑證檔案的絕對路徑，通常以 -cert.pub 結尾",
+      "certificateHelp": "使用 OpenSSH 使用者憑證及其對應私密金鑰，而非網站的 TLS/SSL 憑證。"
+    },
+    "empty": {
+      "title": "尚未新增 VPS 主機",
+      "description": "新增主機後，可在這裡管理連線資訊及用戶端接入。"
+    },
+    "discard": {
+      "title": "捨棄未儲存的變更？",
+      "message": "關閉編輯器並捨棄目前草稿？先前儲存操作已寫入的設定不會被復原。",
+      "confirm": "捨棄變更"
+    },
+    "connection": {
+      "success": "連線測試成功",
+      "hostKeyChanged": "主機指紋已變更，連線已阻擋。請先核實伺服器身分。",
+      "targetChanged": "連線資訊與已儲存的主機或已確認的目標不一致，連線已阻擋。請重新開啟主機，核對位址、連接埠、使用者名稱和驗證方式；若要更換伺服器，請新增主機記錄。",
+      "authenticationFailed": "SSH 驗證失敗，請檢查密碼、私密金鑰或憑證。",
+      "credentialsUnavailable": "無法存取本機認證資料庫，請檢查系統認證服務後重試。",
+      "passwordRequired": "沒有可用的已儲存密碼，請編輯主機並輸入密碼後重試。",
+      "sshNotFound": "找不到所需的 OpenSSH 工具",
+      "timeout": "連線測試逾時",
+      "cancelled": "連線測試已取消",
+      "failed": "連線測試失敗"
+    },
+    "cli": {
+      "usage": "cc-switch vps exec --root <VPS-directory> --app <client> --server <UUID> [--timeout <seconds>] -- <remote-command>\n在 -- 後傳入恰好一個遠端 shell 命令字串。不配置 TTY，預設逾時為 300 秒，支援透過 stdin 輸入指令碼。主機指紋須先在 VPS 頁面測試連線並核對確認。",
+      "invalidArguments": "參數不正確。請執行 cc-switch vps --help 查看用法。",
+      "dataInvalid": "主機檔案遺失、損毀或被修改，或 VPS 目錄不正確。請回 VPS 頁面檢查設定。",
+      "hostUnavailable": "主機不存在或未綁定給此用戶端。請在 VPS 頁面檢查主機及用戶端選擇。",
+      "trustRequired": "尚未確認主機指紋。請在 VPS 頁面測試連線，核對指紋後再確認。",
+      "trustInvalid": "本機信任記錄異常或復原尚未完成。請回 VPS 頁面重新測試連線。",
+      "targetChanged": "設定在準備執行期間發生變更。請重新整理 VPS 頁面，核對主機後重試。",
+      "passwordRequired": "沒有可用的已儲存密碼。請先在 VPS 頁面儲存主機密碼，再重試。",
+      "credentialsUnavailable": "無法讀取系統認證資料庫，不會退回明文。請檢查系統認證服務，再回 VPS 頁面重試。",
+      "prepareFailed": "無法為本次執行準備私有 SSH 設定。請檢查本機目錄權限，再回 VPS 頁面重試。",
+      "sshNotFound": "找不到系統 OpenSSH。請安裝或啟用 OpenSSH，並確認 PATH 中可找到 ssh。",
+      "executionFailed": "本機 SSH 執行失敗。請檢查本機 SSH 環境後重試。遠端錯誤會原樣傳遞 stderr 和結束代碼。",
+      "timeout": "執行逾時，已停止本機 SSH。遠端命令可能已產生效果，請檢查遠端狀態後再重試。",
+      "cancelled": "執行已取消，已停止本機 SSH。遠端命令可能已產生效果，請檢查遠端狀態後再重試。"
+    },
+    "hostKey": {
+      "title": "確認主機指紋",
+      "description": "接受前，請透過可信管道核對 {{name}} 的此指紋。取得主機公開金鑰不等於已證明伺服器身分。",
+      "confirm": "信任此指紋",
+      "confirmFailed": "主機指紋確認失敗",
+      "retryHint": "確認可能已過期，或本機信任檔案無法寫入。請重新測試連線；若再次顯示指紋，請重新核對後確認。"
+    },
+    "help": {
+      "title": "關於 VPS 用戶端接入",
+      "access": "選擇用戶端後，會自動設定本機主機目錄及一個由 VPS 託管的 Skill。這個自動 Skill 不會顯示於一般 Skills 頁面。",
+      "scope": "用戶端選擇控制探索範圍，並非安全沙箱。同一系統帳戶下的其他程式仍可能使用可存取的 SSH 憑證。",
+      "sessions": "取消綁定不會終止已執行的 SSH 工作階段。測試成功只代表這一次探測。",
+      "cloud": "若用戶端使用雲端模型，遠端命令輸出可能會傳送給模型服務供應商。"
+    }
+  },
   "common": {
     "add": "新增",
     "edit": "編輯",
@@ -2541,6 +2640,7 @@
       "skillPathNotFound": "儲存庫 {{owner}}/{{name}} 中未找到技能路徑 '{{path}}'",
       "skillDirNotFound": "技能目錄不存在：{{path}}",
       "directoryConflict": "技能目錄 '{{directory}}' 已被 {{existing_repo}} 佔用，無法從 {{new_repo}} 安裝",
+      "managedByVps": "技能「{{directory}}」由 VPS 功能託管，無法在此修改或覆寫。",
       "emptyArchive": "下載的壓縮檔為空",
       "invalidRepoRef": "倉庫位址不合法：{{owner}}/{{name}}",
       "archiveTooLarge": "壓縮檔解壓後超過 {{limit_mb}} MB 上限，已中止",
@@ -2564,6 +2664,7 @@
         "checkRepoUrl": "請檢查儲存庫位址和分支名稱",
         "checkDiskSpace": "請檢查磁碟空間",
         "checkPermission": "請檢查目錄權限",
+        "manageInVps": "請在 VPS 頁面管理用戶端接入。若要另外匯入手動技能，請使用不同的 ID 和目錄。",
         "uninstallFirst": "請先解除安裝已安裝的同名技能",
         "checkZipContent": "請確認 ZIP 檔案包含有效的技能目錄（含 SKILL.md 檔案）"
       }

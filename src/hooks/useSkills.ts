@@ -26,6 +26,7 @@ export function useInstalledSkills() {
   return useQuery({
     queryKey: ["skills", "installed"],
     queryFn: () => skillsApi.getInstalled(),
+    select: (skills) => skills.filter((skill) => skill.managedBy == null),
     staleTime: Infinity,
     placeholderData: keepPreviousData,
   });
@@ -35,6 +36,8 @@ export function useSkillBackups() {
   return useQuery({
     queryKey: ["skills", "backups"],
     queryFn: () => skillsApi.getBackups(),
+    select: (backups) =>
+      backups.filter((backup) => backup.skill.managedBy == null),
     enabled: false,
   });
 }

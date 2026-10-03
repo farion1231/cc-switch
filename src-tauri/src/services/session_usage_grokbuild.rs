@@ -1306,10 +1306,7 @@ mod tests {
         std::fs::create_dir_all(&sub).expect("create dirs");
 
         // 构造循环：sub/cycle -> enc 父目录
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&enc, sub.join("cycle")).expect("symlink");
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&enc, sub.join("cycle")).expect("symlink");
+        crate::test_fs_links::symlink_dir(&enc, &sub.join("cycle")).expect("directory link");
 
         // 也放一个真实的目标文件，确认正常遍历仍工作
         std::fs::write(enc.join("updates.jsonl"), b"{}\n").expect("write real file");

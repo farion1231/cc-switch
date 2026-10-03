@@ -83,6 +83,7 @@ fn installed_skill(id: &str, directory: &str, claude_enabled: bool) -> Installed
         installed_at: 1_000,
         content_hash: None,
         updated_at: 0,
+        managed_by: None,
     }
 }
 
@@ -96,6 +97,31 @@ fn write_ssot_skill(directory: &str) {
         format!("---\nname: {directory}\ndescription: Test skill\n---\n"),
     )
     .expect("write SKILL.md");
+}
+
+#[test]
+fn managed_skills_are_not_captured_or_toggled_by_profiles() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let state = create_test_state().expect("create test state");
+    let mut skill = installed_skill("internal:vps", "cc-switch-vps", true);
+    skill.managed_by = Some("vps".into());
+    state.db.save_skill(&skill).unwrap();
+    write_ssot_skill(&skill.directory);
+
+    let profile = ProfileService::create(&state, "No VPS bindings", ProfileScope::Claude).unwrap();
+    let payload: ProfilePayload = serde_json::from_str(&profile.payload).unwrap();
+    assert_eq!(payload.skills.claude, Some(vec![]));
+    let warnings = ProfileService::apply(&state, &profile.id, ProfileScope::Claude).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let stored = state.db.get_installed_skill(&skill.id).unwrap().unwrap();
+    assert!(stored.apps.claude);
+    assert_eq!(stored.managed_by.as_deref(), Some("vps"));
+    assert!(SkillService::get_ssot_dir()
+        .unwrap()
+        .join(&skill.directory)
+        .join("SKILL.md")
+        .exists());
 }
 
 #[test]

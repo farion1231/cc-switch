@@ -29,6 +29,8 @@ pub mod skill;
 mod stream_check;
 mod subscription;
 mod sync_support;
+mod vps;
+mod vps_ssh;
 mod xai_oauth;
 
 mod lightweight;
@@ -65,6 +67,8 @@ pub use settings::*;
 pub use skill::*;
 pub use stream_check::*;
 pub use subscription::*;
+pub use vps::*;
+pub use vps_ssh::*;
 pub use xai_oauth::*;
 
 pub use lightweight::*;

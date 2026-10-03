@@ -42,6 +42,8 @@ export interface InstalledSkill {
   installedAt: number;
   contentHash?: string;
   updatedAt: number;
+  /** Internal feature ownership; absent for ordinary user-managed Skills. */
+  managedBy?: string;
 }
 
 export interface SkillUninstallResult {

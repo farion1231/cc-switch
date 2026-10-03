@@ -263,6 +263,11 @@ pub fn get_app_config_dir() -> PathBuf {
 
     let default_dir = get_home_dir().join(".cc-switch");
 
+    // An explicit test home must stay isolated even before its database is created.
+    if std::env::var("CC_SWITCH_TEST_HOME").is_ok_and(|home| !home.trim().is_empty()) {
+        return default_dir;
+    }
+
     // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
     // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
     // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
@@ -618,6 +623,52 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[serial_test::serial]
+    fn test_home_never_falls_back_to_legacy_home_database() {
+        struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                for (key, value) in &self.0 {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+
+        let isolated = tempfile::tempdir().unwrap();
+        let legacy = tempfile::tempdir().unwrap();
+        let legacy_config = legacy.path().join(".cc-switch");
+        fs::create_dir_all(&legacy_config).unwrap();
+        fs::write(legacy_config.join("cc-switch.db"), b"legacy sentinel").unwrap();
+        let _env = EnvGuard(
+            ["HOME", "CC_SWITCH_TEST_HOME"]
+                .into_iter()
+                .map(|key| (key, std::env::var_os(key)))
+                .collect(),
+        );
+        std::env::set_var("HOME", legacy.path());
+        let expected = isolated.path().join(".cc-switch");
+        assert!(!expected.join("cc-switch.db").exists());
+
+        for home in [
+            isolated.path().display().to_string(),
+            format!("  {}  ", isolated.path().display()),
+        ] {
+            std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            assert_eq!(get_home_dir(), isolated.path());
+            assert_eq!(get_app_config_dir(), expected);
+            assert_eq!(get_app_config_path(), expected.join("config.json"));
+        }
+        assert_eq!(
+            fs::read(legacy_config.join("cc-switch.db")).unwrap(),
+            b"legacy sentinel"
+        );
+        assert_eq!(fs::read_dir(&legacy_config).unwrap().count(), 1);
+    }
 
     fn assert_atomic_write_replaces_existing_file(dir: &Path) {
         let path = dir.join("atomic-write-contract.json");

@@ -101,7 +101,8 @@ impl Database {
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
-            updated_at INTEGER NOT NULL DEFAULT 0
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            managed_by TEXT
         )",
             [],
         )
@@ -563,6 +564,12 @@ impl Database {
                             }
                         }
                         Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        if Self::table_exists(conn, "skills")? {
+                            Self::add_column_if_missing(conn, "skills", "managed_by", "TEXT")?;
+                        }
+                        Self::set_user_version(conn, 20)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3747,6 +3754,30 @@ mod tests {
         )?;
         assert_eq!(log_default, 1);
 
+        Ok(())
+    }
+
+    #[test]
+    fn managed_skill_migration_keeps_legacy_rows_user_managed() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE skills (id TEXT PRIMARY KEY, directory TEXT NOT NULL);
+             INSERT INTO skills (id, directory) VALUES ('local:manual', 'manual');",
+        )?;
+        Database::set_user_version(&conn, 19)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let owner: Option<String> = conn.query_row(
+            "SELECT managed_by FROM skills WHERE id = 'local:manual'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(owner, None);
+        conn.execute("UPDATE skills SET managed_by = 'vps'", [])?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let owner: String =
+            conn.query_row("SELECT managed_by FROM skills", [], |row| row.get(0))?;
+        assert_eq!(owner, "vps");
         Ok(())
     }
 
