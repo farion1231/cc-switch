@@ -1450,6 +1450,7 @@ impl RolloutParser {
             for block in message.blocks.iter_mut() {
                 if let SessionBlock::ToolResult {
                     call_id: id,
+                    status,
                     exit_code,
                     duration_ms,
                     ..
@@ -1461,6 +1462,14 @@ impl RolloutParser {
                         }
                         if duration_ms.is_none() {
                             *duration_ms = info.duration_ms;
+                        }
+                        // 输出先到时只能判为成功，失败 / 中断以迟到的结构化项为准
+                        if *status == ToolStatus::Success {
+                            if matches!(info.status, ToolStatus::Error | ToolStatus::Interrupted) {
+                                *status = info.status;
+                            } else if exit_code.is_some_and(|c| c != 0) {
+                                *status = ToolStatus::Error;
+                            }
                         }
                         return;
                     }
@@ -2975,12 +2984,18 @@ mod tests {
         assert_eq!(results.len(), 1);
         match find_result(&msgs, "call_ls") {
             SessionBlock::ToolResult {
+                status,
                 exit_code,
                 duration_ms,
                 ..
             } => {
                 assert_eq!(*exit_code, Some(2), "退出码从迟到的 item_completed 回填");
                 assert_eq!(*duration_ms, Some(1500));
+                assert_eq!(
+                    *status,
+                    ToolStatus::Error,
+                    "失败状态从迟到的 item_completed 回填"
+                );
             }
             other => panic!("unexpected block {other:?}"),
         }
