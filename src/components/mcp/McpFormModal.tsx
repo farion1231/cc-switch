@@ -5,14 +5,7 @@ import { Check, Eye, EyeOff, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import {
-  Sheet,
-  SheetBody,
-  SheetContent,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { McpServer, McpServerSpec } from "@/types";
@@ -115,7 +108,7 @@ function appsOf(
 }
 
 /**
- * MCP 添加 / 编辑抽屉（宽 560）：模板、粘贴识别、表单 ⇄ JSON、写入到、说明与链接。
+ * MCP 添加 / 编辑整页：模板、粘贴识别、表单 ⇄ JSON、写入到、说明与链接。
  * 旧版的「配置向导」并进了表单。
  */
 const McpFormModal: React.FC<McpFormModalProps> = ({
@@ -608,729 +601,15 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   const hasSecrets = secretCountOf(conn) > 0;
 
   return (
-    <Sheet
-      open
-      onOpenChange={(open) => {
-        if (!open && !savingRef.current) onClose();
+    <FullScreenPanel
+      isOpen
+      title={title}
+      onClose={() => {
+        if (!savingRef.current) onClose();
       }}
-    >
-      <SheetContent
-        width={560}
-        closeLabel={t("common.close")}
-        aria-describedby={undefined}
-      >
-        <SheetHeader className="flex h-[52px] items-center space-y-0 border-b border-border pe-12 ps-6 pt-0">
-          <SheetTitle className="truncate text-section" title={title}>
-            {title}
-          </SheetTitle>
-        </SheetHeader>
-
-        <SheetBody className="flex flex-col gap-5 px-6 pb-6 pt-5">
-          {!isEdit && (
-            <>
-              <div className="flex flex-col gap-2">
-                <span id="mcp-tpl-label" className={LABEL_CLASS}>
-                  {t("mcpPage.drawer.templates")}
-                </span>
-                <div
-                  role="group"
-                  aria-labelledby="mcp-tpl-label"
-                  className="flex flex-wrap gap-2"
-                >
-                  {mcpPresets.map((preset) => (
-                    <HoverTip
-                      content={t(`mcp.presets.${preset.id}.description`)}
-                    >
-                      <button
-                        key={preset.id}
-                        type="button"
-                        aria-pressed={template === preset.id}
-                        onClick={() => pickTemplate(preset.id)}
-                        className="h-7 whitespace-nowrap rounded-full border border-border-strong bg-surface px-3 text-body transition-colors hover:bg-subtle aria-pressed:bg-selected aria-pressed:font-medium"
-                      >
-                        {t(`mcpPage.templateLabels.${preset.id}`, {
-                          defaultValue: preset.id,
-                        })}
-                      </button>
-                    </HoverTip>
-                  ))}
-                </div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="mcp-paste" className={LABEL_CLASS}>
-                  {t("mcpPage.drawer.paste")}
-                </label>
-                <textarea
-                  id="mcp-paste"
-                  value={pasteText}
-                  onChange={(event) => handlePaste(event.target.value)}
-                  placeholder={t("mcpPage.drawer.pastePlaceholder")}
-                  aria-invalid={paste?.ok === false}
-                  aria-describedby={paste ? "mcp-paste-hint" : undefined}
-                  spellCheck={false}
-                  rows={3}
-                  className={cn(
-                    MONO_FIELD_CLASS,
-                    "h-16 resize-none py-2 leading-[18px] placeholder:font-sans placeholder:text-body",
-                  )}
-                />
-                {paste?.ok === true && (
-                  <span
-                    id="mcp-paste-hint"
-                    className="flex items-start gap-1 text-caption text-success-text"
-                  >
-                    <Check
-                      aria-hidden="true"
-                      className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                      strokeWidth={1.5}
-                    />
-                    <span>
-                      {paste.count > 1
-                        ? t("mcpPage.drawer.pasteManyOk")
-                        : paste.name
-                          ? t("mcpPage.drawer.pasteOneOk", {
-                              format: formatLabel(paste.format),
-                              name: paste.name,
-                            })
-                          : t("mcpPage.drawer.pasteOneNoName", {
-                              format: formatLabel(paste.format),
-                            })}
-                    </span>
-                  </span>
-                )}
-                {paste?.ok === false && (
-                  <FieldError id="mcp-paste-hint">
-                    {t("mcpPage.drawer.pasteHelp")}
-                  </FieldError>
-                )}
-              </div>
-              <div aria-hidden="true" className="h-px shrink-0 bg-border" />
-            </>
-          )}
-
-          {batch ? (
-            <section
-              aria-labelledby="mcp-batch-title"
-              className="flex flex-col gap-2"
-            >
-              <div className="flex items-center gap-3">
-                <h3
-                  id="mcp-batch-title"
-                  className="m-0 flex-1 text-body font-semibold text-fg-1"
-                >
-                  {t("mcpPage.drawer.batchTitle", {
-                    count: batch.items.length,
-                    format: formatLabel(batch.format),
-                  })}
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBatch(null);
-                    setPaste(null);
-                    setBatchError(false);
-                  }}
-                  className="text-caption font-medium text-fg-2 underline underline-offset-[3px] hover:text-fg-1"
-                >
-                  {t("mcpPage.drawer.batchClear")}
-                </button>
-              </div>
-              <ul className="m-0 list-none rounded-panel border border-border p-0">
-                {batch.items.map((item, index) => {
-                  const inputId = `mcp-batch-${index}`;
-                  const statusId = `${inputId}-status`;
-                  const setItem = (patch: Partial<BatchItem>) =>
-                    setBatch((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            items: prev.items.map((it, i) =>
-                              i === index ? { ...it, ...patch } : it,
-                            ),
-                          }
-                        : prev,
-                    );
-                  return (
-                    <li
-                      key={`${item.name}-${index}`}
-                      className={cn(
-                        "flex min-h-12 items-center gap-2.5 py-1.5 pe-2.5 ps-3.5",
-                        index > 0 && "border-t border-border",
-                      )}
-                    >
-                      <input
-                        id={inputId}
-                        type="checkbox"
-                        className={CHECKBOX_CLASS}
-                        checked={item.include}
-                        aria-describedby={statusId}
-                        onChange={(event) => {
-                          setItem({ include: event.target.checked });
-                          setBatchError(false);
-                        }}
-                      />
-                      <label
-                        htmlFor={inputId}
-                        className="min-w-0 truncate text-body font-medium"
-                      >
-                        {item.name}
-                      </label>
-                      <NeutralBadge mono>
-                        {item.spec.type ?? "stdio"}
-                      </NeutralBadge>
-                      <span className="flex-1" />
-                      <span
-                        id={statusId}
-                        className="shrink-0 whitespace-nowrap text-caption text-fg-2"
-                      >
-                        {item.exists
-                          ? t("mcpPage.drawer.batchExists")
-                          : t("mcpPage.drawer.batchNew")}
-                      </span>
-                      {item.exists && (
-                        <MiniSegmented
-                          label={t("mcpPage.drawer.batchExistsGroup", {
-                            name: item.name,
-                          })}
-                          items={[
-                            {
-                              value: "skip",
-                              label: t("mcpPage.drawer.batchSkip"),
-                            },
-                            {
-                              value: "over",
-                              label: t("mcpPage.drawer.batchOverwrite"),
-                            },
-                          ]}
-                          value={item.include ? "over" : "skip"}
-                          onValueChange={(value) => {
-                            setItem({ include: value === "over" });
-                            setBatchError(false);
-                          }}
-                        />
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-              {batchError && (
-                <FieldError>{t("mcpPage.drawer.batchNone")}</FieldError>
-              )}
-            </section>
-          ) : (
-            <>
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center gap-0.5">
-                  <label htmlFor="mcp-name" className={LABEL_CLASS}>
-                    {t("mcpPage.drawer.name")}
-                    <RequiredMark srText={t("mcpPage.drawer.required")} />
-                  </label>
-                  <HelpTip
-                    title={
-                      isEdit
-                        ? t("mcpPage.drawer.nameHelpEditTitle")
-                        : t("mcpPage.drawer.nameHelpTitle")
-                    }
-                  >
-                    {isEdit
-                      ? t("mcpPage.drawer.nameHelpEdit")
-                      : t("mcpPage.drawer.nameHelp")}
-                  </HelpTip>
-                </div>
-                <input
-                  id="mcp-name"
-                  type="text"
-                  className={MONO_FIELD_CLASS}
-                  value={name}
-                  readOnly={isEdit}
-                  placeholder={t("mcpPage.drawer.namePlaceholder")}
-                  aria-required={!isEdit}
-                  aria-invalid={Boolean(visibleErrors.name)}
-                  aria-describedby={
-                    visibleErrors.name ? "mcp-name-hint" : undefined
-                  }
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(event) => setName(event.target.value)}
-                />
-                {visibleErrors.name && (
-                  <FieldError id="mcp-name-hint">
-                    {fieldErrorText(visibleErrors.name)}
-                  </FieldError>
-                )}
-              </div>
-
-              <section
-                aria-labelledby="mcp-conn-title"
-                className="flex flex-col gap-4"
-              >
-                <div className="flex items-center gap-3">
-                  <h3
-                    id="mcp-conn-title"
-                    className="m-0 flex-1 text-body font-semibold text-fg-1"
-                  >
-                    {t("mcpPage.drawer.connection")}
-                  </h3>
-                  <SegmentedControl
-                    aria-label={t("mcpPage.drawer.editMode")}
-                    className="h-8 rounded-[8px]"
-                    value={tab}
-                    onValueChange={switchTab}
-                    items={[
-                      {
-                        value: "form",
-                        label: t("mcpPage.drawer.tabForm"),
-                        disabled: tab === "json" && jsonError !== null,
-                        className: "min-w-[60px] rounded-[5px]",
-                      },
-                      {
-                        value: "json",
-                        label: "JSON",
-                        className: "min-w-[60px] rounded-[5px]",
-                      },
-                    ]}
-                  />
-                </div>
-
-                {tab === "form" ? (
-                  <>
-                    <div className="flex flex-col gap-1.5">
-                      <span id="mcp-tr-label" className={LABEL_CLASS}>
-                        {t("mcpPage.drawer.transport")}
-                      </span>
-                      <SegmentedControl<McpTransport>
-                        aria-label={t("mcpPage.drawer.transport")}
-                        className="h-8 self-start rounded-[8px]"
-                        value={conn.transport}
-                        onValueChange={(value) =>
-                          patchConn({ transport: value })
-                        }
-                        items={[
-                          {
-                            value: "stdio",
-                            label: t("mcpPage.drawer.transportStdio"),
-                            className: "rounded-[5px] px-3",
-                          },
-                          {
-                            value: "http",
-                            label: "HTTP",
-                            className: "rounded-[5px] px-3",
-                          },
-                          {
-                            value: "sse",
-                            label: "SSE",
-                            className: "rounded-[5px] px-3",
-                          },
-                        ]}
-                      />
-                    </div>
-
-                    {conn.transport === "stdio" ? (
-                      <>
-                        <div className="flex flex-col gap-1.5">
-                          <label htmlFor="mcp-cmd" className={LABEL_CLASS}>
-                            {t("mcpPage.drawer.command")}
-                            <RequiredMark
-                              srText={t("mcpPage.drawer.required")}
-                            />
-                          </label>
-                          <input
-                            id="mcp-cmd"
-                            type="text"
-                            className={cn(
-                              MONO_FIELD_CLASS,
-                              "placeholder:font-sans placeholder:text-body",
-                            )}
-                            value={conn.command}
-                            placeholder={t("mcpPage.drawer.commandPlaceholder")}
-                            aria-required="true"
-                            aria-invalid={Boolean(visibleErrors.command)}
-                            aria-describedby={
-                              visibleErrors.command ? "mcp-cmd-hint" : undefined
-                            }
-                            autoComplete="off"
-                            spellCheck={false}
-                            onChange={(event) =>
-                              patchConn({ command: event.target.value })
-                            }
-                          />
-                          {visibleErrors.command && (
-                            <FieldError id="mcp-cmd-hint">
-                              {fieldErrorText(visibleErrors.command)}
-                            </FieldError>
-                          )}
-                        </div>
-
-                        <div
-                          role="group"
-                          aria-labelledby="mcp-args-label"
-                          className="flex flex-col gap-1.5"
-                        >
-                          <span id="mcp-args-label" className={LABEL_CLASS}>
-                            {t("mcpPage.drawer.args")}
-                          </span>
-                          {conn.args.map((arg, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center gap-1"
-                            >
-                              <input
-                                type="text"
-                                className={cn(MONO_FIELD_CLASS, "flex-1")}
-                                aria-label={t("mcpPage.drawer.argAria", {
-                                  index: index + 1,
-                                })}
-                                value={arg}
-                                autoComplete="off"
-                                spellCheck={false}
-                                onChange={(event) =>
-                                  patchConn({
-                                    args: conn.args.map((item, i) =>
-                                      i === index ? event.target.value : item,
-                                    ),
-                                  })
-                                }
-                              />
-                              <HoverTip content={t("common.delete")}>
-                                <Button
-                                  type="button"
-                                  variant="quiet"
-                                  size="icon-compact"
-                                  aria-label={t("mcpPage.drawer.removeArg", {
-                                    index: index + 1,
-                                  })}
-                                  onClick={() =>
-                                    patchConn({
-                                      args: conn.args.filter(
-                                        (_, i) => i !== index,
-                                      ),
-                                    })
-                                  }
-                                >
-                                  <X
-                                    className="h-3.5 w-3.5"
-                                    strokeWidth={1.5}
-                                  />
-                                </Button>
-                              </HoverTip>
-                            </div>
-                          ))}
-                          <AddRowButton
-                            onClick={() =>
-                              patchConn({ args: [...conn.args, ""] })
-                            }
-                          >
-                            {t("mcpPage.drawer.addArg")}
-                          </AddRowButton>
-                        </div>
-
-                        {renderKvRows("env", t("mcpPage.drawer.env"))}
-
-                        <div className="flex flex-col gap-1.5">
-                          <label htmlFor="mcp-cwd" className={LABEL_CLASS}>
-                            {t("mcpPage.drawer.cwd")}
-                            <span className="ms-1.5 text-caption font-normal text-fg-2">
-                              {t("mcpPage.drawer.optional")}
-                            </span>
-                          </label>
-                          <input
-                            id="mcp-cwd"
-                            type="text"
-                            className={cn(
-                              MONO_FIELD_CLASS,
-                              "placeholder:font-sans placeholder:text-body",
-                            )}
-                            value={conn.cwd}
-                            placeholder={t("mcpPage.drawer.cwdPlaceholder")}
-                            autoComplete="off"
-                            spellCheck={false}
-                            onChange={(event) =>
-                              patchConn({ cwd: event.target.value })
-                            }
-                          />
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex flex-col gap-1.5">
-                          <label htmlFor="mcp-url" className={LABEL_CLASS}>
-                            URL
-                            <RequiredMark
-                              srText={t("mcpPage.drawer.required")}
-                            />
-                          </label>
-                          <input
-                            id="mcp-url"
-                            type="text"
-                            inputMode="url"
-                            className={MONO_FIELD_CLASS}
-                            value={conn.url}
-                            placeholder="https://mcp.example.com/mcp"
-                            aria-required="true"
-                            aria-invalid={Boolean(visibleErrors.url)}
-                            aria-describedby={
-                              visibleErrors.url ? "mcp-url-hint" : undefined
-                            }
-                            autoComplete="off"
-                            spellCheck={false}
-                            onChange={(event) =>
-                              patchConn({ url: event.target.value })
-                            }
-                          />
-                          {visibleErrors.url && (
-                            <FieldError id="mcp-url-hint">
-                              {fieldErrorText(visibleErrors.url)}
-                            </FieldError>
-                          )}
-                        </div>
-                        {renderKvRows("headers", t("mcpPage.drawer.headers"))}
-                      </>
-                    )}
-
-                    {extraKeys.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={LABEL_CLASS}>
-                          {t("mcpPage.drawer.extraFields", {
-                            count: extraKeys.length,
-                          })}
-                        </span>
-                        {extraKeys.map((key) => (
-                          <code
-                            key={key}
-                            className="h-[22px] whitespace-nowrap rounded-control bg-subtle px-2 font-mono text-caption leading-[22px]"
-                          >
-                            {key}
-                          </code>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => switchTab("json")}
-                          className="text-body font-medium text-fg-1 underline underline-offset-[3px] hover:text-fg-2"
-                        >
-                          {t("mcpPage.drawer.editInJson")}
-                        </button>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex min-h-7 items-center gap-3">
-                      <div className="flex flex-1 items-center gap-0.5">
-                        <label htmlFor="mcp-json" className={LABEL_CLASS}>
-                          {t("mcpPage.drawer.jsonLabel")}
-                        </label>
-                        <HelpTip title={t("mcpPage.drawer.jsonHelpTitle")}>
-                          {t("mcpPage.drawer.jsonHelp")}
-                        </HelpTip>
-                      </div>
-                      {hasSecrets && (
-                        <button
-                          type="button"
-                          aria-pressed={revealJson}
-                          onClick={toggleRevealJson}
-                          className="inline-flex h-7 items-center gap-1 rounded-control pe-2 ps-1.5 text-body font-medium text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
-                        >
-                          {revealJson ? (
-                            <EyeOff className="h-3.5 w-3.5" strokeWidth={2} />
-                          ) : (
-                            <Eye className="h-3.5 w-3.5" strokeWidth={2} />
-                          )}
-                          {t("mcpPage.drawer.showValues")}
-                        </button>
-                      )}
-                    </div>
-                    <textarea
-                      id="mcp-json"
-                      value={jsonText}
-                      onChange={(event) => handleJsonChange(event.target.value)}
-                      aria-invalid={jsonError !== null}
-                      aria-describedby={jsonError ? "mcp-json-hint" : undefined}
-                      spellCheck={false}
-                      wrap="off"
-                      className={cn(
-                        MONO_FIELD_CLASS,
-                        "h-[300px] resize-y overflow-auto whitespace-pre px-3 py-2.5 leading-[18px]",
-                      )}
-                    />
-                    {jsonError && (
-                      <FieldError id="mcp-json-hint">
-                        {jsonErrorText(jsonError)}
-                        {jsonError.kind === "syntax" &&
-                          ` ${t("mcpPage.drawer.jsonBlocksForm")}`}
-                      </FieldError>
-                    )}
-                    {!jsonError &&
-                      attempted &&
-                      (errors.command || errors.url) && (
-                        <FieldError>
-                          {fieldErrorText(errors.command ?? errors.url)}
-                        </FieldError>
-                      )}
-                  </div>
-                )}
-              </section>
-            </>
-          )}
-
-          <div
-            role="group"
-            aria-labelledby="mcp-apps-label"
-            className="flex min-w-0 flex-col gap-2"
-          >
-            <div className="flex items-center gap-0.5">
-              <span id="mcp-apps-label" className={LABEL_CLASS}>
-                {t("mcpPage.drawer.writeTo")}
-              </span>
-              <HelpTip title={t("mcpPage.drawer.writeToHelpTitle")}>
-                {t("mcpPage.drawer.writeToHelp")}
-              </HelpTip>
-            </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-              {visibleAppIds.map((app) => (
-                <label
-                  key={app}
-                  className="flex h-6 cursor-pointer items-center gap-2 text-body"
-                >
-                  <input
-                    type="checkbox"
-                    className={CHECKBOX_CLASS}
-                    checked={apps[app]}
-                    onChange={(event) =>
-                      setApps((prev) => ({
-                        ...prev,
-                        [app]: event.target.checked,
-                      }))
-                    }
-                  />
-                  <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
-                  <span className="whitespace-nowrap">
-                    {APP_DISPLAY_NAME[app]}
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {!batch && (
-            <div className="flex flex-col gap-3">
-              <DisclosureButton
-                open={metaOpen}
-                controls="mcp-meta"
-                onToggle={() => setMetaOpen((value) => !value)}
-                hint={t("mcpPage.drawer.metaHint")}
-              >
-                {t("mcpPage.drawer.meta")}
-              </DisclosureButton>
-              {metaOpen && (
-                <div id="mcp-meta" className="flex flex-col gap-3.5">
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center gap-0.5">
-                      <label htmlFor="mcp-meta-name" className={LABEL_CLASS}>
-                        {t("mcpPage.drawer.displayName")}
-                      </label>
-                      <HelpTip title={t("mcpPage.drawer.displayNameHelpTitle")}>
-                        {t("mcpPage.drawer.displayNameHelp")}
-                      </HelpTip>
-                    </div>
-                    <input
-                      id="mcp-meta-name"
-                      type="text"
-                      className={FIELD_CLASS}
-                      value={meta.name}
-                      autoComplete="off"
-                      onChange={(event) =>
-                        setMeta((prev) => ({
-                          ...prev,
-                          name: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="mcp-meta-desc" className={LABEL_CLASS}>
-                      {t("mcpPage.drawer.description")}
-                    </label>
-                    <textarea
-                      id="mcp-meta-desc"
-                      rows={2}
-                      className={cn(FIELD_CLASS, "h-auto py-2")}
-                      value={meta.description}
-                      onChange={(event) =>
-                        setMeta((prev) => ({
-                          ...prev,
-                          description: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="mcp-meta-tags" className={LABEL_CLASS}>
-                      {t("mcpPage.drawer.tags")}
-                    </label>
-                    <input
-                      id="mcp-meta-tags"
-                      type="text"
-                      className={FIELD_CLASS}
-                      value={meta.tags}
-                      placeholder={t("mcpPage.drawer.tagsPlaceholder")}
-                      autoComplete="off"
-                      onChange={(event) =>
-                        setMeta((prev) => ({
-                          ...prev,
-                          tags: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="mcp-meta-home" className={LABEL_CLASS}>
-                      {t("mcpPage.drawer.homepage")}
-                    </label>
-                    <input
-                      id="mcp-meta-home"
-                      type="text"
-                      inputMode="url"
-                      className={FIELD_CLASS}
-                      value={meta.homepage}
-                      placeholder="https://"
-                      autoComplete="off"
-                      spellCheck={false}
-                      onChange={(event) =>
-                        setMeta((prev) => ({
-                          ...prev,
-                          homepage: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="mcp-meta-docs" className={LABEL_CLASS}>
-                      {t("mcpPage.drawer.docs")}
-                    </label>
-                    <input
-                      id="mcp-meta-docs"
-                      type="text"
-                      inputMode="url"
-                      className={FIELD_CLASS}
-                      value={meta.docs}
-                      placeholder="https://"
-                      autoComplete="off"
-                      spellCheck={false}
-                      onChange={(event) =>
-                        setMeta((prev) => ({
-                          ...prev,
-                          docs: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </SheetBody>
-
-        <SheetFooter className="h-14 px-6 py-0">
+      contentClassName="flex flex-col gap-5 space-y-0"
+      footer={
+        <>
           {isEdit && onRequestDelete && (
             <Button
               type="button"
@@ -1362,9 +641,688 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
           >
             {saving ? t("common.saving") : submitLabel}
           </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        </>
+      }
+    >
+      {!isEdit && (
+        <>
+          <div className="flex flex-col gap-2">
+            <span id="mcp-tpl-label" className={LABEL_CLASS}>
+              {t("mcpPage.drawer.templates")}
+            </span>
+            <div
+              role="group"
+              aria-labelledby="mcp-tpl-label"
+              className="flex flex-wrap gap-2"
+            >
+              {mcpPresets.map((preset) => (
+                <HoverTip content={t(`mcp.presets.${preset.id}.description`)}>
+                  <button
+                    key={preset.id}
+                    type="button"
+                    aria-pressed={template === preset.id}
+                    onClick={() => pickTemplate(preset.id)}
+                    className="h-7 whitespace-nowrap rounded-full border border-border-strong bg-surface px-3 text-body transition-colors hover:bg-subtle aria-pressed:bg-selected aria-pressed:font-medium"
+                  >
+                    {t(`mcpPage.templateLabels.${preset.id}`, {
+                      defaultValue: preset.id,
+                    })}
+                  </button>
+                </HoverTip>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="mcp-paste" className={LABEL_CLASS}>
+              {t("mcpPage.drawer.paste")}
+            </label>
+            <textarea
+              id="mcp-paste"
+              value={pasteText}
+              onChange={(event) => handlePaste(event.target.value)}
+              placeholder={t("mcpPage.drawer.pastePlaceholder")}
+              aria-invalid={paste?.ok === false}
+              aria-describedby={paste ? "mcp-paste-hint" : undefined}
+              spellCheck={false}
+              rows={3}
+              className={cn(
+                MONO_FIELD_CLASS,
+                "h-16 resize-none py-2 leading-[18px] placeholder:font-sans placeholder:text-body",
+              )}
+            />
+            {paste?.ok === true && (
+              <span
+                id="mcp-paste-hint"
+                className="flex items-start gap-1 text-caption text-success-text"
+              >
+                <Check
+                  aria-hidden="true"
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                  strokeWidth={1.5}
+                />
+                <span>
+                  {paste.count > 1
+                    ? t("mcpPage.drawer.pasteManyOk")
+                    : paste.name
+                      ? t("mcpPage.drawer.pasteOneOk", {
+                          format: formatLabel(paste.format),
+                          name: paste.name,
+                        })
+                      : t("mcpPage.drawer.pasteOneNoName", {
+                          format: formatLabel(paste.format),
+                        })}
+                </span>
+              </span>
+            )}
+            {paste?.ok === false && (
+              <FieldError id="mcp-paste-hint">
+                {t("mcpPage.drawer.pasteHelp")}
+              </FieldError>
+            )}
+          </div>
+          <div aria-hidden="true" className="h-px shrink-0 bg-border" />
+        </>
+      )}
+
+      {batch ? (
+        <section
+          aria-labelledby="mcp-batch-title"
+          className="flex flex-col gap-2"
+        >
+          <div className="flex items-center gap-3">
+            <h3
+              id="mcp-batch-title"
+              className="m-0 flex-1 text-body font-semibold text-fg-1"
+            >
+              {t("mcpPage.drawer.batchTitle", {
+                count: batch.items.length,
+                format: formatLabel(batch.format),
+              })}
+            </h3>
+            <button
+              type="button"
+              onClick={() => {
+                setBatch(null);
+                setPaste(null);
+                setBatchError(false);
+              }}
+              className="text-caption font-medium text-fg-2 underline underline-offset-[3px] hover:text-fg-1"
+            >
+              {t("mcpPage.drawer.batchClear")}
+            </button>
+          </div>
+          <ul className="m-0 list-none rounded-panel border border-border p-0">
+            {batch.items.map((item, index) => {
+              const inputId = `mcp-batch-${index}`;
+              const statusId = `${inputId}-status`;
+              const setItem = (patch: Partial<BatchItem>) =>
+                setBatch((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        items: prev.items.map((it, i) =>
+                          i === index ? { ...it, ...patch } : it,
+                        ),
+                      }
+                    : prev,
+                );
+              return (
+                <li
+                  key={`${item.name}-${index}`}
+                  className={cn(
+                    "flex min-h-12 items-center gap-2.5 py-1.5 pe-2.5 ps-3.5",
+                    index > 0 && "border-t border-border",
+                  )}
+                >
+                  <input
+                    id={inputId}
+                    type="checkbox"
+                    className={CHECKBOX_CLASS}
+                    checked={item.include}
+                    aria-describedby={statusId}
+                    onChange={(event) => {
+                      setItem({ include: event.target.checked });
+                      setBatchError(false);
+                    }}
+                  />
+                  <label
+                    htmlFor={inputId}
+                    className="min-w-0 truncate text-body font-medium"
+                  >
+                    {item.name}
+                  </label>
+                  <NeutralBadge mono>{item.spec.type ?? "stdio"}</NeutralBadge>
+                  <span className="flex-1" />
+                  <span
+                    id={statusId}
+                    className="shrink-0 whitespace-nowrap text-caption text-fg-2"
+                  >
+                    {item.exists
+                      ? t("mcpPage.drawer.batchExists")
+                      : t("mcpPage.drawer.batchNew")}
+                  </span>
+                  {item.exists && (
+                    <MiniSegmented
+                      label={t("mcpPage.drawer.batchExistsGroup", {
+                        name: item.name,
+                      })}
+                      items={[
+                        {
+                          value: "skip",
+                          label: t("mcpPage.drawer.batchSkip"),
+                        },
+                        {
+                          value: "over",
+                          label: t("mcpPage.drawer.batchOverwrite"),
+                        },
+                      ]}
+                      value={item.include ? "over" : "skip"}
+                      onValueChange={(value) => {
+                        setItem({ include: value === "over" });
+                        setBatchError(false);
+                      }}
+                    />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {batchError && (
+            <FieldError>{t("mcpPage.drawer.batchNone")}</FieldError>
+          )}
+        </section>
+      ) : (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-0.5">
+              <label htmlFor="mcp-name" className={LABEL_CLASS}>
+                {t("mcpPage.drawer.name")}
+                <RequiredMark srText={t("mcpPage.drawer.required")} />
+              </label>
+              <HelpTip
+                title={
+                  isEdit
+                    ? t("mcpPage.drawer.nameHelpEditTitle")
+                    : t("mcpPage.drawer.nameHelpTitle")
+                }
+              >
+                {isEdit
+                  ? t("mcpPage.drawer.nameHelpEdit")
+                  : t("mcpPage.drawer.nameHelp")}
+              </HelpTip>
+            </div>
+            <input
+              id="mcp-name"
+              type="text"
+              className={MONO_FIELD_CLASS}
+              value={name}
+              readOnly={isEdit}
+              placeholder={t("mcpPage.drawer.namePlaceholder")}
+              aria-required={!isEdit}
+              aria-invalid={Boolean(visibleErrors.name)}
+              aria-describedby={
+                visibleErrors.name ? "mcp-name-hint" : undefined
+              }
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => setName(event.target.value)}
+            />
+            {visibleErrors.name && (
+              <FieldError id="mcp-name-hint">
+                {fieldErrorText(visibleErrors.name)}
+              </FieldError>
+            )}
+          </div>
+
+          <section
+            aria-labelledby="mcp-conn-title"
+            className="flex flex-col gap-4"
+          >
+            <div className="flex items-center gap-3">
+              <h3
+                id="mcp-conn-title"
+                className="m-0 flex-1 text-body font-semibold text-fg-1"
+              >
+                {t("mcpPage.drawer.connection")}
+              </h3>
+              <SegmentedControl
+                aria-label={t("mcpPage.drawer.editMode")}
+                className="h-8 rounded-[8px]"
+                value={tab}
+                onValueChange={switchTab}
+                items={[
+                  {
+                    value: "form",
+                    label: t("mcpPage.drawer.tabForm"),
+                    disabled: tab === "json" && jsonError !== null,
+                    className: "min-w-[60px] rounded-[5px]",
+                  },
+                  {
+                    value: "json",
+                    label: "JSON",
+                    className: "min-w-[60px] rounded-[5px]",
+                  },
+                ]}
+              />
+            </div>
+
+            {tab === "form" ? (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <span id="mcp-tr-label" className={LABEL_CLASS}>
+                    {t("mcpPage.drawer.transport")}
+                  </span>
+                  <SegmentedControl<McpTransport>
+                    aria-label={t("mcpPage.drawer.transport")}
+                    className="h-8 self-start rounded-[8px]"
+                    value={conn.transport}
+                    onValueChange={(value) => patchConn({ transport: value })}
+                    items={[
+                      {
+                        value: "stdio",
+                        label: t("mcpPage.drawer.transportStdio"),
+                        className: "rounded-[5px] px-3",
+                      },
+                      {
+                        value: "http",
+                        label: "HTTP",
+                        className: "rounded-[5px] px-3",
+                      },
+                      {
+                        value: "sse",
+                        label: "SSE",
+                        className: "rounded-[5px] px-3",
+                      },
+                    ]}
+                  />
+                </div>
+
+                {conn.transport === "stdio" ? (
+                  <>
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="mcp-cmd" className={LABEL_CLASS}>
+                        {t("mcpPage.drawer.command")}
+                        <RequiredMark srText={t("mcpPage.drawer.required")} />
+                      </label>
+                      <input
+                        id="mcp-cmd"
+                        type="text"
+                        className={cn(
+                          MONO_FIELD_CLASS,
+                          "placeholder:font-sans placeholder:text-body",
+                        )}
+                        value={conn.command}
+                        placeholder={t("mcpPage.drawer.commandPlaceholder")}
+                        aria-required="true"
+                        aria-invalid={Boolean(visibleErrors.command)}
+                        aria-describedby={
+                          visibleErrors.command ? "mcp-cmd-hint" : undefined
+                        }
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(event) =>
+                          patchConn({ command: event.target.value })
+                        }
+                      />
+                      {visibleErrors.command && (
+                        <FieldError id="mcp-cmd-hint">
+                          {fieldErrorText(visibleErrors.command)}
+                        </FieldError>
+                      )}
+                    </div>
+
+                    <div
+                      role="group"
+                      aria-labelledby="mcp-args-label"
+                      className="flex flex-col gap-1.5"
+                    >
+                      <span id="mcp-args-label" className={LABEL_CLASS}>
+                        {t("mcpPage.drawer.args")}
+                      </span>
+                      {conn.args.map((arg, index) => (
+                        <div key={index} className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            className={cn(MONO_FIELD_CLASS, "flex-1")}
+                            aria-label={t("mcpPage.drawer.argAria", {
+                              index: index + 1,
+                            })}
+                            value={arg}
+                            autoComplete="off"
+                            spellCheck={false}
+                            onChange={(event) =>
+                              patchConn({
+                                args: conn.args.map((item, i) =>
+                                  i === index ? event.target.value : item,
+                                ),
+                              })
+                            }
+                          />
+                          <HoverTip content={t("common.delete")}>
+                            <Button
+                              type="button"
+                              variant="quiet"
+                              size="icon-compact"
+                              aria-label={t("mcpPage.drawer.removeArg", {
+                                index: index + 1,
+                              })}
+                              onClick={() =>
+                                patchConn({
+                                  args: conn.args.filter((_, i) => i !== index),
+                                })
+                              }
+                            >
+                              <X className="h-3.5 w-3.5" strokeWidth={1.5} />
+                            </Button>
+                          </HoverTip>
+                        </div>
+                      ))}
+                      <AddRowButton
+                        onClick={() => patchConn({ args: [...conn.args, ""] })}
+                      >
+                        {t("mcpPage.drawer.addArg")}
+                      </AddRowButton>
+                    </div>
+
+                    {renderKvRows("env", t("mcpPage.drawer.env"))}
+
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="mcp-cwd" className={LABEL_CLASS}>
+                        {t("mcpPage.drawer.cwd")}
+                        <span className="ms-1.5 text-caption font-normal text-fg-2">
+                          {t("mcpPage.drawer.optional")}
+                        </span>
+                      </label>
+                      <input
+                        id="mcp-cwd"
+                        type="text"
+                        className={cn(
+                          MONO_FIELD_CLASS,
+                          "placeholder:font-sans placeholder:text-body",
+                        )}
+                        value={conn.cwd}
+                        placeholder={t("mcpPage.drawer.cwdPlaceholder")}
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(event) =>
+                          patchConn({ cwd: event.target.value })
+                        }
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="mcp-url" className={LABEL_CLASS}>
+                        URL
+                        <RequiredMark srText={t("mcpPage.drawer.required")} />
+                      </label>
+                      <input
+                        id="mcp-url"
+                        type="text"
+                        inputMode="url"
+                        className={MONO_FIELD_CLASS}
+                        value={conn.url}
+                        placeholder="https://mcp.example.com/mcp"
+                        aria-required="true"
+                        aria-invalid={Boolean(visibleErrors.url)}
+                        aria-describedby={
+                          visibleErrors.url ? "mcp-url-hint" : undefined
+                        }
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(event) =>
+                          patchConn({ url: event.target.value })
+                        }
+                      />
+                      {visibleErrors.url && (
+                        <FieldError id="mcp-url-hint">
+                          {fieldErrorText(visibleErrors.url)}
+                        </FieldError>
+                      )}
+                    </div>
+                    {renderKvRows("headers", t("mcpPage.drawer.headers"))}
+                  </>
+                )}
+
+                {extraKeys.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={LABEL_CLASS}>
+                      {t("mcpPage.drawer.extraFields", {
+                        count: extraKeys.length,
+                      })}
+                    </span>
+                    {extraKeys.map((key) => (
+                      <code
+                        key={key}
+                        className="h-[22px] whitespace-nowrap rounded-control bg-subtle px-2 font-mono text-caption leading-[22px]"
+                      >
+                        {key}
+                      </code>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => switchTab("json")}
+                      className="text-body font-medium text-fg-1 underline underline-offset-[3px] hover:text-fg-2"
+                    >
+                      {t("mcpPage.drawer.editInJson")}
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <div className="flex min-h-7 items-center gap-3">
+                  <div className="flex flex-1 items-center gap-0.5">
+                    <label htmlFor="mcp-json" className={LABEL_CLASS}>
+                      {t("mcpPage.drawer.jsonLabel")}
+                    </label>
+                    <HelpTip title={t("mcpPage.drawer.jsonHelpTitle")}>
+                      {t("mcpPage.drawer.jsonHelp")}
+                    </HelpTip>
+                  </div>
+                  {hasSecrets && (
+                    <button
+                      type="button"
+                      aria-pressed={revealJson}
+                      onClick={toggleRevealJson}
+                      className="inline-flex h-7 items-center gap-1 rounded-control pe-2 ps-1.5 text-body font-medium text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
+                    >
+                      {revealJson ? (
+                        <EyeOff className="h-3.5 w-3.5" strokeWidth={2} />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5" strokeWidth={2} />
+                      )}
+                      {t("mcpPage.drawer.showValues")}
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  id="mcp-json"
+                  value={jsonText}
+                  onChange={(event) => handleJsonChange(event.target.value)}
+                  aria-invalid={jsonError !== null}
+                  aria-describedby={jsonError ? "mcp-json-hint" : undefined}
+                  spellCheck={false}
+                  wrap="off"
+                  className={cn(
+                    MONO_FIELD_CLASS,
+                    "h-[300px] resize-y overflow-auto whitespace-pre px-3 py-2.5 leading-[18px]",
+                  )}
+                />
+                {jsonError && (
+                  <FieldError id="mcp-json-hint">
+                    {jsonErrorText(jsonError)}
+                    {jsonError.kind === "syntax" &&
+                      ` ${t("mcpPage.drawer.jsonBlocksForm")}`}
+                  </FieldError>
+                )}
+                {!jsonError && attempted && (errors.command || errors.url) && (
+                  <FieldError>
+                    {fieldErrorText(errors.command ?? errors.url)}
+                  </FieldError>
+                )}
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      <div
+        role="group"
+        aria-labelledby="mcp-apps-label"
+        className="flex min-w-0 flex-col gap-2"
+      >
+        <div className="flex items-center gap-0.5">
+          <span id="mcp-apps-label" className={LABEL_CLASS}>
+            {t("mcpPage.drawer.writeTo")}
+          </span>
+          <HelpTip title={t("mcpPage.drawer.writeToHelpTitle")}>
+            {t("mcpPage.drawer.writeToHelp")}
+          </HelpTip>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+          {visibleAppIds.map((app) => (
+            <label
+              key={app}
+              className="flex h-6 cursor-pointer items-center gap-2 text-body"
+            >
+              <input
+                type="checkbox"
+                className={CHECKBOX_CLASS}
+                checked={apps[app]}
+                onChange={(event) =>
+                  setApps((prev) => ({
+                    ...prev,
+                    [app]: event.target.checked,
+                  }))
+                }
+              />
+              <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
+              <span className="whitespace-nowrap">{APP_DISPLAY_NAME[app]}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {!batch && (
+        <div className="flex flex-col gap-3">
+          <DisclosureButton
+            open={metaOpen}
+            controls="mcp-meta"
+            onToggle={() => setMetaOpen((value) => !value)}
+            hint={t("mcpPage.drawer.metaHint")}
+          >
+            {t("mcpPage.drawer.meta")}
+          </DisclosureButton>
+          {metaOpen && (
+            <div id="mcp-meta" className="flex flex-col gap-3.5">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-0.5">
+                  <label htmlFor="mcp-meta-name" className={LABEL_CLASS}>
+                    {t("mcpPage.drawer.displayName")}
+                  </label>
+                  <HelpTip title={t("mcpPage.drawer.displayNameHelpTitle")}>
+                    {t("mcpPage.drawer.displayNameHelp")}
+                  </HelpTip>
+                </div>
+                <input
+                  id="mcp-meta-name"
+                  type="text"
+                  className={FIELD_CLASS}
+                  value={meta.name}
+                  autoComplete="off"
+                  onChange={(event) =>
+                    setMeta((prev) => ({
+                      ...prev,
+                      name: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="mcp-meta-desc" className={LABEL_CLASS}>
+                  {t("mcpPage.drawer.description")}
+                </label>
+                <textarea
+                  id="mcp-meta-desc"
+                  rows={2}
+                  className={cn(FIELD_CLASS, "h-auto py-2")}
+                  value={meta.description}
+                  onChange={(event) =>
+                    setMeta((prev) => ({
+                      ...prev,
+                      description: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="mcp-meta-tags" className={LABEL_CLASS}>
+                  {t("mcpPage.drawer.tags")}
+                </label>
+                <input
+                  id="mcp-meta-tags"
+                  type="text"
+                  className={FIELD_CLASS}
+                  value={meta.tags}
+                  placeholder={t("mcpPage.drawer.tagsPlaceholder")}
+                  autoComplete="off"
+                  onChange={(event) =>
+                    setMeta((prev) => ({
+                      ...prev,
+                      tags: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="mcp-meta-home" className={LABEL_CLASS}>
+                  {t("mcpPage.drawer.homepage")}
+                </label>
+                <input
+                  id="mcp-meta-home"
+                  type="text"
+                  inputMode="url"
+                  className={FIELD_CLASS}
+                  value={meta.homepage}
+                  placeholder="https://"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) =>
+                    setMeta((prev) => ({
+                      ...prev,
+                      homepage: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="mcp-meta-docs" className={LABEL_CLASS}>
+                  {t("mcpPage.drawer.docs")}
+                </label>
+                <input
+                  id="mcp-meta-docs"
+                  type="text"
+                  inputMode="url"
+                  className={FIELD_CLASS}
+                  value={meta.docs}
+                  placeholder="https://"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) =>
+                    setMeta((prev) => ({
+                      ...prev,
+                      docs: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </FullScreenPanel>
   );
 };
 
