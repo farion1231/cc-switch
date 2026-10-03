@@ -18,6 +18,7 @@ export function AuthSettingsPanel({ target, onClose }: AuthSettingsPanelProps) {
       title={t("nav.auth")}
       onClose={onClose}
       motionPreset="slide-from-right"
+      width="full"
     >
       {target ? <AuthCenterPanel authScrollTarget={target} /> : null}
     </FullScreenPanel>

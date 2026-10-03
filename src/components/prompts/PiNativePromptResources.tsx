@@ -27,12 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
   promptsApi,
@@ -100,7 +95,7 @@ function showMutationError(error: unknown, fallback: string) {
   toast.error(extractErrorMessage(error) || fallback);
 }
 
-/** 抽屉外壳（宽 560）：标题栏 52、正文滚动、底栏 56。 */
+/** 编辑页外壳：整页面板，与其它二级编辑页同宽。 */
 function PromptDrawer({
   title,
   description,
@@ -116,32 +111,19 @@ function PromptDrawer({
   footer: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const { t } = useTranslation();
   return (
-    <Sheet
-      open
-      onOpenChange={(open) => {
-        if (!open && !busy) onClose();
+    <FullScreenPanel
+      isOpen
+      title={title}
+      onClose={() => {
+        if (!busy) onClose();
       }}
+      contentClassName="flex min-h-full flex-col gap-5 space-y-0"
+      footer={footer}
     >
-      <SheetContent width={560} closeLabel={t("common.close")}>
-        <div className="flex h-[52px] shrink-0 items-center border-b border-border pe-12 ps-6">
-          <SheetTitle
-            title={title}
-            className="min-w-0 truncate text-title text-fg-1"
-          >
-            {title}
-          </SheetTitle>
-          <SheetDescription className="sr-only">{description}</SheetDescription>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5">
-          {children}
-        </div>
-        <div className="flex h-14 shrink-0 items-center gap-2 border-t border-border px-6">
-          {footer}
-        </div>
-      </SheetContent>
-    </Sheet>
+      <p className="sr-only">{description}</p>
+      {children}
+    </FullScreenPanel>
   );
 }
 
@@ -351,7 +333,7 @@ export function PiSystemPromptFiles() {
     }),
   ];
 
-  // 删除不弹确认框：直接删、关抽屉，toast 给「撤销」（原样写回）；原本是空白的文件不给撤销
+  // 删除不弹确认框：直接删、关编辑页，toast 给「撤销」（原样写回）；原本是空白的文件不给撤销
   const remove = useMutation({
     mutationFn: async ({
       kind,

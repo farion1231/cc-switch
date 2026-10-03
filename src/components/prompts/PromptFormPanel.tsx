@@ -3,12 +3,7 @@ import { useTranslation } from "react-i18next";
 import { CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/help-tip";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { Prompt, AppId } from "@/lib/api";
 import { fieldClass } from "@/components/ui/input";
@@ -51,7 +46,7 @@ export function FieldError({ id, children }: { id: string; children: string }) {
 }
 
 /**
- * 添加 / 编辑提示词的抽屉（宽 560，PromptsEdit.dc.html）。
+ * 添加 / 编辑提示词的整页编辑页（与其它二级编辑页同宽）。
  * 启用中的那条：保存按钮写明会覆盖哪个文件；删除照样画出来但不能点，原因挂在按钮上。
  */
 const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
@@ -160,134 +155,13 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   const countId = `${baseId}-count`;
 
   return (
-    <Sheet
-      open
-      onOpenChange={(open) => {
-        if (!open) handleClose();
-      }}
-    >
-      <SheetContent
-        width={560}
-        closeLabel={t("common.close")}
-        onEscapeKeyDown={(event) => {
-          if (savingRef.current) event.preventDefault();
-        }}
-      >
-        <div className="flex h-[52px] shrink-0 items-center border-b border-border pe-12 ps-6">
-          <SheetTitle
-            title={title}
-            className="min-w-0 truncate text-title text-fg-1"
-          >
-            {title}
-          </SheetTitle>
-          <SheetDescription className="sr-only">
-            {t("prompts.formDescription", { file: fileName })}
-          </SheetDescription>
-        </div>
-
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5">
-          <div className="flex shrink-0 flex-col gap-1.5">
-            <label
-              htmlFor={`${baseId}-name`}
-              className="text-body font-medium text-fg-1"
-            >
-              {t("prompts.name")}
-              <span aria-hidden="true" className="ms-0.5 text-danger-text">
-                *
-              </span>
-              <span className="sr-only">{t("prompts.requiredMark")}</span>
-            </label>
-            <input
-              ref={nameRef}
-              id={`${baseId}-name`}
-              type="text"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              disabled={saving}
-              placeholder={t(
-                isHermes
-                  ? "prompts.namePlaceholderHermes"
-                  : "prompts.namePlaceholder",
-              )}
-              aria-required="true"
-              aria-invalid={showNameError}
-              aria-describedby={showNameError ? nameHintId : undefined}
-              autoComplete="off"
-              className={cn(promptFieldClass, "h-8")}
-            />
-            {showNameError ? (
-              <FieldError id={nameHintId}>{nameError}</FieldError>
-            ) : null}
-          </div>
-
-          <div className="flex shrink-0 flex-col gap-1.5">
-            <label
-              htmlFor={`${baseId}-desc`}
-              className="text-body font-medium text-fg-1"
-            >
-              {t("prompts.description")}
-            </label>
-            <input
-              id={`${baseId}-desc`}
-              type="text"
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              disabled={saving}
-              placeholder={t("prompts.descriptionPlaceholder")}
-              autoComplete="off"
-              className={cn(promptFieldClass, "h-8")}
-            />
-          </div>
-
-          <div className="flex min-h-[220px] flex-1 flex-col gap-1.5">
-            <label
-              htmlFor={`${baseId}-body`}
-              className="text-body font-medium text-fg-1"
-            >
-              {t("prompts.content")}
-            </label>
-            <textarea
-              ref={bodyRef}
-              id={`${baseId}-body`}
-              value={content}
-              onChange={(event) => setContent(event.target.value)}
-              disabled={saving}
-              spellCheck={false}
-              placeholder={
-                isHermes
-                  ? t("prompts.contentPlaceholderHermes")
-                  : t("prompts.contentPlaceholder", {
-                      filename: fileName,
-                      appName,
-                    })
-              }
-              aria-invalid={showBodyError}
-              aria-describedby={
-                showBodyError ? `${bodyHintId} ${countId}` : countId
-              }
-              className={cn(
-                promptFieldClass,
-                "min-h-[180px] flex-1 resize-none px-3 py-2.5 font-mono text-caption leading-[18px]",
-              )}
-            />
-            <div className="flex items-start gap-3">
-              {showBodyError ? (
-                <FieldError id={bodyHintId}>{bodyError}</FieldError>
-              ) : null}
-              <span
-                id={countId}
-                className={cn(
-                  "ms-auto shrink-0 whitespace-nowrap text-caption tabular-nums",
-                  overLimit ? "text-danger-text" : "text-fg-2",
-                )}
-              >
-                {countText}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex h-14 shrink-0 items-center gap-2 border-t border-border px-6">
+    <FullScreenPanel
+      isOpen
+      title={title}
+      onClose={handleClose}
+      contentClassName="flex min-h-full flex-col gap-5 space-y-0"
+      footer={
+        <>
           {editingId && onDelete ? (
             <DisabledReason
               reason={isActive ? t("prompts.deleteBlockedReason") : undefined}
@@ -327,9 +201,112 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
           >
             {saving ? t("common.saving") : submitLabel}
           </Button>
+        </>
+      }
+    >
+      <p className="sr-only">
+        {t("prompts.formDescription", { file: fileName })}
+      </p>
+      <div className="flex shrink-0 flex-col gap-1.5">
+        <label
+          htmlFor={`${baseId}-name`}
+          className="text-body font-medium text-fg-1"
+        >
+          {t("prompts.name")}
+          <span aria-hidden="true" className="ms-0.5 text-danger-text">
+            *
+          </span>
+          <span className="sr-only">{t("prompts.requiredMark")}</span>
+        </label>
+        <input
+          ref={nameRef}
+          id={`${baseId}-name`}
+          type="text"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          disabled={saving}
+          placeholder={t(
+            isHermes
+              ? "prompts.namePlaceholderHermes"
+              : "prompts.namePlaceholder",
+          )}
+          aria-required="true"
+          aria-invalid={showNameError}
+          aria-describedby={showNameError ? nameHintId : undefined}
+          autoComplete="off"
+          className={cn(promptFieldClass, "h-8")}
+        />
+        {showNameError ? (
+          <FieldError id={nameHintId}>{nameError}</FieldError>
+        ) : null}
+      </div>
+
+      <div className="flex shrink-0 flex-col gap-1.5">
+        <label
+          htmlFor={`${baseId}-desc`}
+          className="text-body font-medium text-fg-1"
+        >
+          {t("prompts.description")}
+        </label>
+        <input
+          id={`${baseId}-desc`}
+          type="text"
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          disabled={saving}
+          placeholder={t("prompts.descriptionPlaceholder")}
+          autoComplete="off"
+          className={cn(promptFieldClass, "h-8")}
+        />
+      </div>
+
+      <div className="flex min-h-[220px] flex-1 flex-col gap-1.5">
+        <label
+          htmlFor={`${baseId}-body`}
+          className="text-body font-medium text-fg-1"
+        >
+          {t("prompts.content")}
+        </label>
+        <textarea
+          ref={bodyRef}
+          id={`${baseId}-body`}
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          disabled={saving}
+          spellCheck={false}
+          placeholder={
+            isHermes
+              ? t("prompts.contentPlaceholderHermes")
+              : t("prompts.contentPlaceholder", {
+                  filename: fileName,
+                  appName,
+                })
+          }
+          aria-invalid={showBodyError}
+          aria-describedby={
+            showBodyError ? `${bodyHintId} ${countId}` : countId
+          }
+          className={cn(
+            promptFieldClass,
+            "min-h-[180px] flex-1 resize-none px-3 py-2.5 font-mono text-caption leading-[18px]",
+          )}
+        />
+        <div className="flex items-start gap-3">
+          {showBodyError ? (
+            <FieldError id={bodyHintId}>{bodyError}</FieldError>
+          ) : null}
+          <span
+            id={countId}
+            className={cn(
+              "ms-auto shrink-0 whitespace-nowrap text-caption tabular-nums",
+              overLimit ? "text-danger-text" : "text-fg-2",
+            )}
+          >
+            {countText}
+          </span>
         </div>
-      </SheetContent>
-    </Sheet>
+      </div>
+    </FullScreenPanel>
   );
 };
 
