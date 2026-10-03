@@ -123,7 +123,7 @@
     --chart-2: #db2777;
     --chart-grid: #ececf0;
 
-    /* 会话阅读页的 Agent 主题色（docs/session-reader-redesign.md §6.7）：只用于提问竖条和助手 glyph，
+    /* 会话阅读页的 Agent 主题色：只用于提问竖条和助手 glyph，
        正文保持中性（决策 D4）。作文字用时对 --bg-app / --bg-subtle 对比度 ≥ 4.5:1 */
     --agent-claude: #c2613f;
     --agent-codex: #3f3f46;

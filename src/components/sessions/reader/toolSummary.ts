@@ -12,7 +12,7 @@ import {
 import type { MergedStep, SessionTurn, TimelineStep, ToolStep } from "./turns";
 
 /**
- * 步骤 / 轮的一行摘要与各 Agent 合并规则（docs/session-reader-redesign.md §6.1、§6.6）。
+ * 步骤 / 轮的一行摘要与各 Agent 合并规则。
  * 只产出结构化数据和品牌固定字面（Ran / Explored / Called…）；需要翻译的通用文案
  * 交给调用方传入的 t()，或由组件按 i18n key 自行拼接。
  */

@@ -5,7 +5,7 @@ import type { ToolCallBlock } from "@/types";
 import { highlightText } from "../utils";
 
 /**
- * 改动渲染（docs/session-reader-redesign.md §6.4）：unified diff / apply_patch 文本 →
+ * 改动渲染：unified diff / apply_patch 文本 →
  * 行号 + `+` success-soft / `-` danger-soft，hunk 之间用 `⋮` 隔开，多文件各有小标题。
  */
 

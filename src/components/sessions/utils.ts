@@ -85,11 +85,6 @@ export const shortenHomePath = (value: string) =>
     .replace(/^\/home\/[^/]+(?=\/|$)/, "~")
     .replace(/^[A-Za-z]:\\Users\\[^\\]+(?=\\|$)/, "~");
 
-export const formatTimestamp = (value?: number) => {
-  if (!value) return "";
-  return new Date(value).toLocaleString();
-};
-
 /** 「10月1日 08:12」这类短格式，跟随系统语言。 */
 export const formatShortDateTime = (value?: number) => {
   if (!value) return "";

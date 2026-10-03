@@ -1,4 +1,4 @@
-//! 会话阅读页的统一数据模型（设计见 `docs/session-reader-redesign.md` §3）。
+//! 会话阅读页的统一数据模型。
 //!
 //! 各 provider 解析器把源记录转成 [`SessionMessage`]：结构化内容放 `blocks`，
 //! `content` 是由 blocks 派生的纯文本投影（[`project_content`]），供旧的搜索 /

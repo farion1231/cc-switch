@@ -19,7 +19,7 @@ import {
 } from "./toolSummary";
 
 /**
- * 会话阅读页的 turn 结构与虚拟列表行模型（docs/session-reader-redesign.md §6.2、§6.5）。
+ * 会话阅读页的 turn 结构与虚拟列表行模型。
  *
  * 纯函数：SessionMessage[] → SessionTurn[]（提问 → 执行过程步骤 → 最终回复）
  * → ReaderRow[]（交给 useVirtualizer）。折叠规则全部在这里表达，组件只按行渲染。

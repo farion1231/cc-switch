@@ -2,7 +2,7 @@ import type { ToolKind } from "@/types";
 import type { SessionAppId } from "../utils";
 
 /**
- * 会话阅读页的 Agent 风格配置（docs/session-reader-redesign.md §6.6）。
+ * 会话阅读页的 Agent 风格配置。
  *
  * 五家 Agent 共用同一套版式骨架，只用这份配置区分符号、动作叫法、主题色和合并规则；
  * 没有专属配置的来源（Hermes / OpenClaw / Grok Build / MiniMax Code）一律用 generic。

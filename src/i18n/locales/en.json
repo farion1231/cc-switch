@@ -1282,7 +1282,6 @@
       "params": "Input",
       "output": "Output",
       "diff": "Changes",
-      "diffCounts": "+{{added}} −{{removed}}",
       "thinking": {
         "claude": "Thinking…",
         "codex": "Reasoning",
@@ -1296,7 +1295,6 @@
       "thinkingRedacted": "Thinking not visible",
       "note": "Note",
       "noteExpand": "Show full note",
-      "finalReply": "Reply",
       "noFinalReply": "No final reply in this turn",
       "turnAborted": "Interrupted",
       "event": {
@@ -1354,7 +1352,6 @@
       "copyTurn": "Copy this turn",
       "turnCopied": "Copied this turn",
       "copyWithThinking": "Include thinking when copying",
-      "onlyChanges": "Changes only",
       "filterAll": "All",
       "filterChat": "Chat",
       "filterChanges": "Changes",

@@ -137,7 +137,7 @@ export interface SessionReaderProps {
 }
 
 /**
- * 会话阅读页（docs/session-reader-redesign.md §6）：只做编排——页头、信息栏、阅读工具、
+ * 会话阅读页：只做编排——页头、信息栏、阅读工具、
  * 流式加载状态、虚拟列表、查找与跳转。turn 结构与折叠规则在 turns.ts，各行由独立组件渲染。
  */
 export function SessionReader({

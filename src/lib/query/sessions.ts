@@ -14,7 +14,7 @@ import type {
 import { buildTurnIndex, buildTurns } from "@/components/sessions/reader/turns";
 
 /**
- * 会话阅读页的数据层（docs/session-reader-redesign.md §5.1、§6.3）：
+ * 会话阅读页的数据层：
  * 分块流式读取会话、按需取块全文、图片转 Blob URL。
  */
 

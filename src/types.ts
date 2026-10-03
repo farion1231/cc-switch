@@ -494,7 +494,7 @@ export interface SessionMeta {
   resumeCommand?: string;
 }
 
-// ─── 会话阅读页数据模型（docs/session-reader-redesign.md §3.2，对应 Rust session_manager/model.rs） ───
+// ─── 会话阅读页数据模型（对应 Rust session_manager/model.rs） ───
 
 export type ToolKind =
   | "shell"

@@ -1283,7 +1283,6 @@
       "params": "參數",
       "output": "輸出",
       "diff": "變更",
-      "diffCounts": "+{{added}} −{{removed}}",
       "thinking": {
         "claude": "思考中…",
         "codex": "推理",
@@ -1297,7 +1296,6 @@
       "thinkingRedacted": "思考內容不可見",
       "note": "說明",
       "noteExpand": "展開說明",
-      "finalReply": "回覆",
       "noFinalReply": "這一輪沒有最終回覆",
       "turnAborted": "已中斷",
       "event": {
@@ -1355,7 +1353,6 @@
       "copyTurn": "複製這一輪",
       "turnCopied": "已複製這一輪",
       "copyWithThinking": "複製時包含思考",
-      "onlyChanges": "只看變更",
       "filterAll": "全部",
       "filterChat": "對話",
       "filterChanges": "變更",

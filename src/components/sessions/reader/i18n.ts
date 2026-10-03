@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { Translate } from "./toolSummary";
 
 /**
- * 阅读页文案（`sessionManager.reader.*`，docs/session-reader-redesign.md §6.8）。
+ * 阅读页文案（`sessionManager.reader.*`）。
  * 这里的简体中文是各 key 的 defaultValue：语言包缺 key（含单测）时仍有可读文案。
  * 四套语言包里的取值以 src/i18n/locales/*.json 为准。
  */
@@ -38,7 +38,6 @@ export const READER_DEFAULTS: Record<string, string> = {
   params: "参数",
   output: "输出",
   diff: "改动",
-  diffCounts: "+{{added}} −{{removed}}",
   "thinking.claude": "思考中…",
   "thinking.codex": "推理",
   "thinking.gemini": "想法",
@@ -50,7 +49,6 @@ export const READER_DEFAULTS: Record<string, string> = {
   thinkingRedacted: "思考内容不可见",
   note: "说明",
   noteExpand: "展开说明",
-  finalReply: "回复",
   noFinalReply: "这一轮没有最终回复",
   turnAborted: "已中断",
   "event.compaction": "上下文已压缩",
@@ -96,7 +94,6 @@ export const READER_DEFAULTS: Record<string, string> = {
   copyTurn: "复制这一轮",
   turnCopied: "已复制这一轮",
   copyWithThinking: "复制时包含思考",
-  onlyChanges: "只看改动",
   filterAll: "全部",
   filterChat: "对话",
   filterChanges: "改动",

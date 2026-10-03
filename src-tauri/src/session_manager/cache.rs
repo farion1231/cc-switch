@@ -1,4 +1,4 @@
-//! 会话解析结果缓存 `TranscriptCache`（设计见 `docs/session-reader-redesign.md` §5.2）。
+//! 会话解析结果缓存 `TranscriptCache`。
 //!
 //! 打开同一个会话（切换回来、流式读取后再取全文、复制整段）时不必重新解析。
 //! 命中条件与 `FileParseCache` 一致：源的 `(mtime, len)` 没变；容量按 LRU 控制在

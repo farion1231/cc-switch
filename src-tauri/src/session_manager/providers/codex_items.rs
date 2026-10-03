@@ -1,4 +1,4 @@
-//! Codex rollout 解析的底层零件（设计见 `docs/session-reader-redesign.md` §4.2）：
+//! Codex rollout 解析的底层零件：
 //!
 //! - 借用式反序列化类型：大行（9MB 的 `custom_tool_call_output`、10MB 的 `compacted`）
 //!   只解析用得到的字段，base64 图片等不带转义的长字串直接借用行缓冲，不拷贝。

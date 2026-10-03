@@ -1,4 +1,4 @@
-//! 会话源校验与按需取内容（设计见 `docs/session-reader-redesign.md` §5.3）。
+//! 会话源校验与按需取内容。
 //!
 //! 前端回传的 `sourcePath`、[`ContentRef`]、[`ImageRef`] 都不可信：
 //!

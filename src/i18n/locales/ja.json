@@ -1282,7 +1282,6 @@
       "params": "入力",
       "output": "出力",
       "diff": "変更",
-      "diffCounts": "+{{added}} −{{removed}}",
       "thinking": {
         "claude": "思考中…",
         "codex": "推論",
@@ -1296,7 +1295,6 @@
       "thinkingRedacted": "思考内容は表示できません",
       "note": "メモ",
       "noteExpand": "メモを展開",
-      "finalReply": "返信",
       "noFinalReply": "このターンには最終返信がありません",
       "turnAborted": "中断されました",
       "event": {
@@ -1354,7 +1352,6 @@
       "copyTurn": "このターンをコピー",
       "turnCopied": "このターンをコピーしました",
       "copyWithThinking": "コピー時に思考を含める",
-      "onlyChanges": "変更のみ",
       "filterAll": "すべて",
       "filterChat": "会話",
       "filterChanges": "変更",
