@@ -359,8 +359,14 @@ export const SessionStepDetails = memo(function SessionStepDetails({
 
   const command = call?.kind === "shell" ? fullCommand(call) : null;
   const showCommand = Boolean(command && command.trim() !== call?.title.trim());
+  // shell 一般直接显示完整命令；但参数超过预览上限时取不到全文，
+  // 这时也给出「参数」区，按需加载完整参数（否则只剩最多 200 字的标题）
+  const shellTruncated =
+    call?.kind === "shell" && call.inputPreview.length < call.inputTotalLen;
   const hasParams =
-    Boolean(call) && call!.kind !== "shell" && call!.inputPreview.trim() !== "";
+    Boolean(call) &&
+    call!.inputPreview.trim() !== "" &&
+    (call!.kind !== "shell" || shellTruncated);
 
   const output = result && (result.preview || result.totalLen > 0) && (
     <BlockText
@@ -413,7 +419,7 @@ export const SessionStepDetails = memo(function SessionStepDetails({
         <Section
           label={rt("params")}
           collapsible
-          defaultOpen={failure || !result}
+          defaultOpen={failure || !result || shellTruncated}
         >
           <BlockText
             preview={call.inputPreview}

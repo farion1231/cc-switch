@@ -254,6 +254,91 @@ describe("SessionReader", () => {
     expect(region).toHaveTextContent("还有 82 行");
   });
 
+  it("参数超过预览上限的 shell 命令：显示「参数」区并按需取完整命令", async () => {
+    const longCommand = `echo ${"x".repeat(560)} && echo LONG_COMMAND_TAIL`;
+    const fullInput = JSON.stringify({ command: longCommand });
+    const getBlockContent = vi
+      .spyOn(sessionsApi, "getBlockContent")
+      .mockResolvedValue({
+        text: fullInput,
+        totalLen: fullInput.length,
+        truncated: false,
+      });
+    const messages: SessionMessage[] = [
+      {
+        role: "user",
+        content: "run it",
+        ts: 1791014400000,
+        turnId: "t1",
+        blocks: [{ type: "text", text: "run it" }],
+      },
+      {
+        role: "assistant",
+        content: "",
+        ts: 1791014401000,
+        turnId: "t1",
+        blocks: [
+          {
+            type: "tool_call",
+            id: "toolu_long",
+            rawName: "Bash",
+            kind: "shell",
+            title: longCommand.slice(0, 200),
+            inputPreview: fullInput.slice(0, 400),
+            inputTotalLen: fullInput.length,
+            inputFull: {
+              kind: "jsonl",
+              offset: 10,
+              len: 700,
+              pointer: "/message/content/0/input",
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: "",
+        ts: 1791014402000,
+        turnId: "t1",
+        blocks: [
+          {
+            type: "tool_result",
+            callId: "toolu_long",
+            status: "success",
+            preview: "ok",
+            totalLen: 2,
+            lineCount: 1,
+            truncated: false,
+          },
+        ],
+      },
+      {
+        role: "assistant",
+        content: "",
+        ts: 1791014403000,
+        turnId: "t1",
+        blocks: [{ type: "text", text: "done" }],
+      },
+    ];
+    renderReader("claude", messages);
+
+    fireEvent.click(stepButton(/Bash\(echo x/));
+    const region = screen.getByRole("region", { name: /Bash\(echo x/ });
+    expect(within(region).getByText("参数")).toBeInTheDocument();
+    expect(region).not.toHaveTextContent("LONG_COMMAND_TAIL");
+
+    fireEvent.click(within(region).getByRole("button", { name: "显示全部" }));
+    expect(
+      await within(region).findByText(/LONG_COMMAND_TAIL/),
+    ).toBeInTheDocument();
+    expect(getBlockContent).toHaveBeenCalledWith(
+      "claude",
+      "/mock/claude.jsonl",
+      expect.objectContaining({ kind: "jsonl", offset: 10 }),
+      expect.objectContaining({ offset: 0 }),
+    );
+  });
+
   it("「显示全部」按需取全文", async () => {
     const getBlockContent = vi
       .spyOn(sessionsApi, "getBlockContent")
