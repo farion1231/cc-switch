@@ -18,6 +18,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::model::{ContentRef, ImageRef, ImageSource};
+use super::providers::{hermes, opencode};
 use super::{canonicalize_existing_path, provider_roots};
 
 /// 单次读取的全文上限
@@ -91,12 +92,12 @@ pub fn validate_source(provider_id: &str, source_path: &str) -> Result<Validated
         }
         "opencode" if source_path.starts_with("sqlite:") => validate_sqlite_source(
             source_path,
-            parse_opencode_sqlite(source_path),
+            opencode::parse_sqlite_source(source_path),
             &crate::opencode_config::get_opencode_db_path(),
         )?,
         "hermes" if source_path.starts_with("sqlite:") => validate_sqlite_source(
             source_path,
-            parse_hermes_sqlite(source_path),
+            hermes::parse_sqlite_source(source_path),
             &crate::hermes_config::get_hermes_dir().join("state.db"),
         )?,
         _ => {
@@ -147,24 +148,6 @@ pub(super) fn resolve_under_roots(
         "Session source path is outside provider roots: {}",
         source.display()
     ))
-}
-
-/// `sqlite:<db>:<ses_id>`（与 `providers::opencode::parse_sqlite_source` 同规则）
-fn parse_opencode_sqlite(source: &str) -> Option<(PathBuf, String)> {
-    let rest = source.strip_prefix("sqlite:")?;
-    let sep = rest.rfind(":ses_")?;
-    Some((PathBuf::from(&rest[..sep]), rest[sep + 1..].to_string()))
-}
-
-/// `sqlite:<db>#<session_id>`（与 `providers::hermes::parse_sqlite_source` 同规则）
-fn parse_hermes_sqlite(source: &str) -> Option<(PathBuf, String)> {
-    let rest = source.strip_prefix("sqlite:")?;
-    let hash = rest.rfind('#')?;
-    let session_id = &rest[hash + 1..];
-    if session_id.is_empty() {
-        return None;
-    }
-    Some((PathBuf::from(&rest[..hash]), session_id.to_string()))
 }
 
 fn validate_sqlite_source(
@@ -709,14 +692,14 @@ mod tests {
         std::fs::write(&other, "").unwrap();
 
         let raw = format!("sqlite:{}:ses_1", own.display());
-        let ok = validate_sqlite_source(&raw, parse_opencode_sqlite(&raw), &own).unwrap();
+        let ok = validate_sqlite_source(&raw, opencode::parse_sqlite_source(&raw), &own).unwrap();
         assert!(
             matches!(ok, SourceLocation::Sqlite { ref session_id, .. } if session_id == "ses_1")
         );
 
         let raw = format!("sqlite:{}:ses_1", other.display());
-        assert!(validate_sqlite_source(&raw, parse_opencode_sqlite(&raw), &own).is_err());
-        assert!(parse_hermes_sqlite("sqlite:/x/state.db#").is_none());
+        assert!(validate_sqlite_source(&raw, opencode::parse_sqlite_source(&raw), &own).is_err());
+        assert!(hermes::parse_sqlite_source("sqlite:/x/state.db#").is_none());
     }
 
     /// 超长注入文本与压缩摘要只下发预览：`full` 必须能取回原文（Claude 与 Codex 解析器）

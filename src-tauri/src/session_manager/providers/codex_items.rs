@@ -23,8 +23,9 @@ use crate::session_manager::model::{
 };
 
 use super::blocks::{
-    kind_from_codex_parsed_cmd, one_line_title, preview, preview_chars, refine_shell_kind,
-    title_mcp, title_path, title_shell, title_web, Preview, INPUT_PREVIEW_CHARS,
+    count_diff_lines, kind_from_codex_parsed_cmd, one_line_title, preview, preview_chars,
+    refine_shell_kind, saturating_u32, title_mcp, title_path, title_shell, title_web, Preview,
+    INPUT_PREVIEW_CHARS,
 };
 use super::utils::JsonlSpan;
 
@@ -294,7 +295,6 @@ pub(super) struct FileChangeInfo {
     pub id: String,
     pub diff: DiffSummary,
     pub status: ToolStatus,
-    pub output: Preview,
 }
 
 #[derive(Debug, Clone)]
@@ -420,7 +420,7 @@ impl RawItem<'_> {
                         "/payload/item/changes/{}/unified_diff",
                         escape_pointer_token(path)
                     ));
-                    count_unified_diff(diff)
+                    count_diff_lines(diff)
                 } else {
                     let lines = change
                         .get("content")
@@ -457,7 +457,6 @@ impl RawItem<'_> {
             id,
             diff: diff_summary(files, full),
             status,
-            output: preview(""),
         })
     }
 
@@ -810,26 +809,6 @@ pub(super) fn parse_legacy_shell_output(text: &str) -> Option<(String, Option<i3
 
 // ─── diff ────────────────────────────────────────────────────────────────
 
-fn saturating_u32(n: usize) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
-}
-
-/// unified diff 的增删行数（不计 `+++` / `---` 文件头）
-pub(super) fn count_unified_diff(diff: &str) -> (u32, u32) {
-    let (mut added, mut removed) = (0u32, 0u32);
-    for line in diff.lines() {
-        if line.starts_with("+++") || line.starts_with("---") {
-            continue;
-        }
-        if line.starts_with('+') {
-            added += 1;
-        } else if line.starts_with('-') {
-            removed += 1;
-        }
-    }
-    (added, removed)
-}
-
 pub(super) fn diff_summary(files: Vec<DiffFile>, full: Option<ContentRef>) -> DiffSummary {
     DiffSummary {
         added: files.iter().map(|f| f.added).sum(),
@@ -968,7 +947,29 @@ pub(super) struct CallSpec<'s> {
     pub by_user: bool,
 }
 
-impl CallSpec<'_> {
+impl<'s> CallSpec<'s> {
+    /// 只填必需字段的调用，其余字段按需用 `..` 覆盖
+    pub fn new(
+        id: String,
+        raw_name: impl Into<String>,
+        kind: ToolKind,
+        title: String,
+        input: &'s str,
+    ) -> Self {
+        Self {
+            id,
+            raw_name: raw_name.into(),
+            kind,
+            title,
+            detail: None,
+            server: None,
+            input,
+            input_ref: None,
+            diff: None,
+            by_user: false,
+        }
+    }
+
     pub fn into_block(self) -> SessionBlock {
         let input = preview_chars(self.input, INPUT_PREVIEW_CHARS);
         SessionBlock::ToolCall {
@@ -1003,6 +1004,19 @@ pub(super) struct ResultSpec {
 }
 
 impl ResultSpec {
+    /// 没有输出的结果
+    pub fn empty(call_id: String, status: ToolStatus) -> Self {
+        Self {
+            call_id,
+            status,
+            output: preview(""),
+            full: None,
+            exit_code: None,
+            duration_ms: None,
+            images: Vec::new(),
+        }
+    }
+
     pub fn into_block(self) -> SessionBlock {
         let truncated = self.output.truncated;
         SessionBlock::ToolResult {
@@ -1025,28 +1039,25 @@ impl CommandInfo {
     /// 单独成块的 CommandExecution 工具调用（没有对应 exec 时）
     pub fn call_spec(&self) -> CallSpec<'_> {
         CallSpec {
-            id: self.id.clone(),
-            raw_name: "CommandExecution".to_string(),
-            kind: self.kind,
-            title: title_shell(&self.command),
             detail: self.cwd.clone(),
-            server: None,
-            input: &self.command,
-            input_ref: None,
-            diff: None,
             by_user: self.by_user,
+            ..CallSpec::new(
+                self.id.clone(),
+                "CommandExecution",
+                self.kind,
+                title_shell(&self.command),
+                &self.command,
+            )
         }
     }
 
     pub fn result_spec(&self, call_id: String) -> ResultSpec {
         ResultSpec {
-            call_id,
-            status: self.status,
             output: self.output.clone(),
             full: self.output_ref.clone(),
             exit_code: self.exit_code,
             duration_ms: self.duration_ms,
-            images: Vec::new(),
+            ..ResultSpec::empty(call_id, self.status)
         }
     }
 }
@@ -1185,7 +1196,7 @@ mod tests {
         assert_eq!(diff_title(&diff), "a.rs 等 3 个文件");
 
         assert_eq!(
-            count_unified_diff("--- a\n+++ b\n@@\n-x\n+y\n+z\n ctx"),
+            count_diff_lines("--- a\n+++ b\n@@\n-x\n+y\n+z\n ctx"),
             (2, 1)
         );
     }

@@ -414,12 +414,7 @@ impl TranscriptBuilder {
             "system",
             ts,
             None,
-            vec![SessionBlock::Event {
-                kind,
-                text,
-                url,
-                full: None,
-            }],
+            vec![SessionBlock::event(kind, text, url)],
         );
     }
 
@@ -681,19 +676,17 @@ impl TranscriptBuilder {
         };
         if let Some(first) = texts.iter().map(|(t, _)| t.trim()).find(|t| !t.is_empty()) {
             if first.starts_with("[Request interrupted by user") {
-                blocks.push(SessionBlock::Event {
-                    kind: EventKind::Aborted,
-                    text: Some(first.to_string()),
-                    url: None,
-                    full: None,
-                });
+                blocks.push(SessionBlock::event(
+                    EventKind::Aborted,
+                    Some(first.to_string()),
+                    None,
+                ));
             } else if let Some(command) = slash_command(first) {
-                blocks.push(SessionBlock::Event {
-                    kind: EventKind::SlashCommand,
-                    text: Some(command),
-                    url: None,
-                    full: None,
-                });
+                blocks.push(SessionBlock::event(
+                    EventKind::SlashCommand,
+                    Some(command),
+                    None,
+                ));
             } else if first.starts_with("<bash-input>") {
                 blocks.extend(user_bash_blocks(first, uuid.as_deref()));
             } else if is_injected_text(first) {

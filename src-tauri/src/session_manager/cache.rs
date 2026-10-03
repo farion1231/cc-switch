@@ -610,12 +610,7 @@ mod tests {
             SessionMessage::from_blocks(
                 "assistant",
                 None,
-                vec![SessionBlock::Event {
-                    kind: EventKind::Aborted,
-                    text: None,
-                    url: None,
-                    full: None,
-                }],
+                vec![SessionBlock::event(EventKind::Aborted, None, None)],
             ),
         ];
 

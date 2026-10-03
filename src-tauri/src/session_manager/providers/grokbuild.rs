@@ -6,9 +6,7 @@ use serde_json::Value;
 use crate::session_manager::model::{SessionBlock, ToolStatus};
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::blocks::{
-    assign_turn_ids, parse_arguments, tool_call_block, tool_result_block, ToolSource,
-};
+use super::blocks::{assign_turn_ids, openai_tool_calls, tool_result_block};
 use super::utils::{
     extract_text, for_each_jsonl_value, parse_timestamp_to_ms, truncate_summary, TITLE_MAX_CHARS,
 };
@@ -97,32 +95,9 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                 if !text.trim().is_empty() {
                     blocks.push(SessionBlock::text(text));
                 }
-                for (j, call) in value
-                    .get("tool_calls")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .enumerate()
-                {
-                    let name = call
-                        .pointer("/function/name")
-                        .or_else(|| call.get("name"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown");
-                    let (input_pointer, raw_input) = match call.pointer("/function/arguments") {
-                        Some(raw) => (format!("/tool_calls/{j}/function/arguments"), Some(raw)),
-                        None => (format!("/tool_calls/{j}/arguments"), call.get("arguments")),
-                    };
-                    let input = raw_input.map(parse_arguments).unwrap_or(Value::Null);
-                    let id = call.get("id").and_then(Value::as_str).unwrap_or_default();
-                    blocks.push(tool_call_block(
-                        ToolSource::Generic,
-                        id,
-                        name,
-                        &input,
-                        || Some(span.content_ref(input_pointer)),
-                    ));
-                }
+                blocks.extend(openai_tool_calls(value.get("tool_calls"), |pointer| {
+                    Some(span.content_ref(format!("/tool_calls{pointer}")))
+                }));
                 blocks
             }
             _ if text.trim().is_empty() => Vec::new(),

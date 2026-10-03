@@ -9,10 +9,7 @@ use crate::hermes_config::get_hermes_dir;
 use crate::session_manager::model::{ContentRef, SessionBlock, ToolStatus};
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::blocks::{
-    assign_turn_ids, parse_arguments, thinking_block, tool_call_block, tool_result_block,
-    ToolSource,
-};
+use super::blocks::{assign_turn_ids, openai_tool_calls, thinking_block, tool_result_block};
 use super::utils::for_each_jsonl_value;
 use super::utils::{
     extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,
@@ -488,37 +485,6 @@ fn load_messages_from_conn(
     Ok(messages)
 }
 
-/// OpenAI 形状的 `tool_calls[]`（`{id, function{name, arguments}}`，也兼容扁平 `{id, name, arguments}`）
-/// → ToolCall。`arguments_ref(pointer)` 为参数全文生成引用，`pointer` 是参数在 `tool_calls`
-/// 数组内的 JSON Pointer（`/{i}/function/arguments` 或扁平形状的 `/{i}/arguments`）。
-fn openai_tool_calls(
-    calls: Option<&Value>,
-    arguments_ref: impl Fn(String) -> Option<ContentRef>,
-) -> Vec<SessionBlock> {
-    calls
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .enumerate()
-        .map(|(i, call)| {
-            let name = call
-                .pointer("/function/name")
-                .or_else(|| call.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let id = call.get("id").and_then(Value::as_str).unwrap_or_default();
-            let (pointer, raw) = match call.pointer("/function/arguments") {
-                Some(raw) => (format!("/{i}/function/arguments"), Some(raw)),
-                None => (format!("/{i}/arguments"), call.get("arguments")),
-            };
-            let input = raw.map(parse_arguments).unwrap_or(Value::Null);
-            tool_call_block(ToolSource::Generic, id, name, &input, || {
-                arguments_ref(pointer)
-            })
-        })
-        .collect()
-}
-
 /// `messages` 表某行某列的引用（`content::sqlite_allowed` 白名单内的列）
 fn messages_cell(id: i64, column: &str, pointer: String) -> ContentRef {
     ContentRef::Sqlite {
@@ -574,7 +540,7 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
     Ok(deleted > 0)
 }
 
-fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
+pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     let rest = source.strip_prefix("sqlite:")?;
     let hash_pos = rest.rfind('#')?;
     let db_path = PathBuf::from(&rest[..hash_pos]);

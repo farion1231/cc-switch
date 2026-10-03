@@ -797,12 +797,11 @@ impl RolloutParser {
                 "system",
                 ts,
                 None,
-                vec![SessionBlock::Event {
-                    kind: EventKind::ModelChange,
-                    text: Some(model),
-                    url: None,
-                    full: None,
-                }],
+                vec![SessionBlock::event(
+                    EventKind::ModelChange,
+                    Some(model),
+                    None,
+                )],
                 false,
             );
         }
@@ -819,12 +818,7 @@ impl RolloutParser {
             "system",
             ts,
             None,
-            vec![SessionBlock::Event {
-                kind: EventKind::Aborted,
-                text: Some(reason),
-                url: None,
-                full: None,
-            }],
+            vec![SessionBlock::event(EventKind::Aborted, Some(reason), None)],
             false,
         );
     }
@@ -1066,12 +1060,7 @@ impl RolloutParser {
         } else {
             format!("{author}: {}", first.trim())
         };
-        let mut blocks = vec![SessionBlock::Event {
-            kind: EventKind::SubAgent,
-            text: Some(event),
-            url: None,
-            full: None,
-        }];
+        let mut blocks = vec![SessionBlock::event(EventKind::SubAgent, Some(event), None)];
         if !rest.trim().is_empty() {
             blocks.push(SessionBlock::text(rest.trim().to_string()));
         }
@@ -1094,27 +1083,14 @@ impl RolloutParser {
             Some(ToolStatus::Interrupted) => ToolStatus::Interrupted,
             _ => ToolStatus::Success,
         };
-        let call = CallSpec {
-            id: id.clone(),
-            raw_name: "web_search".to_string(),
-            kind: ToolKind::Web,
-            title: web_action_title(&action),
-            detail: None,
-            server: None,
-            input: &input,
-            input_ref: None,
-            diff: None,
-            by_user: false,
-        };
-        let result = ResultSpec {
-            call_id: id.clone(),
-            status,
-            output: preview(""),
-            full: None,
-            exit_code: None,
-            duration_ms: None,
-            images: Vec::new(),
-        };
+        let call = CallSpec::new(
+            id.clone(),
+            "web_search",
+            ToolKind::Web,
+            web_action_title(&action),
+            &input,
+        );
+        let result = ResultSpec::empty(id.clone(), status);
         self.push_assistant(ts, Some(id), vec![call.into_block(), result.into_block()]);
     }
 
@@ -1244,16 +1220,10 @@ impl RolloutParser {
         };
 
         let block = CallSpec {
-            id: call_id.clone(),
-            raw_name: name.to_string(),
-            kind,
-            title,
             detail,
             server: normalized.server,
-            input: arguments,
             input_ref: Some(span.content_ref("/payload/arguments")),
-            diff: None,
-            by_user: false,
+            ..CallSpec::new(call_id.clone(), name, kind, title, arguments)
         }
         .into_block();
         self.register_call(ts, owned(&p.id), call_id, block, flavor, cmds);
@@ -1267,16 +1237,14 @@ impl RolloutParser {
             .unwrap_or_default();
 
         let mut spec = CallSpec {
-            id: call_id.clone(),
-            raw_name: name.to_string(),
-            kind: ToolKind::Other,
-            title: title_other(name),
-            detail: None,
-            server: None,
-            input,
             input_ref: Some(span.content_ref("/payload/input")),
-            diff: None,
-            by_user: false,
+            ..CallSpec::new(
+                call_id.clone(),
+                name,
+                ToolKind::Other,
+                title_other(name),
+                input,
+            )
         };
         let (flavor, cmds) = match name {
             "exec" => {
@@ -1321,19 +1289,18 @@ impl RolloutParser {
             .or_else(|| owned(&p.id))
             .unwrap_or_default();
         let block = CallSpec {
-            id: call_id.clone(),
-            raw_name: "local_shell".to_string(),
-            kind: refine_shell_kind(&cmd),
-            title: title_shell(&cmd),
             detail: action
                 .get("working_directory")
                 .and_then(Value::as_str)
                 .map(str::to_string),
-            server: None,
-            input: &input,
             input_ref: Some(span.content_ref("/payload/action")),
-            diff: None,
-            by_user: false,
+            ..CallSpec::new(
+                call_id.clone(),
+                "local_shell",
+                refine_shell_kind(&cmd),
+                title_shell(&cmd),
+                &input,
+            )
         }
         .into_block();
         let cmds = if cmd.is_empty() {
@@ -1490,49 +1457,36 @@ impl RolloutParser {
             }
             ItemRecord::FileChange(info) => {
                 let call = CallSpec {
-                    id: info.id.clone(),
-                    raw_name: "FileChange".to_string(),
-                    kind: diff_kind(&info.diff),
-                    title: diff_title(&info.diff),
-                    detail: None,
-                    server: None,
-                    input: "",
-                    input_ref: None,
                     diff: Some(info.diff.clone()),
-                    by_user: false,
+                    ..CallSpec::new(
+                        info.id.clone(),
+                        "FileChange",
+                        diff_kind(&info.diff),
+                        diff_title(&info.diff),
+                        "",
+                    )
                 };
-                let result = ResultSpec {
-                    call_id: info.id.clone(),
-                    status: info.status,
-                    output: info.output.clone(),
-                    full: None,
-                    exit_code: None,
-                    duration_ms: None,
-                    images: Vec::new(),
-                };
+                let result = ResultSpec::empty(info.id.clone(), info.status);
                 (info.id, vec![call.into_block(), result.into_block()])
             }
             ItemRecord::Mcp(info) => {
                 let call = CallSpec {
-                    id: info.id.clone(),
-                    raw_name: info.tool.clone(),
-                    kind: ToolKind::Mcp,
-                    title: title_mcp(&info.server, &info.tool),
                     detail: info.detail.clone(),
                     server: Some(info.server.clone()),
-                    input: &info.input,
-                    input_ref: None,
-                    diff: None,
-                    by_user: false,
+                    ..CallSpec::new(
+                        info.id.clone(),
+                        info.tool.clone(),
+                        ToolKind::Mcp,
+                        title_mcp(&info.server, &info.tool),
+                        &info.input,
+                    )
                 };
                 let result = ResultSpec {
-                    call_id: info.id.clone(),
-                    status: info.status,
                     output: info.output.clone(),
                     full: info.output_ref.clone(),
-                    exit_code: None,
                     duration_ms: info.duration_ms,
                     images: info.images.clone(),
+                    ..ResultSpec::empty(info.id.clone(), info.status)
                 };
                 let blocks = vec![call.into_block(), result.into_block()];
                 (info.id, blocks)
@@ -1544,27 +1498,14 @@ impl RolloutParser {
                 }],
             ),
             ItemRecord::Web(info) => {
-                let call = CallSpec {
-                    id: info.id.clone(),
-                    raw_name: "web_search".to_string(),
-                    kind: ToolKind::Web,
-                    title: info.title.clone(),
-                    detail: None,
-                    server: None,
-                    input: &info.input,
-                    input_ref: None,
-                    diff: None,
-                    by_user: false,
-                };
-                let result = ResultSpec {
-                    call_id: info.id.clone(),
-                    status: ToolStatus::Success,
-                    output: preview(""),
-                    full: None,
-                    exit_code: None,
-                    duration_ms: None,
-                    images: Vec::new(),
-                };
+                let call = CallSpec::new(
+                    info.id.clone(),
+                    "web_search",
+                    ToolKind::Web,
+                    info.title.clone(),
+                    &info.input,
+                );
+                let result = ResultSpec::empty(info.id.clone(), ToolStatus::Success);
                 let blocks = vec![call.into_block(), result.into_block()];
                 (info.id, blocks)
             }
@@ -1593,13 +1534,12 @@ impl RolloutParser {
             None => {
                 let status = output_status(&out, None);
                 let result = ResultSpec {
-                    call_id,
-                    status,
                     output: preview(&out.text),
                     full: out.full,
                     exit_code: out.exit_code,
                     duration_ms: out.duration_ms,
                     images: out.images,
+                    ..ResultSpec::empty(call_id, status)
                 };
                 self.push("tool", ts, id, vec![result.into_block()], false);
             }
@@ -1766,8 +1706,6 @@ impl RolloutParser {
                     images
                 };
                 ResultSpec {
-                    call_id: last_id,
-                    status,
                     output: preview(&out.text),
                     full: out.full,
                     exit_code: last_command.and_then(|c| c.exit_code).or(out.exit_code),
@@ -1776,6 +1714,7 @@ impl RolloutParser {
                         .or(out.duration_ms)
                         .or(mcp.as_ref().and_then(|m| m.duration_ms)),
                     images,
+                    ..ResultSpec::empty(last_id, status)
                 }
             }
             None => match last_command {
@@ -1786,15 +1725,7 @@ impl RolloutParser {
                     }
                     spec
                 }
-                None => ResultSpec {
-                    call_id: last_id,
-                    status: ToolStatus::Interrupted,
-                    output: preview(""),
-                    full: None,
-                    exit_code: None,
-                    duration_ms: None,
-                    images: Vec::new(),
-                },
+                None => ResultSpec::empty(last_id, ToolStatus::Interrupted),
             },
         };
         results.push(spec.into_block());

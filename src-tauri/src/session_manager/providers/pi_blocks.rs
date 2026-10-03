@@ -170,18 +170,12 @@ impl PiTranscript {
 
         // 中断 / 截断 / 出错追加事件
         match msg.get("stopReason").and_then(Value::as_str) {
-            Some("aborted") => blocks.push(SessionBlock::Event {
-                kind: EventKind::Aborted,
-                text: None,
-                url: None,
-                full: None,
-            }),
-            Some("length") => blocks.push(SessionBlock::Event {
-                kind: EventKind::Other,
-                text: Some("truncated".into()),
-                url: None,
-                full: None,
-            }),
+            Some("aborted") => blocks.push(SessionBlock::event(EventKind::Aborted, None, None)),
+            Some("length") => blocks.push(SessionBlock::event(
+                EventKind::Other,
+                Some("truncated".into()),
+                None,
+            )),
             Some("error") => blocks.push(SessionBlock::Event {
                 kind: EventKind::Error,
                 text: msg
@@ -430,12 +424,7 @@ fn event_message(kind: EventKind, text: String, ts: Option<i64>) -> Option<Sessi
         SessionMessage::from_blocks(
             "system",
             ts,
-            vec![SessionBlock::Event {
-                kind,
-                text: Some(text),
-                url: None,
-                full: None,
-            }],
+            vec![SessionBlock::event(kind, Some(text), None)],
         )
     })
 }

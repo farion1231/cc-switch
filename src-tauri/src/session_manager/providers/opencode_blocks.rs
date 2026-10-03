@@ -113,12 +113,11 @@ fn push_part_blocks(blocks: &mut Vec<SessionBlock>, locator: &PartLocator, part:
         Some("tool") => push_tool_blocks(blocks, locator, part),
         Some("agent") => {
             if let Some(name) = part.get("name").and_then(Value::as_str) {
-                blocks.push(SessionBlock::Event {
-                    kind: EventKind::Other,
-                    text: Some(format!("@{name}")),
-                    url: None,
-                    full: None,
-                });
+                blocks.push(SessionBlock::event(
+                    EventKind::Other,
+                    Some(format!("@{name}")),
+                    None,
+                ));
             }
         }
         Some("patch") => push_patch_blocks(blocks, part),
@@ -327,12 +326,11 @@ fn push_file_block(blocks: &mut Vec<SessionBlock>, locator: &PartLocator, part: 
         }
     }
     if let Some(text) = filename.or_else(|| (!url.is_empty()).then_some(url)) {
-        blocks.push(SessionBlock::Event {
-            kind: EventKind::Other,
-            text: Some(text.to_string()),
-            url: None,
-            full: None,
-        });
+        blocks.push(SessionBlock::event(
+            EventKind::Other,
+            Some(text.to_string()),
+            None,
+        ));
     }
 }
 
@@ -341,24 +339,18 @@ fn message_error_event(info: &Value) -> Option<SessionBlock> {
     let error = info.get("error")?;
     let name = error.get("name").and_then(Value::as_str).unwrap_or("");
     if name == "MessageAbortedError" {
-        return Some(SessionBlock::Event {
-            kind: EventKind::Aborted,
-            text: None,
-            url: None,
-            full: None,
-        });
+        return Some(SessionBlock::event(EventKind::Aborted, None, None));
     }
     let text = error
         .pointer("/data/message")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .unwrap_or(name);
-    Some(SessionBlock::Event {
-        kind: EventKind::Error,
-        text: (!text.is_empty()).then(|| text.to_string()),
-        url: None,
-        full: None,
-    })
+    Some(SessionBlock::event(
+        EventKind::Error,
+        (!text.is_empty()).then(|| text.to_string()),
+        None,
+    ))
 }
 
 /// 消息级 `cost/tokens/modelID/providerID/time/finish` → meta（0 视为缺省）。

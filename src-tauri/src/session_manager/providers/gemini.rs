@@ -111,12 +111,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                 let mut message = SessionMessage::from_blocks(
                     "system",
                     ts,
-                    vec![SessionBlock::Event {
-                        kind: event_kind,
-                        text: Some(text),
-                        url: None,
-                        full: None,
-                    }],
+                    vec![SessionBlock::event(event_kind, Some(text), None)],
                 );
                 // info（登录、刷新等提示）默认折叠
                 message.injected = kind == "info";
