@@ -176,6 +176,7 @@ fn parse_sqlite_session_row(
     Ok(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
+        parent_session_id: None,
         title: display_title.clone(),
         summary: display_title,
         project_dir: if directory.is_empty() {
@@ -758,6 +759,7 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
+        parent_session_id: None,
         title: display_title,
         summary,
         project_dir: directory,
@@ -1107,6 +1109,13 @@ mod tests {
         }
 
         assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().all(|s| s.parent_session_id.is_none()));
+        let serialized = serde_json::to_value(&sessions).expect("serialize session metadata");
+        assert!(serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|session| session.get("parentSessionId").is_none()));
         assert_eq!(sessions[0].session_id, "ses_2");
         assert_eq!(sessions[0].title.as_deref(), Some("Named Session"));
         assert_eq!(sessions[1].session_id, "ses_1");
@@ -1360,6 +1369,13 @@ mod tests {
         }
 
         assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().all(|s| s.parent_session_id.is_none()));
+        let serialized = serde_json::to_value(&sessions).expect("serialize session metadata");
+        assert!(serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|session| session.get("parentSessionId").is_none()));
         assert_eq!(sessions[0].session_id, "ses_v2_1");
         assert_eq!(sessions[0].title.as_deref(), Some("project-v2-a"));
         assert_eq!(sessions[0].last_active_at, Some(3_000));
@@ -1601,6 +1617,13 @@ mod tests {
 
         let sessions = scan_sessions_sqlite();
         assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().all(|s| s.parent_session_id.is_none()));
+        let serialized = serde_json::to_value(&sessions).expect("serialize session metadata");
+        assert!(serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|session| session.get("parentSessionId").is_none()));
         assert_eq!(sessions[0].session_id, "ses_v1_post");
         assert_eq!(sessions[0].title.as_deref(), Some("Post Migration 1.x"));
         assert_eq!(sessions[0].last_active_at, Some(3000));

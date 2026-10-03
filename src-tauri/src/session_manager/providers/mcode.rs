@@ -58,6 +58,7 @@ fn scan(conn: &Connection, data_dir: &Path) -> rusqlite::Result<Vec<SessionMeta>
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
                 .then(|| format!("{command} --session {id}")),
             session_id: id,
+            parent_session_id: None,
             title: row.get(1)?,
             summary: None,
             project_dir: row.get(2)?,
@@ -141,6 +142,9 @@ mod tests {
         let data_dir = Path::new("/tmp/MiniMax Code's $(printf expanded)");
         let sessions = scan(&conn, data_dir).unwrap();
         assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].parent_session_id, None);
+        let serialized = serde_json::to_value(&sessions[0]).expect("serialize session metadata");
+        assert!(serialized.get("parentSessionId").is_none());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
