@@ -214,16 +214,61 @@ export function getModelExtraFields(
   return extra;
 }
 
+export function formatOpencodeExtraOptionValue(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 export function toOpencodeExtraOptions(
   options: OpenCodeProviderConfig["options"],
 ): Record<string, string> {
   const extra: Record<string, string> = {};
   for (const [k, v] of Object.entries(options || {})) {
     if (!isKnownOpencodeOptionKey(k)) {
-      extra[k] = typeof v === "string" ? v : JSON.stringify(v);
+      extra[k] = formatOpencodeExtraOptionValue(v);
     }
   }
   return extra;
+}
+
+/**
+ * Reconciles the extra-option row editor's string map into the stored
+ * `options` object in place. Rows whose text still matches the stored
+ * value's display form were not touched by the user, so their stored
+ * values (types included) are kept as-is; only added, edited and removed
+ * rows are rewritten.
+ */
+export function mergeOpencodeExtraOptionRows(
+  options: Record<string, unknown>,
+  rows: Record<string, string>,
+): void {
+  const nextRows: Record<string, string> = {};
+  for (const [k, v] of Object.entries(rows)) {
+    const trimmedKey = k.trim();
+    if (trimmedKey && !k.startsWith(OPENCODE_EXTRA_OPTION_DRAFT_PREFIX)) {
+      nextRows[trimmedKey] = v;
+    }
+  }
+
+  for (const k of Object.keys(options)) {
+    if (!isKnownOpencodeOptionKey(k) && !(k in nextRows)) {
+      delete options[k];
+    }
+  }
+
+  for (const [k, v] of Object.entries(nextRows)) {
+    const existing = options[k];
+    if (
+      existing !== undefined &&
+      formatOpencodeExtraOptionValue(existing) === v
+    ) {
+      continue;
+    }
+    try {
+      options[k] = JSON.parse(v);
+    } catch {
+      options[k] = v;
+    }
+  }
 }
 
 export { buildOmoProfilePreview } from "@/types/omo";
