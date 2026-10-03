@@ -19,7 +19,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Label } from "@/components/ui/label";
 import {
   Popover,
@@ -178,6 +178,10 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
 
 function optionalText(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function normalizeProviderKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9-]/g, "");
 }
 
 function optionalNumberText(value: unknown): string {
@@ -1173,11 +1177,6 @@ export function PiProviderForm({
     [updateSettingsConfig],
   );
 
-  const handleProviderKeyChange = useCallback((value: string) => {
-    const normalized = value.toLowerCase().replace(/[^a-z0-9-]/g, "");
-    setProviderKey(normalized);
-  }, []);
-
   const submit = async (identity: ProviderFormData) => {
     onSubmittingChange?.(true);
     setFormError(null);
@@ -1479,12 +1478,11 @@ export function PiProviderForm({
                         *
                       </span>
                     </Label>
-                    <Input
+                    <ImeSafeInput
                       id="pi-provider-key"
                       value={providerKey}
-                      onChange={(event) =>
-                        handleProviderKeyChange(event.target.value)
-                      }
+                      onValueChange={setProviderKey}
+                      normalize={normalizeProviderKey}
                       disabled={isEdit}
                       placeholder="my-provider"
                       autoComplete="off"
@@ -1682,11 +1680,11 @@ export function PiProviderForm({
                             />
                           </Button>
                           <div className="flex min-w-0 flex-1 gap-1">
-                            <Input
+                            <ImeSafeInput
                               id={`pi-model-id-${model.key}`}
                               value={model.id}
-                              onChange={(event) =>
-                                changeModelId(model.key, event.target.value)
+                              onValueChange={(value) =>
+                                changeModelId(model.key, value)
                               }
                               placeholder="model-id"
                               aria-label={t("pi.form.modelId")}
@@ -1702,12 +1700,12 @@ export function PiProviderForm({
                               />
                             )}
                           </div>
-                          <Input
+                          <ImeSafeInput
                             id={`pi-model-name-${model.key}`}
                             value={model.name}
-                            onChange={(event) =>
+                            onValueChange={(value) =>
                               updateModelOverride(model.key, {
-                                name: event.target.value,
+                                name: value,
                                 hasName: true,
                               })
                             }
@@ -1785,7 +1783,7 @@ export function PiProviderForm({
                               }
                               htmlFor={`pi-model-context-window-${model.key}`}
                             >
-                              <Input
+                              <ImeSafeInput
                                 id={`pi-model-context-window-${model.key}`}
                                 aria-label={t("pi.form.contextWindow")}
                                 type="number"
@@ -1794,9 +1792,9 @@ export function PiProviderForm({
                                 inputMode="decimal"
                                 required={!isEdit || model.hasContextWindow}
                                 value={model.contextWindow}
-                                onChange={(event) =>
+                                onValueChange={(value) =>
                                   updateModelOverride(model.key, {
-                                    contextWindow: event.target.value,
+                                    contextWindow: value,
                                     hasContextWindow: true,
                                   })
                                 }
@@ -1817,7 +1815,7 @@ export function PiProviderForm({
                               }
                               htmlFor={`pi-model-max-tokens-${model.key}`}
                             >
-                              <Input
+                              <ImeSafeInput
                                 id={`pi-model-max-tokens-${model.key}`}
                                 aria-label={t("pi.form.maxTokens")}
                                 type="number"
@@ -1826,9 +1824,9 @@ export function PiProviderForm({
                                 inputMode="decimal"
                                 required={!isEdit || model.hasMaxTokens}
                                 value={model.maxTokens}
-                                onChange={(event) =>
+                                onValueChange={(value) =>
                                   updateModelOverride(model.key, {
-                                    maxTokens: event.target.value,
+                                    maxTokens: value,
                                     hasMaxTokens: true,
                                   })
                                 }
@@ -2017,20 +2015,19 @@ export function PiProviderForm({
                                                     "pi.form.thinkingLevelMapTo",
                                                   )}
                                                 </label>
-                                                <Input
+                                                <ImeSafeInput
                                                   value={
                                                     typeof mappedValue ===
                                                     "string"
                                                       ? mappedValue
                                                       : level
                                                   }
-                                                  onChange={(event) =>
+                                                  onValueChange={(value) =>
                                                     updateThinkingLevelMap(
                                                       model.key,
                                                       (map) => ({
                                                         ...map,
-                                                        [level]:
-                                                          event.target.value,
+                                                        [level]: value,
                                                       }),
                                                     )
                                                   }
