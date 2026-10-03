@@ -5778,6 +5778,20 @@ mod tests {
             })
         }
 
+        fn assert_tools_with_search_shim(seen: &Seen, original_tools: &Value) {
+            let original_tools = original_tools.as_array().expect("original tools");
+            let tools = seen.body["tools"].as_array().expect("forwarded tools");
+            assert_eq!(tools.len(), original_tools.len() + 1, "{}", seen.body);
+            assert_eq!(&tools[..original_tools.len()], original_tools.as_slice());
+
+            // Third-party Responses requests retain their tools and gain exactly
+            // one callable search shim, including on the Stack proxy path.
+            let shim = tools.last().expect("search shim");
+            assert_eq!(shim["type"], "function");
+            assert_eq!(shim["name"], "tool_search");
+            assert_eq!(shim["parameters"]["required"], json!(["query"]));
+        }
+
         async fn send(
             forwarder: &RequestForwarder,
             upstream: &Upstream,
@@ -5899,7 +5913,7 @@ mod tests {
             .await;
             assert_eq!(seen.body["input"], own_history["input"]);
 
-            // 对照：普通请求逐字节不改。
+            // 对照：普通请求保留原工具和输入，仅追加 ToolSearch 兼容工具。
             let plain = body(
                 "listed",
                 json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
@@ -5912,7 +5926,7 @@ mod tests {
                 plain.clone(),
             )
             .await;
-            assert_eq!(seen.body["tools"], plain["tools"]);
+            assert_tools_with_search_shim(&seen, &plain["tools"]);
             assert_eq!(seen.body["input"], plain["input"]);
         }
 
@@ -6009,11 +6023,11 @@ mod tests {
                     with_choice("glm-5.2"),
                 )
                 .await;
-                assert_eq!(seen.body["tools"], json!([function.clone()]), "{endpoint}");
+                assert_tools_with_search_shim(&seen, &json!([function.clone()]));
                 assert!(seen.body.get("tool_choice").is_none(), "{endpoint}");
             }
 
-            // 只剩它一个工具时整个 `tools` 删掉。
+            // 只有托管搜索时删掉它，仅保留 ToolSearch 兼容工具。
             let seen = send(
                 &forwarder(true),
                 &upstream,
@@ -6022,9 +6036,9 @@ mod tests {
                 body("glm-5.2", json!([{ "type": "web_search" }])),
             )
             .await;
-            assert!(seen.body.get("tools").is_none(), "{}", seen.body);
+            assert_tools_with_search_shim(&seen, &json!([]));
 
-            // 对照：支持的上游、路由请求都原样转发。
+            // 对照：支持的上游、路由请求保留托管搜索，并追加 ToolSearch 兼容工具。
             for (stack, model) in [(true, "deepseek-v4-pro"), (false, "glm-5.2")] {
                 let seen = send(
                     &forwarder(stack),
@@ -6034,7 +6048,7 @@ mod tests {
                     with_choice(model),
                 )
                 .await;
-                assert_eq!(seen.body["tools"], tools, "stack={stack} {model}");
+                assert_tools_with_search_shim(&seen, &tools);
                 assert_eq!(seen.body["tool_choice"]["type"], "web_search");
             }
         }
