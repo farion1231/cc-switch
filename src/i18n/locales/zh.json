@@ -3921,7 +3921,8 @@
       "officialStack": "官方账号只能做默认，不能叠加。",
       "needsRoute": "需要路由：{{reason}}，不能直连。",
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
-      "currentCannotRemove": "正在用的这家不能移除，先启用别家。"
+      "currentCannotRemove": "正在用的这家不能移除，先启用别家。",
+      "inUseCannotDelete": "正在用的这家不能删除，先切到别家。"
     },
     "section": {
       "queue": "队列 · 按优先级（{{count}}）",

@@ -3921,7 +3921,8 @@
       "officialStack": "公式アカウントは既定にだけでき、Stack には追加できません。",
       "needsRoute": "ルーティングが必要：{{reason}}。直接接続はできません。",
       "defaultCannotRemove": "既定のプロバイダーは削除できません。先にほかを既定にしてください。",
-      "currentCannotRemove": "使用中のプロバイダーは削除できません。先にほかを有効にしてください。"
+      "currentCannotRemove": "使用中のプロバイダーは削除できません。先にほかを有効にしてください。",
+      "inUseCannotDelete": "使用中のプロバイダーは削除できません。先にほかへ切り替えてください。"
     },
     "section": {
       "queue": "キュー · 優先順（{{count}}）",

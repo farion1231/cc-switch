@@ -114,6 +114,34 @@ describe("buildSwitchSections — direct", () => {
   });
 });
 
+describe("buildSwitchSections — delete guard", () => {
+  // 后端 is_referenced：直连指针、路由 / 叠加模式下的当前路由都删不掉，哪个视图都要标出来
+  it("disables delete on the direct provider in every view", () => {
+    for (const view of ["direct", "route", "stack"] as AppMode[]) {
+      const { sections } = build({ active: "direct", view });
+      expect(item(sections, "relay").deleteDisabledReason).toBe(
+        "providerCard.reason.inUseCannotDelete",
+      );
+      expect(item(sections, "backup").deleteDisabledReason).toBeUndefined();
+    }
+  });
+
+  it("also disables delete on the provider being routed to while routing", () => {
+    const { sections } = build({
+      active: "route",
+      view: "direct",
+      routeId: "backup",
+    });
+    expect(item(sections, "relay").deleteDisabledReason).toBeTruthy();
+    expect(item(sections, "backup").deleteDisabledReason).toBeTruthy();
+    expect(item(sections, "converted").deleteDisabledReason).toBeUndefined();
+
+    // 直连时 routeId 只是上次的路由，不算在用
+    const direct = build({ active: "direct", view: "route", routeId: "backup" });
+    expect(item(direct.sections, "backup").deleteDisabledReason).toBeUndefined();
+  });
+});
+
 describe("buildSwitchSections — route", () => {
   it("routes to a provider and keeps official subscriptions out", () => {
     const { sections, input } = build({
@@ -298,8 +326,10 @@ describe("buildDesktopSections", () => {
     expect(item(sections, "mapped")).toMatchObject({
       tone: "route",
       status: { label: "providerCard.status.inUse", dot: "route" },
+      deleteDisabledReason: "providerCard.reason.inUseCannotDelete",
     });
     expect(item(sections, "relay").chips.map((c) => c.key)).toEqual(["direct"]);
+    expect(item(sections, "relay").deleteDisabledReason).toBeUndefined();
     button(sections, "relay", "switch").onClick();
     expect(onSwitch).toHaveBeenCalledWith(relay);
   });

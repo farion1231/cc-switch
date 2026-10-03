@@ -3922,7 +3922,8 @@
       "officialStack": "官方帳號只能當預設，不能疊加。",
       "needsRoute": "需要路由：{{reason}}，不能直連。",
       "defaultCannotRemove": "預設那家不能移除，先把別家設為預設。",
-      "currentCannotRemove": "正在用的這家不能移除，先啟用別家。"
+      "currentCannotRemove": "正在用的這家不能移除，先啟用別家。",
+      "inUseCannotDelete": "正在用的這家不能刪除，先切到別家。"
     },
     "section": {
       "queue": "佇列 · 依優先順序（{{count}}）",

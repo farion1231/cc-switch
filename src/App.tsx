@@ -773,7 +773,11 @@ function App() {
         { closeButton: true },
       );
     } else {
-      await deleteProvider(provider.id);
+      try {
+        await deleteProvider(provider.id);
+      } catch {
+        // useDeleteProviderMutation 的 onError 已经弹了错误 toast；确认框照样关掉
+      }
     }
     setConfirmAction(null);
   };
