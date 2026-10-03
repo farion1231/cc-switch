@@ -38,6 +38,17 @@ export interface CardMenuOption {
   onSelect: () => void;
 }
 
+/** 「更多」菜单里跟当前模式有关的一项。 */
+export interface CardMenuItem {
+  key: string;
+  label: string;
+  /** 点了之后的后果，写在名字下面 */
+  detail?: string;
+  /** 不能点的原因：照常列出来，原因写在名字下面 */
+  disabledReason?: string;
+  onSelect: () => void;
+}
+
 export interface CardButton {
   key: string;
   label: string;
@@ -54,6 +65,8 @@ export interface CardPresentation {
   /** 主操作位换成状态文字（使用中 / 路由中 / 当前默认 / 已添加…） */
   status?: { label: string; dot: CardTone | "muted" };
   buttons: CardButton[];
+  /** 「更多」菜单最前面、跟当前模式有关的操作（聚合页的「设为默认」） */
+  menuItems?: CardMenuItem[];
   chips: CardChip[];
   /** 整卡淡一些（不能用于当前模式的官方订阅、Hermes 托管） */
   dim?: boolean;
@@ -426,24 +439,33 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
 
   // view === "stack"
   const on = active === "stack";
-  // 进了聚合后「设为默认」当场生效；没进聚合时默认那家在确认框里选，行上只留名单的
-  // 添加 / 移除（只改名单，不切模式）
-  const defaultButtons = (p: Provider): CardButton[] =>
-    on
-      ? [
-          {
-            key: "setDefault",
-            label: t("providerCard.action.setDefault"),
-            onClick: () => actions.stackSetDefault(p),
-          },
-        ]
-      : [];
   const defaultId = (() => {
     const candidate = on ? routeId : (routeId ?? directId);
     const p = providers.find((x) => x.id === candidate);
     return p && !blockedFromRouting(app, p) ? p.id : null;
   })();
   const defaultProvider = providers.find((p) => p.id === defaultId);
+  // 行上的主操作只有名单的添加 / 移除；「设为默认」在「更多」菜单里：进了聚合当场生效，
+  // 在直连时只记下选择（切换时的确认框里还能改）。正在路由时不能点：默认和路由目标是同一个
+  // 指针，改了就是当场换路由。官方账号只能做默认、不能做成员（Codex）：默认从它换成别家，
+  // 官方订阅的模型就不在聚合里了，后果写在菜单项上
+  const defaultIsOfficial =
+    defaultProvider !== undefined && official(defaultProvider);
+  const setDefaultItems = (p: Provider): CardMenuItem[] => [
+    {
+      key: "setDefault",
+      label: t("providerCard.action.setDefault"),
+      detail:
+        defaultIsOfficial && !official(p)
+          ? t("providerCard.reason.defaultDropsOfficial")
+          : undefined,
+      disabledReason:
+        active === "route"
+          ? t("providerCard.reason.defaultWhileRouting")
+          : undefined,
+      onSelect: () => actions.stackSetDefault(p),
+    },
+  ];
   const memberIds = providers
     .filter((p) => p.id !== defaultId && stackMembers.has(p.id))
     .map((p) => p.id);
@@ -498,8 +520,8 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
       provider: p,
       presentation: {
         chips: [modelsChip(p)],
+        menuItems: setDefaultItems(p),
         buttons: [
-          ...defaultButtons(p),
           {
             key: "remove",
             label: t("providerCard.action.remove"),
@@ -525,8 +547,8 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
           provider: p,
           presentation: {
             chips: [chip.official()],
+            menuItems: setDefaultItems(p),
             buttons: [
-              ...defaultButtons(p),
               {
                 key: "add",
                 label: t("providerCard.action.add"),
@@ -541,6 +563,8 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
         provider: p,
         presentation: {
           chips: providerNeedsRouting(app, p) ? [chip.needsRoute(p)] : [],
+          // 还没添加的也能直接设为默认：后端会把默认那家一起加进名单
+          menuItems: setDefaultItems(p),
           buttons: [
             {
               key: "add",

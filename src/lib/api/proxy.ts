@@ -58,6 +58,12 @@ export const proxyApi = {
     });
   },
 
+  // 指定路由目标（聚合模式下是默认那家）：直连时只记下来、下次进入路由 / 聚合模式时用它，
+  // 已经在路由 / 聚合模式时当场生效
+  async setProxyRoute(appType: string, providerId: string): Promise<void> {
+    return invoke("set_proxy_route", { appType, providerId });
+  },
+
   // 应用页模式行：生效的模式、路由目标（直连时是上次路由的那家）、直连那家
   async getAppMode(appType: string): Promise<AppModeView> {
     return invoke("get_app_mode", { appType });

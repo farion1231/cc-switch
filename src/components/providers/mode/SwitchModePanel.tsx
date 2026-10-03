@@ -205,6 +205,23 @@ export function SwitchModePanel({
     }
   };
 
+  const rememberDefault = async (provider: Provider) => {
+    try {
+      await proxyApi.setProxyRoute(app, provider.id);
+      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+      toast.success(
+        t("mode.toast.defaultRemembered", { provider: provider.name }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(
+        t("mode.toast.failed", {
+          detail: extractErrorMessage(error) || t("common.unknown"),
+        }),
+      );
+    }
+  };
+
   const switchMode = {
     active,
     view,
@@ -248,7 +265,11 @@ export function SwitchModePanel({
           enabled: false,
         });
       },
-      stackSetDefault: (provider: Provider) => void onSwitch(provider),
+      // 聚合生效时换默认当场生效（同切换供应商）；没生效时只记下选择，切换时的确认框预选它
+      stackSetDefault: (provider: Provider) =>
+        active === "stack"
+          ? void onSwitch(provider)
+          : void rememberDefault(provider),
     },
   };
 

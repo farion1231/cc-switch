@@ -77,6 +77,15 @@ const button = (sections: ProviderSection[], id: string, key: string) => {
   return found;
 };
 
+/** 「更多」菜单里的「设为默认」 */
+const setDefaultItem = (sections: ProviderSection[], id: string) => {
+  const found = item(sections, id).menuItems?.find(
+    (m) => m.key === "setDefault",
+  );
+  if (!found) throw new Error(`no setDefault menu item on ${id}`);
+  return found;
+};
+
 describe("buildSwitchSections — direct", () => {
   it("marks the direct provider in use and asks before switching to one that needs routing", () => {
     const { sections, input } = build({ active: "direct", view: "direct" });
@@ -290,6 +299,7 @@ describe("buildSwitchSections — route", () => {
     for (const id of ["relay", "backup", "converted"]) {
       expect(item(sections, id).buttons).toEqual([]);
       expect(item(sections, id).chips).toEqual([]);
+      expect(item(sections, id).menuItems).toBeUndefined();
     }
     // 不能路由的官方订阅没有按钮可挂原因，原因在「官方」徽标上
     expect(item(sections, "official")).toMatchObject({
@@ -327,17 +337,32 @@ describe("buildSwitchSections — stack", () => {
       key: "models",
       tone: "warning",
     });
+    // 行上只有名单的移除 / 添加；「设为默认」在「更多」菜单里
+    expect(item(sections, "backup").buttons.map((b) => b.key)).toEqual([
+      "remove",
+    ]);
     button(sections, "backup", "remove").onClick();
     expect(input.actions.stackRemove).toHaveBeenCalledWith(backup);
-    button(sections, "backup", "setDefault").onClick();
+    expect(setDefaultItem(sections, "backup")).toMatchObject({
+      label: "providerCard.action.setDefault",
+      detail: undefined,
+      disabledReason: undefined,
+    });
+    setDefaultItem(sections, "backup").onSelect();
     expect(input.actions.stackSetDefault).toHaveBeenCalledWith(backup);
 
     button(sections, "converted", "add").onClick();
     expect(input.actions.stackAdd).toHaveBeenCalledWith(converted);
-    // Claude 官方订阅不能进聚合
+    // 还没添加的也能直接设为默认
+    setDefaultItem(sections, "converted").onSelect();
+    expect(input.actions.stackSetDefault).toHaveBeenCalledWith(converted);
+    // 默认那家自己没有这一项
+    expect(item(sections, "relay").menuItems).toBeUndefined();
+    // Claude 官方订阅不能进聚合，也做不了默认
     expect(button(sections, "official", "blocked").disabledReason).toBe(
       "providerCard.reason.noStack",
     );
+    expect(item(sections, "official").menuItems).toBeUndefined();
   });
 
   it("previews the stack outside Stack mode: rows only edit the list", () => {
@@ -354,11 +379,10 @@ describe("buildSwitchSections — stack", () => {
       tone: undefined,
       status: { label: "providerCard.status.defaultAfterSwitch" },
     });
-    // 默认那家在确认框里选：行上没有「设为默认」，也没有会切模式的按钮
+    // 行上没有会切模式的按钮，只有名单的添加 / 移除
     expect(item(sections, "backup").buttons.map((b) => b.key)).toEqual([
       "remove",
     ]);
-    // 名单的添加 / 移除照旧能点
     expect(item(sections, "converted").buttons.map((b) => b.key)).toEqual([
       "add",
     ]);
@@ -367,6 +391,27 @@ describe("buildSwitchSections — stack", () => {
     button(sections, "backup", "remove").onClick();
     expect(input.actions.stackRemove).toHaveBeenCalledWith(backup);
     expect(input.actions.stackSetDefault).not.toHaveBeenCalled();
+    // 「设为默认」在「更多」菜单里：直连时能点（只记下选择）
+    expect(setDefaultItem(sections, "backup").disabledReason).toBeUndefined();
+    setDefaultItem(sections, "converted").onSelect();
+    expect(input.actions.stackSetDefault).toHaveBeenCalledWith(converted);
+  });
+
+  it("does not let the Stack default change from the preview while routing", () => {
+    // 默认和路由目标是同一个指针：路由中改它就是当场换路由
+    const { sections } = build({
+      active: "route",
+      view: "stack",
+      routeId: "relay",
+      stackMembers: new Map([["backup", 1]]),
+    });
+
+    expect(item(sections, "relay").section).toBe("default");
+    for (const id of ["backup", "converted"]) {
+      expect(setDefaultItem(sections, id).disabledReason).toBe(
+        "providerCard.reason.defaultWhileRouting",
+      );
+    }
   });
 
   it("shows a Codex official account outside Stack mode with only the reason it cannot be added", () => {
@@ -388,6 +433,34 @@ describe("buildSwitchSections — stack", () => {
     expect(button(sections, "account", "add").disabledReason).toBe(
       "providerCard.reason.officialStack",
     );
+    // 它能做默认；默认本来就不是官方账号时，换默认没有额外后果
+    expect(setDefaultItem(sections, "account").detail).toBeUndefined();
+  });
+
+  it("says the official subscription leaves the Stack when the default moves off a Codex official account", () => {
+    const account = provider("account", {
+      category: "official",
+      settingsConfig: { auth: {}, config: "" },
+    });
+    for (const active of ["direct", "stack"] as AppMode[]) {
+      const { sections } = build({
+        app: "codex",
+        active,
+        view: "stack",
+        providers: [account, relay, backup],
+        directId: "relay",
+        routeId: "account",
+        stackMembers: new Map([["relay", 1]]),
+      });
+
+      expect(item(sections, "account").section).toBe("default");
+      // 已添加的、还没添加的第三方都一样：官方账号不做默认就不在聚合里了
+      for (const id of ["relay", "backup"]) {
+        expect(setDefaultItem(sections, id).detail).toBe(
+          "providerCard.reason.defaultDropsOfficial",
+        );
+      }
+    }
   });
 
   it("never lets ChatGPT accounts be added in Codex Stack mode, even legacy cards without a category", () => {
@@ -416,7 +489,7 @@ describe("buildSwitchSections — stack", () => {
     expect(button(sections, "managed", "add").disabledReason).toBe(
       "providerCard.reason.officialStack",
     );
-    button(sections, "managed", "setDefault").onClick();
+    setDefaultItem(sections, "managed").onSelect();
     expect(input.actions.stackSetDefault).toHaveBeenCalledWith(managed);
   });
 });
