@@ -585,7 +585,8 @@ describe("PromptPanel", () => {
     await waitFor(() => {
       expect(onInteractionBlockedChange).toHaveBeenLastCalledWith(true);
     });
-    expect(toggle).toBeDisabled();
+    // 外观上的禁用晚 300ms 出现（useDelayedFlag），拦截本身是立即的
+    await waitFor(() => expect(toggle).toBeDisabled());
     expect(editButton("Harbor Prompt")).toBeDisabled();
     expect(screen.getByRole("button", { name: "prompts.add" })).toBeDisabled();
 
@@ -609,7 +610,9 @@ describe("PromptPanel", () => {
     });
     expect(screen.getByText("prompts.loading")).toBeInTheDocument();
     const add = screen.getByRole("button", { name: "prompts.add" });
-    expect(add).toBeDisabled();
+    fireEvent.click(add);
+    expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
+    await waitFor(() => expect(add).toBeDisabled());
     fireEvent.click(add);
     expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
     expect(mocks.toggleEnabled).not.toHaveBeenCalled();
@@ -710,6 +713,29 @@ describe("PromptPanel", () => {
     expect(mocks.reload).not.toHaveBeenCalled();
   });
 
+  it("keeps controls enabled through a quick focus reload but still blocks clicks", async () => {
+    renderPanel();
+    await waitForPanelReady();
+
+    let resolveReload!: () => void;
+    mocks.reload.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveReload = resolve;
+      }),
+    );
+    fireEvent(window, new Event("focus"));
+    const add = screen.getByRole("button", { name: "prompts.add" });
+    expect(add).not.toBeDisabled();
+    fireEvent.click(add);
+    expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveReload();
+      await Promise.resolve();
+    });
+    expect(add).not.toBeDisabled();
+  });
+
   it.each(["focus", "prompt-imported"])(
     "queues %s reloads while the drawer is open",
     async (trigger) => {
@@ -746,7 +772,11 @@ describe("PromptPanel", () => {
 
     const view = renderPanel();
     await waitFor(() => expect(claudeReload).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole("button", { name: "prompts.add" })).toBeDisabled();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "prompts.add" }),
+      ).toBeDisabled(),
+    );
 
     view.rerenderWith({ appId: "codex" });
     await waitFor(() => expect(codexReload).toHaveBeenCalledTimes(1));

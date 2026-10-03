@@ -5,6 +5,7 @@ import { Notice } from "@/components/ui/notice";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { promptsApi, type AppId, type Prompt } from "@/lib/api";
 import { usePromptActions } from "@/hooks/usePromptActions";
+import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import PromptFormPanel from "./PromptFormPanel";
 import { PromptCopyDialog } from "./PromptCopyDialog";
@@ -86,6 +87,10 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
   const interactionBlocked =
     loading || writePending || isFormOpen || dialogOpen;
   const navigationBlocked = writePending || isFormOpen || dialogOpen;
+  // 外观上的禁用晚 300ms 才出现：点一下启用这类很快的写入不让整列按钮闪一下变灰。
+  // 拦截仍看 interactionBlocked；表单、对话框打开时照常立即禁用。
+  const controlsDisabled =
+    useDelayedFlag(loading || writePending) || isFormOpen || dialogOpen;
 
   useEffect(() => {
     if (open) void reload();
@@ -156,6 +161,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
   const hasExternalPrompt = fileHasContent && activePrompt === undefined;
 
   const handleToggle = (id: string, enabled: boolean) => {
+    if (interactionBlocked) return;
     const before = prompts;
     const target = before[id];
     if (!target) return;
@@ -385,8 +391,9 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
                 activeTab === "templates"
                   ? t("pi.prompts.newTemplate")
                   : t("prompts.add"),
-              disabled: interactionBlocked,
+              disabled: controlsDisabled,
               onClick: () => {
+                if (interactionBlocked) return;
                 if (activeTab === "templates") {
                   templatesRef.current?.openCreate();
                 } else {
@@ -442,7 +449,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
               <Button
                 variant="neutral"
                 size="compact"
-                disabled={interactionBlocked}
+                disabled={controlsDisabled}
                 onClick={handleImport}
               >
                 {t("pi.prompts.saveToLibrary")}
@@ -469,7 +476,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
               app="pi"
               displayPath={displayPath}
               fileText={fileText}
-              disabled={interactionBlocked}
+              disabled={controlsDisabled}
               onImport={handleImport}
               onAdd={() => openGlobalPromptForm()}
             />
@@ -479,7 +486,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
             prompts={prompts}
             searchQuery={searchQuery}
             listLabel={t("pi.prompts.libraryLabel")}
-            disabled={interactionBlocked}
+            disabled={controlsDisabled}
             onClearSearch={() => setSearchQuery("")}
             onToggle={handleToggle}
             onEdit={openGlobalPromptForm}

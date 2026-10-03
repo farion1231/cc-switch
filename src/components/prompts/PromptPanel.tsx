@@ -4,6 +4,7 @@ import { toast } from "@/lib/toast";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { promptsApi, type AppId, type Prompt } from "@/lib/api";
 import { usePromptActions } from "@/hooks/usePromptActions";
+import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import PiPromptPanel from "./PiPromptPanel";
 import PromptFormPanel from "./PromptFormPanel";
@@ -76,6 +77,12 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   const interactionBlocked =
     loading || reloadPending || writePending || isFormOpen || dialogOpen;
   const navigationBlocked = writePending || isFormOpen || dialogOpen;
+  // 外观上的禁用晚 300ms 才出现：切回窗口时的重读、点一下启用这类很快的操作，
+  // 不让整列按钮闪一下变灰。拦截仍看 interactionBlocked 和写锁；表单、对话框打开时照常立即禁用。
+  const controlsDisabled =
+    useDelayedFlag(loading || reloadPending || writePending) ||
+    isFormOpen ||
+    dialogOpen;
 
   useEffect(() => {
     onInteractionBlockedChange?.(interactionBlocked);
@@ -493,7 +500,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       primary={{
         label: t("prompts.add"),
         onClick: handleAdd,
-        disabled: interactionBlocked,
+        disabled: controlsDisabled,
       }}
       moreItems={moreItems(
         {
@@ -531,7 +538,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
             app={appId}
             displayPath={displayPath}
             fileText={fileText}
-            disabled={interactionBlocked}
+            disabled={controlsDisabled}
             onImport={() => void handleImport()}
             onAdd={handleAdd}
           />
@@ -541,7 +548,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
           prompts={prompts}
           searchQuery={searchQuery}
           listLabel={t("prompts.listLabel", { app: APP_DISPLAY_NAME[appId] })}
-          disabled={interactionBlocked}
+          disabled={controlsDisabled}
           onClearSearch={() => setSearchQuery("")}
           onToggle={(id, enabled) => void handleToggle(id, enabled)}
           onEdit={handleEdit}
