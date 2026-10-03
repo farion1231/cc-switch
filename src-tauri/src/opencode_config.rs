@@ -184,6 +184,13 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
         .unwrap_or_default())
 }
 
+/// 获取单个供应商的 live 节点片段（即 DB settingsConfig 的原文）。
+/// 契约对齐 `openclaw_config::get_provider`：节点缺失（含 live 文件尚未写出）
+/// 返回 `Ok(None)`，配置损坏才返回 `Err`。
+pub fn get_provider(id: &str) -> Result<Option<Value>, AppError> {
+    Ok(get_providers()?.get(id).cloned())
+}
+
 pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     edit_config(get_opencode_config_path, |full_config| {
         if !full_config.get("provider").is_some_and(Value::is_object) {
@@ -348,6 +355,46 @@ mod tests {
         assert!(
             read_opencode_config().is_ok(),
             "a normal object config must still load"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_provider_returns_stored_fragment_and_none_for_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 稀疏节点（built-in 覆盖形态，无 npm/models）也要原样返回
+        let fragment = json!({"options": {"apiKey": "{env:OPENCODE_API_KEY}"}});
+        set_provider("opencode-go", fragment.clone()).expect("set provider");
+
+        assert_eq!(get_provider("opencode-go").expect("get"), Some(fragment));
+        assert_eq!(
+            get_provider("not-written").expect("get missing"),
+            None,
+            "missing node must be Ok(None), not an error"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_provider_treats_missing_file_and_broken_section_as_absent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // live 文件尚未写出（如 DB 经网盘同步到新机）→ 空配置 → Ok(None)，
+        // 前端据此回退 DB 快照且允许保存
+        assert_eq!(get_provider("any").expect("no file yet"), None);
+
+        // provider 键损坏（非对象）沿用 get_providers 的宽容语义按"无节点"
+        // 处理——保存路径 set_provider 会自行归一化；只有根不是对象才 Err
+        write_config(temp.path(), "{\"provider\": []}");
+        assert_eq!(get_provider("any").expect("lenient"), None);
+
+        write_config(temp.path(), "[]");
+        assert!(
+            get_provider("any").is_err(),
+            "non-object root must error, mirroring read_opencode_config"
         );
     }
 
