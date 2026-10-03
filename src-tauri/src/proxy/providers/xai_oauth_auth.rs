@@ -480,6 +480,11 @@ impl XaiOAuthManager {
         Ok(())
     }
 
+    /// 失效指定账号的内存 access_token 缓存（例如上游返回 401 Unauthorized 时）
+    pub async fn invalidate_cached_token(&self, account_id: &str) {
+        self.access_tokens.write().await.remove(account_id);
+    }
+
     async fn discover_endpoints(&self) -> Result<OAuthEndpoints, XaiOAuthError> {
         if let Some(endpoints) = self.discovered_endpoints.read().await.clone() {
             return Ok(endpoints);
@@ -1351,5 +1356,23 @@ mod tests {
         assert!(manager.list_accounts().await.is_empty());
         assert!(manager.access_tokens.read().await.is_empty());
         assert!(!data_dir.path().join("xai_oauth_auth.json").exists());
+    }
+
+    #[tokio::test]
+    async fn invalidate_cached_token_removes_token_from_memory() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let cached_token = CachedAccessToken {
+            token: "cached-access-token".to_string(),
+            expires_at_ms: chrono::Utc::now().timestamp_millis() + 3_600_000,
+        };
+        manager
+            .access_tokens
+            .write()
+            .await
+            .insert("acc-1".to_string(), cached_token);
+        assert!(manager.access_tokens.read().await.contains_key("acc-1"));
+        manager.invalidate_cached_token("acc-1").await;
+        assert!(!manager.access_tokens.read().await.contains_key("acc-1"));
     }
 }

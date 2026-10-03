@@ -31,6 +31,15 @@ describe("isTransientUsageError", () => {
       true,
     );
     expect(isTransientUsageError(fail("读取响应失败: eof"))).toBe(true);
+    expect(
+      isTransientUsageError(
+        fail("xAI OAuth token unavailable: 网络错误: 连接超时"),
+      ),
+    ).toBe(true);
+    expect(isTransientUsageError(fail("网络错误: 连接重置"))).toBe(true);
+    expect(
+      isTransientUsageError(fail("OAuth token unavailable: timed out")),
+    ).toBe(true);
   });
 
   it("确定性失败 → 非瞬时（false），必须立即透出", () => {
