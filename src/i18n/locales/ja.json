@@ -3856,6 +3856,7 @@
       "routeTo": "転送先",
       "stackDefault": "既定のプロバイダー",
       "officialOption": "{{name}}（公式）",
+      "stackOfficialNote": "公式アカウントは既定にしかできません。別のプロバイダーを既定にすると、公式サブスクリプションのモデルは集約に入りません。",
       "routeNoteFile": "{{file}} のアドレスとキーを書き換えます。本物のキーは CC Switch に残り、ほかの設定は変わりません。",
       "routeNoteSwitch": "以後「ルーティング」タブでプロバイダーを変えても設定ファイルは書き換えません。",
       "routeNoteKeepRunning": "CC Switch を起動したままにしてください。終了時に直接接続へ書き戻し、次回起動時に再接続します。",
@@ -3891,7 +3892,6 @@
     "action": {
       "switch": "切り替え",
       "routeHere": "ここへ転送",
-      "startRouteFrom": "ここからルーティング開始",
       "backToDirectAndUse": "直接接続に戻して使う",
       "addToQueue": "キューに追加",
       "removeFromQueue": "キューから外す",
@@ -3903,8 +3903,7 @@
       "edit": "{{name}} を編集",
       "more": "{{name}} のその他の操作",
       "moveUp": "{{name}} を上へ",
-      "moveDown": "{{name}} を下へ",
-      "startStackFrom": "ここを既定にして集約を開始"
+      "moveDown": "{{name}} を下へ"
     },
     "chip": {
       "official": "公式",
@@ -3944,7 +3943,7 @@
       "addedHelp": "追加したプロバイダーはすべて {{app}} の設定に書き込まれます。モデルは {{app}} の中で選びます。",
       "addedEmpty": "まだプロバイダーを追加していません。",
       "available": "追加できるもの · {{count}}",
-      "stackNoDefault": "既定のプロバイダーはまだありません。下から選んで「ここを既定にして集約を開始…」を押してください。"
+      "stackNoDefault": "既定のプロバイダーはまだありません。集約に切り替えるときに選びます。"
     }
   },
   "desktopAccess": {

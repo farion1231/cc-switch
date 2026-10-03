@@ -226,10 +226,6 @@ export function SwitchModePanel({
         }),
       exitAndUse,
       routeTo: (provider: Provider) => void onSwitch(provider),
-      startRouteFrom: (provider: Provider) =>
-        setDialog({ kind: "enter", target: "route", pick: provider.id }),
-      startStackFrom: (provider: Provider) =>
-        setDialog({ kind: "enter", target: "stack", pick: provider.id }),
       queueAdd: (provider: Provider) =>
         addToQueue.mutate({ appType: app, providerId: provider.id }),
       queueRemove: (provider: Provider) =>
@@ -464,7 +460,7 @@ export function SwitchModePanel({
                     directProviderId: directId,
                     providerName: nameOf(directId),
                   })
-                : setDialog({ kind: "enter", target: view, pick: null })
+                : setDialog({ kind: "enter", target: view })
             }
           >
             {cta}
@@ -524,11 +520,9 @@ export function SwitchModePanel({
         active={active}
         providers={providerList}
         eligibleIds={eligibleIds}
-        defaultPick={{
-          route: routeId,
-          stack: active === "stack" ? routeId : (routeId ?? directId),
-        }}
-        stackMembers={otherMembers.map((member) => ({
+        defaultPick={routeId ?? directId}
+        stackMembers={(stack?.members ?? []).map((member) => ({
+          id: member.providerId,
           name: nameOf(member.providerId),
           models: member.modelIds.length,
         }))}
