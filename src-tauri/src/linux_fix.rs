@@ -41,6 +41,12 @@ const RECONCILE_WAIT: Duration = Duration::from_millis(500);
 /// 调用是 fire-and-forget：内部 spawn 一个异步任务在 ~250ms 后完成。
 /// 调用线程立即返回，不阻塞 UI。
 pub(crate) fn nudge_main_window(window: WebviewWindow) {
+    // 先把超出所在显示器物理尺寸的窗口钳回边界:window-state 恢复的
+    // 膨胀尺寸会被合成器整体钳制成"假最大化",且让下面 ±1px 回写
+    // 把坏值原样存回。先对账,nudge 读到的就是修正后的尺寸。
+    // (见 window_state_guard 模块文档)
+    crate::window_state_guard::reconcile_window_to_monitor(&window);
+
     // 第一次 set_focus：webview 可能还没 realize，这一次通常是无效的，
     // 但成本极低（线程安全，内部 run_on_main_thread），顺手做掉。
     let _ = window.set_focus();
@@ -110,6 +116,11 @@ pub(crate) fn nudge_main_window(window: WebviewWindow) {
                         log::warn!("Linux nudge: 对账回读 inner_size 失败: {e}");
                     }
                 }
+
+                // nudge 序列完成、scale 缓存已稳定后,按状态文件里的逻辑像素
+                // 重新应用窗口尺寸,修正插件在窗口创建早期恢复出的错误尺寸
+                // (window_state_guard 的不动点方案,见该模块文档)。
+                crate::window_state_guard::reapply_saved_size(&window);
             }
             Err(e) => {
                 // 极罕见的失败路径；只做了 set_focus 也比什么都不做强，
