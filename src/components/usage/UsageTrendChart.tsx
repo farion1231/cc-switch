@@ -12,9 +12,13 @@ import {
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useUsageTrends } from "@/lib/query/usage";
 import { Loader2 } from "lucide-react";
-import { getLocaleFromLanguage, parseFiniteNumber } from "./format";
+import {
+  fmtInt,
+  fmtUsd,
+  getLocaleFromLanguage,
+  parseFiniteNumber,
+} from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
-import { UsageTooltipCard } from "./UsageTooltipCard";
 import type { UsageRangeSelection } from "@/types/usage";
 
 interface UsageTrendChartProps {
@@ -90,9 +94,8 @@ export function buildUsageTrendChartData(
           })
         : pointDate.toLocaleDateString(dateLocale, {
             year: "numeric",
-            month: "long",
-            day: "numeric",
-            weekday: "short",
+            month: "2-digit",
+            day: "2-digit",
           });
       const label = isHourly
         ? pointDate.toLocaleString(dateLocale, {
@@ -176,7 +179,7 @@ export function UsageTrendChart({
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
-  const [metric, setMetric] = useState<TrendMetric>("tokens");
+  const [metric, setMetric] = useState<TrendMetric>("requests");
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
     range,
@@ -214,23 +217,31 @@ export function UsageTrendChart({
         ? t("usage.trend.tokens")
         : t("usage.trend.cost");
 
+  const formatMetric = (value: unknown) =>
+    metric === "cost" ? fmtUsd(value, 4) : fmtInt(value, dateLocale);
   const formatYTick = (value: unknown) =>
     metric === "cost"
       ? `$${parseFiniteNumber(value) ?? 0}`
       : formatUsageTrendTokenTickLabel(value, tokenTickFormatter);
 
-  // 悬停时 Token、请求、费用一起看，不管当前画的是哪个指标
   const renderTooltip = ({ active, payload }: any) => {
     if (!active || !payload || payload.length === 0) return null;
     const point = payload[0]?.payload as UsageTrendChartPoint | undefined;
-    if (!point) return null;
+    const heading = point?.tooltipLabel ?? point?.label ?? "";
     return (
-      <UsageTooltipCard
-        heading={point.tooltipLabel ?? point.label}
-        tokens={point.tokens}
-        requests={point.requests}
-        cost={point.cost}
-      />
+      <div className="rounded-[8px] border border-border bg-surface px-3 py-2 text-caption text-fg-1 shadow-v7-md">
+        <p className="mb-1 font-semibold">{heading}</p>
+        <div className="flex items-center gap-2 tabular-nums">
+          <span
+            aria-hidden="true"
+            className="h-2 w-2 rounded-[2px] bg-chart-1"
+          />
+          <span className="text-fg-2">{metricLabel}</span>
+          <span className="ms-auto ps-3">
+            {formatMetric(point ? point[metric] : payload[0]?.value)}
+          </span>
+        </div>
+      </div>
     );
   };
 
@@ -263,8 +274,8 @@ export function UsageTrendChart({
           value={metric}
           onValueChange={setMetric}
           items={[
-            { value: "tokens", label: t("usage.trend.tokens") },
             { value: "requests", label: t("usage.trend.requests") },
+            { value: "tokens", label: t("usage.trend.tokens") },
             { value: "cost", label: t("usage.trend.cost") },
           ]}
         />

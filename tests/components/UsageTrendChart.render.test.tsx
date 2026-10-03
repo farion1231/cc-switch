@@ -39,8 +39,8 @@ describe("UsageTrendChart (single metric)", () => {
     );
 
     const legend = screen.getByTestId("usage-trend-legend");
-    // 默认「Tokens」，且不再有第二条「成本（右轴）」图例
-    expect(legend).toHaveTextContent("usage.trend.tokens");
+    // 默认「请求」，且不再有第二条「成本（右轴）」图例
+    expect(legend).toHaveTextContent("usage.trend.requestsLegend");
     expect(screen.queryByText(/usage.trend.costLine/)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "usage.trend.cost" }));
@@ -49,10 +49,10 @@ describe("UsageTrendChart (single metric)", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "usage.trend.requests" }),
+      screen.getByRole("button", { name: "usage.trend.tokens" }),
     );
     expect(screen.getByTestId("usage-trend-legend")).toHaveTextContent(
-      "usage.trend.requestsLegend",
+      "usage.trend.tokens",
     );
   });
 });

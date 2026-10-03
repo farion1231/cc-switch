@@ -5,18 +5,14 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useUsageTrends } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import type { UsageRangeSelection } from "@/types/usage";
-import {
-  formatTokensShort,
-  getLocaleFromLanguage,
-  parseFiniteNumber,
-} from "./format";
+import { getLocaleFromLanguage, parseFiniteNumber } from "./format";
 import type { UsageTrendStatLike } from "./UsageTrendChart";
 import { UsageTooltipCard } from "./UsageTooltipCard";
 
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** 0 档用底色，1–4 档是同一绿色的不同透明度，深浅色模式都能看清 */
-const LEVEL_ALPHA = [0, 0.3, 0.5, 0.75, 1];
+/** 0 档用底色，1–4 档是趋势图同色（chart-1）的不同浓度，深浅色模式都能看清 */
+const LEVEL_PERCENT = [0, 30, 50, 75, 100];
 
 type HeatMetric = "tokens" | "requests" | "cost";
 
@@ -99,14 +95,13 @@ function levelOf(value: number, thresholds: number[]): number {
 function cellStyle(level: number) {
   return level === 0
     ? undefined
-    : { backgroundColor: `rgb(34 197 94 / ${LEVEL_ALPHA[level]})` };
+    : {
+        backgroundColor: `color-mix(in srgb, var(--chart-1) ${LEVEL_PERCENT[level]}%, transparent)`,
+      };
 }
 
-/**
- * 最近 53 周的按天数据。热力图和日期小卡片共用：起点按天取整，查询键相同，
- * 同时挂载也只发一次请求。
- */
-export function useYearDailyTrends(
+/** 最近 53 周的按天数据：起点按天取整，同一天内查询键不变。 */
+function useYearDailyTrends(
   filters: { appType?: string; providerName?: string; model?: string },
   refreshIntervalMs: number,
 ) {
@@ -336,7 +331,7 @@ export function UsageHeatmap({
 
       <div className="mt-2 flex items-center justify-end gap-1.5 text-badge text-fg-3">
         {t("usage.heatmap.less")}
-        {LEVEL_ALPHA.map((_, level) => (
+        {LEVEL_PERCENT.map((_, level) => (
           <span
             key={level}
             className={cn(
@@ -349,124 +344,5 @@ export function UsageHeatmap({
         {t("usage.heatmap.more")}
       </div>
     </section>
-  );
-}
-
-/**
- * 日期小卡片：今天、本周、本月、近 7 天日均、连续使用天数。数据和热力图同源
- * （最近 53 周按天），不跟着顶部时间范围走；放在趋势图 / 热力图下面。
- */
-export function UsageDayTiles({
-  appType,
-  providerName,
-  model,
-  refreshIntervalMs,
-}: UsageHeatmapProps) {
-  const { t, i18n } = useTranslation();
-  const language = i18n.resolvedLanguage || i18n.language || "en";
-  const { data: trends } = useYearDailyTrends(
-    { appType, providerName, model },
-    refreshIntervalMs,
-  );
-
-  const stats = useMemo(() => {
-    const days = buildWeeks(trends, "tokens")
-      .flat()
-      .filter((cell) => !cell.future);
-    const today = startOfDay(new Date());
-    const sum = (cells: DayCell[]) =>
-      cells.reduce((total, cell) => total + cell.tokens, 0);
-    const todayIdx = days.length - 1;
-    const todayCell = days[todayIdx];
-    const weekStart = today.getTime() - weekdayIndex(today) * DAY_MS;
-    const last7 = days.slice(-7);
-    const prev7 = days.slice(-14, -7);
-    const avg7 = sum(last7) / 7;
-    const prevAvg7 = sum(prev7) / 7;
-
-    // 连续天数：今天还没用也不算断，从昨天往回数
-    let streak = 0;
-    let i = todayCell?.requests > 0 ? todayIdx : todayIdx - 1;
-    for (; i >= 0 && days[i].requests > 0; i--) streak++;
-
-    return {
-      today: todayCell?.tokens ?? 0,
-      week: sum(days.filter((cell) => cell.date.getTime() >= weekStart)),
-      month: sum(
-        days.filter(
-          (cell) =>
-            cell.date.getMonth() === today.getMonth() &&
-            cell.date.getFullYear() === today.getFullYear(),
-        ),
-      ),
-      monthLabel: today.toLocaleDateString(getLocaleFromLanguage(language), {
-        month: "long",
-      }),
-      avg7,
-      change: prevAvg7 > 0 ? (avg7 - prevAvg7) / prevAvg7 : null,
-      streak,
-      activeDays: days.filter((cell) => cell.requests > 0).length,
-    };
-  }, [trends, language]);
-
-  const tokens = (value: number) => formatTokensShort(value, language);
-  const tiles: Array<{ label: string; value: string; hint?: React.ReactNode }> =
-    [
-      { label: t("usage.heatmap.today"), value: tokens(stats.today) },
-      {
-        label: t("usage.heatmap.week"),
-        value: tokens(stats.week),
-        hint: t("usage.heatmap.weekHint"),
-      },
-      {
-        label: t("usage.heatmap.month"),
-        value: tokens(stats.month),
-        hint: stats.monthLabel,
-      },
-      {
-        label: t("usage.heatmap.avg7"),
-        value: tokens(stats.avg7),
-        hint:
-          stats.change == null ? undefined : (
-            <span>
-              <span
-                className={
-                  stats.change >= 0 ? "text-success-text" : "text-danger-text"
-                }
-              >
-                {stats.change >= 0 ? "↑" : "↓"}{" "}
-                {Math.abs(Math.round(stats.change * 100))}%
-              </span>{" "}
-              {t("usage.heatmap.vsPrev")}
-            </span>
-          ),
-      },
-      {
-        label: t("usage.heatmap.streak"),
-        value: t("usage.heatmap.days", { count: stats.streak }),
-        hint: t("usage.heatmap.activeDays", { count: stats.activeDays }),
-      },
-    ];
-
-  return (
-    <div
-      data-testid="usage-day-tiles"
-      className="grid shrink-0 grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5"
-    >
-      {tiles.map((tile) => (
-        <div
-          key={tile.label}
-          className="rounded-[14px] border border-border bg-surface px-5 py-4"
-        >
-          <div className="text-[14px] text-fg-3">{tile.label}</div>
-          <div className="mt-2 text-[24px] font-light leading-[1.2] tabular-nums text-fg-1">
-            {tile.value}
-          </div>
-          <div className="mt-1 min-h-[18px] text-caption text-fg-3">
-            {tile.hint}
-          </div>
-        </div>
-      ))}
-    </div>
   );
 }

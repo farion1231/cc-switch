@@ -51,13 +51,11 @@ import { PricingConfigPanel } from "./PricingConfigPanel";
 import { RequestDetailPanel } from "./RequestDetailPanel";
 import { UsageDataSourcesSheet } from "./UsageDataSourcesSheet";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
-import { UsageDayTiles, UsageHeatmap } from "./UsageHeatmap";
+import { UsageHeatmap } from "./UsageHeatmap";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 
 const DEFAULT_REFRESH_INTERVAL_MS = 30000;
-// 新日志写入时后端会推事件让查询立刻失效，轮询只是兜底，不需要 5 / 10 秒这么密；
-// 以前存下的 5 / 10 秒在 normalizeRefreshInterval 里回落到默认 30 秒。
-const REFRESH_INTERVAL_OPTIONS_MS = [0, 30000, 60000, 120000] as const;
+const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
 type RefreshIntervalOption = (typeof REFRESH_INTERVAL_OPTIONS_MS)[number];
 
 const isRefreshIntervalOption = (
@@ -158,9 +156,8 @@ export function UsageDashboard({
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  // 默认看最近 24 小时（按小时分桶），跨零点也能看到连续的用量
   const [range, setRange] = useState<UsageRangeSelection>({
-    preset: "1d",
+    preset: "today",
   });
   const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
   const [providerName, setProviderName] = useState<string | undefined>(
@@ -800,14 +797,6 @@ export function UsageDashboard({
             refreshIntervalMs={refreshIntervalMs}
           />
         )}
-
-        {/* 今天 / 本周 / 本月 / 近 7 天 / 连续天数：不随时间范围变，两种图下面都显示 */}
-        <UsageDayTiles
-          appType={appType}
-          providerName={providerName}
-          model={model}
-          refreshIntervalMs={refreshIntervalMs}
-        />
 
         {tabsSection}
       </div>
