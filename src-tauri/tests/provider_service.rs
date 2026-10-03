@@ -2579,19 +2579,29 @@ fn switch_claude_moves_compat_switches_with_their_provider() {
     );
 
     ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
-    assert_eq!(claude_live(), json!({ "env": {} }));
+    // 上一家的地址和凭据写成空串而不是删除：热加载中的会话读到空串等于没设，
+    // 切回官方后立即生效（#7808）。
+    assert_eq!(
+        claude_live(),
+        json!({ "env": { "ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "" } })
+    );
 
     ProviderService::switch(&state, AppType::Claude, "deepseek").expect("back to deepseek");
     assert_eq!(claude_live(), deepseek);
 
-    // 用户在 live 里手动改成了 0：不是 CC Switch 写的，切走时保留。
+    // 用户在 live 里手动改成了 0：不是 CC Switch 写的，切走时保留；
+    // live 里缺的上一家关键字段补回空串（进程里可能还留着旧值）。
     let mut edited = claude_live();
     edited["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"] = json!("0");
     std::fs::write(get_claude_settings_path(), edited.to_string()).expect("edit live");
     ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
     assert_eq!(
         claude_live(),
-        json!({ "env": { "CLAUDE_CODE_DISABLE_ARTIFACT": "0" } })
+        json!({ "env": {
+            "CLAUDE_CODE_DISABLE_ARTIFACT": "0",
+            "ANTHROPIC_BASE_URL": "",
+            "ANTHROPIC_AUTH_TOKEN": ""
+        }})
     );
 }
 
@@ -2634,7 +2644,11 @@ fn switch_claude_window_values_follow_the_provider() {
         json!("262144")
     );
     ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
-    assert_eq!(claude_live(), json!({ "env": {} }));
+    // 上一家的地址和凭据写成空串而不是删除（#7808，热加载会话读到空串等于没设）。
+    assert_eq!(
+        claude_live(),
+        json!({ "env": { "ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "" } })
+    );
 
     // 旧版切到早期的 Kimi 行时注入的默认值：上一家的行里查不到。
     ProviderService::switch(&state, AppType::Claude, "old-kimi").expect("to old kimi");
@@ -2643,7 +2657,10 @@ fn switch_claude_window_values_follow_the_provider() {
     live["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = json!("262144");
     std::fs::write(get_claude_settings_path(), live.to_string()).expect("seed injected");
     ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
-    assert_eq!(claude_live(), json!({ "env": {} }));
+    assert_eq!(
+        claude_live(),
+        json!({ "env": { "ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "" } })
+    );
 }
 
 /// live 解析不了：切换报错，文件字节、mtime 和当前供应商都不变。
