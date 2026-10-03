@@ -3,8 +3,8 @@ import type { QuotaTier } from "@/types/subscription";
 
 /**
  * 额度的文字和颜色（v7 QuotaSpec）：一律写「剩余」，平时灰色；任一档剩余不到 10%（余额不到
- * 总额 10%）橙色；用完 / 过期 / 没查到红色。卡片最多两行：档数更多时，第一行固定写窗口
- * 最短的那档，其余并成一行（见 cardRows）。
+ * 总额 10%）加深加粗（不用橙色，见 TONE_TEXT）；用完 / 过期 / 没查到红色。卡片最多两行：
+ * 档数更多时，第一行固定写窗口最短的那档，其余并成一行（见 cardRows）。
  */
 export type QuotaTone = "normal" | "warning" | "danger" | "muted";
 

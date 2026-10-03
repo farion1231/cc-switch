@@ -10,10 +10,14 @@ import {
   type QuotaTone,
 } from "./quotaRules";
 
+/**
+ * 快用完只加深加粗、不用橙色：浅色模式的警告文字和可点击文字（主题橙）几乎同色，
+ * 额度列本身又能点，橙色会被读成「这里可以点」。展开的额度条仍用琥珀色填充
+ */
 export const TONE_TEXT: Record<QuotaTone, string> = {
   normal: "text-fg-2",
   muted: "text-fg-3",
-  warning: "font-medium text-warning-text",
+  warning: "font-medium text-fg-1",
   danger: "font-medium text-danger-text",
 };
 
