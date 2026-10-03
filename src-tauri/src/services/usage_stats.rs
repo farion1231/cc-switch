@@ -118,6 +118,7 @@ pub struct DailyStats {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderStats {
     pub provider_id: String,
+    pub app_type: String,
     pub provider_name: String,
     pub request_count: u64,
     /// 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径。
@@ -1650,6 +1651,7 @@ impl Database {
 
             Ok(ProviderStats {
                 provider_id: row.get(0)?,
+                app_type: row.get(1)?,
                 provider_name: row.get(2)?,
                 request_count: request_count as u64,
                 total_tokens: row.get::<_, i64>(4)? as u64,

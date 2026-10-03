@@ -241,21 +241,31 @@ pub struct ForwardError {
 /// 不需要每条出口路径都手动调用。
 pub(crate) struct ActiveConnectionGuard {
     status: Arc<RwLock<ProxyStatus>>,
-    /// 该条连接实际打到的 provider。None 表示还没选定 provider（入口处即失败）。
-    provider_id: Option<String>,
+    /// 该条连接实际打到的 (app_type, provider_id)。None 表示还没选定 provider
+    /// （入口处即失败）。两者都要：`providers` 的主键是 `(id, app_type)`，
+    /// 只记 id 会把不同应用下同 id 的 provider 混为一谈。
+    provider_binding: Option<(String, String)>,
 }
 
-/// 归还某 provider 名下的一份在飞份额，归零则移除条目（避免 map 随 provider
-/// 增删无限增长）。
+/// 归还某 (app_type, provider_id) 名下的一份在飞份额，归零则移除条目
+/// （避免 map 随 provider 增删无限增长）。
 ///
 /// [`ActiveConnectionGuard::bind_provider`] 与 `Drop` 共用：Drop 不能 await，
 /// 只能把同一段逻辑塞进 spawn 的 future，抽出来才能保证两处语义永远一致。
-fn release_provider_share(status: &mut ProxyStatus, provider_id: &str) {
-    if let Some(count) = status.in_flight_by_provider.get_mut(provider_id) {
-        *count = count.saturating_sub(1);
-        if *count == 0 {
-            status.in_flight_by_provider.remove(provider_id);
+fn release_provider_share(status: &mut ProxyStatus, app_type: &str, provider_id: &str) {
+    let mut inner_empty = false;
+    if let Some(per_provider) = status.in_flight_by_provider.get_mut(app_type) {
+        if let Some(count) = per_provider.get_mut(provider_id) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                per_provider.remove(provider_id);
+            }
+            inner_empty = per_provider.is_empty();
         }
+    }
+    // 外层也清掉，否则「曾经有在飞、现已全结束」的应用会留下一个空 map。
+    if inner_empty {
+        status.in_flight_by_provider.remove(app_type);
     }
 }
 
@@ -267,28 +277,35 @@ impl ActiveConnectionGuard {
         }
         Self {
             status,
-            provider_id: None,
+            provider_binding: None,
         }
     }
 
     /// 在 provider 选定后调用，把这条连接登记到该 provider 名下。
     ///
     /// 幂等：重复调用同一 provider 不会重复计数。
-    pub(crate) async fn bind_provider(&mut self, provider_id: &str) {
-        if self.provider_id.as_deref() == Some(provider_id) {
-            return;
+    pub(crate) async fn bind_provider(&mut self, app_type: &str, provider_id: &str) {
+        if let Some((bound_app, bound_id)) = &self.provider_binding {
+            if bound_app == app_type && bound_id == provider_id {
+                return;
+            }
         }
         // 换 provider（故障转移）：归还旧份额与登记新份额放在同一个写锁临界区，
         // 读方不会看到这条连接「既不在旧家也不在新家」的中间态。
+        let app = app_type.to_string();
         let id = provider_id.to_string();
         {
             let mut s = self.status.write().await;
-            if let Some(previous) = self.provider_id.take() {
-                release_provider_share(&mut s, &previous);
+            if let Some((previous_app, previous_id)) = self.provider_binding.take() {
+                release_provider_share(&mut s, &previous_app, &previous_id);
             }
-            *s.in_flight_by_provider.entry(id.clone()).or_insert(0) += 1;
+            *s.in_flight_by_provider
+                .entry(app.clone())
+                .or_default()
+                .entry(id.clone())
+                .or_insert(0) += 1;
         }
-        self.provider_id = Some(id);
+        self.provider_binding = Some((app, id));
     }
 }
 
@@ -296,20 +313,20 @@ impl Drop for ActiveConnectionGuard {
     fn drop(&mut self) {
         // Drop 不能 await：把减量操作调度到 tokio runtime
         let status = self.status.clone();
-        let provider_id = self.provider_id.take();
+        let provider_binding = self.provider_binding.take();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
                 let mut s = status.write().await;
                 s.active_connections = s.active_connections.saturating_sub(1);
-                if let Some(provider_id) = provider_id {
-                    release_provider_share(&mut s, &provider_id);
+                if let Some((app_type, provider_id)) = provider_binding {
+                    release_provider_share(&mut s, &app_type, &provider_id);
                 }
             });
         }
-        // 没有 runtime 时静默丢失计数：全局 active_connections 会漂移，per-provider
-        // 的条目则要等到代理重启（ProxyStatus 重建）才会消失。仅 UI 展示用，可接受
-        // 最终一致性——guard 全都在代理自身的 future 里 drop，生产路径上取不到
-        // runtime 是不可达的。
+        // 没有 runtime 时静默丢失计数：全局 active_connections 会漂移，
+        // per-provider 的条目则要等到代理重启（ProxyStatus 重建）才会消失。
+        // 仅 UI 展示用，可接受最终一致性——guard 全都在代理自身的 future 里
+        // drop，生产路径上取不到 runtime 是不可达的。
     }
 }
 
@@ -830,7 +847,9 @@ impl RequestForwarder {
 
             // 这条连接从此刻起算在这家 provider 头上（上游请求发出前）。
             // 故障转移到下家时会先把上家的份额还回去，保证同一时刻只计一家。
-            guard.bind_provider(&provider.id).await;
+            // 记 (app_type, provider_id) 而不是只记 id：providers 主键是二元组，
+            // 三个应用各自的 default provider 不是同一个。
+            guard.bind_provider(app_type.as_str(), &provider.id).await;
 
             // PRE-SEND 优化器：每个 provider 独立决定是否优化
             // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
@@ -5823,23 +5842,23 @@ mod tests {
         let mut b = ActiveConnectionGuard::acquire(status.clone()).await;
 
         // 两家 provider 各一条
-        a.bind_provider("p1").await;
-        b.bind_provider("p2").await;
+        a.bind_provider("claude", "p1").await;
+        b.bind_provider("claude", "p2").await;
 
         {
             let s = status.read().await;
             assert_eq!(s.active_connections, 2);
-            assert_eq!(s.in_flight_by_provider.get("p1"), Some(&1));
-            assert_eq!(s.in_flight_by_provider.get("p2"), Some(&1));
+            assert_eq!(s.in_flight_by_provider["claude"]["p1"], 1);
+            assert_eq!(s.in_flight_by_provider["claude"]["p2"], 1);
         }
 
         // 同一 provider 再来一条 → 只累加那一家
         let mut c = ActiveConnectionGuard::acquire(status.clone()).await;
-        c.bind_provider("p1").await;
+        c.bind_provider("claude", "p1").await;
         {
             let s = status.read().await;
-            assert_eq!(s.in_flight_by_provider.get("p1"), Some(&2));
-            assert_eq!(s.in_flight_by_provider.get("p2"), Some(&1));
+            assert_eq!(s.in_flight_by_provider["claude"]["p1"], 2);
+            assert_eq!(s.in_flight_by_provider["claude"]["p2"], 1);
             assert_eq!(s.active_connections, 3);
         }
 
@@ -5848,9 +5867,66 @@ mod tests {
         tokio::task::yield_now().await;
         {
             let s = status.read().await;
-            assert_eq!(s.in_flight_by_provider.get("p1"), Some(&1));
+            assert_eq!(s.in_flight_by_provider["claude"]["p1"], 1);
             assert_eq!(s.active_connections, 2);
         }
+    }
+
+    /// 同一 provider id 在不同应用下必须分开计数。
+    ///
+    /// `providers` 的主键是 (id, app_type)，导入 Claude/Codex/Gemini 配置会
+    /// 各自创建 id 同为 default 的 provider。若只按 id 记账，Claude/default
+    /// 有一条在飞时切到 Codex 统计页也会显示 1。
+    #[tokio::test]
+    async fn in_flight_separates_providers_that_share_an_id_across_apps() {
+        let status = test_status();
+        let mut claude = ActiveConnectionGuard::acquire(status.clone()).await;
+        let mut codex = ActiveConnectionGuard::acquire(status.clone()).await;
+
+        claude.bind_provider("claude", "default").await;
+        codex.bind_provider("codex", "default").await;
+
+        {
+            let s = status.read().await;
+            assert_eq!(s.in_flight_by_provider["claude"]["default"], 1);
+            assert_eq!(s.in_flight_by_provider["codex"]["default"], 1);
+            assert_eq!(s.active_connections, 2);
+        }
+
+        // 只结束 Claude 那条：Codex 的计数必须原样保留，不能被动到。
+        drop(claude);
+        tokio::task::yield_now().await;
+
+        {
+            let s = status.read().await;
+            assert_eq!(
+                s.in_flight_by_provider["codex"]["default"], 1,
+                "另一个应用下同 id provider 的计数不能被误伤"
+            );
+            assert!(
+                !s.in_flight_by_provider.contains_key("claude"),
+                "归零后外层条目也要移除"
+            );
+            assert_eq!(s.active_connections, 1);
+        }
+    }
+
+    /// 两边同时对同 id provider 发请求时，各自看到自己的条数而不是合计。
+    #[tokio::test]
+    async fn in_flight_keeps_concurrent_same_id_requests_apart() {
+        let status = test_status();
+        let mut claude_a = ActiveConnectionGuard::acquire(status.clone()).await;
+        let mut claude_b = ActiveConnectionGuard::acquire(status.clone()).await;
+        let mut codex_a = ActiveConnectionGuard::acquire(status.clone()).await;
+
+        claude_a.bind_provider("claude", "default").await;
+        claude_b.bind_provider("claude", "default").await;
+        codex_a.bind_provider("codex", "default").await;
+
+        let s = status.read().await;
+        assert_eq!(s.in_flight_by_provider["claude"]["default"], 2);
+        assert_eq!(s.in_flight_by_provider["codex"]["default"], 1);
+        assert_eq!(s.active_connections, 3);
     }
 
     #[tokio::test]
@@ -5858,26 +5934,45 @@ mod tests {
         let status = test_status();
         let mut guard = ActiveConnectionGuard::acquire(status.clone()).await;
 
-        guard.bind_provider("p1").await;
+        guard.bind_provider("claude", "p1").await;
         // 故障转移：同一条连接改打 p2，p1 的份额必须先还回去
-        guard.bind_provider("p2").await;
+        guard.bind_provider("claude", "p2").await;
 
         {
             let s = status.read().await;
-            assert_eq!(
-                s.in_flight_by_provider.get("p1"),
-                None,
+            assert!(
+                !s.in_flight_by_provider["claude"].contains_key("p1"),
                 "换 provider 后旧份额必须归还，否则 p1 的计数会永久虚高"
             );
-            assert_eq!(s.in_flight_by_provider.get("p2"), Some(&1));
+            assert_eq!(s.in_flight_by_provider["claude"]["p2"], 1);
             assert_eq!(s.active_connections, 1);
         }
 
         // 重复绑定同一家不得重复计数
-        guard.bind_provider("p2").await;
+        guard.bind_provider("claude", "p2").await;
         {
             let s = status.read().await;
-            assert_eq!(s.in_flight_by_provider.get("p2"), Some(&1));
+            assert_eq!(s.in_flight_by_provider["claude"]["p2"], 1);
+        }
+    }
+
+    /// 故障转移跨应用时，两个应用的分割必须都正确结算。
+    #[tokio::test]
+    async fn in_flight_failover_across_apps_returns_the_old_app_share() {
+        let status = test_status();
+        let mut guard = ActiveConnectionGuard::acquire(status.clone()).await;
+
+        guard.bind_provider("claude", "default").await;
+        guard.bind_provider("codex", "default").await;
+
+        {
+            let s = status.read().await;
+            assert!(
+                !s.in_flight_by_provider.contains_key("claude"),
+                "转移到另一应用后，原应用的份额必须还回去"
+            );
+            assert_eq!(s.in_flight_by_provider["codex"]["default"], 1);
+            assert_eq!(s.active_connections, 1);
         }
     }
 
@@ -5885,14 +5980,14 @@ mod tests {
     async fn in_flight_entry_is_removed_when_the_last_stream_ends() {
         let status = test_status();
         let mut guard = ActiveConnectionGuard::acquire(status.clone()).await;
-        guard.bind_provider("p1").await;
+        guard.bind_provider("claude", "p1").await;
 
         drop(guard);
         tokio::task::yield_now().await;
 
         let s = status.read().await;
         assert!(
-            !s.in_flight_by_provider.contains_key("p1"),
+            !s.in_flight_by_provider.contains_key("claude"),
             "归零后应移除条目，否则 map 会随 provider 增删无限增长"
         );
         assert_eq!(s.active_connections, 0);

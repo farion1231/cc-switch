@@ -27,8 +27,13 @@ export interface ProxyStatus {
   last_error: string | null;
   failover_count: number;
   active_targets?: ActiveTarget[];
-  /** 每个 provider 当前活跃的推理流条数（provider ID → count）。 */
-  in_flight_by_provider?: Record<string, number>;
+  /**
+   * 每个 (app_type, provider_id) 当前活跃的推理流条数。
+   *
+   * 嵌套而非扁平：providers 的主键是 (id, app_type)，三个应用会各自有 id 为
+   * `default` 的 provider，扁平结构会把它们混成一个计数。
+   */
+  in_flight_by_provider?: Record<string, Record<string, number>>;
 }
 
 export interface ActiveTarget {
