@@ -311,15 +311,13 @@ pub fn build_turns(messages: &[SessionMessage]) -> Vec<TurnIndex> {
                     turn.index.step_count += 1;
                     turn.reply_pending = false;
                 }
-                SessionBlock::ToolResult { status, .. } => {
-                    if *status == ToolStatus::Error {
-                        turn.index.error_count += 1;
-                    }
+                SessionBlock::ToolResult { status, .. } if *status == ToolStatus::Error => {
+                    turn.index.error_count += 1;
                 }
-                SessionBlock::Text { text, .. } if message.role == "assistant" => {
-                    if !text.trim().is_empty() {
-                        turn.reply_pending = true;
-                    }
+                SessionBlock::Text { text, .. }
+                    if message.role == "assistant" && !text.trim().is_empty() =>
+                {
+                    turn.reply_pending = true;
                 }
                 SessionBlock::Event {
                     kind: EventKind::Aborted,
