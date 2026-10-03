@@ -27,7 +27,12 @@ export function FirstRunNoticeDialog() {
     if (!settings) return;
     try {
       const { webdavSync: _, ...rest } = settings;
-      await settingsApi.save({ ...rest, firstRunNoticeConfirmed: true });
+      // 新装用户看的就是新界面，「界面改版了」弹窗一并记成已看过
+      await settingsApi.save({
+        ...rest,
+        firstRunNoticeConfirmed: true,
+        newLayoutNoticeConfirmed: true,
+      });
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
     } catch (error) {
       console.error("Failed to save firstRunNoticeConfirmed:", error);

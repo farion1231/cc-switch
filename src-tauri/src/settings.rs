@@ -418,6 +418,9 @@ pub struct AppSettings {
     /// User has confirmed the first-run welcome notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_run_notice_confirmed: Option<bool>,
+    /// User has confirmed the one-time "new layout" dialog shown to upgrading users
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_layout_notice_confirmed: Option<bool>,
     /// User has confirmed the common config first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub common_config_confirmed: Option<bool>,
@@ -553,6 +556,7 @@ impl Default for AppSettings {
             unify_codex_migrate_existing: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
+            new_layout_notice_confirmed: None,
             common_config_confirmed: None,
             language: None,
             visible_apps: None,

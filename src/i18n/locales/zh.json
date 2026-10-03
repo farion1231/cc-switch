@@ -4476,8 +4476,11 @@
     "headerUpdatesClear": "显示全部 Skill",
     "updateAllCount": "全部更新（{{count}} 个）"
   },
-  "coach": {
-    "newLayout": "界面改版了：模式移到了每个应用页的顶部，用量统计和授权中心在左侧边栏。"
+  "newLayoutNotice": {
+    "title": "界面改版了",
+    "body": "CC Switch 这一版重新设计了界面，常用功能的位置有变化：\n• 模式移到了每个应用页的顶部\n• 用量统计和授权中心移到了左侧边栏\n想了解全部变化，可以看看这一版的更新说明。",
+    "viewReleaseNotes": "查看更新说明",
+    "confirm": "我知道了"
   },
   "authCenter": {
     "helpTitle": "授权中心是什么",

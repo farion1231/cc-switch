@@ -4476,8 +4476,11 @@
     "headerUpdatesClear": "すべての Skill を表示",
     "updateAllCount": "すべて更新（{{count}} 件）"
   },
-  "coach": {
-    "newLayout": "画面が新しくなりました：モードは各アプリのページ上部に、使用量とアカウントはサイドバーにあります。"
+  "newLayoutNotice": {
+    "title": "画面が新しくなりました",
+    "body": "このバージョンでは画面を一新し、いくつかの機能の場所が変わりました：\n• モードは各アプリのページ上部に移動しました\n• 使用量とアカウントはサイドバーにあります\n変更点の詳細はリリースノートをご覧ください。",
+    "viewReleaseNotes": "リリースノートを見る",
+    "confirm": "OK"
   },
   "authCenter": {
     "helpTitle": "アカウントとは",

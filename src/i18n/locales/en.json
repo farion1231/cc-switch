@@ -4476,8 +4476,11 @@
     "headerUpdatesClear": "Show all Skills",
     "updateAllCount": "Update all ({{count}})"
   },
-  "coach": {
-    "newLayout": "New layout: modes sit at the top of each app page; Usage and Accounts are in the sidebar."
+  "newLayoutNotice": {
+    "title": "CC Switch has a new look",
+    "body": "This version redesigns the interface, so a few things have moved:\n• Modes now sit at the top of each app page\n• Usage and Accounts are in the sidebar\nSee the release notes for everything that changed.",
+    "viewReleaseNotes": "View release notes",
+    "confirm": "Got it"
   },
   "authCenter": {
     "helpTitle": "What is Accounts?",
