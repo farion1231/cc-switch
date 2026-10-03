@@ -23,6 +23,7 @@ import { ReaderContext, type ReaderContextValue } from "./context";
 import { transcriptToMarkdown, turnToMarkdown } from "./exportMarkdown";
 import { useReaderT } from "./i18n";
 import { SessionEventRow, SessionInjectedRow } from "./SessionEventRow";
+import { SessionAgentAvatar } from "./SessionAgentAvatar";
 import { SessionFinalReply } from "./SessionFinalReply";
 import { SessionQuestion } from "./SessionQuestion";
 import {
@@ -76,6 +77,14 @@ const latestModel = (messages: SessionMessage[]) => {
 };
 
 /** 该轮的执行过程有没有摘要行（规则 5：只有 1 步且没失败时没有） */
+/** 属于 Agent 一侧（靠左、带头像列）的行；提问靠右，事件和分隔线居中 */
+const AGENT_ROW_KINDS: ReadonlySet<ReaderRow["kind"]> = new Set([
+  "timeline",
+  "step",
+  "final",
+  "injected",
+]);
+
 const hasTimelineRow = (turn: SessionTurn) =>
   turn.steps.length > 1 ||
   (turn.steps.length === 1 && isFailureStep(turn.steps[0]));
@@ -203,6 +212,18 @@ export function SessionReader({
       turns,
     ],
   );
+
+  // 左右布局：每轮 Agent 输出的第一行（折叠摘要 / 首个步骤 / 最终回复）左侧挂一次头像
+  const agentStartKeys = useMemo(() => {
+    const keys = new Set<string>();
+    const seen = new Set<number>();
+    for (const row of rows) {
+      if (seen.has(row.turn) || !AGENT_ROW_KINDS.has(row.kind)) continue;
+      seen.add(row.turn);
+      keys.add(row.key);
+    }
+    return keys;
+  }, [rows]);
 
   const findTotal = search?.total ?? 0;
   const findCurrent = findTotal ? Math.min(findIndex, findTotal) : 0;
@@ -427,16 +448,38 @@ export function SessionReader({
     rows.length > 0 &&
     (atBottom === null ? rows.length >= 8 : !atBottom);
 
+  /** Agent 输出一侧：左边 40px 头像列，右边留白和人的气泡错开 */
+  const renderAgentRow = (row: ReaderRow, content: ReactNode): ReactNode => (
+    <div className="relative pe-10 ps-10">
+      {agentStartKeys.has(row.key) && (
+        <span className="absolute start-0 top-0.5">
+          <SessionAgentAvatar />
+        </span>
+      )}
+      {content}
+    </div>
+  );
+
   const renderRow = (row: ReaderRow): ReactNode => {
+    const content = renderRowContent(row);
+    return AGENT_ROW_KINDS.has(row.kind) && content
+      ? renderAgentRow(row, content)
+      : content;
+  };
+
+  const renderRowContent = (row: ReaderRow): ReactNode => {
     const turn = turns[row.turn];
     switch (row.kind) {
       case "question":
+        // 人的输入靠右，气泡最宽 85%，左边留出 Agent 侧的空间
         return turn.question ? (
-          <div className="pb-2">
-            <SessionQuestion
-              question={turn.question}
-              forceExpanded={row.forceExpanded}
-            />
+          <div className="flex justify-end pb-3 ps-12">
+            <div className="min-w-0 max-w-[85%]">
+              <SessionQuestion
+                question={turn.question}
+                forceExpanded={row.forceExpanded}
+              />
+            </div>
           </div>
         ) : null;
       case "timeline":

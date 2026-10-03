@@ -63,8 +63,8 @@ export interface SessionQuestionProps {
 }
 
 /**
- * 提问卡：左侧 3px Agent 主题色竖条、bg-subtle；纯文本 + 围栏代码（决策 D7），
- * 贴图缩略图，复制按钮悬停出现。
+ * 提问气泡：靠右显示（左右对话布局），底色是 Agent 主题色的淡色，右上角收小做出气泡尖角；
+ * 纯文本 + 围栏代码（决策 D7），贴图缩略图，复制按钮悬停出现。
  */
 export const SessionQuestion = memo(function SessionQuestion({
   question,
@@ -82,12 +82,40 @@ export const SessionQuestion = memo(function SessionQuestion({
       : text;
 
   return (
-    <div className="group/question relative min-w-0 rounded-panel bg-subtle py-2.5 pe-3 ps-4">
-      <span
-        aria-hidden
-        className="absolute inset-y-2.5 start-0 w-[3px] rounded-full bg-[var(--reader-accent)]"
-      />
-      <div className="flex h-6 items-center gap-1.5">
+    <div
+      className="group/question relative min-w-0 rounded-[14px] rounded-se-[4px] border border-border px-3.5 py-2.5"
+      style={{
+        // 主题色淡淡铺一层，深浅色下都能和 Agent 一侧的无底色内容区分开
+        background:
+          "color-mix(in srgb, var(--reader-accent) 10%, var(--bg-card))",
+      }}
+    >
+      <div className="flex h-6 items-center justify-end gap-1.5">
+        <HoverTip
+          content={t("sessionManager.copyShort", { defaultValue: "复制" })}
+        >
+          <button
+            type="button"
+            aria-label={t("sessionManager.copyQuestion", {
+              defaultValue: "复制这条提问",
+            })}
+            onClick={() =>
+              onCopy(
+                text,
+                t("sessionManager.messageCopied", {
+                  defaultValue: "已复制这条消息",
+                }),
+              )
+            }
+            className={cn(
+              rowIconButton,
+              "-ms-1 group-hover/question:opacity-100",
+            )}
+          >
+            <Copy aria-hidden className="h-3.5 w-3.5" strokeWidth={1.5} />
+          </button>
+        </HoverTip>
+        <div className="flex-1" />
         {style.userGlyph && (
           <span
             aria-hidden
@@ -108,31 +136,6 @@ export const SessionQuestion = memo(function SessionQuestion({
             {formatClock(question.ts)}
           </time>
         ) : null}
-        <div className="flex-1" />
-        <HoverTip
-          content={t("sessionManager.copyShort", { defaultValue: "复制" })}
-        >
-          <button
-            type="button"
-            aria-label={t("sessionManager.copyQuestion", {
-              defaultValue: "复制这条提问",
-            })}
-            onClick={() =>
-              onCopy(
-                text,
-                t("sessionManager.messageCopied", {
-                  defaultValue: "已复制这条消息",
-                }),
-              )
-            }
-            className={cn(
-              rowIconButton,
-              "-me-1 group-hover/question:opacity-100",
-            )}
-          >
-            <Copy aria-hidden className="h-3.5 w-3.5" strokeWidth={1.5} />
-          </button>
-        </HoverTip>
       </div>
       {text && (
         <SessionPlainText
