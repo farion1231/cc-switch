@@ -368,6 +368,7 @@ impl McpService {
                     let to_save = if let Some(existing_server) = existing.get(&server.id) {
                         let mut merged = existing_server.clone();
                         merged.apps.claude = true;
+                        merged.server = server.server.clone();
                         merged
                     } else {
                         // 真正的新服务器
@@ -406,6 +407,7 @@ impl McpService {
                     let to_save = if let Some(existing_server) = existing.get(&server.id) {
                         let mut merged = existing_server.clone();
                         merged.apps.codex = true;
+                        merged.server = server.server.clone();
                         merged
                     } else {
                         // 真正的新服务器
@@ -444,6 +446,7 @@ impl McpService {
                     let to_save = if let Some(existing_server) = existing.get(&server.id) {
                         let mut merged = existing_server.clone();
                         merged.apps.gemini = true;
+                        merged.server = server.server.clone();
                         merged
                     } else {
                         // 真正的新服务器
@@ -476,6 +479,7 @@ impl McpService {
                     let to_save = if let Some(existing_server) = existing.get(&server.id) {
                         let mut merged = existing_server.clone();
                         merged.apps.grokbuild = true;
+                        merged.server = server.server.clone();
                         merged
                     } else {
                         new_count += 1;
@@ -508,6 +512,7 @@ impl McpService {
                     let to_save = if let Some(existing_server) = existing.get(&server.id) {
                         let mut merged = existing_server.clone();
                         merged.apps.opencode = true;
+                        merged.server = server.server.clone();
                         merged
                     } else {
                         // 真正的新服务器
@@ -546,6 +551,7 @@ impl McpService {
                     let to_save = if let Some(existing_server) = existing.get(&server.id) {
                         let mut merged = existing_server.clone();
                         merged.apps.hermes = true;
+                        merged.server = server.server.clone();
                         merged
                     } else {
                         // 真正的新服务器
