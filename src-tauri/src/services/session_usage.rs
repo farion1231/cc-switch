@@ -150,6 +150,16 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "MCode",
         crate::services::session_usage_mcode::sync_mcode_usage(db),
     );
+    merge_sync_step(
+        &mut result,
+        "VS Code Copilot",
+        crate::services::session_usage_vscode::sync_vscode_copilot_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
+        "Copilot CLI",
+        crate::services::session_usage_copilot_cli::sync_copilot_cli_usage(db),
+    );
     notify_sync_result(&result);
     result
 }

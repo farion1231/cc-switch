@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### The All-in-One Manager for Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes Agent, Pi & MiniMax Code
+### The All-in-One Manager for Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, VS Code Copilot, GitHub Copilot CLI, OpenClaw, Hermes Agent, Pi & MiniMax Code
 
 **Switch API providers in one click and manage MCP, Skills, and Prompts in one place — no more hand-editing JSON / TOML / YAML config files.**
 
@@ -215,7 +215,7 @@ AI coding tools like Claude Code, Codex, and Gemini CLI each have their own conf
 
 **CC Switch** brings all of this into a single desktop app: pick a preset, enter your key, and switch in one click, without losing your existing configuration.
 
-- **One App, Ten Tools** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, Pi, and MiniMax Code
+- **One App, Twelve Tools** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, VS Code Copilot, GitHub Copilot CLI, OpenClaw, Hermes, Pi, and MiniMax Code
 - **No More Manual Editing** — 90+ provider presets including AWS Bedrock, NVIDIA NIM, and community relays
 - **Use GPT in Claude Code, Claude in Codex** — Built-in local routing automatically converts between Anthropic, OpenAI, and Gemini API formats, with automatic failover
 - **Centralized MCP, Skills & Prompts** — Add MCP servers and Skills once, then choose which tools to sync them to; prompts are maintained separately for each tool
@@ -285,7 +285,7 @@ Download the latest Linux build from the [Releases](../../releases) page:
 1. **Add Provider**: Click "Add New Provider" (the + button) in the toolbar → Choose a preset or create a custom configuration
 2. **Switch Provider**:
    - Main UI: Select provider → Click "Enable" (for OpenCode, OpenClaw, Hermes, and MiniMax Code the button is "Add"; these four tools and Pi are coexist-mode tools, so you can add several providers at once)
-   - System Tray: Click provider name directly (Claude Code, Codex, Gemini CLI, and Grok Build only)
+   - System Tray: Click provider name directly (Claude Code, Codex, Gemini CLI, Grok Build, and GitHub Copilot CLI)
 3. **Takes Effect**: Claude Code needs no restart; for Codex, Gemini CLI, and Grok Build, restart your terminal or the CLI tool; for Claude Desktop, restart the app itself (see FAQ)
 4. **Back to Official Login**: Switch to the built-in official provider in the list (e.g. "Claude Official"), restart the tool, then follow its login/OAuth flow
 5. **Local Routing (optional)**: To use OpenAI- or Gemini-format providers in Claude Code, or to use Claude in Codex, you need to turn on local routing. In "Settings → Routing → Local Routing", turn on "Routing Master Switch", then turn on the tool you need under "Routing Enabled". To toggle it right from the top of the main page, turn on "Show Routing Toggle on Main Page"
@@ -316,6 +316,8 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 | Gemini CLI | Switch | ✓ | ✓ | ✓ | ✓ | GEMINI.md | ✓ | ✓ |
 | Grok Build | Switch | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | OpenCode | Coexist | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| VS Code Copilot | Coexist | – | – | ✓ | ✓ | *.prompt.md | ✓ | ✓ |
+| GitHub Copilot CLI | Switch | – | ✓ | ✓ | ✓ | copilot-instructions.md | ✓ | ✓ |
 | OpenClaw | Coexist | – | – | – | – | Workspace editor | ✓ | – |
 | Hermes | Coexist | – | – | ✓ | ✓ | Memory | ✓ | – |
 | Pi | Coexist | – | – | – | ✓ | AGENTS.md, SYSTEM.md, prompt templates | ✓ | ✓ |
@@ -335,7 +337,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 - **OAuth Authentication Center (Beta)** — Sign in to multiple GitHub Copilot, ChatGPT, and xAI (Grok) accounts in "Settings → Auth" and use those subscriptions as providers in Claude Code, Claude Desktop, and Codex (everything except Codex's OpenAI Official requires local routing). Using a subscription outside the official client may violate the vendor's terms of service; assess the risk yourself
 - **Third-party providers for Claude Desktop** — Connect directly to Anthropic-compatible endpoints; for non-Claude models, choose "Model Mapping" to map tiers like Sonnet, Opus, and Haiku to the provider's actual models through local routing
 - **Universal providers** — One config syncs to Claude Code, Codex, and Gemini CLI
-- One-click switching, system tray quick switching (Claude Code, Codex, Gemini CLI, Grok Build), drag-and-drop sorting, import/export
+- One-click switching, system tray quick switching (Claude Code, Codex, Gemini CLI, Grok Build, GitHub Copilot CLI), drag-and-drop sorting, import/export
 
 ### Local Routing & Failover
 
@@ -378,7 +380,9 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 <details>
 <summary><strong>Which AI tools does CC Switch support?</strong></summary>
 
-CC Switch supports ten tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**. Each tool has dedicated provider presets and configuration management; see [Supported Features by Tool](#supported-features-by-tool) for what each one supports.
+CC Switch supports twelve tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **VS Code Copilot**, **GitHub Copilot CLI**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**. Each tool has dedicated provider presets and configuration management; see [Supported Features by Tool](#supported-features-by-tool) for what each one supports.
+
+**VS Code Copilot** and **GitHub Copilot CLI** are independent applications with separate provider catalogs and sessions; the GitHub Copilot desktop app is not managed here. See the [VS Code Copilot guide](docs/vscode-copilot-byok.md) and [Copilot CLI guide](docs/copilot-cli.md).
 
 </details>
 

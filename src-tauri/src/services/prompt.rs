@@ -4,10 +4,12 @@ use std::path::Path;
 use crate::app_config::AppType;
 use crate::config::write_text_file;
 use crate::error::AppError;
+use crate::file_transaction::{commit_file_updates, FileUpdate};
 use crate::prompt::Prompt;
-use crate::prompt_files::{prompt_file_path, validate_prompt_content};
+use crate::prompt_files::{prompt_file_path, prompt_file_paths, validate_prompt_content};
 use crate::services::pi_prompt_files::PiAgentsFileGuard;
 use crate::store::AppState;
+use std::sync::Arc;
 
 /// 安全地获取当前 Unix 时间戳
 fn get_unix_timestamp() -> Result<i64, AppError> {
@@ -19,9 +21,23 @@ fn get_unix_timestamp() -> Result<i64, AppError> {
 
 pub struct PromptService;
 
-fn project_prompt_set_to_path(
+fn write_prompt_targets(
+    target_paths: Vec<std::path::PathBuf>,
+    content: &str,
+    existing_only: bool,
+) -> Result<(), AppError> {
+    let contents: Arc<[u8]> = Arc::from(content.as_bytes());
+    let updates = target_paths
+        .into_iter()
+        .filter(|path| !existing_only || path.exists())
+        .map(|path| FileUpdate::write_shared(path, Arc::clone(&contents)))
+        .collect();
+    commit_file_updates(updates, None, "prompt file")
+}
+
+fn project_prompt_set_to_paths(
     prompts: &IndexMap<String, Prompt>,
-    target_path: &Path,
+    target_paths: Vec<std::path::PathBuf>,
 ) -> Result<Option<String>, AppError> {
     let enabled: Vec<(&String, &Prompt)> = prompts
         .iter()
@@ -29,7 +45,7 @@ fn project_prompt_set_to_path(
         .collect();
 
     if let Some((_, prompt)) = enabled.first() {
-        write_text_file(target_path, &prompt.content)?;
+        write_prompt_targets(target_paths, &prompt.content, false)?;
     }
     // With nothing enabled, leave the target file untouched. This projection
     // only runs after a database restore, and the live file is not part of
@@ -49,6 +65,14 @@ fn project_prompt_set_to_path(
     Ok(Some(format!(
         "多个 Prompt 同时启用，已按稳定顺序投影第一个；enabled IDs: {ids}"
     )))
+}
+
+#[cfg(test)]
+fn project_prompt_set_to_path(
+    prompts: &IndexMap<String, Prompt>,
+    target_path: &std::path::Path,
+) -> Result<Option<String>, AppError> {
+    project_prompt_set_to_paths(prompts, vec![target_path.to_path_buf()])
 }
 
 impl PromptService {
@@ -110,13 +134,9 @@ impl PromptService {
         state.db.save_prompt(app.as_str(), &prompt)?;
 
         if prompt.enabled {
-            let target_path = prompt_file_path(&app)?;
-            write_text_file(&target_path, &prompt.content)?;
+            write_prompt_targets(prompt_file_paths(&app)?, &prompt.content, false)?;
         } else if clear_live {
-            let target_path = prompt_file_path(&app)?;
-            if target_path.exists() {
-                write_text_file(&target_path, "")?;
-            }
+            write_prompt_targets(prompt_file_paths(&app)?, "", true)?;
         }
 
         Ok(())
@@ -156,9 +176,14 @@ impl PromptService {
         }
 
         // 回填当前 live 文件内容到已启用的提示词，或创建备份
-        let target_path = prompt_file_path(&app)?;
+        let target_paths = prompt_file_paths(&app)?;
+        let target_path = target_paths
+            .iter()
+            .find(|path| path.exists())
+            .or_else(|| target_paths.first())
+            .ok_or_else(|| AppError::Config("No prompt target is available".to_string()))?;
         if target_path.exists() {
-            if let Ok(live_content) = std::fs::read_to_string(&target_path) {
+            if let Ok(live_content) = std::fs::read_to_string(target_path) {
                 if !live_content.trim().is_empty() {
                     let mut prompts = state.db.get_prompts(app.as_str())?;
 
@@ -214,7 +239,7 @@ impl PromptService {
         if let Some(prompt) = prompts.get_mut(id) {
             validate_prompt_content(&app, &prompt.content)?;
             prompt.enabled = true;
-            write_text_file(&target_path, &prompt.content)?; // 原子写入
+            write_prompt_targets(target_paths, &prompt.content, false)?;
             state.db.save_prompt(app.as_str(), prompt)?;
         } else {
             return Err(AppError::InvalidInput(format!("提示词 {id} 不存在")));
@@ -295,11 +320,11 @@ impl PromptService {
             None
         };
         let prompts = state.db.get_prompts(app.as_str())?;
-        let target_path = prompt_file_path(&app)?;
         if let Some(prompt) = prompts.values().find(|prompt| prompt.enabled) {
             validate_prompt_content(&app, &prompt.content)?;
         }
-        if let Some(warning) = project_prompt_set_to_path(&prompts, &target_path)? {
+        let target_paths = prompt_file_paths(&app)?;
+        if let Some(warning) = project_prompt_set_to_paths(&prompts, target_paths)? {
             return Err(AppError::Message(warning));
         }
         Ok(())
@@ -838,6 +863,7 @@ mod tests {
 #[cfg(test)]
 mod pi_prompt_tests {
     use super::*;
+    use crate::config::write_text_file;
     use crate::database::Database;
     use crate::pi_config::test_support::TestAgentDir;
     use serial_test::serial;

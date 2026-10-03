@@ -32,7 +32,7 @@ interface OpenClawDefaultModelOption {
 }
 
 interface ProviderActionsProps {
-  appId?: AppId;
+  appId?: AppId | "copilot-byok";
   isCurrent: boolean;
   isInConfig?: boolean;
   isTesting?: boolean;
@@ -43,6 +43,7 @@ interface ProviderActionsProps {
   onDuplicate?: () => void;
   onTest?: () => void;
   onConfigureUsage?: () => void;
+  configureUsageTitle?: string;
   onDelete: () => void;
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
@@ -61,7 +62,9 @@ interface ProviderActionsProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   isRemovalProtected?: boolean;
+  isDeletionProtected?: boolean;
   isStateChangeProtected?: boolean;
+  hideMainActionWhenCurrent?: boolean;
   defaultModelOptions?: OpenClawDefaultModelOption[];
   onSetAsDefault?: (modelId?: string) => void;
 }
@@ -90,6 +93,7 @@ export function ProviderActions({
   onDuplicate,
   onTest,
   onConfigureUsage,
+  configureUsageTitle,
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
@@ -105,7 +109,9 @@ export function ProviderActions({
   // OpenClaw: default model
   isDefaultModel = false,
   isRemovalProtected = false,
+  isDeletionProtected = false,
   isStateChangeProtected = false,
+  hideMainActionWhenCurrent = false,
   defaultModelOptions = [],
   onSetAsDefault,
 }: ProviderActionsProps) {
@@ -114,8 +120,9 @@ export function ProviderActions({
 
   // Additive provider membership: providers can coexist in the native config.
   const isAdditiveMode =
-    Boolean(appId && isAdditiveAppId(appId)) &&
-    !(appId === "opencode" && isOmo);
+    (Boolean(appId && isAdditiveAppId(appId)) &&
+      !(appId === "opencode" && isOmo)) ||
+    appId === "copilot-byok";
 
   // 故障转移模式下的按钮逻辑（累加模式和 OMO 应用不支持故障转移）
   const isFailoverMode =
@@ -210,6 +217,7 @@ export function ProviderActions({
           ),
           icon: <Minus className="h-4 w-4" />,
           text: t("provider.removeFromConfig", { defaultValue: "移除" }),
+          title: isRemovalProtected ? t("provider.inUse") : undefined,
         };
       }
       return {
@@ -320,6 +328,7 @@ export function ProviderActions({
   const buttonState = getMainButtonState();
   const canDelete =
     !isReadOnly &&
+    !isDeletionProtected &&
     (appId === "pi"
       ? !isStateChangeProtected
       : isOmo || isAdditiveMode
@@ -328,8 +337,9 @@ export function ProviderActions({
   const readOnlyHint = t("provider.managedByHermesHint", {
     defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
   });
-  const deleteHint =
-    appId === "pi" && isStateChangeProtected
+  const deleteHint = isDeletionProtected
+    ? t("provider.inUse")
+    : appId === "pi" && isStateChangeProtected
       ? piStateChangeHint
       : isReadOnly
         ? readOnlyHint
@@ -433,24 +443,26 @@ export function ProviderActions({
 
       {/* disabled:pointer-events-none prevents the native title from firing,
           so the wrapper owns the explanatory tooltip and cursor. */}
-      <span
-        title={buttonState.title}
-        className={cn(
-          "inline-flex",
-          buttonState.disabled && "cursor-not-allowed",
-        )}
-      >
-        <Button
-          size="sm"
-          variant={buttonState.variant}
-          onClick={handleMainButtonClick}
-          disabled={buttonState.disabled}
-          className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+      {!(hideMainActionWhenCurrent && isCurrent) && (
+        <span
+          title={buttonState.title}
+          className={cn(
+            "inline-flex",
+            buttonState.disabled && "cursor-not-allowed",
+          )}
         >
-          {buttonState.icon}
-          {buttonState.text}
-        </Button>
-      </span>
+          <Button
+            size="sm"
+            variant={buttonState.variant}
+            onClick={handleMainButtonClick}
+            disabled={buttonState.disabled}
+            className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+          >
+            {buttonState.icon}
+            {buttonState.text}
+          </Button>
+        </span>
+      )}
 
       <div className="flex items-center gap-1">
         <Button
@@ -501,8 +513,8 @@ export function ProviderActions({
         <Button
           size="icon"
           variant="ghost"
-          onClick={onConfigureUsage || undefined}
-          title={t("provider.configureUsage")}
+          onClick={onConfigureUsage ? () => onConfigureUsage() : undefined}
+          title={configureUsageTitle ?? t("provider.configureUsage")}
           className={cn(
             iconButtonClass,
             !onConfigureUsage &&

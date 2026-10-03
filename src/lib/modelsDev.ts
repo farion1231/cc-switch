@@ -33,11 +33,15 @@ export interface ModelsDevReasoningOption {
 export interface ModelsDevModel {
   id?: string;
   name?: string;
+  family?: string;
   release_date?: string;
   cost?: ModelsDevCost;
   modalities?: ModelsDevModalities;
   limit?: ModelsDevLimit;
+  attachment?: boolean;
   reasoning?: boolean;
+  tool_call?: boolean;
+  temperature?: boolean;
   reasoning_options?: ModelsDevReasoningOption[];
   // 转售 / 聚合商的条目指回原厂条目，形如 "zhipuai/glm-5"。
   canonical_model_id?: string;
