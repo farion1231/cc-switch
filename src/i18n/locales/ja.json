@@ -1335,6 +1335,10 @@
       "turnsCount": "{{turns}} ターン · {{messages}} 件",
       "questionsCount": "質問 {{count}} 件",
       "toolsCount": "ツール呼び出し {{count}} 回",
+      "usage": {
+        "tokens": "{{tokens}} トークン",
+        "detail": "{{requests}} 件のリクエスト · API 価格で概算\n入力 {{input}} · 出力 {{output}}\nキャッシュ書き込み {{cacheWrite}} · キャッシュ読み込み {{cacheRead}}"
+      },
       "loadingProgress": "{{loaded}} / {{total}} 件を読み込み済み",
       "verb": {
         "run": "実行",

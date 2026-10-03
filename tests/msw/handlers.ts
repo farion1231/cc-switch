@@ -479,6 +479,20 @@ export const handlers = [
       cacheHitRate: 0,
     }),
   ),
+  // 会话阅读页头部：没有导入过用量时不显示
+  http.post(`${TAURI_ENDPOINT}/get_session_usage_summary`, () =>
+    success({
+      totalRequests: 0,
+      totalCost: "0",
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCacheCreationTokens: 0,
+      totalCacheReadTokens: 0,
+      successRate: 0,
+      realTotalTokens: 0,
+      cacheHitRate: 0,
+    }),
+  ),
   http.post(`${TAURI_ENDPOINT}/auth_get_status`, async ({ request }) => {
     const { authProvider } = await withJson<{ authProvider: string }>(request);
     return success({

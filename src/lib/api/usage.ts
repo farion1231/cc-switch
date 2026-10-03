@@ -66,6 +66,13 @@ export const usageApi = {
     });
   },
 
+  getSessionUsageSummary: async (
+    appType: string,
+    sessionId: string,
+  ): Promise<UsageSummary> => {
+    return invoke("get_session_usage_summary", { appType, sessionId });
+  },
+
   getUsageSummaryByApp: async (
     startDate?: number,
     endDate?: number,

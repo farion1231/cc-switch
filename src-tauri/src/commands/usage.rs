@@ -41,6 +41,19 @@ pub async fn get_usage_summary(
     .await
 }
 
+/// 获取单个会话的使用量汇总（会话阅读页头部）
+#[tauri::command]
+pub async fn get_session_usage_summary(
+    state: State<'_, AppState>,
+    app_type: String,
+    session_id: String,
+) -> Result<UsageSummary, AppError> {
+    run_db_query(&state, move |db| {
+        db.get_session_usage_summary(&app_type, &session_id)
+    })
+    .await
+}
+
 /// 获取按 app_type 拆分的使用量汇总
 #[tauri::command]
 pub async fn get_usage_summary_by_app(

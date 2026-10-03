@@ -1336,6 +1336,10 @@
       "turnsCount": "{{turns}} 輪 · {{messages}} 則",
       "questionsCount": "{{count}} 次提問",
       "toolsCount": "{{count}} 次工具呼叫",
+      "usage": {
+        "tokens": "{{tokens}} Tokens",
+        "detail": "{{requests}} 次請求 · 按 API 價估算\n輸入 {{input}} · 輸出 {{output}}\n快取寫入 {{cacheWrite}} · 快取讀取 {{cacheRead}}"
+      },
       "loadingProgress": "已載入 {{loaded}} / {{total}}",
       "verb": {
         "run": "執行",

@@ -78,6 +78,9 @@ export const READER_DEFAULTS: Record<string, string> = {
   turnsCount: "{{turns}} 轮 · {{messages}} 条",
   questionsCount: "{{count}} 次提问",
   toolsCount: "{{count}} 次工具调用",
+  "usage.tokens": "{{tokens}} Tokens",
+  "usage.detail":
+    "{{requests}} 次请求 · 按 API 价估算\n输入 {{input}} · 输出 {{output}}\n缓存写入 {{cacheWrite}} · 缓存读取 {{cacheRead}}",
   loadingProgress: "已加载 {{loaded}} / {{total}}",
   "verb.run": "运行",
   "verb.read": "读取",

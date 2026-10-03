@@ -143,6 +143,8 @@ export const usageKeys = {
   detail: (requestId: string) =>
     [...usageKeys.all, "detail", requestId] as const,
   pricing: () => [...usageKeys.all, "pricing"] as const,
+  session: (appType: string, sessionId: string) =>
+    [...usageKeys.all, "session", appType, sessionId] as const,
   limits: (providerId: string, appType: string) =>
     [...usageKeys.all, "limits", providerId, appType] as const,
   script: (providerId: string, appType: string) =>
@@ -347,6 +349,16 @@ export function useSessionUsageLastSync() {
   return useQuery({
     queryKey: [...usageKeys.all, "session-last-sync"] as const,
     queryFn: () => usageApi.getSessionUsageLastSync(),
+    refetchInterval: DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+  });
+}
+
+/** 单个会话的用量汇总（会话阅读页头部），只数会话日志导入的行。 */
+export function useSessionUsageSummary(appType: string, sessionId: string) {
+  return useQuery({
+    queryKey: usageKeys.session(appType, sessionId),
+    queryFn: () => usageApi.getSessionUsageSummary(appType, sessionId),
     refetchInterval: DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: false,
   });
