@@ -125,8 +125,9 @@ function SidebarTopBar({
           {...DRAG_REGION_ATTR}
           style={DRAG_REGION_STYLE as React.CSSProperties}
         />
+        {/* 品牌区与导航之间不画分隔线：靠侧栏底色和留白分开，免得和右侧页头下边框近似平行却差 11px */}
         <div
-          className="-mt-[18px] flex h-9 shrink-0 items-center gap-2 pe-2 ps-4"
+          className="-mt-[18px] mb-2 flex h-9 shrink-0 items-center gap-2 pe-2 ps-4"
           {...DRAG_REGION_ATTR}
           style={DRAG_REGION_STYLE as React.CSSProperties}
         >
@@ -141,7 +142,6 @@ function SidebarTopBar({
           </span>
           {toggleButton}
         </div>
-        <div className="mx-4 mb-1.5 h-px shrink-0 bg-border" />
       </>
     );
   }
