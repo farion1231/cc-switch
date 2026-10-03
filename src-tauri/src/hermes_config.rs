@@ -922,13 +922,32 @@ pub fn set_model_config(model: &HermesModelConfig) -> Result<HermesWriteOutcome,
 /// still have a runnable configuration (Hermes will surface a clear error
 /// if the default no longer belongs to the active provider).
 ///
-/// Existing fields in `model:` (`context_length` / `max_tokens` / `base_url`
-/// / `extra`) are preserved via struct-update.
+/// Endpoint fields (`base_url` / `key_env` / `api_key` / `api_mode`) follow
+/// the provider being switched to: a declared value lands in `model:`, an
+/// undeclared one is CLEARED. Hermes honors the model section's endpoint
+/// fields over the `custom_providers` entry, so stale residue from the
+/// previous provider would keep routing requests to the old gateway — or
+/// leak its inline credential into the new provider's requests (#6717).
+/// Users who want an official provider to hit a relay declare `base_url` on
+/// that provider's settings; relay-style presets already do.
+///
+/// Legacy camelCase aliases (`baseUrl` / `apiKey` / `apiMode`) stored in old
+/// DB rows are normalized before reading, so a switch activates the same
+/// endpoint that `set_provider` would have written for the same provider.
+///
+/// Other existing fields in `model:` (`context_length` / `max_tokens` /
+/// unrelated `extra` keys) are preserved via struct-update.
 pub fn apply_switch_defaults(
     provider_id: &str,
     settings_config: &serde_json::Value,
 ) -> Result<HermesWriteOutcome, AppError> {
-    let first_model_id = settings_config
+    // Legacy DB rows (older DeepLink imports) can still carry camelCase
+    // aliases. `set_provider` sanitizes on write, but the switch path reads
+    // the raw DB settings — normalize a clone so both spellings resolve.
+    let mut normalized = settings_config.clone();
+    sanitize_hermes_provider_keys(&mut normalized);
+
+    let first_model_id = normalized
         .get("models")
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
@@ -938,11 +957,42 @@ pub fn apply_switch_defaults(
         .filter(|s| !s.is_empty());
 
     let current = get_model_config()?.unwrap_or_default();
-    let merged = HermesModelConfig {
+    let mut merged = HermesModelConfig {
         default: first_model_id.or(current.default.clone()),
         provider: Some(provider_id.to_string()),
         ..current
     };
+
+    // Endpoint fields follow the provider being switched to (#6717): a
+    // declared value wins, an undeclared one CLEARS the residue. Hermes
+    // prefers the model section's endpoint / inline credential over the
+    // `custom_providers` entry, so a stale `base_url` would keep routing to
+    // the previous gateway and a stale `key_env` / `api_key` would leak the
+    // previous provider's secret into the new provider's requests. Users
+    // who want an official provider to hit a relay declare `base_url` on
+    // that provider's settings — relay-style presets already do.
+    // `key_env` / `api_key` / `api_mode` are untyped model-section fields;
+    // they round-trip through `extra` (forward-compat flatten).
+    merged.base_url = normalized
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    for key in ["key_env", "api_key", "api_mode"] {
+        let declared = normalized
+            .get(key)
+            .filter(|v| !v.is_null() && v.as_str().map(|s| !s.trim().is_empty()).unwrap_or(true))
+            .cloned();
+        match declared {
+            Some(value) => {
+                merged.extra.insert(key.to_string(), value);
+            }
+            None => {
+                merged.extra.remove(key);
+            }
+        }
+    }
+
     set_model_config(&merged)
 }
 
@@ -2050,13 +2100,13 @@ custom_providers:
             let model = get_model_config().unwrap().unwrap();
             assert_eq!(model.default.as_deref(), Some("new-model"));
             assert_eq!(model.provider.as_deref(), Some("new-provider"));
-            // User-customized fields must survive the switch.
-            assert_eq!(
-                model.base_url.as_deref(),
-                Some("https://user-override.example.com")
-            );
+            // Model-panel sizing fields are user-customized and must survive.
             assert_eq!(model.context_length, Some(131072));
             assert_eq!(model.max_tokens, Some(16384));
+            // The endpoint is provider identity, not a sizing preference: a
+            // provider that declares no base_url clears the previous one
+            // instead of inheriting it (#6717).
+            assert_eq!(model.base_url, None);
         });
     }
 
@@ -2109,6 +2159,118 @@ custom_providers:
             // First entry's id is whitespace-only → blank → fall back to old default
             // (we intentionally don't scan past the first entry for a default).
             assert_eq!(model.default.as_deref(), Some("prev-default"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_syncs_endpoint_fields_from_provider() {
+        with_test_home(|| {
+            // `model:` still carries the PREVIOUS provider's endpoint fields.
+            let initial: HermesModelConfig = serde_json::from_value(serde_json::json!({
+                "default": "old-model",
+                "provider": "old-provider",
+                "base_url": "https://old-gateway.example.com/v1",
+                "key_env": "OLD_GATEWAY_KEY",
+                "api_key": "sk-old",
+                "api_mode": "chat_completions",
+            }))
+            .unwrap();
+            set_model_config(&initial).unwrap();
+
+            // Switching to a provider that declares its own endpoint fields.
+            let settings = serde_json::json!({
+                "base_url": "https://new-gateway.example.com/v1",
+                "key_env": "NEW_GATEWAY_KEY",
+                "api_key": "sk-new",
+                "api_mode": "codex_responses",
+                "models": [{ "id": "new-model" }]
+            });
+            apply_switch_defaults("new-provider", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(model.provider.as_deref(), Some("new-provider"));
+            assert_eq!(model.default.as_deref(), Some("new-model"));
+            // #6717: stale endpoint fields must not survive the switch.
+            assert_eq!(
+                model.base_url.as_deref(),
+                Some("https://new-gateway.example.com/v1")
+            );
+            assert_eq!(
+                model.extra.get("key_env").and_then(|v| v.as_str()),
+                Some("NEW_GATEWAY_KEY")
+            );
+            assert_eq!(
+                model.extra.get("api_key").and_then(|v| v.as_str()),
+                Some("sk-new")
+            );
+            assert_eq!(
+                model.extra.get("api_mode").and_then(|v| v.as_str()),
+                Some("codex_responses")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_clears_stale_endpoint_fields_when_provider_declares_none() {
+        with_test_home(|| {
+            // `model:` still carries the PREVIOUS custom provider's endpoint
+            // and secrets.
+            let initial: HermesModelConfig = serde_json::from_value(serde_json::json!({
+                "default": "old-model",
+                "provider": "old-provider",
+                "base_url": "https://old-gateway.example.com/v1",
+                "key_env": "OLD_GATEWAY_KEY",
+                "api_key": "sk-old",
+                "api_mode": "anthropic_messages",
+            }))
+            .unwrap();
+            set_model_config(&initial).unwrap();
+
+            // Official-style provider: no endpoint fields declared.
+            let settings = serde_json::json!({ "models": [{ "id": "new-model" }] });
+            apply_switch_defaults("official-provider", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(model.provider.as_deref(), Some("official-provider"));
+            // Nothing from the previous provider may leak into the new one's
+            // resolution: Hermes prefers model-section endpoint/credential.
+            assert_eq!(model.base_url, None);
+            assert!(model.extra.get("key_env").is_none());
+            assert!(model.extra.get("api_key").is_none());
+            assert!(model.extra.get("api_mode").is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_normalizes_legacy_camel_case_aliases() {
+        with_test_home(|| {
+            // Old DB rows (legacy DeepLink imports) store camelCase aliases;
+            // the switch path reads raw DB settings, so it must resolve them
+            // the same way `set_provider` does.
+            let settings = serde_json::json!({
+                "baseUrl": "https://legacy-gateway.example.com/v1",
+                "apiKey": "sk-legacy",
+                "apiMode": "anthropic_messages",
+                "models": [{ "id": "legacy-model" }]
+            });
+            apply_switch_defaults("legacy-provider", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(
+                model.base_url.as_deref(),
+                Some("https://legacy-gateway.example.com/v1")
+            );
+            assert_eq!(
+                model.extra.get("api_key").and_then(|v| v.as_str()),
+                Some("sk-legacy")
+            );
+            assert_eq!(
+                model.extra.get("api_mode").and_then(|v| v.as_str()),
+                Some("anthropic_messages")
+            );
         });
     }
 
