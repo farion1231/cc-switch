@@ -14,6 +14,8 @@ export interface HoverTipProps {
   children: React.ReactElement;
   side?: "top" | "bottom" | "left" | "right";
   align?: "start" | "center" | "end";
+  /** 鼠标离开触发元素后关闭，提示本身不接收指针事件。 */
+  disableHoverableContent?: boolean;
 }
 
 /** 文案末尾的「…」是菜单项「会弹出对话框」的约定，放进提示里像被截断，去掉。 */
@@ -40,17 +42,24 @@ export function HoverTip({
   children,
   side = "bottom",
   align = "center",
+  disableHoverableContent,
 }: HoverTipProps) {
   if (content === undefined || content === null || content === "") {
     return children;
   }
   return (
     <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-      <Tooltip>
+      <Tooltip disableHoverableContent={disableHoverableContent}>
         <TooltipTrigger asChild onFocus={keepClosedUnlessKeyboard}>
           {children}
         </TooltipTrigger>
-        <TooltipContent side={side} align={align}>
+        <TooltipContent
+          side={side}
+          align={align}
+          className={
+            disableHoverableContent ? "pointer-events-none" : undefined
+          }
+        >
           {stripEllipsis(content)}
         </TooltipContent>
       </Tooltip>

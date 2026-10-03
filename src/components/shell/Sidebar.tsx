@@ -99,11 +99,11 @@ function SidebarTopBar({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
-  const tipSide = collapsed ? "right" : "bottom";
+  const tipSide = collapsed ? "right" : "left";
   const label = collapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar");
   const Icon = collapsed ? ChevronsRight : ChevronsLeft;
   const toggleButton = (
-    <HoverTip content={label} side={tipSide}>
+    <HoverTip content={label} side={tipSide} disableHoverableContent>
       <button
         type="button"
         onClick={onToggle}
@@ -388,7 +388,7 @@ function AppNavItem({
           ? { className: "bg-route-solid text-route-on", icon: Route }
           : null;
     return (
-      <HoverTip content={tip} side="right">
+      <HoverTip content={tip} side="right" disableHoverableContent>
         <button
           type="button"
           onClick={onSelect}
@@ -528,7 +528,11 @@ function NavItem({
 
   if (collapsed) {
     return (
-      <HoverTip content={title ?? accessibleName} side="right">
+      <HoverTip
+        content={title ?? accessibleName}
+        side="right"
+        disableHoverableContent
+      >
         <button
           type="button"
           onClick={onClick}
@@ -547,7 +551,11 @@ function NavItem({
 
   // 展开时名字可见；只有 title 比名字多说了点什么（如「有可用更新」）才挂提示
   return (
-    <HoverTip content={title !== label ? title : undefined} side="right">
+    <HoverTip
+      content={title !== label ? title : undefined}
+      side={compact ? "top" : "right"}
+      disableHoverableContent
+    >
       <button
         type="button"
         onClick={onClick}
