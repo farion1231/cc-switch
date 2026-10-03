@@ -152,6 +152,26 @@ function getPresetProviderType(
     : undefined;
 }
 
+// 上下文窗口 token 归一化：接受纯数字与 K/k/M/m 后缀（"1M"/"256k"/"500000"），
+// 在保存层单点换算为正整数后落库。后端 parse_codex_positive_u64 的字符串分支
+// 只收纯数字（codex_config.rs），数值由 Number 分支直接接受——K/M 换算由前端
+// 保存层负责，落库形态后端两侧都兼容。旧实现用 [^\d] 剥字符，会把手编 JSON
+// 里的 "1M" 静默剥成数值 1 并直达 live 配置；这里对整 token 校验，解析失败
+// 整字段丢弃，宁缺毋假。
+const normalizeContextWindowToken = (value: unknown): number | undefined => {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const match = /^(\d+)([KkMm])?$/.exec(String(value).trim());
+  if (!match) return undefined;
+  const scale =
+    match[2] === undefined
+      ? 1
+      : match[2].toLowerCase() === "k"
+        ? 1000
+        : 1000000;
+  const scaled = Number(match[1]) * scale;
+  return Number.isSafeInteger(scaled) && scaled > 0 ? scaled : undefined;
+};
+
 export const normalizeCodexCatalogModelsForSave = (
   models: CodexCatalogModel[],
 ): CodexCatalogModel[] => {
@@ -164,13 +184,7 @@ export const normalizeCodexCatalogModelsForSave = (
     seen.add(model);
 
     const displayName = item.displayName?.trim();
-    const rawContextWindow = String(item.contextWindow ?? "").replace(
-      /[^\d]/g,
-      "",
-    );
-    const contextWindow = rawContextWindow
-      ? Number.parseInt(rawContextWindow, 10)
-      : undefined;
+    const contextWindow = normalizeContextWindowToken(item.contextWindow);
 
     const inputModalities = item.inputModalities?.filter(
       (m) => typeof m === "string" && m.trim(),
@@ -185,7 +199,7 @@ export const normalizeCodexCatalogModelsForSave = (
     normalized.push({
       model,
       ...(displayName ? { displayName } : {}),
-      ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
+      ...(contextWindow ? { contextWindow } : {}),
       // Native Responses profile overrides (ignored by the chat/proxy profile).
       ...(typeof item.supportsParallelToolCalls === "boolean"
         ? { supportsParallelToolCalls: item.supportsParallelToolCalls }
