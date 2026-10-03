@@ -25,6 +25,7 @@ use crate::services::session_usage::{
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use std::fs;
+use std::path::Path;
 use std::time::SystemTime;
 
 /// 从 opencode message.data JSON 中提取的 token 和费用数据
@@ -76,8 +77,13 @@ fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool,
 
 /// 同步 OpenCode 使用数据
 pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    let db_path = get_opencode_db_path();
+    sync_opencode_usage_from_path(db, &get_opencode_db_path())
+}
 
+fn sync_opencode_usage_from_path(
+    db: &Database,
+    db_path: &Path,
+) -> Result<SessionSyncResult, AppError> {
     if !db_path.exists() {
         return Ok(SessionSyncResult {
             imported: 0,
@@ -95,7 +101,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     // opencode 的数据库运行在 WAL 模式：新提交先落在 -wal 文件里，
     // 主库文件只有在 checkpoint 时才更新。因此必须同时考虑 -wal 的
     // mtime，否则会在 checkpoint 之前漏掉刚写入的会话。
-    let metadata = fs::metadata(&db_path)
+    let metadata = fs::metadata(db_path)
         .map_err(|e| AppError::Config(format!("无法读取 opencode.db 元数据: {e}")))?;
     let mut file_modified = metadata_modified_nanos(&metadata);
 
@@ -121,7 +127,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
     // 打开 opencode 的 SQLite 数据库（只读）
     let opencode_conn =
-        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
 
     let mut result = SessionSyncResult {
@@ -183,8 +189,11 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
             continue;
         }
 
+        // Checkpoint completed messages even if this session contains an
+        // unfinished message. Its completion updates message.time_updated,
+        // which query_sessions includes in the next session watermark.
         if session_has_incomplete_usage {
-            continue;
+            result.deferred_files = 1;
         }
 
         // 更新会话级同步状态。失败时不要推进文件级状态，确保下次可重试。
@@ -410,6 +419,18 @@ fn insert_opencode_message(
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
+    // Detail rows disappear after rollup; their stable message IDs must still
+    // deduplicate later scans (including scans after a cursor is lost).
+    let already_pruned: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM session_usage_dedup
+         WHERE data_source = 'opencode_session' AND request_id = ?1)",
+        [request_id],
+        |row| row.get(0),
+    )?;
+    if already_pruned {
+        return Ok(false);
+    }
+
     let created_at = if msg.timestamp_ms > 0 {
         msg.timestamp_ms / 1000
     } else {
@@ -528,6 +549,187 @@ fn insert_opencode_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn usage_message(input: u32, completed: bool) -> String {
+        let mut message = serde_json::json!({
+            "role": "assistant", "modelID": "test-model", "cost": 1,
+            "tokens": {"input": input, "output": 10},
+            "time": {"created": 1000}
+        });
+        if completed {
+            message["time"]["completed"] = serde_json::json!(2000);
+        }
+        message.to_string()
+    }
+
+    fn source_fixture(path: &Path) -> rusqlite::Connection {
+        let source = rusqlite::Connection::open(path).unwrap();
+        source
+            .execute_batch(
+                "CREATE TABLE session (id TEXT PRIMARY KEY, time_updated INTEGER);
+             CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT,
+                 time_created INTEGER, time_updated INTEGER, data TEXT);
+             INSERT INTO session VALUES ('s1', 100);",
+            )
+            .unwrap();
+        source
+            .execute(
+                "INSERT INTO message VALUES ('done', 's1', 1, 100, ?1)",
+                [usage_message(100, true)],
+            )
+            .unwrap();
+        source
+    }
+
+    fn force_file_scan(db: &Database, path: &Path) {
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "DELETE FROM session_log_sync WHERE file_path = ?1",
+                [path.to_string_lossy().as_ref()],
+            )
+            .unwrap();
+    }
+
+    fn rolled_up_count(db: &Database) -> i64 {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COALESCE(SUM(request_count), 0) FROM usage_daily_rollups
+             WHERE provider_id = '_opencode_session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn incomplete_messages_advance_missing_and_stale_cursors_and_complete_later() {
+        for previous in [None, Some(50)] {
+            let db = Database::memory().unwrap();
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("opencode.db");
+            let source = source_fixture(&path);
+            source
+                .execute(
+                    "INSERT INTO message VALUES ('wip', 's1', 2, 100, ?1)",
+                    [usage_message(50, false)],
+                )
+                .unwrap();
+            let key = format!("{}:s1", path.display());
+            if let Some(previous) = previous {
+                update_sync_state(&db, &key, previous, 0).unwrap();
+            }
+
+            assert_eq!(
+                sync_opencode_usage_from_path(&db, &path).unwrap().imported,
+                1
+            );
+            let cursors = crate::services::session_usage::load_sync_cursors(&db).unwrap();
+            assert_eq!(cursors.get(&key).map(|c| c.last_modified), Some(100));
+            assert_eq!(db.rollup_and_prune(30).unwrap(), 1);
+
+            // Other sessions can change the source file while this one stays idle.
+            force_file_scan(&db, &path);
+            assert_eq!(
+                sync_opencode_usage_from_path(&db, &path).unwrap().imported,
+                0
+            );
+            assert_eq!(db.rollup_and_prune(30).unwrap(), 0);
+
+            // Completion only updates the message watermark, not the session row.
+            source
+                .execute(
+                    "UPDATE message SET time_updated = 200, data = ?1 WHERE id = 'wip'",
+                    [usage_message(50, true)],
+                )
+                .unwrap();
+            force_file_scan(&db, &path);
+            assert_eq!(
+                sync_opencode_usage_from_path(&db, &path).unwrap().imported,
+                1
+            );
+            assert_eq!(db.rollup_and_prune(30).unwrap(), 1);
+            assert_eq!(rolled_up_count(&db), 2);
+        }
+    }
+
+    #[test]
+    fn pruned_opencode_messages_stay_deduplicated_after_cursor_loss() {
+        let db = Database::memory().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("opencode.db");
+        let _source = source_fixture(&path);
+        assert_eq!(
+            sync_opencode_usage_from_path(&db, &path).unwrap().imported,
+            1
+        );
+        assert_eq!(db.rollup_and_prune(30).unwrap(), 1);
+        for _ in 0..3 {
+            db.conn
+                .lock()
+                .unwrap()
+                .execute("DELETE FROM session_log_sync", [])
+                .unwrap();
+            assert_eq!(
+                sync_opencode_usage_from_path(&db, &path).unwrap().imported,
+                0
+            );
+            assert_eq!(db.rollup_and_prune(30).unwrap(), 0);
+            assert_eq!(rolled_up_count(&db), 1);
+        }
+    }
+
+    #[test]
+    fn failed_prune_rolls_back_opencode_ledger_and_rollup() {
+        let db = Database::memory().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("opencode.db");
+        let _source = source_fixture(&path);
+        sync_opencode_usage_from_path(&db, &path).unwrap();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_prune BEFORE DELETE ON proxy_request_logs
+             BEGIN SELECT RAISE(ABORT, 'fixture prune failure'); END;",
+            )
+            .unwrap();
+        assert!(db.rollup_and_prune(30).is_err());
+        assert_eq!(rolled_up_count(&db), 0);
+        let conn = db.conn.lock().unwrap();
+        let ledger: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'opencode_session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(ledger, 0);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        conn.execute("DROP TRIGGER fail_prune", []).unwrap();
+        drop(conn);
+        assert_eq!(db.rollup_and_prune(30).unwrap(), 1);
+        assert_eq!(rolled_up_count(&db), 1);
+        let ledger: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'opencode_session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(ledger, 1);
+    }
 
     #[test]
     fn test_parse_message_data_full() {
