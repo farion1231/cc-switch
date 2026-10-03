@@ -4,6 +4,7 @@ use crate::error::AppError;
 use crate::services::model_pricing::{ModelPricingInfo, ModelsDevSyncConfig, ModelsDevSyncState};
 use crate::services::usage_stats::*;
 use crate::store::AppState;
+use rusqlite::Connection;
 use tauri::State;
 
 /// 获取使用量汇总
@@ -143,11 +144,20 @@ pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingI
         return Ok(Vec::new());
     }
 
+    let pricing = query_model_pricing(&conn)?;
+
+    log::info!("成功获取 {} 条模型定价数据", pricing.len());
+    Ok(pricing)
+}
+
+fn query_model_pricing(conn: &Connection) -> Result<Vec<ModelPricingInfo>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT model_id, display_name, input_cost_per_million, output_cost_per_million,
                 cache_read_cost_per_million, cache_creation_cost_per_million
          FROM model_pricing
-         ORDER BY display_name",
+         ORDER BY COALESCE(NULLIF(TRIM(display_name), ''), model_id) COLLATE NOCASE,
+                  model_id COLLATE NOCASE,
+                  model_id",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -165,8 +175,6 @@ pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingI
     for row in rows {
         pricing.push(row?);
     }
-
-    log::info!("成功获取 {} 条模型定价数据", pricing.len());
     Ok(pricing)
 }
 
@@ -302,6 +310,55 @@ pub fn get_usage_data_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_pricing_list_uses_display_name_with_model_id_fallback() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE model_pricing (
+                model_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                input_cost_per_million TEXT NOT NULL,
+                output_cost_per_million TEXT NOT NULL,
+                cache_read_cost_per_million TEXT NOT NULL,
+                cache_creation_cost_per_million TEXT NOT NULL
+            );
+            INSERT INTO model_pricing VALUES
+                ('glm-5.3-flash', 'glm-5.3-flash', '1', '2', '0', '0'),
+                ('deepseek-ai/DeepSeek-V4.1-Flash', 'deepseek-ai/DeepSeek-V4.1-Flash', '1', '2', '0', '0'),
+                ('agnes-2.5-pro-alpha', 'agnes-2.5-pro-alpha', '1', '2', '0', '0'),
+                ('deepseek-v4-flash-vision-exp', 'DeepSeek V4 Flash Vision Exp', '1', '2', '0', '0'),
+                ('deepseek-v4-flash-0731', 'DeepSeek V4 Flash', '1', '2', '0', '0'),
+                ('deepseek-v4-flash', 'DeepSeek V4 Flash', '1', '2', '0', '0'),
+                ('deepseek-v4-pro', 'DeepSeek V4 Pro', '1', '2', '0', '0'),
+                ('deepseek-v4.1-flash', 'DeepSeek V4.1 Flash', '1', '2', '0', '0'),
+                ('deepseek-flash', 'DeepSeek V4.1 Flash', '1', '2', '0', '0'),
+                ('fallback-model', '   ', '1', '2', '0', '0');",
+        )?;
+
+        let pricing = query_model_pricing(&conn)?;
+        let model_ids: Vec<&str> = pricing
+            .iter()
+            .map(|entry| entry.model_id.as_str())
+            .collect();
+        assert_eq!(
+            model_ids,
+            vec![
+                "agnes-2.5-pro-alpha",
+                "deepseek-v4-flash",
+                "deepseek-v4-flash-0731",
+                "deepseek-v4-flash-vision-exp",
+                "deepseek-v4-pro",
+                "deepseek-flash",
+                "deepseek-v4.1-flash",
+                "deepseek-ai/DeepSeek-V4.1-Flash",
+                "fallback-model",
+                "glm-5.3-flash",
+            ]
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn codex_rebuild_notifies_when_reimport_is_empty() {
