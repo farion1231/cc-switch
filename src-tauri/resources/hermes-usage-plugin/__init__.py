@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 LEDGER_NAME = "ccswitch-usage.sqlite"
+REQUIRED_HOOKS = ("post_api_request", "api_request_error", "post_auxiliary_call")
 
 
 def _counter(value):
@@ -148,9 +149,17 @@ def make_collector(home):
 
 def register(ctx):
     from hermes_constants import get_hermes_home
+    from hermes_cli.plugins import VALID_HOOKS
+
+    missing = [name for name in REQUIRED_HOOKS if name not in VALID_HOOKS]
+    if missing:
+        raise RuntimeError(
+            "CC Switch request capture requires Hermes 0.21.5 (v2026.9.24) or newer; "
+            "upgrade Hermes before enabling capture. Missing hooks: " + ", ".join(missing)
+        )
 
     collect = make_collector(get_hermes_home())
-    for name in ("post_api_request", "api_request_error", "post_auxiliary_call"):
+    for name in REQUIRED_HOOKS:
         def callback(_name=name, **payload):
             collect(_name, **payload)
         ctx.register_hook(name, callback)

@@ -135,6 +135,9 @@ export function HermesCapturePanel({
           <p className="mt-1 text-muted-foreground">
             {t("usage.hermes.captureSetup")}
           </p>
+          <p className="mt-1 text-muted-foreground">
+            {t("usage.hermes.captureCompatibility")}
+          </p>
         </div>
         <Button variant="outline" onClick={enable} disabled={enabling}>
           {t("usage.hermes.enableCapture", {
@@ -200,6 +203,15 @@ export function HermesCapturePanel({
                 </td>
                 <td className="p-3">
                   {event.durationMs == null ? "—" : `${event.durationMs} ms`}
+                  {event.durationMs != null && (
+                    <span className="block text-xs text-muted-foreground">
+                      {t(
+                        event.kind === "aux"
+                          ? "usage.hermes.auxAttemptElapsed"
+                          : "usage.hermes.mainElapsed",
+                      )}
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}

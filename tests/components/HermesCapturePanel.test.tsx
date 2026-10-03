@@ -138,4 +138,58 @@ describe("HermesCapturePanel", () => {
       ),
     );
   });
+
+  it("distinguishes main cumulative elapsed time from auxiliary attempt elapsed time", async () => {
+    getEvents.mockResolvedValue([
+      {
+        eventId: "main:r:error:2",
+        profileName: "profile-a",
+        kind: "main",
+        startedAtMs: 100000,
+        provider: "p",
+        model: "m",
+        status: "error",
+        durationMs: 9488,
+        usageAvailable: false,
+      },
+      {
+        eventId: "aux:r:0",
+        profileName: "profile-a",
+        kind: "aux",
+        auxTask: "approval",
+        startedAtMs: 100000,
+        provider: "p",
+        model: "m",
+        status: "success",
+        durationMs: 1063,
+        usageAvailable: false,
+      },
+      {
+        eventId: "main:unknown:success",
+        profileName: "profile-a",
+        kind: "main",
+        startedAtMs: 100000,
+        provider: "p",
+        model: "m",
+        status: "success",
+        durationMs: null,
+        usageAvailable: false,
+      },
+    ]);
+    mount();
+    expect(await screen.findByText("9488 ms")).toBeInTheDocument();
+    expect(screen.getByText("usage.hermes.mainElapsed")).toBeInTheDocument();
+    expect(screen.getByText("1063 ms")).toBeInTheDocument();
+    expect(
+      screen.getByText("usage.hermes.auxAttemptElapsed"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
+  it("shows the capture plugin compatibility requirement", () => {
+    mount();
+    expect(
+      screen.getByText("usage.hermes.captureCompatibility"),
+    ).toBeInTheDocument();
+  });
 });

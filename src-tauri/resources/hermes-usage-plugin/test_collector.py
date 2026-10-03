@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 
 PLUGIN = Path(__file__).with_name("__init__.py")
+SUPPORTED_HOOKS = {"post_api_request", "api_request_error", "post_auxiliary_call"}
 
 
 def load_plugin():
@@ -102,7 +103,9 @@ class CollectorTests(unittest.TestCase):
         hooks = {}
         context = types.SimpleNamespace(register_hook=lambda name, fn: hooks.setdefault(name, fn))
         constants = types.SimpleNamespace(get_hermes_home=lambda: self.home)
-        with patch.dict(sys.modules, {"hermes_constants": constants}):
+        plugins = types.SimpleNamespace(VALID_HOOKS=SUPPORTED_HOOKS)
+        with patch.dict(sys.modules, {"hermes_constants": constants,
+                                     "hermes_cli.plugins": plugins}):
             plugin.register(context)
         self.assertEqual(set(hooks), {"post_api_request", "api_request_error",
                                       "post_auxiliary_call"})
@@ -110,6 +113,35 @@ class CollectorTests(unittest.TestCase):
         with closing(sqlite3.connect(self.home / "ccswitch-usage.sqlite")) as conn:
             count = conn.execute("SELECT COUNT(*) FROM request_events").fetchone()[0]
         self.assertEqual(count, 1)
+
+    def test_manifest_declares_the_supported_release_and_registered_hooks(self):
+        manifest = PLUGIN.with_name("plugin.yaml").read_text(encoding="utf-8")
+        self.assertIn('requires_hermes: ">=0.21.5"', manifest)
+        declared_hooks = {line.strip()[2:] for line in manifest.splitlines()
+                          if line.startswith("  - ")}
+        self.assertEqual(declared_hooks, SUPPORTED_HOOKS)
+
+    def test_missing_auxiliary_hook_rejects_capture_before_creating_a_ledger(self):
+        plugin = load_plugin()
+        hooks = {}
+        context = types.SimpleNamespace(register_hook=lambda name, fn: hooks.setdefault(name, fn))
+        constants = types.SimpleNamespace(get_hermes_home=lambda: self.home)
+        plugins = types.SimpleNamespace(VALID_HOOKS=SUPPORTED_HOOKS - {"post_auxiliary_call"})
+        with patch.dict(sys.modules, {"hermes_constants": constants,
+                                     "hermes_cli.plugins": plugins}):
+            with self.assertRaisesRegex(RuntimeError, r"0\.21\.5.*post_auxiliary_call"):
+                plugin.register(context)
+        self.assertEqual(hooks, {})
+        self.assertFalse((self.home / "ccswitch-usage.sqlite").exists())
+
+    def test_retry_elapsed_values_are_preserved_not_estimated_by_subtraction(self):
+        callback = load_plugin().make_collector(self.home)
+        for retry, elapsed in enumerate((1063, 4186, 9488)):
+            callback("api_request_error", api_request_id="same-start", started_at=100,
+                     ended_at=100 + elapsed / 1000, retry_count=retry, status_code=404)
+        with closing(sqlite3.connect(self.home / "ccswitch-usage.sqlite")) as conn:
+            rows = conn.execute("SELECT started_at_ms, duration_ms FROM request_events ORDER BY rowid").fetchall()
+        self.assertEqual(rows, [(100000, 1063), (100000, 4186), (100000, 9488)])
 
 
 if __name__ == "__main__":
