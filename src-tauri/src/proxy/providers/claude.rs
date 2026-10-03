@@ -1190,10 +1190,10 @@ mod tests {
             .split('.')
             .map(|part| part.parse().unwrap())
             .collect();
-        // Sol and Luna require the newer Codex client identity on ChatGPT accounts.
+        // GPT-6.1 Sol requires the newer Codex client identity on ChatGPT accounts.
         assert!(
-            version.as_slice() >= [0, 155, 0].as_slice(),
-            "gpt-6-sol and gpt-6-luna require Codex >= 0.155.0; sent {version:?}"
+            version.as_slice() >= [0, 159, 0].as_slice(),
+            "gpt-6.1-sol requires Codex >= 0.159.0; sent {version:?}"
         );
     }
 

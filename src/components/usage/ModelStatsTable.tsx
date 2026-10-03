@@ -1,14 +1,15 @@
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { useModelStats } from "@/lib/query/usage";
-import { fmtUsd } from "./format";
+import { cn } from "@/lib/utils";
+import {
+  fmtInt,
+  fmtUsd,
+  formatTokensCompact,
+  getLocaleFromLanguage,
+  getResolvedLang,
+} from "./format";
+import { usageTable } from "./usageTable";
 import type { UsageRangeSelection } from "@/types/usage";
 
 interface ModelStatsTableProps {
@@ -26,7 +27,8 @@ export function ModelStatsTable({
   model,
   refreshIntervalMs,
 }: ModelStatsTableProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useModelStats(
     range,
     { appType, providerName, model },
@@ -35,63 +37,74 @@ export function ModelStatsTable({
     },
   );
 
+  const rows = useMemo(
+    () => [...(stats ?? [])].sort((a, b) => b.requestCount - a.requestCount),
+    [stats],
+  );
+
   if (isLoading) {
-    return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;
+    return <div className={usageTable.skeleton} />;
   }
 
   return (
-    <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-hidden">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{t("usage.model", "模型")}</TableHead>
-            <TableHead className="text-right">
-              {t("usage.requests", "请求数")}
-            </TableHead>
-            <TableHead className="text-right">
-              {t("usage.tokens", "Tokens")}
-            </TableHead>
-            <TableHead className="text-right">
-              {t("usage.totalCost", "总成本")}
-            </TableHead>
-            <TableHead className="text-right">
-              {t("usage.avgCost", "平均成本")}
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {stats?.length === 0 ? (
-            <TableRow>
-              <TableCell
-                colSpan={5}
-                className="text-center text-muted-foreground"
-              >
-                {t("usage.noData", "暂无数据")}
-              </TableCell>
-            </TableRow>
+    <div className={usageTable.scroller}>
+      <table
+        className={cn(usageTable.table, "min-w-[560px]")}
+        aria-label={t("usage.modelStats")}
+      >
+        <thead>
+          <tr className={usageTable.headRow}>
+            <th className={usageTable.th}>{t("usage.model")}</th>
+            <th className={usageTable.thEnd}>{t("usage.requests")}</th>
+            <th className={usageTable.thEnd}>{t("usage.tokens")}</th>
+            <th className={usageTable.thEnd}>{t("usage.totalCost")}</th>
+            <th className={usageTable.thEnd}>{t("usage.avgCost")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={5} className={usageTable.empty}>
+                {t("usage.noData")}
+              </td>
+            </tr>
           ) : (
-            stats?.map((stat) => (
-              <TableRow key={stat.model}>
-                <TableCell className="font-mono text-sm">
-                  {stat.model}
-                </TableCell>
-                <TableCell className="text-right">
-                  {stat.requestCount.toLocaleString()}
-                </TableCell>
-                <TableCell className="text-right">
-                  {stat.totalTokens.toLocaleString()}
-                </TableCell>
-                <TableCell className="text-right">
-                  {fmtUsd(stat.totalCost, 4)}
-                </TableCell>
-                <TableCell className="text-right">
-                  {fmtUsd(stat.avgCostPerRequest, 6)}
-                </TableCell>
-              </TableRow>
+            rows.map((stat) => (
+              <tr key={stat.model} className={usageTable.row}>
+                <td className={cn(usageTable.td, usageTable.mono)}>
+                  <span
+                    className="block max-w-[320px] truncate"
+                    title={stat.model}
+                  >
+                    {stat.model}
+                  </span>
+                </td>
+                <td className={usageTable.tdEnd}>
+                  {fmtInt(stat.requestCount, locale)}
+                </td>
+                <td
+                  className={usageTable.tdEnd}
+                  title={fmtInt(stat.totalTokens, locale)}
+                >
+                  {formatTokensCompact(stat.totalTokens, locale)}
+                </td>
+                <td
+                  className={cn(usageTable.tdEnd, "font-medium")}
+                  title={fmtUsd(stat.totalCost, 6)}
+                >
+                  {fmtUsd(stat.totalCost, 2)}
+                </td>
+                <td
+                  className={cn(usageTable.tdEnd, "text-fg-2")}
+                  title={fmtUsd(stat.avgCostPerRequest, 6)}
+                >
+                  {fmtUsd(stat.avgCostPerRequest, 4)}
+                </td>
+              </tr>
             ))
           )}
-        </TableBody>
-      </Table>
+        </tbody>
+      </table>
     </div>
   );
 }

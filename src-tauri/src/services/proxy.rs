@@ -25,6 +25,22 @@ pub struct ProxyService {
     switch_locks: SwitchLockManager,
 }
 
+/// 重启失败时写回库的那份配置：设置页只动四个全局字段，旧接口是整份七个字段。
+enum SavedProxyConfig {
+    Global(GlobalProxyConfig),
+    Legacy(ProxyConfig),
+}
+
+impl SavedProxyConfig {
+    async fn write(&self, db: &Database) -> Result<(), String> {
+        match self {
+            Self::Global(config) => db.update_global_proxy_config(config.clone()).await,
+            Self::Legacy(config) => db.update_proxy_config(config.clone()).await,
+        }
+        .map_err(|e| format!("恢复原代理配置失败: {e}"))
+    }
+}
+
 /// 客户端连接代理用的地址。`listen_address` 可能是 `0.0.0.0` / `::`（监听所有网卡），
 /// 客户端连不上这个地址，改用本机回环；IPv6 加方括号。
 pub(crate) fn proxy_origin(listen_address: &str, listen_port: u16) -> String {
@@ -64,8 +80,28 @@ impl ProxyService {
         self.switch_locks.lock_for_app(app_type).await
     }
 
-    /// 启动代理服务器
+    /// 启动代理服务器。成功、失败都让托盘比对一次（图标圆点、问题区、「退出」的后果跟着变）。
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
+        let result = self.start_server().await;
+        self.notify_tray().await;
+        result
+    }
+
+    /// 停止代理服务器。同 [`Self::start`]，结束后让托盘比对一次。
+    pub async fn stop(&self) -> Result<(), String> {
+        let result = self.stop_server().await;
+        self.notify_tray().await;
+        result
+    }
+
+    /// 托盘在后台线程比对、变了才重建，这里不等它。
+    async fn notify_tray(&self) {
+        if let Some(handle) = self.app_handle.read().await.as_ref() {
+            crate::tray::schedule_tray_status_check(handle);
+        }
+    }
+
+    async fn start_server(&self) -> Result<ProxyServerInfo, String> {
         // 1. 启动时自动设置 proxy_enabled = true
         let mut global_config = self
             .db
@@ -180,8 +216,7 @@ impl ProxyService {
         }
     }
 
-    /// 停止代理服务器
-    pub async fn stop(&self) -> Result<(), String> {
+    async fn stop_server(&self) -> Result<(), String> {
         if let Some(server) = self.server.write().await.take() {
             server
                 .stop()
@@ -234,17 +269,27 @@ impl ProxyService {
     }
 
     /// 客户端文件里有没有接管占位符 `PROXY_MANAGED`（旧版接管的遗留物，或新版接上代理
-    /// 时写的契约）。
+    /// 时写的契约）。Codex 的官方路由不带占位符，按指向本地代理的地址认。
     pub(crate) fn live_has_proxy_placeholder(&self, app_type: &AppType) -> bool {
         match app_type {
             AppType::Claude => match self.read_claude_live() {
                 Ok(config) => Self::is_claude_live_taken_over(&config),
                 Err(_) => false,
             },
-            AppType::Codex => match self.read_codex_live() {
-                Ok(config) => Self::is_codex_live_taken_over(&config),
-                Err(_) => false,
-            },
+            AppType::Codex => {
+                match self.read_codex_live() {
+                    Ok(config) => Self::is_codex_live_taken_over(&config)
+                        || config
+                            .get("config")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|text| {
+                                crate::services::provider::codex_direct::routes_official_to_proxy(
+                                    &self.db, text,
+                                )
+                            }),
+                    Err(_) => false,
+                }
+            }
             AppType::Gemini => match self.read_gemini_live() {
                 Ok(config) => Self::is_gemini_live_taken_over(&config),
                 Err(_) => false,
@@ -417,8 +462,8 @@ impl ProxyService {
             .map_err(|e| format!("获取代理配置失败: {e}"))
     }
 
-    /// 更新代理配置。返回代理是否因地址或端口变了而重启：重启后调用方要按新地址重写
-    /// 接上代理的客户端（`mode::controller::resync_route`）。
+    /// 更新代理配置（旧接口：七个字段整份写进四行）。返回代理是否因地址或端口变了而重启：
+    /// 重启后调用方要按新地址重写接上代理的客户端（`mode::controller::resync_route`）。
     pub async fn update_config(&self, config: &ProxyConfig) -> Result<bool, String> {
         // 记录旧配置用于判定是否需要重启
         let previous = self
@@ -436,53 +481,121 @@ impl ProxyService {
             .await
             .map_err(|e| format!("保存代理配置失败: {e}"))?;
 
-        // 检查服务器当前状态
+        // 判断是否需要重启（地址或端口变更）
+        let require_restart = new_config.listen_address != previous.listen_address
+            || new_config.listen_port != previous.listen_port;
+        self.apply_saved_config(require_restart, SavedProxyConfig::Legacy(previous))
+            .await
+    }
+
+    /// 设置页「保存并重启服务」：只写四个全局字段。各应用自己的重试次数和超时不碰——
+    /// [`Self::update_config`] 走的旧 DAO 读的是 claude 行、写的是四行，会把 claude 的
+    /// 应用级字段广播给其他三家。返回值同 [`Self::update_config`]。
+    pub async fn update_global_config(&self, config: &GlobalProxyConfig) -> Result<bool, String> {
+        let previous = self
+            .db
+            .get_global_proxy_config()
+            .await
+            .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
+
+        self.db
+            .update_global_proxy_config(config.clone())
+            .await
+            .map_err(|e| format!("保存全局代理配置失败: {e}"))?;
+
+        let require_restart = config.listen_address != previous.listen_address
+            || config.listen_port != previous.listen_port;
+        self.apply_saved_config(require_restart, SavedProxyConfig::Global(previous))
+            .await
+    }
+
+    /// 让运行中的服务用上刚写进库的配置：地址或端口变了就重启（返回 true），否则实时应用。
+    /// 服务没在跑时什么都不做。新地址绑不上就把 `previous` 写回库、按旧地址重新拉起，让
+    /// 「保存失败」就是什么都没变：服务停着不管的话，下一次保存会因为没在跑而假成功，
+    /// 客户端也还指着旧地址。
+    async fn apply_saved_config(
+        &self,
+        require_restart: bool,
+        previous: SavedProxyConfig,
+    ) -> Result<bool, String> {
         let mut server_guard = self.server.write().await;
         if server_guard.is_none() {
             return Ok(false);
         }
+        let new_config = self
+            .db
+            .get_proxy_config()
+            .await
+            .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
-        // 判断是否需要重启（地址或端口变更）
-        let require_restart = new_config.listen_address != previous.listen_address
-            || new_config.listen_port != previous.listen_port;
-
-        if require_restart {
-            if let Some(server) = server_guard.take() {
-                server
-                    .stop()
-                    .await
-                    .map_err(|e| format!("重启前停止代理服务器失败: {e}"))?;
+        if !require_restart {
+            if let Some(server) = server_guard.as_ref() {
+                server.apply_runtime_config(&new_config).await;
+                log::info!("代理配置已实时应用，无需重启代理服务器");
             }
-
-            let app_handle = self.app_handle.read().await.clone();
-            let new_server = ProxyServer::new(new_config.clone(), self.db.clone(), app_handle);
-            let info = new_server
-                .start()
-                .await
-                .map_err(|e| format!("重启代理服务器失败: {e}"))?;
-            if let Err(e) = self
-                .persist_ephemeral_listen_port_if_needed(&new_config, info.port)
-                .await
-            {
-                let _ = new_server.stop().await;
-                return Err(e);
-            }
-
-            *server_guard = Some(new_server);
-            log::info!("代理配置已更新，服务器已自动重启应用最新配置");
-
-            return Ok(true);
-        } else if let Some(server) = server_guard.as_ref() {
-            server.apply_runtime_config(&new_config).await;
-            log::info!("代理配置已实时应用，无需重启代理服务器");
+            return Ok(false);
         }
 
-        Ok(false)
+        if let Some(server) = server_guard.take() {
+            server
+                .stop()
+                .await
+                .map_err(|e| format!("重启前停止代理服务器失败: {e}"))?;
+        }
+
+        let error = match self.start_with(&new_config).await {
+            Ok(server) => {
+                *server_guard = Some(server);
+                log::info!("代理配置已更新，服务器已自动重启应用最新配置");
+                return Ok(true);
+            }
+            Err(error) => format!("重启代理服务器失败: {error}"),
+        };
+
+        log::warn!("{error}，恢复原配置并重新启动");
+        match self.restore_and_start(previous).await {
+            Ok(server) => {
+                *server_guard = Some(server);
+                Err(format!("{error}；已按原配置重新启动"))
+            }
+            Err(restore_error) => Err(format!("{error}；恢复原配置也失败: {restore_error}")),
+        }
+    }
+
+    /// 按 `config` 起一个新服务，动态端口回写进库。
+    async fn start_with(&self, config: &ProxyConfig) -> Result<ProxyServer, String> {
+        let app_handle = self.app_handle.read().await.clone();
+        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        let info = server.start().await.map_err(|e| e.to_string())?;
+        if let Err(e) = self
+            .persist_ephemeral_listen_port_if_needed(config, info.port)
+            .await
+        {
+            let _ = server.stop().await;
+            return Err(e);
+        }
+        Ok(server)
+    }
+
+    async fn restore_and_start(&self, previous: SavedProxyConfig) -> Result<ProxyServer, String> {
+        previous.write(&self.db).await?;
+        let config = self
+            .db
+            .get_proxy_config()
+            .await
+            .map_err(|e| format!("获取代理配置失败: {e}"))?;
+        self.start_with(&config).await
     }
 
     /// 检查服务器是否正在运行
     pub async fn is_running(&self) -> bool {
         self.server.read().await.is_some()
+    }
+
+    /// 同 [`Self::is_running`]，但不等锁：托盘菜单这种同步路径用。正在启动 / 停止、拿不到锁时
+    /// 为 `None`（按「不知道」处理，不报问题）。
+    pub fn running_now(&self) -> Option<bool> {
+        self.server.try_read().ok().map(|server| server.is_some())
     }
 
     /// 热更新熔断器配置
@@ -595,5 +708,66 @@ mod tests {
             23456
         );
         assert_app_proxy_configs_unchanged(&db, &configs).await;
+    }
+
+    #[tokio::test]
+    async fn update_global_config_preserves_app_proxy_configs() {
+        let db = Arc::new(Database::memory().unwrap());
+        let configs = seed_distinct_app_proxy_configs(&db).await;
+        let service = ProxyService::new(db.clone());
+        let mut global = db.get_global_proxy_config().await.unwrap();
+        global.enable_logging = !global.enable_logging;
+        global.listen_port = 23456;
+
+        let restarted = service.update_global_config(&global).await.unwrap();
+
+        assert!(!restarted, "服务没在跑，不该报重启");
+        assert_app_proxy_configs_unchanged(&db, &configs).await;
+        assert_eq!(
+            serde_json::to_value(db.get_global_proxy_config().await.unwrap()).unwrap(),
+            serde_json::to_value(global).unwrap()
+        );
+    }
+
+    /// 新端口绑不上时「保存失败」要等于什么都没变：库里还是旧端口、服务还在旧端口上跑。
+    /// 服务停着不管的话，下一次保存会因为「没在跑」直接假成功。
+    #[tokio::test]
+    async fn failed_restart_restores_previous_config_and_server() {
+        let db = Arc::new(Database::memory().unwrap());
+        let service = ProxyService::new(db.clone());
+        let mut global = db.get_global_proxy_config().await.unwrap();
+        global.listen_address = "127.0.0.1".to_string();
+        global.listen_port = 0;
+        db.update_global_proxy_config(global).await.unwrap();
+        let running_port = service.start().await.unwrap().port;
+        assert_ne!(running_port, 0);
+
+        // 占住另一个端口，让重启时绑定失败
+        let blocker = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let taken_port = blocker.local_addr().unwrap().port();
+        let mut attempt = db.get_global_proxy_config().await.unwrap();
+        attempt.listen_port = taken_port;
+
+        let error = service
+            .update_global_config(&attempt)
+            .await
+            .expect_err("binding a taken port must fail");
+        assert!(error.contains("重启代理服务器失败"), "{error}");
+
+        assert_eq!(
+            db.get_global_proxy_config().await.unwrap().listen_port,
+            running_port,
+            "库里应回到原端口"
+        );
+        let status = service.get_status().await.unwrap();
+        assert!(status.running, "服务应按原配置重新拉起");
+        assert_eq!(status.port, running_port);
+
+        // 再保存一次不再假成功：服务在跑，配置没变就实时应用
+        let again = db.get_global_proxy_config().await.unwrap();
+        assert!(!service.update_global_config(&again).await.unwrap());
+        assert!(service.is_running().await);
+        service.stop().await.unwrap();
+        drop(blocker);
     }
 }

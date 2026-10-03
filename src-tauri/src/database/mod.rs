@@ -76,6 +76,8 @@ pub(crate) use lock_conn;
 /// rusqlite::Connection 本身不是 Sync 的，因此需要这层包装。
 pub struct Database {
     pub(crate) conn: Mutex<Connection>,
+    /// 请求日志总数缓存，见 `services::usage_stats::LogCountCache`
+    pub(crate) log_count_cache: Mutex<Option<crate::services::usage_stats::LogCountCache>>,
 }
 
 fn register_db_change_hook(conn: &Connection) {
@@ -118,6 +120,7 @@ impl Database {
 
         let db = Self {
             conn: Mutex::new(conn),
+            log_count_cache: Mutex::new(None),
         };
         db.create_tables()?;
 
@@ -192,6 +195,7 @@ impl Database {
 
         let db = Self {
             conn: Mutex::new(conn),
+            log_count_cache: Mutex::new(None),
         };
         db.create_tables()?;
         db.ensure_model_pricing_seeded()?;

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
@@ -5,6 +6,8 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
+use super::blocks::assign_turn_ids;
+use super::opencode_blocks::{message_from_parts, PartLocator};
 use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary};
 
 const PROVIDER_ID: &str = "opencode";
@@ -127,7 +130,7 @@ fn scan_sessions_json() -> Vec<SessionMeta> {
 /// Uses `rfind(":ses_")` to split the path from the session ID because the
 /// db path itself may contain colons (e.g. `C:\Users\...` on Windows).
 /// This relies on the OpenCode convention that session IDs start with `ses_`.
-fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
+pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     let rest = source.strip_prefix("sqlite:")?;
     let sep = rest.rfind(":ses_")?;
     let db_path = PathBuf::from(&rest[..sep]);
@@ -266,59 +269,64 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let mut msg_files = Vec::new();
     collect_json_files(path, &mut msg_files);
 
-    // Parse all messages and collect (created_ts, message_id, role, parts_text)
-    let mut entries: Vec<(i64, String, String, String)> = Vec::new();
+    // (created_ts, message_id, message)
+    let mut entries: Vec<(i64, String, SessionMessage)> = Vec::new();
 
     for msg_path in &msg_files {
-        let data = match std::fs::read_to_string(msg_path) {
-            Ok(d) => d,
-            Err(_) => continue,
+        let Some(value) = read_json(msg_path) else {
+            continue;
         };
-        let value: Value = match serde_json::from_str(&data) {
-            Ok(v) => v,
-            Err(_) => continue,
+        let Some(msg_id) = value.get("id").and_then(Value::as_str) else {
+            continue;
         };
-
-        let msg_id = match value.get("id").and_then(Value::as_str) {
-            Some(id) => id.to_string(),
-            None => continue,
-        };
-
         let role = value
             .get("role")
             .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
-
+            .unwrap_or("unknown");
         let created_ts = value
             .get("time")
             .and_then(|t| t.get("created"))
             .and_then(parse_timestamp_to_ms)
             .unwrap_or(0);
 
-        // Collect text parts from storage/part/{messageID}/
-        let part_dir = storage.join("part").join(&msg_id);
-        let text = collect_parts_text(&part_dir);
-        if text.trim().is_empty() {
+        // storage/part/{messageID}/ 下的 part 文件；part id 按时间递增，按文件名排序即生成顺序
+        let mut part_files = Vec::new();
+        collect_json_files(&storage.join("part").join(msg_id), &mut part_files);
+        part_files.sort();
+        let parts: Vec<(PartLocator, Value)> = part_files
+            .iter()
+            .filter_map(|part_path| {
+                let part = read_json(part_path)?;
+                let rel_path = part_path
+                    .strip_prefix(storage)
+                    .ok()?
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                Some((PartLocator::File { rel_path }, part))
+            })
+            .collect();
+
+        let ts = (created_ts > 0).then_some(created_ts);
+        let message = message_from_parts(role, Some(msg_id.to_string()), ts, &value, &parts);
+        if message.is_empty() {
             continue;
         }
-
-        entries.push((created_ts, msg_id, role, text));
+        entries.push((created_ts, msg_id.to_string(), message));
     }
 
-    // Sort by created timestamp
-    entries.sort_by_key(|(ts, _, _, _)| *ts);
+    // Sort by created timestamp, then by (time-ordered) message id
+    entries.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
 
-    let messages = entries
-        .into_iter()
-        .map(|(ts, _, role, content)| SessionMessage {
-            role,
-            content,
-            ts: if ts > 0 { Some(ts) } else { None },
-        })
-        .collect();
-
+    let mut messages: Vec<SessionMessage> = entries.into_iter().map(|(_, _, m)| m).collect();
+    assign_turn_ids(&mut messages);
     Ok(messages)
+}
+
+fn read_json(path: &Path) -> Option<Value> {
+    let data = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
 }
 
 /// Load messages from the OpenCode SQLite database for a given source reference.
@@ -365,7 +373,8 @@ fn load_messages_sqlite_v1(
 ) -> Result<Vec<SessionMessage>, String> {
     let mut msg_stmt = conn
         .prepare(
-            "SELECT id, time_created, data FROM message WHERE session_id = ?1 ORDER BY time_created ASC",
+            "SELECT id, time_created, data FROM message WHERE session_id = ?1 \
+             ORDER BY time_created ASC, id ASC",
         )
         .map_err(|e| format!("Failed to prepare message query: {e}"))?;
 
@@ -380,63 +389,53 @@ fn load_messages_sqlite_v1(
 
     let mut part_stmt = conn
         .prepare(
-            "SELECT message_id, data FROM part WHERE session_id = ?1 ORDER BY time_created ASC",
+            "SELECT id, message_id, data FROM part WHERE session_id = ?1 \
+             ORDER BY time_created ASC, id ASC",
         )
         .map_err(|e| format!("Failed to prepare part query: {e}"))?;
 
     let part_rows = part_stmt
         .query_map([session_id], |row| {
-            let message_id: String = row.get(0)?;
-            let data: String = row.get(1)?;
-            Ok((message_id, data))
+            let part_id: String = row.get(0)?;
+            let message_id: String = row.get(1)?;
+            let data: String = row.get(2)?;
+            Ok((part_id, message_id, data))
         })
         .map_err(|e| format!("Failed to query parts: {e}"))?;
 
-    let mut parts_map: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    for part in part_rows.flatten() {
-        let (message_id, data) = part;
-        parts_map.entry(message_id).or_default().push(data);
+    let mut parts_map: HashMap<String, Vec<(PartLocator, Value)>> = HashMap::new();
+    for (part_id, message_id, data) in part_rows.flatten() {
+        let Ok(part) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        let locator = PartLocator::Sqlite {
+            table: "part",
+            id: part_id,
+            base: String::new(),
+        };
+        parts_map
+            .entry(message_id)
+            .or_default()
+            .push((locator, part));
     }
 
     let mut messages = Vec::new();
-    for row in msg_rows.flatten() {
-        let (msg_id, ts, data) = row;
-        let msg_value: Value = match serde_json::from_str(&data) {
-            Ok(v) => v,
-            Err(_) => continue,
+    for (msg_id, ts, data) in msg_rows.flatten() {
+        let Ok(msg_value) = serde_json::from_str::<Value>(&data) else {
+            continue;
         };
         let role = msg_value
             .get("role")
             .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
-
-        let mut texts = Vec::new();
-        if let Some(parts) = parts_map.get(&msg_id) {
-            for part_data in parts {
-                let part_value: Value = match serde_json::from_str(part_data) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                if let Some(text) = extract_part_text(&part_value) {
-                    texts.push(text);
-                }
-            }
+            .unwrap_or("unknown");
+        let parts = parts_map.remove(&msg_id).unwrap_or_default();
+        let message = message_from_parts(role, Some(msg_id), Some(ts), &msg_value, &parts);
+        if !message.is_empty() {
+            messages.push(message);
         }
-
-        let content = texts.join("\n");
-        if content.trim().is_empty() {
-            continue;
-        }
-
-        messages.push(SessionMessage {
-            role,
-            content,
-            ts: Some(ts),
-        });
     }
 
+    assign_turn_ids(&mut messages);
     Ok(messages)
 }
 
@@ -446,7 +445,7 @@ fn load_messages_sqlite_v2(
 ) -> Result<Vec<SessionMessage>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT type, time_created, data \
+            "SELECT id, type, time_created, data \
              FROM session_message \
              WHERE session_id = ?1 \
              ORDER BY seq ASC, rowid ASC",
@@ -455,95 +454,72 @@ fn load_messages_sqlite_v2(
 
     let rows = stmt
         .query_map([session_id], |row| {
-            let msg_type: String = row.get(0)?;
-            let ts: i64 = row.get(1)?;
-            let data: String = row.get(2)?;
-            Ok((msg_type, ts, data))
+            let id: String = row.get(0)?;
+            let msg_type: String = row.get(1)?;
+            let ts: i64 = row.get(2)?;
+            let data: String = row.get(3)?;
+            Ok((id, msg_type, ts, data))
         })
         .map_err(|e| format!("Failed to query V2 messages: {e}"))?;
 
     let mut messages = Vec::new();
-    for row in rows.flatten() {
-        let (msg_type, ts, data) = row;
-        let msg_value: Value = match serde_json::from_str(&data) {
-            Ok(v) => v,
-            Err(_) => continue,
+    for (row_id, msg_type, ts, data) in rows.flatten() {
+        let Ok(msg_value) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        if !matches!(msg_type.as_str(), "user" | "assistant" | "system") {
+            continue;
+        }
+
+        // user 优先取 `text`；其余取 `content[]`（结构同 v1 parts），最后退回 `text`
+        let text_part = |text: &str| {
+            (
+                PartLocator::Sqlite {
+                    table: "session_message",
+                    id: row_id.clone(),
+                    base: String::new(),
+                },
+                serde_json::json!({ "type": "text", "text": text }),
+            )
+        };
+        let parts: Vec<(PartLocator, Value)> = match (
+            msg_type.as_str(),
+            msg_value.get("text").and_then(Value::as_str),
+            msg_value.get("content"),
+        ) {
+            ("user" | "system", Some(text), _) => vec![text_part(text)],
+            (_, _, Some(Value::Array(items))) if msg_type != "system" => items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    (
+                        PartLocator::Sqlite {
+                            table: "session_message",
+                            id: row_id.clone(),
+                            base: format!("/content/{i}"),
+                        },
+                        item.clone(),
+                    )
+                })
+                .collect(),
+            (_, _, Some(Value::String(text))) if msg_type == "user" => vec![text_part(text)],
+            (_, Some(text), _) => vec![text_part(text)],
+            _ => Vec::new(),
         };
 
-        match msg_type.as_str() {
-            "user" => {
-                let text = msg_value
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .or_else(|| {
-                        msg_value.get("content").and_then(|c| match c {
-                            Value::String(s) => Some(s.clone()),
-                            Value::Array(arr) => {
-                                let parts: Vec<String> =
-                                    arr.iter().filter_map(extract_part_text).collect();
-                                if parts.is_empty() {
-                                    None
-                                } else {
-                                    Some(parts.join("\n"))
-                                }
-                            }
-                            _ => None,
-                        })
-                    });
-
-                if let Some(content) = text {
-                    if !content.trim().is_empty() {
-                        messages.push(SessionMessage {
-                            role: "user".to_string(),
-                            content,
-                            ts: Some(ts),
-                        });
-                    }
-                }
-            }
-            "assistant" => {
-                let mut texts = Vec::new();
-                if let Some(content_array) = msg_value.get("content").and_then(Value::as_array) {
-                    for part_value in content_array {
-                        if let Some(text) = extract_part_text(part_value) {
-                            texts.push(text);
-                        }
-                    }
-                } else if let Some(text) = msg_value.get("text").and_then(Value::as_str) {
-                    if !text.trim().is_empty() {
-                        texts.push(text.to_string());
-                    }
-                }
-
-                let content = texts.join("\n");
-                if !content.trim().is_empty() {
-                    messages.push(SessionMessage {
-                        role: "assistant".to_string(),
-                        content,
-                        ts: Some(ts),
-                    });
-                }
-            }
-            "system" => {
-                let text = msg_value
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                if let Some(content) = text {
-                    if !content.trim().is_empty() {
-                        messages.push(SessionMessage {
-                            role: "system".to_string(),
-                            content,
-                            ts: Some(ts),
-                        });
-                    }
-                }
-            }
-            _ => continue,
+        let message = message_from_parts(
+            &msg_type,
+            Some(row_id.clone()),
+            Some(ts),
+            &msg_value,
+            &parts,
+        );
+        if !message.is_empty() {
+            messages.push(message);
         }
     }
 
+    assign_turn_ids(&mut messages);
     Ok(messages)
 }
 
@@ -1182,7 +1158,7 @@ mod tests {
         assert_eq!(messages[0].content, "Hello");
         assert_eq!(messages[0].ts, Some(1000));
         assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].content, "[Tool: bash]\nDone");
+        assert_eq!(messages[1].content, "[Tool: bash]\n\nDone");
         assert_eq!(messages[1].ts, Some(2000));
     }
 
@@ -1413,7 +1389,7 @@ mod tests {
         assert_eq!(messages[0].content, "Hello V2");
         assert_eq!(messages[0].ts, Some(1000));
         assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].content, "[Tool: shell]\nAll done in V2");
+        assert_eq!(messages[1].content, "[Tool: shell] shell\n\nAll done in V2");
         assert_eq!(messages[1].ts, Some(2000));
     }
 

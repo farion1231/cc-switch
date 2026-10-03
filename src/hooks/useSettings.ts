@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { providersApi, settingsApi } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
@@ -28,6 +28,8 @@ export interface UseSettingsResult {
   isSaving: boolean;
   isPortable: boolean;
   appConfigDir?: string;
+  /** 已保存的 CC Switch 数据目录（没覆盖时为空），用来判断有没有改动没保存 */
+  initialAppConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
   requiresRestart: boolean;
   updateSettings: (updates: Partial<SettingsFormState>) => void;
@@ -85,6 +87,7 @@ export function useSettings(): UseSettingsResult {
     resolvedDirs,
     isLoading: isDirectoryLoading,
     initialAppConfigDir,
+    commitAppConfigDir,
     updateDirectory,
     updateAppConfigDir,
     browseDirectory,
@@ -371,6 +374,8 @@ export function useSettings(): UseSettingsResult {
         await saveMutation.mutateAsync(payload);
 
         await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+        // 基准值换成刚存的：设置页不卸载，下次比较和「需要重启」都只跟真正没保存的改动走
+        commitAppConfigDir(sanitizedAppDir);
 
         // 只在开机自启状态真正改变时调用系统 API
         if (
@@ -494,6 +499,7 @@ export function useSettings(): UseSettingsResult {
     },
     [
       appConfigDir,
+      commitAppConfigDir,
       data,
       initialAppConfigDir,
       queryClient,
@@ -516,6 +522,7 @@ export function useSettings(): UseSettingsResult {
     isSaving: saveMutation.isPending,
     isPortable,
     appConfigDir,
+    initialAppConfigDir,
     resolvedDirs,
     requiresRestart,
     updateSettings,

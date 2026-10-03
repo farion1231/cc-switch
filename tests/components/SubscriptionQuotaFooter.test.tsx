@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { createInstance } from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import {
@@ -45,7 +45,11 @@ const baseTiers: QuotaTier[] = [
   { name: "seven_day", utilization: 25, resetsAt: null },
 ];
 
-function renderQuota(tiers: QuotaTier[], inline = true) {
+function renderQuota(
+  tiers: QuotaTier[],
+  inline = true,
+  overrides: Partial<SubscriptionQuota> = {},
+) {
   const quota: SubscriptionQuota = {
     tool: "claude",
     credentialStatus: "valid",
@@ -55,6 +59,7 @@ function renderQuota(tiers: QuotaTier[], inline = true) {
     extraUsage: null,
     error: null,
     queriedAt: now,
+    ...overrides,
   };
   return render(
     <I18nextProvider i18n={i18n}>
@@ -70,51 +75,110 @@ function renderQuota(tiers: QuotaTier[], inline = true) {
 }
 
 describe("Claude Fable subscription quota", () => {
-  it.each([true, false])(
-    "shows the Fable limit and reset in inline=%s",
-    (inline) => {
-      renderQuota(
-        [
-          ...baseTiers,
-          {
-            name: "seven_day_fable",
-            utilization: 95,
-            resetsAt: "2026-09-12T00:00:00Z",
-          },
-        ],
-        inline,
-      );
-      expect(screen.getByText("12%")).toBeInTheDocument();
-      expect(screen.getByText("25%")).toBeInTheDocument();
-      const row = screen.getByText(/^Fable:?$/).parentElement!;
-      expect(within(row).getByText("95%")).toHaveClass("text-red-500");
-      expect(
-        within(row).getByText(inline ? "2d12h" : "2d12h后重置"),
-      ).toBeInTheDocument();
+  it("pins the shortest window first and merges the rest into one line", () => {
+    renderQuota([
+      ...baseTiers,
+      {
+        name: "seven_day_fable",
+        utilization: 95,
+        resetsAt: "2026-09-12T00:00:00Z",
+      },
+    ]);
+    // 第一行固定是 5 小时，哪怕它剩得最多；其余两档并成一行，快用完的那段单独加深
+    const lines = screen.getByRole("button").children;
+    expect(lines[0]).toHaveTextContent("5 小时剩余 88%");
+    expect(lines[1]).toHaveTextContent("每周 75% · Fable 5%");
+    expect(screen.getByText("每周 75%")).toHaveClass("text-fg-2");
+    expect(screen.getByText("Fable 5%")).toHaveClass(
+      "font-medium",
+      "text-fg-1",
+    );
+    // 重置时间在悬停说明里
+    expect(screen.getByRole("button").getAttribute("title")).toContain(
+      "Fable · 2d12h后重置",
+    );
+  });
+
+  it.each([
+    ["en", "5-hour 88% left", "Wk 75% · Fable 5%"],
+    ["ja", "5時間 残り 88%", "週 75% · Fable 5%"],
+  ])(
+    "uses short tier names on the merged line in %s",
+    async (language, first, merged) => {
+      await i18n.changeLanguage(language);
+      renderQuota([
+        ...baseTiers,
+        { name: "seven_day_fable", utilization: 95, resetsAt: null },
+      ]);
+      const lines = screen.getByRole("button").children;
+      expect(lines[0]).toHaveTextContent(first);
+      expect(lines[1]).toHaveTextContent(merged);
     },
   );
 
-  it("shows an unused Fable limit without a reset countdown", () => {
+  it("shows every tier as a bar when expanded", () => {
+    renderQuota(
+      [
+        ...baseTiers,
+        {
+          name: "seven_day_fable",
+          utilization: 100,
+          resetsAt: "2026-09-12T00:00:00Z",
+        },
+      ],
+      false,
+    );
+    expect(
+      screen.getByRole("meter", { name: "5 小时: 剩余 88%" }),
+    ).toHaveAttribute("aria-valuenow", "88");
+    expect(screen.getByText("已用完")).toHaveClass("text-danger-text");
+    expect(screen.getByText("Fable").closest("div")).toHaveAttribute(
+      "title",
+      "Fable · 2d12h后重置",
+    );
+  });
+
+  it("shows an unused Fable limit in the quiet color", () => {
     renderQuota([{ name: "seven_day_fable", utilization: 0, resetsAt: null }]);
-    const row = screen.getByText("Fable:").parentElement!;
-    expect(within(row).getByText("0%")).toHaveClass("text-green-600");
-    expect(row.querySelector("svg")).toBeNull();
+    expect(screen.getByText("Fable 剩余 100%")).toHaveClass("text-fg-2");
   });
 
   it("keeps legacy quotas visible without inventing a Fable limit", () => {
     renderQuota(baseTiers);
-    expect(screen.getByText("12%")).toBeInTheDocument();
-    expect(screen.getByText("25%")).toBeInTheDocument();
+    expect(screen.getByText("5 小时剩余 88%")).toBeInTheDocument();
+    expect(screen.getByText("每周剩余 75%")).toBeInTheDocument();
     expect(screen.queryByText(/Fable/)).not.toBeInTheDocument();
   });
 
   it.each([
-    ["zh-TW", "Fable:"],
-    ["en", "Fable:"],
-    ["ja", "Fable:"],
-  ])("localizes the Fable label in %s", async (language, label) => {
+    ["zh-TW", "Fable 剩餘 63%"],
+    ["en", "Fable 63% left"],
+    ["ja", "Fable 残り 63%"],
+  ])("localizes the Fable line in %s", async (language, text) => {
     await i18n.changeLanguage(language);
     renderQuota([{ name: "seven_day_fable", utilization: 37, resetsAt: null }]);
-    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByText(text)).toBeInTheDocument();
+  });
+});
+
+describe("credential failures", () => {
+  const failed = (credentialStatus: SubscriptionQuota["credentialStatus"]) =>
+    renderQuota([], true, {
+      success: false,
+      credentialStatus,
+      error: "raw backend message",
+    });
+
+  it("says the token is waiting for a refresh, not that the login expired", () => {
+    failed("refresh_pending");
+    expect(screen.getByText("额度没查到")).toBeInTheDocument();
+    expect(screen.getByText("令牌待刷新")).toBeInTheDocument();
+    expect(screen.queryByText("登录已过期")).not.toBeInTheDocument();
+    expect(screen.queryByText("raw backend message")).not.toBeInTheDocument();
+  });
+
+  it("still says the login expired when it really did", () => {
+    failed("expired");
+    expect(screen.getByText("登录已过期")).toBeInTheDocument();
   });
 });

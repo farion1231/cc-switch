@@ -276,6 +276,13 @@ export const settingsApi = {
     return await invoke("probe_tool_installations", { tools });
   },
 
+  /** 「应用」页展示路径、来源和多处安装（和升级前的预检分开调用）。 */
+  async listToolInstallations(
+    tools: string[],
+  ): Promise<ToolInstallationReport[]> {
+    return await invoke("list_tool_installations", { tools });
+  },
+
   async getRectifierConfig(): Promise<RectifierConfig> {
     return await invoke("get_rectifier_config");
   },

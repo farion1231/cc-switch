@@ -10,8 +10,9 @@
 //! - 查询：`GrokWebBillingFetcher.swift` —— POST 空 gRPC-web 帧到
 //!   `GetGrokCreditsConfig`，响应无公开 .proto，用通用 protobuf 扫描按
 //!   字段路径启发式提取已用百分比与重置时间。
-//! - token 刷新由 Grok CLI 自己负责（约 7 天过期），本模块只读不刷新，
-//!   过期时引导用户重新 `grok login`。
+//! - token 刷新由 Grok CLI 自己负责（访问令牌约 6 小时过期，CLI 下次运行时
+//!   用 refresh_token 换新），本模块只读不刷新；过期但仍有 refresh_token 时
+//!   报“待刷新”，刷新令牌也没了才引导用户重新 `grok login`。
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -101,11 +102,28 @@ fn parse_grok_auth_json(content: &str) -> GrokCredentials {
 
     if let Some(expires_at) = entry.get("expires_at").and_then(|v| v.as_str()) {
         if is_iso_expired(expires_at) {
-            return (
-                Some(access_token),
-                CredentialStatus::Expired,
-                Some("Grok OAuth token has expired".to_string()),
-            );
+            // 访问令牌几小时一换，Grok 下次运行时用刷新令牌换新的并写回 auth.json；
+            // 刷新令牌被永久拒绝时 Grok 会把这条记录删掉，所以还在就不算登录过期。
+            let refreshable = entry
+                .get("refresh_token")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| !t.is_empty());
+            return if refreshable {
+                (
+                    Some(access_token),
+                    CredentialStatus::RefreshPending,
+                    Some(
+                        "Access token has expired; Grok refreshes it the next time it runs"
+                            .to_string(),
+                    ),
+                )
+            } else {
+                (
+                    Some(access_token),
+                    CredentialStatus::Expired,
+                    Some("Grok OAuth token has expired".to_string()),
+                )
+            };
         }
     }
 
@@ -689,7 +707,7 @@ pub(crate) async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, S
             CredentialStatus::ParseError,
             message.unwrap_or_else(|| "Failed to parse Grok credentials".to_string()),
         )),
-        CredentialStatus::Expired => {
+        CredentialStatus::Expired | CredentialStatus::RefreshPending => {
             // 即使过期也尝试调用 API（时钟偏差时 token 可能仍有效）
             if let Some(ref token) = token {
                 let result = query_grok_quota(token, "grokbuild", RELOGIN_HINT).await?;
@@ -697,14 +715,13 @@ pub(crate) async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, S
                     return Ok(result);
                 }
             }
-            Ok(SubscriptionQuota::error(
-                "grokbuild",
-                CredentialStatus::Expired,
-                format!(
-                    "{} {RELOGIN_HINT}",
-                    message.unwrap_or_else(|| "Grok OAuth token has expired.".to_string())
-                ),
-            ))
+            let message = message.unwrap_or_else(|| "Grok OAuth token has expired.".to_string());
+            let message = if matches!(status, CredentialStatus::Expired) {
+                format!("{message} {RELOGIN_HINT}")
+            } else {
+                message
+            };
+            Ok(SubscriptionQuota::error("grokbuild", status, message))
         }
         CredentialStatus::Valid => {
             let token = token.expect("token must be Some when status is Valid");
@@ -901,6 +918,24 @@ mod tests {
         assert_eq!(token.as_deref(), Some("token"));
         assert!(matches!(status, CredentialStatus::Expired));
         assert!(message.is_some());
+    }
+
+    #[test]
+    fn auth_json_expired_entry_with_refresh_token_is_refresh_pending() {
+        let status = |refresh_token: &str| {
+            let content = serde_json::json!({
+                "https://auth.x.ai::client-id": {
+                    "key": "token",
+                    "expires_at": "2020-01-01T00:00:00.000Z",
+                    "refresh_token": refresh_token
+                }
+            })
+            .to_string();
+            parse_grok_auth_json(&content).1
+        };
+        assert!(matches!(status("rt"), CredentialStatus::RefreshPending));
+        // 空的刷新令牌换不了新令牌：真的要重新登录。
+        assert!(matches!(status(""), CredentialStatus::Expired));
     }
 
     #[test]

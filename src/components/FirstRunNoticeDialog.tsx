@@ -27,7 +27,12 @@ export function FirstRunNoticeDialog() {
     if (!settings) return;
     try {
       const { webdavSync: _, ...rest } = settings;
-      await settingsApi.save({ ...rest, firstRunNoticeConfirmed: true });
+      // 新装用户看的就是新界面，「界面改版了」弹窗一并记成已看过
+      await settingsApi.save({
+        ...rest,
+        firstRunNoticeConfirmed: true,
+        newLayoutNoticeConfirmed: true,
+      });
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
     } catch (error) {
       console.error("Failed to save firstRunNoticeConfirmed:", error);
@@ -44,7 +49,7 @@ export function FirstRunNoticeDialog() {
       <DialogContent className="max-w-md" zIndex="top">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-blue-500" />
+            <Sparkles className="h-5 w-5 text-fg-1" />
             {t("firstRunNotice.title")}
           </DialogTitle>
         </DialogHeader>

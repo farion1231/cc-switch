@@ -1,4 +1,5 @@
 import type { ProviderCategory } from "@/types";
+import type { PresetFamilyFields } from "./presetFamilies";
 
 /**
  * Gemini 预设供应商的视觉主题配置
@@ -12,7 +13,7 @@ export interface GeminiPresetTheme {
   textColor?: string;
 }
 
-export interface GeminiProviderPreset {
+export interface GeminiProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
@@ -344,26 +345,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "soleapi",
     endpointCandidates: ["https://soleapi.com"],
     icon: "soleapi",
-  },
-  {
-    name: "ETok.ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.etok.ai/v1beta",
-        GEMINI_MODEL: "gemini-3.6-flash",
-      },
-    },
-    baseURL: "https://api.etok.ai/v1beta",
-    model: "gemini-3.6-flash",
-    description: "ETok",
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "etok",
-    endpointCandidates: ["https://api.etok.ai/v1beta"],
-    icon: "etok",
-    iconColor: "#000000",
   },
   {
     name: "Cubence",
