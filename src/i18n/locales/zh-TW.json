@@ -4175,6 +4175,7 @@
       "jsonSyntaxLine": "第 {{line}} 行附近有語法錯誤",
       "jsonNotObject": "最外層要是一個物件，例如 {\"command\": \"npx\"}",
       "jsonBlocksForm": "修好後才能切回表單。",
+      "jsonMaskedUnknown": "「{{key}}」的值還是佔位符，但草稿裡沒有這個鍵的原值：填入真實值，或先點「顯示值」再改鍵名。",
       "writeTo": "寫入到",
       "writeToHelpTitle": "怎麼寫進各應用",
       "writeToHelp": "同一份設定原樣寫進勾選的每個應用；某個應用要不同參數時，另建一條只勾它。MiniMax Code 只替換連線欄位，mcp.json 裡的其他欄位保留。",

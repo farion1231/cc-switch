@@ -144,6 +144,22 @@ describe("mcpDraft form ⇄ JSON", () => {
     expect(parsed.ok && parsed.spec).toEqual({ ...spec, command: "npx" });
   });
 
+  it("refuses a placeholder whose key has no original value instead of saving an empty secret", () => {
+    const conn = connectionOf(spec);
+    // 改了键名、占位符还在：原值按键名找不到，不能悄悄存成 ""
+    const renamed = jsonTextOf(conn, false).replace('"TOKEN"', '"API_TOKEN"');
+    const parsed = parseJsonText(renamed, conn);
+    expect(!parsed.ok && parsed.error).toEqual({
+      kind: "maskedUnknown",
+      field: "env",
+      key: "API_TOKEN",
+    });
+    // 填了真实值就正常通过
+    const filled = renamed.replace(`"${SECRET_MASK}"`, '"new-secret"');
+    const ok = parseJsonText(filled, conn);
+    expect(ok.ok && ok.spec.env).toEqual({ API_TOKEN: "new-secret" });
+  });
+
   it("reports the line of a JSON syntax error", () => {
     const parsed = parseJsonText(
       '{\n  "command": "uvx"\n  "args": []\n}',

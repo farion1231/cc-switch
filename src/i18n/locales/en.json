@@ -4174,6 +4174,7 @@
       "jsonSyntaxLine": "Syntax error near line {{line}}",
       "jsonNotObject": "The top level must be an object, e.g. {\"command\": \"npx\"}",
       "jsonBlocksForm": "Fix it to switch back to the form.",
+      "jsonMaskedUnknown": "\"{{key}}\" still holds the placeholder, but the draft has no original value for that key. Enter the real value, or turn on \"Show values\" before renaming keys.",
       "writeTo": "Write to",
       "writeToHelpTitle": "How it's written to apps",
       "writeToHelp": "The same config is written as-is to every ticked app; if one app needs different arguments, create a separate entry for it. MiniMax Code only replaces the connection fields; other fields in mcp.json are kept.",
