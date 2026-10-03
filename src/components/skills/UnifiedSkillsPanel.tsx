@@ -892,6 +892,8 @@ interface ImportSkillsDialogProps {
     description?: string;
     foundIn: string[];
     path: string;
+    readOnly?: boolean;
+    pluginId?: string;
   }>;
   isImporting: boolean;
   onImport: (imports: ImportSkillSelection[]) => void;
@@ -1032,8 +1034,14 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   onClose,
 }) => {
   const { t } = useTranslation();
+  // 只读来源（插件提供的 skill）由 Claude Code 自己加载，不参与导入：
+  // 既不默认勾选，也不计入提交列表，否则导入会静默跳过并提示"成功导入 0 个"。
   const [selected, setSelected] = useState<Set<string>>(
-    new Set(skills.map((s) => s.directory)),
+    new Set(skills.filter((s) => !s.readOnly).map((s) => s.directory)),
+  );
+  const readOnlyDirectories = useMemo(
+    () => new Set(skills.filter((s) => s.readOnly).map((s) => s.directory)),
+    [skills],
   );
   const [selectedApps, setSelectedApps] = useState<
     Record<string, ImportSkillSelection["apps"]>
@@ -1057,6 +1065,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   );
 
   const toggleSelect = (directory: string) => {
+    if (readOnlyDirectories.has(directory)) return;
     const newSelected = new Set(selected);
     if (newSelected.has(directory)) {
       newSelected.delete(directory);
@@ -1068,20 +1077,22 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
 
   const handleImport = () => {
     onImport(
-      Array.from(selected).map((directory) => ({
-        directory,
-        apps: selectedApps[directory] ?? {
-          claude: false,
-          codex: false,
-          gemini: false,
-          grokbuild: false,
-          opencode: false,
-          openclaw: false,
-          hermes: false,
-          pi: false,
-          mcode: false,
-        },
-      })),
+      Array.from(selected)
+        .filter((directory) => !readOnlyDirectories.has(directory))
+        .map((directory) => ({
+          directory,
+          apps: selectedApps[directory] ?? {
+            claude: false,
+            codex: false,
+            gemini: false,
+            grokbuild: false,
+            opencode: false,
+            openclaw: false,
+            hermes: false,
+            pi: false,
+            mcode: false,
+          },
+        })),
     );
   };
 
@@ -1104,8 +1115,9 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                   type="checkbox"
                   checked={selected.has(skill.directory)}
                   onChange={() => toggleSelect(skill.directory)}
+                  disabled={skill.readOnly}
                   aria-label={skill.name}
-                  className="mt-1"
+                  className="mt-1 disabled:opacity-40"
                 />
                 <div className="flex-1 min-w-0">
                   <div className="font-medium">{skill.name}</div>
@@ -1114,8 +1126,16 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                       {skill.description}
                     </div>
                   )}
+                  {skill.readOnly && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {t("skills.providedByPlugin", {
+                        plugin: skill.pluginId ?? "",
+                      })}
+                    </div>
+                  )}
                   <div className="mt-2">
                     <AppToggleGroup
+                      disabled={skill.readOnly}
                       apps={
                         selectedApps[skill.directory] ?? {
                           claude: false,
