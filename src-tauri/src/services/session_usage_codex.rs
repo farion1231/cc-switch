@@ -19,7 +19,8 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    metadata_modified_nanos, update_sync_state, update_sync_state_on_conn, SessionSyncResult,
+    estimated_latency_ms, metadata_modified_nanos, parse_timestamp_millis, update_sync_state,
+    update_sync_state_on_conn, SessionSyncResult,
 };
 use crate::services::usage_stats::{
     find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,
@@ -197,6 +198,199 @@ struct ParsedTokenEvent {
     event_index: Option<u32>,
     model: String,
     timestamp: Option<String>,
+    /// 按事件时间戳估出来的请求耗时（含首字等待）；估不出来为 None。
+    latency_ms: Option<i64>,
+}
+
+/// 只看每行开头这么多字节来判断行的种类：时间戳、类型、角色都在行头，
+/// 后面的正文（工具输出可能上百 KB）不用解析。
+const LINE_HEAD_BYTES: usize = 512;
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+/// 从行头里取 `"key":"value"` 的值。只用于时间戳、类型名、角色这类不含转义的短值。
+fn head_str<'a>(head: &'a [u8], key: &str) -> Option<&'a str> {
+    let needle = format!("\"{key}\":\"");
+    let start = find_bytes(head, needle.as_bytes())? + needle.len();
+    let len = head[start..].iter().position(|b| *b == b'"')?;
+    std::str::from_utf8(&head[start..start + len]).ok()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TimingLine {
+    /// 下一次请求只会在它之后发出：用户消息、`turn_context`
+    Boundary,
+    /// 工具结果，同样是下一次请求的起点
+    ToolOutput,
+    /// 模型输出的一项（思考、回复、工具调用），写在这一项生成完的时刻
+    ModelOutput,
+    /// `token_usage_record`：响应结束时写的用量记录（新版 Codex 才有）
+    UsageRecord,
+    /// 一轮开始（`task_started`）或被中断（`turn_aborted`）：没等到 `token_count`
+    /// 的那次请求到此作废
+    TurnReset,
+}
+
+fn classify_timing_line(line: &str) -> Option<(i64, TimingLine)> {
+    let bytes = line.as_bytes();
+    let head = &bytes[..bytes.len().min(LINE_HEAD_BYTES)];
+    let (envelope, payload) = match find_bytes(head, b"\"payload\":{") {
+        Some(at) => head.split_at(at),
+        None => (head, &[][..]),
+    };
+    let kind = match head_str(envelope, "type")? {
+        "turn_context" => TimingLine::Boundary,
+        "token_usage_record" => TimingLine::UsageRecord,
+        "response_item" => match head_str(payload, "type")? {
+            "message" => match head_str(payload, "role")? {
+                "assistant" => TimingLine::ModelOutput,
+                _ => TimingLine::Boundary,
+            },
+            "reasoning" => TimingLine::ModelOutput,
+            item if item.ends_with("_output") => TimingLine::ToolOutput,
+            item if item.ends_with("_call") => TimingLine::ModelOutput,
+            _ => return None,
+        },
+        "event_msg" => match head_str(payload, "type")? {
+            "task_started" | "turn_aborted" => TimingLine::TurnReset,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let timestamp_ms = head_str(envelope, "timestamp").and_then(parse_timestamp_millis)?;
+    Some((timestamp_ms, kind))
+}
+
+/// 按事件顺序估每次请求的耗时。Codex 日志没有请求级计时，而且各版本的
+/// 事件顺序不一样：
+///
+/// - 结束时刻：新版在响应结束时写 `token_usage_record`，直接用它。旧版只有
+///   `token_count`，有的版本在响应结束时写，有的要等工具跑完才写；后一种
+///   表现为「最后一个输出项之后先出现工具结果，`token_count` 紧跟着工具结果
+///   写出」，这时改用最后一个输出项的时刻（略早于真正结束，速度会略偏高）。
+/// - 开始时刻：看到这次请求第一个输出项时，在它之前最近的一个起点行
+///   （上一次的 `token_count`、工具结果、用户消息、`turn_context`）。不直接取
+///   结束前最近的起点行，是因为工具结果可能在响应还没结束时就写进来了。
+///
+/// 2025 年的旧布局把上一次响应的输出项补写在它的 `token_count` 之后（时间戳
+/// 和那个 `token_count` 一样）。这些输出项不属于下一次请求，直接忽略；否则
+/// 下一次请求的起点会被钉在上一次响应结束的时刻，用户隔很久才发下一条消息时
+/// 算出来的耗时就长得离谱。
+///
+/// 请求被中断或出错时等不到 `token_count`，它留下的起点要在下一轮开始时清掉，
+/// 否则会被下一次请求沿用。只在 `task_started` / `turn_aborted` 上清，不在用户
+/// 消息上清：Codex 会在响应中途插入 developer 消息，在那里清会把起点挪晚。
+#[derive(Debug, Default)]
+struct RequestTimer {
+    last_boundary_ms: Option<i64>,
+    last_token_count_ms: Option<i64>,
+    request_start_ms: Option<i64>,
+    last_model_output_ms: Option<i64>,
+    /// 最后一个输出项之后出现的工具结果里最晚的一个；之后再有输出项就清空。
+    tool_output_after_model_output_ms: Option<i64>,
+    usage_record: Option<(i64, CumulativeTokens)>,
+}
+
+/// 两行的时间戳相差不超过这个毫秒数，就算是同一批写出的（实测相差 0–1 毫秒，
+/// 而一次真实的请求不可能这么快）。
+const SAME_FLUSH_SLACK_MS: i64 = 100;
+
+impl RequestTimer {
+    fn observe_line(&mut self, line: &str) {
+        let Some((timestamp_ms, kind)) = classify_timing_line(line) else {
+            return;
+        };
+        match kind {
+            TimingLine::Boundary => {
+                self.last_boundary_ms = self.last_boundary_ms.max(Some(timestamp_ms));
+            }
+            TimingLine::ToolOutput => {
+                self.last_boundary_ms = self.last_boundary_ms.max(Some(timestamp_ms));
+                if self.last_model_output_ms.is_some() {
+                    self.tool_output_after_model_output_ms = Some(timestamp_ms);
+                }
+            }
+            TimingLine::ModelOutput => {
+                let trails_token_count = self.request_start_ms.is_none()
+                    && self
+                        .last_token_count_ms
+                        .is_some_and(|at| timestamp_ms - at <= SAME_FLUSH_SLACK_MS);
+                if trails_token_count {
+                    return;
+                }
+                if self.request_start_ms.is_none() {
+                    self.request_start_ms = self.last_boundary_ms;
+                }
+                self.last_model_output_ms = Some(timestamp_ms);
+                self.tool_output_after_model_output_ms = None;
+            }
+            TimingLine::UsageRecord => {
+                // 行头只够判断种类，用量要解析整行；这类行很短
+                let usage = serde_json::from_str::<serde_json::Value>(line)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("payload")
+                            .and_then(|payload| payload.get("usage"))
+                            .and_then(parse_cumulative_tokens)
+                    });
+                self.usage_record = usage.map(|usage| (timestamp_ms, usage));
+            }
+            TimingLine::TurnReset => {
+                *self = RequestTimer {
+                    last_boundary_ms: self.last_boundary_ms.max(Some(timestamp_ms)),
+                    last_token_count_ms: self.last_token_count_ms,
+                    ..RequestTimer::default()
+                };
+            }
+        }
+    }
+
+    /// 遇到一次有用量的 `token_count`：结算这次请求的耗时，并把它记成下一次
+    /// 请求的起点。`last` 是这次请求自己的用量，用来确认 `token_usage_record`
+    /// 说的是同一次请求。
+    fn finish_request(
+        &mut self,
+        token_count_ms: Option<i64>,
+        last: Option<&CumulativeTokens>,
+    ) -> Option<i64> {
+        let start_ms = self.request_start_ms.or(self.last_boundary_ms);
+        let record_end_ms = self
+            .usage_record
+            .take()
+            .filter(|(_, usage)| {
+                last.is_none_or(|last| {
+                    usage.input == last.input
+                        && usage.cached_input == last.cached_input
+                        && usage.output == last.output
+                })
+            })
+            .map(|(timestamp_ms, _)| timestamp_ms);
+        let token_count_waited_for_tools =
+            match (self.tool_output_after_model_output_ms, token_count_ms) {
+                (Some(tool_output_ms), Some(token_count_ms)) => {
+                    token_count_ms - tool_output_ms <= SAME_FLUSH_SLACK_MS
+                }
+                (Some(_), None) => true,
+                (None, _) => false,
+            };
+        let end_ms = record_end_ms.or(if token_count_waited_for_tools {
+            self.last_model_output_ms
+        } else {
+            token_count_ms
+        });
+
+        *self = RequestTimer {
+            last_boundary_ms: self.last_boundary_ms.max(token_count_ms),
+            last_token_count_ms: token_count_ms,
+            ..RequestTimer::default()
+        };
+        estimated_latency_ms(start_ms?, end_ms?)
+    }
 }
 
 #[derive(Debug)]
@@ -818,6 +1012,7 @@ fn parse_codex_file(
     let mut line_offset = 0i64;
     let mut observed_bytes = 0i64;
     let mut has_billable_tokens = false;
+    let mut timer = RequestTimer::default();
 
     loop {
         let mut bytes = Vec::new();
@@ -844,6 +1039,8 @@ fn parse_codex_file(
         if line.trim().is_empty() {
             continue;
         }
+
+        timer.observe_line(&line);
 
         let is_event_msg = line.contains("\"event_msg\"");
         let is_turn_context = line.contains("\"turn_context\"");
@@ -964,6 +1161,7 @@ fn parse_codex_file(
                 }
                 previous_token_signature = Some(signature.clone());
 
+                let request_usage = last.clone();
                 let delta = if duplicate_snapshot {
                     DeltaTokens {
                         input: 0,
@@ -1003,16 +1201,26 @@ fn parse_codex_file(
                     Some(event_index)
                 };
 
+                let timestamp = value
+                    .get("timestamp")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+                // 重复快照（限额刷新时重发的）不是一次请求，不参与计时
+                let latency_ms = nonzero_index.and_then(|_| {
+                    timer.finish_request(
+                        timestamp.as_deref().and_then(parse_timestamp_millis),
+                        request_usage.as_ref(),
+                    )
+                });
+
                 token_events.push(ParsedTokenEvent {
                     line_offset,
                     signature,
                     delta,
                     event_index: nonzero_index,
                     model: current_model.clone(),
-                    timestamp: value
-                        .get("timestamp")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_owned),
+                    timestamp,
+                    latency_ms,
                 });
             }
             _ => {}
@@ -1418,6 +1626,7 @@ fn sync_single_codex_file(
                 &event.model,
                 Some(session_thread_id),
                 event.timestamp.as_deref(),
+                event.latency_ms,
                 &mut batch_suspected,
                 &mut pass.pricing,
             ) {
@@ -1468,6 +1677,7 @@ fn insert_codex_session_entry(
         model,
         session_id,
         timestamp,
+        None,
         suspected_duplicates,
         &mut HashMap::new(),
     )
@@ -1477,7 +1687,8 @@ fn insert_codex_session_entry(
 ///
 /// 调用方负责持锁/事务；`pricing_cache` 按原始 model 字符串键控（
 /// `find_codex_pricing` 是纯函数式查找，同串必同结果），全量重导时把
-/// 每事件一次的定价 SELECT 降为每模型一次。
+/// 每事件一次的定价 SELECT 降为每模型一次。`latency_ms` 是按事件时间戳估出来的
+/// 请求耗时（见 [`RequestTimer`]），估不出来传 None。
 #[allow(clippy::too_many_arguments)]
 fn insert_codex_session_entry_on_conn(
     conn: &rusqlite::Connection,
@@ -1486,6 +1697,7 @@ fn insert_codex_session_entry_on_conn(
     model: &str,
     session_id: Option<&str>,
     timestamp: Option<&str>,
+    latency_ms: Option<i64>,
     suspected_duplicates: &mut u32,
     pricing_cache: &mut HashMap<String, Option<ModelPricing>>,
 ) -> Result<bool, AppError> {
@@ -1584,8 +1796,8 @@ fn insert_codex_session_entry_on_conn(
                 cache_read_cost,
                 cache_creation_cost,
                 total_cost,
-                0i64,                // latency_ms
-                Option::<i64>::None, // first_token_ms
+                latency_ms.unwrap_or(0), // latency_ms: 按时间戳估算，0 = 没有计时
+                Option::<i64>::None, // first_token_ms: 会话日志无此数据
                 200i64,              // status_code
                 Option::<String>::None, // error_message
                 session_id.map(|s| s.to_string()),
@@ -3450,5 +3662,215 @@ mod tests {
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
         }
         Ok(())
+    }
+
+    /// 按 Codex 实际写出的键顺序（timestamp、type、payload）拼一行；`json!` 会把键
+    /// 按字母排序，行头判断种类靠的是真实顺序
+    fn raw_line(timestamp: &str, kind: &str, payload: &str) -> String {
+        format!(r#"{{"timestamp":"{timestamp}","type":"{kind}","payload":{payload}}}"#)
+    }
+
+    fn raw_item(timestamp: &str, payload: &str) -> String {
+        raw_line(timestamp, "response_item", payload)
+    }
+
+    fn raw_usage(input: u64, output: u64) -> String {
+        format!(
+            r#"{{"input_tokens":{input},"cached_input_tokens":0,"output_tokens":{output},"reasoning_output_tokens":0,"total_tokens":{}}}"#,
+            input + output
+        )
+    }
+
+    /// `total` 是累计用量，`last` 是这一次请求的用量
+    fn raw_token_count(timestamp: &str, total: (u64, u64), last: (u64, u64)) -> String {
+        raw_line(
+            timestamp,
+            "event_msg",
+            &format!(
+                r#"{{"type":"token_count","info":{{"total_token_usage":{},"last_token_usage":{}}},"rate_limits":{{"limit_id":"codex"}}}}"#,
+                raw_usage(total.0, total.1),
+                raw_usage(last.0, last.1)
+            ),
+        )
+    }
+
+    fn parsed_latencies(lines: &[String]) -> Vec<Option<i64>> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        fs::write(&file, lines.join("\n") + "\n").unwrap();
+        parse_codex_file(&file, Some(PARENT_ID.to_string()))
+            .unwrap()
+            .token_events
+            .iter()
+            .filter(|event| event.event_index.is_some())
+            .map(|event| event.latency_ms)
+            .collect()
+    }
+
+    const USER_MESSAGE: &str = r#"{"type":"message","role":"user","content":[]}"#;
+    const ASSISTANT_MESSAGE: &str = r#"{"type":"message","role":"assistant","content":[]}"#;
+    const REASONING: &str = r#"{"type":"reasoning","summary":[]}"#;
+    const TOOL_CALL: &str = r#"{"type":"custom_tool_call","call_id":"c1","name":"shell"}"#;
+    const TOOL_OUTPUT: &str = r#"{"type":"custom_tool_call_output","call_id":"c1","output":"ok"}"#;
+
+    #[test]
+    fn test_latency_ends_at_usage_record_not_at_delayed_token_count() -> Result<(), AppError> {
+        let lines = vec![
+            raw_line(
+                "2026-10-02T03:00:00.000Z",
+                "turn_context",
+                r#"{"model":"gpt-5"}"#,
+            ),
+            raw_item("2026-10-02T03:00:01.000Z", USER_MESSAGE),
+            raw_item("2026-10-02T03:00:05.000Z", REASONING),
+            raw_item("2026-10-02T03:00:09.000Z", TOOL_CALL),
+            // 响应在这里结束；token_count 要等工具跑完才写
+            raw_line(
+                "2026-10-02T03:00:09.500Z",
+                "token_usage_record",
+                &format!(r#"{{"turn_id":"t1","usage":{}}}"#, raw_usage(100, 600)),
+            ),
+            raw_item("2026-10-02T03:00:20.000Z", TOOL_OUTPUT),
+            raw_token_count("2026-10-02T03:00:20.001Z", (100, 600), (100, 600)),
+            // 第二次请求：用量记录对不上这次请求，不采信，退回 token_count 的时刻
+            raw_item("2026-10-02T03:00:25.000Z", REASONING),
+            raw_item("2026-10-02T03:00:30.000Z", ASSISTANT_MESSAGE),
+            raw_line(
+                "2026-10-02T03:00:30.200Z",
+                "token_usage_record",
+                &format!(r#"{{"turn_id":"other","usage":{}}}"#, raw_usage(1, 999)),
+            ),
+            raw_token_count("2026-10-02T03:00:30.300Z", (300, 1300), (200, 700)),
+        ];
+
+        assert_eq!(parsed_latencies(&lines), vec![Some(8_500), Some(10_299)]);
+
+        // 估出来的耗时要落进库里
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut contents = session_meta(PARENT_ID).to_string();
+        contents.push('\n');
+        contents.push_str(&(lines.join("\n") + "\n"));
+        fs::write(&file, contents).unwrap();
+        let db = Database::memory()?;
+        sync_test_file(&db, &file, &[&file])?;
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn
+            .prepare("SELECT latency_ms FROM proxy_request_logs ORDER BY request_id")
+            .unwrap();
+        let stored: Vec<i64> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+        assert_eq!(stored, vec![8_500, 10_299]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_latency_without_usage_record_stops_before_tool_execution() {
+        let lines = vec![
+            raw_item("2026-08-03T03:00:01.000Z", USER_MESSAGE),
+            raw_item("2026-08-03T03:00:06.000Z", TOOL_CALL),
+            // 工具跑了 10 秒，token_count 紧跟着工具结果写出
+            raw_item("2026-08-03T03:00:16.000Z", TOOL_OUTPUT),
+            raw_token_count("2026-08-03T03:00:16.001Z", (100, 600), (100, 600)),
+            // 限额刷新时重发的快照不是一次请求，不能把下一次请求的起点往后挪
+            raw_token_count("2026-08-03T03:00:17.000Z", (100, 600), (100, 600)),
+            raw_item("2026-08-03T03:00:20.000Z", REASONING),
+            raw_item("2026-08-03T03:00:22.000Z", ASSISTANT_MESSAGE),
+            raw_token_count("2026-08-03T03:00:22.100Z", (300, 1300), (200, 700)),
+        ];
+
+        assert_eq!(parsed_latencies(&lines), vec![Some(5_000), Some(6_099)]);
+    }
+
+    #[test]
+    fn test_latency_ignores_items_written_after_their_token_count() {
+        // 2025 年的布局：输出项和工具结果补写在它们那次响应的 token_count 之后
+        let lines = vec![
+            raw_item("2025-10-30T08:00:01.000Z", USER_MESSAGE),
+            raw_token_count("2025-10-30T08:00:08.000Z", (100, 600), (100, 600)),
+            raw_item("2025-10-30T08:00:08.000Z", REASONING),
+            raw_item("2025-10-30T08:00:08.001Z", TOOL_CALL),
+            raw_item("2025-10-30T08:00:08.001Z", TOOL_OUTPUT),
+            raw_line(
+                "2025-10-30T08:00:08.002Z",
+                "turn_context",
+                r#"{"model":"gpt-5"}"#,
+            ),
+            // 用户隔了一分多钟才发下一条消息，这段空闲不算进请求耗时
+            raw_item("2025-10-30T08:01:40.000Z", USER_MESSAGE),
+            raw_token_count("2025-10-30T08:01:50.000Z", (300, 1300), (200, 700)),
+        ];
+
+        assert_eq!(parsed_latencies(&lines), vec![Some(7_000), Some(10_000)]);
+    }
+
+    #[test]
+    fn test_timing_line_is_classified_from_the_line_head() {
+        let long_output = format!(
+            r#"{{"type":"function_call_output","call_id":"c1","output":"{}"}}"#,
+            "x".repeat(4 * LINE_HEAD_BYTES)
+        );
+        assert_eq!(
+            classify_timing_line(&raw_item("2026-10-02T03:00:00.250Z", &long_output)),
+            Some((1_790_910_000_250, TimingLine::ToolOutput))
+        );
+        // 正文里出现的字样不影响判断：种类只看信封上的 type
+        let quoted =
+            r#"{"type":"message","role":"user","content":"\"type\":\"token_usage_record\""}"#;
+        assert_eq!(
+            classify_timing_line(&raw_item("2026-10-02T03:00:00.250Z", quoted)).map(|line| line.1),
+            Some(TimingLine::Boundary)
+        );
+        assert_eq!(
+            classify_timing_line(&raw_line(
+                "2026-10-02T03:00:00.250Z",
+                "event_msg",
+                r#"{"type":"task_started"}"#
+            ))
+            .map(|line| line.1),
+            Some(TimingLine::TurnReset)
+        );
+        assert_eq!(
+            classify_timing_line(&raw_line(
+                "2026-10-02T03:00:00.250Z",
+                "event_msg",
+                r#"{"type":"item_completed"}"#
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn test_latency_does_not_inherit_the_start_of_an_aborted_request() {
+        const DEVELOPER_MESSAGE: &str = r#"{"type":"message","role":"developer","content":[]}"#;
+        let lines = vec![
+            raw_item("2026-10-02T03:00:01.000Z", USER_MESSAGE),
+            // 这次请求出了一段思考就被用户中断，等不到 token_count
+            raw_item("2026-10-02T03:00:10.000Z", REASONING),
+            raw_line(
+                "2026-10-02T03:00:20.000Z",
+                "event_msg",
+                r#"{"type":"turn_aborted","reason":"interrupted"}"#,
+            ),
+            raw_line(
+                "2026-10-02T03:02:00.000Z",
+                "event_msg",
+                r#"{"type":"task_started"}"#,
+            ),
+            raw_item("2026-10-02T03:02:00.010Z", USER_MESSAGE),
+            raw_item("2026-10-02T03:02:20.000Z", REASONING),
+            raw_item("2026-10-02T03:02:30.000Z", ASSISTANT_MESSAGE),
+            raw_token_count("2026-10-02T03:02:30.100Z", (100, 600), (100, 600)),
+            // 响应中途插进来的 developer 消息不是新一轮，起点不动
+            raw_item("2026-10-02T03:02:35.000Z", REASONING),
+            raw_item("2026-10-02T03:02:36.000Z", DEVELOPER_MESSAGE),
+            raw_item("2026-10-02T03:02:40.000Z", ASSISTANT_MESSAGE),
+            raw_token_count("2026-10-02T03:02:40.200Z", (300, 1300), (200, 700)),
+        ];
+
+        assert_eq!(parsed_latencies(&lines), vec![Some(30_090), Some(10_100)]);
     }
 }

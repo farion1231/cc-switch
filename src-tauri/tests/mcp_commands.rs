@@ -499,6 +499,49 @@ command = "echo"
 }
 
 #[test]
+fn import_mcp_from_codex_infers_http_from_url_without_type() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    // Codex 的 [mcp_servers.*] 没有 `type`：HTTP server 只带 `url`。
+    fs::write(
+        codex_dir.join("config.toml"),
+        "[mcp_servers.remote]\nurl = \"https://mcp.example.com/mcp\"\n\n\
+         [mcp_servers.remote.http_headers]\nAuthorization = \"Bearer x\"\n",
+    )
+    .expect("seed codex config");
+
+    let state = create_test_state().expect("create test state");
+    let changed = McpService::import_from_codex(&state).expect("import from codex");
+    assert!(changed > 0, "should import the url-only server");
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("remote").expect("url-only server imported");
+    assert_eq!(
+        entry.server.get("type").and_then(|v| v.as_str()),
+        Some("http"),
+        "url-only Codex server must import as http, not stdio"
+    );
+    assert_eq!(
+        entry.server.get("url").and_then(|v| v.as_str()),
+        Some("https://mcp.example.com/mcp"),
+        "url must be preserved"
+    );
+    assert_eq!(
+        entry
+            .server
+            .get("headers")
+            .and_then(|v| v.get("Authorization"))
+            .and_then(|v| v.as_str()),
+        Some("Bearer x"),
+        "http_headers must map to headers"
+    );
+}
+
+#[test]
 fn import_mcp_from_claude_does_not_sync_existing_codex_enabled_server() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -856,6 +899,53 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
         v.pointer("/mcpServers/echo").is_none(),
         "echo should be removed from Claude live config after disabling"
     );
+}
+
+#[test]
+fn projecting_an_app_continues_past_a_server_that_cannot_be_written() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    fs::create_dir_all(home.join(".claude")).expect("create ~/.claude dir");
+    let mcp_path = get_claude_mcp_path();
+    fs::write(
+        &mcp_path,
+        json!({"mcpServers": {"c-off": {"type": "stdio", "command": "old"}}}).to_string(),
+    )
+    .expect("seed ~/.claude.json");
+
+    let state = support::create_test_state().expect("create test state");
+    // 直接入库，绕过面板校验：规范不是对象的行可能来自云同步或旧数据。
+    for (id, server, claude) in [
+        ("a-broken", json!("not an object"), true),
+        ("b-good", json!({"type": "stdio", "command": "echo"}), true),
+        ("c-off", json!({"type": "stdio", "command": "old"}), false),
+    ] {
+        let server: McpServer = serde_json::from_value(json!({
+            "id": id, "name": id, "server": server, "apps": {"claude": claude}
+        }))
+        .expect("build server");
+        state.db.save_mcp_server(&server).expect("save server");
+    }
+
+    let err = McpService::sync_enabled_for_app(&state, &AppType::Claude)
+        .expect_err("the broken server must still be reported");
+    assert!(
+        err.to_string().contains("a-broken"),
+        "error should name the failed server: {err}"
+    );
+
+    let text = fs::read_to_string(&mcp_path).expect("read ~/.claude.json");
+    let v: serde_json::Value = serde_json::from_str(&text).expect("parse ~/.claude.json");
+    assert!(
+        v.pointer("/mcpServers/b-good").is_some(),
+        "servers after the failed one must still be written"
+    );
+    assert!(
+        v.pointer("/mcpServers/c-off").is_none(),
+        "disabled servers after the failed one must still be removed"
+    );
+    assert!(v.pointer("/mcpServers/a-broken").is_none());
 }
 
 #[test]
@@ -1423,4 +1513,75 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
         servers.contains_key("external-only"),
         "live entries unknown to DB should be preserved"
     );
+}
+
+#[test]
+fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
+    let all = McpService::resync_targets(None).expect("default targets");
+    assert_eq!(
+        all.iter().map(|app| app.as_str()).collect::<Vec<_>>(),
+        vec![
+            "claude",
+            "codex",
+            "gemini",
+            "grokbuild",
+            "opencode",
+            "hermes",
+            "mcode"
+        ]
+    );
+    assert_eq!(McpService::resync_targets(Some(&[])).unwrap(), all);
+
+    let only_codex =
+        McpService::resync_targets(Some(&["codex".to_string(), "codex".to_string()])).unwrap();
+    assert_eq!(only_codex, vec![AppType::Codex]);
+
+    assert!(McpService::resync_targets(Some(&["pi".to_string()])).is_err());
+    assert!(McpService::resync_targets(Some(&["openclaw".to_string()])).is_err());
+    assert!(McpService::resync_targets(Some(&["not-an-app".to_string()])).is_err());
+}
+
+/// 「重新同步到各应用」逐应用报告：Codex 配置坏了只让 Codex 失败、文件不动，
+/// Claude 照常按数据库里的开关写入。
+#[test]
+fn resync_app_reports_each_app_and_leaves_broken_config_untouched() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    fs::write(get_claude_mcp_path(), "{}").expect("seed ~/.claude.json");
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    let broken = "not = = valid toml";
+    fs::write(codex_dir.join("config.toml"), broken).expect("seed broken codex config");
+
+    let state = create_test_state().expect("create test state");
+    let server: McpServer = serde_json::from_value(json!({
+        "id": "fetch", "name": "fetch",
+        "server": {"type": "stdio", "command": "uvx", "args": ["mcp-server-fetch"]},
+        "apps": {"claude": true, "codex": true}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&server).unwrap();
+
+    let claude = McpService::resync_app(&state, &AppType::Claude);
+    assert!(claude.ok, "claude should sync: {claude:?}");
+    assert_eq!(claude.app, "claude");
+    assert!(claude.error.is_none());
+    let claude_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(get_claude_mcp_path()).unwrap()).unwrap();
+    assert_eq!(claude_json["mcpServers"]["fetch"]["command"], "uvx");
+
+    let codex = McpService::resync_app(&state, &AppType::Codex);
+    assert!(!codex.ok);
+    assert_eq!(codex.app, "codex");
+    assert!(codex.error.as_deref().is_some_and(|e| !e.is_empty()));
+    assert_eq!(
+        fs::read_to_string(codex_dir.join("config.toml")).unwrap(),
+        broken,
+        "a config that failed to parse must not be rewritten"
+    );
+
+    let serialized = serde_json::to_value(&claude).unwrap();
+    assert_eq!(serialized, json!({"app": "claude", "ok": true}));
 }

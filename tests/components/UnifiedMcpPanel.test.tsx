@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
@@ -7,49 +8,63 @@ import type { McpApps, McpServer, McpServerSpec } from "@/types";
 const mocks = vi.hoisted(() => ({
   serversMap: {} as Record<string, McpServer>,
   isLoading: false,
-  togglePending: false,
-  toggleVariables: undefined as
-    | { serverId: string; app: string; enabled: boolean }
-    | undefined,
-  bulkPending: false,
-  bulkVariables: undefined as
-    | { serverIds: string[]; app: string; enabled: boolean }
-    | undefined,
+  isError: false,
   toggle: vi.fn(),
   bulkToggle: vi.fn(),
   deleteServer: vi.fn(),
   importServers: vi.fn(),
+  resync: vi.fn(),
+  refetch: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
+  toastWarning: vi.fn(),
+  visibleApps: ["claude", "codex", "gemini"] as string[],
 }));
 
 vi.mock("@/hooks/useMcp", () => ({
   useAllMcpServers: () => ({
     data: mocks.serversMap,
     isLoading: mocks.isLoading,
+    isError: mocks.isError,
+    error: mocks.isError ? new Error("database is locked") : null,
+    refetch: mocks.refetch,
   }),
-  useToggleMcpApp: () => ({
-    mutateAsync: mocks.toggle,
-    isPending: mocks.togglePending,
-    variables: mocks.toggleVariables,
-  }),
+  useToggleMcpApp: () => ({ mutateAsync: mocks.toggle, isPending: false }),
   useBulkToggleMcpApp: () => ({
     mutateAsync: mocks.bulkToggle,
-    isPending: mocks.bulkPending,
-    variables: mocks.bulkVariables,
+    isPending: false,
   }),
-  useDeleteMcpServer: () => ({ mutateAsync: mocks.deleteServer }),
-  useImportMcpFromApps: () => ({ mutateAsync: mocks.importServers }),
+  useDeleteMcpServer: () => ({
+    mutateAsync: mocks.deleteServer,
+    isPending: false,
+  }),
+  useImportMcpFromApps: () => ({
+    mutateAsync: mocks.importServers,
+    isPending: false,
+  }),
+  useResyncMcpToApps: () => ({
+    mutateAsync: mocks.resync,
+    isPending: false,
+  }),
+}));
+
+vi.mock("@/components/mcp/useVisibleAppIds", () => ({
+  useVisibleAppIds: (ids: string[]) =>
+    ids.filter((id) => mocks.visibleApps.includes(id)),
 }));
 
 vi.mock("@/components/mcp/McpFormModal", () => ({
-  default: () => null,
+  default: ({ editingId }: { editingId?: string }) => (
+    <div data-testid="mcp-drawer">{editingId ?? "add"}</div>
+  ),
 }));
 
 vi.mock("sonner", () => ({
   toast: {
     error: mocks.toastError,
     success: mocks.toastSuccess,
+    warning: mocks.toastWarning,
+    info: vi.fn(),
   },
 }));
 
@@ -64,11 +79,7 @@ function makeServer(id: string, overrides: ServerOverrides = {}): McpServer {
     id,
     name: id,
     ...metadata,
-    server: {
-      type: "stdio",
-      command: "default-command",
-      ...server,
-    },
+    server: { type: "stdio", command: "default-command", ...server },
     apps: {
       claude: false,
       codex: false,
@@ -82,190 +93,330 @@ function makeServer(id: string, overrides: ServerOverrides = {}): McpServer {
   } as McpServer;
 }
 
-function renderPanel(onInteractionBlockedChange?: (blocked: boolean) => void) {
-  return render(
-    <UnifiedMcpPanel
-      onOpenChange={vi.fn()}
-      onInteractionBlockedChange={onInteractionBlockedChange}
-    />,
-  );
-}
+const renderPanel = (onBlocked?: (blocked: boolean) => void) =>
+  render(<UnifiedMcpPanel onInteractionBlockedChange={onBlocked} />);
+
+const rowNames = () =>
+  within(screen.getByRole("list", { name: "mcpPage.listLabel" }))
+    .getAllByRole("listitem")
+    .map((item) => item.querySelector("span")?.textContent);
 
 describe("UnifiedMcpPanel", () => {
   beforeEach(() => {
     mocks.serversMap = {};
     mocks.isLoading = false;
-    mocks.togglePending = false;
-    mocks.toggleVariables = undefined;
-    mocks.bulkPending = false;
-    mocks.bulkVariables = undefined;
-    mocks.toggle.mockReset();
-    mocks.bulkToggle.mockReset();
-    mocks.deleteServer.mockReset();
-    mocks.importServers.mockReset();
+    mocks.isError = false;
+    mocks.visibleApps = ["claude", "codex", "gemini"];
+    mocks.toggle.mockReset().mockResolvedValue(true);
+    mocks.bulkToggle.mockReset().mockImplementation(async ({ serverIds }) => ({
+      succeeded: serverIds,
+      failed: [],
+    }));
+    mocks.deleteServer.mockReset().mockResolvedValue(true);
+    mocks.importServers.mockReset().mockResolvedValue(0);
+    mocks.resync.mockReset().mockImplementation(async (apps?: string[]) =>
+      (apps ?? ["claude", "codex", "gemini"]).map((app) => ({
+        app,
+        ok: true,
+      })),
+    );
+    mocks.toastWarning.mockReset();
+    mocks.refetch.mockReset().mockResolvedValue({ data: mocks.serversMap });
     mocks.toastError.mockReset();
     mocks.toastSuccess.mockReset();
-    mocks.toggle.mockResolvedValue(undefined);
-    mocks.bulkToggle.mockResolvedValue({ succeeded: [], failed: [] });
   });
 
-  it("searches the explicit non-sensitive MCP fields and renders a visible ScrollArea", () => {
+  it("searches the allow-listed fields but never env or header values", async () => {
     mocks.serversMap = {
-      "map-key-hit": makeServer("internal-id-hit", {
-        name: "Display Name Hit",
-        description: "description-hit",
-        tags: ["tag-hit"],
-        homepage: "https://homepage-hit.example",
-        docs: "https://docs-hit.example",
-        source: "source-hit",
-        server: {
-          type: "sse",
-          command: "command-hit",
-          args: ["--arg-hit"],
-          cwd: "/cwd-hit",
-          url: "https://url-hit.example",
-        },
+      alpha: makeServer("alpha", {
+        server: { command: "uvx", args: ["fetch-tool"] },
       }),
-      control: makeServer("control", { name: "Control Server" }),
-    };
-
-    const { container } = renderPanel();
-    const input = screen.getByLabelText("mcp.unifiedPanel.searchAriaLabel");
-
-    expect(
-      container.querySelector("[data-radix-scroll-area-viewport]"),
-    ).toBeInTheDocument();
-
-    for (const query of [
-      "map-key-hit",
-      "internal-id-hit",
-      "  DISPLAY NAME HIT  ",
-      "description-hit",
-      "tag-hit",
-      "sse",
-      "command-hit",
-      "arg-hit",
-      "cwd-hit",
-      "url-hit.example",
-      "homepage-hit.example",
-      "docs-hit.example",
-      "source-hit",
-    ]) {
-      fireEvent.change(input, { target: { value: query } });
-      expect(screen.getByText("Display Name Hit")).toBeInTheDocument();
-      expect(screen.queryByText("Control Server")).not.toBeInTheDocument();
-    }
-  });
-
-  it("does not index MCP env or headers keys and values", () => {
-    mocks.serversMap = {
-      secret: makeServer("secret", {
-        name: "Secret Holder",
+      beta: makeServer("beta", {
         server: {
-          env: { ONLY_ENV_SECRET: "env-value-needle" },
-          headers: { Authorization: "header-value-needle" },
+          type: "http",
+          url: "https://beta.example.com/mcp",
+          headers: { Authorization: "secret-token" },
+          env: { API_KEY: "hidden-value" },
         },
       }),
     };
-
     renderPanel();
-    const input = screen.getByLabelText("mcp.unifiedPanel.searchAriaLabel");
+    expect(rowNames()).toEqual(["alpha", "beta"]);
+    // 第二行显示命令 / 去掉协议的 URL，不显示请求头
+    expect(screen.getByText("uvx fetch-tool")).toBeInTheDocument();
+    expect(screen.getByText("beta.example.com/mcp")).toBeInTheDocument();
+    expect(screen.queryByText(/secret-token/)).not.toBeInTheDocument();
 
-    for (const query of [
-      "only_env_secret",
-      "env-value-needle",
-      "authorization",
-      "header-value-needle",
-    ]) {
-      fireEvent.change(input, { target: { value: query } });
-      expect(screen.queryByText("Secret Holder")).not.toBeInTheDocument();
-      expect(
-        screen.getByText("mcp.unifiedPanel.noSearchResults"),
-      ).toBeInTheDocument();
-    }
+    const search = screen.getByRole("textbox", {
+      name: "mcp.unifiedPanel.searchAriaLabel",
+    });
+    await userEvent.type(search, "fetch-tool");
+    expect(rowNames()).toEqual(["alpha"]);
+    await userEvent.clear(search);
+    await userEvent.type(search, "secret-token");
+    expect(screen.getByText("mcpPage.noMatch")).toBeInTheDocument();
+    await userEvent.clear(search);
+    await userEvent.type(search, "hidden-value");
+    expect(screen.getByText("mcpPage.noMatch")).toBeInTheDocument();
   });
 
-  it("keeps the original empty state distinct from an empty search result", () => {
+  it("shows the empty state, not a search miss, when there are no servers", () => {
     renderPanel();
+    expect(screen.getByText("mcpPage.emptyTitle")).toBeInTheDocument();
+    expect(screen.queryByText("mcpPage.noMatch")).not.toBeInTheDocument();
+  });
 
-    expect(screen.getByText("mcp.unifiedPanel.noServers")).toBeInTheDocument();
+  it("shows the load error instead of the empty state", () => {
+    mocks.isError = true;
+    renderPanel();
+    expect(screen.getByText("mcpPage.loadFailed")).toBeInTheDocument();
+    expect(screen.getByText("database is locked")).toBeInTheDocument();
+    expect(screen.queryByText("mcpPage.emptyTitle")).not.toBeInTheDocument();
+  });
+
+  it("only renders columns for apps shown on the Apps page", () => {
+    mocks.serversMap = { alpha: makeServer("alpha") };
+    renderPanel();
+    const header = screen.getByTestId("mcp-matrix");
     expect(
-      screen.queryByText("mcp.unifiedPanel.noSearchResults"),
-    ).not.toBeInTheDocument();
+      within(header).getAllByRole("button", { name: /appMatrix.columnAria/ }),
+    ).toHaveLength(3);
+  });
 
-    fireEvent.change(
-      screen.getByLabelText("mcp.unifiedPanel.searchAriaLabel"),
-      { target: { value: "anything" } },
+  it("highlights the column header when a cell gets keyboard focus", async () => {
+    mocks.serversMap = { alpha: makeServer("alpha") };
+    renderPanel();
+    const columns = screen.getAllByRole("button", {
+      name: /appMatrix.columnAria/,
+    });
+    const cell = screen.getAllByRole("button", { name: /appMatrix.cell/ })[1];
+    act(() => cell.focus());
+    expect(columns[1]).toHaveAttribute("data-highlighted");
+    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
+    act(() => cell.blur());
+    expect(columns[1]).not.toHaveAttribute("data-highlighted");
+  });
+
+  it("bulk-enables only the rows left by the search and offers undo", async () => {
+    mocks.serversMap = {
+      "alpha-one": makeServer("alpha-one"),
+      "alpha-two": makeServer("alpha-two", { apps: { codex: true } }),
+      beta: makeServer("beta"),
+    };
+    renderPanel();
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "mcp.unifiedPanel.searchAriaLabel" }),
+      "alpha",
+    );
+    const codexColumn = screen.getAllByRole("button", {
+      name: /appMatrix.columnAria/,
+    })[1];
+    await userEvent.click(codexColumn);
+    expect(screen.getByText("appMatrix.pop.scopeSearch")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
     );
 
-    expect(screen.getByText("mcp.unifiedPanel.noServers")).toBeInTheDocument();
-    expect(
-      screen.queryByText("mcp.unifiedPanel.noSearchResults"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("bulk toggles the full collection and submits only servers whose state differs", async () => {
-    mocks.serversMap = {
-      visible: makeServer("visible", {
-        name: "Visible Needle",
-        apps: { claude: false },
-      }),
-      "hidden-disabled": makeServer("hidden-disabled", {
-        name: "Hidden Disabled",
-        apps: { claude: false },
-      }),
-      "hidden-enabled": makeServer("hidden-enabled", {
-        name: "Hidden Enabled",
-        apps: { claude: true },
-      }),
-    };
-    mocks.bulkToggle.mockResolvedValue({
-      succeeded: ["visible", "hidden-disabled"],
-      failed: [],
-    });
-
-    renderPanel();
-    fireEvent.change(
-      screen.getByLabelText("mcp.unifiedPanel.searchAriaLabel"),
-      { target: { value: "visible needle" } },
-    );
-
-    expect(screen.getByText("Visible Needle")).toBeInTheDocument();
-    expect(screen.queryByText("Hidden Disabled")).not.toBeInTheDocument();
-    expect(screen.queryByText("Hidden Enabled")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getAllByRole("checkbox")[0]);
-
-    await waitFor(() => {
-      expect(mocks.bulkToggle).toHaveBeenCalledWith({
-        serverIds: ["visible", "hidden-disabled"],
-        app: "claude",
-        enabled: true,
-      });
-    });
-  });
-
-  it("blocks edit and delete while a toggle write is pending", async () => {
-    mocks.serversMap = {
-      server: makeServer("server", { name: "Managed Server" }),
-    };
-    mocks.bulkPending = true;
-    mocks.bulkVariables = {
-      serverIds: ["server"],
-      app: "claude",
+    await waitFor(() => expect(mocks.bulkToggle).toHaveBeenCalledTimes(1));
+    expect(mocks.bulkToggle).toHaveBeenCalledWith({
+      serverIds: ["alpha-one"],
+      app: "codex",
       enabled: true,
-    };
-    const onInteractionBlockedChange = vi.fn();
+    });
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    const [, options] = mocks.toastSuccess.mock.calls[0];
+    expect(options.action.label).toBe("appMatrix.undo");
 
-    renderPanel(onInteractionBlockedChange);
+    options.action.onClick();
+    await waitFor(() => expect(mocks.bulkToggle).toHaveBeenCalledTimes(2));
+    expect(mocks.bulkToggle).toHaveBeenLastCalledWith({
+      serverIds: ["alpha-one"],
+      app: "codex",
+      enabled: false,
+    });
+  });
 
-    expect(screen.getByTitle("common.edit")).toBeDisabled();
-    expect(screen.getByTitle("common.delete")).toBeDisabled();
-    for (const bulkControl of screen.getAllByRole("checkbox")) {
-      expect(bulkControl).toBeDisabled();
-    }
-    await waitFor(() =>
-      expect(onInteractionBlockedChange).toHaveBeenCalledWith(true),
+  it("marks a failed write with a warning and retries the wanted state", async () => {
+    mocks.serversMap = { serena: makeServer("serena") };
+    mocks.toggle.mockRejectedValueOnce(new Error("config.toml line 12"));
+    renderPanel();
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "appMatrix.cell.off" })[1],
     );
+    await waitFor(() =>
+      expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument(),
+    );
+    expect(mocks.toggle).toHaveBeenCalledWith({
+      serverId: "serena",
+      app: "codex",
+      enabled: true,
+    });
+    const failCell = screen.getByRole("button", {
+      name: "appMatrix.cell.fail",
+    });
+
+    await userEvent.click(failCell);
+    await waitFor(() => expect(mocks.toggle).toHaveBeenCalledTimes(2));
+    expect(mocks.toggle).toHaveBeenLastCalledWith({
+      serverId: "serena",
+      app: "codex",
+      enabled: true,
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByText("mcpPage.failNoticeTitle"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("retries a failed app from the notice by resyncing that app", async () => {
+    mocks.serversMap = { serena: makeServer("serena") };
+    mocks.toggle.mockRejectedValueOnce(new Error("config.toml line 12"));
+    renderPanel();
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "appMatrix.cell.off" })[1],
+    );
+    await waitFor(() =>
+      expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
+
+    await waitFor(() => expect(mocks.resync).toHaveBeenCalledWith(["codex"]));
+    expect(mocks.toggle).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(
+        screen.queryByText("mcpPage.failNoticeTitle"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "mcpPage.toast.written",
+      expect.anything(),
+    );
+  });
+
+  it("keeps the notice when the resync retry fails again", async () => {
+    mocks.serversMap = { serena: makeServer("serena") };
+    mocks.toggle.mockRejectedValueOnce(new Error("config.toml line 12"));
+    mocks.resync.mockResolvedValueOnce([
+      { app: "codex", ok: false, error: "still broken" },
+    ]);
+    renderPanel();
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "appMatrix.cell.off" })[1],
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "common.retry" }),
+    );
+
+    await waitFor(() => expect(mocks.resync).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument();
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("resyncs every app from the more menu and reports the ones that failed", async () => {
+    mocks.serversMap = {
+      serena: makeServer("serena", { apps: { codex: true } }),
+    };
+    mocks.resync.mockResolvedValueOnce([
+      { app: "claude", ok: true },
+      { app: "codex", ok: false, error: "config.toml line 12" },
+    ]);
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "mcpPage.resync" }),
+    );
+
+    await waitFor(() => expect(mocks.resync).toHaveBeenCalledWith(undefined));
+    await waitFor(() =>
+      expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument(),
+    );
+    expect(mocks.toastWarning).toHaveBeenCalledWith(
+      "mcpPage.toast.resyncPartial",
+      expect.anything(),
+    );
+
+    // 再来一次全部成功：通知条消失
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "mcpPage.resync" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText("mcpPage.failNoticeTitle"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "mcpPage.toast.resynced",
+      expect.anything(),
+    );
+  });
+
+  it("opens the edit drawer from the pencil button", async () => {
+    mocks.serversMap = {
+      serena: makeServer("serena", { apps: { claude: true, hermes: true } }),
+    };
+    renderPanel();
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.editAria" }),
+    );
+    expect(screen.getByTestId("mcp-drawer")).toHaveTextContent("serena");
+  });
+
+  it("deletes after confirming in the dialog", async () => {
+    mocks.serversMap = {
+      serena: makeServer("serena", { apps: { claude: true } }),
+    };
+    renderPanel();
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.rowMoreAria" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "mcpPage.deleteEllipsis" }),
+    );
+    expect(screen.getByText("mcpPage.deleteBodyApps")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "common.delete" }),
+    );
+    await waitFor(() =>
+      expect(mocks.deleteServer).toHaveBeenCalledWith("serena"),
+    );
+  });
+
+  it("reports which servers an import added", async () => {
+    mocks.serversMap = {};
+    mocks.refetch.mockResolvedValue({
+      data: {
+        context7: makeServer("context7"),
+        fetch: makeServer("fetch"),
+      },
+    });
+    renderPanel();
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "mcpPage.importFromApps" })[0],
+    );
+    await waitFor(() =>
+      expect(screen.getByText("mcpPage.import.title")).toBeInTheDocument(),
+    );
+    expect(mocks.importServers).toHaveBeenCalled();
+    expect(screen.getByText("mcpPage.import.added")).toBeInTheDocument();
+  });
+
+  it("reports the blocked state while the drawer is open", async () => {
+    const onBlocked = vi.fn();
+    mocks.serversMap = { alpha: makeServer("alpha") };
+    renderPanel(onBlocked);
+    expect(onBlocked).toHaveBeenLastCalledWith(false);
+    await userEvent.click(screen.getByRole("button", { name: "mcpPage.add" }));
+    expect(onBlocked).toHaveBeenLastCalledWith(true);
   });
 });

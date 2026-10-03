@@ -1,8 +1,5 @@
 use serde_json::{json, Map, Value};
 
-const THINK_OPEN_TAG: &str = "<think>";
-const THINK_CLOSE_TAG: &str = "</think>";
-
 // 穷举上游可能的 reasoning 回传字段，优先级：reasoning_content > reasoning(字符串/对象) > reasoning_details。
 // 不依赖 provider meta 的 outputFormat 声明，因此对各家 Chat 兼容接口都能兜底提取。
 pub(crate) fn extract_reasoning_field_text(value: &Value) -> Option<String> {
@@ -206,34 +203,4 @@ pub(crate) fn is_empty_value(value: &Value) -> bool {
         Value::Object(value) => value.is_empty(),
         _ => false,
     }
-}
-
-pub(crate) fn split_leading_think_block(text: &str) -> Option<(String, String)> {
-    let leading_ws_len = text.len() - text.trim_start().len();
-    let after_ws = &text[leading_ws_len..];
-    if !after_ws.starts_with(THINK_OPEN_TAG) {
-        return None;
-    }
-
-    let body_start = leading_ws_len + THINK_OPEN_TAG.len();
-    let close_relative = text[body_start..].find(THINK_CLOSE_TAG)?;
-    let close_start = body_start + close_relative;
-    let answer_start = close_start + THINK_CLOSE_TAG.len();
-
-    Some((
-        text[body_start..close_start].trim().to_string(),
-        strip_think_answer_separator(&text[answer_start..]).to_string(),
-    ))
-}
-
-pub(crate) fn strip_leading_think_open_tag(text: &str) -> Option<String> {
-    let leading_ws_len = text.len() - text.trim_start().len();
-    let after_ws = &text[leading_ws_len..];
-    after_ws
-        .strip_prefix(THINK_OPEN_TAG)
-        .map(|value| value.trim().to_string())
-}
-
-fn strip_think_answer_separator(text: &str) -> &str {
-    text.trim_start_matches(['\r', '\n', '\t', ' '])
 }

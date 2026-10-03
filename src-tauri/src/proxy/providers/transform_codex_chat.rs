@@ -7,9 +7,9 @@
 use super::codex_chat_common::{
     append_reasoning_content, extract_reasoning_field_text, extract_reasoning_summary_text,
     response_function_call_item, response_function_call_item_with_namespace,
-    split_leading_think_block,
 };
 use super::codex_compaction;
+use super::inline_think::split_leading_think_block;
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,

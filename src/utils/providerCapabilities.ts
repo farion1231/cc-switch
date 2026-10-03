@@ -98,6 +98,17 @@ export function isOfficialAccount(
   );
 }
 
+/**
+ * 能进故障转移队列（对应后端 `provider_router::provider_supports_failover`）：
+ * Codex 官方账号卡靠客户端自己的登录走路由，不能和别家轮换。
+ */
+export function supportsFailover(
+  appId: AppId,
+  provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
+): boolean {
+  return !supportsOfficialProxyTakeover(appId, provider);
+}
+
 /** Keep the UI capability rule aligned with the Rust takeover policy. */
 export function supportsOfficialProxyTakeover(
   appId: AppId,

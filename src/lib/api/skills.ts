@@ -105,6 +105,50 @@ export interface SkillUpdateInfo {
   remoteHash: string;
 }
 
+/** 没有读到的仓库（发现、检查更新时逐仓库报告） */
+export interface SkillRepoFailure {
+  owner: string;
+  name: string;
+  branch: string;
+  /** 原始错误；下载类错误是结构化 JSON，用 formatSkillError / skillErrorReason 解析 */
+  error: string;
+}
+
+/** 发现结果：读到的 Skill + 没读到的仓库 */
+export interface SkillDiscoveryResult {
+  skills: DiscoverableSkill[];
+  failures: SkillRepoFailure[];
+}
+
+/** 检查更新结果：可更新的 Skill + 没读到的仓库 */
+export interface SkillUpdateCheckResult {
+  updates: SkillUpdateInfo[];
+  failures: SkillRepoFailure[];
+}
+
+/** ZIP 里因目录名已被占用而跳过的 Skill（#3749） */
+export interface ZipSkippedSkill {
+  directory: string;
+  existingId: string;
+  existingName: string;
+}
+
+/** 从 ZIP 安装的结果 */
+export interface ZipInstallResult {
+  installed: InstalledSkill[];
+  skipped: ZipSkippedSkill[];
+}
+
+/** 「立即重新同步」里单个应用的结果 */
+export interface SkillAppSyncOutcome {
+  app: AppType;
+  ok: boolean;
+  /** 整个应用没同步 */
+  error?: string;
+  /** 应用同步了，但这些 Skill 失败 */
+  failedSkills: Array<{ directory: string; error: string }>;
+}
+
 /** 存储位置迁移结果 */
 export interface MigrationResult {
   migratedCount: number;
@@ -197,14 +241,19 @@ export const skillsApi = {
     return await invoke("import_skills_from_apps", { imports });
   },
 
-  /** 发现可安装的 Skills（从仓库获取） */
-  async discoverAvailable(): Promise<DiscoverableSkill[]> {
+  /** 发现可安装的 Skills（从仓库获取），附带没读到的仓库 */
+  async discoverAvailable(): Promise<SkillDiscoveryResult> {
     return await invoke("discover_available_skills");
   },
 
-  /** 检查 Skills 更新 */
-  async checkUpdates(): Promise<SkillUpdateInfo[]> {
+  /** 检查 Skills 更新，附带没读到的仓库 */
+  async checkUpdates(): Promise<SkillUpdateCheckResult> {
     return await invoke("check_skill_updates");
+  },
+
+  /** 立即重新同步：按开关和当前同步方式把 Skill 重新投影到各应用目录 */
+  async resyncToApps(): Promise<SkillAppSyncOutcome[]> {
+    return await invoke("resync_skills_to_apps");
   },
 
   /** 更新单个 Skill */
@@ -217,6 +266,16 @@ export const skillsApi = {
     target: "cc_switch" | "unified",
   ): Promise<MigrationResult> {
     return await invoke("migrate_skill_storage", { target });
+  },
+
+  /** CC Switch 目录下放 Skill 主副本的路径（改过配置目录就是改后的） */
+  async getCcSwitchSkillsDir(): Promise<string> {
+    return await invoke("get_cc_switch_skills_dir");
+  },
+
+  /** 在文件管理器里打开 CC Switch 目录下的 Skills 目录 */
+  async openCcSwitchSkillsDir(): Promise<void> {
+    await invoke("open_cc_switch_skills_dir");
   },
 
   /** 搜索 skills.sh 公共目录 */
@@ -285,7 +344,7 @@ export const skillsApi = {
   async installFromZip(
     filePath: string,
     currentApp: AppId,
-  ): Promise<InstalledSkill[]> {
+  ): Promise<ZipInstallResult> {
     return await invoke("install_skills_from_zip", { filePath, currentApp });
   },
 };

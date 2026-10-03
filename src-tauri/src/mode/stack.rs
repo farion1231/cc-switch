@@ -504,16 +504,16 @@ impl StackMiss {
     pub fn message(&self, model: &str) -> String {
         match self {
             Self::StackOff => format!(
-                "叠加的模型 {model} 只能在叠加模式下使用，当前没有开启叠加模式，请在模型列表里重新选择 (Stacked model {model} only works in Stack mode, which is off; pick a model from the model list again)"
+                "聚合的模型 {model} 只能在聚合模式下使用，当前没有开启聚合模式，请在模型列表里重新选择 (Aggregated model {model} only works in Stack mode, which is off; pick a model from the model list again)"
             ),
             Self::Unknown => format!(
-                "叠加的模型 {model} 在 CC Switch 里不存在，请在模型列表里重新选择 (Stacked model {model} is unknown to CC Switch; pick a model from the model list again)"
+                "聚合的模型 {model} 在 CC Switch 里不存在，请在模型列表里重新选择 (Aggregated model {model} is unknown to CC Switch; pick a model from the model list again)"
             ),
             Self::Removed => format!(
-                "叠加的模型 {model} 已从 CC Switch 移除，请在模型列表里重新选择 (Stacked model {model} was removed from CC Switch; pick a model from the model list again)"
+                "聚合的模型 {model} 已从 CC Switch 移除，请在模型列表里重新选择 (Aggregated model {model} was removed from CC Switch; pick a model from the model list again)"
             ),
             Self::Deleted => format!(
-                "叠加的模型 {model} 对应的供应商已删除，请在模型列表里重新选择 (The provider of stacked model {model} was deleted; pick a model from the model list again)"
+                "聚合的模型 {model} 对应的供应商已删除，请在模型列表里重新选择 (The provider of aggregated model {model} was deleted; pick a model from the model list again)"
             ),
         }
     }
