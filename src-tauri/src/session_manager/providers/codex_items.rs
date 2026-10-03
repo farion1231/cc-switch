@@ -818,6 +818,13 @@ pub(super) fn diff_summary(files: Vec<DiffFile>, full: Option<ContentRef>) -> Di
     }
 }
 
+/// apply_patch 的输出表明补丁没有落盘：校验失败（`apply_patch verification failed: …`，
+/// 模型写坏的补丁）或被用户拒绝。这类输出没有退出码，不认出来会按成功显示。
+pub(super) fn apply_patch_rejected(output: &str) -> bool {
+    let output = output.trim_start();
+    output.starts_with("apply_patch verification failed") || output.starts_with("patch rejected")
+}
+
 /// apply_patch 文本（`*** Begin Patch` 格式）→ 文件列表与增删行数
 pub(super) fn parse_apply_patch(patch: &str) -> Vec<DiffFile> {
     let mut files: Vec<DiffFile> = Vec::new();
@@ -849,12 +856,15 @@ pub(super) fn parse_apply_patch(patch: &str) -> Vec<DiffFile> {
                 file.op = DiffOp::Rename;
                 file.path = path.to_string();
             }
+        } else if line.starts_with("*** End Patch") {
+            break;
         } else if line.starts_with("***") {
             continue;
         } else if let Some(file) = files.last_mut() {
             if line.starts_with('+') {
                 file.added += 1;
-            } else if line.starts_with('-') {
+            } else if line.starts_with('-') && file.op != DiffOp::Add {
+                // 新增文件只有 `+` 行；`-` 开头的是写坏补丁里漏了前缀的正文
                 file.removed += 1;
             }
         }
@@ -1176,6 +1186,27 @@ mod tests {
         );
         assert!(same_command("git  status", "git status"));
         assert!(!same_command("git status", "ls"));
+    }
+
+    #[test]
+    fn apply_patch_counts_ignore_minus_lines_in_added_files_and_after_end() {
+        let files = parse_apply_patch(
+            "*** Begin Patch\n*** Add File: a.md\n+# A\n- missing plus\n*** Update File: b.md\n@@\n-old\n+new\n*** End Patch\n- trailing\n+trailing",
+        );
+        assert_eq!(
+            files
+                .iter()
+                .map(|f| (f.added, f.removed))
+                .collect::<Vec<_>>(),
+            vec![(1, 0), (1, 1)]
+        );
+        assert!(apply_patch_rejected(
+            "apply_patch verification failed: invalid hunk"
+        ));
+        assert!(apply_patch_rejected("patch rejected by user"));
+        assert!(!apply_patch_rejected(
+            "Success. Updated the following files:\nM a.md"
+        ));
     }
 
     #[test]
