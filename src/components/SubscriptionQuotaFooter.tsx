@@ -68,14 +68,92 @@ export function countdownStr(resetsAt: string | null): string | null {
   return `${minutes}m`;
 }
 
-/** 格式化重置时间为倒计时文本（带 i18n 模板） */
-function formatResetTime(
+/**
+ * ISO 8601 timestamp carrying an explicit UTC offset — the shape every backend
+ * usage path emits for `resets_at`. Requiring the offset keeps us from
+ * re-rendering arbitrary custom-script strings that merely look date-like, and
+ * from silently re-labelling a naive (offset-less) upstream value.
+ */
+const ABSOLUTE_TIMESTAMP_RE =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+
+/** Whether the value is an ISO 8601 timestamp with an explicit offset */
+export function isAbsoluteTimestamp(value: string | null | undefined): boolean {
+  return !!value && ABSOLUTE_TIMESTAMP_RE.test(value.trim());
+}
+
+/**
+ * Reset moment on the host's local clock: "17:54" when it lands today,
+ * "09-17 17:54" once it crosses into another day. Stays null for values we
+ * can't parse instead of rendering "Invalid Date".
+ *
+ * Reads the current time through `Date.now()` so callers can pin it the same
+ * way `countdownStr` does.
+ */
+export function localClockStr(resetsAt: string | null): string | null {
+  if (!resetsAt) return null;
+  const at = new Date(resetsAt);
+  if (Number.isNaN(at.getTime())) return null;
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const clock = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+
+  const now = new Date(Date.now());
+  const sameDay =
+    at.getFullYear() === now.getFullYear() &&
+    at.getMonth() === now.getMonth() &&
+    at.getDate() === now.getDate();
+
+  return sameDay
+    ? clock
+    : `${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${clock}`;
+}
+
+/**
+ * Countdown label for a reset moment, e.g. "6d22h后重置". Null once the window
+ * has already passed, so callers can hide the whole reset block.
+ *
+ * The local clock travels in a separate slot (`localClockStr`) because the two
+ * are stacked vertically — see `TierBadge` / `TierBar`. Keeping them on one
+ * line made the date the first thing a narrow card truncated away.
+ */
+export function resetCountdownLabel(
   resetsAt: string | null,
   t: (key: string, options?: Record<string, string>) => string,
 ): string | null {
   const time = countdownStr(resetsAt);
   if (!time) return null;
   return t("subscription.resetsIn", { time });
+}
+
+/**
+ * Render a raw `extra` payload. The backend usage paths stuff `resets_at` in
+ * there as a bare ISO string, which used to be printed verbatim — a UTC wall
+ * clock the user had to convert by hand. Turn those into a countdown plus the
+ * local reset moment.
+ *
+ * `extra` is documented to script authors as free-form display text, so a bare
+ * ISO string coming out of a custom JS usage script may mean anything — an
+ * expiry, a billing date, anything but a quota reset. Only the templates known
+ * to fill `extra` from `resets_at` may claim that meaning, via `isResetTime`;
+ * everything else passes through untouched.
+ */
+export function formatExtraText(
+  extra: string | null | undefined,
+  t: (key: string, options?: Record<string, string>) => string,
+  isResetTime = false,
+): string | null {
+  if (!extra) return null;
+  if (!isResetTime) return extra;
+  if (!isAbsoluteTimestamp(extra)) return extra;
+
+  const at = localClockStr(extra);
+  if (!at) return extra;
+
+  const time = countdownStr(extra);
+  return time
+    ? t("subscription.resetsInAt", { time, at })
+    : t("subscription.resetsAt", { at });
 }
 
 /** 不需要在 inline 模式显示的 tier */
@@ -316,6 +394,7 @@ export const TierBadge: React.FC<{
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
   const countdown = countdownStr(tier.resetsAt);
+  const resetsAtClock = localClockStr(tier.resetsAt);
 
   const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
 
@@ -333,9 +412,14 @@ export const TierBadge: React.FC<{
         </span>
       )}
       {countdown && (
-        <span className="text-muted-foreground/60 ml-0.5 flex items-center gap-px">
-          <Clock size={10} />
-          {countdown}
+        <span className="text-muted-foreground/60 ml-0.5 flex flex-col items-start leading-tight">
+          <span className="flex items-center gap-px">
+            <Clock size={10} />
+            <span>{countdown}</span>
+          </span>
+          {resetsAtClock && (
+            <span className="tabular-nums opacity-70">{resetsAtClock}</span>
+          )}
         </span>
       )}
     </div>
@@ -350,7 +434,8 @@ const TierBar: React.FC<{
   const label = TIER_I18N_KEYS[tier.name]
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
-  const resetText = formatResetTime(tier.resetsAt, t);
+  const resetLabel = resetCountdownLabel(tier.resetsAt, t);
+  const resetsAtClock = localClockStr(tier.resetsAt);
 
   return (
     <div className="flex items-center gap-3 text-xs">
@@ -384,12 +469,19 @@ const TierBar: React.FC<{
         >
           {Math.round(tier.utilization)}%
         </span>
-        {resetText && (
+        {resetLabel && (
           <span
-            className="text-[10px] text-muted-foreground/70 truncate"
-            title={resetText}
+            className="flex min-w-0 flex-col text-[10px] leading-tight text-muted-foreground/70"
+            title={
+              resetsAtClock ? `${resetLabel} ${resetsAtClock}` : resetLabel
+            }
           >
-            {resetText}
+            <span className="truncate">{resetLabel}</span>
+            {resetsAtClock && (
+              <span className="truncate tabular-nums opacity-70">
+                {resetsAtClock}
+              </span>
+            )}
           </span>
         )}
       </div>
