@@ -278,7 +278,8 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
           })}
         </DropdownMenuItem>
         <DropdownMenuCheckboxItem
-          className={sessionMenuItemClass}
+          // 左边留出勾选标记的位置，避免和文字重叠
+          className={cn(sessionMenuItemClass, "ps-8")}
           checked={includeThinking}
           onCheckedChange={(value) => onIncludeThinkingChange(value === true)}
           onSelect={(event) => event.preventDefault()}
@@ -613,7 +614,8 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
                 className="w-[220px] rounded-panel p-1 shadow-v7-md"
               >
                 <DropdownMenuCheckboxItem
-                  className={sessionMenuItemClass}
+                  // 左边留出勾选标记的位置，避免和文字重叠
+                  className={cn(sessionMenuItemClass, "ps-8")}
                   checked={expandAll}
                   onCheckedChange={(value) => onExpandAllChange(value === true)}
                   onSelect={(event) => event.preventDefault()}
@@ -621,7 +623,8 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
                   {rt("expandAllTimelines")}
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuCheckboxItem
-                  className={sessionMenuItemClass}
+                  // 左边留出勾选标记的位置，避免和文字重叠
+                  className={cn(sessionMenuItemClass, "ps-8")}
                   checked={showInjected}
                   onCheckedChange={(value) =>
                     onShowInjectedChange(value === true)
