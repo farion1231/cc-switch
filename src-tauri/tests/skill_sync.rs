@@ -148,6 +148,7 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
             repo_name: None,
             repo_branch: None,
             readme_url: None,
+            group_id: None,
             apps: SkillApps::default(),
             installed_at: 0,
             content_hash: None,
@@ -189,6 +190,7 @@ fn uninstall_skill_creates_backup_before_removing_ssot() {
             repo_name: None,
             repo_branch: None,
             readme_url: None,
+            group_id: None,
             apps: SkillApps {
                 claude: true,
                 ..Default::default()
@@ -257,6 +259,7 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
             repo_name: None,
             repo_branch: None,
             readme_url: None,
+            group_id: None,
             apps: SkillApps {
                 claude: true,
                 ..Default::default()
@@ -266,6 +269,14 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
             updated_at: 0,
         })
         .expect("save skill");
+    let group = state
+        .db
+        .create_skill_group(
+            "Restored tools",
+            "blue",
+            &["local:restore-skill".to_string()],
+        )
+        .expect("create skill group");
 
     let uninstall =
         SkillService::uninstall(&state.db, "local:restore-skill").expect("uninstall skill");
@@ -283,6 +294,7 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
         .expect("restore from backup");
 
     assert_eq!(restored.directory, "restore-skill");
+    assert_eq!(restored.group_id.as_deref(), Some(group.id.as_str()));
     assert!(restored.apps.claude, "restored skill should enable Claude");
     assert!(
         !restored.apps.codex && !restored.apps.gemini && !restored.apps.opencode,
@@ -338,6 +350,7 @@ fn delete_skill_backup_removes_backup_directory() {
             repo_name: None,
             repo_branch: None,
             readme_url: None,
+            group_id: None,
             apps: SkillApps {
                 claude: true,
                 ..Default::default()

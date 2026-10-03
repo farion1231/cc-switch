@@ -10,6 +10,8 @@ import {
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillGroup,
+  type SkillGroupColor,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
@@ -28,6 +30,92 @@ export function useInstalledSkills() {
     queryFn: () => skillsApi.getInstalled(),
     staleTime: Infinity,
     placeholderData: keepPreviousData,
+  });
+}
+
+export function useSkillGroups() {
+  return useQuery({
+    queryKey: ["skills", "groups"],
+    queryFn: () => skillsApi.getGroups(),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+  });
+}
+
+function invalidateSkillGrouping(
+  queryClient: ReturnType<typeof useQueryClient>,
+) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["skills", "groups"] }),
+    queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+  ]);
+}
+
+export function useCreateSkillGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      color,
+      skillIds,
+    }: {
+      name: string;
+      color: SkillGroupColor;
+      skillIds: string[];
+    }) => skillsApi.createGroup(name, color, skillIds),
+    onSettled: () => invalidateSkillGrouping(queryClient),
+  });
+}
+
+export function useUpdateSkillGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      name,
+      color,
+    }: {
+      id: string;
+      name: string;
+      color: SkillGroupColor;
+    }) => skillsApi.updateGroup(id, name, color),
+    onSettled: () => invalidateSkillGrouping(queryClient),
+  });
+}
+
+export function useDeleteSkillGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => skillsApi.deleteGroup(id),
+    onSettled: () => invalidateSkillGrouping(queryClient),
+  });
+}
+
+export function useReplaceSkillGroupMembers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      groupId,
+      skillIds,
+    }: {
+      groupId: string;
+      skillIds: string[];
+    }) => skillsApi.replaceGroupMembers(groupId, skillIds),
+    onSettled: () => invalidateSkillGrouping(queryClient),
+  });
+}
+
+export function useMoveSkillsToGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      skillIds,
+      groupId,
+    }: {
+      skillIds: string[];
+      groupId?: string;
+    }) => skillsApi.moveToGroup(skillIds, groupId),
+    onSettled: () => invalidateSkillGrouping(queryClient),
   });
 }
 
@@ -381,6 +469,8 @@ export function useSearchSkillsSh(
 
 export type {
   InstalledSkill,
+  SkillGroup,
+  SkillGroupColor,
   DiscoverableSkill,
   ImportSkillSelection,
   SkillBackupEntry,

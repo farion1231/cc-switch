@@ -70,6 +70,7 @@ pub(crate) fn should_trigger_auto_sync_for_table(table: &str) -> bool {
             | "mcp_servers"
             | "prompts"
             | "skills"
+            | "skill_groups"
             | "skill_repos"
             | "profiles"
             | "settings"
@@ -500,6 +501,7 @@ mod tests {
             "mcp_servers",
             "prompts",
             "skills",
+            "skill_groups",
             "skill_repos",
             "profiles",
             "settings",

@@ -4,7 +4,7 @@
 //! - 支持三应用开关（Claude/Codex/Gemini）
 //! - SSOT 存储在 ~/.cc-switch/skills/
 
-use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
+use crate::app_config::{AppType, InstalledSkill, SkillGroup, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
@@ -30,6 +30,77 @@ fn parse_app_type(app: &str) -> Result<AppType, String> {
 #[tauri::command]
 pub fn get_installed_skills(app_state: State<'_, AppState>) -> Result<Vec<InstalledSkill>, String> {
     SkillService::get_all_installed(&app_state.db).map_err(|e| e.to_string())
+}
+
+/// 获取用户定义的 Skill 分组（按创建顺序）。
+#[tauri::command]
+pub fn get_skill_groups(app_state: State<'_, AppState>) -> Result<Vec<SkillGroup>, String> {
+    app_state.db.get_skill_groups().map_err(|e| e.to_string())
+}
+
+/// 创建分组，并可原子地把初始成员移入该组。
+#[tauri::command]
+pub fn create_skill_group(
+    name: String,
+    color: String,
+    skill_ids: Vec<String>,
+    app_state: State<'_, AppState>,
+) -> Result<SkillGroup, String> {
+    app_state
+        .db
+        .create_skill_group(&name, &color, &skill_ids)
+        .map_err(|e| e.to_string())
+}
+
+/// 修改分组名称与颜色。
+#[tauri::command]
+pub fn update_skill_group(
+    id: String,
+    name: String,
+    color: String,
+    app_state: State<'_, AppState>,
+) -> Result<SkillGroup, String> {
+    app_state
+        .db
+        .update_skill_group(&id, &name, &color)
+        .map_err(|e| e.to_string())
+}
+
+/// 删除分组；数据库外键会把成员安全地移回未分组。
+#[tauri::command]
+pub fn delete_skill_group(id: String, app_state: State<'_, AppState>) -> Result<bool, String> {
+    app_state
+        .db
+        .delete_skill_group(&id)
+        .map_err(|e| e.to_string())
+}
+
+/// 以一次事务替换指定分组的完整成员集合。
+#[tauri::command]
+pub fn replace_skill_group_members(
+    group_id: String,
+    skill_ids: Vec<String>,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    app_state
+        .db
+        .replace_skill_group_members(&group_id, &skill_ids)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// 把一批 Skill 移到指定分组；group_id 为空时移回未分组。
+#[tauri::command]
+pub fn move_skills_to_group(
+    skill_ids: Vec<String>,
+    group_id: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    app_state
+        .db
+        .move_skills_to_group(&skill_ids, group_id.as_deref())
+        .map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 #[tauri::command]
