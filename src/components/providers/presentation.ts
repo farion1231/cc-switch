@@ -42,8 +42,6 @@ export interface CardMenuOption {
 export interface CardMenuItem {
   key: string;
   label: string;
-  /** 点了之后的后果，写在名字下面 */
-  detail?: string;
   /** 不能点的原因：照常列出来，原因写在名字下面 */
   disabledReason?: string;
   onSelect: () => void;
@@ -447,18 +445,11 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
   const defaultProvider = providers.find((p) => p.id === defaultId);
   // 行上的主操作只有名单的添加 / 移除；「设为默认」在「更多」菜单里：进了聚合当场生效，
   // 在直连时只记下选择（切换时的确认框里还能改）。正在路由时不能点：默认和路由目标是同一个
-  // 指针，改了就是当场换路由。官方账号只能做默认、不能做成员（Codex）：默认从它换成别家，
-  // 官方订阅的模型就不在聚合里了，后果写在菜单项上
-  const defaultIsOfficial =
-    defaultProvider !== undefined && official(defaultProvider);
+  // 指针，改了就是当场换路由
   const setDefaultItems = (p: Provider): CardMenuItem[] => [
     {
       key: "setDefault",
       label: t("providerCard.action.setDefault"),
-      detail:
-        defaultIsOfficial && !official(p)
-          ? t("providerCard.reason.defaultDropsOfficial")
-          : undefined,
       disabledReason:
         active === "route"
           ? t("providerCard.reason.defaultWhileRouting")

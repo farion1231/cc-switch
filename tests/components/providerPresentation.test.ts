@@ -345,7 +345,6 @@ describe("buildSwitchSections — stack", () => {
     expect(input.actions.stackRemove).toHaveBeenCalledWith(backup);
     expect(setDefaultItem(sections, "backup")).toMatchObject({
       label: "providerCard.action.setDefault",
-      detail: undefined,
       disabledReason: undefined,
     });
     setDefaultItem(sections, "backup").onSelect();
@@ -433,34 +432,8 @@ describe("buildSwitchSections — stack", () => {
     expect(button(sections, "account", "add").disabledReason).toBe(
       "providerCard.reason.officialStack",
     );
-    // 它能做默认；默认本来就不是官方账号时，换默认没有额外后果
-    expect(setDefaultItem(sections, "account").detail).toBeUndefined();
-  });
-
-  it("says the official subscription leaves the Stack when the default moves off a Codex official account", () => {
-    const account = provider("account", {
-      category: "official",
-      settingsConfig: { auth: {}, config: "" },
-    });
-    for (const active of ["direct", "stack"] as AppMode[]) {
-      const { sections } = build({
-        app: "codex",
-        active,
-        view: "stack",
-        providers: [account, relay, backup],
-        directId: "relay",
-        routeId: "account",
-        stackMembers: new Map([["relay", 1]]),
-      });
-
-      expect(item(sections, "account").section).toBe("default");
-      // 已添加的、还没添加的第三方都一样：官方账号不做默认就不在聚合里了
-      for (const id of ["relay", "backup"]) {
-        expect(setDefaultItem(sections, id).detail).toBe(
-          "providerCard.reason.defaultDropsOfficial",
-        );
-      }
-    }
+    // 它能做默认
+    expect(setDefaultItem(sections, "account").disabledReason).toBeUndefined();
   });
 
   it("never lets ChatGPT accounts be added in Codex Stack mode, even legacy cards without a category", () => {

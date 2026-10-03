@@ -178,16 +178,10 @@ export function ProviderCardActions({
               className="flex-col items-start gap-0.5"
             >
               {item.label}
-              {item.disabledReason ? (
+              {item.disabledReason && (
                 <span className="max-w-64 text-caption text-fg-3">
                   {item.disabledReason}
                 </span>
-              ) : (
-                item.detail && (
-                  <span className="max-w-64 text-caption text-warning-text">
-                    {item.detail}
-                  </span>
-                )
               )}
             </DropdownMenuItem>
           ))}

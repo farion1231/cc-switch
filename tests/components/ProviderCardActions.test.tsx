@@ -22,7 +22,7 @@ async function openMenu(presentation: CardPresentation) {
 }
 
 describe("ProviderCardActions — mode items in the more menu", () => {
-  it("lists them first, with the consequence under the name", async () => {
+  it("lists them first", async () => {
     const onSelect = vi.fn();
     const { user, menu } = await openMenu({
       buttons: [],
@@ -31,7 +31,6 @@ describe("ProviderCardActions — mode items in the more menu", () => {
         {
           key: "setDefault",
           label: "providerCard.action.setDefault",
-          detail: "providerCard.reason.defaultDropsOfficial",
           onSelect,
         },
       ],
@@ -39,9 +38,6 @@ describe("ProviderCardActions — mode items in the more menu", () => {
 
     const items = within(menu).getAllByRole("menuitem");
     expect(items[0]).toHaveTextContent("providerCard.action.setDefault");
-    expect(items[0]).toHaveTextContent(
-      "providerCard.reason.defaultDropsOfficial",
-    );
     expect(items[1]).toHaveTextContent("provider.duplicate");
 
     await user.click(items[0]);
@@ -57,7 +53,6 @@ describe("ProviderCardActions — mode items in the more menu", () => {
         {
           key: "setDefault",
           label: "providerCard.action.setDefault",
-          detail: "providerCard.reason.defaultDropsOfficial",
           disabledReason: "providerCard.reason.defaultWhileRouting",
           onSelect,
         },
@@ -66,11 +61,7 @@ describe("ProviderCardActions — mode items in the more menu", () => {
 
     const item = within(menu).getAllByRole("menuitem")[0];
     expect(item).toHaveAttribute("aria-disabled", "true");
-    // 不能点时只写原因，不再写后果
     expect(item).toHaveTextContent("providerCard.reason.defaultWhileRouting");
-    expect(item).not.toHaveTextContent(
-      "providerCard.reason.defaultDropsOfficial",
-    );
     await user.click(item);
     expect(onSelect).not.toHaveBeenCalled();
   });
