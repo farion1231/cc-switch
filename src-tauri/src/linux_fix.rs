@@ -9,6 +9,9 @@
 //! - **失效模式 B**：GTK surface 与 WebKitWebView 的 input region 尺寸
 //!   协商在 `visible:false` → `show()` 的路径上失败，整窗永远不响应
 //!   点击，只有重新 `size_allocate`（例如最大化-还原）才能恢复。
+//! - **WSLg 例外**：原生 Wayland 在分数/高 DPI 缩放下会把伪 resize
+//!   错误地转换为另一组物理尺寸，导致 WebKit surface 与 RDP buffer
+//!   持续不匹配并显示白屏。该环境只执行延迟 focus，不执行 resize。
 //!
 //! 本模块导出 [`nudge_main_window`]，它通过「显式 set_focus + 无视觉
 //! 版本的 ±1px 伪 resize」精确模拟用户手动最大化再还原的 workaround，
@@ -16,7 +19,7 @@
 //! deeplink 唤起、single_instance 回调、托盘 show_main、lightweight
 //! 退出）都应在现有 `set_focus()` 之后追加一次调用。
 
-use std::time::Duration;
+use std::{ffi::OsStr, time::Duration};
 
 use tauri::{PhysicalSize, WebviewWindow};
 
@@ -36,6 +39,50 @@ const RESIZE_GAP: Duration = Duration::from_millis(100);
 /// resize 消息队列。
 const RECONCILE_WAIT: Duration = Duration::from_millis(500);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NudgeMode {
+    FocusOnly,
+    FocusAndResize,
+}
+
+fn non_empty(value: Option<&OsStr>) -> bool {
+    value.is_some_and(|value| !value.is_empty())
+}
+
+fn prefers_wayland(gdk_backend: Option<&OsStr>, wayland_display: Option<&OsStr>) -> bool {
+    match gdk_backend {
+        Some(backends) => backends
+            .to_string_lossy()
+            .split(',')
+            .next()
+            .is_some_and(|backend| backend.trim().eq_ignore_ascii_case("wayland")),
+        None => non_empty(wayland_display),
+    }
+}
+
+fn nudge_mode(
+    wsl_distro_name: Option<&OsStr>,
+    wsl_interop: Option<&OsStr>,
+    gdk_backend: Option<&OsStr>,
+    wayland_display: Option<&OsStr>,
+) -> NudgeMode {
+    let is_wsl = non_empty(wsl_distro_name) || non_empty(wsl_interop);
+    if is_wsl && prefers_wayland(gdk_backend, wayland_display) {
+        NudgeMode::FocusOnly
+    } else {
+        NudgeMode::FocusAndResize
+    }
+}
+
+fn current_nudge_mode() -> NudgeMode {
+    nudge_mode(
+        std::env::var_os("WSL_DISTRO_NAME").as_deref(),
+        std::env::var_os("WSL_INTEROP").as_deref(),
+        std::env::var_os("GDK_BACKEND").as_deref(),
+        std::env::var_os("WAYLAND_DISPLAY").as_deref(),
+    )
+}
+
 /// 对主窗口执行 Linux 专用的「focus + surface 重激活」序列。
 ///
 /// 调用是 fire-and-forget：内部 spawn 一个异步任务在 ~250ms 后完成。
@@ -51,6 +98,11 @@ pub(crate) fn nudge_main_window(window: WebviewWindow) {
         // 第二次 set_focus：此时 webview realize 已完成，在绝大多数
         // 发行版上这一次会真的生效，消除失效模式 A。
         let _ = window.set_focus();
+
+        if current_nudge_mode() == NudgeMode::FocusOnly {
+            log::info!("Linux: WSLg Wayland 环境仅执行 focus，跳过伪 resize");
+            return;
+        }
 
         // 伪 resize：读取当前 inner_size，先加 1px 再还原。这会触发
         // GTK 的 size-allocate → WebKitWebViewBase::size_allocate →
@@ -118,4 +170,62 @@ pub(crate) fn nudge_main_window(window: WebviewWindow) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{nudge_mode, NudgeMode};
+    use std::ffi::OsStr;
+
+    #[test]
+    fn wslg_default_wayland_uses_focus_only() {
+        assert_eq!(
+            nudge_mode(
+                Some(OsStr::new("Ubuntu")),
+                None,
+                None,
+                Some(OsStr::new("wayland-0")),
+            ),
+            NudgeMode::FocusOnly
+        );
+    }
+
+    #[test]
+    fn wslg_explicit_wayland_uses_focus_only() {
+        assert_eq!(
+            nudge_mode(
+                None,
+                Some(OsStr::new("/run/WSL/1_interop")),
+                Some(OsStr::new("wayland,x11")),
+                Some(OsStr::new("wayland-0")),
+            ),
+            NudgeMode::FocusOnly
+        );
+    }
+
+    #[test]
+    fn wslg_explicit_x11_keeps_resize_nudge() {
+        assert_eq!(
+            nudge_mode(
+                Some(OsStr::new("Ubuntu")),
+                None,
+                Some(OsStr::new("x11")),
+                Some(OsStr::new("wayland-0")),
+            ),
+            NudgeMode::FocusAndResize
+        );
+    }
+
+    #[test]
+    fn regular_linux_wayland_keeps_resize_nudge() {
+        assert_eq!(
+            nudge_mode(
+                None,
+                None,
+                Some(OsStr::new("wayland")),
+                Some(OsStr::new("wayland-0")),
+            ),
+            NudgeMode::FocusAndResize
+        );
+    }
 }
