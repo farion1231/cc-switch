@@ -1,4 +1,4 @@
-import { formatClock } from "../utils";
+import { formatMessageTime } from "../utils";
 import type { AgentReaderStyle } from "./agentStyles";
 import { describeEvent } from "./SessionEventRow";
 import {
@@ -101,7 +101,7 @@ const eventLine = (event: TurnEvent, t: Translate) => {
 };
 
 const heading = (label: string, ts?: number) =>
-  `**${label}**${ts ? ` ${formatClock(ts)}` : ""}`;
+  `**${label}**${ts ? ` ${formatMessageTime(ts)}` : ""}`;
 
 export const turnToMarkdown = (
   turn: SessionTurn,

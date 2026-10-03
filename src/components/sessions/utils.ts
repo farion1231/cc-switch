@@ -101,6 +101,21 @@ export const formatShortDateTime = (value?: number) => {
   });
 };
 
+/** 阅读页里单条消息的时间：月日 + 时分，不是今年的再带上年份（如「10月1日 16:29」） */
+export const formatMessageTime = (value?: number) => {
+  if (!value) return "";
+  const date = new Date(value);
+  return date.toLocaleString(undefined, {
+    ...(date.getFullYear() !== new Date().getFullYear()
+      ? { year: "numeric" as const }
+      : {}),
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
 export const formatClock = (value?: number) => {
   if (!value) return "";
   return new Date(value).toLocaleTimeString(undefined, {

@@ -3,7 +3,7 @@ import { memo } from "react";
 import type { SessionMessage } from "@/types";
 
 import { AppGlyph } from "@/components/shell/AppGlyph";
-import { formatClock, isSessionAppId } from "../utils";
+import { formatMessageTime, isSessionAppId } from "../utils";
 import { useReaderContext } from "./context";
 import type { SessionTurn } from "./turns";
 
@@ -64,7 +64,7 @@ export const SessionAgentHeader = memo(function SessionAgentHeader({
           title={new Date(ts).toLocaleString()}
           className="shrink-0 tabular-nums text-fg-3"
         >
-          {formatClock(ts)}
+          {formatMessageTime(ts)}
         </time>
       ) : null}
       {model && (

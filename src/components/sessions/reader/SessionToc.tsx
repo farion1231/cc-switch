@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { TurnIndex } from "@/types";
-import { formatClock } from "../utils";
+import { formatMessageTime } from "../utils";
 import { useReaderT } from "./i18n";
 
 interface SessionQuestionsMenuProps {
@@ -76,7 +76,7 @@ export const SessionQuestionsMenu = memo(function SessionQuestionsMenu({
             )}
             {item.ts ? (
               <span className="shrink-0 text-caption tabular-nums text-fg-3">
-                {formatClock(item.ts)}
+                {formatMessageTime(item.ts)}
               </span>
             ) : null}
           </DropdownMenuItem>

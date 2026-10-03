@@ -6,6 +6,7 @@ import {
   groupSessionsByProject,
   groupSessionsByTime,
   isArchivedSession,
+  formatMessageTime,
 } from "@/components/sessions/utils";
 import type { SessionMeta } from "@/types";
 
@@ -107,5 +108,19 @@ describe("session utils", () => {
     expect(buildCdResumeCommand("/tmp/it's", "claude --resume x")).toBe(
       "cd '/tmp/it'\\''s' && claude --resume x",
     );
+  });
+
+  it("formats message times with the date, adding the year only for past years", () => {
+    const thisYear = new Date().getFullYear();
+    const recent = new Date(thisYear, 0, 15, 9, 5).getTime();
+    const older = new Date(thisYear - 1, 11, 30, 23, 10).getTime();
+
+    expect(formatMessageTime(undefined)).toBe("");
+    // 今年：带月日和时分，不带年份
+    expect(formatMessageTime(recent)).toMatch(/15/);
+    expect(formatMessageTime(recent)).not.toContain(String(thisYear));
+    // 往年：带上年份
+    expect(formatMessageTime(older)).toContain(String(thisYear - 1));
+    expect(formatMessageTime(older)).toMatch(/30/);
   });
 });

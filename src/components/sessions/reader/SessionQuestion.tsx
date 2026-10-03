@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { HoverTip } from "@/components/ui/hover-tip";
 import { cn } from "@/lib/utils";
-import { formatClock } from "../utils";
+import { formatMessageTime } from "../utils";
 import { useReaderContext } from "./context";
 import { useReaderT } from "./i18n";
 import {
@@ -118,7 +118,7 @@ export const SessionQuestion = memo(function SessionQuestion({
             title={new Date(question.ts).toLocaleString()}
             className="tabular-nums"
           >
-            {formatClock(question.ts)}
+            {formatMessageTime(question.ts)}
           </time>
         ) : null}
       </div>
