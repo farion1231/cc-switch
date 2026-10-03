@@ -1916,7 +1916,8 @@ fn build_menu_model(
     ));
     menu.push(TrayEntry::Separator);
     menu.push(TrayEntry::item("open_website", texts.open_website));
-    // 不能换成系统自带的 quit：它会跳过 app.exit(0) 的清理（客户端指回直连、停服务）。
+    // 不换成系统自带的 quit：它不经过 app.exit(0) 的退出流程，客户端指回直连、停服务只能在
+    // RunEvent::Exit 里限时补做（见 lib.rs 的 cleanup_before_system_exit）。
     // 有应用在用路由服务时把这个后果写在「退出」上（后果不进说明，写在按钮文字里）。
     menu.push(TrayEntry::item(
         "quit",

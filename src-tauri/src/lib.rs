@@ -76,7 +76,6 @@ pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-#[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, sync::Arc};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -1774,6 +1773,7 @@ pub fn run() {
                 //     与所有 Tauri 应用默认重启路径的行为一致，无需额外等待
                 ExitRequestAction::DeferToTauriRestart => {
                     log::info!("收到重启请求 (code={code:?})，交由 Tauri 默认重启流程 re-exec");
+                    RESTART_REQUESTED.store(true, Ordering::SeqCst);
                     return;
                 }
                 // 其它 Some(_)：用户主动调用 app.exit() 退出（如托盘菜单"退出"），
@@ -1801,6 +1801,16 @@ pub fn run() {
                 // 使用 std::process::exit 避免再次触发 ExitRequested
                 std::process::exit(0);
             });
+            return;
+        }
+
+        // macOS ⌘Q、Dock「退出」、注销关机走系统 terminate，不发 ExitRequested、只发
+        // RunEvent::Exit，回调一返回进程就结束，只能在这里同步补做退出清理。重启也会走到
+        // 这里，照上面 DeferToTauriRestart 的约定交还 Tauri 默认流程，不清理。
+        if matches!(event, RunEvent::Exit) {
+            if !RESTART_REQUESTED.load(Ordering::SeqCst) {
+                cleanup_before_system_exit(app_handle);
+            }
             return;
         }
 
@@ -1913,6 +1923,30 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         crate::mode::controller::detach_all(state.inner()).await;
         log::info!("退出清理完成：客户端已指回直连，代理已停止");
+    }
+}
+
+/// 系统终止应用时最多等退出清理这么久：停代理服务自带 5 秒超时，指回直连只是写几个文件。
+const SYSTEM_EXIT_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// 系统直接终止应用时（macOS ⌘Q、Dock「退出」、注销关机）的退出清理。
+///
+/// 这条路没有 `ExitRequested` 可以 `prevent_exit()` 再异步清理，只能在主线程上等清理做完。
+/// 清理放到异步运行时的线程上跑、主线程限时等：万一里面有步骤要等主线程，超时后照常退出，
+/// 不会把进程卡住。
+fn cleanup_before_system_exit(app_handle: &tauri::AppHandle) {
+    log::info!("系统终止应用，开始退出清理...");
+    let handle = app_handle.clone();
+    let task = tauri::async_runtime::spawn(async move { cleanup_before_exit(&handle).await });
+    // timeout 要在运行时里构造（它取当前运行时的计时器），所以包一层 async。
+    let finished = tauri::async_runtime::block_on(async move {
+        tokio::time::timeout(SYSTEM_EXIT_CLEANUP_TIMEOUT, task).await
+    });
+    if finished.is_err() {
+        log::warn!(
+            "退出清理 {} 秒内没做完，直接退出",
+            SYSTEM_EXIT_CLEANUP_TIMEOUT.as_secs()
+        );
     }
 }
 
@@ -2169,6 +2203,9 @@ enum ExitRequestAction {
     /// 其它 `Some(_)`：用户主动退出（托盘「退出」等），执行完整异步清理后结束进程。
     CleanupAndExit,
 }
+
+/// 收到过重启请求。重启时 Tauri 也会发 `RunEvent::Exit`，靠它跳过系统终止那条清理。
+static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 fn classify_exit_request(code: Option<i32>) -> ExitRequestAction {
     match code {
