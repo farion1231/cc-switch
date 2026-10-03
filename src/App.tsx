@@ -1207,7 +1207,7 @@ function App() {
       <div
         ref={providerScrollContainerRef}
         id="main-content"
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 pb-12 pt-4"
+        className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
       >
         <div className="space-y-4">
           {activeApp === "claude-desktop" && (
@@ -1284,7 +1284,7 @@ function App() {
                 id="main-content"
                 role="tabpanel"
                 aria-labelledby={`openclaw-config-${openclawConfigTab}`}
-                className="min-h-0 flex-1 overflow-y-auto"
+                className="min-h-0 flex-1 overflow-y-auto scroll-stable"
               >
                 {openclawConfigTab === "env" ? (
                   <EnvPanel />
@@ -1298,7 +1298,10 @@ function App() {
           );
         case "hermesMemory":
           return (
-            <div id="main-content" className="min-h-0 flex-1 overflow-y-auto">
+            <div
+              id="main-content"
+              className="min-h-0 flex-1 overflow-y-auto scroll-stable"
+            >
               <HermesMemoryPanel onOpenWebUI={openHermesWebUI} />
             </div>
           );
@@ -1350,7 +1353,10 @@ function App() {
                 </>
               }
             />
-            <div id="main-content" className="min-h-0 flex-1 overflow-y-auto">
+            <div
+              id="main-content"
+              className="min-h-0 flex-1 overflow-y-auto scroll-stable"
+            >
               <div className="px-6 pb-10 pt-4">
                 <AuthCenterPanel showIntro={false} />
               </div>

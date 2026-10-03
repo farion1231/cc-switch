@@ -644,7 +644,7 @@ export function SkillsPage({
       <div className="flex min-h-0 flex-1 flex-col px-6 pb-5">
         <div
           ref={listScrollRef}
-          className="min-h-0 overflow-auto rounded-panel border border-border bg-surface"
+          className="min-h-0 overflow-auto scroll-stable rounded-panel border border-border bg-surface"
         >
           {loadingList ? (
             <div className="flex items-center justify-center gap-2 py-16 text-body text-fg-2">

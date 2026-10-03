@@ -734,7 +734,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
           ) : (
             <div
               data-testid="mcp-matrix"
-              className="min-h-0 overflow-auto rounded-panel border border-border bg-surface"
+              className="min-h-0 overflow-auto scroll-stable rounded-panel border border-border bg-surface"
             >
               <MatrixColumnHighlight>
                 <div className="min-w-[560px]">
@@ -1051,7 +1051,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                 </p>
               )}
             </div>
-            <div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain">
+            <div className="flex min-h-0 flex-col gap-4 overflow-y-auto scroll-stable overscroll-contain">
               {importReport.error && (
                 <section className="flex flex-col gap-2">
                   <h3 className="m-0 text-body font-semibold">

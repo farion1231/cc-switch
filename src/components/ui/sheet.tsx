@@ -84,7 +84,7 @@ const SheetBody = ({
 }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      "min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4",
+      "min-h-0 flex-1 overflow-y-auto scroll-stable overscroll-contain px-5 py-4",
       className,
     )}
     {...props}

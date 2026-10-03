@@ -134,7 +134,7 @@ function PromptDrawer({
           </SheetTitle>
           <SheetDescription className="sr-only">{description}</SheetDescription>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-6 pb-6 pt-5">
+        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5">
           {children}
         </div>
         <div className="flex h-14 shrink-0 items-center gap-2 border-t border-border px-6">
@@ -907,7 +907,7 @@ export const PiPromptTemplates = forwardRef<
     return (
       <ul
         aria-label={t("pi.prompts.templatesLabel")}
-        className="m-0 min-h-0 shrink list-none overflow-y-auto rounded-panel border border-border bg-surface p-0"
+        className="m-0 min-h-0 shrink list-none overflow-y-auto scroll-stable rounded-panel border border-border bg-surface p-0"
       >
         {filteredTemplates.map((template, index) => {
           const summary = getPiPromptTemplateSummary(template.content);

@@ -1097,7 +1097,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     return (
       <div
         data-testid="skills-matrix"
-        className="min-h-0 overflow-auto rounded-panel border border-border bg-surface"
+        className="min-h-0 overflow-auto scroll-stable rounded-panel border border-border bg-surface"
       >
         <MatrixColumnHighlight>
           <div className="min-w-[600px]">

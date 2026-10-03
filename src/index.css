@@ -501,11 +501,10 @@ html:not([data-keyboard]) [tabindex]:focus {
     display: none;
   }
 
-  .scroll-overlay {
-    scrollbar-gutter: stable both-edges;
-    padding-right: 0.5rem;
-    margin-right: -0.5rem;
-    overflow-x: hidden;
+  /* 滚动条常显且占 8px：主滚动区、大列表先把这条槽留出来，
+     内容高度跨过能否滚动的临界时整列不会左右横跳 */
+  .scroll-stable {
+    scrollbar-gutter: stable;
   }
 
   .border-default {

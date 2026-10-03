@@ -1299,7 +1299,7 @@ export function SessionManagerPage({
                   defaultValue: "会话列表",
                 })}
                 ref={listScrollRef}
-                className="mx-6 mt-3 min-h-0 shrink overflow-y-auto overscroll-contain rounded-panel border border-border bg-surface"
+                className="mx-6 mt-3 min-h-0 shrink overflow-y-auto scroll-stable overscroll-contain rounded-panel border border-border bg-surface"
                 style={{ scrollPaddingTop: groupMode === "project" ? 44 : 8 }}
               >
                 {renderList()}

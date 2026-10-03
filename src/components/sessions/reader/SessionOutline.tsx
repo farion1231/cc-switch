@@ -103,7 +103,7 @@ export const SessionOutline = memo(function SessionOutline({
       </div>
       <ol
         ref={listRef}
-        className="m-0 min-h-0 flex-1 list-none overflow-y-auto overscroll-contain px-2 pb-4"
+        className="m-0 min-h-0 flex-1 list-none overflow-y-auto scroll-stable overscroll-contain px-2 pb-4"
       >
         {entries.map((entry) => {
           const active = entry.turn.index === activeTurn;

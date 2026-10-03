@@ -688,7 +688,7 @@ export function SessionReader({
           const bottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
           setAtBottom((current) => (current === bottom ? current : bottom));
         }}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6"
+        className="min-h-0 flex-1 overflow-y-auto scroll-stable overscroll-contain px-6"
       >
         <div
           className="relative w-full"

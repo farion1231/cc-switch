@@ -381,7 +381,7 @@ export function SettingsPage({
       <div
         ref={scrollRef}
         id="main-content"
-        className="min-h-0 flex-1 overflow-y-auto"
+        className="min-h-0 flex-1 overflow-y-auto scroll-stable"
       >
         {isBusy ? (
           <div className="flex h-full items-center justify-center">

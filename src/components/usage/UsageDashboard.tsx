@@ -723,12 +723,12 @@ export function UsageDashboard({
       // 空库里只有定价可配：不画全是 0 的概览和趋势，直接给页签
       <div
         id="main-content"
-        className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-6 pb-6 pt-1"
+        className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto scroll-stable px-6 pb-6 pt-1"
       >
         {tabsSection}
       </div>
     ) : isEmpty ? (
-      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 pb-6">
+      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto scroll-stable px-6 pb-6">
         <div className="mt-16 flex max-w-[440px] flex-col items-center gap-3 text-center">
           <span
             aria-hidden="true"
@@ -768,7 +768,7 @@ export function UsageDashboard({
     ) : (
       <div
         id="main-content"
-        className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-6 pb-6 pt-1"
+        className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto scroll-stable px-6 pb-6 pt-1"
       >
         <UsageHero
           range={range}
