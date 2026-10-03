@@ -1574,6 +1574,7 @@ pub fn run() {
             commands::get_proxy_takeover_status,
             commands::set_proxy_takeover_for_app,
             commands::get_app_mode,
+            commands::set_proxy_route,
             commands::take_startup_attach_failures,
             tray::take_tray_navigation,
             tray::tray_app_page_seen,

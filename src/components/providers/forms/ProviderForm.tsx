@@ -878,7 +878,7 @@ function ProviderFormFull({
         selectedPresetEntry?.preset.category === "official"));
   const isCodexOfficialManagedOauthBound =
     isCodexOfficialProvider && Boolean(selectedCodexAccountId);
-  // 应用实际在叠加模式时，新增 / 编辑用叠加的简化表单
+  // 应用实际在聚合模式时，新增 / 编辑用聚合的简化表单
   const stackLayoutAvailable =
     appModeView?.mode === "stack" &&
     (appId === "claude" || appId === "codex") &&
@@ -1499,7 +1499,7 @@ function ProviderFormFull({
           issues.push(
             t("providerForm.stackLayout.noModels", {
               defaultValue:
-                "模型列表为空：叠加这家后，模型选择器里不会多出它的模型",
+                "模型列表为空：把这家加入聚合后，模型选择器里不会多出它的模型",
             }),
           );
         }
@@ -2435,7 +2435,7 @@ function ProviderFormFull({
                       defaultValue: "显示完整表单",
                     })
                   : t("providerForm.stackLayout.simpleForm", {
-                      defaultValue: "返回叠加模式的简化表单",
+                      defaultValue: "返回聚合模式的简化表单",
                     })}
               </Button>
             </div>

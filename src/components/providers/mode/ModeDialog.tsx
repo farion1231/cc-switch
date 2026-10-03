@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { isOfficialAccount } from "@/utils/providerCapabilities";
 
 /** 路由模式改写的客户端文件（确认框里写明，用默认位置）。 */
 const CLIENT_FILE: Partial<Record<AppId, string>> = {
@@ -30,7 +31,7 @@ const CLIENT_FILE: Partial<Record<AppId, string>> = {
 };
 
 export type ModeDialogState =
-  | { kind: "enter"; target: Exclude<AppMode, "direct">; pick: string | null }
+  | { kind: "enter"; target: Exclude<AppMode, "direct"> }
   | { kind: "needsRoute"; providerId: string; reason: string };
 
 interface ModeDialogProps {
@@ -38,12 +39,12 @@ interface ModeDialogProps {
   state: ModeDialogState | null;
   active: AppMode;
   providers: Provider[];
-  /** 能做路由目标 / 叠加默认的供应商 */
+  /** 能做路由目标 / 聚合默认的供应商 */
   eligibleIds: string[];
-  /** 默认选中：路由用上次的路由目标，叠加用当前默认那家 */
-  defaultPick: { route: string | null; stack: string | null };
-  /** 叠加里除了默认那家以外的成员及其模型数 */
-  stackMembers: { name: string; models: number }[];
+  /** 默认选中：上次的路由目标（聚合里就是默认那家），没有就用直连那家 */
+  defaultPick: string | null;
+  /** 聚合名单（含默认那家）及各家的模型数；框里按选中的默认那家算「另有」哪几家 */
+  stackMembers: { id: string; name: string; models: number }[];
   onClose: () => void;
   onEnter: (target: Exclude<AppMode, "direct">, pick: string) => Promise<void>;
   /** 对话框 F：仍然直连切换 */
@@ -52,8 +53,8 @@ interface ModeDialogProps {
 
 /**
  * 模式切换确认框（B4.4 的 A / C / D / E，以及 F「需要路由」）。确认键 = 入口按钮去掉「…」。
- * 出错时就地显示，不关框。路由可以在框里换目标；叠加的默认供应商在列表里定（卡片上的
- * 「以这家为默认开始叠加…」或预览里的默认那家），框里只显示、不再选。
+ * 出错时就地显示，不关框。路由到哪家、聚合以哪家为默认都在框里选（进入模式只有这一个入口，
+ * 卡片上不再有「从这家开始」的按钮）。
  */
 export function ModeDialog(props: ModeDialogProps) {
   const { state, onClose } = props;
@@ -94,15 +95,19 @@ function EnterBody({
   const viaDirect = active !== "direct";
   const eligible = providers.filter((p) => eligibleIds.includes(p.id));
   const initialPick =
-    [state.pick, target === "route" ? defaultPick.route : defaultPick.stack]
-      .filter((id): id is string => Boolean(id))
-      .find((id) => eligibleIds.includes(id)) ??
-    eligible[0]?.id ??
-    "";
+    defaultPick && eligibleIds.includes(defaultPick)
+      ? defaultPick
+      : (eligible[0]?.id ?? "");
   const [pick, setPick] = useState(initialPick);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pickedProvider = eligible.find((p) => p.id === pick);
+  // 官方账号只能做聚合的默认、不能做成员（Codex）：选了别家，它的模型就进不了聚合
+  const officialLeftOut =
+    target === "stack" &&
+    pickedProvider !== undefined &&
+    !isOfficialAccount(app, pickedProvider) &&
+    eligible.some((p) => isOfficialAccount(app, p));
 
   useEffect(() => {
     setPick(initialPick);
@@ -110,7 +115,8 @@ function EnterBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
-  const memberModels = stackMembers.reduce((sum, m) => sum + m.models, 0);
+  const otherMembers = stackMembers.filter((m) => m.id !== pick);
+  const memberModels = otherMembers.reduce((sum, m) => sum + m.models, 0);
   const notes =
     target === "route"
       ? [
@@ -121,9 +127,9 @@ function EnterBody({
           t("mode.dialog.routeNoteKeepRunning"),
         ]
       : [
-          stackMembers.length > 0
+          otherMembers.length > 0
             ? t("mode.dialog.stackNoteMembers", {
-                names: stackMembers.map((m) => m.name).join("、"),
+                names: otherMembers.map((m) => m.name).join("、"),
                 count: memberModels,
               })
             : t("mode.dialog.stackNoteEmpty"),
@@ -160,13 +166,17 @@ function EnterBody({
     : target === "route"
       ? t("mode.dialog.routeTitle", { app: appName })
       : t("mode.dialog.stackTitle", { app: appName });
-  // 从路由 / 叠加互换时后端一步完成（先写回直连再接入只是实现细节），不再列步骤
+  // 从路由 / 聚合互换时后端一步完成（先写回直连再接入只是实现细节），不再列步骤
   const lead =
     target === "route"
       ? t("mode.dialog.routeLead")
       : t("mode.dialog.stackLead");
+  const pickLabel =
+    target === "route"
+      ? t("mode.dialog.routeTo")
+      : t("mode.dialog.stackDefault");
   const optionLabel = (provider: Provider) =>
-    provider.category === "official"
+    isOfficialAccount(app, provider)
       ? t("mode.dialog.officialOption", { name: provider.name })
       : provider.name;
 
@@ -179,42 +189,31 @@ function EnterBody({
         </DialogDescription>
       </div>
 
-      {target === "route" ? (
-        <div className="space-y-1.5">
-          <label className="text-caption font-semibold text-fg-2">
-            {t("mode.dialog.routeTo")}
-          </label>
-          <Select value={pick} onValueChange={setPick} disabled={busy}>
-            <SelectTrigger
-              className="h-9"
-              aria-label={t("mode.dialog.routeTo")}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="z-[70]">
-              {eligible.map((provider) => (
-                <SelectItem key={provider.id} value={provider.id}>
-                  {optionLabel(provider)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      ) : (
-        <div className="space-y-1">
-          <p className="text-caption font-semibold text-fg-2">
-            {t("mode.dialog.stackDefault")}
-          </p>
+      <div className="space-y-1.5">
+        <label className="text-caption font-semibold text-fg-2">
+          {pickLabel}
+        </label>
+        <Select value={pick} onValueChange={setPick} disabled={busy}>
+          <SelectTrigger className="h-9" aria-label={pickLabel}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="z-[70]">
+            {eligible.map((provider) => (
+              <SelectItem key={provider.id} value={provider.id}>
+                {optionLabel(provider)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {officialLeftOut && (
           <p
-            data-testid="stack-default"
-            className="text-body font-medium text-fg-1"
+            data-testid="stack-official-note"
+            className="rounded-control bg-warning-soft px-3 py-2 text-caption text-warning-text"
           >
-            {pickedProvider
-              ? optionLabel(pickedProvider)
-              : t("mode.noProvider")}
+            {t("mode.dialog.stackOfficialNote")}
           </p>
-        </div>
-      )}
+        )}
+      </div>
 
       <ul className="space-y-1.5 rounded-panel bg-subtle px-4 py-3 text-caption text-fg-2">
         {notes.map((note) => (

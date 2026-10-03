@@ -200,6 +200,7 @@ export function SkillsPage({
     isFetching: fetchingSkillsSh,
     isPlaceholderData: placeholderSkillsSh,
     isError: skillsShError,
+    refetch: refetchSkillsSh,
   } = useSearchSkillsSh(skillsShQuery, SKILLSSH_PAGE_SIZE, skillsShOffset);
   const installMutation = useInstallSkill();
   const { setRepoEnabled } = useSkillRepoActions();
@@ -229,6 +230,16 @@ export function SkillsPage({
     setSkillsShOffset(0);
     setAccumulated([]);
     setSkillsShQuery(trimmed);
+  };
+
+  // 第一页失败时 query key 没变，光把 offset 设回 0 什么都不会发生，要显式重新请求
+  const retrySkillsSh = () => {
+    setAccumulated([]);
+    if (skillsShOffset === 0) {
+      void refetchSkillsSh();
+    } else {
+      setSkillsShOffset(0);
+    }
   };
 
   // ─── 已安装 / 目录名占用 ────────────────────────────────────────────
@@ -421,9 +432,7 @@ export function SkillsPage({
         body = t("skillsPage.discover.skillsShHint");
       } else if (skillsShError) {
         title = t("skills.skillssh.error");
-        buttons = [
-          { label: t("common.retry"), onClick: () => setSkillsShOffset(0) },
-        ];
+        buttons = [{ label: t("common.retry"), onClick: retrySkillsSh }];
       } else {
         title = t("skillsPage.discover.skillsShNone", { query: skillsShQuery });
       }

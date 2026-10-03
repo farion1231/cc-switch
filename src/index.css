@@ -88,7 +88,7 @@
     --overlay: rgba(9, 9, 11, 0.36);
     --control-off: #888890;
 
-    /* 模式色：直连蓝、路由青绿、叠加紫。--*-border 是当前卡片的边框，等于各自的 fill */
+    /* 模式色：直连蓝、路由青绿、聚合紫。--*-border 是当前卡片的边框，等于各自的 fill */
     --direct-fill: #0a84ff;
     --direct-text: #0063c7;
     --direct-soft: #eaf3ff;

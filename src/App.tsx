@@ -196,7 +196,7 @@ function App() {
     void checkToolUpdatesInBackground();
   }, [checkToolUpdatesOnStartup]);
 
-  // 启动时没能接上路由 / 叠加、已退回直连的应用：在对应的应用页提示一次并给「重试」
+  // 启动时没能接上路由 / 聚合、已退回直连的应用：在对应的应用页提示一次并给「重试」
   const [startupFailures, setStartupFailures] = useState<
     StartupAttachFailure[]
   >([]);
@@ -571,8 +571,17 @@ function App() {
   // ─── 导航 ───────────────────────────────────────────────────────────────
   // MCP / Skills / 提示词在进行中的操作会锁住导航（卸载面板会丢掉进行中的状态）
 
+  // 添加 / 编辑 / 用量脚本面板只盖住内容区，侧栏还能点。离开当前页就把它们关掉：
+  // 面板的 appId 跟着 activeApp 走，开着切应用会把 A 应用的供应商保存进 B 应用
+  const closeProviderPanels = () => {
+    setIsAddOpen(false);
+    setEditingProvider(null);
+    setUsageProvider(null);
+  };
+
   const openSettings = (section: SettingsSection = "general") => {
     if (managementBusyRef.current) return;
+    closeProviderPanels();
     if (currentViewRef.current !== "settings") {
       settingsReturnViewRef.current = currentViewRef.current;
     }
@@ -586,6 +595,7 @@ function App() {
 
   const selectApp = (app: AppId) => {
     if (managementBusyRef.current) return;
+    closeProviderPanels();
     setActiveApp(app);
     localStorage.setItem(APP_STORAGE_KEY, app);
     setCurrentView("providers");
@@ -597,6 +607,7 @@ function App() {
       return;
     }
     if (managementBusyRef.current) return;
+    closeProviderPanels();
     if (page === "prompts" && currentViewRef.current !== "prompts") {
       // 提示词页默认选中侧栏里最后选的那个应用
       setPromptsApp(
@@ -762,7 +773,11 @@ function App() {
         { closeButton: true },
       );
     } else {
-      await deleteProvider(provider.id);
+      try {
+        await deleteProvider(provider.id);
+      } catch {
+        // useDeleteProviderMutation 的 onError 已经弹了错误 toast；确认框照样关掉
+      }
     }
     setConfirmAction(null);
   };

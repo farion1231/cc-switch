@@ -873,3 +873,53 @@ describe("行定位与行高", () => {
     );
   });
 });
+
+describe("查找命中在预览可见行之外", () => {
+  // 失败步骤默认只露 FAILURE_PREVIEW_LINES 行；命中在后面的行时整段预览都要展开，
+  // 否则查找计数里有、界面上看不见（对应旧阅读页 v7 的同类修复）
+  const lines = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`);
+  lines[1] = "early HIT here";
+  lines[8] = "late TAIL here";
+  const failedTurn = () =>
+    buildTurns(
+      [
+        msg("user", [text("run")]),
+        msg("assistant", [call("f")]),
+        msg("tool", [
+          result("f", "error", {
+            preview: lines.join("\n"),
+            lineCount: lines.length,
+            totalLen: lines.join("\n").length,
+          }),
+        ]),
+        msg("assistant", [text("done")]),
+      ].map((message) => ({ ...message, turnId: "t" })),
+      { style: AGENT_READER_STYLES.claude },
+    );
+  const failedStepRow = (query: string) => {
+    const turns = failedTurn();
+    const rows = flattenRows(turns, { search: findSearchHits(turns, query) });
+    const row = rows.find((r) => r.kind === "step");
+    if (!row || row.kind !== "step") throw new Error("no step row");
+    return row;
+  };
+
+  it("命中在可见行内：保持默认预览行数", () => {
+    const row = failedStepRow("hit");
+    expect(row.expanded).toBe(true);
+    expect(row.previewLines).toBe(FAILURE_PREVIEW_LINES);
+  });
+
+  it("命中在可见行之后：整段预览展开", () => {
+    const row = failedStepRow("tail");
+    expect(row.expanded).toBe(true);
+    expect(row.previewLines).toBeGreaterThan(lines.length);
+  });
+
+  it("没有查找时不受影响", () => {
+    const turns = failedTurn();
+    const row = flattenRows(turns).find((r) => r.kind === "step");
+    if (!row || row.kind !== "step") throw new Error("no step row");
+    expect(row.previewLines).toBe(FAILURE_PREVIEW_LINES);
+  });
+});

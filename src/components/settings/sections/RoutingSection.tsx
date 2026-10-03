@@ -15,7 +15,6 @@ import {
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { PROXY_APP_IDS, type ProxyAppId } from "@/config/appConfig";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
-import { extractErrorMessage } from "@/utils/errorUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { HelpTip, DisabledReason } from "@/components/ui/help-tip";
@@ -133,11 +132,8 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
         listenAddress: trimmed === "localhost" ? "127.0.0.1" : trimmed,
         listenPort: portValue,
       });
-      toast.success(t("proxy.settings.configSaved"), { closeButton: true });
-    } catch (error) {
-      toast.error(
-        extractErrorMessage(error) || t("proxy.settings.configSaveFailed"),
-      );
+    } catch {
+      // useUpdateGlobalProxyConfig 的 onSuccess / onError 已经弹过 toast
     }
   };
 
@@ -388,7 +384,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
         </div>
       </SettingsBlock>
 
-      {/* 可恢复的操作（路由目标、队列、叠加名单都保留），不用红色 */}
+      {/* 可恢复的操作（路由目标、队列、聚合名单都保留），不用红色 */}
       <ConfirmDialog
         isOpen={confirmExitAll}
         variant="info"

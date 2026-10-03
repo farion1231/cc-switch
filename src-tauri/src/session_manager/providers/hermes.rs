@@ -112,13 +112,18 @@ fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
 
     let db_source = format!("sqlite:{}", db_path.display());
     let first_user_messages = first_user_messages(&conn);
+    let last_messages = last_messages(&conn);
 
     for row_result in rows.flatten() {
         if let Some(mut meta) = sqlite_row_to_session_meta(&row_result, &db_source) {
-            if let Some(text) = first_user_messages.get(&meta.session_id) {
-                if meta.title.is_none() {
+            let first = first_user_messages.get(&meta.session_id);
+            if meta.title.is_none() {
+                if let Some(text) = first {
                     meta.title = Some(truncate_summary(text, TITLE_MAX_CHARS));
                 }
+            }
+            // 列表上标的是「最后：」，和其他应用一样取最后一条，而不是开头那句
+            if let Some(text) = last_messages.get(&meta.session_id).or(first) {
                 meta.summary = Some(truncate_summary(text, 160));
             }
             sessions.push(meta);
@@ -129,19 +134,34 @@ fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
 }
 
 /// First displayable user message of each listed session, decoded to text.
-/// Hermes auto-titles most sessions, so this mainly feeds the summary (and the
-/// search index); it is the title only when `sessions.title` is empty.
+/// Hermes auto-titles most sessions, so this is the title only when
+/// `sessions.title` is empty (and the summary fallback when a session has no
+/// readable last message).
 fn first_user_messages(conn: &Connection) -> HashMap<String, String> {
+    edge_messages(conn, "MIN", "role = 'user'")
+}
+
+/// Last displayable user / assistant message of each listed session: what the
+/// list shows after "Last:", same as the other apps' session lists.
+fn last_messages(conn: &Connection) -> HashMap<String, String> {
+    edge_messages(
+        conn,
+        "MAX",
+        "role IN ('user', 'assistant') AND content IS NOT NULL AND content != ''",
+    )
+}
+
+fn edge_messages(conn: &Connection, pick: &str, role_filter: &str) -> HashMap<String, String> {
     let columns = get_table_columns(conn, "messages");
     if columns.is_empty() {
         return HashMap::new();
     }
     let query = format!(
         "SELECT m.session_id, m.content FROM messages m \
-         JOIN (SELECT session_id, MIN(id) AS first_id FROM messages \
-               WHERE role = 'user'{filter} \
+         JOIN (SELECT session_id, {pick}(id) AS edge_id FROM messages \
+               WHERE {role_filter}{filter} \
                  AND session_id IN (SELECT id FROM sessions ORDER BY rowid DESC LIMIT {SQLITE_SCAN_LIMIT}) \
-               GROUP BY session_id) f ON m.id = f.first_id",
+               GROUP BY session_id) f ON m.id = f.edge_id",
         filter = display_filter(&columns),
     );
     let mut stmt = match conn.prepare(&query) {
@@ -592,8 +612,24 @@ fn scan_sessions_jsonl() -> Vec<SessionMeta> {
     sessions
 }
 
+/// 一行 JSONL 里的消息角色和非空正文（扁平和 `{type:"message", message:{…}}` 两种格式）。
+fn jsonl_message(value: &Value) -> Option<(&str, String)> {
+    let role = value
+        .get("role")
+        .or_else(|| value.get("message").and_then(|m| m.get("role")))
+        .and_then(Value::as_str)?;
+    let content = value
+        .get("content")
+        .or_else(|| value.get("message").and_then(|m| m.get("content")))?;
+    let text = extract_text(content);
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some((role, text))
+}
+
 fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
-    // Read head (metadata + first user message) and tail (last timestamp)
+    // Read head (metadata + first user message) and tail (last timestamp + last message)
     let (head, tail) = read_head_tail_lines(path, 30, 10).ok()?;
 
     let mut first_user_msg: Option<String> = None;
@@ -652,26 +688,16 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
         }
 
         if first_user_msg.is_none() {
-            let role = value
-                .get("role")
-                .or_else(|| value.get("message").and_then(|m| m.get("role")))
-                .and_then(Value::as_str);
-
-            if role == Some("user") {
-                let content = value
-                    .get("content")
-                    .or_else(|| value.get("message").and_then(|m| m.get("content")));
-                if let Some(c) = content {
-                    let text = extract_text(c);
-                    if !text.trim().is_empty() {
-                        first_user_msg = Some(truncate_summary(&text, TITLE_MAX_CHARS).to_string());
-                    }
-                }
+            if let Some(("user", text)) = jsonl_message(&value) {
+                first_user_msg = Some(truncate_summary(&text, TITLE_MAX_CHARS));
             }
         }
     }
 
-    // Process tail lines for the most recent timestamp
+    // Process tail lines for the most recent timestamp and the last displayable message:
+    // the summary is the last user/assistant message, same as the SQLite scan.
+    let mut tail_ts: Option<i64> = None;
+    let mut last_msg: Option<String> = None;
     for line in tail.iter().rev() {
         if line.trim().is_empty() {
             continue;
@@ -680,15 +706,22 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        let ts = value
-            .get("timestamp")
-            .or_else(|| value.get("ts"))
-            .and_then(parse_timestamp_to_ms);
-        if let Some(t) = ts {
-            last_ts = Some(t);
+        if tail_ts.is_none() {
+            tail_ts = value
+                .get("timestamp")
+                .or_else(|| value.get("ts"))
+                .and_then(parse_timestamp_to_ms);
+        }
+        if last_msg.is_none() {
+            if let Some(("user" | "assistant", text)) = jsonl_message(&value) {
+                last_msg = Some(truncate_summary(&text, 160));
+            }
+        }
+        if tail_ts.is_some() && last_msg.is_some() {
             break;
         }
     }
+    let last_ts = tail_ts.or(last_ts);
 
     // Fall back to filename as session ID
     let session_id = session_id.unwrap_or_else(|| {
@@ -704,7 +737,7 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
         provider_id: PROVIDER_ID.to_string(),
         session_id,
         title: title.or_else(|| first_user_msg.clone()),
-        summary: first_user_msg,
+        summary: last_msg.or(first_user_msg),
         project_dir: cwd,
         created_at: first_ts,
         last_active_at: last_ts.or(first_ts),
@@ -838,6 +871,25 @@ mod tests {
         assert_eq!(meta.project_dir.as_deref(), Some("/home/user/project"));
         assert!(meta.created_at.is_some());
         assert!(meta.last_active_at.is_some());
+    }
+
+    /// JSONL 行和 SQLite 行并排显示：摘要同样取最后一条 user/assistant，首条只做标题回退。
+    #[test]
+    fn parse_jsonl_session_summary_is_the_last_message() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("s2.jsonl");
+        let mut f = File::create(&path).expect("create");
+        writeln!(f, r#"{{"type":"session","id":"s2"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"message","message":{{"role":"user","content":"first question"}},"timestamp":"2026-01-01T00:00:00Z"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"message","message":{{"role":"assistant","content":"first answer"}},"timestamp":"2026-01-01T00:01:00Z"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"message","message":{{"role":"user","content":"second question"}},"timestamp":"2026-01-01T00:02:00Z"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"message","message":{{"role":"assistant","content":"last answer"}},"timestamp":"2026-01-01T00:03:00Z"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"message","message":{{"role":"tool","content":"ignored"}},"timestamp":"2026-01-01T00:04:00Z"}}"#).unwrap();
+        f.flush().unwrap();
+
+        let meta = parse_jsonl_session(&path).expect("should parse");
+        assert_eq!(meta.title.as_deref(), Some("first question"));
+        assert_eq!(meta.summary.as_deref(), Some("last answer"));
     }
 
     #[test]
@@ -1079,7 +1131,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_sessions_sqlite_uses_first_user_message_for_summary_and_missing_title() {
+    fn scan_sessions_sqlite_uses_first_user_message_for_missing_title_and_last_for_summary() {
         let dir = tempdir().expect("tempdir");
         let (path, conn) = hermes_db(dir.path());
         conn.execute_batch(
@@ -1116,7 +1168,34 @@ mod tests {
             .find(|s| s.session_id == "untitled")
             .unwrap();
         assert_eq!(untitled.title.as_deref(), Some("original question"));
+        // 摘要是最后一条（结构化内容解码后的文字），不是开头那句
+        assert_eq!(untitled.summary.as_deref(), Some("later"));
         assert_eq!(untitled.last_active_at, Some(300_000));
+    }
+
+    #[test]
+    fn scan_sessions_sqlite_summary_is_the_last_user_or_assistant_message() {
+        let dir = tempdir().expect("tempdir");
+        let (path, conn) = hermes_db(dir.path());
+        conn.execute_batch(
+            "INSERT INTO sessions (id, title, started_at) VALUES ('s1', 'T', 100.0);",
+        )
+        .unwrap();
+        insert_message(&conn, "s1", "user", "first question", 101.0);
+        insert_message(&conn, "s1", "assistant", "the answer", 102.0);
+        // 工具行和被 undo 藏起来的行都不算「最后」
+        insert_message(&conn, "s1", "tool", "tool output", 103.0);
+        insert_message(&conn, "s1", "user", "rewound question", 104.0);
+        conn.execute(
+            "UPDATE messages SET active = 0, compacted = 0 WHERE id = 4",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let sessions = scan_sessions_sqlite_at(&path);
+        let s1 = sessions.iter().find(|s| s.session_id == "s1").unwrap();
+        assert_eq!(s1.summary.as_deref(), Some("the answer"));
     }
 
     #[test]

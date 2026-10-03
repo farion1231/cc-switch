@@ -176,8 +176,6 @@ describe("ProviderList Component", () => {
         needsRouteDialog: vi.fn(),
         exitAndUse: vi.fn(),
         routeTo: vi.fn(),
-        startRouteFrom: vi.fn(),
-        startStackFrom: vi.fn(),
         queueAdd: vi.fn(),
         queueRemove: vi.fn(),
         queueMove: vi.fn(),

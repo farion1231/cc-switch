@@ -358,8 +358,8 @@ export function EditProviderDialog({
       onClose={handlePanelClose}
       contentClassName={
         appId === "pi"
-          ? "mx-0 max-w-[688px] pb-0 pt-4"
-          : "mx-0 max-w-[688px] pt-4"
+          ? "mx-0 max-w-[1008px] pb-0 pt-4"
+          : "mx-0 max-w-[1008px] pt-4"
       }
       footer={
         <>

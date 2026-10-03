@@ -800,8 +800,12 @@ const stepRows = (
 ): ReaderRow[] => {
   const override = options.stepOverrides?.get(step.id);
   const failure = isFailureStep(step);
-  const expanded =
-    override ?? (failure || Boolean(options.search?.stepIds.has(step.id)));
+  const searchHit = Boolean(options.search?.stepIds.has(step.id));
+  const expanded = override ?? (failure || searchHit);
+  const basePreviewLines =
+    failure && override === undefined
+      ? FAILURE_PREVIEW_LINES
+      : STEP_PREVIEW_LINES;
   const rows: ReaderRow[] = [
     {
       kind: "step",
@@ -810,10 +814,13 @@ const stepRows = (
       step,
       depth,
       expanded,
+      // 查找命中在默认可见行之外（如失败步骤只露 6 行）：整段预览都展开，否则命中看不见
       previewLines:
-        failure && override === undefined
-          ? FAILURE_PREVIEW_LINES
-          : STEP_PREVIEW_LINES,
+        searchHit &&
+        options.search &&
+        previewTailHasQuery(step, basePreviewLines, options.search.query)
+          ? Number.MAX_SAFE_INTEGER
+          : basePreviewLines,
       pinned,
     },
   ];
@@ -823,6 +830,21 @@ const stepRows = (
     );
   }
   return rows;
+};
+
+/** 工具输出预览在前 `visible` 行之后还有没有命中（大小写不敏感，和查找一致） */
+const previewTailHasQuery = (
+  step: TimelineStep,
+  visible: number,
+  query: string,
+): boolean => {
+  if (step.kind !== "tool" || !step.result?.preview || !query) return false;
+  return step.result.preview
+    .split(/\r?\n/)
+    .slice(visible)
+    .join("\n")
+    .toLowerCase()
+    .includes(query.toLowerCase());
 };
 
 const eventRow = (turn: SessionTurn, event: TurnEvent): ReaderRow => ({

@@ -169,6 +169,8 @@ export function UsageDashboard({
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
   const [tab, setTab] = useState<UsageTab>("logs");
+  // 没有用量时也能进定价页：新装的人往往先配好 models.dev 同步再开始用
+  const [pricingWhileEmpty, setPricingWhileEmpty] = useState(false);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
     normalizeRefreshInterval(savedRefreshIntervalMs),
   );
@@ -668,122 +670,148 @@ export function UsageDashboard({
 
   const scopedAppType = appType === "all" ? undefined : appType;
 
-  const body = isEmpty ? (
-    <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 pb-6">
-      <div className="mt-16 flex max-w-[440px] flex-col items-center gap-3 text-center">
-        <span
-          aria-hidden="true"
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-subtle text-fg-2"
-        >
-          <ChartColumn className="h-5 w-5" strokeWidth={1.5} />
-        </span>
-        <div className="flex flex-col gap-1">
-          <p className="m-0 text-section text-fg-1">{t("usage.empty.title")}</p>
-          <p className="m-0 text-body text-fg-2">{t("usage.empty.body")}</p>
-        </div>
-        <Button
-          type="button"
-          variant="neutral"
-          size="regular"
-          disabled={syncingSession}
-          onClick={() => void runManualSessionSync()}
-        >
-          {syncingSession && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {t("usage.sessionSync.syncNow")}
-        </Button>
+  const tabsSection = (
+    <section aria-label={t("usage.tabs.label")} className="flex flex-col">
+      <PageTabs<UsageTab>
+        aria-label={t("usage.tabs.label")}
+        items={TABS.map((id) => ({ value: id, label: tabLabel[id] }))}
+        value={tab}
+        onValueChange={setTab}
+        idPrefix="usage-tab"
+        controls="usage-tabpanel"
+        trailing={tabTrailing}
+      />
+
+      <div
+        role="tabpanel"
+        id="usage-tabpanel"
+        aria-labelledby={`usage-tab-${tab}`}
+      >
+        {tab === "logs" && (
+          <RequestLogTable
+            range={range}
+            appType={appType}
+            providerName={providerName}
+            model={model}
+            statusCode={statusCode}
+            refreshIntervalMs={refreshIntervalMs}
+            onOpenDetail={setDetailRequestId}
+          />
+        )}
+        {tab === "providers" && (
+          <ProviderStatsTable
+            range={range}
+            appType={appType}
+            providerName={providerName}
+            model={model}
+            refreshIntervalMs={refreshIntervalMs}
+          />
+        )}
+        {tab === "models" && (
+          <ModelStatsTable
+            range={range}
+            appType={appType}
+            providerName={providerName}
+            model={model}
+            refreshIntervalMs={refreshIntervalMs}
+          />
+        )}
+        {tab === "pricing" && <PricingConfigPanel />}
       </div>
-    </div>
-  ) : (
-    <div
-      id="main-content"
-      className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-6 pb-6 pt-1"
-    >
-      <UsageHero
-        range={range}
-        appType={scopedAppType}
-        providerName={providerName}
-        model={model}
-        refreshIntervalMs={refreshIntervalMs}
-        compact={compact}
-      />
-
-      {/* 「全部」看长期分布用热力图；24 小时到 30 天这类短范围用柱状图 */}
-      {range.preset === "all" ? (
-        <UsageHeatmap
-          appType={appType}
-          providerName={providerName}
-          model={model}
-          refreshIntervalMs={refreshIntervalMs}
-        />
-      ) : (
-        <UsageTrendChart
-          range={range}
-          rangeLabel={rangeLabel}
-          appType={appType}
-          providerName={providerName}
-          model={model}
-          refreshIntervalMs={refreshIntervalMs}
-        />
-      )}
-
-      {/* 今天 / 本周 / 本月 / 近 7 天 / 连续天数：不随时间范围变，两种图下面都显示 */}
-      <UsageDayTiles
-        appType={appType}
-        providerName={providerName}
-        model={model}
-        refreshIntervalMs={refreshIntervalMs}
-      />
-
-      <section aria-label={t("usage.tabs.label")} className="flex flex-col">
-        <PageTabs<UsageTab>
-          aria-label={t("usage.tabs.label")}
-          items={TABS.map((id) => ({ value: id, label: tabLabel[id] }))}
-          value={tab}
-          onValueChange={setTab}
-          idPrefix="usage-tab"
-          controls="usage-tabpanel"
-          trailing={tabTrailing}
-        />
-
-        <div
-          role="tabpanel"
-          id="usage-tabpanel"
-          aria-labelledby={`usage-tab-${tab}`}
-        >
-          {tab === "logs" && (
-            <RequestLogTable
-              range={range}
-              appType={appType}
-              providerName={providerName}
-              model={model}
-              statusCode={statusCode}
-              refreshIntervalMs={refreshIntervalMs}
-              onOpenDetail={setDetailRequestId}
-            />
-          )}
-          {tab === "providers" && (
-            <ProviderStatsTable
-              range={range}
-              appType={appType}
-              providerName={providerName}
-              model={model}
-              refreshIntervalMs={refreshIntervalMs}
-            />
-          )}
-          {tab === "models" && (
-            <ModelStatsTable
-              range={range}
-              appType={appType}
-              providerName={providerName}
-              model={model}
-              refreshIntervalMs={refreshIntervalMs}
-            />
-          )}
-          {tab === "pricing" && <PricingConfigPanel />}
-        </div>
-      </section>
-    </div>
+    </section>
   );
+
+  const body =
+    isEmpty && pricingWhileEmpty ? (
+      // 空库里只有定价可配：不画全是 0 的概览和趋势，直接给页签
+      <div
+        id="main-content"
+        className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-6 pb-6 pt-1"
+      >
+        {tabsSection}
+      </div>
+    ) : isEmpty ? (
+      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 pb-6">
+        <div className="mt-16 flex max-w-[440px] flex-col items-center gap-3 text-center">
+          <span
+            aria-hidden="true"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-subtle text-fg-2"
+          >
+            <ChartColumn className="h-5 w-5" strokeWidth={1.5} />
+          </span>
+          <div className="flex flex-col gap-1">
+            <p className="m-0 text-section text-fg-1">
+              {t("usage.empty.title")}
+            </p>
+            <p className="m-0 text-body text-fg-2">{t("usage.empty.body")}</p>
+          </div>
+          <Button
+            type="button"
+            variant="neutral"
+            size="regular"
+            disabled={syncingSession}
+            onClick={() => void runManualSessionSync()}
+          >
+            {syncingSession && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {t("usage.sessionSync.syncNow")}
+          </Button>
+          <Button
+            type="button"
+            variant="quiet"
+            size="regular"
+            onClick={() => {
+              setTab("pricing");
+              setPricingWhileEmpty(true);
+            }}
+          >
+            {t("usage.empty.configurePricing")}
+          </Button>
+        </div>
+      </div>
+    ) : (
+      <div
+        id="main-content"
+        className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-6 pb-6 pt-1"
+      >
+        <UsageHero
+          range={range}
+          appType={scopedAppType}
+          providerName={providerName}
+          model={model}
+          refreshIntervalMs={refreshIntervalMs}
+          compact={compact}
+        />
+
+        {/* 「全部」看长期分布用热力图；24 小时到 30 天这类短范围用柱状图 */}
+        {range.preset === "all" ? (
+          <UsageHeatmap
+            appType={appType}
+            providerName={providerName}
+            model={model}
+            refreshIntervalMs={refreshIntervalMs}
+          />
+        ) : (
+          <UsageTrendChart
+            range={range}
+            rangeLabel={rangeLabel}
+            appType={appType}
+            providerName={providerName}
+            model={model}
+            refreshIntervalMs={refreshIntervalMs}
+          />
+        )}
+
+        {/* 今天 / 本周 / 本月 / 近 7 天 / 连续天数：不随时间范围变，两种图下面都显示 */}
+        <UsageDayTiles
+          appType={appType}
+          providerName={providerName}
+          model={model}
+          refreshIntervalMs={refreshIntervalMs}
+        />
+
+        {tabsSection}
+      </div>
+    );
 
   return (
     <div ref={containerRef} className="flex min-h-0 min-w-0 flex-1 flex-col">

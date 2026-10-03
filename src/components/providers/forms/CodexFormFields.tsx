@@ -1464,7 +1464,7 @@ export function CodexFormFields({
               <p className="text-xs leading-relaxed text-fg-2">
                 {t("codexConfig.modelListEmpty", {
                   defaultValue:
-                    "未配置模型：叠加模式下只发布这家的默认模型（config.toml 的 model）。",
+                    "未配置模型：聚合模式下只发布这家的默认模型（config.toml 的 model）。",
                 })}
               </p>
             )}

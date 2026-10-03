@@ -110,7 +110,7 @@ export function RequestHeadersEditor({
   return (
     <div className={cn("space-y-2 border-l border-border pl-3", className)}>
       <div className="flex items-start justify-between gap-3">
-        <div className="max-w-3xl space-y-1">
+        <div className="space-y-1">
           <Label>{t("opencode.headers", { defaultValue: "Headers" })}</Label>
           <p className="text-xs text-fg-2">
             {t("opencode.headersHint", {
@@ -134,7 +134,7 @@ export function RequestHeadersEditor({
         </Button>
       </div>
 
-      <div className="max-w-3xl" aria-live="polite">
+      <div aria-live="polite">
         {Object.keys(headers).length === 0 ? (
           <p className="py-1 text-sm text-fg-2">
             {t("opencode.noHeaders", {

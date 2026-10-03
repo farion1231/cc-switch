@@ -106,20 +106,20 @@
     "needsRouting": "Needs Routing",
     "directProvider": "Direct",
     "directProviderHint": "Leaving routing mode switches back to this provider",
-    "stackBadge": "Stack",
+    "stackBadge": "Aggregation",
     "stackBadgeHint": "Pick in {{client}}'s model picker: {{models}}",
     "stackBadgeNoModels": "This provider has no models configured, so nothing shows up in the model picker",
     "stackSaved": "Saved. Restart {{client}} to apply",
-    "stackModelsChanged": "Stack models changed. Restart {{client}} to apply",
-    "stackReselectHint": "Whenever CC Switch rewrites the client config, pick the stacked model again in the model picker",
+    "stackModelsChanged": "Aggregated models changed. Restart {{client}} to apply",
+    "stackReselectHint": "Whenever CC Switch rewrites the client config, pick the aggregated model again in the model picker",
     "stackPartial": "Partly written; it will be finished on the next change or when CC Switch restarts",
-    "stackFailed": "Failed to save stacked models: {{error}}",
+    "stackFailed": "Failed to save aggregated models: {{error}}",
     "stackDefaultCannotRemove": "The default provider cannot be removed; set another provider as the default first",
     "stackDefaultHint": "This is the default provider: the first model in its list handles Claude Code's startup and background tasks",
     "officialModelsBundled": "The official model list isn't available yet, so Codex's built-in list is used for now and account-specific models may be missing",
-    "officialModelsUnavailable": "Stacked models are unavailable for now: the Codex model list can't be read",
-    "routeOwnsCatalog": "Stacked models won't show up in Codex: the routed provider uses its own model catalog file (model_catalog_json)",
-    "configOwnsCatalog": "Stacked models won't show up in Codex: model_catalog_json in config.toml points to a different model catalog file",
+    "officialModelsUnavailable": "Aggregated models are unavailable for now: the Codex model list can't be read",
+    "routeOwnsCatalog": "Aggregated models won't show up in Codex: the routed provider uses its own model catalog file (model_catalog_json)",
+    "configOwnsCatalog": "Aggregated models won't show up in Codex: model_catalog_json in config.toml points to a different model catalog file",
     "noRoutingSupport": "No Routing Support",
     "blockedByProxyHint": "Can't switch to an official provider in Routing mode",
     "editProvider": "Edit Provider",
@@ -383,8 +383,8 @@
         "description": "Control routing service toggle, view status and port info",
         "enableFeature": "Show Routing Toggle on Main Page",
         "enableFeatureDescription": "When enabled, the routing and failover toggles will appear at the top of the main page",
-        "enableStackMode": "Show the Stack mode switch on the main page",
-        "enableStackModeDescription": "When on, the main-page switch for Claude Code and Codex becomes the Stack mode: add several providers like in OpenCode, and all their models appear in the client's model list (after restarting the client). No failover. This and the local routing switch are mutually exclusive; switching sends Claude Code and Codex back to direct first",
+        "enableStackMode": "Show the Aggregation mode switch on the main page",
+        "enableStackModeDescription": "When on, the main-page switch for Claude Code and Codex becomes the Aggregation mode: add several providers like in OpenCode, and all their models appear in the client's model list (after restarting the client). No failover. This and the local routing switch are mutually exclusive; switching sends Claude Code and Codex back to direct first",
         "enableFailoverToggle": "Show Failover Toggle on Main Page",
         "enableFailoverToggleDescription": "When enabled, the failover toggle will appear independently at the top of the main page",
         "running": "Running",
@@ -848,6 +848,7 @@
     "toolConflictDefault": "Default",
     "toolConflictNotRunnable": "can't run",
     "toolDiagnoseNoConflict": "No conflicting installations found",
+    "toolDiagnoseConflicts": "{{count}} tool(s) have multiple installations; the lists are expanded on their rows",
     "toolDiagnoseFailed": "Diagnosis failed",
     "toolUpgradeConfirmTitle": "Confirm upgrade target",
     "toolUpgradeConfirmHint": "Multiple installations detected. This upgrade won't update all of them; refer to each tool below for what it actually targets.",
@@ -1539,15 +1540,15 @@
     "stackModelsLabel": "Models",
     "addStackModel": "Add model",
     "stackModelsHint": "These models appear in Claude Code's /model menu; picking one sends requests straight to this provider. The first one (★) is this provider's default model: while this provider is the default, Claude Code uses it at startup and for background tasks. Restart Claude Code after changes.",
-    "stackModelsEmpty": "No models configured: this provider won't appear in the model picker once added to the Stack",
+    "stackModelsEmpty": "No models configured: this provider won't appear in the model picker once added to the aggregation",
     "stackModelPlaceholder": "e.g. deepseek-v4-pro",
     "stackModelDefault": "Default model",
     "stackModelMakeDefault": "Make default model",
     "stackLayout": {
       "fullForm": "Show full form",
-      "simpleForm": "Back to the Stack form",
+      "simpleForm": "Back to the Aggregation form",
       "advancedHint": "Custom User-Agent and request overrides; usually no need to change.",
-      "noModels": "The model list is empty: this provider won't appear in the model picker once added to the Stack"
+      "noModels": "The model list is empty: this provider won't appear in the model picker once added to the aggregation"
     },
     "modelRoleLabel": "Model role",
     "modelRoleSonnet": "Sonnet",
@@ -1800,7 +1801,7 @@
     "stackModelListHint": "These models appear in Codex's /model menu; picking one sends requests straight to this provider. The one marked ★ is this provider's default model: while this provider is the default, Codex uses it by default. Restart Codex after changes.",
     "stackDefaultNotInList": "The default model {{model}} is not in the list: Codex still requests it by default, but /model won't show it.",
     "addToModelList": "Add to list",
-    "modelListEmpty": "No models configured: in Stack mode only this provider's default model (the model in config.toml) is published.",
+    "modelListEmpty": "No models configured: in Aggregation mode only this provider's default model (the model in config.toml) is published.",
     "stackAdvancedHint": "Reasoning, Anthropic-specific options, custom User-Agent and request overrides; usually no need to change.",
     "catalogDisplayName": "Display Name",
     "catalogDisplayNamePlaceholder": "e.g., DeepSeek V4 Flash",
@@ -2104,6 +2105,7 @@
     "withMultiplier": "with multiplier",
     "requestDetail": "Request Detail",
     "requestNotFound": "Request not found",
+    "requestLoadFailed": "Couldn't load request details",
     "basicInfo": "Basic Info",
     "tokenUsage": "Token Usage",
     "cacheCreationCost": "Cache Creation Cost",
@@ -2300,7 +2302,8 @@
     },
     "empty": {
       "title": "No usage data yet",
-      "body": "Usage from session logs and from requests through the routing service shows up here."
+      "body": "Usage from session logs and from requests through the routing service shows up here.",
+      "configurePricing": "Configure model pricing"
     },
     "pricing": {
       "modelsDevTitle": "models.dev sync · {{status}}",
@@ -3350,6 +3353,8 @@
     "enabled": "{{app}} failover enabled",
     "disabled": "{{app}} failover disabled",
     "toggleFailed": "Operation failed: {{detail}}",
+    "queueAddFailed": "Failed to add to the queue: {{detail}}",
+    "queueRemoveFailed": "Failed to remove from the queue: {{detail}}",
     "inQueue": "In queue",
     "addQueue": "Add",
     "priority": {
@@ -3472,23 +3477,23 @@
       }
     },
     "stackMode": {
-      "enabled": "{{app}} is now in Stack mode",
+      "enabled": "{{app}} is now in Aggregation mode",
       "exitedToDirect": "{{apps}} switched back to direct",
       "tooltip": {
-        "active": "{{appLabel}} Stack mode is on: models of the added providers appear in the model list after restarting the client",
-        "inactive": "Enter Stack mode: add several providers and all their models appear in the {{appLabel}} model list"
+        "active": "{{appLabel}} Aggregation mode is on: models of the added providers appear in the model list after restarting the client",
+        "inactive": "Enter Aggregation mode: add several providers and all their models appear in the {{appLabel}} model list"
       },
-      "ariaLabel": "{{appLabel}} Stack mode",
-      "failoverUnavailable": "{{appLabel}} is in Stack mode, which has no failover. The queue and settings are kept and apply again in routing mode",
+      "ariaLabel": "{{appLabel}} Aggregation mode",
+      "failoverUnavailable": "{{appLabel}} is in Aggregation mode, which has no failover. The queue and settings are kept and apply again in routing mode",
       "codexStale": {
-        "title": "Codex is still using an old model list, so Stack models won't show",
+        "title": "Codex is still using an old model list, so aggregated models won't show",
         "daemon": "CLI: reopening codex isn't enough; its background daemon needs a restart.",
         "others": "Desktop app: quit it completely and reopen it (⌘Q on macOS; closing the window isn't enough). Editor extensions: reopen the editor window.",
         "restart": "Restart Codex daemon",
         "confirmTitle": "Restart the Codex daemon?",
-        "confirmMessage": "Every codex session in your terminals shares this daemon, so running tasks will be interrupted. Reopen codex afterwards to see the Stack models.",
+        "confirmMessage": "Every codex session in your terminals shares this daemon, so running tasks will be interrupted. Reopen codex afterwards to see the aggregated models.",
         "confirm": "Restart",
-        "restarted": "Codex daemon restarted. Reopen codex to see the Stack models",
+        "restarted": "Codex daemon restarted. Reopen codex to see the aggregated models",
         "notRunning": "The Codex daemon isn't running. codex will load the new model list the next time it starts",
         "failed": "Failed to restart the Codex daemon: {{error}}"
       }
@@ -3869,7 +3874,7 @@
     "settingsHasUpdate": "Settings · a new CC Switch version is available",
     "mode": {
       "route": "Routing",
-      "stack": "Stack",
+      "stack": "Aggregation",
       "mapping": "Mapping",
       "mappingFull": "Model mapping"
     },
@@ -3929,7 +3934,7 @@
     "names": {
       "direct": "Direct",
       "route": "Routing",
-      "stack": "Stack"
+      "stack": "Aggregation"
     },
     "active": "active",
     "activeTitle": "{{mode}} is active",
@@ -3943,13 +3948,13 @@
       "directLead": "Direct is active · connected to",
       "routeLead": "Routing is active",
       "byQueue": "by queue",
-      "stackLead": "Stack is active · default",
+      "stackLead": "Aggregation is active · default",
       "stackValue": "{{name}} · {{count}} more with {{models}} models"
     },
     "activate": {
       "viewing": "You're viewing “{{view}}”. {{app}} is currently on {{active}}.",
       "route": "Start routing",
-      "stack": "Switch to Stack",
+      "stack": "Switch to Aggregation",
       "direct": "Back to direct"
     },
     "notice": {
@@ -3960,32 +3965,34 @@
     },
     "toast": {
       "enteredRoute": "{{app}} is now routing → {{provider}}.",
-      "enteredStack": "{{app}} switched to Stack. Restart {{app}} to see the stacked models in /model.",
+      "enteredStack": "{{app}} switched to Aggregation. Restart {{app}} to see the aggregated models in /model.",
       "exited": "Back to direct: {{app}} now connects to {{provider}} directly.",
+      "defaultRemembered": "{{provider}} will be the default provider once you switch to Aggregation.",
       "restartHint": " Restart {{app}} to apply.",
       "undo": "Undo",
       "failed": "Couldn't switch: {{detail}}"
     },
     "dialog": {
       "routeTitle": "Use routing for {{app}}?",
-      "stackTitle": "Use Stack for {{app}}?",
+      "stackTitle": "Use Aggregation for {{app}}?",
       "switchTitle": "Switch {{app}} from “{{from}}” to “{{to}}”?",
       "routeLead": "Requests go through CC Switch on this machine first, then to the provider you pick.",
       "stackLead": "The default provider takes requests without a prefix.",
       "routeTo": "Route to",
       "stackDefault": "Default provider",
       "officialOption": "{{name}} (official)",
+      "stackOfficialNote": "An official account can only be the default. With another provider as the default, the official subscription's models won't be part of the aggregation.",
       "routeNoteFile": "Rewrites the address and key in {{file}}. The real key stays in CC Switch; other settings are untouched.",
       "routeNoteSwitch": "Changing providers later on the Routing tab won't rewrite the config file.",
       "routeNoteKeepRunning": "Keep CC Switch running. Quitting writes the direct config back; it reconnects on the next start.",
       "stackNoteMembers": "{{names}} add {{count}} models, shown in /model with the ccs- prefix.",
-      "stackNoteEmpty": "No other providers added yet, so only the default is available. You can add more on the Stack tab later.",
-      "stackNoteNoFailover": "Stack has no failover. The queue and its settings are kept and come back with routing.",
-      "stackNoteRestart": "Restart {{app}} to see the stacked models.",
-      "stackNoteRestartCodex": "Restart {{app}} to see the stacked models; quit the desktop app completely and reopen it.",
-      "stackToRouteNote": "Stacked models are withdrawn from /model (the list is kept); a selected stacked model must be changed back to a regular one.",
+      "stackNoteEmpty": "No other providers added yet, so only the default is available. You can add more on the Aggregation tab later.",
+      "stackNoteNoFailover": "Aggregation has no failover. The queue and its settings are kept and come back with routing.",
+      "stackNoteRestart": "Restart {{app}} to see the aggregated models.",
+      "stackNoteRestartCodex": "Restart {{app}} to see the aggregated models; quit the desktop app completely and reopen it.",
+      "stackToRouteNote": "Aggregated models are withdrawn from /model (the list is kept); a selected aggregated model must be changed back to a regular one.",
       "confirmRoute": "Start routing",
-      "confirmStack": "Switch to Stack",
+      "confirmStack": "Switch to Aggregation",
       "needsRouteTitle": "{{provider}} needs routing",
       "needsRouteLead": "{{provider}}: {{reason}}. If you switch to it directly, {{app}} won't be able to use it.",
       "switchAnyway": "Switch directly anyway",
@@ -3995,7 +4002,7 @@
       "title": "How the connection modes differ",
       "direct": "Direct: the client connects straight to the chosen provider; switching rewrites its config.",
       "route": "Routing: requests go through CC Switch on this machine first; failover is available.",
-      "stack": "Stack: models from several providers are listed together in /model; no failover."
+      "stack": "Aggregation: models from several providers are listed together in /model; no failover."
     }
   },
   "providerCard": {
@@ -4010,7 +4017,6 @@
     "action": {
       "switch": "Switch",
       "routeHere": "Route here",
-      "startRouteFrom": "Start routing here",
       "backToDirectAndUse": "Back to direct and use",
       "addToQueue": "Add to queue",
       "removeFromQueue": "Remove from queue",
@@ -4022,14 +4028,12 @@
       "edit": "Edit {{name}}",
       "more": "More actions for {{name}}",
       "moveUp": "Move {{name}} up",
-      "moveDown": "Move {{name}} down",
-      "startStackFrom": "Start Stack with this as default"
+      "moveDown": "Move {{name}} down"
     },
     "chip": {
       "official": "Official",
       "needsRoute": "Needs routing",
       "directWhenDirect": "Used when direct",
-      "lastRoute": "Last routed",
       "default": "Default",
       "models": "{{count}} models",
       "noModels": "No models",
@@ -4040,11 +4044,15 @@
     },
     "reason": {
       "noRoute": "Official subscriptions don't go through routing; available again in direct mode.",
-      "noStack": "Official subscriptions can't be used in Stack.",
-      "officialStack": "Official accounts can only be the default, not stacked.",
+      "noStack": "Official subscriptions can't be used in Aggregation.",
+      "officialStack": "Official accounts can only be the default; they can't join the aggregation.",
+      "defaultDropsOfficial": "The official subscription's models won't be part of the aggregation.",
+      "defaultWhileRouting": "While routing, the default is the provider you route to. You can pick another one when switching to Aggregation.",
       "needsRoute": "Needs routing: {{reason}}; can't connect directly.",
       "defaultCannotRemove": "The default can't be removed. Make another provider the default first.",
-      "currentCannotRemove": "The provider in use can't be removed. Enable another one first."
+      "currentCannotRemove": "The provider in use can't be removed. Enable another one first.",
+      "inUseCannotDelete": "The provider in use can't be deleted. Switch to another one first.",
+      "noFailover": "Official accounts can't join the failover queue: they use the client's own login and can't rotate with other providers."
     },
     "section": {
       "queue": "Queue · by priority ({{count}})",
@@ -4053,7 +4061,7 @@
       "queueEmpty": "The queue is empty. Add providers from below.",
       "notInQueue": "Not in queue ({{count}})",
       "stackDefault": "Default provider",
-      "stackDefaultAfterSwitch": "Default provider after switching to Stack",
+      "stackDefaultAfterSwitch": "Default provider after switching to Aggregation",
       "stackDefaultHelp": "Requests without a prefix go to it; other added providers appear in /model with the ccs- prefix.",
       "stackEmpty": "No other providers added yet.",
       "added": "Added · {{count}}",
@@ -4061,7 +4069,7 @@
       "addedHelp": "Added providers are all written into {{app}}'s config; pick the model inside {{app}}.",
       "addedEmpty": "No providers added yet.",
       "available": "Available · {{count}}",
-      "stackNoDefault": "No default provider yet. Pick one below and choose \"Start Stack with this as default…\"."
+      "stackNoDefault": "No default provider yet. You pick one when switching to Aggregation."
     }
   },
   "desktopAccess": {
@@ -4078,7 +4086,7 @@
   "routingSettings": {
     "service": "Service",
     "serviceName": "Routing service",
-    "serviceHelp": "In routing and Stack modes, requests go through the routing service on this machine before reaching the provider. It starts automatically when an app enters either mode, or when Claude Desktop uses model mapping.",
+    "serviceHelp": "In routing and Aggregation modes, requests go through the routing service on this machine before reaching the provider. It starts automatically when an app enters either mode, or when Claude Desktop uses model mapping.",
     "runningFor": "Running · up {{uptime}}",
     "uptimeHours": "{{hours}} h {{minutes}} min",
     "uptimeMinutes": "{{minutes}} min",
@@ -4097,7 +4105,7 @@
     "logging": "Record request usage",
     "loggingHelp": "When off, Usage has no per-request details for routed requests.",
     "usingApps": "Apps using routing · {{count}}",
-    "noApps": "No app is using routing. Enter it from the Routing or Stack tab on an app's page.",
+    "noApps": "No app is using routing. Enter it from the Routing or Aggregation tab on an app's page.",
     "routeDetail": "Routing to {{name}}",
     "stackDetail": "Default {{name}}",
     "desktopMode": "Model mapping · kept running automatically",
@@ -4105,7 +4113,7 @@
     "goTo": "Open",
     "exitAll": "Switch all back to direct",
     "exitAllTitle": "Switch every app back to direct?",
-    "exitAllMessage": "Apps in routing or Stack mode get their direct config written back, then the routing service stops. Route targets, queues and Stack lists are kept.",
+    "exitAllMessage": "Apps in routing or Aggregation mode get their direct config written back, then the routing service stops. Route targets, queues and aggregation lists are kept.",
     "exitAllConfirm": "Switch all back to direct",
     "failoverHelp": "Tune each app's timeouts, retries and circuit breaker here. Queues are managed on each app's Routing tab."
   },
@@ -4296,6 +4304,7 @@
       "jsonSyntaxLine": "Syntax error near line {{line}}",
       "jsonNotObject": "The top level must be an object, e.g. {\"command\": \"npx\"}",
       "jsonBlocksForm": "Fix it to switch back to the form.",
+      "jsonMaskedUnknown": "\"{{key}}\" still holds the placeholder, but the draft has no original value for that key. Enter the real value, or turn on \"Show values\" before renaming keys.",
       "writeTo": "Write to",
       "writeToHelpTitle": "How it's written to apps",
       "writeToHelp": "The same config is written as-is to every ticked app; if one app needs different arguments, create a separate entry for it. MiniMax Code only replaces the connection fields; other fields in mcp.json are kept.",

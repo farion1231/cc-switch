@@ -255,11 +255,15 @@ export function ProviderList({
 
   const sections = useMemo<ProviderSection[]>(() => {
     if (switchMode) {
+      // 队列按没过滤的全部供应商剔掉已不存在的 id：序号和上下移要按完整队列算，
+      // 搜索只决定画哪些卡
+      const known = new Set(sortedProviders.map((p) => p.id));
       return buildSwitchSections({
         ...switchMode,
         app: appId,
         t,
         providers: filteredProviders,
+        queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
     if (appId === "claude-desktop") {
@@ -314,6 +318,7 @@ export function ProviderList({
     switchMode,
     appId,
     t,
+    sortedProviders,
     filteredProviders,
     currentProviderId,
     onSwitch,

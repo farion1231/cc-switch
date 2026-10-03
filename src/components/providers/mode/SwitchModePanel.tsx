@@ -68,7 +68,7 @@ interface SwitchModePanelProps extends ListCallbacks {
   onNeedsRouteHandled?: () => void;
 }
 
-/** Gemini CLI、Grok Build 没有叠加模式（Q6）：那一格隐藏，前两格位置不变。 */
+/** Gemini CLI、Grok Build 没有聚合模式（Q6）：那一格隐藏，前两格位置不变。 */
 const modesFor = (app: ProxyAppId): AppMode[] =>
   isStackAppId(app) ? ["direct", "route", "stack"] : ["direct", "route"];
 
@@ -205,6 +205,23 @@ export function SwitchModePanel({
     }
   };
 
+  const rememberDefault = async (provider: Provider) => {
+    try {
+      await proxyApi.setProxyRoute(app, provider.id);
+      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+      toast.success(
+        t("mode.toast.defaultRemembered", { provider: provider.name }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(
+        t("mode.toast.failed", {
+          detail: extractErrorMessage(error) || t("common.unknown"),
+        }),
+      );
+    }
+  };
+
   const switchMode = {
     active,
     view,
@@ -226,10 +243,6 @@ export function SwitchModePanel({
         }),
       exitAndUse,
       routeTo: (provider: Provider) => void onSwitch(provider),
-      startRouteFrom: (provider: Provider) =>
-        setDialog({ kind: "enter", target: "route", pick: provider.id }),
-      startStackFrom: (provider: Provider) =>
-        setDialog({ kind: "enter", target: "stack", pick: provider.id }),
       queueAdd: (provider: Provider) =>
         addToQueue.mutate({ appType: app, providerId: provider.id }),
       queueRemove: (provider: Provider) =>
@@ -252,7 +265,11 @@ export function SwitchModePanel({
           enabled: false,
         });
       },
-      stackSetDefault: (provider: Provider) => void onSwitch(provider),
+      // 聚合生效时换默认当场生效（同切换供应商）；没生效时只记下选择，切换时的确认框预选它
+      stackSetDefault: (provider: Provider) =>
+        active === "stack"
+          ? void onSwitch(provider)
+          : void rememberDefault(provider),
     },
   };
 
@@ -464,7 +481,7 @@ export function SwitchModePanel({
                     directProviderId: directId,
                     providerName: nameOf(directId),
                   })
-                : setDialog({ kind: "enter", target: view, pick: null })
+                : setDialog({ kind: "enter", target: view })
             }
           >
             {cta}
@@ -524,11 +541,9 @@ export function SwitchModePanel({
         active={active}
         providers={providerList}
         eligibleIds={eligibleIds}
-        defaultPick={{
-          route: routeId,
-          stack: active === "stack" ? routeId : (routeId ?? directId),
-        }}
-        stackMembers={otherMembers.map((member) => ({
+        defaultPick={routeId ?? directId}
+        stackMembers={(stack?.members ?? []).map((member) => ({
+          id: member.providerId,
           name: nameOf(member.providerId),
           models: member.modelIds.length,
         }))}

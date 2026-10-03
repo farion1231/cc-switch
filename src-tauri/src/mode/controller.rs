@@ -556,7 +556,7 @@ pub async fn enter_with_route(
     require_proxy_app(app)?;
     if stack_mode && !stack::supports_stack(app) {
         return Err(format!(
-            "{} 不支持叠加模式 ({} does not support the Stack mode)",
+            "{} 不支持聚合模式 ({} does not support the Aggregation mode)",
             app.as_str(),
             app.as_str()
         ));
@@ -873,11 +873,39 @@ async fn switch_route_checked(
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
     if reject_stacked && current::is_proxy(app) && settled_stack(app)?.enabled {
         return Err(
-            "叠加模式不做故障转移，请先换回路由模式 (The Stack mode has no failover; switch back to the routing mode first)"
+            "聚合模式不做故障转移，请先换回路由模式 (The Aggregation mode has no failover; switch back to the routing mode first)"
                 .to_string(),
         );
     }
     switch_route_locked(state, app, &target).await
+}
+
+/// 指定代理路由（聚合模式下是默认那家），不管现在是什么模式。直连模式下只记下指针，下次进入
+/// 路由 / 聚合模式时用它，客户端文件和模式都不动；已经在代理模式时就是换路由，当场生效。
+pub async fn set_route(state: &AppState, app: &AppType, provider_id: &str) -> Result<(), String> {
+    require_proxy_app(app)?;
+    let target =
+        provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
+    reject_unsupported_official(app, &target)?;
+    let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
+    let mode = current::mode_state(app);
+    if mode.is_proxy() {
+        return switch_route_locked(state, app, &target).await;
+    }
+    if mode.proxy_route.as_deref() == Some(provider_id) {
+        return Ok(());
+    }
+    commit_state(
+        state,
+        app,
+        &PendingTarget {
+            state: Some(ModeState {
+                proxy_route: Some(target.id),
+                ..mode
+            }),
+            ..PendingTarget::default()
+        },
+    )
 }
 
 /// 代理模式下不能切到不支持代理的官方供应商（Codex 官方账号走客户端自己的登录，除外）。
@@ -921,7 +949,9 @@ fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> 
         _ => provider.category.as_deref() == Some("official"),
     };
     if official {
-        return Err("官方账号不能叠加 (An official account cannot be a stacked model)".to_string());
+        return Err(
+            "官方账号不能加入聚合 (An official account cannot join the aggregation)".to_string(),
+        );
     }
     if matches!(app, AppType::Codex) {
         codex_direct::check_stack_member(provider).map_err(err)?;
@@ -958,7 +988,7 @@ pub async fn set_stack_member(
 ) -> Result<Option<&'static str>, StackWriteError> {
     if !stack::supports_stack(app) {
         return Err(StackWriteError::unchanged(format!(
-            "{} 不支持叠加模型 ({} does not support stacked models)",
+            "{} 不支持聚合的模型 ({} does not support aggregated models)",
             app.as_str(),
             app.as_str()
         )));
@@ -5102,6 +5132,53 @@ model_provider = "c"
             .await
             .expect_err("unknown provider");
         assert_eq!(view().mode, "direct");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn setting_the_route_in_direct_mode_only_records_it() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let mut official = claude("official", "https://api.anthropic.com", json!({}));
+        official.category = Some("official".to_string());
+        let [a, kimi, zhipu] = stack_rows();
+        let state = state_with(AppType::Claude, &[a, kimi, zhipu, official], "a").await;
+        let view = || app_mode_view(&state, &AppType::Claude).expect("mode view");
+
+        // 直连模式：只记下指针。模式、直连指针、名单、客户端文件都不动。
+        set_route(&state, &AppType::Claude, "kimi")
+            .await
+            .expect("remember kimi");
+        assert_eq!(view().mode, "direct");
+        assert_eq!(view().route_provider_id.as_deref(), Some("kimi"));
+        assert_eq!(view().direct_provider_id.as_deref(), Some("a"));
+        assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
+        assert!(stack_state().is_empty());
+        assert_back_to_user_settings();
+
+        // 不存在的、不能走代理的官方订阅：拒绝，记下的那家不变。
+        set_route(&state, &AppType::Claude, "missing")
+            .await
+            .expect_err("unknown provider");
+        set_route(&state, &AppType::Claude, "official")
+            .await
+            .expect_err("official subscription");
+        assert_eq!(view().route_provider_id.as_deref(), Some("kimi"));
+
+        // 进入聚合模式沿用记下的那家：它是默认，随之加入名单。
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        assert_eq!(view().mode, "stack");
+        assert_eq!(view().route_provider_id.as_deref(), Some("kimi"));
+        assert_eq!(stack_state().members, vec!["kimi"]);
+
+        // 已经在聚合模式：当场换默认，新默认也加入名单。
+        set_route(&state, &AppType::Claude, "zhipu")
+            .await
+            .expect("set default");
+        assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("zhipu"));
+        assert_eq!(stack_state().members, vec!["kimi", "zhipu"]);
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_back_to_user_settings();
     }
 
     #[tokio::test]

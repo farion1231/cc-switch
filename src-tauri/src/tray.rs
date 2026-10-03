@@ -92,7 +92,7 @@ pub struct TrayTexts {
     pub header_route: &'static str,
     pub header_failover: &'static str,
     pub header_stack: &'static str,
-    /// 叠加子菜单标题，写出默认那家：`{name}`
+    /// 聚合子菜单标题，写出默认那家：`{name}`
     pub header_stack_default: &'static str,
     pub failover_note: &'static str,
     pub mode_route: &'static str,
@@ -114,7 +114,7 @@ pub struct TrayTexts {
     pub tooltip_problem: &'static str,
     /// 反馈行（灰字）：直连切换 / Claude Desktop 切换，`{app}` `{name}`
     pub feedback_switched: &'static str,
-    /// 反馈行：叠加换默认
+    /// 反馈行：聚合换默认
     pub feedback_stack_default: &'static str,
     /// 反馈行：应用项目
     pub feedback_profile: &'static str,
@@ -192,11 +192,11 @@ impl TrayTexts {
                 header_direct: "Direct",
                 header_route: "Routing",
                 header_failover: "Routing · Failover on",
-                header_stack: "Stack · Default provider",
-                header_stack_default: "Stack · Default: {name}",
+                header_stack: "Aggregation · Default provider",
+                header_stack_default: "Aggregation · Default: {name}",
                 failover_note: "Picked from the queue automatically; change it on the app page",
                 mode_route: "Routing",
-                mode_stack: "Stack",
+                mode_stack: "Aggregation",
                 mode_mapping: "Model mapping",
                 needs_routing_suffix: " (needs routing)…",
                 official_blocked_suffix: " (official plans don't go through routing)",
@@ -251,11 +251,11 @@ impl TrayTexts {
                 header_direct: "直接接続",
                 header_route: "ルーティング",
                 header_failover: "ルーティング · フェイルオーバー有効",
-                header_stack: "Stack · デフォルトのプロバイダー",
-                header_stack_default: "Stack · デフォルト：{name}",
+                header_stack: "集約 · デフォルトのプロバイダー",
+                header_stack_default: "集約 · デフォルト：{name}",
                 failover_note: "キューの順に自動で選ばれます（変更はアプリのページで）",
                 mode_route: "ルーティング",
-                mode_stack: "Stack",
+                mode_stack: "集約",
                 mode_mapping: "モデルマッピング",
                 needs_routing_suffix: "（ルーティングが必要）…",
                 official_blocked_suffix: "（公式サブスクリプションはルーティングを通りません）",
@@ -310,11 +310,11 @@ impl TrayTexts {
                 header_direct: "直連",
                 header_route: "路由",
                 header_failover: "路由 · 故障轉移開啟中",
-                header_stack: "疊加 · 預設供應商",
-                header_stack_default: "疊加 · 預設 {name}",
+                header_stack: "聚合 · 預設供應商",
+                header_stack_default: "聚合 · 預設 {name}",
                 failover_note: "依佇列自動選擇，要調整請到應用頁",
                 mode_route: "路由",
-                mode_stack: "疊加",
+                mode_stack: "聚合",
                 mode_mapping: "模型映射",
                 needs_routing_suffix: "（需要路由）…",
                 official_blocked_suffix: "（官方訂閱不經過路由）",
@@ -366,11 +366,11 @@ impl TrayTexts {
                 header_direct: "直连",
                 header_route: "路由",
                 header_failover: "路由 · 故障转移开启中",
-                header_stack: "叠加 · 默认供应商",
-                header_stack_default: "叠加 · 默认 {name}",
+                header_stack: "聚合 · 默认供应商",
+                header_stack_default: "聚合 · 默认 {name}",
                 failover_note: "按队列自动选择，要调整请到应用页",
                 mode_route: "路由",
-                mode_stack: "叠加",
+                mode_stack: "聚合",
                 mode_mapping: "模型映射",
                 needs_routing_suffix: "（需要路由）…",
                 official_blocked_suffix: "（官方订阅不经过路由）",
@@ -926,7 +926,7 @@ fn is_official_account(app: &AppType, provider: &Provider) -> bool {
         || (*app == AppType::Codex && crate::proxy::providers::is_codex_official_provider(provider))
 }
 
-/// 官方订阅不经过路由（Codex 官方卡除外）：路由 / 叠加下不能选。
+/// 官方订阅不经过路由（Codex 官方卡除外）：路由 / 聚合下不能选。
 fn blocked_from_routing(app: &AppType, provider: &Provider) -> bool {
     is_official_account(app, provider)
         && !crate::services::provider::official_provider_supports_proxy_takeover(app, provider)
@@ -1062,7 +1062,7 @@ struct AppSnapshot {
     current_id: Option<String>,
     /// 故障转移队列（按优先级）。
     queue: Vec<String>,
-    /// 叠加名单。
+    /// 聚合名单。
     stack_members: Vec<String>,
     quota: Option<QuotaView>,
     /// 路由服务该在跑却没在跑。
@@ -1077,7 +1077,7 @@ impl AppSnapshot {
         self.providers.iter().find(|p| p.id == id)
     }
 
-    /// 这个应用现在靠路由服务：路由 / 叠加中，或 Desktop 在用模型映射卡。
+    /// 这个应用现在靠路由服务：路由 / 聚合中，或 Desktop 在用模型映射卡。
     fn uses_service(&self) -> bool {
         match self.mode {
             TrayMode::Route | TrayMode::Failover | TrayMode::Stack => true,
@@ -1091,7 +1091,7 @@ impl AppSnapshot {
 enum TrayProblem {
     /// 路由服务没在跑，但有应用在用它。
     ServiceDown { port: u16 },
-    /// 启动时没能接上路由 / 叠加，已退回直连。
+    /// 启动时没能接上路由 / 聚合，已退回直连。
     AttachFailed { app: AppType, stack: bool },
     /// 托盘里的切换没成功。
     SwitchFailed { app: AppType, reason: String },
@@ -1338,7 +1338,7 @@ fn collect_problems(
     }
     {
         let mut failures = lock(&ATTACH_FAILURES);
-        // 已经重新进入路由 / 叠加的应用不再报。
+        // 已经重新进入路由 / 聚合的应用不再报。
         failures.retain(|(app, _)| {
             visible
                 .iter()
@@ -1389,7 +1389,7 @@ const FEEDBACK_TTL: std::time::Duration = std::time::Duration::from_secs(2 * 60)
 enum TrayFeedback {
     /// Codex / Gemini CLI / Grok Build 直连切换，或 Claude Desktop 切换。
     Switched { app: AppType, name: String },
-    /// 叠加换默认：发布给客户端的模型列表跟着变。
+    /// 聚合换默认：发布给客户端的模型列表跟着变。
     StackDefault { app: AppType, name: String },
     /// 应用项目：同时改了供应商、MCP、Skills、提示词。
     ProfileApplied { app: AppType, name: String },
@@ -1719,7 +1719,7 @@ fn provider_rows(texts: &TrayTexts, snapshot: &AppSnapshot) -> Vec<TrayEntry> {
             rows
         }
         TrayMode::Stack => {
-            // 只列名单里的成员和能做默认的官方卡（Codex 官方卡不能叠加，但能做默认）；点一家 = 设为默认。
+            // 只列名单里的成员和能做默认的官方卡（Codex 官方卡不能加入聚合，但能做默认）；点一家 = 设为默认。
             let listed: Vec<&ProviderEntry> = snapshot
                 .providers
                 .iter()
@@ -1769,7 +1769,7 @@ fn app_children(
         TrayMode::Direct => Some(texts.header_direct.to_string()),
         TrayMode::Route => Some(texts.header_route.to_string()),
         TrayMode::Failover => Some(texts.header_failover.to_string()),
-        // 叠加：标题写出默认那家（勾着的就是它）；还没有默认时退回泛称。
+        // 聚合：标题写出默认那家（勾着的就是它）；还没有默认时退回泛称。
         TrayMode::Stack => Some(match snapshot.current() {
             Some(current) => fill(
                 texts.header_stack_default,
@@ -1994,7 +1994,7 @@ fn collect_model(app_state: &AppState, texts: &TrayTexts) -> Result<TrayModel, A
     Ok(TrayModel { entries, status })
 }
 
-/// 退出会让它们断开的情况：路由服务在跑，且有应用在路由 / 叠加模式，或 Claude Desktop 在用
+/// 退出会让它们断开的情况：路由服务在跑，且有应用在路由 / 聚合模式，或 Claude Desktop 在用
 /// 模型映射卡（和 `controller::stop_server_if_unused` 的「在用」同一口径，隐藏的应用也算）。
 fn routing_in_use(app_state: &AppState) -> bool {
     app_state.proxy_service.running_now() == Some(true)
@@ -2932,15 +2932,15 @@ mod tests {
         let zh = zh();
         assert_eq!(
             (zh.header_direct, zh.mode_route, zh.mode_stack),
-            ("直连", "路由", "叠加")
+            ("直连", "路由", "聚合")
         );
         assert_eq!(zh.header_failover, "路由 · 故障转移开启中");
         let tw = TrayTexts::from_language("zh-TW");
-        assert_eq!((tw.header_direct, tw.mode_stack), ("直連", "疊加"));
+        assert_eq!((tw.header_direct, tw.mode_stack), ("直連", "聚合"));
         let en = en();
         assert_eq!(
             (en.header_direct, en.mode_route, en.mode_stack),
-            ("Direct", "Routing", "Stack")
+            ("Direct", "Routing", "Aggregation")
         );
         let ja = TrayTexts::from_language("ja");
         assert_eq!(ja.mode_route, "ルーティング");
@@ -3760,12 +3760,12 @@ mod tests {
         );
         app.stack_members = vec!["deepseek".to_string(), "kimi".to_string()];
         let menu = model(&[], &[app]);
-        assert_eq!(text_of(&menu[2]), "Codex · 叠加 · DeepSeek");
+        assert_eq!(text_of(&menu[2]), "Codex · 聚合 · DeepSeek");
         let children = children_of(&menu, &AppType::Codex);
         assert_eq!(
             texts_of(&children),
             [
-                "叠加 · 默认 DeepSeek",
+                "聚合 · 默认 DeepSeek",
                 "DeepSeek",
                 "Kimi For Coding",
                 "OpenAI Official",
@@ -3957,11 +3957,11 @@ mod tests {
         app.current_id = None;
         app.stack_members = vec!["deepseek".to_string()];
         let children = children_of(&model(&[], &[app.clone()]), &AppType::Claude);
-        assert_eq!(text_of(&children[0]), "叠加 · 默认供应商");
+        assert_eq!(text_of(&children[0]), "聚合 · 默认供应商");
         app.current_id = Some("deepseek".to_string());
         let menu = build_menu_model(&en(), &MenuStatus::default(), &[app], false, now());
         let children = children_of(&menu, &AppType::Claude);
-        assert_eq!(text_of(&children[0]), "Stack · Default: DeepSeek");
+        assert_eq!(text_of(&children[0]), "Aggregation · Default: DeepSeek");
     }
 
     #[test]
