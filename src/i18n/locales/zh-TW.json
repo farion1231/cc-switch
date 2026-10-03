@@ -2178,7 +2178,8 @@
     },
     "empty": {
       "title": "還沒有用量資料",
-      "body": "工作階段日誌和經路由服務的請求都會記在這裡。"
+      "body": "工作階段日誌和經路由服務的請求都會記在這裡。",
+      "configurePricing": "設定模型定價"
     },
     "pricing": {
       "modelsDevTitle": "models.dev 同步 · {{status}}",
