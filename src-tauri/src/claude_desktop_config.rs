@@ -2290,6 +2290,174 @@ mod tests {
         );
     }
 
+    /// 模拟 Claude Desktop 自己往 profile 里写设置（#7796 的 Configure third-party
+    /// inference、#3329 手工编辑的 managedMcpServers 都是这条路）。
+    fn desktop_ui_writes_profile(path: &Path, edits: &[(&str, Value)]) {
+        let mut profile: Value = read_json_file(path).expect("read profile");
+        let obj = profile.as_object_mut().expect("profile is an object");
+        for (key, value) in edits {
+            obj.insert((*key).to_string(), value.clone());
+        }
+        fs::write(path, serde_json::to_string_pretty(&profile).unwrap()).expect("desktop write");
+    }
+
+    /// #7796 场景 a/c：Desktop UI 写进 CC Switch profile 的设置，订阅往返（切官方
+    /// 再切回同一个第三方）后原样保留，多次往返结果一致；CC Switch 管理的网关字段
+    /// 照常恢复，官方态下 Key 从盘上清掉。
+    #[test]
+    fn claude_desktop_subscription_round_trip_preserves_desktop_ui_settings() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let db = test_db();
+        let provider = direct_provider("gateway-a");
+        let official = official_provider();
+        let user_settings = json!([{
+            "name": "opencli",
+            "url": "http://127.0.0.1:31337/",
+            "toolPolicy": { "allow": ["browser"] }
+        }]);
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply third-party provider");
+        desktop_ui_writes_profile(
+            &paths.profile_path,
+            &[
+                ("managedMcpServers", user_settings.clone()),
+                ("chatTabEnabled", json!(false)),
+                ("autoModeEnabled", json!(true)),
+                ("inferenceCredentialKind", json!("apiKey")),
+                ("userAutoMode", json!(true)),
+            ],
+        );
+
+        apply_provider_to_paths(&db, &official, &paths).expect("switch to official");
+        let official_profile: Value =
+            read_json_file(&paths.profile_path).expect("profile kept on disk");
+        for key in floor::DESKTOP_PROFILE_FLOOR {
+            assert!(
+                official_profile.get(*key).is_none(),
+                "{key} must be cleared while official"
+            );
+        }
+        assert_eq!(official_profile["managedMcpServers"], user_settings);
+        assert_eq!(official_profile["chatTabEnabled"], json!(false));
+        assert_eq!(official_profile["autoModeEnabled"], json!(true));
+        assert_eq!(official_profile["inferenceCredentialKind"], json!("apiKey"));
+        assert_eq!(official_profile["userAutoMode"], json!(true));
+        let meta: Value = read_json_file(&paths.meta_path).expect("read meta");
+        assert!(
+            meta.get("appliedId").is_none(),
+            "the profile is delisted while official, so the Desktop UI cannot reach it"
+        );
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("switch back");
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile["managedMcpServers"], user_settings);
+        assert_eq!(profile["chatTabEnabled"], json!(false));
+        assert_eq!(profile["autoModeEnabled"], json!(true));
+        assert_eq!(profile["inferenceCredentialKind"], json!("apiKey"));
+        assert_eq!(profile["userAutoMode"], json!(true));
+        assert_eq!(profile["inferenceProvider"], json!("gateway"));
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("https://gateway.example.com")
+        );
+        assert_eq!(profile["inferenceGatewayApiKey"], json!("test-token"));
+        assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
+        assert!(profile.get("inferenceModels").is_none());
+
+        // 多次订阅往返结果一致（幂等）。
+        for _ in 0..2 {
+            apply_provider_to_paths(&db, &official, &paths).expect("switch to official");
+            apply_provider_to_paths(&db, &provider, &paths).expect("switch back again");
+        }
+        let profile_again: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile_again, profile, "round trips are idempotent");
+        let threep: Value = read_json_file(&paths.threep_config_path).expect("read 3p config");
+        assert_eq!(threep["deploymentMode"], json!("3p"));
+    }
+
+    /// #7796 场景 b：订阅往返后切到另一个第三方，用户的设置保留，网关字段换成新
+    /// 供应商的值，模型列表跟着新供应商走、不残留上一家的映射。
+    #[test]
+    fn claude_desktop_subscription_round_trip_to_another_provider_swaps_key_fields_only() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let db = test_db();
+        let a = direct_provider("gateway-a");
+        let mut b = direct_provider_with_models("gateway-b");
+        b.settings_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://other-gateway.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "b-token"
+            }
+        });
+        let official = official_provider();
+        let user_settings = json!([{ "name": "opencli", "url": "http://127.0.0.1:31337/" }]);
+
+        apply_provider_to_paths(&db, &a, &paths).expect("apply a");
+        desktop_ui_writes_profile(
+            &paths.profile_path,
+            &[
+                ("managedMcpServers", user_settings.clone()),
+                ("chatTabEnabled", json!(false)),
+            ],
+        );
+
+        apply_provider_to_paths(&db, &official, &paths).expect("switch to official");
+        apply_provider_to_paths(&db, &b, &paths).expect("switch to provider b");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile["managedMcpServers"], user_settings);
+        assert_eq!(profile["chatTabEnabled"], json!(false));
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("https://other-gateway.example.com")
+        );
+        assert_eq!(profile["inferenceGatewayApiKey"], json!("b-token"));
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([{ "name": "claude-sonnet-4-6", "supports1m": true }])
+        );
+    }
+
+    /// #7796 场景 d：官方态下写进 profile 的设置，切回第三方时不被清掉；用户改过的
+    /// 策略键（seed 键）也不被回写成 CC Switch 的默认值。
+    ///
+    /// 代码路径说明：切官方后 CC Switch 的 profile 已从 `_meta.json` 摘除条目，
+    /// Desktop 只按条目列出 profile，所以「Desktop UI 在官方态改这个 profile」正常
+    /// 情况不可达；这里在文件层模拟任何实际发生的写入（旧版残留、手工编辑），断言
+    /// CC Switch 切回第三方时原样保留。
+    #[test]
+    fn claude_desktop_settings_added_while_official_survive_switching_back() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let db = test_db();
+        let provider = direct_provider("gateway-a");
+        let official = official_provider();
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+        apply_provider_to_paths(&db, &official, &paths).expect("switch to official");
+        desktop_ui_writes_profile(
+            &paths.profile_path,
+            &[
+                ("addedWhileOfficial", json!("kept")),
+                ("disableDeploymentModeChooser", json!(false)),
+                ("coworkEgressAllowedHosts", json!(["corp.example"])),
+            ],
+        );
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("switch back");
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile["addedWhileOfficial"], json!("kept"));
+        assert_eq!(
+            profile["disableDeploymentModeChooser"],
+            json!(false),
+            "a user-tightened policy key must not be re-seeded"
+        );
+        assert_eq!(profile["coworkEgressAllowedHosts"], json!(["corp.example"]));
+        assert_eq!(profile["inferenceProvider"], json!("gateway"));
+    }
+
     #[test]
     fn claude_desktop_keeps_other_meta_entries_in_place() {
         let temp = TempDir::new().expect("tempdir");
