@@ -1108,7 +1108,18 @@ pub(crate) fn run_with_edits(
     let report = write.run(op, &changes, pending);
     // 按磁盘上的实际内容记新启动的 Codex 会读到的目录：失败时可能已经发布了一部分。
     super::codex_client_catalog::observe(store);
-    report
+    let report = report?;
+    match crate::codex_config::read_codex_live_settings() {
+        Ok(settings) => {
+            crate::codex_config::sync_codex_desktop_available_models_cache_after_live_restore(
+                &settings,
+            );
+        }
+        Err(err) => log::debug!(
+            "Codex Desktop model whitelist cache reconciliation skipped after write: {err}"
+        ),
+    }
+    Ok(report)
 }
 
 /// 直连写入：`prepare` → `plan` → `run`。

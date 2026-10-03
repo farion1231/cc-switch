@@ -2906,6 +2906,78 @@ command = "fs-server"
         assert_eq!(codex_text(), on_a);
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn codex_key_field_writes_reconcile_desktop_models_in_every_mode() {
+        let home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let path = home.dir.path().join("Codex Desktop/Local Storage/leveldb");
+        fs::create_dir_all(&path).unwrap();
+        let options = || rusty_leveldb::Options {
+            create_if_missing: true,
+            ..Default::default()
+        };
+        let cache_key = b"_https://codex\x00statsig.cached.evaluations.active";
+        let pin_key = b"_https://codex\x00statsig.last_modified_time.evaluations";
+        let mut db = rusty_leveldb::DB::open(&path, options()).unwrap();
+        db.put(
+            cache_key,
+            &serde_json::to_vec(&json!({
+                "source": "Network",
+                "data": json!({
+                    "dynamic_configs": { "107580212": {
+                        "value": { "available_models": ["gpt-5.5"] }
+                    }}
+                }).to_string()
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        db.put(
+            pin_key,
+            &serde_json::to_vec(&json!({ "statsig.cached.evaluations.active": 0 })).unwrap(),
+        )
+        .unwrap();
+        db.close().unwrap();
+        let read_cache = || {
+            let mut db = rusty_leveldb::DB::open(&path, options()).unwrap();
+            let wrapper: Value = serde_json::from_slice(&db.get(cache_key).unwrap()).unwrap();
+            let data: Value = serde_json::from_str(wrapper["data"].as_str().unwrap()).unwrap();
+            let pins: Value = serde_json::from_slice(&db.get(pin_key).unwrap()).unwrap();
+            db.close().unwrap();
+            (
+                data["dynamic_configs"]["107580212"]["value"]["available_models"].clone(),
+                pins["statsig.cached.evaluations.active"].as_i64().unwrap(),
+            )
+        };
+        let a = codex_row("a", "https://a.example/v1", "");
+        let mut b = codex_row("b", "https://b.example/v1", "");
+        b.settings_config["modelCatalog"] = json!({ "models": [{ "model": "gpt-b" }] });
+        let official = codex_official();
+        let official_id = official.id.clone();
+        let state = state_with(AppType::Codex, &[a, b, official], "a").await;
+
+        ProviderService::switch(&state, AppType::Codex, "b").expect("direct switch");
+        assert!(read_cache().0.as_array().unwrap().contains(&json!("gpt-b")));
+        enter(&state, &AppType::Codex, false)
+            .await
+            .expect("enter proxy");
+        assert!(read_cache().0.as_array().unwrap().contains(&json!("gpt-b")));
+        exit(&state, &AppType::Codex).await.expect("exit proxy");
+        let (models, custom_pin) = read_cache();
+        assert!(models.as_array().unwrap().contains(&json!("gpt-b")));
+        assert_eq!(codex_user_parts(&codex_text()).len(), 6);
+
+        ProviderService::switch(&state, AppType::Codex, &official_id).expect("official switch");
+        let (models, official_pin) = read_cache();
+        assert_eq!(models, json!(["gpt-5.5"]));
+        assert!(
+            official_pin < custom_pin,
+            "official mode must release the custom cache pin"
+        );
+    }
+
     /// 行里自己指定的模型目录指针跟着这一家走：切走时删掉，切到生成了目录的那家就换成
     /// CC Switch 自己的指针；代理契约带进来的，退出代理时同样删掉。用户直接写进 live 的
     /// 指针一直留着。

@@ -1251,6 +1251,17 @@ pub fn run() {
                     state.inner().clone(),
                 );
 
+                match crate::codex_config::read_codex_live_settings() {
+                    Ok(settings) => {
+                        crate::codex_config::sync_codex_desktop_available_models_cache_after_live_restore(
+                            &settings,
+                        );
+                    }
+                    Err(e) => log::debug!(
+                        "Codex Desktop model whitelist cache startup reconciliation skipped: {e}"
+                    ),
+                }
+
                 // Periodic backup check (on startup)
                 if let Err(e) = state.db.periodic_backup_if_needed() {
                     log::warn!("Periodic backup failed on startup: {e}");
