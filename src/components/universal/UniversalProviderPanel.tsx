@@ -8,6 +8,7 @@ import { UniversalProviderFormModal } from "./UniversalProviderFormModal";
 import { universalProvidersApi } from "@/lib/api";
 import type { UniversalProvider, UniversalProvidersMap } from "@/types";
 import { deepClone } from "@/utils/deepClone";
+import { invalidateUniversalProviderCaches, queryClient } from "@/lib/query";
 
 export function UniversalProviderPanel() {
   const { t } = useTranslation();
@@ -60,6 +61,7 @@ export function UniversalProviderPanel() {
         // 新建模式下自动同步到各应用
         if (!editingProvider) {
           await universalProvidersApi.sync(provider.id);
+          await invalidateUniversalProviderCaches(queryClient);
         }
 
         toast.success(
@@ -82,7 +84,7 @@ export function UniversalProviderPanel() {
         );
       }
     },
-    [editingProvider, loadProviders, t],
+    [editingProvider, loadProviders, queryClient, t],
   );
 
   // 保存并同步供应商
@@ -91,6 +93,7 @@ export function UniversalProviderPanel() {
       try {
         await universalProvidersApi.upsert(provider);
         await universalProvidersApi.sync(provider.id);
+        await invalidateUniversalProviderCaches(queryClient);
         toast.success(
           t("universalProvider.savedAndSynced", {
             defaultValue: "已保存并同步到所有应用",
@@ -107,7 +110,7 @@ export function UniversalProviderPanel() {
         );
       }
     },
-    [loadProviders, t],
+    [loadProviders, queryClient, t],
   );
 
   // 删除供应商
@@ -116,6 +119,7 @@ export function UniversalProviderPanel() {
 
     try {
       await universalProvidersApi.delete(deleteConfirm.id);
+      await invalidateUniversalProviderCaches(queryClient);
       toast.success(
         t("universalProvider.deleted", { defaultValue: "统一供应商已删除" }),
       );
@@ -130,7 +134,7 @@ export function UniversalProviderPanel() {
     } finally {
       setDeleteConfirm({ open: false, id: "", name: "" });
     }
-  }, [deleteConfirm.id, loadProviders, t]);
+  }, [deleteConfirm.id, loadProviders, queryClient, t]);
 
   // 同步供应商
   const handleSync = useCallback(async () => {
@@ -138,6 +142,7 @@ export function UniversalProviderPanel() {
 
     try {
       await universalProvidersApi.sync(syncConfirm.id);
+      await invalidateUniversalProviderCaches(queryClient);
       toast.success(
         t("universalProvider.synced", { defaultValue: "已同步到所有应用" }),
       );
@@ -151,7 +156,7 @@ export function UniversalProviderPanel() {
     } finally {
       setSyncConfirm({ open: false, id: "", name: "" });
     }
-  }, [syncConfirm.id, t]);
+  }, [queryClient, syncConfirm.id, t]);
 
   // 打开同步确认
   const handleSyncClick = useCallback(
@@ -178,6 +183,7 @@ export function UniversalProviderPanel() {
       try {
         await universalProvidersApi.upsert(duplicated);
         await universalProvidersApi.sync(duplicated.id);
+        await invalidateUniversalProviderCaches(queryClient);
         toast.success(
           t("universalProvider.duplicatedAndSynced", {
             defaultValue: "统一供应商已复制并同步",
@@ -193,7 +199,7 @@ export function UniversalProviderPanel() {
         );
       }
     },
-    [loadProviders, t],
+    [loadProviders, queryClient, t],
   );
 
   // 打开编辑

@@ -568,6 +568,7 @@ export interface UniversalProviderApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  hermes?: boolean;
 }
 
 // Claude 模型配置
@@ -589,11 +590,16 @@ export interface GeminiModelConfig {
   model?: string;
 }
 
+export interface HermesModelConfig {
+  model?: string;
+}
+
 // 各应用的模型配置
 export interface UniversalProviderModels {
   claude?: ClaudeModelConfig;
   codex?: CodexModelConfig;
   gemini?: GeminiModelConfig;
+  hermes?: HermesModelConfig;
 }
 
 // 统一供应商（跨应用共享配置）
