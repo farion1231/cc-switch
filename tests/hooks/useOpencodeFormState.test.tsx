@@ -144,4 +144,75 @@ describe("useOpencodeFormState", () => {
       timeout: 200,
     });
   });
+
+  it("keeps untouched extra option values verbatim when another option is edited", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai",
+      options: {
+        name: "123",
+        flag: "false",
+        missing: "null",
+        list: "[]",
+        map: "{}",
+        timeout: 100,
+      },
+      models: { fixture: { name: "Fixture model" } },
+    });
+
+    act(() => {
+      result.current.handleOpencodeExtraOptionsChange({
+        ...result.current.opencodeExtraOptions,
+        timeout: "200",
+      });
+    });
+
+    expect(JSON.parse(getSettingsConfig()).options).toEqual({
+      name: "123",
+      flag: "false",
+      missing: "null",
+      list: "[]",
+      map: "{}",
+      timeout: 200,
+    });
+  });
+
+  it("keeps untouched extra option values verbatim when an option is added", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai",
+      options: { name: "123", timeout: 100 },
+      models: {},
+    });
+
+    act(() => {
+      // Mirrors handleAddExtraOption: a draft row is appended to the map.
+      result.current.handleOpencodeExtraOptionsChange({
+        ...result.current.opencodeExtraOptions,
+        "draft-option:123": "",
+      });
+    });
+
+    expect(JSON.parse(getSettingsConfig()).options).toEqual({
+      name: "123",
+      timeout: 100,
+    });
+  });
+
+  it("keeps untouched extra option values verbatim when a different option is removed", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai",
+      options: { name: "123", timeout: 100, legacy: "false" },
+      models: {},
+    });
+
+    const rows = { ...result.current.opencodeExtraOptions };
+    delete rows.legacy;
+    act(() => {
+      result.current.handleOpencodeExtraOptionsChange(rows);
+    });
+
+    expect(JSON.parse(getSettingsConfig()).options).toEqual({
+      name: "123",
+      timeout: 100,
+    });
+  });
 });
