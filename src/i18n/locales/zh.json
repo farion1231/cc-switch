@@ -3857,6 +3857,23 @@
     "queryFailed": "查询失败",
     "refresh": "刷新"
   },
+  "aggregate": {
+    "enable": "启用聚合路由",
+    "title": "聚合供应商",
+    "hint": "自身不存端点与密钥，按模型把请求分流到其他供应商。启用后需重启 Claude Desktop 生效。",
+    "targetProvider": "目标供应商",
+    "upstreamModel": "上游模型",
+    "upstreamModelPlaceholder": "留空 = 不映射该档",
+    "displayName": "显示名",
+    "supports1m": "1M 上下文",
+    "slotIdPreview": "槽位 ID",
+    "addProvider": "添加供应商",
+    "defaultTarget": "默认目标",
+    "defaultTargetPlaceholder": "必选：未命中任何档位的请求回落到这里",
+    "defaultTargetHint": "未命中路由的请求发往这里（Claude 的内部调用会走它）",
+    "notSaveable": "至少添加一个槽位并选择默认目标后才能保存",
+    "modeLockedHint": "聚合路由需要接管请求转发，接入方式已锁定为「模型映射」（代理）。"
+  },
   "nav": {
     "mainLabel": "主导航",
     "skipToContent": "跳到主要内容",
