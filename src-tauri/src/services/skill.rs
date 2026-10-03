@@ -2111,8 +2111,9 @@ impl SkillService {
                 search_sources.push((d, app.as_str().to_string()));
             }
         }
-        if let Some(agents_dir) = get_agents_skills_dir() {
-            search_sources.push((agents_dir, "agents".to_string()));
+        let agents_dir = get_agents_skills_dir();
+        if let Some(agents_dir) = &agents_dir {
+            search_sources.push((agents_dir.clone(), "agents".to_string()));
         }
         search_sources.push((ssot_dir.clone(), "cc-switch".to_string()));
 
@@ -2155,8 +2156,18 @@ impl SkillService {
 
             // 复制到 SSOT
             let dest = ssot_dir.join(&dir_name);
+            let mut shared_source_copy: Option<PathBuf> = None;
             if !dest.exists() {
                 Self::copy_dir_recursive(&source, &dest)?;
+                // ~/.agents/skills 是跨工具共享目录，不是任何应用的部署目录：
+                // 本次复制成功即视为整体迁移的候选，待登记成功后删除源副本
+                // （issue #7809）。应用目录的部署副本、符号链接（可能是其他
+                // 工具的部署链接）不在此列。
+                if let Some(agents_dir) = &agents_dir {
+                    if source.starts_with(agents_dir) && !Self::is_symlink(&source) {
+                        shared_source_copy = Some(source.clone());
+                    }
+                }
             }
 
             // 解析元数据
@@ -2231,6 +2242,17 @@ impl SkillService {
 
             // 保存到数据库
             db.save_skill(&skill)?;
+
+            // 登记成功后整体迁移：删除共享目录里的源副本。删除失败不回滚导入
+            // （SSOT 副本已完整落盘），保留源目录并记录警告，避免半迁移状态。
+            if let Some(shared_source_copy) = shared_source_copy {
+                if let Err(error) = Self::remove_path(&shared_source_copy) {
+                    log::warn!(
+                        "导入后删除共享目录源副本失败（已保留）: {}: {error}",
+                        shared_source_copy.display()
+                    );
+                }
+            }
 
             imported.push(skill);
         }
@@ -5361,6 +5383,168 @@ mod tests {
         assert!(empty_db.get_all_installed_skills().unwrap().is_empty());
         assert!(SkillService::paths_alias(&native, &external));
         assert_eq!(fs::read(external.join("SKILL.md")).unwrap(), original);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn import_from_apps_migrates_shared_agents_source_after_successful_import() {
+        // issue #7809：存储位置为内置目录时，从共享 agents 目录导入必须整体迁移：
+        // SSOT 落盘且登记成功后删除源目录，而不是留下同名幽灵副本。
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let agents_source = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("test-skill");
+        write_skill(&agents_source, "shared");
+
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: SkillApps {
+                    claude: true,
+                    ..Default::default()
+                },
+            }],
+        )
+        .unwrap();
+        assert_eq!(imported.len(), 1);
+
+        let ssot_copy = SkillService::get_ssot_dir().unwrap().join("test-skill");
+        assert!(ssot_copy.join("SKILL.md").exists(), "SSOT copy must exist");
+        assert!(
+            db.get_installed_skill(&imported[0].id).unwrap().is_some(),
+            "skill must be registered in the database"
+        );
+        assert!(
+            !agents_source.exists(),
+            "shared agents source must be migrated (removed) after a successful import"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn import_from_apps_keeps_shared_agents_source_when_ssot_copy_already_exists() {
+        // SSOT 里已有同名副本（版本可能不同）时，删除源目录有丢数据风险，
+        // 必须保守保留源副本，维持既有行为。
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let agents_source = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("test-skill");
+        write_skill(&agents_source, "agents-version");
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("test-skill"),
+            "ssot-version",
+        );
+
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: SkillApps::default(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(imported.len(), 1);
+        assert!(
+            agents_source.join("SKILL.md").exists(),
+            "a divergent pre-existing SSOT copy must not trigger source deletion"
+        );
+        assert!(
+            fs::read_to_string(agents_source.join("SKILL.md"))
+                .unwrap()
+                .contains("agents-version"),
+            "source content must stay untouched"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn import_from_apps_unified_storage_never_deletes_the_agents_dir() {
+        // Unified 模式下 SSOT 就是 ~/.agents/skills 本身：此时导入绝不能删除
+        // 共享目录，否则等于删除托管副本。
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let agents_source = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("test-skill");
+        write_skill(&agents_source, "shared");
+
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: SkillApps::default(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(imported.len(), 1);
+        assert!(
+            agents_source.join("SKILL.md").exists(),
+            "with Unified storage the agents dir is the SSOT and must never be deleted"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial_test::serial]
+    fn import_from_apps_never_deletes_a_symlinked_agents_source() {
+        // 共享目录里的符号链接可能是其他工具的部署链接（如 MCode 外链），
+        // 只复制内容，绝不删除链接或其目标。
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let external = temp.path().join("external-skill");
+        write_skill(&external, "external");
+        let original = fs::read(external.join("SKILL.md")).unwrap();
+        let agents_link = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("test-skill");
+        fs::create_dir_all(agents_link.parent().unwrap()).unwrap();
+        SkillService::create_symlink(&external, &agents_link).unwrap();
+
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: SkillApps::default(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(imported.len(), 1);
+        assert!(
+            SkillService::is_symlink(&agents_link),
+            "the agents symlink itself must survive the import"
+        );
+        assert_eq!(
+            fs::read(external.join("SKILL.md")).unwrap(),
+            original,
+            "the symlink target must stay untouched"
+        );
     }
 
     #[test]
