@@ -117,6 +117,29 @@ export interface SwitchModeInput {
 }
 
 export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
+  const { t, active, directId, routeId } = input;
+  // 后端 is_referenced：直连指针指着的、路由 / 叠加模式下正在路由的，都删不掉。
+  // 不管当前看的是哪个视图都要标出来，否则确认后后端拒绝、确认框还卡在原地
+  const inUse = (id: string) =>
+    id === directId || (active !== "direct" && id === routeId);
+  const inUseReason = t("providerCard.reason.inUseCannotDelete");
+  return buildSwitchSectionsByView(input).map((section) => ({
+    ...section,
+    items: section.items.map((item) =>
+      inUse(item.provider.id)
+        ? {
+            ...item,
+            presentation: {
+              ...item.presentation,
+              deleteDisabledReason: inUseReason,
+            },
+          }
+        : item,
+    ),
+  }));
+}
+
+function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
   const {
     app,
     t,
@@ -607,6 +630,7 @@ export function buildDesktopSections({
               },
               chips,
               buttons: [],
+              deleteDisabledReason: t("providerCard.reason.inUseCannotDelete"),
             },
           };
         }
