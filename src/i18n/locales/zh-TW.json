@@ -3910,7 +3910,6 @@
       "official": "官方",
       "needsRoute": "需要路由",
       "directWhenDirect": "直連時使用",
-      "lastRoute": "上次路由",
       "default": "預設",
       "models": "{{count}} 個模型",
       "noModels": "沒有模型",

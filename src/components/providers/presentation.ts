@@ -166,10 +166,12 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
       tone: "outline",
       title: input.routingReason(p),
     }),
-    directWhenDirect: (onSoft = false): CardChip => ({
+    // 只在直连页上标：那里的「回到直连」一步生效、不写名字，要靠它看出会落到哪家。
+    // 路由页上没有跟直连那家有关的操作，不标
+    directWhenDirect: (): CardChip => ({
       key: "direct",
       label: t("providerCard.chip.directWhenDirect"),
-      tone: onSoft ? "outline" : "direct",
+      tone: "direct",
       title: t("provider.directProviderHint"),
     }),
   };
@@ -269,9 +271,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
             if (blockedFromRouting(app, p))
               return blocked(p, t("providerCard.action.routeHere"), noRoute);
             const chips = officialOnly(p);
-            const current = p.id === routeId;
-            if (p.id === directId) chips.push(chip.directWhenDirect(current));
-            if (current) {
+            if (p.id === routeId) {
               return {
                 provider: p,
                 presentation: {
@@ -363,12 +363,10 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
               t("providerCard.action.addToQueue"),
               t("providerCard.reason.noFailover"),
             );
-          const chips = officialOnly(p);
-          if (p.id === directId) chips.push(chip.directWhenDirect());
           return {
             provider: p,
             presentation: {
-              chips,
+              chips: officialOnly(p),
               buttons: [
                 {
                   key: "queueAdd",
@@ -399,7 +397,8 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
     }
 
     // 实际在直连 / 聚合，正在查看路由：行上没有主操作，要生效只有通知条的「开始路由」，
-    // 路由到哪家在确认框里选。不能路由的官方订阅没有按钮可挂原因，原因挂在「官方」徽标上
+    // 路由到哪家在确认框里选（预选上次那家，框里看得到，卡上不再标）。不能路由的官方订阅
+    // 没有按钮可挂原因，原因挂在「官方」徽标上
     return [
       {
         key: "all",
@@ -413,17 +412,12 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
                 buttons: [],
               } satisfies CardPresentation,
             };
-          const chips = officialOnly(p);
-          if (p.id === routeId)
-            chips.push({
-              key: "lastRoute",
-              label: t("providerCard.chip.lastRoute"),
-              tone: "route",
-            });
-          if (p.id === directId) chips.push(chip.directWhenDirect());
           return {
             provider: p,
-            presentation: { chips, buttons: [] } satisfies CardPresentation,
+            presentation: {
+              chips: officialOnly(p),
+              buttons: [],
+            } satisfies CardPresentation,
           };
         }),
       },

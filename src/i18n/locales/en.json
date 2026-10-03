@@ -3909,7 +3909,6 @@
       "official": "Official",
       "needsRoute": "Needs routing",
       "directWhenDirect": "Used when direct",
-      "lastRoute": "Last routed",
       "default": "Default",
       "models": "{{count}} models",
       "noModels": "No models",
