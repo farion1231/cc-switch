@@ -14,6 +14,7 @@ import {
   X,
   Book,
   Brain,
+  Wrench,
   History,
   BarChart2,
   Download,
@@ -93,7 +94,7 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
-import { McpIcon, SkillsIcon } from "@/components/BrandIcons";
+import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import {
@@ -1655,7 +1656,7 @@ function App() {
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("skills.manage")}
                               >
-                                <SkillsIcon className="w-4 h-4" />
+                                <Wrench className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -1750,7 +1751,7 @@ function App() {
                                 )}
                                 title={t("skills.manage")}
                               >
-                                <SkillsIcon className="flex-shrink-0 w-4 h-4" />
+                                <Wrench className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
