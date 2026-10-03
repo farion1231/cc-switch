@@ -511,6 +511,24 @@ Wenn Sie über ein Desktop-Symbol starten, fügen Sie es der `Exec=`-Zeile der `
 
 </details>
 
+<details>
+<summary><strong>Linux (AppImage + fcitx/ibus): Die Anwendung friert ein, wenn ich bei einem Anbieter auf „Bearbeiten“ klicke</strong></summary>
+
+Der GTK-Start-Hook des AppImage exportiert bedingungslos `GTK_IM_MODULE_FILE`, der auf eine mitgelieferte `immodules.cache` zeigt — diese enthält nur GTK-eigene Module, keine fcitx- oder ibus-Einträge. Ist `GTK_IM_MODULE=fcitx` gesetzt, findet GTK dort das Modul nicht und fällt auf XIM zurück; sobald ein Textfeld im Editor den Fokus erhält, kann WebKitGTK die gesamte Anwendung einfrieren (nur `SIGKILL` hilft). Dieser Fix wirkt nur auf `GTK_IM_MODULE`: eine Maschine, die ihr Eingabemodul ausschließlich über `XMODIFIERS` konfiguriert, ist nicht abgedeckt — GTK liest `XMODIFIERS` bei der Modulauswahl nie und landet in einem solchen Setup direkt bei der locales-basierten Rückfallebene, die `xim` aus demselben Bundle-Cache wählt; ein Umschreiben des Caches ändert daran nichts. Derselbe Hook exportiert auch `GTK_EXE_PREFIX` ins AppDir — deshalb nützt es ebenfalls nichts, die Variable einfach zu entfernen: GTK würde denselben Bundle-Cache erneut ableiten. CC Switch erkennt diesen speziellen Fall deshalb beim Start und richtet `GTK_IM_MODULE_FILE` auf den Cache des Host-Systems aus, sofern dieser Ihr Eingabemodul tatsächlich enthält; findet sich keiner, ändert sich nichts. Greift nur, wenn die Variable wirklich innerhalb des AppDir zeigt **und** dieser Bundle-Cache das Eingabemodul tatsächlich nicht enthält; deb-/rpm-Installationen und vorhandene Module bleiben unberührt. Wenn Sie mehrere Module angegeben haben (`GTK_IM_MODULE=fcitx:ibus`), erhalten Sie das erste Modul, das der Host-Cache tatsächlich bereitstellt — möglicherweise nicht das zuerst aufgeführte.
+
+Wird die Variable auf den Host-Cache zeigen, entfällt der XIM-Rückfall und damit der Freeze — ob Ihr Eingabemodul danach tatsächlich funktioniert, hängt jedoch davon ab, ob `im-fcitx5.so` bzw. `im-ibus.so` des Hosts gegen die im AppImage gebündelte GTK-Version lädt. Schlägt das fehl (andere GTK-Microversion), fällt GTK auf seinen eingebauten `simple`-Kontext zurück: der Freeze bleibt aus, das Eingabemodul bleibt aber unbenutzbar — mit `CC_SWITCH_GTK_IM_MODULE_FILE=keep` lässt sich das alte Verhalten wiederherstellen.
+
+Starten Sie mit dem optionalen Notausgang, um die Wahl zu übersteuern (der Hook fasst diese Variable nicht an):
+
+```bash
+CC_SWITCH_GTK_IM_MODULE_FILE=keep ./CC-Switch-*.AppImage                       # Pfad des Hooks beibehalten (altes Verhalten)
+CC_SWITCH_GTK_IM_MODULE_FILE=/pfad/zu/immodules.cache ./CC-Switch-*.AppImage   # eigenen Cache verwenden
+```
+
+Wenn Sie über ein Desktop-Symbol starten, fügen Sie es der `Exec=`-Zeile der `.desktop`-Datei hinzu (z. B. `env CC_SWITCH_GTK_IM_MODULE_FILE=keep /pfad/zum/AppImage`). CC Switch meldet auf stderr, was es getan hat (welcher Cache benutzt wird bzw. warum nichts geändert wurde) — bei `.desktop`-Starts ist das unsichtbar; starten Sie das AppImage im Terminal, um die Meldung zu sehen.
+
+</details>
+
 Weitere Fragen und Antworten finden Sie in den [FAQ des Benutzerhandbuchs](docs/user-manual/en/5-faq/5.2-questions.md) (auf Englisch).
 
 ## Mitwirken

@@ -512,6 +512,24 @@ CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
 
 </details>
 
+<details>
+<summary><strong>Linux（AppImage + fcitx/ibus）：点击供应商的“编辑”后整个应用卡死</strong></summary>
+
+AppImage 的 GTK 启动钩子会无条件导出 `GTK_IM_MODULE_FILE`，指向自带的 `immodules.cache`——该缓存里只有 GTK 内置输入法模块，没有任何 fcitx / ibus 条目。设置 `GTK_IM_MODULE=fcitx` 时，GTK 在这个缓存里找不到对应模块，会按当前 locale 回退到 XIM；编辑页的文本框一获得焦点，WebKitGTK 就可能把整个应用卡死（只能 `SIGKILL` 恢复）。本补丁只作用于 `GTK_IM_MODULE`：如果机器仅通过 `XMODIFIERS` 配置输入法，则不在覆盖范围内——GTK 选择输入法模块时从不读取 `XMODIFIERS`，这种配置会直接走 GTK 的 locale 兜底命中同一份 bundle 缓存里的 `xim`，改写缓存文件改变不了这一点。注意：同一个钩子还会导出指向 AppDir 的 `GTK_EXE_PREFIX`，所以单纯摘掉 `GTK_IM_MODULE_FILE` 也没有用——GTK 只会自己推回同一份 bundle 缓存。因此 CC Switch 会在启动时识别这一特定情形，把该变量改指向主机系统自己的缓存（仅当那份缓存确实列出了你的输入法模块）；一台都找不到就什么都不改，绝不乱指。仅当该变量确实指向 AppDir 内、且 bundle 缓存确实缺少你的输入法模块时才会如此，因此 deb / rpm 安装、模块存在时都不受影响。如果你列出了多个模块（`GTK_IM_MODULE=fcitx:ibus`），最终生效的是主机缓存实际提供的第一个模块，可能不是你列在最前面的那个。
+
+把该变量改指向主机缓存后，XIM 回退这条路径就绕开了，卡死随之消失——但你的输入法之后能否真正可用，取决于主机上的 `im-fcitx5.so` / `im-ibus.so` 能否在 AppImage 自带的 GTK 版本下加载。若加载失败（例如 GTK 微版本不同），GTK 会退回内置的 `simple` 上下文：不再卡死，但输入法仍然不可用；需要时可用 `CC_SWITCH_GTK_IM_MODULE_FILE=keep` 恢复原有行为。
+
+可用内置的逃生开关覆盖这一选择（钩子不会触碰该变量）：
+
+```bash
+CC_SWITCH_GTK_IM_MODULE_FILE=keep ./CC-Switch-*.AppImage                    # 保持钩子写入的路径（恢复旧行为）
+CC_SWITCH_GTK_IM_MODULE_FILE=/path/to/immodules.cache ./CC-Switch-*.AppImage  # 指定自己的缓存
+```
+
+如果你是从桌面图标启动的，请把它写进 `.desktop` 的 `Exec=` 行（如 `env CC_SWITCH_GTK_IM_MODULE_FILE=keep /path/to/AppImage`）。CC Switch 会把它的处理结果（改指向了哪个缓存，或为什么没动）打到 stderr；从 `.desktop` 图标启动时看不到这些输出，请在终端里运行 AppImage 查看。
+
+</details>
+
 更多问题请查看用户手册中的[常见问题](docs/user-manual/zh/5-faq/5.2-questions.md)。
 
 ## 贡献
