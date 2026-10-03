@@ -1,15 +1,16 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::hermes_config::get_hermes_dir;
+use crate::session_manager::model::{ContentRef, SessionBlock, ToolStatus};
 use crate::session_manager::{SessionMessage, SessionMeta};
 
+use super::blocks::{assign_turn_ids, openai_tool_calls, thinking_block, tool_result_block};
+use super::utils::for_each_jsonl_value;
 use super::utils::{
     extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,
 };
@@ -317,6 +318,8 @@ struct MessageRow {
     tool_name: Option<String>,
     active: i64,
     display_metadata: Option<String>,
+    /// 助手的推理文本（较新的 Hermes 才有该列，待核实）
+    reasoning: Option<String>,
 }
 
 impl MessageRow {
@@ -375,7 +378,7 @@ fn load_messages_from_conn(
     // compaction re-inserting rows with their original time).
     let query = format!(
         "SELECT id, role, content, {timestamp}, {tool_call_id}, {tool_calls}, {tool_name}, \
-                {active}, {display_metadata} \
+                {active}, {display_metadata}, {reasoning} \
          FROM messages WHERE session_id = ?1{filter} ORDER BY id ASC",
         timestamp = col("timestamp"),
         tool_call_id = col("tool_call_id"),
@@ -383,6 +386,7 @@ fn load_messages_from_conn(
         tool_name = col("tool_name"),
         active = col("active"),
         display_metadata = col("display_metadata"),
+        reasoning = col("reasoning"),
         filter = display_filter(&columns),
     );
 
@@ -402,6 +406,7 @@ fn load_messages_from_conn(
                 tool_name: row.get(6).ok().flatten(),
                 active: row.get::<_, Option<i64>>(7).ok().flatten().unwrap_or(1),
                 display_metadata: row.get(8).ok().flatten(),
+                reasoning: row.get(9).ok().flatten(),
             })
         })
         .map_err(|e| format!("Failed to query messages: {e}"))?;
@@ -431,45 +436,63 @@ fn load_messages_from_conn(
     let mut messages = Vec::new();
     for row in order {
         let ts = row.timestamp.and_then(timestamp_secs_to_ms);
-        let text = row
-            .content
-            .as_deref()
-            .map(decode_content)
-            .unwrap_or_default();
-        if !text.trim().is_empty() {
-            messages.push(SessionMessage {
-                role: row.role.clone(),
-                content: text,
-                ts,
-            });
-        }
-        // Assistant tool calls (OpenAI shape) render like Codex function calls.
-        if row.role == "assistant" {
-            let calls = row
-                .tool_calls
-                .as_deref()
-                .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
-            for call in calls
-                .as_ref()
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let name = call
-                    .pointer("/function/name")
-                    .or_else(|| call.get("name"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                messages.push(SessionMessage {
-                    role: "assistant".to_string(),
-                    content: format!("[Tool: {name}]"),
-                    ts,
-                });
+        let raw_content = row.content.as_deref().unwrap_or_default();
+        let text = decode_content(raw_content);
+        let blocks = match row.role.as_str() {
+            // 工具输出：按 tool_call_id 配对；Hermes 不记录成败 → Unknown
+            "tool" => {
+                // 结构化编码（`\0json:` 前缀）的内容取整列没有意义，只给预览
+                let plain = !raw_content.starts_with(CONTENT_JSON_PREFIX);
+                vec![tool_result_block(
+                    row.tool_call_id.clone().unwrap_or_default(),
+                    ToolStatus::Unknown,
+                    &text,
+                    || plain.then(|| messages_cell(row.id, "content", String::new())),
+                )]
             }
+            // 助手：推理 → 正文 → tool_calls（OpenAI 形状）
+            "assistant" => {
+                let mut blocks = Vec::new();
+                if let Some(reasoning) = row.reasoning.as_deref().filter(|r| !r.trim().is_empty()) {
+                    blocks.push(thinking_block(reasoning, None, None, || {
+                        Some(messages_cell(row.id, "reasoning", String::new()))
+                    }));
+                }
+                if !text.trim().is_empty() {
+                    blocks.push(SessionBlock::text(text));
+                }
+                let calls = row
+                    .tool_calls
+                    .as_deref()
+                    .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+                blocks.extend(openai_tool_calls(calls.as_ref(), |pointer| {
+                    Some(messages_cell(row.id, "tool_calls", pointer))
+                }));
+                blocks
+            }
+            _ if text.trim().is_empty() => Vec::new(),
+            _ => vec![SessionBlock::text(text)],
+        };
+        let mut message = SessionMessage::from_blocks(row.role.clone(), ts, blocks);
+        if message.is_empty() {
+            continue;
         }
+        message.id = Some(row.id.to_string());
+        messages.push(message);
     }
 
+    assign_turn_ids(&mut messages);
     Ok(messages)
+}
+
+/// `messages` 表某行某列的引用（`content::sqlite_allowed` 白名单内的列）
+fn messages_cell(id: i64, column: &str, pointer: String) -> ContentRef {
+    ContentRef::Sqlite {
+        table: "messages".into(),
+        id: id.to_string(),
+        column: column.into(),
+        pointer,
+    }
 }
 
 /// Hermes stores timestamps as Unix epoch seconds (REAL).
@@ -517,7 +540,7 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
     Ok(deleted > 0)
 }
 
-fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
+pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     let rest = source.strip_prefix("sqlite:")?;
     let hash_pos = rest.rfind('#')?;
     let db_path = PathBuf::from(&rest[..hash_pos]);
@@ -690,58 +713,73 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
 }
 
 /// Load messages from a Hermes JSONL transcript file.
+///
+/// 字段名按 SQLite 同构推断（`tool_calls` / `tool_call_id`，待核实）。
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
-    let reader = BufReader::new(file);
     let mut messages = Vec::new();
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
-        if line.trim().is_empty() {
-            continue;
-        }
-        let value: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
+    for_each_jsonl_value(path, |span, value| {
         // Support both flat messages and nested {type:"message", message:{...}} format
-        let (role_val, content_val, ts_val) =
-            if value.get("type").and_then(Value::as_str) == Some("message") {
-                let msg = match value.get("message") {
-                    Some(m) => m,
-                    None => continue,
-                };
-                (
-                    msg.get("role"),
-                    msg.get("content"),
-                    value.get("timestamp").or_else(|| msg.get("ts")),
-                )
-            } else {
-                (
-                    value.get("role"),
-                    value.get("content"),
-                    value.get("timestamp").or_else(|| value.get("ts")),
-                )
+        let (msg, base, ts_val) = if value.get("type").and_then(Value::as_str) == Some("message") {
+            let Some(msg) = value.get("message") else {
+                return Ok(());
             };
-
-        let role = match role_val.and_then(Value::as_str) {
-            Some(r) => r.to_string(),
-            None => continue,
+            (
+                msg,
+                "/message",
+                value.get("timestamp").or_else(|| msg.get("ts")),
+            )
+        } else {
+            (
+                &value,
+                "",
+                value.get("timestamp").or_else(|| value.get("ts")),
+            )
         };
 
-        let content = content_val.map(extract_text).unwrap_or_default();
-        if content.trim().is_empty() {
-            continue;
-        }
+        let Some(role) = msg.get("role").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        let content = msg.get("content");
+        let text = content.map(extract_text).unwrap_or_default();
+        let content_ref = || {
+            content
+                .filter(|c| c.is_string())
+                .map(|_| span.content_ref(format!("{base}/content")))
+        };
+
+        let blocks = match role {
+            "tool" => vec![tool_result_block(
+                msg.get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                ToolStatus::Unknown,
+                &text,
+                content_ref,
+            )],
+            "assistant" => {
+                let mut blocks = Vec::new();
+                if !text.trim().is_empty() {
+                    blocks.push(SessionBlock::text(text));
+                }
+                blocks.extend(openai_tool_calls(msg.get("tool_calls"), |pointer| {
+                    Some(span.content_ref(format!("{base}/tool_calls{pointer}")))
+                }));
+                blocks
+            }
+            _ if text.trim().is_empty() => Vec::new(),
+            _ => vec![SessionBlock::text(text)],
+        };
 
         let ts = ts_val.and_then(parse_timestamp_to_ms);
-        messages.push(SessionMessage { role, content, ts });
-    }
+        let message = SessionMessage::from_blocks(role, ts, blocks);
+        if !message.is_empty() {
+            messages.push(message);
+        }
+        Ok(())
+    })?;
 
+    assign_turn_ids(&mut messages);
     Ok(messages)
 }
 
@@ -759,6 +797,8 @@ pub fn delete_session(_root: &Path, path: &Path, _session_id: &str) -> Result<bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session_manager::model::ToolKind;
+    use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
 
@@ -955,9 +995,10 @@ mod tests {
         )
         .unwrap();
 
+        // 正文与工具调用合在同一条助手消息里
         assert_eq!(
             contents(&conn, "s1"),
-            vec!["let me check", "[Tool: terminal]", "file1.txt"]
+            vec!["let me check\n\n[Tool: terminal]", "file1.txt"]
         );
     }
 
@@ -1143,5 +1184,130 @@ mod tests {
             !found.contains_key("s0"),
             "oldest session is outside the list"
         );
+    }
+
+    #[test]
+    fn load_messages_sqlite_pairs_tool_calls_with_results() {
+        let dir = tempdir().expect("tempdir");
+        let (_path, conn) = hermes_db(dir.path());
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN reasoning TEXT;")
+            .unwrap();
+        insert_message(&conn, "s1", "user", "看看磁盘", 1.0);
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, tool_calls, reasoning, timestamp)
+             VALUES ('s1', 'assistant', '我先看一下。', ?1, 'need df', 2.0)",
+            [r#"[{"id":"call_1","type":"function","function":{"name":"terminal","arguments":"{\"command\": \"df -h /\", \"timeout\": 30}"}},
+                 {"id":"call_2","type":"function","function":{"name":"web_search","arguments":"{\"query\": \"ext4 tune2fs\"}"}}]"#],
+        )
+        .unwrap();
+        let long: String = (1..=40).map(|i| format!("result {i}\n")).collect();
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, tool_call_id, timestamp)
+             VALUES ('s1', 'tool', 'Filesystem  Size', 'call_1', 3.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, tool_call_id, timestamp)
+             VALUES ('s1', 'tool', ?1, 'call_2', 4.0)",
+            [&long],
+        )
+        .unwrap();
+        // 缺 tool_call_id 的旧数据：callId 为空，前端显示为通用「工具输出」
+        insert_message(&conn, "s1", "tool", "orphan output", 5.0);
+
+        let msgs = load_messages_from_conn(&conn, "s1").expect("load");
+        assert_eq!(msgs.len(), 5);
+        let turns: Vec<_> = msgs.iter().map(|m| m.turn_id.as_deref().unwrap()).collect();
+        assert_eq!(turns, ["t1"; 5]);
+        assert_eq!(msgs[1].id.as_deref(), Some("2"));
+
+        let a = &msgs[1].blocks;
+        assert!(matches!(&a[0], SessionBlock::Thinking { text, .. } if text == "need df"));
+        assert!(matches!(&a[1], SessionBlock::Text { text, .. } if text == "我先看一下。"));
+        match (&a[2], &a[3]) {
+            (
+                SessionBlock::ToolCall {
+                    id, kind, title, ..
+                },
+                SessionBlock::ToolCall {
+                    id: id2,
+                    kind: kind2,
+                    title: title2,
+                    ..
+                },
+            ) => {
+                assert_eq!(
+                    (id.as_str(), *kind, title.as_str()),
+                    ("call_1", ToolKind::Shell, "df -h /")
+                );
+                assert_eq!(
+                    (id2.as_str(), *kind2, title2.as_str()),
+                    ("call_2", ToolKind::Web, "ext4 tune2fs")
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let result = |i: usize| match &msgs[i].blocks[0] {
+            SessionBlock::ToolResult {
+                call_id,
+                status,
+                full,
+                truncated,
+                ..
+            } => (call_id.clone(), *status, full.clone(), *truncated),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            result(2),
+            ("call_1".into(), ToolStatus::Unknown, None, false)
+        );
+        let (call_id, _, full, truncated) = result(3);
+        assert_eq!(call_id, "call_2");
+        assert!(truncated);
+        assert_eq!(
+            full,
+            Some(ContentRef::Sqlite {
+                table: "messages".into(),
+                id: "4".into(),
+                column: "content".into(),
+                pointer: String::new(),
+            })
+        );
+        assert_eq!(result(4).0, "");
+        assert_eq!(msgs[4].role, "tool");
+    }
+
+    #[test]
+    fn load_messages_jsonl_pairs_tool_calls() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+        let mut f = File::create(&path).expect("create");
+        writeln!(
+            f,
+            r#"{{"role":"user","content":"列一下文件","ts":1700000000}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"role":"assistant","content":"","tool_calls":[{{"id":"c1","function":{{"name":"terminal","arguments":"{{\"command\":\"ls\"}}"}}}}],"ts":1700000001}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"role":"tool","tool_call_id":"c1","content":"a.txt","ts":1700000002}}"#
+        )
+        .unwrap();
+        f.flush().unwrap();
+
+        let msgs = load_messages(&path).expect("load");
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[1].content, "[Tool: terminal] ls");
+        assert!(matches!(
+            &msgs[2].blocks[0],
+            SessionBlock::ToolResult { call_id, status: ToolStatus::Unknown, preview, .. }
+                if call_id == "c1" && preview == "a.txt"
+        ));
     }
 }

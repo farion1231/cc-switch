@@ -105,6 +105,19 @@ module.exports = {
           text: "var(--danger-text)",
           soft: "var(--danger-soft)",
         },
+        // 会话阅读页 Agent 主题色：text-agent-claude / bg-agent-codex / border-agent-gemini …
+        agent: {
+          claude: "var(--agent-claude)",
+          codex: "var(--agent-codex)",
+          gemini: "var(--agent-gemini)",
+          opencode: "var(--agent-opencode)",
+          pi: "var(--agent-pi)",
+          generic: "var(--agent-generic)",
+        },
+        diff: {
+          add: "var(--diff-add-bg)",
+          del: "var(--diff-del-bg)",
+        },
         chart: {
           1: "var(--chart-1)",
           2: "var(--chart-2)",

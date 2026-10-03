@@ -1635,6 +1635,11 @@ pub fn run() {
             // Session manager
             commands::list_sessions,
             commands::get_session_messages,
+            commands::stream_session_messages,
+            commands::get_session_block_content,
+            commands::get_session_image,
+            commands::reveal_session_path,
+            commands::export_session_markdown,
             commands::delete_session,
             commands::delete_sessions,
             commands::launch_session_terminal,
