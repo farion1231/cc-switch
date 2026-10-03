@@ -2666,8 +2666,6 @@
     },
     "manage": {
       "filterApp": "依應用程式篩選",
-      "filterAppAny": "顯示對任一所選應用程式啟用的技能",
-      "filterAppAll": "顯示對全部所選應用程式啟用的技能",
       "filterAppMode": "比對方式",
       "filterAppModeAny": "任一",
       "filterAppModeAll": "全部",
@@ -2681,7 +2679,6 @@
       "clearSelection": "清除選取",
       "clearSelectionAll": "清除全部（含隱藏 {{count}} 項）",
       "bulkActions": "批次操作",
-      "selectedCount": "已選 {{count}} 項",
       "hiddenSelected": "另有 {{count}} 個已選被目前篩選隱藏",
       "bulkUninstall": "解除安裝（{{count}}）",
       "bulkUninstallAll": "解除安裝全部已選（{{count}}，含隱藏 {{hidden}} 項）",

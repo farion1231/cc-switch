@@ -5,6 +5,13 @@ import { cn } from "@/lib/utils";
 
 interface ManagementBulkBarProps {
   selectedCount: number;
+  /**
+   * Selected rows the active filter hides. While they have no visible row the
+   * fraction reads 0 — this count is what keeps the bar (and with it the
+   * hidden-selection disclosure and the scope-declaring action labels)
+   * mounted instead of unmounting exactly when they matter.
+   */
+  hiddenCount?: number;
   totalCount: number;
   /** Select-all / clear control; omitted when the list does not support it. */
   onSelectAll?: () => void;
@@ -21,11 +28,12 @@ interface ManagementBulkBarProps {
 /**
  * Action bar shown while a management list has a selection.
  *
- * Renders nothing when the selection is empty, so lists can keep it mounted
- * without reserving layout space.
+ * Renders nothing while nothing is selected or hidden, so lists can keep it
+ * mounted without reserving layout space.
  */
 export function ManagementBulkBar({
   selectedCount,
+  hiddenCount,
   totalCount,
   onSelectAll,
   onClear,
@@ -36,7 +44,7 @@ export function ManagementBulkBar({
   children,
   className,
 }: ManagementBulkBarProps) {
-  if (selectedCount === 0) return null;
+  if (selectedCount === 0 && (hiddenCount ?? 0) === 0) return null;
 
   const allSelected = selectedCount >= totalCount && totalCount > 0;
 

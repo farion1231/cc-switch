@@ -2665,8 +2665,6 @@
     },
     "manage": {
       "filterApp": "按应用筛选",
-      "filterAppAny": "显示对任一已选应用启用的技能",
-      "filterAppAll": "显示对全部已选应用启用的技能",
       "filterAppMode": "匹配方式",
       "filterAppModeAny": "任一",
       "filterAppModeAll": "全部",
@@ -2680,7 +2678,6 @@
       "clearSelection": "清空选择",
       "clearSelectionAll": "清空全部（含隐藏 {{count}} 项）",
       "bulkActions": "批量操作",
-      "selectedCount": "已选 {{count}} 项",
       "hiddenSelected": "另有 {{count}} 个已选被当前筛选隐藏",
       "bulkUninstall": "卸载（{{count}}）",
       "bulkUninstallAll": "卸载全部已选（{{count}}，含隐藏 {{hidden}} 项）",

@@ -2665,8 +2665,6 @@
     },
     "manage": {
       "filterApp": "アプリで絞り込み",
-      "filterAppAny": "選択したいずれかのアプリで有効なスキルを表示",
-      "filterAppAll": "選択したすべてのアプリで有効なスキルを表示",
       "filterAppMode": "一致条件",
       "filterAppModeAny": "いずれか",
       "filterAppModeAll": "すべて",
@@ -2680,7 +2678,6 @@
       "clearSelection": "選択を解除",
       "clearSelectionAll": "すべて解除（非表示 {{count}} 件を含む）",
       "bulkActions": "一括操作",
-      "selectedCount": "{{count}} 件選択中",
       "hiddenSelected": "他に {{count}} 件の選択がフィルターで非表示です",
       "bulkUninstall": "アンインストール（{{count}}）",
       "bulkUninstallAll": "すべてアンインストール（{{count}}、非表示 {{hidden}} 件）",

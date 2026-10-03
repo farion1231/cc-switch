@@ -1263,36 +1263,57 @@ describe("UnifiedSkillsPanel", () => {
       await waitFor(() => expect(bulkCountText()).toBe("3 / 3"));
     });
 
-    it("hides the bulk bar while every selected row is filtered out, and restores it after", async () => {
+    it("keeps the bulk bar reachable while every selected row is filtered out", async () => {
       threeSkills();
+      bulkUninstallSkillMock.mockResolvedValue({ succeeded: [], failed: [] });
       renderPanel();
 
       const user = userEvent.setup();
       await user.click(rowCheckboxes()[0]);
-      await waitFor(() => expect(bulkCountText()).toBe("1 / 3"));
+      await user.click(rowCheckboxes()[1]);
+      await waitFor(() => expect(bulkCountText()).toBe("2 / 3"));
 
-      // With every tick hidden the visible selection is empty, so the shared
-      // bulk bar renders nothing — but the selection itself survives the
-      // detour and comes back with the tick intact.
+      // With every tick hidden the fraction reads 0 — the state the bar used
+      // to unmount in, taking the disclosure and both actions with it. Now it
+      // stays mounted: the hidden count stays visible and uninstall still
+      // drives the whole accumulated selection, not just the visible rows.
       fireEvent.change(
         screen.getByRole("textbox", {
           name: "skills.installedSearchAriaLabel",
         }),
-        { target: { value: "Local Only" } },
+        { target: { value: "Updatable" } },
       );
-      await waitFor(() => expect(screen.queryByRole("toolbar")).toBeNull());
+      await waitFor(() => expect(bulkCountText()).toBe("0 / 1"));
+      expect(screen.getByRole("toolbar")).toBeInTheDocument();
+      expect(
+        screen.getByText("skills.manage.hiddenSelected"),
+      ).toBeInTheDocument();
 
+      await user.click(screen.getByText("skills.manage.bulkUninstallAll"));
+      const dialog = screen
+        .getByText(/skills\.manage\.bulkUninstallConfirm/)
+        .closest<HTMLElement>('[role="dialog"]');
+      await user.click(
+        within(dialog!).getByRole("button", {
+          name: "skills.manage.bulkUninstall",
+        }),
+      );
+      await waitFor(() => {
+        expect(bulkUninstallSkillMock).toHaveBeenCalledWith([
+          "repo/enabled-claude",
+          "repo/local-only",
+        ]);
+      });
+
+      // A successful uninstall clears the accumulated selection, so once the
+      // filter widens again there is nothing left to show — back to no bar.
       fireEvent.change(
         screen.getByRole("textbox", {
           name: "skills.installedSearchAriaLabel",
         }),
         { target: { value: "" } },
       );
-      await waitFor(() => expect(bulkCountText()).toBe("1 / 3"));
-      expect(rowCheckboxes()[0]).toBeChecked();
-      expect(
-        screen.queryByText("skills.manage.hiddenSelected"),
-      ).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByRole("toolbar")).toBeNull());
     });
 
     it("prunes selections whose skill no longer exists after a refresh", async () => {

@@ -13,15 +13,6 @@ interface ManagementFilterChipsProps {
   options: ManagementFilterOption[];
   selected: string[];
   onSelectionChange: (selected: string[]) => void;
-  /**
-   * Selection semantics for items carrying several tags:
-   * - "any" (default): show items tagged with at least one selected value
-   * - "all": show only items tagged with every selected value
-   *
-   * The chips component itself treats both the same — the list applies this
-   * when filtering. Declared here so a caller cannot mix modes accidentally.
-   */
-  mode?: "any" | "all";
   disabled?: boolean;
   className?: string;
 }
@@ -30,11 +21,9 @@ interface ManagementFilterChipsProps {
  * Multi-select filter chip row for local management lists.
  *
  * Empty selection means "no filter" (every option shown), which is the state the
- * list starts in — the chips are refinements, not required choices.
- *
- * `mode` decides what the selection means for items carrying several tags:
- * - "any" (default): show items tagged with at least one selected value
- * - "all": show only items tagged with every selected value
+ * list starts in — the chips are refinements, not required choices. What the
+ * selection means for items carrying several tags ("any" vs "all" matching) is
+ * decided by the list when filtering, not here.
  */
 export function ManagementFilterChips({
   label,

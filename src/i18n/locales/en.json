@@ -2665,8 +2665,6 @@
     },
     "manage": {
       "filterApp": "Filter by app",
-      "filterAppAny": "Showing skills enabled for any selected app",
-      "filterAppAll": "Showing skills enabled for every selected app",
       "filterAppMode": "Match mode",
       "filterAppModeAny": "Any",
       "filterAppModeAll": "All",
@@ -2680,7 +2678,6 @@
       "clearSelection": "Clear selection",
       "clearSelectionAll": "Clear all (including {{count}} hidden)",
       "bulkActions": "Bulk actions",
-      "selectedCount": "{{count}} selected",
       "hiddenSelected": "{{count}} more selected hidden by the current filter",
       "bulkUninstall": "Uninstall ({{count}})",
       "bulkUninstallAll": "Uninstall all ({{count}}, {{hidden}} hidden)",

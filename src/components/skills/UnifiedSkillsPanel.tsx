@@ -212,25 +212,30 @@ const UnifiedSkillsPanel = React.forwardRef<
     [onCheckUpdatesStateChange],
   );
 
-  const beginWrite = (allowOpenDialog = false) => {
-    if (
-      checkUpdatesLockRef.current ||
-      isCheckingUpdates ||
-      writeLockRef.current ||
-      mutationPending ||
-      (!allowOpenDialog && dialogOpen)
-    ) {
-      return false;
-    }
-    writeLockRef.current = true;
-    setWritePending(true);
-    return true;
-  };
+  // 行回调走 useCallback 是 React.memo 生效的前提：引用不稳定的话，每次
+  // 轮询/按键都会把整表行重建成纯浪费。
+  const beginWrite = useCallback(
+    (allowOpenDialog = false) => {
+      if (
+        checkUpdatesLockRef.current ||
+        isCheckingUpdates ||
+        writeLockRef.current ||
+        mutationPending ||
+        (!allowOpenDialog && dialogOpen)
+      ) {
+        return false;
+      }
+      writeLockRef.current = true;
+      setWritePending(true);
+      return true;
+    },
+    [dialogOpen, isCheckingUpdates, mutationPending],
+  );
 
-  const endWrite = () => {
+  const endWrite = useCallback(() => {
     writeLockRef.current = false;
     setWritePending(false);
-  };
+  }, []);
 
   const applicableSkillUpdates = useMemo(() => {
     const installedIds = new Set((skills ?? []).map((skill) => skill.id));
@@ -491,17 +496,20 @@ const UnifiedSkillsPanel = React.forwardRef<
       ? toggleAppMutation.variables?.app
       : null;
 
-  const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
-    if (!beginWrite()) return;
+  const handleToggleApp = useCallback(
+    async (id: string, app: AppId, enabled: boolean) => {
+      if (!beginWrite()) return;
 
-    try {
-      await toggleAppMutation.mutateAsync({ id, app, enabled });
-    } catch (error) {
-      toast.error(t("common.error"), { description: String(error) });
-    } finally {
-      endWrite();
-    }
-  };
+      try {
+        await toggleAppMutation.mutateAsync({ id, app, enabled });
+      } catch (error) {
+        toast.error(t("common.error"), { description: String(error) });
+      } finally {
+        endWrite();
+      }
+    },
+    [beginWrite, endWrite, t, toggleAppMutation.mutateAsync],
+  );
 
   const handleToggleAll = async (app: AppId, enabled: boolean) => {
     if (!skills || !beginWrite()) return;
@@ -535,56 +543,71 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
-  const handleUninstall = (skill: InstalledSkill) => {
-    if (
-      checkUpdatesLockRef.current ||
-      writeLockRef.current ||
-      interactionBlocked
-    ) {
-      return;
-    }
-    setConfirmDialog({
-      isOpen: true,
-      title: t("skills.uninstall"),
-      message: t("skills.uninstallConfirm", { name: skill.name }),
-      onConfirm: async () => {
-        if (!beginWrite(true)) return;
-        try {
-          const result = await uninstallMutation.mutateAsync(skill.id);
-          setConfirmDialog(null);
-          const piCleanupIncomplete =
-            result.piCleanupIncomplete || Boolean(result.preservedPiPath);
-          const toastOptions = {
-            description: result.preservedPiPath
-              ? t("skills.uninstallPiPreserved", {
-                  path: result.preservedPiPath,
-                })
-              : result.piCleanupIncomplete
-                ? t("skills.uninstallPiCleanupIncomplete")
-                : result.backupPath
-                  ? t("skills.backup.location", { path: result.backupPath })
-                  : undefined,
-            closeButton: true,
-          };
-          if (piCleanupIncomplete) {
-            toast.warning(
-              t("skills.uninstallSuccess", { name: skill.name }),
-              toastOptions,
-            );
-          } else {
-            toast.success(
-              t("skills.uninstallSuccess", { name: skill.name }),
-              toastOptions,
-            );
+  // id 参数契约：行组件只交出 skill.id，本体由 skillById 反查。这样回调
+  // 引用可以稳定下来，React.memo 才真正拦得住轮询和按键带来的整表重渲染。
+  const handleUninstall = useCallback(
+    (id: string) => {
+      if (
+        checkUpdatesLockRef.current ||
+        writeLockRef.current ||
+        interactionBlocked
+      ) {
+        return;
+      }
+      const skill = skillById.get(id);
+      if (!skill) return;
+      setConfirmDialog({
+        isOpen: true,
+        title: t("skills.uninstall"),
+        message: t("skills.uninstallConfirm", { name: skill.name }),
+        onConfirm: async () => {
+          if (!beginWrite(true)) return;
+          try {
+            const result = await uninstallMutation.mutateAsync(skill.id);
+            setConfirmDialog(null);
+            const piCleanupIncomplete =
+              result.piCleanupIncomplete || Boolean(result.preservedPiPath);
+            const toastOptions = {
+              description: result.preservedPiPath
+                ? t("skills.uninstallPiPreserved", {
+                    path: result.preservedPiPath,
+                  })
+                : result.piCleanupIncomplete
+                  ? t("skills.uninstallPiCleanupIncomplete")
+                  : result.backupPath
+                    ? t("skills.backup.location", { path: result.backupPath })
+                    : undefined,
+              closeButton: true,
+            };
+            if (piCleanupIncomplete) {
+              toast.warning(
+                t("skills.uninstallSuccess", { name: skill.name }),
+                toastOptions,
+              );
+            } else {
+              toast.success(
+                t("skills.uninstallSuccess", { name: skill.name }),
+                toastOptions,
+              );
+            }
+          } catch (error) {
+            toast.error(t("common.error"), { description: String(error) });
+          } finally {
+            endWrite();
           }
-        } catch (error) {
-          toast.error(t("common.error"), { description: String(error) });
-        } finally {
-          endWrite();
-        }
-      },
-    });
-  };
+        },
+      });
+    },
+    [
+      beginWrite,
+      endWrite,
+      interactionBlocked,
+      setConfirmDialog,
+      skillById,
+      t,
+      uninstallMutation.mutateAsync,
+    ],
+  );
 
   const handleBulkUninstall = () => {
     if (selectedIds.length === 0) return;
@@ -797,19 +820,22 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
-  const handleUpdateSkill = async (skill: InstalledSkill) => {
-    if (!beginWrite()) return;
-    try {
-      const updated = await updateSkillMutation.mutateAsync(skill.id);
-      toast.success(t("skills.updateSuccess", { name: updated.name }), {
-        closeButton: true,
-      });
-    } catch (error) {
-      toast.error(t("skills.updateFailed"), { description: String(error) });
-    } finally {
-      endWrite();
-    }
-  };
+  const handleUpdateSkill = useCallback(
+    async (id: string) => {
+      if (!beginWrite()) return;
+      try {
+        const updated = await updateSkillMutation.mutateAsync(id);
+        toast.success(t("skills.updateSuccess", { name: updated.name }), {
+          closeButton: true,
+        });
+      } catch (error) {
+        toast.error(t("skills.updateFailed"), { description: String(error) });
+      } finally {
+        endWrite();
+      }
+    },
+    [beginWrite, endWrite, t, updateSkillMutation.mutateAsync],
+  );
 
   const handleUpdateAll = async () => {
     if (applicableSkillUpdates.length === 0 || !beginWrite()) {
@@ -1094,6 +1120,7 @@ const UnifiedSkillsPanel = React.forwardRef<
 
       <ManagementBulkBar
         selectedCount={visibleSelectedCount}
+        hiddenCount={hiddenSelectedCount}
         totalCount={filteredTotal}
         onSelectAll={selectAllFiltered}
         onClear={clearSelection}
@@ -1162,7 +1189,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                     key={skill.id}
                     skill={skill}
                     selected={selectedIdSet.has(skill.id)}
-                    onSelectedChange={() => toggleSelected(skill.id)}
+                    onSelectedChange={toggleSelected}
                     hasUpdate={!!updatesMap[skill.id]}
                     isUpdating={
                       updateSkillMutation.isPending &&
@@ -1171,8 +1198,8 @@ const UnifiedSkillsPanel = React.forwardRef<
                     actionsDisabled={interactionBlocked}
                     appIds={visibleSkillAppIds}
                     onToggleApp={handleToggleApp}
-                    onUninstall={() => handleUninstall(skill)}
-                    onUpdate={() => handleUpdateSkill(skill)}
+                    onUninstall={handleUninstall}
+                    onUpdate={handleUpdateSkill}
                     isLast={index === pagedSkills.length - 1 && !hasMore}
                   />
                 ))}
@@ -1241,10 +1268,11 @@ interface InstalledSkillListItemProps {
   isUpdating?: boolean;
   actionsDisabled?: boolean;
   selected?: boolean;
-  onSelectedChange?: () => void;
+  /** 行回调一律传 skill.id，父组件反查本体——引用稳定是 memo 生效的前提。 */
+  onSelectedChange?: (id: string) => void;
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
-  onUninstall: () => void;
-  onUpdate?: () => void;
+  onUninstall: (id: string) => void;
+  onUpdate?: (id: string) => void;
   isLast?: boolean;
 }
 
@@ -1252,8 +1280,9 @@ interface InstalledSkillListItemProps {
  * 已安装 skill 的行。
  *
  * 用 React.memo 包住：父组件每约 2 秒轮询一次代理状态，搜索框里每个按键
- * 也会让整表重筛——不记忆化的话几百行都要在每次按键时重建。回调 props 由
- * 父组件用 useCallback 稳定住，因此只有自身相关字段变化时才会重渲染。
+ * 也会让整表重筛——不记忆化的话几百行都要在每次按键时重建。回调 props 走
+ * id 参数契约（行内回调交出 skill.id），由父组件用 useCallback 稳定住引用，
+ * 因此只有自身相关字段变化时才会重渲染。
  */
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> =
   React.memo(
@@ -1295,7 +1324,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> =
             className="h-3.5 w-3.5 flex-shrink-0 accent-primary"
             checked={selected}
             disabled={actionsDisabled}
-            onChange={() => onSelectedChange?.()}
+            onChange={() => onSelectedChange?.(skill.id)}
             aria-label={t("skills.manage.selectSkill", { name: skill.name })}
           />
           <div className="flex-1 min-w-0">
@@ -1354,7 +1383,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> =
                   "h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10",
                   actionsDisabled && !isUpdating && "disabled:opacity-100",
                 )}
-                onClick={onUpdate}
+                onClick={() => onUpdate?.(skill.id)}
                 disabled={actionsDisabled || isUpdating}
                 title={t("skills.update")}
               >
@@ -1370,7 +1399,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> =
               variant="ghost"
               size="icon"
               className="h-7 w-7 hover:text-red-500 hover:bg-red-100 disabled:opacity-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
-              onClick={onUninstall}
+              onClick={() => onUninstall(skill.id)}
               disabled={actionsDisabled}
               title={t("skills.uninstall")}
             >
