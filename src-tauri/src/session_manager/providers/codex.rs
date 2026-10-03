@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -590,6 +590,10 @@ struct RolloutParser {
     /// AgentMessage.phase（commentary / final_answer），按消息 id
     phases: HashMap<String, String>,
     calls: HashMap<String, PendingCall>,
+    /// 已经输出结果的调用 id。Codex 0.119–0.128 的写入顺序是「调用 → 输出 →
+    /// item_completed」，迟到的 item_completed 按 id 命中这里时只回填退出码 / 耗时，
+    /// 不再单独成一个步骤（否则同一条命令会显示两次）
+    finished: HashSet<String>,
     /// 还没等到输出的调用（按出现顺序）
     open: Vec<String>,
     /// 并行 exec 时归属不明的 CommandExecution，等输出到达时按内容认领
@@ -1371,6 +1375,13 @@ impl RolloutParser {
             call.items.push(record);
             return;
         }
+        // 1b. 调用已经随输出结束（输出先于 item_completed 到达）：只回填，不再成步骤
+        if !item_id.is_empty() && self.finished.contains(&item_id) {
+            if let ItemRecord::Command(info) = &record {
+                self.backfill_finished_result(&item_id, info);
+            }
+            return;
+        }
         // 2. 按类型挂到最近的未完成调用
         let claim = match &record {
             ItemRecord::Command(info) => self.claim_command(info),
@@ -1430,6 +1441,31 @@ impl RolloutParser {
             [] => Claim::None,
             [id] => Claim::Call((*id).clone()),
             _ => Claim::Pool,
+        }
+    }
+
+    /// 迟到的 CommandExecution：把退出码、耗时补进已输出的结果（只补缺的字段）
+    fn backfill_finished_result(&mut self, call_id: &str, info: &CommandInfo) {
+        for message in self.messages.iter_mut().rev() {
+            for block in message.blocks.iter_mut() {
+                if let SessionBlock::ToolResult {
+                    call_id: id,
+                    exit_code,
+                    duration_ms,
+                    ..
+                } = block
+                {
+                    if id == call_id {
+                        if exit_code.is_none() {
+                            *exit_code = info.exit_code;
+                        }
+                        if duration_ms.is_none() {
+                            *duration_ms = info.duration_ms;
+                        }
+                        return;
+                    }
+                }
+            }
         }
     }
 
@@ -1572,6 +1608,7 @@ impl RolloutParser {
         msg_id: Option<String>,
         aborted: bool,
     ) {
+        self.finished.insert(call_id.clone());
         let PendingCall {
             msg_idx,
             block_idx,
@@ -2890,6 +2927,63 @@ mod tests {
                 "content": [{ "type": "input_text", "text": "Found 2 broken links\ndocs/a.md:14" }, { "type": "encrypted_content", "encrypted_content": "gAAA" }] }),
             ),
         ]
+    }
+
+    /// 审查 #7825：Codex 0.119–0.128 的写入顺序是「调用 → 输出 → item_completed」，
+    /// 迟到的 CommandExecution 不能再单独成一个步骤，只回填退出码和耗时
+    #[test]
+    fn late_item_completed_after_output_does_not_duplicate_the_command() {
+        use serde_json::json;
+        let lines = vec![
+            line(0, "session_meta", json!({ "id": "s1", "cwd": "/p" })),
+            line(
+                0,
+                "event_msg",
+                json!({ "type": "task_started", "turn_id": T1 }),
+            ),
+            line(
+                0,
+                "response_item",
+                json!({ "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "list files" }] }),
+            ),
+            line(
+                1,
+                "response_item",
+                json!({ "type": "function_call", "id": "fc_1", "name": "exec_command",
+                "arguments": "{\"cmd\":\"ls -la\",\"workdir\":\"/p\"}", "call_id": "call_ls" }),
+            ),
+            line(
+                2,
+                "response_item",
+                json!({ "type": "function_call_output", "call_id": "call_ls", "output": "total 0\nREADME.md\n" }),
+            ),
+            item(
+                3,
+                json!({ "type": "CommandExecution", "id": "call_ls", "command": ["/bin/zsh", "-lc", "ls -la"], "cwd": "file:///p",
+                "parsed_cmd": [{ "type": "unknown", "cmd": "ls -la" }], "status": "failed", "exit_code": 2,
+                "duration": { "secs": 1, "nanos": 500_000_000 }, "aggregated_output": "total 0\nREADME.md\n" }),
+            ),
+        ];
+        let (_temp, _path, msgs) = load_fixture(&lines);
+
+        assert_eq!(calls(&msgs).len(), 1, "同一条命令只能有一个步骤");
+        let results: Vec<_> = msgs
+            .iter()
+            .flat_map(|m| &m.blocks)
+            .filter(|b| matches!(b, SessionBlock::ToolResult { .. }))
+            .collect();
+        assert_eq!(results.len(), 1);
+        match find_result(&msgs, "call_ls") {
+            SessionBlock::ToolResult {
+                exit_code,
+                duration_ms,
+                ..
+            } => {
+                assert_eq!(*exit_code, Some(2), "退出码从迟到的 item_completed 回填");
+                assert_eq!(*duration_ms, Some(1500));
+            }
+            other => panic!("unexpected block {other:?}"),
+        }
     }
 
     fn load_fixture(lines: &[String]) -> (tempfile::TempDir, PathBuf, Vec<SessionMessage>) {
