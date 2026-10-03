@@ -9,10 +9,17 @@ vi.mock("react-i18next", () => ({
 const mutateAsyncMock = vi.fn();
 const testMutateAsyncMock = vi.fn();
 const scanMutateAsyncMock = vi.fn();
+const savedProxySettings = {
+  url: "http://127.0.0.1:7890",
+  followSystemProxy: true,
+};
 
 vi.mock("@/hooks/useGlobalProxy", () => ({
-  useGlobalProxyUrl: () => ({ data: "http://127.0.0.1:7890", isLoading: false }),
-  useSetGlobalProxyUrl: () => ({
+  useGlobalProxySettings: () => ({
+    data: savedProxySettings,
+    isLoading: false,
+  }),
+  useSetGlobalProxySettings: () => ({
     mutateAsync: mutateAsyncMock,
     isPending: false,
   }),
@@ -59,7 +66,10 @@ describe("GlobalProxySettings", () => {
 
     await waitFor(() => expect(mutateAsyncMock).toHaveBeenCalled());
     // 没有用户名时，URL 不经过 URL 对象解析，所以没有尾部斜杠
-    expect(mutateAsyncMock).toHaveBeenCalledWith("http://localhost:8080");
+    expect(mutateAsyncMock).toHaveBeenCalledWith({
+      url: "http://localhost:8080",
+      followSystemProxy: true,
+    });
   });
 
   it("clears proxy URL when clear button is clicked", async () => {

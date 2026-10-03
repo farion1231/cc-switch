@@ -882,7 +882,7 @@ mod integration_tests {
     #[tokio::test]
     #[ignore]
     async fn live_s3_connection() {
-        crate::proxy::http_client::init(None).ok();
+        crate::proxy::http_client::init(None, true).ok();
         let creds = test_creds();
         let result = test_connection(&creds).await;
         assert!(result.is_ok(), "Connection failed: {:?}", result.err());
@@ -892,7 +892,7 @@ mod integration_tests {
     #[tokio::test]
     #[ignore]
     async fn live_s3_put_get_head_roundtrip() {
-        crate::proxy::http_client::init(None).ok();
+        crate::proxy::http_client::init(None, true).ok();
         let creds = test_creds();
         let key = "cc-switch-sync/v2/default/_integration_test.json";
         let data = br#"{"test":true,"ts":12345}"#;
