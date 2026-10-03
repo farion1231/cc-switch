@@ -10,8 +10,9 @@
 //! - 查询：`GrokWebBillingFetcher.swift` —— POST 空 gRPC-web 帧到
 //!   `GetGrokCreditsConfig`，响应无公开 .proto，用通用 protobuf 扫描按
 //!   字段路径启发式提取已用百分比与重置时间。
-//! - token 刷新由 Grok CLI 自己负责（约 7 天过期），本模块只读不刷新，
-//!   过期时引导用户重新 `grok login`。
+//! - token 刷新由 Grok CLI 自己负责（访问令牌约 6 小时过期，CLI 下次运行时
+//!   用 refresh_token 换新），本模块只读不刷新；过期但仍有 refresh_token 时
+//!   报“待刷新”，刷新令牌也没了才引导用户重新 `grok login`。
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
