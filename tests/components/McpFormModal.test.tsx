@@ -185,6 +185,46 @@ describe("McpFormModal (drawer)", () => {
     expect(mocks.upsert.mock.calls[0][0]).toMatchObject({ id: "linear" });
   });
 
+  it("keeps hidden apps' flags when overwriting an existing server from a batch", async () => {
+    // Hermes 从侧栏隐藏了：覆盖 figma 时它在 Hermes 的开关要原样带回，不能被当成关掉
+    renderForm({
+      visibleAppIds: ["claude", "codex"],
+      existingServers: {
+        figma: {
+          id: "figma",
+          name: "figma",
+          server: { type: "http", url: "http://127.0.0.1:3845/mcp" },
+          apps: { claude: false, hermes: true } as McpServer["apps"],
+        },
+      },
+    });
+    fireEvent.change(screen.getByLabelText("mcpPage.drawer.paste"), {
+      target: {
+        value: JSON.stringify({
+          mcpServers: {
+            linear: { type: "http", url: "https://mcp.linear.app/mcp" },
+            figma: { type: "http", url: "http://127.0.0.1:3845/v2" },
+          },
+        }),
+      },
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.drawer.batchOverwrite" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.drawer.addManyReplace" }),
+    );
+    await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(2));
+    const figma = mocks.upsert.mock.calls
+      .map((call) => call[0])
+      .find((entry) => entry.id === "figma");
+    expect(figma.apps).toMatchObject({
+      claude: true,
+      codex: true,
+      hermes: true,
+    });
+  });
+
   it("masks secrets in the JSON tab and keeps them on save", async () => {
     const server: McpServer = {
       id: "serena",

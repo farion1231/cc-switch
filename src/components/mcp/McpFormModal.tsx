@@ -322,16 +322,21 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     base?: McpServer,
     metaDraft?: MetaDraft,
   ): McpServer => {
+    // 只用「写入到」里能看到的勾选覆盖原值：隐藏只影响界面，覆盖已有服务器时隐藏
+    // 应用的开关原样带回，否则会被当成关掉、从那些应用的配置里删掉；不支持 MCP 的
+    // 应用（OpenClaw 等）沿用原值，新建时为 false
+    const visibleApps = Object.fromEntries(
+      visibleAppIds.map((app) => [app, apps[app]]),
+    );
     const entry: McpServer = {
       ...(base ? { ...base } : {}),
       id,
       name: id,
       server: spec,
-      // 不支持 MCP 的应用（OpenClaw 等）沿用原值，新建时为 false
       apps: {
         openclaw: false,
-        ...(base?.apps ?? {}),
-        ...apps,
+        ...(base?.apps ?? appsOf(undefined, [])),
+        ...visibleApps,
       } as McpServer["apps"],
     };
     if (!metaDraft) {
