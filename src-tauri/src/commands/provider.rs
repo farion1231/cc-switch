@@ -5,7 +5,7 @@ use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
 use crate::commands::xai_oauth::XaiOAuthState;
 use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta};
 use crate::services::provider::{EditorSave, EditorView};
 use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
@@ -85,6 +85,7 @@ pub async fn update_provider(
 
 /// 供应商编辑器底部 JSON 的显示内容：切到这个供应商之后配置文件会是什么样。
 /// `settingsConfig` 是供应商的行（新增时传空对象）。
+/// Codex draft metadata wins over the stored provider's metadata when supplied.
 #[tauri::command]
 pub async fn get_provider_editor_view(
     app_handle: tauri::AppHandle,
@@ -92,6 +93,7 @@ pub async fn get_provider_editor_view(
     #[allow(non_snake_case)] settingsConfig: serde_json::Value,
     category: Option<String>,
     #[allow(non_snake_case)] providerId: Option<String>,
+    meta: Option<ProviderMeta>,
 ) -> Result<EditorView, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -105,11 +107,13 @@ pub async fn get_provider_editor_view(
             category,
         )
         .map_err(|e| e.to_string())?;
-        ProviderService::editor_view(
+        ProviderService::editor_view_with_meta(
             state.inner(),
             app_type,
             &settingsConfig,
             category.as_deref(),
+            providerId.as_deref(),
+            meta.as_ref(),
         )
         .map_err(|e| e.to_string())
     })

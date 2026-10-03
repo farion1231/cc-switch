@@ -133,6 +133,7 @@ export function EditProviderDialog({
             asRecord(provider.settingsConfig) ?? {},
             provider.category,
             provider.id,
+            appId === "codex" ? provider.meta : undefined,
           );
           if (!cancelled) {
             setEditorView(view);
