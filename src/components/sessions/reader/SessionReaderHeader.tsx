@@ -423,17 +423,6 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
             </HoverTip>
           </div>
           {resume}
-          <HoverTip content={rt("exportMarkdown")}>
-            <button
-              type="button"
-              aria-label={rt("exportMarkdown")}
-              disabled={!canCopyMarkdown}
-              onClick={onExportMarkdown}
-              className={cn(readerIconButton, "h-8 w-8")}
-            >
-              <Download className="h-4 w-4" strokeWidth={1.5} />
-            </button>
-          </HoverTip>
           {moreMenu}
         </>
       }
@@ -490,6 +479,8 @@ export interface SessionReaderToolbarProps {
   onCloseFind: () => void;
   onFindQueryChange: (query: string) => void;
   onStepFind: (delta: number) => void;
+  /** 导出为 Markdown 文件（和查找、显示选项放在同一行） */
+  onExportMarkdown: () => void;
 }
 
 const Sep = () => (
@@ -521,6 +512,7 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
   onCloseFind,
   onFindQueryChange,
   onStepFind,
+  onExportMarkdown,
 }: SessionReaderToolbarProps) {
   const { t } = useTranslation();
   const rt = useReaderT();
@@ -669,6 +661,17 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
                 </DropdownMenuCheckboxItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <HoverTip content={rt("exportMarkdown")}>
+              <button
+                type="button"
+                aria-label={rt("exportMarkdown")}
+                disabled={turnIndex.length === 0}
+                onClick={onExportMarkdown}
+                className={cn(readerIconButton, "h-8 w-8")}
+              >
+                <Download className="h-4 w-4" strokeWidth={1.5} />
+              </button>
+            </HoverTip>
             {!find.open && (
               <HoverTip
                 content={t("sessionManager.findShort", {
