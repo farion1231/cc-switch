@@ -31,6 +31,8 @@ const searchCache = new Map<
     isLoading: boolean;
     isFetching: boolean;
     isPlaceholderData?: boolean;
+    isError?: boolean;
+    refetch?: () => void;
   }
 >();
 
@@ -38,7 +40,12 @@ const setSearchResult = (
   query: string,
   offset: number,
   result: SkillsShSearchResult | undefined,
-  state: Partial<{ isLoading: boolean; isFetching: boolean }> = {},
+  state: Partial<{
+    isLoading: boolean;
+    isFetching: boolean;
+    isError: boolean;
+    refetch: () => void;
+  }> = {},
 ) => {
   searchCache.set(`${query}:${offset}`, {
     data: result,
@@ -212,6 +219,20 @@ describe("SkillsPage (Discover)", () => {
     await screen.findByText("figma-use");
     await userEvent.type(input, "{Enter}");
     expect(screen.getByText("figma-use")).toBeInTheDocument();
+  });
+
+  it("refetches the first skills.sh page when retrying after a failure", async () => {
+    const refetch = vi.fn();
+    setSearchResult("boom", 0, undefined, { isError: true, refetch });
+    renderPage();
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "skillsPage.discover.skillsShAria" }),
+      "boom{Enter}",
+    );
+    expect(screen.getByText("skills.skillssh.error")).toBeInTheDocument();
+    // 第一页失败时 query key 没变，重试必须显式 refetch，不能只把 offset 设回 0
+    await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 
   it("shows the loading state while a skills.sh query is fetching", async () => {
