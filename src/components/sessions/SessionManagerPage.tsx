@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   defaultRangeExtractor,
+  observeElementRect,
   useVirtualizer,
   type Range,
 } from "@tanstack/react-virtual";
@@ -760,6 +761,13 @@ export function SessionManagerPage({
     getItemKey: (index) => listRows[index]?.key ?? index,
     overscan: 10,
     rangeExtractor,
+    // 阅读页打开时列表是 display:none，ResizeObserver 会报 0×0。照收的话虚拟列表把行全卸掉，
+    // 返回时先画一帧空列表、等下一次测量才回来；忽略这种尺寸，原来的行一直留着
+    observeElementRect: (instance, cb) =>
+      observeElementRect(instance, (rect) => {
+        if (rect.width === 0 && rect.height === 0) return;
+        cb(rect);
+      }),
   });
 
   const renderProjectHeader = (
