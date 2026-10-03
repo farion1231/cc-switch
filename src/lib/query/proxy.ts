@@ -53,7 +53,7 @@ export function useProxyTakeoverStatus(poll = true) {
 }
 
 /**
- * 应用的模式状态（直连 / 路由 / 叠加、路由目标、直连那家）。放在 ["providers", appId] 前缀下：
+ * 应用的模式状态（直连 / 路由 / 聚合、路由目标、直连那家）。放在 ["providers", appId] 前缀下：
  * 进出模式、切换供应商时随供应商列表一起失效。
  */
 export function useAppMode(appType: string, enabled = true) {

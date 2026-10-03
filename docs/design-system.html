@@ -35,7 +35,7 @@
     --overlay: rgba(9, 9, 11, .36);
     --control-off: #888890;
 
-    /* 模式色：直连 / 路由 / 叠加 */
+    /* 模式色：直连 / 路由 / 聚合 */
     --direct-fill: #0a84ff; --direct-text: #0063c7; --direct-soft: #eaf3ff; --direct-solid: #0066cc; --direct-on: #ffffff;
     --route-fill: #0d9488; --route-text: #06726b; --route-soft: #e7f6f4; --route-solid: #0f766e; --route-on: #ffffff;
     --stack-fill: #7c3aed; --stack-text: #6d28d9; --stack-soft: #f2ecfe; --stack-solid: #6d28d9; --stack-on: #ffffff;
@@ -544,7 +544,7 @@
       <h1>CC Switch 设计系统</h1>
       <p>桌面端（Tauri + React）的视觉与交互规范。令牌直接取自 <code>src/index.css</code> 与 <code>tailwind.config.cjs</code>：
         中性黑白骨架、主题色 <strong style="color:var(--action-text)">#F97315</strong> 只落在操作色上，
-        直连 / 路由 / 叠加三种模式各有一套颜色，13px 正文、6 / 10 / 14 三档圆角，明暗双主题一一对应。</p>
+        直连 / 路由 / 聚合三种模式各有一套颜色，13px 正文、6 / 10 / 14 三档圆角，明暗双主题一一对应。</p>
       <div class="meta">
         <span class="chip outline">Tauri 2 · React 18</span>
         <span class="chip outline">Tailwind 3 · Radix · shadcn/ui</span>
@@ -615,7 +615,7 @@
           <div class="row"><i style="background:var(--route-solid)"></i>solid<span>#0F766E</span></div>
         </div>
         <div class="modecol">
-          <div class="head" style="color:var(--stack-text)"><svg class="i"><use href="#layers"/></svg>叠加 stack</div>
+          <div class="head" style="color:var(--stack-text)"><svg class="i"><use href="#layers"/></svg>聚合 stack</div>
           <div class="row"><i style="background:var(--stack-fill)"></i>fill<span>#7C3AED</span></div>
           <div class="row"><i style="background:var(--stack-text)"></i>text<span>#6D28D9</span></div>
           <div class="row"><i style="background:var(--stack-soft)"></i>soft<span>#F2ECFE</span></div>
@@ -725,7 +725,7 @@
       <div class="stage">
         <button class="btn direct"><svg class="i"><use href="#plug"/></svg>改为直连</button>
         <button class="btn route"><svg class="i"><use href="#route"/></svg>改为路由</button>
-        <button class="btn stack"><svg class="i"><use href="#layers"/></svg>改为叠加</button>
+        <button class="btn stack"><svg class="i"><use href="#layers"/></svg>改为聚合</button>
       </div>
       <h3 class="sub">尺寸</h3>
       <div class="stage">
@@ -831,7 +831,7 @@
         <span class="chip outline">官方</span>
         <span class="chip direct">直连</span>
         <span class="chip route">路由 · 第 1 位</span>
-        <span class="chip stack">叠加</span>
+        <span class="chip stack">聚合</span>
         <span class="chip success"><span class="d"></span>正常 · 312ms</span>
         <span class="chip warning"><span class="d"></span>额度 8%</span>
         <span class="chip danger"><span class="d"></span>连接失败</span>
@@ -896,7 +896,7 @@
         <span class="spec"><button class="btn icon" data-tip="回到直连并使用" aria-label="回到直连并使用"><svg class="i"><use href="#plug"/></svg></button><span class="cap">回到直连并使用</span></span>
         <span class="spec"><button class="btn icon" data-tip="路由到此" aria-label="路由到此"><svg class="i"><use href="#route"/></svg></button><span class="cap">路由到此 / 从这家开始</span></span>
         <span class="spec"><button class="btn icon" data-tip="加入队列" aria-label="加入队列"><svg class="i"><use href="#list-plus"/></svg></button><span class="cap">加入 / 移出队列</span></span>
-        <span class="spec"><button class="btn icon" data-tip="以这家为默认开始叠加…" aria-label="开始叠加"><svg class="i"><use href="#layers"/></svg></button><span class="cap">开始叠加</span></span>
+        <span class="spec"><button class="btn icon" data-tip="以这家为默认开始聚合…" aria-label="开始聚合"><svg class="i"><use href="#layers"/></svg></button><span class="cap">开始聚合</span></span>
         <span class="spec"><button class="btn icon" data-tip="添加" aria-label="添加"><svg class="i"><use href="#plus"/></svg></button><span class="cap">添加 / 移除</span></span>
       </div>
       <p class="note">设为默认 = 星标、启用 / 停用 = 电源；没对上的 key 回退为圆点图标，新加按钮时在 BUTTON_ICON 里补一条。</p>
@@ -983,17 +983,17 @@
       <div class="kicker">CC Switch / 01 · providers/mode/ModeTabs.tsx</div>
       <h2>连接模式</h2>
       <p class="lede">每个应用有三种连接方式：<strong style="color:var(--direct-text)">直连</strong>（直接写配置文件）、
-        <strong style="color:var(--route-text)">路由</strong>（本地代理按队列 / 故障转移）、<strong style="color:var(--stack-text)">叠加</strong>（多家模型合并）。
+        <strong style="color:var(--route-text)">路由</strong>（本地代理按队列 / 故障转移）、<strong style="color:var(--stack-text)">聚合</strong>（多家模型合并）。
         模式 tab 保留<strong>图标 + 文字</strong>、不挂提示；同一行右侧的故障转移、路由设置是纯图标 + HoverTip。</p>
       <div class="stage col app" style="padding-bottom:56px">
         <div class="moderow">
           <div class="seg modes" role="group" aria-label="连接模式" id="modeSeg">
             <button aria-pressed="false"><svg class="i sm"><use href="#plug"/></svg>直连</button>
             <button aria-pressed="true" class="act-route"><svg class="i sm"><use href="#route"/></svg>路由<span class="dot" role="img" aria-label="生效中"></span></button>
-            <button aria-pressed="false"><svg class="i sm"><use href="#layers"/></svg>叠加</button>
+            <button aria-pressed="false"><svg class="i sm"><use href="#layers"/></svg>聚合</button>
           </div>
           <span class="helptip" style="margin-left:-8px"><button aria-label="三种模式的区别"><svg class="i sm"><use href="#help"/></svg></button>
-            <span class="card"><b>三种模式的区别</b>直连：直接写入应用配置。<br>路由：经本地代理转发，可故障转移。<br>叠加：把多家的模型合并给一个应用。</span></span>
+            <span class="card"><b>三种模式的区别</b>直连：直接写入应用配置。<br>路由：经本地代理转发，可故障转移。<br>聚合：把多家的模型合并给一个应用。</span></span>
           <span class="status">路由生效中 · 按队列 · Anthropic 官方</span>
           <label data-tip="故障转移"><svg class="i"><use href="#shuffle"/></svg><button class="switch" role="switch" aria-checked="true" aria-label="故障转移" onclick="toggleSwitch(this)"><i></i></button></label>
           <button class="btn quiet icon lg" aria-label="路由设置" data-tip="路由设置"><svg class="i"><use href="#settings2"/></svg></button>
@@ -1016,7 +1016,7 @@
           <div class="gh">应用</div>
           <div class="row on"><span class="g" style="background:#d97757">C</span>Claude Code<span class="lab" style="color:var(--route-text)">路由</span></div>
           <div class="row"><span class="g" style="background:#111">X</span>Codex<span class="lab" style="color:var(--direct-text)">直连</span></div>
-          <div class="row"><span class="g" style="background:#4285f4">G</span>Gemini<span class="lab" style="color:var(--stack-text)">叠加</span></div>
+          <div class="row"><span class="g" style="background:#4285f4">G</span>Gemini<span class="lab" style="color:var(--stack-text)">聚合</span></div>
           <div class="gh">工具</div>
           <div class="row"><svg class="i"><use href="#chart"/></svg>用量统计<span class="lab" style="color:var(--text-3)">$12.48</span></div>
           <div class="row"><svg class="i"><use href="#settings2"/></svg>设置</div>

@@ -17,7 +17,7 @@ export interface AppNavStatus {
   mode: AppMode;
   /** Claude Desktop 的当前供应商走模型映射（需要路由服务） */
   mapping: boolean;
-  /** 需要处理：在路由 / 叠加 / 映射，但路由服务没在运行 */
+  /** 需要处理：在路由 / 聚合 / 映射，但路由服务没在运行 */
   alert: boolean;
 }
 

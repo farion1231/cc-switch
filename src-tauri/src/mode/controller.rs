@@ -556,7 +556,7 @@ pub async fn enter_with_route(
     require_proxy_app(app)?;
     if stack_mode && !stack::supports_stack(app) {
         return Err(format!(
-            "{} 不支持叠加模式 ({} does not support the Stack mode)",
+            "{} 不支持聚合模式 ({} does not support the Stack mode)",
             app.as_str(),
             app.as_str()
         ));
@@ -873,7 +873,7 @@ async fn switch_route_checked(
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
     if reject_stacked && current::is_proxy(app) && settled_stack(app)?.enabled {
         return Err(
-            "叠加模式不做故障转移，请先换回路由模式 (The Stack mode has no failover; switch back to the routing mode first)"
+            "聚合模式不做故障转移，请先换回路由模式 (The Stack mode has no failover; switch back to the routing mode first)"
                 .to_string(),
         );
     }
@@ -921,7 +921,9 @@ fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> 
         _ => provider.category.as_deref() == Some("official"),
     };
     if official {
-        return Err("官方账号不能叠加 (An official account cannot be a stacked model)".to_string());
+        return Err(
+            "官方账号不能加入聚合 (An official account cannot be a stacked model)".to_string(),
+        );
     }
     if matches!(app, AppType::Codex) {
         codex_direct::check_stack_member(provider).map_err(err)?;
@@ -958,7 +960,7 @@ pub async fn set_stack_member(
 ) -> Result<Option<&'static str>, StackWriteError> {
     if !stack::supports_stack(app) {
         return Err(StackWriteError::unchanged(format!(
-            "{} 不支持叠加模型 ({} does not support stacked models)",
+            "{} 不支持聚合的模型 ({} does not support stacked models)",
             app.as_str(),
             app.as_str()
         )));
