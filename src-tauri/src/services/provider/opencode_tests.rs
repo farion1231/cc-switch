@@ -137,6 +137,28 @@ fn opencode_builtin_partial_model_override_can_omit_display_name() {
 
 #[test]
 #[serial]
+fn opencode_failed_update_keeps_previous_provider() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();
+    import_opencode_providers_from_live(&fixture.state).unwrap();
+    let before = fixture.imported();
+    let live_before = fs::read(&fixture.config_path).unwrap();
+
+    let mut edited = before.clone();
+    edited.name = "Failed edit".into();
+    edited.settings_config = json!({"models": []});
+    let error =
+        ProviderService::update(&fixture.state, AppType::OpenCode, None, edited).unwrap_err();
+
+    assert!(error.to_string().contains("invalid config structure"));
+    assert_eq!(fs::read(&fixture.config_path).unwrap(), live_before);
+    let restored = fixture.imported();
+    assert_eq!(restored.name, before.name);
+    assert_eq!(restored.settings_config, before.settings_config);
+}
+
+#[test]
+#[serial]
 fn opencode_builtin_incomplete_copies_cannot_be_added_to_live() {
     let fixture = Fixture::new();
     fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();

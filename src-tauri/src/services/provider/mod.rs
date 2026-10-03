@@ -5827,6 +5827,15 @@ impl ProviderService {
                 return Self::save_mcode_provider(state, &provider, live_config_managed, false);
             }
 
+            if app_type == AppType::OpenCode {
+                return Self::update_opencode(
+                    state,
+                    &provider,
+                    existing_provider.as_ref(),
+                    live_config_managed,
+                );
+            }
+
             // Save to database after live-config presence is resolved so parse errors
             // do not report failure after already mutating DB state.
             state.db.save_provider(app_type.as_str(), &provider)?;
@@ -5930,6 +5939,39 @@ impl ProviderService {
                         "更新 Codex 供应商失败: {error}; 恢复供应商数据同时失败: {rollback}"
                     )));
                 }
+            }
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    /// 保存 OpenCode 供应商（additive 模式的普通路径，不含 OMO 变体）。调用方持有这个应用的
+    /// 切换锁。
+    ///
+    /// 已托管进 live 的那家先存行、再写 opencode.json；写失败就把行恢复原样（行是本次才建的
+    /// 就删掉），数据库卡片不会和 live 文件失步（同 [`Self::update_codex`] 的失败语义）。OpenCode
+    /// 只做 additive 写、不进代理发布，没有 pending，失败不会是部分发布，恢复总是安全的。
+    /// 其余只存行。
+    fn update_opencode(
+        state: &AppState,
+        provider: &Provider,
+        existing: Option<&Provider>,
+        live_config_managed: bool,
+    ) -> Result<bool, AppError> {
+        let app_type = AppType::OpenCode;
+        state.db.save_provider(app_type.as_str(), provider)?;
+        if !live_config_managed {
+            return Ok(true);
+        }
+        if let Err(error) = write_live_for_state(state, &app_type, provider) {
+            let rollback = match existing {
+                Some(existing) => state.db.save_provider(app_type.as_str(), existing),
+                None => state.db.delete_provider(app_type.as_str(), &provider.id),
+            };
+            if let Err(rollback) = rollback {
+                return Err(AppError::Message(format!(
+                    "更新 OpenCode 供应商失败: {error}; 恢复供应商数据同时失败: {rollback}"
+                )));
             }
             return Err(error);
         }
