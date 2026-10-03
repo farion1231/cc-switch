@@ -11,13 +11,7 @@ import {
   sessionsApi,
   type AppId,
 } from "@/lib/api";
-import type {
-  Provider,
-  Settings,
-  UsageResult,
-  SessionMeta,
-  SessionMessage,
-} from "@/types";
+import type { Provider, Settings, UsageResult, SessionMeta } from "@/types";
 import { usageKeys } from "@/lib/query/usage";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
@@ -312,14 +306,5 @@ export const useSessionsQuery = () => {
   });
 };
 
-export const useSessionMessagesQuery = (
-  providerId?: string,
-  sourcePath?: string,
-) => {
-  return useQuery<SessionMessage[]>({
-    queryKey: ["sessionMessages", providerId, sourcePath],
-    queryFn: async () => sessionsApi.getMessages(providerId!, sourcePath!),
-    enabled: Boolean(providerId && sourcePath),
-    staleTime: 30 * 1000,
-  });
-};
+// 会话消息查询已迁到 ./sessions（阅读页数据层），这里保留转发给旧调用方
+export { useSessionMessagesQuery } from "./sessions";

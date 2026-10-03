@@ -15,6 +15,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
+import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
@@ -423,7 +424,10 @@ export const useDeleteSessionMutation = () => {
         ),
       );
       queryClient.removeQueries({
-        queryKey: ["sessionMessages", input.providerId, input.sourcePath],
+        queryKey: sessionKeys.messages(input.providerId, input.sourcePath),
+      });
+      queryClient.removeQueries({
+        queryKey: sessionKeys.transcript(input.providerId, input.sourcePath),
       });
 
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });

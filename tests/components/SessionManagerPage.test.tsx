@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import { piApi } from "@/lib/api/pi";
 import { sessionsApi } from "@/lib/api/sessions";
@@ -76,12 +77,19 @@ const openRow = (title: string) =>
 const openAppMenu = async () =>
   userEvent.click(screen.getByRole("button", { name: /^应用：/ }));
 
+const EXPANDED_KEY = "cc-switch.sessionManager.expandedProjects";
+
 describe("SessionManagerPage", () => {
   beforeEach(() => {
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     platform.mac = false;
     window.localStorage.clear();
+    // 项目分组默认收起；其余用例要直接看到会话，先把模拟项目都记成已展开
+    window.localStorage.setItem(
+      EXPANDED_KEY,
+      JSON.stringify(["/mock/codex", "/mock/claude", UNKNOWN_PROJECT_DIR_KEY]),
+    );
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
@@ -208,9 +216,37 @@ describe("SessionManagerPage", () => {
 
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
-    expect(
-      window.localStorage.getItem("cc-switch.sessionManager.collapsedProjects"),
-    ).toContain("/mock/codex");
+    expect(window.localStorage.getItem(EXPANDED_KEY)).not.toContain(
+      "/mock/codex",
+    );
+  });
+
+  it("starts with project groups collapsed and remembers expanded ones", async () => {
+    window.localStorage.removeItem(EXPANDED_KEY);
+    renderPage("codex");
+
+    const toggle = await screen.findByRole("button", { name: /^codex/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Alpha Session")).toBeInTheDocument();
+    expect(window.localStorage.getItem(EXPANDED_KEY)).toContain("/mock/codex");
+  });
+
+  it("opens collapsed groups while searching", async () => {
+    window.localStorage.removeItem(EXPANDED_KEY);
+    renderPage("codex");
+
+    await screen.findByRole("button", { name: /^codex/ });
+    expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "Alpha" },
+    });
+    // 标题里的匹配部分会被高亮拆开，按高亮的那段找
+    expect(await screen.findByText("Alpha")).toBeInTheDocument();
   });
 
   it("switches to all apps and to time buckets", async () => {
@@ -309,15 +345,25 @@ describe("SessionManagerPage", () => {
     // 返回和会话名并进页头：只剩一层页头，「会话」那条不再单独出现
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("button", { name: "返回会话列表" })).toBeVisible();
-    expect(await screen.findByText("alpha question")).toBeInTheDocument();
-    expect(screen.getByText("shell")).toBeInTheDocument();
+    // 正文和右侧对话目录各出现一次
+    expect(await screen.findAllByText("alpha question")).toHaveLength(2);
+    expect(
+      within(screen.getByRole("navigation", { name: "对话目录" })).getByText(
+        "alpha question",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("const a = 1;")).toBeInTheDocument();
+    // 工具调用和输出合并进执行过程，默认折叠成一行摘要；展开后能看到
+    expect(screen.queryByText("shell")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^展开执行过程/ }));
+    expect(screen.getByText("shell")).toBeInTheDocument();
     // 列表藏起来了
     expect(screen.queryByRole("region", { name: "会话列表" })).toBeNull();
 
     // 只看对话：工具调用隐藏
-    fireEvent.click(screen.getByRole("switch"));
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
     expect(screen.queryByText("shell")).not.toBeInTheDocument();
+    expect(screen.getAllByText("alpha question")).toHaveLength(2);
 
     fireEvent.click(screen.getByRole("button", { name: "下一个会话" }));
     expect(

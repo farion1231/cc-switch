@@ -18,7 +18,6 @@ import { useSessionSearch } from "@/hooks/useSessionSearch";
 import {
   piKeys,
   useDeleteSessionMutation,
-  useSessionMessagesQuery,
   useSessionsQuery,
   useSettingsQuery,
 } from "@/lib/query";
@@ -44,7 +43,8 @@ import { isMac } from "@/lib/platform";
 import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
 import { SessionItem, sessionMenuItemClass } from "./SessionItem";
-import { SessionReader } from "./SessionReader";
+import { SessionReader } from "./reader/SessionReader";
+import { sessionKeys, useSessionTranscript } from "@/lib/query/sessions";
 import { SessionDeleteDialog, SessionSourcesDialog } from "./SessionDialogs";
 import {
   canDeleteSession,
@@ -62,7 +62,9 @@ import {
 } from "./utils";
 
 const GROUP_MODE_STORAGE_KEY = "cc-switch.sessionManager.groupMode";
-const COLLAPSED_STORAGE_KEY = "cc-switch.sessionManager.collapsedProjects";
+// 按项目分组时默认全部收起，只记住用户手动展开过的项目。
+// 换了新键：旧的 collapsedProjects 记的是「收起了哪些」，语义相反，直接弃用。
+const EXPANDED_STORAGE_KEY = "cc-switch.sessionManager.expandedProjects";
 
 type AppFilter = SessionAppId | "all";
 type GroupMode = "time" | "project";
@@ -77,10 +79,10 @@ const readGroupMode = (): GroupMode => {
   }
 };
 
-const readCollapsed = (): Set<string> => {
+const readExpanded = (): Set<string> => {
   try {
     const parsed = JSON.parse(
-      window.localStorage.getItem(COLLAPSED_STORAGE_KEY) ?? "[]",
+      window.localStorage.getItem(EXPANDED_STORAGE_KEY) ?? "[]",
     );
     return new Set(
       Array.isArray(parsed)
@@ -146,7 +148,7 @@ export function SessionManagerPage({
   );
   const [query, setQuery] = useState("");
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
-  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
+  const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
   const [readerKey, setReaderKey] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(
@@ -175,13 +177,13 @@ export function SessionManagerPage({
   useEffect(() => {
     try {
       window.localStorage.setItem(
-        COLLAPSED_STORAGE_KEY,
-        JSON.stringify(Array.from(collapsed).sort()),
+        EXPANDED_STORAGE_KEY,
+        JSON.stringify(Array.from(expanded).sort()),
       );
     } catch {
       // 同上
     }
-  }, [collapsed]);
+  }, [expanded]);
 
   const piSessionDiscovery = useQuery({
     queryKey: piKeys.sessionDiscovery,
@@ -231,6 +233,11 @@ export function SessionManagerPage({
     providerFilter: appFilter,
   });
   const trimmedQuery = query.trim();
+  // 搜索时全部展开，否则匹配到的会话会藏在收起的项目里
+  const isGroupOpen = useCallback(
+    (key: string) => trimmedQuery !== "" || expanded.has(key),
+    [trimmedQuery, expanded],
+  );
   const matches = useMemo(
     () => sortSessionsByTime(searchSessions(query)),
     [searchSessions, query],
@@ -280,7 +287,7 @@ export function SessionManagerPage({
     }
   }, [readerKey, readerSession, isLoading]);
 
-  const messagesQuery = useSessionMessagesQuery(
+  const transcript = useSessionTranscript(
     readerSession?.providerId,
     readerSession?.sourcePath,
   );
@@ -515,7 +522,16 @@ export function SessionManagerPage({
         .filter((result) => result.success)
         .forEach((result) => {
           queryClient.removeQueries({
-            queryKey: ["sessionMessages", result.providerId, result.sourcePath],
+            queryKey: sessionKeys.messages(
+              result.providerId,
+              result.sourcePath,
+            ),
+          });
+          queryClient.removeQueries({
+            queryKey: sessionKeys.transcript(
+              result.providerId,
+              result.sourcePath,
+            ),
           });
         });
 
@@ -560,7 +576,7 @@ export function SessionManagerPage({
   };
 
   const toggleGroup = (key: string) => {
-    setCollapsed((current) => {
+    setExpanded((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -576,7 +592,7 @@ export function SessionManagerPage({
   };
 
   const reloadMessages = async () => {
-    const result = await messagesQuery.refetch();
+    const result = (await transcript.refetch()) as { error?: unknown };
     if (!result.error) {
       toast.success(
         t("sessionManager.reloaded", { defaultValue: "已重新读取这个会话" }),
@@ -703,7 +719,7 @@ export function SessionManagerPage({
           group,
           first: groupIndex === 0,
         });
-        if (collapsed.has(group.key)) return;
+        if (!isGroupOpen(group.key)) return;
         group.sessions.forEach((session) =>
           rows.push({
             kind: "session",
@@ -715,7 +731,7 @@ export function SessionManagerPage({
       });
     }
     return rows;
-  }, [groupMode, timeGroups, projectGroups, collapsed]);
+  }, [groupMode, timeGroups, projectGroups, isGroupOpen]);
 
   const stickyIndexes = useMemo(
     () =>
@@ -750,7 +766,7 @@ export function SessionManagerPage({
     group: (typeof projectGroups)[number],
     first: boolean,
   ) => {
-    const open = !collapsed.has(group.key);
+    const open = isGroupOpen(group.key);
     const fullPath = group.projectDir ? shortenHomePath(group.projectDir) : "";
     const pathHead = fullPath.endsWith(group.label)
       ? fullPath.slice(0, fullPath.length - group.label.length)
@@ -998,9 +1014,7 @@ export function SessionManagerPage({
             key={readerKey}
             session={readerSession}
             appName={appName(readerSession.providerId)}
-            messages={messagesQuery.data ?? []}
-            isLoading={messagesQuery.isLoading}
-            error={messagesQuery.error}
+            transcript={transcript}
             listQuery={trimmedQuery}
             launchTerminal={terminalName}
             hasPrev={readerIndex > 0}
