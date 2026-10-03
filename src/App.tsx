@@ -66,6 +66,10 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
+import {
+  hasOpencodeDefinition,
+  isNativeOpencodeConfig,
+} from "@/components/providers/forms/helpers/opencodeFormUtils";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
@@ -824,16 +828,25 @@ function App() {
       provider.category !== "omo" &&
       provider.category !== "omo-slim"
     ) {
-      const { npm, models } = provider.settingsConfig;
+      // A copy gets a new ID, so it cannot inherit a built-in definition.
+      // Native V2 declarations name their package in `package`, not `npm`.
+      const isNative = isNativeOpencodeConfig(
+        JSON.stringify(provider.settingsConfig),
+        provider.meta?.opencodeConfigFormat,
+      );
       if (
-        typeof npm !== "string" ||
-        !npm.trim() ||
-        !models ||
-        typeof models !== "object" ||
-        Array.isArray(models) ||
-        Object.keys(models).length === 0
+        !hasOpencodeDefinition(
+          provider.settingsConfig,
+          isNative ? "package" : "npm",
+        )
       ) {
-        toast.error(t("opencode.duplicateRequiresDefinition"));
+        toast.error(
+          t(
+            isNative
+              ? "opencode.duplicateRequiresNativeDefinition"
+              : "opencode.duplicateRequiresDefinition",
+          ),
+        );
         return;
       }
     }
