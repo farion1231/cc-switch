@@ -16,7 +16,7 @@
 use super::error::ProxyError;
 use super::providers::codex_compaction::{
     compaction_item_replay_text, is_compaction_item, is_unrecognized_compaction_item,
-    user_message_item,
+    strip_mismatched_item_id, user_message_item,
 };
 use super::types::RectifierConfig;
 use serde_json::{json, Value};
@@ -31,7 +31,8 @@ const ENCRYPTED_PART_PLACEHOLDER: &str = "[encrypted content omitted]";
 /// 上游拒绝了请求里的密文，重试前要去掉哪些状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpaqueStateRejection {
-    /// 去掉推理条目，函数输出、agent_message 里的加密片段换成占位文字。
+    /// 清掉别家回合留下的状态：去掉推理条目，函数输出、agent_message 里的加密片段换成
+    /// 占位文字，前缀和条目类型对不上的 id 去掉。
     pub reasoning: bool,
     /// 压缩条目换成文字（没有载荷的标记直接去掉）。压缩条目是整段早期对话的唯一载体：
     /// - 官方：只有错误明确点名压缩时才换。第三方回合的压缩由 CC Switch 包装、发送前已经
@@ -53,17 +54,6 @@ pub struct OpaqueStateRectifyResult {
     pub replaced_encrypted_parts: usize,
     /// 去掉的别家格式条目 id 数量
     pub removed_foreign_ids: usize,
-}
-
-/// OpenAI 校验输入条目 id 的前缀；别家（MiniMax 的 `<hex>_msg_N`、`<hex>_fc_N`）签发的不合格式。
-/// id 在输入里可省略，调用和结果靠 `call_id` 对应。
-fn expected_id_prefix(item_type: &str) -> Option<&'static str> {
-    match item_type {
-        "message" => Some("msg_"),
-        "function_call" => Some("fc_"),
-        "custom_tool_call" => Some("ctc_"),
-        _ => None,
-    }
 }
 
 /// 上游是不是因为验不了请求里的密文而拒绝。受整流器总开关管辖。
@@ -244,19 +234,9 @@ pub fn rectify_opaque_state(
             }
             _ => {}
         }
-        if rejection.reasoning {
-            if let Some(prefix) = expected_id_prefix(&item_type) {
-                let foreign = item
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| !id.starts_with(prefix));
-                if foreign {
-                    if let Some(object) = item.as_object_mut() {
-                        object.remove("id");
-                    }
-                    result.removed_foreign_ids += 1;
-                }
-            }
+        // 别家签发的 id（MiniMax 的 `<hex>_msg_N`、`<hex>_fc_N`）不合 OpenAI 的前缀校验
+        if rejection.reasoning && strip_mismatched_item_id(&mut item, &item_type) {
+            result.removed_foreign_ids += 1;
         }
         rectified.push(item);
     }
