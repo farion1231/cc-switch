@@ -39,7 +39,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {
-            crate::linux_fix::nudge_main_window(window.clone());
+            crate::linux_fix::reactivate_main_window(window.clone(), "lightweight-exit");
         }
         #[cfg(target_os = "windows")]
         {
@@ -74,7 +74,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {
-            crate::linux_fix::nudge_main_window(window.clone());
+            crate::linux_fix::reactivate_main_window(window.clone(), "lightweight-recreated");
         }
     }
 
