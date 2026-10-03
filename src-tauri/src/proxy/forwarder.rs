@@ -4,6 +4,7 @@
 
 use super::hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES};
 use super::{
+    adaptive_thinking_rectifier::{rectify_adaptive_thinking, should_rectify_adaptive_thinking},
     body_filter::filter_private_params_with_whitelist,
     content_encoding::{decompress_body_with_limit, get_content_encoding},
     error::*,
@@ -636,6 +637,7 @@ impl RequestForwarder {
             // —— 首家 provider 整流后被 5xx/timeout 击落时，下家仍能用整流后的请求体走整流流程
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
+            let mut adaptive_rectifier_retried = false;
             let mut media_rectifier_retried = false;
             let mut opaque_rectifier_retried = false;
 
@@ -1023,6 +1025,167 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             "budget 整流",
+                                            &mut last_error,
+                                            &mut last_provider,
+                                        )
+                                        .await
+                                    {
+                                        return Err(err);
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
+                    // 检测是否需要触发 adaptive thinking 整流器（仅 Claude/ClaudeAuth 供应商）
+                    // 模型被映射到 thinking 常开的新模型时，客户端按原模型发送的 thinking: disabled
+                    // 与强制 tool_choice 会被上游拒绝；按报错指引整流后对同一供应商重试一次。
+                    if is_anthropic_provider {
+                        let error_message = extract_error_message(&e);
+                        if should_rectify_adaptive_thinking(
+                            error_message.as_deref(),
+                            &self.rectifier_config,
+                        ) {
+                            // 已经重试过：直接返回错误（不可重试客户端错误）
+                            if adaptive_rectifier_retried {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-023] adaptive thinking 整流器已触发过，不再重试"
+                                );
+                                self.router
+                                    .release_permit_neutral(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+                                let mut status = self.status.write().await;
+                                status.failed_requests += 1;
+                                status.last_error = Some(e.to_string());
+                                if status.total_requests > 0 {
+                                    status.success_rate = (status.success_requests as f32
+                                        / status.total_requests as f32)
+                                        * 100.0;
+                                }
+                                return Err(ForwardError {
+                                    error: e,
+                                    provider: Some(provider.clone()),
+                                });
+                            }
+
+                            let adaptive_rectified = rectify_adaptive_thinking(&mut provider_body);
+                            if !adaptive_rectified.applied {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-024] adaptive thinking 整流器触发但无可整流内容，不做无意义重试"
+                                );
+                                self.router
+                                    .release_permit_neutral(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+                                let mut status = self.status.write().await;
+                                status.failed_requests += 1;
+                                status.last_error = Some(e.to_string());
+                                if status.total_requests > 0 {
+                                    status.success_rate = (status.success_requests as f32
+                                        / status.total_requests as f32)
+                                        * 100.0;
+                                }
+                                return Err(ForwardError {
+                                    error: e,
+                                    provider: Some(provider.clone()),
+                                });
+                            }
+
+                            log::info!(
+                                "[{}] [RECT-020] adaptive thinking 整流器触发, removed_disabled_thinking={}, relaxed_tool_choice={:?}",
+                                app_type_str,
+                                adaptive_rectified.removed_disabled_thinking,
+                                adaptive_rectified.relaxed_tool_choice
+                            );
+
+                            let _ = std::mem::replace(&mut adaptive_rectifier_retried, true);
+
+                            // 使用同一供应商重试（不计入熔断器）
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    provider,
+                                    endpoint,
+                                    &provider_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                )
+                                .await
+                            {
+                                Ok((response, claude_api_format, outbound_model)) => {
+                                    log::info!("[{app_type_str}] [RECT-021] adaptive thinking 整流重试成功");
+                                    self.record_success_result(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+
+                                    {
+                                        let mut current_providers =
+                                            self.current_providers.write().await;
+                                        current_providers.insert(
+                                            app_type_str.to_string(),
+                                            (provider.id.clone(), provider.name.clone()),
+                                        );
+                                    }
+
+                                    {
+                                        let mut status = self.status.write().await;
+                                        status.success_requests += 1;
+                                        status.last_error = None;
+                                        let should_switch =
+                                            self.current_provider_id_at_start.as_str()
+                                                != provider.id.as_str();
+                                        if should_switch {
+                                            status.failover_count += 1;
+                                            let fm = self.failover_manager.clone();
+                                            let ah = self.app_handle.clone();
+                                            let pid = provider.id.clone();
+                                            let pname = provider.name.clone();
+                                            let at = app_type_str.to_string();
+                                            tokio::spawn(async move {
+                                                let _ = fm
+                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                    .await;
+                                            });
+                                        }
+                                        if status.total_requests > 0 {
+                                            status.success_rate = (status.success_requests as f32
+                                                / status.total_requests as f32)
+                                                * 100.0;
+                                        }
+                                    }
+
+                                    return Ok(ForwardResult {
+                                        response,
+                                        provider: provider.clone(),
+                                        claude_api_format,
+                                        outbound_model,
+                                        connection_guard: None,
+                                    });
+                                }
+                                Err(retry_err) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [RECT-022] adaptive thinking 整流重试仍失败: {retry_err}"
+                                    );
+                                    if let Some(err) = self
+                                        .handle_rectifier_retry_failure(
+                                            retry_err,
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            "adaptive thinking 整流",
                                             &mut last_error,
                                             &mut last_provider,
                                         )
