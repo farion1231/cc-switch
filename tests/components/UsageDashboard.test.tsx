@@ -74,6 +74,10 @@ vi.mock("@/components/usage/UsageTrendChart", () => ({
   UsageTrendChart: () => <div data-testid="usage-trend" />,
 }));
 
+vi.mock("@/components/usage/UsageHeatmap", () => ({
+  UsageHeatmap: () => <div data-testid="usage-heatmap" />,
+}));
+
 vi.mock("@/components/usage/RequestLogTable", () => ({
   RequestLogTable: (props: { onOpenDetail?: (id: string) => void }) => {
     requestLogTableMock(props);
@@ -107,8 +111,19 @@ vi.mock("@/components/usage/PricingConfigPanel", () => ({
 }));
 
 vi.mock("@/components/usage/UsageDateRangePicker", () => ({
-  UsageDateRangePicker: ({ triggerLabel }: { triggerLabel: string }) => (
-    <button type="button">{triggerLabel}</button>
+  UsageDateRangePicker: ({
+    triggerLabel,
+    onApply,
+  }: {
+    triggerLabel: string;
+    onApply: (selection: { preset: "all" }) => void;
+  }) => (
+    <>
+      <button type="button">{triggerLabel}</button>
+      <button type="button" onClick={() => onApply({ preset: "all" })}>
+        pick-all
+      </button>
+    </>
   ),
 }));
 
@@ -168,24 +183,40 @@ describe("UsageDashboard", () => {
     });
   });
 
+  it("swaps the trend chart for the heatmap on the all-time range", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    expect(await screen.findByTestId("usage-trend")).toBeInTheDocument();
+    expect(screen.queryByTestId("usage-heatmap")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "pick-all" }));
+
+    expect(await screen.findByTestId("usage-heatmap")).toBeInTheDocument();
+    expect(screen.queryByTestId("usage-trend")).not.toBeInTheDocument();
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ range: { preset: "all" } }),
+    );
+  });
+
   it("shows the saved refresh interval in the header menu", () => {
-    renderDashboard({ refreshIntervalMs: 60000 });
+    renderDashboard({ refreshIntervalMs: 5000 });
 
     expect(
       screen.getByRole("button", {
-        name: "usage.refreshInterval: usage.refreshMenu.label:60",
+        name: "usage.refreshInterval: usage.refreshMenu.label:5",
       }),
     ).toBeInTheDocument();
   });
 
-  it("defaults to the last 24 hours", () => {
+  it("defaults to today", () => {
     renderDashboard();
 
     expect(
-      screen.getByRole("button", { name: "usage.preset1d" }),
+      screen.getByRole("button", { name: "usage.presetToday" }),
     ).toBeInTheDocument();
     expect(usageHeroMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ range: { preset: "1d" } }),
+      expect.objectContaining({ range: { preset: "today" } }),
     );
   });
 
@@ -245,16 +276,6 @@ describe("UsageDashboard", () => {
     );
   });
 
-  it("falls back to 30 seconds for a retired 5-second interval", () => {
-    renderDashboard({ refreshIntervalMs: 5000 });
-
-    expect(
-      screen.getByRole("button", {
-        name: "usage.refreshInterval: usage.refreshMenu.label:30",
-      }),
-    ).toBeInTheDocument();
-  });
-
   it("persists refresh interval changes", async () => {
     const user = userEvent.setup();
     const onRefreshIntervalChange = vi.fn().mockResolvedValue(true);
@@ -267,16 +288,16 @@ describe("UsageDashboard", () => {
     );
     await user.click(
       await screen.findByRole("menuitem", {
-        name: "usage.refreshMenu.seconds:60",
+        name: "usage.refreshMenu.seconds:5",
       }),
     );
 
     await waitFor(() =>
-      expect(onRefreshIntervalChange).toHaveBeenCalledWith(60000),
+      expect(onRefreshIntervalChange).toHaveBeenCalledWith(5000),
     );
     expect(
       screen.getByRole("button", {
-        name: "usage.refreshInterval: usage.refreshMenu.label:60",
+        name: "usage.refreshInterval: usage.refreshMenu.label:5",
       }),
     ).toBeInTheDocument();
   });
@@ -293,12 +314,12 @@ describe("UsageDashboard", () => {
     );
     await user.click(
       await screen.findByRole("menuitem", {
-        name: "usage.refreshMenu.seconds:60",
+        name: "usage.refreshMenu.seconds:5",
       }),
     );
 
     await waitFor(() =>
-      expect(onRefreshIntervalChange).toHaveBeenCalledWith(60000),
+      expect(onRefreshIntervalChange).toHaveBeenCalledWith(5000),
     );
     await waitFor(() =>
       expect(

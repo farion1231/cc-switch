@@ -2084,13 +2084,6 @@
     "metrics": {
       "label": "指標",
       "more": "その他の指標",
-      "cacheTotal": "キャッシュ",
-      "perRequest": "1 リクエストあたり",
-      "perMillion": "100 万トークンあたり",
-      "hitRateSub": "キャッシュヒット / 全入力",
-      "outputLabel": "出力",
-      "cacheReadLabel": "キャッシュヒット",
-      "cacheWriteLabel": "キャッシュ書き込み",
       "realTotalHelpTitle": "実消費 Tokens の計算方法",
       "realTotalHelp": "新規入力 + 出力 + キャッシュ書き込み + キャッシュヒット。新規入力にキャッシュは含みません。一部のプロトコル（OpenAI など）はキャッシュ書き込みを報告しないため、その分が少なく出ることがあります。",
       "hitRateHelpTitle": "キャッシュヒット率の計算方法",
@@ -2099,17 +2092,8 @@
     "heatmap": {
       "title": "使用量ヒートマップ",
       "subtitle": "過去 53 週間の日別使用量",
-      "today": "今日",
-      "week": "今週",
-      "month": "今月",
-      "avg7": "直近 7 日の日平均",
-      "streak": "連続日数",
-      "days": "{{count}} 日",
-      "activeDays": "計 {{count}} 日稼働",
       "less": "少",
-      "more": "多",
-      "weekHint": "月曜から",
-      "vsPrev": "前 7 日比"
+      "more": "多"
     },
     "trend": {
       "title": "使用状況の推移 · {{range}}",

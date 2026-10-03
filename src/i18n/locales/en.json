@@ -2084,13 +2084,6 @@
     "metrics": {
       "label": "Metrics",
       "more": "More metrics",
-      "cacheTotal": "Cache",
-      "perRequest": "Per request",
-      "perMillion": "Per 1M tokens",
-      "hitRateSub": "Cache hits / all input",
-      "outputLabel": "Output",
-      "cacheReadLabel": "Cache hits",
-      "cacheWriteLabel": "Cache writes",
       "realTotalHelpTitle": "How total tokens are counted",
       "realTotalHelp": "Fresh input + output + cache writes + cache hits. Fresh input excludes cache; some protocols (such as OpenAI) don't report cache writes, so that part may be low.",
       "hitRateHelpTitle": "How the cache hit rate is calculated",
@@ -2099,17 +2092,8 @@
     "heatmap": {
       "title": "Usage heatmap",
       "subtitle": "Daily usage over the last 53 weeks",
-      "today": "Today",
-      "week": "This week",
-      "month": "This month",
-      "avg7": "7-day daily avg",
-      "streak": "Current streak",
-      "days": "{{count}} days",
-      "activeDays": "{{count}} active days",
       "less": "Less",
-      "more": "More",
-      "weekHint": "From Monday",
-      "vsPrev": "vs prior 7 days"
+      "more": "More"
     },
     "trend": {
       "title": "Usage trend · {{range}}",

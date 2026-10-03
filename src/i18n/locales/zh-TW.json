@@ -2085,13 +2085,6 @@
     "metrics": {
       "label": "指標",
       "more": "更多指標",
-      "cacheTotal": "快取",
-      "perRequest": "每次請求",
-      "perMillion": "每百萬 Token",
-      "hitRateSub": "快取命中 / 全部輸入",
-      "outputLabel": "輸出",
-      "cacheReadLabel": "快取命中",
-      "cacheWriteLabel": "快取寫入",
       "realTotalHelpTitle": "真實消耗 Tokens 怎麼算",
       "realTotalHelp": "新增輸入 + 輸出 + 快取寫入 + 快取命中。新增輸入不含快取；部分協定（如 OpenAI）不上報快取寫入，這一項可能偏低。",
       "hitRateHelpTitle": "快取命中率怎麼算",
@@ -2100,17 +2093,8 @@
     "heatmap": {
       "title": "用量熱力圖",
       "subtitle": "最近 53 週的每日用量",
-      "today": "今天",
-      "week": "本週",
-      "month": "本月",
-      "avg7": "近 7 天日均",
-      "streak": "目前連續",
-      "days": "{{count}} 天",
-      "activeDays": "共活躍 {{count}} 天",
       "less": "少",
-      "more": "多",
-      "weekHint": "週一起",
-      "vsPrev": "較前 7 天"
+      "more": "多"
     },
     "trend": {
       "title": "使用趨勢 · {{range}}",
