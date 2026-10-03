@@ -849,6 +849,7 @@
     "toolConflictDefault": "預設",
     "toolConflictNotRunnable": "無法執行",
     "toolDiagnoseNoConflict": "未發現安裝衝突",
+    "toolDiagnoseConflicts": "{{count}} 個工具有多處安裝，衝突列表已在對應行展開",
     "toolDiagnoseFailed": "診斷失敗",
     "toolUpgradeConfirmTitle": "確認更新位置",
     "toolUpgradeConfirmHint": "偵測到多處安裝。本次更新不會更新所有安裝；請以下方各工具顯示的實際更新位置為準。",

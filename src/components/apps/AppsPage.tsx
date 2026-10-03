@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -109,6 +109,17 @@ export function AppsPage() {
   const [expanded, setExpanded] = useState<Partial<Record<ToolName, boolean>>>(
     {},
   );
+  // 「诊断安装冲突」（和升级后的自动补诊）有结果的行自动展开，否则点了诊断看起来没反应
+  const diagnosedTools = Object.keys(tools.toolDiagnostics) as ToolName[];
+  useEffect(() => {
+    if (diagnosedTools.length === 0) return;
+    setExpanded((prev) => {
+      const next = { ...prev };
+      for (const tool of diagnosedTools) next[tool] = true;
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tools.toolDiagnostics]);
   const { data: desktopStatus } = useQuery({
     queryKey: ["claude-desktop-status"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),

@@ -848,6 +848,7 @@
     "toolConflictDefault": "既定",
     "toolConflictNotRunnable": "実行不可",
     "toolDiagnoseNoConflict": "競合するインストールは見つかりませんでした",
+    "toolDiagnoseConflicts": "{{count}} 個のツールに複数のインストールがあります。該当行に一覧を展開しました",
     "toolDiagnoseFailed": "診断に失敗しました",
     "toolUpgradeConfirmTitle": "アップグレード先の確認",
     "toolUpgradeConfirmHint": "複数のインストールを検出しました。今回のアップグレードはすべてを更新するわけではありません。実際に作用する箇所は下記の各項目をご確認ください。",
