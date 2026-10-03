@@ -5,6 +5,75 @@ use url::{Host, Url};
 
 use crate::error::AppError;
 
+/// 用量脚本沙箱里宿主进程的本地时区偏移（分钟，遵循 JS `getTimezoneOffset()`
+/// 的语义：UTC − local，正数代表 UTC 西侧）。
+///
+/// 见 #7751：rquickjs-sys 0.8.1 在 Windows 上的 `quickjs.c` 把
+/// `TIME_ZONE_INFORMATION.Bias`（单位本身就是分钟）又除以 60，于是
+/// `getTimezoneOffset()` 在 UTC+8 上返回 `-8` 而非 `-480`，本地时间字段随之
+/// 整体偏离一个数量级。这里把 chrono（自带时区数据库、DST 感知）算出的真实偏移
+/// 注入脚本运行时，覆盖引擎默认实现。
+fn local_timezone_offset_minutes() -> i32 {
+    // 直接从 chrono 的偏移取 `local_minus_utc`（秒），避免跨时区相减带来的类型
+    // 推导问题；JS 期望的是「UTC − local」分钟数，所以取负。
+    let minutes = -chrono::Local::now().offset().local_minus_utc() / 60;
+    // 限制到 JS 规范允许的 [-720, 840] 区间，避免上游时间戳异常导致巨值。
+    minutes.clamp(-720, 840)
+}
+
+/// 在用量脚本之前注入的时区垫片，把 `Date.prototype.getTimezoneOffset` 与
+/// 本地读取类方法重写到宿主时间上。构造（`new Date(y, m, ...)`）与 setter 不在
+/// 本次范围（见 #7751）。
+///
+/// `offset_minutes` 是 JS 语义的偏移：UTC − local，单位分钟。
+/// 本地毫秒数 = UTC 毫秒数 − `offset_minutes` * 60_000。
+fn timezone_shim(offset_minutes: i32) -> String {
+    format!(
+        r#"
+        (function() {{
+            var __CC_TZ_OFFSET_MIN__ = {offset_minutes};
+            var __CC_TZ_OFFSET_MS__ = __CC_TZ_OFFSET_MIN__ * 60000;
+            function __cc_local_ms(utc_ms) {{
+                return utc_ms - __CC_TZ_OFFSET_MS__;
+            }}
+            function __cc_local_date(self) {{
+                var t = (self && typeof self.getTime === 'function')
+                    ? self.getTime()
+                    : Date.now();
+                return new Date(__cc_local_ms(t));
+            }}
+            Date.prototype.getTimezoneOffset = function() {{
+                return __CC_TZ_OFFSET_MIN__;
+            }};
+            Date.prototype.getFullYear = function() {{
+                return __cc_local_date(this).getUTCFullYear();
+            }};
+            Date.prototype.getMonth = function() {{
+                return __cc_local_date(this).getUTCMonth();
+            }};
+            Date.prototype.getDate = function() {{
+                return __cc_local_date(this).getUTCDate();
+            }};
+            Date.prototype.getDay = function() {{
+                return __cc_local_date(this).getUTCDay();
+            }};
+            Date.prototype.getHours = function() {{
+                return __cc_local_date(this).getUTCHours();
+            }};
+            Date.prototype.getMinutes = function() {{
+                return __cc_local_date(this).getUTCMinutes();
+            }};
+            Date.prototype.getSeconds = function() {{
+                return __cc_local_date(this).getUTCSeconds();
+            }};
+            Date.prototype.getMilliseconds = function() {{
+                return __cc_local_date(this).getUTCMilliseconds();
+            }};
+        }})();
+        "#
+    )
+}
+
 /// 执行用量查询脚本
 pub async fn execute_usage_script(
     script_code: &str,
@@ -76,7 +145,19 @@ pub async fn execute_usage_script(
             )
         })?;
 
+        let timezone_shim = timezone_shim(local_timezone_offset_minutes());
+
         context.with(|ctx| {
+            // 先注入时区垫片覆盖 rquickjs-sys 0.8.1 在 Windows 上把偏移单位算错的
+            // bug（见 #7751）；垫片对其它平台也是无害的覆盖。
+            ctx.eval::<(), _>(timezone_shim.as_str()).map_err(|e| {
+                AppError::localized(
+                    "usage_script.timezone_shim_failed",
+                    format!("注入时区垫片失败: {e}"),
+                    format!("Failed to install timezone shim: {e}"),
+                )
+            })?;
+
             // 执行用户代码，获取配置对象
             let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
                 AppError::localized(
@@ -151,7 +232,18 @@ pub async fn execute_usage_script(
             )
         })?;
 
+        let timezone_shim = timezone_shim(local_timezone_offset_minutes());
+
         context.with(|ctx| {
+            // 与 request 阶段相同：先注入时区垫片，再 eval 用户脚本。
+            ctx.eval::<(), _>(timezone_shim.as_str()).map_err(|e| {
+                AppError::localized(
+                    "usage_script.timezone_shim_failed",
+                    format!("注入时区垫片失败: {e}"),
+                    format!("Failed to install timezone shim: {e}"),
+                )
+            })?;
+
             // 重新 eval 获取配置对象
             let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
                 AppError::localized(
@@ -723,6 +815,107 @@ mod tests {
         assert!(
             elapsed < std::time::Duration::from_secs(15),
             "interruption took too long: {elapsed:?}"
+        );
+    }
+
+    /// `#7751`：rquickjs-sys 0.8.1 在 Windows 上的 `quickjs.c` 把
+    /// `TIME_ZONE_INFORMATION.Bias`（单位本身就是分钟）又除以 60，
+    /// `getTimezoneOffset()` 在 UTC+8 上返回 `-8` 而非 `-480`，本地时间
+    /// 字段因此整体偏离一个数量级。垫片按宿主 chrono 的真实偏移覆盖引擎
+    /// 默认实现，本测试断言垫片在已知偏移下能把一个 UTC 时间戳映射到期望
+    /// 的本地字段。
+    #[test]
+    fn timezone_shim_aligns_local_fields_with_host_offset() {
+        // 1790680967498 = 2026-09-29T11:22:47.498Z（与 #7751 探针同时间戳）
+        let utc_ms: i64 = 1_790_680_967_498;
+        for (offset_minutes, expected) in [
+            // UTC+8：本地应该是 19:22:47.498
+            (-480i32, ["2026", "8", "29", "19", "22", "47", "498"]),
+            // UTC：本地就是 UTC 本身
+            (0, ["2026", "8", "29", "11", "22", "47", "498"]),
+            // UTC-5（EST，无 DST）：本地应该是 06:22:47.498
+            (300, ["2026", "8", "29", "6", "22", "47", "498"]),
+        ] {
+            let program = format!(
+                r#"
+                {shim}
+                (function() {{
+                    var d = new Date({utc});
+                    return [
+                        String(d.getFullYear()),
+                        String(d.getMonth()),
+                        String(d.getDate()),
+                        String(d.getHours()),
+                        String(d.getMinutes()),
+                        String(d.getSeconds()),
+                        String(d.getMilliseconds())
+                    ].join(',');
+                }})()
+                "#,
+                shim = timezone_shim(offset_minutes),
+                utc = utc_ms
+            );
+
+            let runtime = Runtime::new().expect("runtime");
+            runtime.set_memory_limit(16 * 1024 * 1024);
+            runtime.set_max_stack_size(256 * 1024);
+            let context = Context::full(&runtime).expect("context");
+            let raw: String =
+                context.with(|ctx| ctx.eval::<String, _>(program.as_str()).expect("eval"));
+
+            assert_eq!(
+                raw,
+                expected.join(","),
+                "offset = {offset_minutes}",
+                offset_minutes = offset_minutes,
+            );
+        }
+    }
+
+    /// `#7751`：垫片要原样返回 JS 规范要求的 `getTimezoneOffset()` 偏移
+    /// （单位分钟），不能像坏掉的引擎那样返回一个数量级错误的 `-8`。
+    #[test]
+    fn timezone_shim_reports_offset_in_minutes() {
+        for offset_minutes in [-720i32, -480, -60, 0, 60, 300, 840] {
+            let program = format!(
+                r#"
+                {shim}
+                (function() {{
+                    return String(new Date(0).getTimezoneOffset());
+                }})()
+                "#,
+                shim = timezone_shim(offset_minutes),
+            );
+
+            let runtime = Runtime::new().expect("runtime");
+            runtime.set_memory_limit(16 * 1024 * 1024);
+            runtime.set_max_stack_size(256 * 1024);
+            let context = Context::full(&runtime).expect("context");
+            let raw: i32 = context.with(|ctx| {
+                ctx.eval::<String, _>(program.as_str())
+                    .expect("eval")
+                    .parse()
+                    .expect("parse")
+            });
+
+            assert_eq!(
+                raw,
+                offset_minutes,
+                "offset_minutes = {offset_minutes}",
+                offset_minutes = offset_minutes,
+            );
+        }
+    }
+
+    /// 宿主偏移必须落在 JS 规范允许的 [-720, 840] 区间，否则垫片会把本地
+    /// 字段算出错误结果。
+    #[test]
+    fn local_timezone_offset_minutes_is_within_safe_range() {
+        let offset = local_timezone_offset_minutes();
+        assert!(
+            (-720..=840).contains(&offset),
+            "offset = {offset} out of JS-allowed range [-720, 840]",
+            offset = offset,
         );
     }
 }
