@@ -8,8 +8,14 @@ const useProxyStatusQueryMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    // The component passes the fallback as the second positional argument.
-    t: (key: string, defaultValue?: string) => defaultValue ?? key,
+    // The component passes either a fallback string or the streams object for
+    // the interpolated empty-state hint.
+    t: (key: string, arg?: string | { streams?: number }) => {
+      if (typeof arg === "string") return arg;
+      if (arg && typeof arg.streams === "number")
+        return `${key}:${arg.streams}`;
+      return key;
+    },
     i18n: {
       resolvedLanguage: "en",
       language: "en",
@@ -39,6 +45,7 @@ const stat: ProviderStats = {
 const renderTable = (
   overrides: {
     appType?: string;
+    providerName?: string;
     model?: string;
   } = {},
 ) =>
@@ -73,7 +80,22 @@ describe("ProviderStatsTable", () => {
     expect(row?.cells[5]?.textContent).toBe("420ms");
   });
 
-  it("falls back to zero when the provider has no in-flight entry", () => {
+  it("marks a nonzero cell as live state rather than a range statistic", () => {
+    useProviderStatsMock.mockReturnValue({ data: [stat], isLoading: false });
+    useProxyStatusQueryMock.mockReturnValue({
+      data: { in_flight_by_provider: { claude: { p1: 3 } } },
+    });
+
+    renderTable();
+
+    const cell = screen.getByText("Provider One").closest("tr")?.cells[6];
+    // The pulsing live marker carries the "in progress right now" tooltip.
+    expect(
+      cell?.querySelector('span[title="usage.inFlightHint"]'),
+    ).toBeTruthy();
+  });
+
+  it("greys out the cell when the provider has no in-flight entry", () => {
     useProviderStatsMock.mockReturnValue({ data: [stat], isLoading: false });
     useProxyStatusQueryMock.mockReturnValue({
       data: { in_flight_by_provider: {} },
@@ -81,9 +103,9 @@ describe("ProviderStatsTable", () => {
 
     renderTable();
 
-    expect(
-      screen.getByText("Provider One").closest("tr")?.cells[6]?.textContent,
-    ).toBe("0");
+    const cell = screen.getByText("Provider One").closest("tr")?.cells[6];
+    expect(cell?.textContent).toBe("0");
+    expect(cell?.querySelector('span[title="usage.inFlightHint"]')).toBeNull();
   });
 
   it("still renders when the proxy status has not loaded yet", () => {
@@ -143,8 +165,7 @@ describe("ProviderStatsTable", () => {
   it("shows the honest empty state even while streams are in flight", () => {
     // A provider whose first stream of the day has not finished has no recorded
     // usage, so it gets no row: every column of a fabricated row would lie
-    // about the selected range (0 requests / 0 tokens / $0). The live state is
-    // the proxy panel's job, not a stats row.
+    // about the selected range (0 requests / 0 tokens / $0).
     useProviderStatsMock.mockReturnValue({ data: [], isLoading: false });
     useProxyStatusQueryMock.mockReturnValue({
       data: { in_flight_by_provider: { claude: { "fresh-provider": 2 } } },
@@ -155,6 +176,74 @@ describe("ProviderStatsTable", () => {
     const cell = screen.getByText("暂无数据");
     expect(cell.getAttribute("colspan")).toBe("7");
     expect(screen.queryByText("fresh-provider")).toBeNull();
+    // All it gets is the scope-respecting live hint, never a stat row.
+    expect(screen.getByText("usage.inFlightNoRowsYet:2")).toBeTruthy();
+  });
+
+  it("counts the empty-state hint across apps when no app filter is active", () => {
+    useProviderStatsMock.mockReturnValue({ data: [], isLoading: false });
+    useProxyStatusQueryMock.mockReturnValue({
+      data: { in_flight_by_provider: { claude: { p1: 2 }, codex: { p1: 1 } } },
+    });
+
+    renderTable();
+
+    expect(screen.getByText("usage.inFlightNoRowsYet:3")).toBeTruthy();
+  });
+
+  it("scopes the empty-state hint to the app filter, folding claude-desktop", () => {
+    // The dashboard folds claude-desktop into claude for filtering, so a
+    // "claude"-scoped hint must include those streams — but not Codex's.
+    useProviderStatsMock.mockReturnValue({ data: [], isLoading: false });
+    useProxyStatusQueryMock.mockReturnValue({
+      data: {
+        in_flight_by_provider: {
+          claude: { p1: 2 },
+          "claude-desktop": { p2: 1 },
+          codex: { p1: 5 },
+        },
+      },
+    });
+
+    renderTable({ appType: "claude" });
+
+    expect(screen.getByText("usage.inFlightNoRowsYet:3")).toBeTruthy();
+  });
+
+  it("drops the empty-state hint when a model filter cannot scope the count", () => {
+    // In-flight counts are provider-wide; a number shown beside a model filter
+    // would recreate exactly the mixed-scope confusion the review hunts for.
+    useProviderStatsMock.mockReturnValue({ data: [], isLoading: false });
+    useProxyStatusQueryMock.mockReturnValue({
+      data: { in_flight_by_provider: { claude: { p1: 2 } } },
+    });
+
+    renderTable({ model: "claude-sonnet-4-6" });
+
+    expect(screen.queryByText(/inFlightNoRowsYet/)).toBeNull();
+  });
+
+  it("drops the empty-state hint when a provider filter is active", () => {
+    // In-flight entries are keyed by id while the filter is by display name;
+    // with no rows there is no way to resolve the match, so: no hint.
+    useProviderStatsMock.mockReturnValue({ data: [], isLoading: false });
+    useProxyStatusQueryMock.mockReturnValue({
+      data: { in_flight_by_provider: { claude: { p1: 2 } } },
+    });
+
+    renderTable({ providerName: "Provider One" });
+
+    expect(screen.queryByText(/inFlightNoRowsYet/)).toBeNull();
+  });
+
+  it("shows a plain empty state when nothing is in flight", () => {
+    useProviderStatsMock.mockReturnValue({ data: [], isLoading: false });
+    useProxyStatusQueryMock.mockReturnValue({ data: undefined });
+
+    renderTable();
+
+    expect(screen.getByText("暂无数据")).toBeTruthy();
+    expect(screen.queryByText(/inFlightNoRowsYet/)).toBeNull();
   });
 
   it("marks the count as provider-wide once a model filter is active", () => {
