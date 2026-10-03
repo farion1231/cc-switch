@@ -108,13 +108,18 @@ fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
 
     let db_source = format!("sqlite:{}", db_path.display());
     let first_user_messages = first_user_messages(&conn);
+    let last_messages = last_messages(&conn);
 
     for row_result in rows.flatten() {
         if let Some(mut meta) = sqlite_row_to_session_meta(&row_result, &db_source) {
-            if let Some(text) = first_user_messages.get(&meta.session_id) {
-                if meta.title.is_none() {
+            let first = first_user_messages.get(&meta.session_id);
+            if meta.title.is_none() {
+                if let Some(text) = first {
                     meta.title = Some(truncate_summary(text, TITLE_MAX_CHARS));
                 }
+            }
+            // 列表上标的是「最后：」，和其他应用一样取最后一条，而不是开头那句
+            if let Some(text) = last_messages.get(&meta.session_id).or(first) {
                 meta.summary = Some(truncate_summary(text, 160));
             }
             sessions.push(meta);
@@ -125,19 +130,34 @@ fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
 }
 
 /// First displayable user message of each listed session, decoded to text.
-/// Hermes auto-titles most sessions, so this mainly feeds the summary (and the
-/// search index); it is the title only when `sessions.title` is empty.
+/// Hermes auto-titles most sessions, so this is the title only when
+/// `sessions.title` is empty (and the summary fallback when a session has no
+/// readable last message).
 fn first_user_messages(conn: &Connection) -> HashMap<String, String> {
+    edge_messages(conn, "MIN", "role = 'user'")
+}
+
+/// Last displayable user / assistant message of each listed session: what the
+/// list shows after "Last:", same as the other apps' session lists.
+fn last_messages(conn: &Connection) -> HashMap<String, String> {
+    edge_messages(
+        conn,
+        "MAX",
+        "role IN ('user', 'assistant') AND content IS NOT NULL AND content != ''",
+    )
+}
+
+fn edge_messages(conn: &Connection, pick: &str, role_filter: &str) -> HashMap<String, String> {
     let columns = get_table_columns(conn, "messages");
     if columns.is_empty() {
         return HashMap::new();
     }
     let query = format!(
         "SELECT m.session_id, m.content FROM messages m \
-         JOIN (SELECT session_id, MIN(id) AS first_id FROM messages \
-               WHERE role = 'user'{filter} \
+         JOIN (SELECT session_id, {pick}(id) AS edge_id FROM messages \
+               WHERE {role_filter}{filter} \
                  AND session_id IN (SELECT id FROM sessions ORDER BY rowid DESC LIMIT {SQLITE_SCAN_LIMIT}) \
-               GROUP BY session_id) f ON m.id = f.first_id",
+               GROUP BY session_id) f ON m.id = f.edge_id",
         filter = display_filter(&columns),
     );
     let mut stmt = match conn.prepare(&query) {
@@ -1004,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_sessions_sqlite_uses_first_user_message_for_summary_and_missing_title() {
+    fn scan_sessions_sqlite_uses_first_user_message_for_missing_title_and_last_for_summary() {
         let dir = tempdir().expect("tempdir");
         let (path, conn) = hermes_db(dir.path());
         conn.execute_batch(
@@ -1041,7 +1061,34 @@ mod tests {
             .find(|s| s.session_id == "untitled")
             .unwrap();
         assert_eq!(untitled.title.as_deref(), Some("original question"));
+        // 摘要是最后一条（结构化内容解码后的文字），不是开头那句
+        assert_eq!(untitled.summary.as_deref(), Some("later"));
         assert_eq!(untitled.last_active_at, Some(300_000));
+    }
+
+    #[test]
+    fn scan_sessions_sqlite_summary_is_the_last_user_or_assistant_message() {
+        let dir = tempdir().expect("tempdir");
+        let (path, conn) = hermes_db(dir.path());
+        conn.execute_batch(
+            "INSERT INTO sessions (id, title, started_at) VALUES ('s1', 'T', 100.0);",
+        )
+        .unwrap();
+        insert_message(&conn, "s1", "user", "first question", 101.0);
+        insert_message(&conn, "s1", "assistant", "the answer", 102.0);
+        // 工具行和被 undo 藏起来的行都不算「最后」
+        insert_message(&conn, "s1", "tool", "tool output", 103.0);
+        insert_message(&conn, "s1", "user", "rewound question", 104.0);
+        conn.execute(
+            "UPDATE messages SET active = 0, compacted = 0 WHERE id = 4",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let sessions = scan_sessions_sqlite_at(&path);
+        let s1 = sessions.iter().find(|s| s.session_id == "s1").unwrap();
+        assert_eq!(s1.summary.as_deref(), Some("the answer"));
     }
 
     #[test]
