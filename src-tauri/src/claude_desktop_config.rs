@@ -573,6 +573,12 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
 }
 
 pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
+    // Aggregate provider: the model specs come from the slots in its routing
+    // table, not from its own `claudeDesktopModelRoutes`.
+    if crate::aggregate::is_aggregate_provider(provider) {
+        return crate::aggregate::aggregate_model_routes(provider);
+    }
+
     let routes = provider
         .meta
         .as_ref()
@@ -768,7 +774,7 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
     Ok(body)
 }
 
-fn strip_one_m_suffix_for_route_lookup(model: &str) -> &str {
+pub(crate) fn strip_one_m_suffix_for_route_lookup(model: &str) -> &str {
     let trimmed = model.trim();
     let marker = ONE_M_CONTEXT_MARKER.as_bytes();
     let bytes = trimmed.as_bytes();
