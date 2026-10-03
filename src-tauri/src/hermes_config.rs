@@ -468,6 +468,136 @@ fn write_yaml_section_to_config_locked(
     })
 }
 
+/// Install and opt in the CC Switch metadata observer for one Hermes home.
+/// The currently running Hermes process must be restarted by the user.
+pub fn enable_hermes_capture_plugin(profile_name: Option<&str>) -> Result<String, AppError> {
+    let root = get_hermes_dir();
+    let profile = profile_name.unwrap_or("default");
+    let home = if profile == "default" {
+        root
+    } else {
+        if profile.is_empty()
+            || profile == "."
+            || profile == ".."
+            || profile.contains('/')
+            || profile.contains('\\')
+        {
+            return Err(AppError::Config("Invalid Hermes Profile name".to_string()));
+        }
+        let path = root.join("profiles").join(profile);
+        let metadata = fs::symlink_metadata(&path).map_err(|e| AppError::io(&path, e))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(AppError::Config(
+                "Hermes Profile is not a real directory".to_string(),
+            ));
+        }
+        path
+    };
+    enable_hermes_capture_plugin_at_home(&home)?;
+    Ok(profile.to_string())
+}
+
+fn enable_hermes_capture_plugin_at_home(home: &Path) -> Result<(), AppError> {
+    let _guard = hermes_write_lock().lock()?;
+    let config_path = home.join("config.yaml");
+    let raw = if config_path.is_file() {
+        fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?
+    } else {
+        String::new()
+    };
+    let parsed: serde_yaml::Value = if raw.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&raw)
+            .map_err(|e| AppError::Config(format!("Cannot parse Hermes config: {e}")))?
+    };
+    let mut plugins = match parsed.get("plugins") {
+        Some(serde_yaml::Value::Mapping(value)) => value.clone(),
+        None => serde_yaml::Mapping::new(),
+        _ => {
+            return Err(AppError::Config(
+                "Hermes plugins config is not a mapping".to_string(),
+            ))
+        }
+    };
+    let key = serde_yaml::Value::String("ccswitch-usage".to_string());
+    let mut enabled = match plugins.get("enabled") {
+        Some(serde_yaml::Value::Sequence(value)) => value.clone(),
+        None => Vec::new(),
+        _ => {
+            return Err(AppError::Config(
+                "Hermes plugins.enabled is not a list".to_string(),
+            ))
+        }
+    };
+    if !enabled.contains(&key) {
+        enabled.push(key.clone());
+    }
+    plugins.insert("enabled".into(), serde_yaml::Value::Sequence(enabled));
+    if let Some(disabled) = plugins.get("disabled") {
+        let mut disabled = disabled
+            .as_sequence()
+            .ok_or_else(|| AppError::Config("Hermes plugins.disabled is not a list".to_string()))?
+            .clone();
+        disabled.retain(|entry| entry != &key);
+        plugins.insert("disabled".into(), serde_yaml::Value::Sequence(disabled));
+    }
+    // Replacing an anchored or commented block would silently discard user
+    // syntax (and may leave aliases dangling). Refuse until a lossless editor
+    // is available; no plugin files or config are written on this path.
+    if let Some((start, end)) = find_yaml_section_range(&raw, "plugins") {
+        let section = &raw[start..end];
+        if section.contains('#') || section.contains('&') || section.contains('*') {
+            return Err(AppError::Config(
+                "Hermes plugins config contains comments or YAML anchors; enable ccswitch-usage manually to preserve them".to_string(),
+            ));
+        }
+    }
+    let updated = replace_yaml_section(&raw, "plugins", &serde_yaml::Value::Mapping(plugins))?;
+    serde_yaml::from_str::<serde_yaml::Value>(&updated)
+        .map_err(|e| AppError::Config(format!("Updated Hermes config is invalid: {e}")))?;
+
+    let directory = home.join("plugins").join("ccswitch-usage");
+    let files = [
+        (
+            "plugin.yaml",
+            include_str!("../resources/hermes-usage-plugin/plugin.yaml"),
+        ),
+        (
+            "__init__.py",
+            include_str!("../resources/hermes-usage-plugin/__init__.py"),
+        ),
+    ];
+    for (name, expected) in files {
+        let path = directory.join(name);
+        if path.exists()
+            && fs::read(&path).map_err(|e| AppError::io(&path, e))? != expected.as_bytes()
+        {
+            return Err(AppError::Config(format!(
+                "Existing Hermes plugin file differs: {}",
+                path.display()
+            )));
+        }
+    }
+    fs::create_dir_all(&directory).map_err(|e| AppError::io(&directory, e))?;
+    for (name, contents) in files {
+        let path = directory.join(name);
+        if !path.exists() {
+            atomic_write(&path, contents.as_bytes())?;
+        }
+    }
+    if updated != raw {
+        if !raw.is_empty() {
+            let backup = home.join("config.yaml.ccswitch-usage.bak");
+            if !backup.exists() {
+                atomic_write(&backup, raw.as_bytes())?;
+            }
+        }
+        atomic_write(&config_path, updated.as_bytes())?;
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Provider Functions
 // ============================================================================
@@ -1142,6 +1272,48 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use std::sync::{Mutex, OnceLock};
+
+    #[test]
+    fn capture_plugin_activation_preserves_other_plugin_settings() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        fs::write(home.join("config.yaml"),
+            "# keep this comment\nmodel:\n  default: example\nplugins:\n  enabled: [other]\n  disabled: [ccswitch-usage, blocked]\n  hook_callback_timeout: 4\n").unwrap();
+        enable_hermes_capture_plugin_at_home(home).unwrap();
+        enable_hermes_capture_plugin_at_home(home).unwrap();
+        let raw = fs::read_to_string(home.join("config.yaml")).unwrap();
+        assert!(raw.contains("# keep this comment"));
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
+        let plugins = &parsed["plugins"];
+        assert!(plugins["enabled"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str() == Some("other")));
+        assert!(plugins["enabled"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str() == Some("ccswitch-usage")));
+        assert!(!plugins["disabled"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str() == Some("ccswitch-usage")));
+        assert_eq!(plugins["hook_callback_timeout"].as_i64(), Some(4));
+        assert!(home.join("plugins/ccswitch-usage/__init__.py").is_file());
+    }
+
+    #[test]
+    fn capture_plugin_refuses_to_break_yaml_anchor() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let yaml = "plugins: &plugcfg\n  enabled: [other]\nother: *plugcfg\n";
+        fs::write(home.join("config.yaml"), yaml).unwrap();
+        assert!(enable_hermes_capture_plugin_at_home(home).is_err());
+        assert_eq!(fs::read_to_string(home.join("config.yaml")).unwrap(), yaml);
+        assert!(!home.join("plugins/ccswitch-usage").exists());
+    }
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

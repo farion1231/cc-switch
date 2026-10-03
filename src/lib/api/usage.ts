@@ -14,10 +14,52 @@ import type {
   PaginatedLogs,
   SessionSyncResult,
   DataSourceSummary,
+  HermesUsageMetadata,
 } from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
 import type { TemplateType } from "@/config/constants";
+
+export interface HermesRequestEvent {
+  eventId: string;
+  profileName: string;
+  kind: string;
+  sessionId: string;
+  taskId: string;
+  auxTask: string;
+  model: string;
+  provider: string;
+  startedAtMs: number;
+  endedAtMs: number;
+  status: string;
+  statusCode: number | null;
+  durationMs: number | null;
+  usageAvailable: boolean;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  reasoningTokens: number | null;
+}
+
+export interface HermesHistoryEstimate {
+  profileName: string;
+  capturedAtMs: number;
+  requestCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  costUsd: string;
+}
+
+export interface HermesReplayResult {
+  imported: number;
+  skipped: number;
+  unavailable: number;
+  errors: string[];
+}
 
 export const usageApi = {
   // Provider usage script methods
@@ -56,6 +98,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    profileName?: string,
+    task?: string,
   ): Promise<UsageSummary> => {
     return invoke("get_usage_summary", {
       startDate,
@@ -63,6 +107,8 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      profileName,
+      task,
     });
   },
 
@@ -71,12 +117,16 @@ export const usageApi = {
     endDate?: number,
     providerName?: string,
     model?: string,
+    profileName?: string,
+    task?: string,
   ): Promise<UsageSummaryByApp[]> => {
     return invoke("get_usage_summary_by_app", {
       startDate,
       endDate,
       providerName,
       model,
+      profileName,
+      task,
     });
   },
 
@@ -86,6 +136,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    profileName?: string,
+    task?: string,
   ): Promise<DailyStats[]> => {
     return invoke("get_usage_trends", {
       startDate,
@@ -93,6 +145,8 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      profileName,
+      task,
     });
   },
 
@@ -102,6 +156,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    profileName?: string,
+    task?: string,
   ): Promise<ProviderStats[]> => {
     return invoke("get_provider_stats", {
       startDate,
@@ -109,6 +165,8 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      profileName,
+      task,
     });
   },
 
@@ -118,6 +176,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    profileName?: string,
+    task?: string,
   ): Promise<ModelStats[]> => {
     return invoke("get_model_stats", {
       startDate,
@@ -125,6 +185,8 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      profileName,
+      task,
     });
   },
 
@@ -209,5 +271,35 @@ export const usageApi = {
 
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {
     return invoke("get_usage_data_sources");
+  },
+
+  getHermesUsageMetadata: async (): Promise<HermesUsageMetadata> => {
+    return invoke("get_hermes_usage_metadata");
+  },
+
+  getHermesRequestEvents: async (
+    filters: {
+      startMs?: number;
+      endMs?: number;
+      profileName?: string;
+      task?: string;
+      providerName?: string;
+      model?: string;
+      offset?: number;
+    } = {},
+  ): Promise<HermesRequestEvent[]> => {
+    return invoke("get_hermes_request_events", filters);
+  },
+
+  getHermesHistoryEstimates: async (): Promise<HermesHistoryEstimate[]> => {
+    return invoke("get_hermes_history_estimates");
+  },
+
+  replayHermesHistory: async (): Promise<HermesReplayResult> => {
+    return invoke("replay_hermes_history");
+  },
+
+  enableHermesCapturePlugin: async (profileName?: string): Promise<string> => {
+    return invoke("enable_hermes_capture_plugin", { profileName });
   },
 };

@@ -1,0 +1,8 @@
+name: ccswitch-usage
+version: "1.0.1"
+description: Opt-in request metadata ledger for CC Switch; no prompts or responses
+requires_hermes: ">=0.21.5"
+provides_hooks:
+  - post_api_request
+  - api_request_error
+  - post_auxiliary_call
