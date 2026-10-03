@@ -145,6 +145,7 @@ pub async fn restart_codex_app_server_daemon(
 /// Stack 模型的提示；失败时 `partial` 为真表示已部分写入，下次操作或重启 CC Switch 时补完。
 #[tauri::command]
 pub async fn set_proxy_stack_member(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     app_type: String,
     provider_id: String,
@@ -152,7 +153,12 @@ pub async fn set_proxy_stack_member(
 ) -> Result<Option<&'static str>, crate::mode::controller::StackWriteError> {
     let app = require_proxy_app(&app_type)
         .map_err(crate::mode::controller::StackWriteError::unchanged)?;
-    crate::mode::controller::set_stack_member(state.inner(), &app, &provider_id, enabled).await
+    let result =
+        crate::mode::controller::set_stack_member(state.inner(), &app, &provider_id, enabled).await;
+    // 托盘的叠加子菜单只列名单成员；部分写入也已经改了名单，一律重建。
+    // 不重建的话，托盘里还列着刚移出的那家，点一下会把它重新加回并设为默认
+    crate::tray::refresh_tray_menu(&app_handle);
+    result
 }
 
 /// 获取代理服务器状态
