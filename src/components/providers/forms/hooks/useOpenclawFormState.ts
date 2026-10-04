@@ -161,8 +161,14 @@ export function useOpenclawFormState({
     (enabled: boolean) => {
       setOpenclawUserAgent(enabled);
       updateOpenclawConfig((config) => {
+        const headers = { ...config.headers };
         if (enabled) {
-          config.headers = { "User-Agent": OPENCLAW_DEFAULT_USER_AGENT };
+          headers["User-Agent"] = OPENCLAW_DEFAULT_USER_AGENT;
+        } else {
+          delete headers["User-Agent"];
+        }
+        if (Object.keys(headers).length > 0) {
+          config.headers = headers;
         } else {
           delete config.headers;
         }
