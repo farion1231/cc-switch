@@ -536,19 +536,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
-  {
-    name: "自定义",
-    websiteUrl: "",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "",
-        GEMINI_MODEL: "gemini-3.6-flash",
-      },
-    },
-    model: "gemini-3.6-flash",
-    description: "自定义 Gemini API 端点",
-    category: "custom",
-  },
 ];
 
 export function getGeminiPresetByName(
