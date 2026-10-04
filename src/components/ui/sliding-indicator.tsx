@@ -26,15 +26,24 @@ export function useSlidingIndicator<T extends HTMLElement>(
     if (!container) return;
     const measure = () => {
       const target = container.querySelector<HTMLElement>(selector);
-      setRect(
-        target
-          ? {
-              x: target.offsetLeft,
-              y: target.offsetTop,
-              width: target.offsetWidth,
-              height: target.offsetHeight,
-            }
-          : null,
+      const next = target
+        ? {
+            x: target.offsetLeft,
+            y: target.offsetTop,
+            width: target.offsetWidth,
+            height: target.offsetHeight,
+          }
+        : null;
+      // 侧栏开合时容器每帧都在变宽，选中项位置多半没动：没变就不触发重渲染
+      setRect((prev) =>
+        prev &&
+        next &&
+        prev.x === next.x &&
+        prev.y === next.y &&
+        prev.width === next.width &&
+        prev.height === next.height
+          ? prev
+          : next,
       );
     };
     measure();

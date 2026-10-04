@@ -109,19 +109,64 @@ pub fn fingerprint(location: &SourceLocation) -> io::Result<Fingerprint> {
 
 /// 会话源的指纹：在 [`fingerprint`] 的基础上补上「正文不在 sourcePath 里」的情况。
 ///
-/// Grok Build 的 sourcePath 是 `summary.json`，正文在同目录的 `chat_history.jsonl`，
-/// 而 `summary.json` 只在一轮结束时改写——只看它的话，一轮进行中刷新会命中旧缓存。
+/// - Grok Build 的 sourcePath 是 `summary.json`，正文在同目录的 `chat_history.jsonl`，
+///   而 `summary.json` 只在一轮结束时改写——只看它的话，一轮进行中刷新会命中旧缓存。
+/// - OpenCode 旧版 storage 的 sourcePath 是 `storage/message/{sessionID}/`，正文在
+///   `storage/part/{messageID}/` 下，流式输出时只改写 part 文件，消息文件不动。
 pub fn source_fingerprint(source: &ValidatedSource) -> io::Result<Fingerprint> {
     let mut fp = fingerprint(&source.location)?;
-    if source.provider_id == "grokbuild" {
-        if let SourceLocation::Path { path, .. } = &source.location {
+    let SourceLocation::Path { path, .. } = &source.location else {
+        return Ok(fp);
+    };
+    match source.provider_id.as_str() {
+        "grokbuild" => {
             let history = path.with_file_name(GROK_CHAT_HISTORY);
             if let Ok(meta) = fs::metadata(&history) {
                 fp.merge(Fingerprint::of_metadata(&meta));
             }
         }
+        "opencode" if path.is_dir() => merge_opencode_parts(path, &mut fp),
+        _ => {}
     }
     Ok(fp)
+}
+
+/// 把 `storage/part/{messageID}/` 目录及其中的 part 文件并入指纹。
+/// 消息文件名就是 `{messageID}.json`；按文件名找目录，不必为算指纹读出 JSON。
+fn merge_opencode_parts(message_dir: &Path, fp: &mut Fingerprint) {
+    let Some(part_root) = message_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(|storage| storage.join("part"))
+    else {
+        return;
+    };
+    let Ok(messages) = fs::read_dir(message_dir) else {
+        return;
+    };
+    for message in messages.flatten() {
+        let path = message.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(message_id) = path.file_stem() else {
+            continue;
+        };
+        let part_dir = part_root.join(message_id);
+        let Ok(meta) = fs::metadata(&part_dir) else {
+            continue;
+        };
+        fp.merge(Fingerprint::of_metadata(&meta));
+        let Ok(parts) = fs::read_dir(&part_dir) else {
+            continue;
+        };
+        for part in parts.flatten() {
+            if let Ok(child) = part.metadata() {
+                fp.merge(Fingerprint::of_metadata(&child));
+                fp.len = fp.len.wrapping_add(1);
+            }
+        }
+    }
 }
 
 fn sqlite_wal_path(db: &Path) -> Option<std::path::PathBuf> {
@@ -424,6 +469,45 @@ mod tests {
 
     /// 审查 #7825：Grok 一轮进行中只往 chat_history.jsonl 追加，summary.json 不变，
     /// 指纹也必须变；其它 provider 不受影响
+    /// OpenCode 旧版 storage：流式输出只改写 `part/{messageID}/` 下的文件，
+    /// 消息目录不变，指纹也必须变
+    #[test]
+    fn opencode_legacy_fingerprint_follows_part_files() {
+        let dir = tempdir().unwrap();
+        let storage = dir.path().join("storage");
+        let message_dir = storage.join("message").join("ses_1");
+        let part_dir = storage.join("part").join("msg_1");
+        std::fs::create_dir_all(&message_dir).unwrap();
+        std::fs::create_dir_all(&part_dir).unwrap();
+        std::fs::write(message_dir.join("msg_1.json"), "{\"id\":\"msg_1\"}").unwrap();
+        let part = part_dir.join("prt_1.json");
+        std::fs::write(&part, "{\"text\":\"a\"}").unwrap();
+        let source = ValidatedSource {
+            provider_id: "opencode".to_string(),
+            raw: message_dir.to_string_lossy().into_owned(),
+            location: SourceLocation::Path {
+                path: message_dir.clone(),
+                root: storage.clone(),
+            },
+        };
+
+        let before = source_fingerprint(&source).unwrap();
+        assert_ne!(
+            before,
+            fingerprint(&source.location).unwrap(),
+            "part 应计入指纹"
+        );
+
+        // 同一个 part 文件变长
+        std::fs::write(&part, "{\"text\":\"ab\"}").unwrap();
+        let grown = source_fingerprint(&source).unwrap();
+        assert_ne!(grown, before);
+
+        // 新增 part 文件
+        std::fs::write(part_dir.join("prt_2.json"), "{}").unwrap();
+        assert_ne!(source_fingerprint(&source).unwrap(), grown);
+    }
+
     #[test]
     fn grok_fingerprint_follows_chat_history() {
         use std::io::Write;

@@ -226,11 +226,11 @@ describe("preset families", () => {
     expect(hits("moonshot")).toEqual([["family:kimi", []]]);
   });
 
-  it("merges Claude's visible presets into 71 rows", () => {
+  it("merges Claude's visible presets into 73 rows", () => {
     const claudeEntries = providerPresets
       .filter((item) => !item.hidden)
       .map((item, index) => ({ id: `claude-${index}`, preset: item }));
-    expect(groupPresetRows(claudeEntries)).toHaveLength(71);
+    expect(groupPresetRows(claudeEntries)).toHaveLength(73);
   });
 
   it("orders plans and regions as the design does where a family says so", () => {

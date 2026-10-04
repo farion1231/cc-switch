@@ -925,6 +925,7 @@ export function ClaudeDesktopProviderForm({
                 value={apiKey}
                 onChange={setApiKey}
                 category={apiKeyLinkCategory}
+                required
                 shouldShowLink={shouldShowApiKeyLink}
                 websiteUrl={apiKeyLinkWebsiteUrl}
                 isPartner={apiKeyLinkIsPartner}

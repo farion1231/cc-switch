@@ -1461,7 +1461,8 @@
       "xycai": "XycAi 企业级 Token 工厂：200+ 全球模型一键接入，SLA 自动赔付，异常缓存 100% 退还！",
       "9527code": "9527 CODE 是企业级满血 AI 中转平台，为 Claude Code、Codex 等主流模型提供高速稳定的中转服务。持续运营一年，服务稳定性达 99.9%，提供 7×24 小时人工技术支持。新人福利联系客服赠送体验额度，拉新返现无上限！",
       "soleapi": "SoleAPI 是面向开发者与企业的 AI 模型网关，一个 API Key 直达 Claude、GPT、Gemini 等 30+ 主流模型，原生兼容 OpenAI 与 Anthropic 协议，智能选路毫秒级故障切换，可用性 99.99%，7×24 技术支持。通过专属链接注册即送体验额度，邀请好友充值持续返现！",
-      "fluxa": "FluxA 与百度智能云联合推出 AgenticPlan，让 AI Agent 能自主购买、管理和使用模型、API 与工具。内含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗舰模型，并获赠 FluxA AgentMarket API 调用额度，解锁搜索、数据抓取、社交媒体、金融、加密、生图、视频等 13000+ 付费 API。"
+      "fluxa": "FluxA 与百度智能云联合推出 AgenticPlan，让 AI Agent 能自主购买、管理和使用模型、API 与工具。内含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗舰模型，并获赠 FluxA AgentMarket API 调用额度，解锁搜索、数据抓取、社交媒体、金融、加密、生图、视频等 13000+ 付费 API。",
+      "88api": "88API 是由香港企业运营的一站式多模型 API 平台，通过统一接口接入文本、图片、语音和视频模型，支持国际主流付款方式，可提供发票，提供企业级稳定服务。通过专属链接注册可获取专属赠送额度！"
     },
     "presets": {
       "ucloud": "优云智算",
@@ -1471,7 +1472,8 @@
       "doubaoseed": "火山 豆包AI",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
-      "together": "Together AI"
+      "together": "Together AI",
+      "tuzi": "兔子API"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -4133,7 +4135,21 @@
       "tokenRefreshPending": "令牌待刷新"
     },
     "updatedAt": "{{time}}更新",
-    "clickToRefresh": "点击重新查询"
+    "clickToRefresh": "点击重新查询",
+    "resetCredits": {
+      "label": "重置",
+      "left": "重置剩余 {{count}} 次",
+      "short": "重置 {{count}} 次",
+      "value": "剩余 {{count}} 次",
+      "expiresOn": "{{date}}到期",
+      "noExpiry": "不会过期",
+      "detail": "存下的限额重置剩余 {{count}} 次 · 最早 {{date}}到期",
+      "detailNoExpiry": "存下的限额重置剩余 {{count}} 次 · 不会过期",
+      "title": "存下的限额重置",
+      "times": "{{count}} 次",
+      "inTime": "{{time}}后",
+      "showAll": "查看 {{count}} 次重置各自的到期时间"
+    }
   },
   "appMatrix": {
     "clearSearch": "清空搜索",

@@ -15,6 +15,8 @@ interface ApiKeySectionProps {
     thirdParty: string;
   };
   disabled?: boolean;
+  /** 保存时会校验 Key 非空的表单才传；官方 / 云厂商 / 禁用时不标星 */
+  required?: boolean;
   isPartner?: boolean;
   partnerPromotionKey?: string;
 }
@@ -29,6 +31,7 @@ export function ApiKeySection({
   websiteUrl,
   placeholder,
   disabled,
+  required = false,
   partnerPromotionKey,
 }: ApiKeySectionProps) {
   const { t } = useTranslation();
@@ -43,9 +46,21 @@ export function ApiKeySection({
   };
 
   const finalPlaceholder = placeholder || defaultPlaceholder;
+  const isDisabled = disabled ?? category === "official";
+  const isRequired =
+    required &&
+    !isDisabled &&
+    category !== "official" &&
+    category !== "cloud_provider";
 
-  // 促销框已取消（v7 不画任何推广样式）；partnerPromotionKey 仍有别的判断在用，只是不再渲染。
-  void partnerPromotionKey;
+  const showLink = shouldShowLink && Boolean(websiteUrl);
+  // 推广语跟着「获取 API Key」走，按输入框说明文字的样式写在框下面（v7 不画推广框）
+  const promotion =
+    showLink && partnerPromotionKey
+      ? t(`providerForm.partnerPromotion.${partnerPromotionKey}`, {
+          defaultValue: "",
+        })
+      : "";
 
   return (
     <ApiKeyInput
@@ -58,9 +73,10 @@ export function ApiKeySection({
           ? finalPlaceholder.official
           : finalPlaceholder.thirdParty
       }
-      disabled={disabled ?? category === "official"}
+      disabled={isDisabled}
+      required={isRequired}
       labelAside={
-        shouldShowLink && websiteUrl ? (
+        showLink ? (
           <a
             href={websiteUrl}
             target="_blank"
@@ -71,6 +87,7 @@ export function ApiKeySection({
           </a>
         ) : null
       }
+      hint={promotion || undefined}
     />
   );
 }

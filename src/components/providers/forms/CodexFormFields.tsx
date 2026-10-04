@@ -1340,6 +1340,7 @@ export function CodexFormFields({
           value={codexApiKey}
           onChange={onApiKeyChange}
           category={category}
+          required
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
           isPartner={isPartner}

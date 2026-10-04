@@ -24,7 +24,7 @@ export interface GeminiProviderPreset extends PresetFamilyFields {
   description?: string;
   category?: ProviderCategory;
   isPartner?: boolean;
-  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
+  primePartner?: boolean; // 旧版的置顶合作伙伴标记；v7 起界面不再读取，新预设不写
   partnerPromotionKey?: string;
   endpointCandidates?: string[];
   theme?: GeminiPresetTheme;
@@ -52,7 +52,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "gemini",
     iconColor: "#4285F4",
   },
-  // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
+  // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.ai",
@@ -217,6 +217,26 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "subrouter",
     endpointCandidates: ["https://subrouter.ai/v1beta"],
     icon: "subrouter",
+  },
+  {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.88api.ai",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.88api.ai",
+    model: "gemini-3.8-flash",
+    description: "88API",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    endpointCandidates: ["https://api.88api.ai", "https://88api.ai"],
+    icon: "88api",
   },
   {
     name: "APIKEY.FUN",
@@ -432,6 +452,30 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.tu-zi.com",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.tu-zi.com",
+    model: "gemini-3.8-flash",
+    description: "Tu-zi",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://api.tu-zi.com",
+      "https://api.ourzhishi.top",
+      "https://api.sydney-ai.com",
+      "https://apicdn.tu-zi.com",
+    ],
+    icon: "tuzi",
+  },
+  {
     name: "E-FlowCode",
     websiteUrl: "https://e-flowcode.cc",
     apiKeyUrl: "https://e-flowcode.cc",
@@ -516,6 +560,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "TheRouter",
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],
+    icon: "therouter",
   },
   {
     name: "AICodeWith",
@@ -534,19 +579,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://api.aicodewith.ai/gemini_cli"],
     icon: "aicodewith",
     iconColor: "#3A3B40",
-  },
-  {
-    name: "自定义",
-    websiteUrl: "",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "",
-        GEMINI_MODEL: "gemini-3.6-flash",
-      },
-    },
-    model: "gemini-3.6-flash",
-    description: "自定义 Gemini API 端点",
-    category: "custom",
   },
 ];
 

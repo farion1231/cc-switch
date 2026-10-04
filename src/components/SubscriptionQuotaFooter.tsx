@@ -7,6 +7,7 @@ import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
 import {
   failedLines,
+  resetCreditsLine,
   tierLine,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -23,7 +24,8 @@ interface SubscriptionQuotaFooterProps {
 interface SubscriptionQuotaViewProps {
   quota: SubscriptionQuota | undefined;
   loading: boolean;
-  refetch: () => void;
+  /** 原样传 refetch：额度列靠它返回的结果判断点击重查的成败 */
+  refetch: () => unknown;
   /** 用于 `subscription.expiredHint` 的 {tool} 插值；解耦了 hook 的 appId */
   appIdForExpiredHint: string;
   inline?: boolean;
@@ -83,6 +85,22 @@ export function tierLines(
     });
 }
 
+/** 一份查询成功的订阅额度要画的行：各档，再加存下的重置次数（只有 ChatGPT 订阅有） */
+export function quotaRows(
+  t: TFunction,
+  quota: SubscriptionQuota,
+  locale: string,
+  { inline = false }: { inline?: boolean } = {},
+): { label: string; line: QuotaLine }[] {
+  const rows = tierLines(t, quota.tiers || [], { inline });
+  // 一档都没有时额度整块不显示，重置次数也不单独出来
+  if (rows.length === 0) return rows;
+  const resets = resetCreditsLine(t, quota.resetCredits, { locale });
+  return resets
+    ? [...rows, { label: t("quota.resetCredits.label"), line: resets }]
+    : rows;
+}
+
 /** 额度没查到的原因：登录过期 / 令牌待刷新写固定文案，其余写后端给的错误 */
 export function quotaFailureReason(
   t: TFunction,
@@ -112,7 +130,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   appIdForExpiredHint,
   inline = false,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   // 无凭据 / 凭据解析错误 → 不显示（静默）
   if (!quota || quota.credentialStatus === "not_found") return null;
@@ -158,7 +176,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
     );
   }
 
-  const rows = tierLines(t, quota.tiers || [], { inline });
+  const rows = quotaRows(t, quota, i18n.language, { inline });
   if (rows.length === 0) return null;
 
   if (inline) {

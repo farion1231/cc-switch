@@ -704,6 +704,15 @@ export const piModelCatalog = {
       maxTokens: 128000,
     },
   },
+  "anthropic/claude-sonnet-5.5": {
+    capabilities: {
+      name: "Claude Sonnet 5.5",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+  },
   "anthropic/claude-fable-5.1": {
     capabilities: {
       name: "Claude Fable 5.1",

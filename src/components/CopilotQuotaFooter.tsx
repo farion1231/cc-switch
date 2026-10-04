@@ -50,7 +50,7 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
     label,
     line: {
       ...tierLine(t, tier, label),
-      detail: quota.plan ? `${quota.plan} · ${label}` : undefined,
+      detail: quota.plan || undefined,
     },
   }));
 

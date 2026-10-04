@@ -29,7 +29,7 @@ export interface OpenClawProviderPreset extends PresetFamilyFields {
   settingsConfig: OpenClawProviderConfig;
   isOfficial?: boolean;
   isPartner?: boolean;
-  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
+  primePartner?: boolean; // 旧版的置顶合作伙伴标记；v7 起界面不再读取，新预设不写
   partnerPromotionKey?: string;
   category?: ProviderCategory;
   /** Template variable definitions */
@@ -102,7 +102,7 @@ export const openclawApiProtocols = [
  * OpenClaw provider presets list
  */
 export const openclawProviderPresets: OpenClawProviderPreset[] = [
-  // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
+  // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",
     family: "kimi",
@@ -976,6 +976,69 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       modelCatalog: {
         "fluxa-tokenplan/deepseek-v4-pro": { alias: "DeepSeek V4 Pro" },
         "fluxa-tokenplan/glm-5.2": { alias: "GLM-5.2" },
+      },
+    },
+  },
+  {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      baseUrl: "https://api.88api.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+        {
+          id: "claude-fable-5-1",
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "88api/claude-opus-5-5",
+        fallbacks: ["88api/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "88api/claude-opus-5-5": { alias: "Opus" },
+        "88api/claude-sonnet-5-5": { alias: "Sonnet" },
+        "88api/claude-haiku-4-5": { alias: "Haiku" },
       },
     },
   },
@@ -2006,6 +2069,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "dmxapi/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
+    icon: "dmxapi",
   },
   {
     name: "SudoCode.chat",
@@ -2164,6 +2228,54 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
+  {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    settingsConfig: {
+      baseUrl: "https://api.tu-zi.com",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "tuzi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "tuzi/claude-opus-5",
+        fallbacks: ["tuzi/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "tuzi/claude-opus-5": { alias: "Opus" },
+        "tuzi/claude-sonnet-5": { alias: "Sonnet" },
+        "tuzi/claude-haiku-4-5": { alias: "Haiku" },
+      },
+    },
+  },
   {
     name: "Amux",
     websiteUrl: "https://amux.ai",
@@ -3789,6 +3901,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       model: { primary: "bailing/Ling-2.6-1T" },
       modelCatalog: { "bailing/Ling-2.6-1T": { alias: "BaiLing" } },
     },
+    icon: "bailing",
   },
   {
     name: "Xiaomi MiMo",
@@ -4178,6 +4291,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "therouter/qwen/qwen3-coder-480b": { alias: "Qwen Coder" },
       },
     },
+    icon: "therouter",
   },
   {
     name: "ModelScope",

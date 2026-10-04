@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { createInstance } from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import {
@@ -49,6 +49,7 @@ function renderQuota(
   tiers: QuotaTier[],
   inline = true,
   overrides: Partial<SubscriptionQuota> = {},
+  refetch: () => unknown = vi.fn(),
 ) {
   const quota: SubscriptionQuota = {
     tool: "claude",
@@ -66,7 +67,7 @@ function renderQuota(
       <SubscriptionQuotaView
         quota={quota}
         loading={false}
-        refetch={vi.fn()}
+        refetch={refetch}
         appIdForExpiredHint="claude"
         inline={inline}
       />
@@ -93,7 +94,12 @@ describe("Claude Fable subscription quota", () => {
       "font-medium",
       "text-fg-1",
     );
-    // 重置时间在悬停说明里
+    // 重置倒计时直接写在每行后面：5 小时那行没有重置时间，留空占位；合并行写最近的那次
+    expect(screen.getByText("2d12h")).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/后重置$/).map((node) => node.textContent),
+    ).toEqual(["2d12h后重置"]);
+    // 悬停说明照旧逐档写全
     expect(screen.getByRole("button").getAttribute("title")).toContain(
       "Fable · 2d12h后重置",
     );
@@ -132,10 +138,8 @@ describe("Claude Fable subscription quota", () => {
       screen.getByRole("meter", { name: "5 小时: 剩余 88%" }),
     ).toHaveAttribute("aria-valuenow", "88");
     expect(screen.getByText("已用完")).toHaveClass("text-danger-text");
-    expect(screen.getByText("Fable").closest("div")).toHaveAttribute(
-      "title",
-      "Fable · 2d12h后重置",
-    );
+    // 展开时重置时间直接写在数值后面
+    expect(screen.getByText("2d12h后重置")).toBeInTheDocument();
   });
 
   it("shows an unused Fable limit in the quiet color", () => {
@@ -180,5 +184,66 @@ describe("credential failures", () => {
   it("still says the login expired when it really did", () => {
     failed("expired");
     expect(screen.getByText("登录已过期")).toBeInTheDocument();
+  });
+});
+
+describe("ChatGPT saved limit resets", () => {
+  const codex = (inline: boolean, refetch?: () => unknown) =>
+    renderQuota(
+      baseTiers,
+      inline,
+      {
+        tool: "codex",
+        resetCredits: {
+          expiresAt: ["2026-09-20T00:00:00Z", null],
+        },
+      },
+      refetch,
+    );
+
+  it("rides along with the weekly tier on the card", () => {
+    codex(true);
+    expect(screen.getByText("5 小时剩余 88%")).toBeInTheDocument();
+    expect(screen.getByText("重置 2 次")).toBeInTheDocument();
+    expect(
+      screen
+        .getByRole("button", { name: /点击重新查询/ })
+        .getAttribute("title"),
+    ).toContain("存下的限额重置剩余 2 次");
+  });
+
+  it("drops down the expiries from the resets, while the usage still refreshes", () => {
+    const refetch = vi.fn();
+    codex(true, refetch);
+
+    // 点重置次数：开下拉，不重查
+    fireEvent.click(
+      screen.getByRole("button", { name: "查看 2 次重置各自的到期时间" }),
+    );
+    expect(refetch).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("dialog", { name: "存下的限额重置" });
+    expect(within(dialog).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(dialog).getByText("不会过期")).toBeInTheDocument();
+
+    // 第一行和同一行的「每周」照旧点了重查
+    fireEvent.click(screen.getByRole("button", { name: /点击重新查询/ }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("gets its own row in the expanded view, with the earliest expiry instead of a bar", () => {
+    codex(false);
+    expect(screen.getByText("重置")).toBeInTheDocument();
+    expect(screen.getByText("剩余 2 次")).toBeInTheDocument();
+    expect(screen.getByText(/到期$/)).toBeInTheDocument();
+    // 只有两档画额度条
+    expect(screen.getAllByRole("meter")).toHaveLength(2);
+  });
+
+  it("stays out of sight when nothing is saved", () => {
+    renderQuota(baseTiers, true, {
+      tool: "codex",
+      resetCredits: { expiresAt: [] },
+    });
+    expect(screen.queryByText(/重置/)).not.toBeInTheDocument();
   });
 });
