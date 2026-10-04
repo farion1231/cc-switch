@@ -161,7 +161,7 @@ describe("HermesFormFields", () => {
     renderHermesForm();
 
     expect(screen.getByText("模型列表").closest("div.border-l")).toHaveClass(
-      "border-border-default",
+      "border-border",
       "pl-3",
     );
     expect(screen.queryByText("默认模型")).not.toBeInTheDocument();
@@ -187,7 +187,7 @@ describe("HermesFormFields", () => {
     expect(screen.getByText("上下文长度")).toHaveClass(
       "text-xs",
       "font-normal",
-      "text-muted-foreground",
+      "text-fg-2",
     );
     expect(contextLength.closest("div.border-l")).toHaveClass(
       "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]",
@@ -239,7 +239,7 @@ describe("HermesFormFields", () => {
       "leading-none",
     );
     expect(input.closest("div.border-l")).toHaveClass(
-      "border-border-default",
+      "border-border",
       "pl-3",
     );
     expect(

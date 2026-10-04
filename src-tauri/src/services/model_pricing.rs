@@ -41,7 +41,7 @@ pub struct ModelPricingInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelsDevSyncConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub auto_sync_enabled: bool,
     #[serde(default = "default_true")]
     pub include_common_models: bool,
@@ -58,7 +58,7 @@ pub struct ModelsDevSyncConfig {
 impl Default for ModelsDevSyncConfig {
     fn default() -> Self {
         Self {
-            auto_sync_enabled: false,
+            auto_sync_enabled: true,
             include_common_models: true,
             selected_model_keys: Vec::new(),
             excluded_common_model_keys: Vec::new(),
@@ -504,17 +504,35 @@ mod tests {
 
     #[test]
     #[serial]
-    fn creates_local_file_with_auto_sync_disabled_by_default() {
+    fn creates_local_file_with_auto_sync_enabled_by_default() {
         with_test_home(|db, path| {
             let state = get_models_dev_sync_state(db).expect("sync state");
             assert!(path.exists());
-            assert!(!state.config.auto_sync_enabled);
+            assert!(state.config.auto_sync_enabled);
             assert!(state.config.include_common_models);
             assert_eq!(state.config_path, path.display().to_string());
 
             let content = fs::read_to_string(path).expect("read pricing file");
             let file: ModelPricingFile = serde_json::from_str(&content).expect("parse file");
             assert!(file.models.is_empty());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn existing_file_with_auto_sync_disabled_stays_disabled() {
+        with_test_home(|db, path| {
+            // Files written before the default flipped carry an explicit `false`.
+            fs::create_dir_all(path.parent().expect("pricing file parent"))
+                .expect("create config dir");
+            fs::write(
+                path,
+                r#"{"version":1,"modelsDevSync":{"autoSyncEnabled":false}}"#,
+            )
+            .expect("write pricing file");
+
+            let state = get_models_dev_sync_state(db).expect("sync state");
+            assert!(!state.config.auto_sync_enabled);
         });
     }
 

@@ -207,66 +207,66 @@ export function CommonConfigEditor({
   return (
     <div className="space-y-2">
       <Label htmlFor="settingsConfig">{t("provider.configJson")}</Label>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-fg-2">
         {t("claudeConfig.keyFieldsHint", {
           defaultValue:
             "地址、Key、模型、上下文窗口和兼容开关随供应商切换；其余字段是 Claude Code 全局设置，保存后对所有供应商生效。",
         })}
       </p>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
           <input
             type="checkbox"
             checked={toggleStates.hideAttribution}
             onChange={(e) => handleToggle("hideAttribution", e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.hideAttribution")}</span>
         </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
           <input
             type="checkbox"
             checked={toggleStates.teammates}
             onChange={(e) => handleToggle("teammates", e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.enableTeammates")}</span>
         </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
           <input
             type="checkbox"
             checked={toggleStates.enableToolSearch}
             onChange={(e) => handleToggle("enableToolSearch", e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.enableToolSearch")}</span>
         </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
           <input
             type="checkbox"
             checked={toggleStates.effortMax}
             onChange={(e) => handleToggle("effortMax", e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.effortMax")}</span>
         </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
           <input
             type="checkbox"
             checked={toggleStates.disableAutoUpgrade}
             onChange={(e) =>
               handleToggle("disableAutoUpgrade", e.target.checked)
             }
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.disableAutoUpgrade")}</span>
         </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
           <input
             type="checkbox"
             checked={toggleStates.disableArtifact}
             onChange={(e) => handleToggle("disableArtifact", e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.disableArtifact")}</span>
         </label>

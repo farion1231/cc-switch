@@ -8,6 +8,8 @@ import type {
   ProxyStack,
   ProxyStackNotice,
   CodexDaemonRestartOutcome,
+  AppModeView,
+  StartupAttachFailure,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -40,13 +42,36 @@ export const proxyApi = {
     return invoke("get_proxy_takeover_status");
   },
 
-  // 为指定应用开启/关闭接管。stack 为真时进入的是 Stack 模式（和路由模式二选一）
+  // 为指定应用进入/退出代理模式。stack 为真时进入的是 Stack 模式（和路由模式二选一）；
+  // route 是确认框里选的路由目标（Stack 模式下是默认那家），不传沿用上次的路由
   async setProxyTakeoverForApp(
     appType: string,
     enabled: boolean,
     stack = false,
+    route?: string | null,
   ): Promise<void> {
-    return invoke("set_proxy_takeover_for_app", { appType, enabled, stack });
+    return invoke("set_proxy_takeover_for_app", {
+      appType,
+      enabled,
+      stack,
+      route: route ?? null,
+    });
+  },
+
+  // 指定路由目标（聚合模式下是默认那家）：直连时只记下来、下次进入路由 / 聚合模式时用它，
+  // 已经在路由 / 聚合模式时当场生效
+  async setProxyRoute(appType: string, providerId: string): Promise<void> {
+    return invoke("set_proxy_route", { appType, providerId });
+  },
+
+  // 应用页模式行：生效的模式、路由目标（直连时是上次路由的那家）、直连那家
+  async getAppMode(appType: string): Promise<AppModeView> {
+    return invoke("get_app_mode", { appType });
+  },
+
+  // 启动时没能接上代理、已退回直连的应用（取一次就清空）
+  async takeStartupAttachFailures(): Promise<StartupAttachFailure[]> {
+    return invoke("take_startup_attach_failures");
   },
 
   // 设置里在路由和 Stack 之间换时：处于另一种模式（stack 为真是 Stack 模式）的 Claude Code、

@@ -6,7 +6,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -856,7 +856,7 @@ export function ClaudeFormFields({
               </SelectItem>
             </SelectContent>
           </Select>
-          <p className="text-xs leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-fg-2">
             {t("providerForm.apiFormatHint", {
               defaultValue:
                 "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
@@ -893,7 +893,7 @@ export function ClaudeFormFields({
           </SelectItem>
         </SelectContent>
       </Select>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-fg-2">
         {t("providerForm.authFieldHint", {
           defaultValue: "选择写入配置的认证环境变量名",
         })}
@@ -941,14 +941,14 @@ export function ClaudeFormFields({
         <Collapsible
           open={stackAdvancedExpanded}
           onOpenChange={setStackAdvancedExpanded}
-          className="rounded-lg border border-border-default p-4"
+          className="rounded-lg border border-border p-4"
         >
           <CollapsibleTrigger asChild>
             <Button
               type="button"
               variant={null}
               size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
             >
               {stackAdvancedExpanded ? (
                 <ChevronDown className="h-4 w-4" />
@@ -959,7 +959,7 @@ export function ClaudeFormFields({
             </Button>
           </CollapsibleTrigger>
           {!stackAdvancedExpanded && (
-            <p className="text-xs text-muted-foreground mt-1 ml-1">
+            <p className="text-xs text-fg-2 mt-1 ml-1">
               {t("providerForm.stackLayout.advancedHint", {
                 defaultValue: "自定义 User-Agent 与请求覆盖，一般无需修改。",
               })}
@@ -971,7 +971,7 @@ export function ClaudeFormFields({
               value={customUserAgent}
               onChange={onCustomUserAgentChange}
             />
-            <div className="border-t border-border-default pt-3">
+            <div className="border-t border-border pt-3">
               <LocalProxyRequestOverridesField
                 headersJson={localProxyHeadersOverride}
                 bodyJson={localProxyBodyOverride}
@@ -997,14 +997,14 @@ export function ClaudeFormFields({
         <Collapsible
           open={advancedExpanded}
           onOpenChange={setAdvancedExpanded}
-          className="rounded-lg border border-border-default p-4"
+          className="rounded-lg border border-border p-4"
         >
           <CollapsibleTrigger asChild>
             <Button
               type="button"
               variant={null}
               size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
             >
               {advancedExpanded ? (
                 <ChevronDown className="h-4 w-4" />
@@ -1015,7 +1015,7 @@ export function ClaudeFormFields({
             </Button>
           </CollapsibleTrigger>
           {!advancedExpanded && (
-            <p className="text-xs text-muted-foreground mt-1 ml-1">
+            <p className="text-xs text-fg-2 mt-1 ml-1">
               {t("providerForm.advancedOptionsHint")}
             </p>
           )}
@@ -1025,7 +1025,7 @@ export function ClaudeFormFields({
             {authFieldSelect}
 
             {/* 模型映射 */}
-            <div className="space-y-1 border-t border-border-default pt-2">
+            <div className="space-y-1 border-t border-border pt-2">
               <div className="flex items-center justify-between">
                 <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
                 <div className="flex gap-2">
@@ -1095,13 +1095,13 @@ export function ClaudeFormFields({
                   </Button>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t("providerForm.modelMappingHint")}
               </p>
             </div>
 
             <div className="space-y-3">
-              <div className="hidden grid-cols-[120px_1fr_minmax(0,1fr)_104px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+              <div className="hidden grid-cols-[120px_1fr_minmax(0,1fr)_104px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
                 <span>
                   {t("providerForm.modelRoleLabel", {
                     defaultValue: "模型角色",
@@ -1134,7 +1134,7 @@ export function ClaudeFormFields({
                     key={row.role}
                     className="grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_minmax(0,1fr)_104px]"
                   >
-                    <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
+                    <div className="flex h-9 items-center rounded-md border border-input bg-subtle px-3 text-sm font-medium text-fg-2">
                       {row.label}
                     </div>
                     {row.displayNameField ? (
@@ -1155,7 +1155,7 @@ export function ClaudeFormFields({
                         autoComplete="off"
                       />
                     ) : (
-                      <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                      <div className="flex h-9 items-center rounded-md border border-input bg-subtle px-3 text-sm text-fg-2">
                         {t("providerForm.modelNoDisplayName", {
                           defaultValue: "不显示在 /model 菜单",
                         })}
@@ -1175,7 +1175,7 @@ export function ClaudeFormFields({
                         ),
                     )}
                     {row.supportsOneM && (
-                      <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                      <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
                         <Checkbox
                           checked={usesOneM}
                           onCheckedChange={(checked) =>
@@ -1192,7 +1192,7 @@ export function ClaudeFormFields({
               })}
             </div>
 
-            <div className="space-y-2 border-t border-border-default pt-4">
+            <div className="space-y-2 border-t border-border pt-4">
               <FormLabel htmlFor="claudeModel">
                 {t("providerForm.fallbackModelLabel", {
                   defaultValue: "默认兜底模型",
@@ -1210,7 +1210,7 @@ export function ClaudeFormFields({
                       setClaudeOneMMarker(value, fallbackUsesOneM),
                     ),
                 )}
-                <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
                   <Checkbox
                     checked={fallbackUsesOneM}
                     onCheckedChange={(checked) => {
@@ -1227,7 +1227,7 @@ export function ClaudeFormFields({
                   })}
                 </label>
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t("providerForm.fallbackModelHint", {
                   defaultValue:
                     "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
@@ -1241,7 +1241,7 @@ export function ClaudeFormFields({
               onChange={onCustomUserAgentChange}
             />
 
-            <div className="border-t border-border-default pt-3">
+            <div className="border-t border-border pt-3">
               <LocalProxyRequestOverridesField
                 headersJson={localProxyHeadersOverride}
                 bodyJson={localProxyBodyOverride}

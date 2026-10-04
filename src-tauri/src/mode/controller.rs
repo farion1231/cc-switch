@@ -541,16 +541,36 @@ pub(crate) fn lock_settled_blocking(
 /// [`StackState::enabled`]）：默认那家（代理路由）随之加入名单，名单里其余各家的模型发布给
 /// 客户端。已经在代理模式时按选的模式重写。
 pub async fn enter(state: &AppState, app: &AppType, stack_mode: bool) -> Result<(), String> {
+    enter_with_route(state, app, stack_mode, None).await
+}
+
+/// 同 [`enter`]，`route` 是确认框里选的路由目标（Stack 模式下是默认那家）；`None` 沿用上次
+/// 的路由，没有就用直连那家。已经在代理模式时（路由 ↔ Stack）在同一把切换锁里按新模式和
+/// 新目标重写，不经过直连。
+pub async fn enter_with_route(
+    state: &AppState,
+    app: &AppType,
+    stack_mode: bool,
+    route: Option<&str>,
+) -> Result<(), String> {
     require_proxy_app(app)?;
     if stack_mode && !stack::supports_stack(app) {
         return Err(format!(
-            "{} 不支持叠加模式 ({} does not support the Stack mode)",
+            "{} 不支持聚合模式 ({} does not support the Aggregation mode)",
             app.as_str(),
             app.as_str()
         ));
     }
+    let explicit = match route {
+        Some(id) => {
+            let target = provider(state, app, id)?.ok_or_else(|| format!("供应商不存在: {id}"))?;
+            reject_unsupported_official(app, &target)?;
+            Some(target)
+        }
+        None => None,
+    };
     let result = match lock_settled(state, app).await {
-        Ok(_guard) => enter_locked(state, app, op::ENTER, Some(stack_mode)).await,
+        Ok(_guard) => enter_locked(state, app, op::ENTER, Some(stack_mode), explicit).await,
         Err(error) => Err(error.to_string()),
     };
     if result.is_err() {
@@ -559,18 +579,24 @@ pub async fn enter(state: &AppState, app: &AppType, stack_mode: bool) -> Result<
     result
 }
 
-/// `stack_mode` 为 `None` 时沿用已落定的模式（启动时接上）。
+/// `stack_mode` 为 `None` 时沿用已落定的模式（启动时接上）。`explicit_route` 是指定的路由
+/// 目标，`None` 沿用上次的路由。
 async fn enter_locked(
     state: &AppState,
     app: &AppType,
     op_name: &str,
     stack_mode: Option<bool>,
+    explicit_route: Option<Provider>,
 ) -> Result<(), String> {
     if !state.proxy_service.is_running().await {
         state.proxy_service.start().await?;
     }
     let mode = current::mode_state(app);
-    let route = match route_provider(state, app, &mode)? {
+    let saved_route = match explicit_route {
+        Some(route) => Some(route),
+        None => route_provider(state, app, &mode)?,
+    };
+    let route = match saved_route {
         Some(route) => route,
         None => direct_provider(state, app)?.ok_or_else(|| {
             format!(
@@ -694,9 +720,11 @@ fn exit_locked(state: &AppState, app: &AppType, keep_mode: bool) -> Result<(), S
     )
 }
 
-/// 没有应用在代理模式了就停掉代理服务（Claude Desktop 的模型映射另外自己启停）。
+/// 没有应用在代理模式、Claude Desktop 也没在用模型映射时，停掉代理服务。
 async fn stop_server_if_unused(state: &AppState) {
-    if current::proxy_flags(PROXY_APPS).contains(&true) {
+    if current::proxy_flags(PROXY_APPS).contains(&true)
+        || crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
+    {
         return;
     }
     if state.proxy_service.is_running().await {
@@ -704,6 +732,29 @@ async fn stop_server_if_unused(state: &AppState) {
             log::warn!("停止代理服务失败: {error}");
         }
     }
+}
+
+/// Claude Desktop 的当前供应商是模型映射卡、代理服务却没在跑时把它拉起来：启动、切到映射卡、
+/// 应用项目之后各调一次。拉不起来只记日志，Desktop 页的状态横幅会提示服务没在运行。
+pub async fn ensure_desktop_mapping_service(state: &AppState) {
+    if !crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
+        || state.proxy_service.is_running().await
+    {
+        return;
+    }
+    if let Err(error) = state.proxy_service.start().await {
+        log::error!("Claude Desktop 正在用模型映射，启动代理服务失败: {error}");
+    }
+}
+
+/// Claude Desktop 换卡（切换、应用项目）之后对齐代理服务：从映射卡换走时，别人也不用就停掉；
+/// 换上映射卡时拉起来。`was_mapping` 是换卡前的 `current_provider_uses_proxy`：只在映射卡
+/// 被换走时才去停，别的换卡不碰服务，免得停掉用户在设置页手动开的服务。
+pub async fn sync_desktop_mapping_service(state: &AppState, was_mapping: bool) {
+    if was_mapping && !crate::claude_desktop_config::current_provider_uses_proxy(&state.db) {
+        stop_server_if_unused(state).await;
+    }
+    ensure_desktop_mapping_service(state).await;
 }
 
 /// 「关闭本地路由」：全部退回直连，再停掉代理服务。
@@ -832,11 +883,39 @@ async fn switch_route_checked(
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
     if reject_stacked && current::is_proxy(app) && settled_stack(app)?.enabled {
         return Err(
-            "叠加模式不做故障转移，请先换回路由模式 (The Stack mode has no failover; switch back to the routing mode first)"
+            "聚合模式不做故障转移，请先换回路由模式 (The Aggregation mode has no failover; switch back to the routing mode first)"
                 .to_string(),
         );
     }
     switch_route_locked(state, app, &target).await
+}
+
+/// 指定代理路由（聚合模式下是默认那家），不管现在是什么模式。直连模式下只记下指针，下次进入
+/// 路由 / 聚合模式时用它，客户端文件和模式都不动；已经在代理模式时就是换路由，当场生效。
+pub async fn set_route(state: &AppState, app: &AppType, provider_id: &str) -> Result<(), String> {
+    require_proxy_app(app)?;
+    let target =
+        provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
+    reject_unsupported_official(app, &target)?;
+    let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
+    let mode = current::mode_state(app);
+    if mode.is_proxy() {
+        return switch_route_locked(state, app, &target).await;
+    }
+    if mode.proxy_route.as_deref() == Some(provider_id) {
+        return Ok(());
+    }
+    commit_state(
+        state,
+        app,
+        &PendingTarget {
+            state: Some(ModeState {
+                proxy_route: Some(target.id),
+                ..mode
+            }),
+            ..PendingTarget::default()
+        },
+    )
 }
 
 /// 代理模式下不能切到不支持代理的官方供应商（Codex 官方账号走客户端自己的登录，除外）。
@@ -880,7 +959,9 @@ fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> 
         _ => provider.category.as_deref() == Some("official"),
     };
     if official {
-        return Err("官方账号不能叠加 (An official account cannot be a stacked model)".to_string());
+        return Err(
+            "官方账号不能加入聚合 (An official account cannot join the aggregation)".to_string(),
+        );
     }
     if matches!(app, AppType::Codex) {
         codex_direct::check_stack_member(provider).map_err(err)?;
@@ -917,7 +998,7 @@ pub async fn set_stack_member(
 ) -> Result<Option<&'static str>, StackWriteError> {
     if !stack::supports_stack(app) {
         return Err(StackWriteError::unchanged(format!(
-            "{} 不支持叠加模型 ({} does not support stacked models)",
+            "{} 不支持聚合的模型 ({} does not support aggregated models)",
             app.as_str(),
             app.as_str()
         )));
@@ -1253,6 +1334,7 @@ pub async fn startup(state: &AppState) {
     }
     // 接上失败退回直连的应用可能已经把代理拉起来了。
     stop_server_if_unused(state).await;
+    ensure_desktop_mapping_service(state).await;
     // 记一次新启动的 Codex 会读到的目录：兜住启动时补完的操作和 CC Switch 没开时的外部修改。
     codex_client_catalog::observe(&DeviceStore::for_device());
 }
@@ -1281,10 +1363,22 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
             ..mode
         };
         commit_state(state, app, &PendingTarget::mode(mode))?;
-        match enter_locked(state, app, op::ATTACH, None).await {
+        match enter_locked(state, app, op::ATTACH, None, None).await {
             Ok(()) => return Ok(()),
             Err(error) => {
                 log::error!("启动时接上 {} 的代理失败，退回直连: {error}", app.as_str());
+                let stack = stack::supports_stack(app)
+                    && settled_stack(app)
+                        .map(|stack| stack.enabled)
+                        .unwrap_or(false);
+                startup_attach_failures()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(StartupAttachFailure {
+                        app_type: app.as_str().to_string(),
+                        stack,
+                        error: error.clone(),
+                    });
                 exit_locked(state, app, false)?;
                 return Err(error);
             }
@@ -1373,6 +1467,68 @@ async fn drain_legacy_backup(state: &AppState, app: &AppType) -> bool {
 /// 给前端：直连指针（代理模式下退出代理时写回的那家）。
 pub fn direct_provider_id(state: &AppState, app: &AppType) -> Result<Option<String>, AppError> {
     current::provider_for(&state.db, app, Purpose::Direct)
+}
+
+/// 应用页的模式行：现在生效的是哪种模式、路由到谁（直连模式下是上次路由的那家）、直连那家。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppModeView {
+    /// `direct` / `route` / `stack`
+    pub mode: &'static str,
+    /// 客户端文件指着代理（CC Switch 运行时为真；退出时分离）
+    pub attached: bool,
+    pub route_provider_id: Option<String>,
+    pub direct_provider_id: Option<String>,
+}
+
+pub fn app_mode_view(state: &AppState, app: &AppType) -> Result<AppModeView, String> {
+    require_proxy_app(app)?;
+    let mode = current::mode_state(app);
+    let name = if !mode.is_proxy() {
+        "direct"
+    } else if stack::supports_stack(app) && settled_stack(app)?.enabled {
+        "stack"
+    } else {
+        "route"
+    };
+    Ok(AppModeView {
+        mode: name,
+        attached: mode.attached,
+        route_provider_id: mode.proxy_route,
+        direct_provider_id: direct_provider_id(state, app).map_err(err)?,
+    })
+}
+
+/// 启动时没能接上代理、退回直连的应用。界面打开时取走一次，在应用页提示并给「重试」。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupAttachFailure {
+    pub app_type: String,
+    pub stack: bool,
+    pub error: String,
+}
+
+fn startup_attach_failures() -> &'static std::sync::Mutex<Vec<StartupAttachFailure>> {
+    static FAILURES: std::sync::OnceLock<std::sync::Mutex<Vec<StartupAttachFailure>>> =
+        std::sync::OnceLock::new();
+    FAILURES.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+/// 看一眼启动时记下的接上失败（不清空）：托盘的问题区自己留一份，界面照样取走。
+pub fn startup_attach_failures_snapshot() -> Vec<StartupAttachFailure> {
+    startup_attach_failures()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// 取走启动时记下的接上失败（取一次就清空）。
+pub fn take_startup_attach_failures() -> Vec<StartupAttachFailure> {
+    std::mem::take(
+        &mut *startup_attach_failures()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+    )
 }
 
 #[cfg(test)]
@@ -2192,7 +2348,7 @@ mod mode_tests {
         assert!(!updater.is_finished(), "the save waits for the switch lock");
         assert_eq!(settings()["env"]["ANTHROPIC_BASE_URL"], "https://a.example");
 
-        enter_locked(state, &AppType::Claude, op::ENTER, Some(false))
+        enter_locked(state, &AppType::Claude, op::ENTER, Some(false), None)
             .await
             .expect("enter");
         drop(guard);
@@ -2221,7 +2377,7 @@ mod mode_tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         assert!(!syncer.is_finished(), "the sync waits for the switch lock");
-        enter_locked(state, &AppType::Claude, op::ENTER, Some(false))
+        enter_locked(state, &AppType::Claude, op::ENTER, Some(false), None)
             .await
             .expect("enter");
         drop(guard);
@@ -4950,6 +5106,93 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
+    async fn entering_with_a_picked_route_changes_target_and_mode_in_one_step() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        let view = || app_mode_view(&state, &AppType::Claude).expect("mode view");
+
+        assert_eq!(view().mode, "direct");
+        assert_eq!(view().direct_provider_id.as_deref(), Some("a"));
+
+        // 直连 → 路由，路由到确认框里选的那家；直连指针不动。
+        enter_with_route(&state, &AppType::Claude, false, Some("kimi"))
+            .await
+            .expect("route to kimi");
+        assert_eq!(view().mode, "route");
+        assert_eq!(view().route_provider_id.as_deref(), Some("kimi"));
+        assert_eq!(view().direct_provider_id.as_deref(), Some("a"));
+
+        // 路由 → Stack，默认换成另一家：同一把锁里一次写完，不经过直连。
+        enter_with_route(&state, &AppType::Claude, true, Some("zhipu"))
+            .await
+            .expect("stack with zhipu");
+        assert_eq!(view().mode, "stack");
+        assert_eq!(view().route_provider_id.as_deref(), Some("zhipu"));
+        assert!(stack_state().members.contains(&"zhipu".to_string()));
+
+        // 回到直连：路由目标留着，下次进入沿用。
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_eq!(view().mode, "direct");
+        assert_eq!(view().route_provider_id.as_deref(), Some("zhipu"));
+        assert_back_to_user_settings();
+
+        // 选了不存在的供应商：什么都不改。
+        enter_with_route(&state, &AppType::Claude, false, Some("missing"))
+            .await
+            .expect_err("unknown provider");
+        assert_eq!(view().mode, "direct");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn setting_the_route_in_direct_mode_only_records_it() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let mut official = claude("official", "https://api.anthropic.com", json!({}));
+        official.category = Some("official".to_string());
+        let [a, kimi, zhipu] = stack_rows();
+        let state = state_with(AppType::Claude, &[a, kimi, zhipu, official], "a").await;
+        let view = || app_mode_view(&state, &AppType::Claude).expect("mode view");
+
+        // 直连模式：只记下指针。模式、直连指针、名单、客户端文件都不动。
+        set_route(&state, &AppType::Claude, "kimi")
+            .await
+            .expect("remember kimi");
+        assert_eq!(view().mode, "direct");
+        assert_eq!(view().route_provider_id.as_deref(), Some("kimi"));
+        assert_eq!(view().direct_provider_id.as_deref(), Some("a"));
+        assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
+        assert!(stack_state().is_empty());
+        assert_back_to_user_settings();
+
+        // 不存在的、不能走代理的官方订阅：拒绝，记下的那家不变。
+        set_route(&state, &AppType::Claude, "missing")
+            .await
+            .expect_err("unknown provider");
+        set_route(&state, &AppType::Claude, "official")
+            .await
+            .expect_err("official subscription");
+        assert_eq!(view().route_provider_id.as_deref(), Some("kimi"));
+
+        // 进入聚合模式沿用记下的那家：它是默认，随之加入名单。
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        assert_eq!(view().mode, "stack");
+        assert_eq!(view().route_provider_id.as_deref(), Some("kimi"));
+        assert_eq!(stack_state().members, vec!["kimi"]);
+
+        // 已经在聚合模式：当场换默认，新默认也加入名单。
+        set_route(&state, &AppType::Claude, "zhipu")
+            .await
+            .expect("set default");
+        assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("zhipu"));
+        assert_eq!(stack_state().members, vec!["kimi", "zhipu"]);
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_back_to_user_settings();
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn the_default_cannot_be_removed_and_a_new_default_joins_the_list() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
@@ -5003,6 +5246,66 @@ model_provider = "c"
         assert!(!current::is_proxy(&AppType::Claude));
         assert_back_to_user_settings();
         assert_eq!(stack_state().members, vec!["kimi", "a"], "the list stays");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_desktop_model_mapping_keeps_the_server_running() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        let mut mapping = Provider::with_id(
+            "map".to_string(),
+            "Map".to_string(),
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://map.example" } }),
+            None,
+        );
+        mapping.meta = Some(crate::provider::ProviderMeta {
+            claude_desktop_mode: Some(crate::provider::ClaudeDesktopMode::Proxy),
+            ..Default::default()
+        });
+        let desktop = AppType::ClaudeDesktop;
+        state
+            .db
+            .save_provider(desktop.as_str(), &mapping)
+            .expect("save mapping provider");
+        crate::settings::set_current_provider(&desktop, Some("map")).expect("desktop current");
+
+        // Claude Code 退出路由时，Desktop 还在用模型映射，服务不能跟着停。
+        enter(&state, &AppType::Claude, false).await.expect("enter");
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert!(state.proxy_service.is_running().await);
+
+        // 服务被手动停掉后，下一次检查（启动、切换、应用项目）会把它拉起来。
+        state.proxy_service.stop().await.expect("stop");
+        ensure_desktop_mapping_service(&state).await;
+        assert!(state.proxy_service.is_running().await);
+
+        // 从映射卡换走时 Claude Code 还在路由：服务留着，等它退出路由时再停。
+        enter(&state, &AppType::Claude, false).await.expect("enter");
+        crate::settings::set_current_provider(&desktop, None).expect("clear desktop current");
+        state
+            .db
+            .delete_provider(desktop.as_str(), "map")
+            .expect("drop mapping");
+        sync_desktop_mapping_service(&state, true).await;
+        assert!(state.proxy_service.is_running().await);
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert!(!state.proxy_service.is_running().await);
+
+        // 换卡前就不是映射卡：用户在设置页手动开的服务不碰。
+        state.proxy_service.start().await.expect("manual start");
+        sync_desktop_mapping_service(&state, false).await;
+        assert!(state.proxy_service.is_running().await);
+
+        // 从映射卡换走、没人在用：顺手停掉。
+        sync_desktop_mapping_service(&state, true).await;
+        assert!(!state.proxy_service.is_running().await);
     }
 
     #[tokio::test]

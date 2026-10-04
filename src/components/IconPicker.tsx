@@ -58,7 +58,7 @@ export const IconPicker: React.FC<IconPickerProps> = ({
                 className={cn(
                   "flex flex-col items-center gap-1 p-3 rounded-lg",
                   "border-2 transition-all duration-200",
-                  "hover:bg-accent hover:border-primary/50",
+                  "hover:bg-subtle hover:border-primary/50",
                   isSelected
                     ? "border-primary bg-primary/10"
                     : "border-transparent",
@@ -66,7 +66,7 @@ export const IconPicker: React.FC<IconPickerProps> = ({
                 title={meta?.displayName || iconName}
               >
                 <ProviderIcon icon={iconName} name={iconName} size={32} />
-                <span className="text-xs text-muted-foreground truncate w-full text-center">
+                <span className="text-xs text-fg-2 truncate w-full text-center">
                   {meta?.displayName || iconName}
                 </span>
               </button>
@@ -76,7 +76,7 @@ export const IconPicker: React.FC<IconPickerProps> = ({
       </div>
 
       {filteredIcons.length === 0 && (
-        <div className="text-center py-8 text-muted-foreground">
+        <div className="text-center py-8 text-fg-2">
           {t("iconPicker.noResults", { defaultValue: "未找到匹配的图标" })}
         </div>
       )}

@@ -28,6 +28,7 @@ pub mod gemini_shadow;
 pub(crate) mod inline_think;
 pub mod models;
 pub(crate) mod reasoning_bridge;
+pub(crate) mod responses_late_arguments;
 pub mod streaming;
 pub mod streaming_codex_anthropic;
 pub mod streaming_codex_chat;
@@ -62,10 +63,10 @@ pub use codex::CodexAdapter;
 pub use codex::{
     apply_codex_chat_upstream_model, apply_codex_upstream_model, codex_provider_upstream_model,
     codex_stack_upstream_rejects_web_search, inject_codex_chat_prompt_cache_key,
-    is_codex_official_provider, provider_needs_responses_namespace_flatten,
-    resolve_codex_catalog_tool_profile, resolve_codex_chat_reasoning_config,
-    should_convert_codex_responses_to_anthropic, should_convert_codex_responses_to_chat,
-    strip_codex_hosted_web_search,
+    is_codex_official_provider, provider_needs_responses_late_arguments_repair,
+    provider_needs_responses_namespace_flatten, resolve_codex_catalog_tool_profile,
+    resolve_codex_chat_reasoning_config, should_convert_codex_responses_to_anthropic,
+    should_convert_codex_responses_to_chat, strip_codex_hosted_web_search,
 };
 pub use gemini::GeminiAdapter;
 

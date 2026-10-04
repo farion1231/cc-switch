@@ -438,7 +438,7 @@ describe("OpenCodeFormFields", () => {
     renderOpenCodeForm();
 
     const section = screen.getByText("Models").closest("div.border-l");
-    expect(section).toHaveClass("border-border-default", "pl-3");
+    expect(section).toHaveClass("border-border", "pl-3");
   });
 
   it("surfaces existing model token limits", () => {
