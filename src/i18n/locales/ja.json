@@ -4573,11 +4573,11 @@
     "requests": "リクエスト {{count}} 件",
     "resetIn": "{{time}} 後にリセット",
     "accounts": "アカウント {{count}} 件",
-    "inUse": "使用中",
     "noUsageQuery": "残量の取得はオフです",
-    "empty": "使用中のプロバイダーはまだありません",
     "openMain": "CC Switch を開く",
     "refresh": "更新",
-    "rightClickHint": "右クリックで切り替え"
+    "rightClickHint": "右クリックで切り替え",
+    "inUseBy": "{{app}} で使用中",
+    "reauthRequired": "再ログインが必要です"
   }
 }

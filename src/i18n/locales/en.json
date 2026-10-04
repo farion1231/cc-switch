@@ -4573,11 +4573,11 @@
     "requests": "Requests: {{count}}",
     "resetIn": "Resets in {{time}}",
     "accounts": "Accounts: {{count}}",
-    "inUse": "In use",
     "noUsageQuery": "Quota lookup is off",
-    "empty": "No provider in use yet",
     "openMain": "Open CC Switch",
     "refresh": "Refresh",
-    "rightClickHint": "Right-click to switch"
+    "rightClickHint": "Right-click to switch",
+    "inUseBy": "In use by {{app}}",
+    "reauthRequired": "Sign in again"
   }
 }

@@ -2852,14 +2852,17 @@ pub struct TrayPanelApp {
     pub script: Option<crate::provider::UsageResult>,
 }
 
-/// 面板展示面与托盘菜单一致：只列在「应用」页可见、且有在用供应商的切换式应用。
+/// 面板里列的应用：Claude Desktop、Gemini CLI、Grok Build 暂不展示（托盘菜单照常列）。
+const PANEL_APPS: [AppType; 2] = [AppType::Claude, AppType::Codex];
+
+/// 只列在「应用」页可见、且有在用供应商的应用。
 pub(crate) fn collect_panel_apps(app_state: &AppState) -> Vec<TrayPanelApp> {
     let visible_apps = crate::settings::get_settings()
         .visible_apps
         .unwrap_or_default();
     let cache = &app_state.usage_cache;
     let mut apps = Vec::new();
-    for app_type in TRAY_APPS.iter() {
+    for app_type in PANEL_APPS.iter() {
         if !visible_apps.is_visible(app_type) {
             continue;
         }

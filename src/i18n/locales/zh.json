@@ -4573,11 +4573,11 @@
     "requests": "{{count}} 次请求",
     "resetIn": "{{time}} 后重置",
     "accounts": "{{count}} 个账号",
-    "inUse": "在用",
     "noUsageQuery": "未开启额度查询",
-    "empty": "还没有在用的供应商",
     "openMain": "打开 CC Switch",
     "refresh": "刷新",
-    "rightClickHint": "右键切换供应商"
+    "rightClickHint": "右键切换供应商",
+    "inUseBy": "{{app}} 在用",
+    "reauthRequired": "需要重新登录"
   }
 }

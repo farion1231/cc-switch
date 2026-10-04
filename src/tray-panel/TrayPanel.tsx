@@ -22,22 +22,39 @@ import { TONE_FILL, TONE_TEXT, useNow } from "@/components/quota/QuotaLines";
 import {
   countdownStr,
   formatRelativeTime,
+  resetCreditsLine,
   toneForLeft,
   type QuotaTone,
 } from "@/components/quota/quotaRules";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import { fmtUsd } from "@/components/usage/format";
 import { usageApi } from "@/lib/api/usage";
-import { authListAccounts, type ManagedAuthAccount } from "@/lib/api/auth";
+import {
+  authGetStatus,
+  type ManagedAuthAccount,
+  type ManagedAuthProvider,
+} from "@/lib/api/auth";
 import {
   trayPanelApi,
   TRAY_PANEL_SHOWN_EVENT,
   type TrayPanelApp,
 } from "@/lib/api/trayPanel";
-import { useCodexOauthQuotaByAccountId } from "@/lib/query/subscription";
+import {
+  useCodexOauthQuotaByAccountId,
+  useXaiOauthQuotaByAccountId,
+} from "@/lib/query/subscription";
+import { useCopilotQuota, type CopilotQuota } from "@/lib/query/copilot";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 import type { UsageResult } from "@/types";
 
 type Range = "day" | "month" | "total";
+
+/** 授权中心各家账号额度的查询 key 前缀 */
+const ACCOUNT_QUOTA_KEYS = [
+  ["codex_oauth", "quota"],
+  ["xai_oauth", "quota"],
+  ["copilot", "quota"],
+];
 const RANGES: Range[] = ["day", "month", "total"];
 
 function rangeStart(range: Range): number {
@@ -66,6 +83,10 @@ interface PanelRow {
   percent: number | null;
   tone: QuotaTone;
   note?: string;
+  /** 悬停说明 */
+  title?: string;
+  /** 占满一整行（重置次数那一行） */
+  wide?: boolean;
 }
 
 type PanelQuota =
@@ -89,6 +110,7 @@ function tierRow(t: TFunction, tier: QuotaTier, label: string): PanelRow {
 function subscriptionPanelQuota(
   t: TFunction,
   quota: SubscriptionQuota | null | undefined,
+  locale: string,
 ): PanelQuota {
   if (
     !quota ||
@@ -100,9 +122,61 @@ function subscriptionPanelQuota(
   if (!quota.success) {
     return { kind: "failed", reason: quotaFailureReason(t, quota) };
   }
-  const rows = (quota.tiers || [])
-    .filter((tier) => tier.name in TIER_I18N_KEYS)
-    .map((tier) => tierRow(t, tier, tierLabel(t, tier.name)));
+  const known = (quota.tiers || []).filter(
+    (tier) => tier.name in TIER_I18N_KEYS,
+  );
+  // 面板里总的每周额度放在按模型分的每周额度（Fable / Opus）后面
+  const rows = [
+    ...known.filter((tier) => tier.name !== "seven_day"),
+    ...known.filter((tier) => tier.name === "seven_day"),
+  ].map((tier) => tierRow(t, tier, tierLabel(t, tier.name)));
+  // 和卡片 / 授权中心一样（quotaRows）：一档都没有时重置次数也不单独出来
+  if (rows.length === 0) return null;
+  const resets = resetCreditsRow(t, quota, locale);
+  return { kind: "rows", rows: resets ? [...rows, resets] : rows };
+}
+
+/**
+ * ChatGPT 订阅存下的限额重置：次数用 resetCreditsLine（和软件里同一套去过期、文案、
+ * 快到期加深），下面逐次写剩多久到期，先到期的在前。
+ */
+function resetCreditsRow(
+  t: TFunction,
+  quota: SubscriptionQuota,
+  locale: string,
+): PanelRow | null {
+  const line = resetCreditsLine(t, quota.resetCredits, { locale });
+  if (!line) return null;
+  const now = Date.now();
+  const note = (quota.resetCredits?.expiresAt ?? [])
+    .filter((at) => !at || !(Date.parse(at) <= now))
+    .map((at) => countdownStr(at, now) ?? t("quota.resetCredits.noExpiry"))
+    .join(" · ");
+  return {
+    key: line.key,
+    label: t("quota.resetCredits.label"),
+    value: line.value ?? line.text,
+    percent: null,
+    tone: line.tone,
+    note,
+    title: line.detail,
+    wide: true,
+  };
+}
+
+function copilotPanelQuota(
+  t: TFunction,
+  quota: CopilotQuota | undefined,
+): PanelQuota {
+  if (!quota) return null;
+  if (!quota.success) {
+    return {
+      kind: "failed",
+      reason: quota.error || t("subscription.queryFailed"),
+    };
+  }
+  const label = t("subscription.copilotPremium");
+  const rows = quota.tiers.map((tier) => tierRow(t, tier, label));
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
@@ -144,6 +218,24 @@ function scriptPanelQuota(
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
+/**
+ * 两列排，落单的占满整行：本身要占满的（重置次数）照旧；夹在它们之间的一段额度条是奇数个时，
+ * 最后一个占满，不留半行空白。
+ */
+function fullWidthRows(rows: PanelRow[]): boolean[] {
+  const full = rows.map((row) => Boolean(row.wide));
+  let runStart = 0;
+  rows.forEach((row, index) => {
+    if (row.wide) {
+      runStart = index + 1;
+      return;
+    }
+    const runEnds = index === rows.length - 1 || rows[index + 1].wide;
+    if (runEnds && (index - runStart + 1) % 2 === 1) full[index] = true;
+  });
+  return full;
+}
+
 function QuotaGrid({ quota }: { quota: PanelQuota }) {
   const { t } = useTranslation();
   if (!quota) return null;
@@ -157,16 +249,15 @@ function QuotaGrid({ quota }: { quota: PanelQuota }) {
       </p>
     );
   }
-  const single = quota.rows.length === 1;
+  const full = fullWidthRows(quota.rows);
   return (
-    <div
-      className={cn(
-        "mt-2 grid gap-x-4 gap-y-2.5",
-        single ? "grid-cols-1" : "grid-cols-2",
-      )}
-    >
-      {quota.rows.map((row) => (
-        <div key={row.key} className="min-w-0">
+    <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2.5">
+      {quota.rows.map((row, index) => (
+        <div
+          key={row.key}
+          title={row.title}
+          className={cn("min-w-0", full[index] && "col-span-2")}
+        >
           <div className="flex items-baseline justify-between gap-2 text-caption">
             <span className="truncate text-fg-2">{row.label}</span>
             <span
@@ -197,7 +288,7 @@ function QuotaGrid({ quota }: { quota: PanelQuota }) {
             </div>
           )}
           {row.note && (
-            <div className="mt-1 text-badge font-normal text-fg-3">
+            <div className="mt-1 truncate text-badge font-normal text-fg-3 tabular-nums">
               {row.note}
             </div>
           )}
@@ -229,20 +320,18 @@ function maskLogin(login: string): string {
 }
 
 function SectionHeader({
-  app,
+  icon,
   title,
   right,
 }: {
-  app: TrayPanelApp;
-  title?: string;
+  icon: ReactNode;
+  title: string;
   right?: ReactNode;
 }) {
   return (
     <div className="flex items-center gap-2">
-      <AppGlyph app={app.appType} size={16} />
-      <span className="truncate text-strong text-fg-1">
-        {title ?? app.appName}
-      </span>
+      {icon}
+      <span className="truncate text-strong text-fg-1">{title}</span>
       <span className="ms-auto min-w-0 truncate text-caption text-fg-3">
         {right}
       </span>
@@ -251,14 +340,18 @@ function SectionHeader({
 }
 
 function AppSection({ app }: { app: TrayPanelApp }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const quota =
     app.usageKind === "script"
       ? scriptPanelQuota(t, app.script, app.tokenPlan)
-      : subscriptionPanelQuota(t, app.subscription);
+      : subscriptionPanelQuota(t, app.subscription, i18n.language);
   return (
     <section className="px-4 py-3">
-      <SectionHeader app={app} right={app.providerName} />
+      <SectionHeader
+        icon={<AppGlyph app={app.appType} size={16} />}
+        title={app.appName}
+        right={app.providerName}
+      />
       <UpdatedAt at={app.subscription?.queriedAt} />
       {app.usageKind === null ? (
         <p className="mt-1 text-caption text-fg-3">
@@ -271,56 +364,139 @@ function AppSection({ app }: { app: TrayPanelApp }) {
   );
 }
 
-function CodexAccount({
+// ─── 授权中心的账号 ────────────────────────────────────────────────────────────
+
+/** 授权中心里登录的账号分组，顺序和授权中心一致 */
+const AUTH_GROUPS: {
+  provider: ManagedAuthProvider;
+  title: string;
+  icon: string;
+}[] = [
+  {
+    provider: "github_copilot",
+    title: "GitHub Copilot",
+    icon: "githubcopilot",
+  },
+  { provider: "codex_oauth", title: "ChatGPT", icon: "openai" },
+  { provider: "xai_oauth", title: "xAI", icon: "xai" },
+];
+
+function needsReauth(account: ManagedAuthAccount): boolean {
+  return Boolean(account.reauth_required || account.requires_reauth);
+}
+
+/** 各家账号的额度 hook 不同，按分组挑一个；需要重新登录的账号不查 */
+function useAccountQuota(
+  provider: ManagedAuthProvider,
+  account: ManagedAuthAccount,
+): { quota: PanelQuota; queriedAt: number | null | undefined } {
+  const { t, i18n } = useTranslation();
+  const enabled = !needsReauth(account);
+  const options = { enabled: false, autoQuery: false };
+  const codex = useCodexOauthQuotaByAccountId(account.id, {
+    ...options,
+    enabled: enabled && provider === "codex_oauth",
+  });
+  const xai = useXaiOauthQuotaByAccountId(account.id, {
+    ...options,
+    enabled: enabled && provider === "xai_oauth",
+  });
+  const copilot = useCopilotQuota(account.id, {
+    ...options,
+    enabled: enabled && provider === "github_copilot",
+  });
+  if (provider === "github_copilot") {
+    return {
+      quota: copilotPanelQuota(t, copilot.data),
+      queriedAt: copilot.data?.queriedAt,
+    };
+  }
+  const data = provider === "codex_oauth" ? codex.data : xai.data;
+  return {
+    quota: subscriptionPanelQuota(t, data, i18n.language),
+    queriedAt: data?.queriedAt,
+  };
+}
+
+function AccountRow({
+  provider,
   account,
-  current,
+  inUseBy,
 }: {
+  provider: ManagedAuthProvider;
   account: ManagedAuthAccount;
-  current: boolean;
+  /** 正在用这个账号的应用名（Codex 绑定的托管账号） */
+  inUseBy?: string;
 }) {
   const { t } = useTranslation();
-  const { data } = useCodexOauthQuotaByAccountId(account.id, {
-    enabled: true,
-    autoQuery: false,
-  });
+  const { quota, queriedAt } = useAccountQuota(provider, account);
   return (
     <div className="mt-2.5">
       <div className="flex items-center gap-1.5 text-caption">
         <span className="truncate text-fg-1" title={account.login}>
           {maskLogin(account.login)}
         </span>
-        {current && (
-          <span className="text-fg-2" aria-label={t("trayPanel.inUse")}>
+        {inUseBy && (
+          <span
+            className="shrink-0 text-fg-2"
+            title={t("trayPanel.inUseBy", { app: inUseBy })}
+            aria-label={t("trayPanel.inUseBy", { app: inUseBy })}
+          >
             ✓
           </span>
         )}
       </div>
-      <UpdatedAt at={data?.queriedAt} />
-      <QuotaGrid quota={subscriptionPanelQuota(t, data)} />
+      {needsReauth(account) ? (
+        <p className="mt-1 text-caption font-medium text-danger-text">
+          {t("trayPanel.reauthRequired")}
+        </p>
+      ) : (
+        <>
+          <UpdatedAt at={queriedAt} />
+          <QuotaGrid quota={quota} />
+        </>
+      )}
     </div>
   );
 }
 
-/** Codex 绑了 cc-switch 自管账号时，把所有账号的额度都列出来 */
-function CodexAccountsSection({
-  app,
-  accounts,
+function AuthGroupSection({
+  provider,
+  title,
+  icon,
+  codexAccountId,
 }: {
-  app: TrayPanelApp;
-  accounts: ManagedAuthAccount[];
+  provider: ManagedAuthProvider;
+  title: string;
+  icon: string;
+  codexAccountId: string | null;
 }) {
   const { t } = useTranslation();
+  // 和授权中心（useManagedAuth）共用同一个查询 key
+  const { data } = useQuery({
+    queryKey: ["managed-auth-status", provider],
+    queryFn: () => authGetStatus(provider),
+    staleTime: 30_000,
+  });
+  const accounts = data?.accounts ?? [];
+  if (accounts.length === 0) return null;
   return (
     <section className="px-4 py-3">
       <SectionHeader
-        app={app}
+        icon={<ProviderIcon icon={icon} name={title} size={16} />}
+        title={title}
         right={t("trayPanel.accounts", { count: accounts.length })}
       />
       {accounts.map((account) => (
-        <CodexAccount
+        <AccountRow
           key={account.id}
+          provider={provider}
           account={account}
-          current={account.id === app.accountId}
+          inUseBy={
+            provider === "codex_oauth" && account.id === codexAccountId
+              ? "Codex"
+              : undefined
+          }
         />
       ))}
     </section>
@@ -348,20 +524,19 @@ export function TrayPanel() {
     queryKey: ["tray-panel", "apps"],
     queryFn: () => trayPanelApi.refreshApps(),
   });
-  const codexAccounts = useQuery({
-    queryKey: ["tray-panel", "codex-accounts"],
-    queryFn: () => authListAccounts("codex_oauth"),
-  });
 
   // 每次弹出都重查：面板只隐藏不销毁
   useEffect(() => {
     const unlisten = listen(TRAY_PANEL_SHOWN_EVENT, () => {
       void queryClient.invalidateQueries({ queryKey: ["tray-panel"] });
+      void queryClient.invalidateQueries({ queryKey: ["managed-auth-status"] });
       // 各账号额度有自己的 5 分钟缓存，超过一分钟的才重查
-      void queryClient.invalidateQueries({
-        queryKey: ["codex_oauth", "quota"],
-        predicate: (query) => Date.now() - query.state.dataUpdatedAt > 60_000,
-      });
+      for (const key of ACCOUNT_QUOTA_KEYS) {
+        void queryClient.invalidateQueries({
+          queryKey: key,
+          predicate: (query) => Date.now() - query.state.dataUpdatedAt > 60_000,
+        });
+      }
     });
     return () => {
       void unlisten.then((off) => off());
@@ -387,7 +562,14 @@ export function TrayPanel() {
     return () => observer.disconnect();
   }, []);
 
-  const accounts = codexAccounts.data ?? [];
+  // Codex 绑的是授权中心的账号时，额度在 ChatGPT 账号那组里写（打 ✓），这里不重复
+  const codexAccountId =
+    apps.data?.find(
+      (app) => app.appType === "codex" && app.usageKind === "managedCodex",
+    )?.accountId ?? null;
+  const appSections = (apps.data ?? []).filter(
+    (app) => !(app.appType === "codex" && app.usageKind === "managedCodex"),
+  );
   const totalTokens = summary.data?.realTotalTokens;
   const refreshing = apps.isFetching || summary.isFetching;
 
@@ -445,24 +627,16 @@ export function TrayPanel() {
       </section>
 
       <div className="divide-y divide-black/[0.08] border-t border-black/[0.08] dark:divide-white/[0.1] dark:border-white/[0.1]">
-        {(apps.data ?? []).map((app) =>
-          app.appType === "codex" &&
-          app.usageKind === "managedCodex" &&
-          accounts.length > 0 ? (
-            <CodexAccountsSection
-              key={app.appType}
-              app={app}
-              accounts={accounts}
-            />
-          ) : (
-            <AppSection key={app.appType} app={app} />
-          ),
-        )}
-        {apps.data?.length === 0 && (
-          <p className="px-4 py-3 text-caption text-fg-3">
-            {t("trayPanel.empty")}
-          </p>
-        )}
+        {appSections.map((app) => (
+          <AppSection key={app.appType} app={app} />
+        ))}
+        {AUTH_GROUPS.map((group) => (
+          <AuthGroupSection
+            key={group.provider}
+            {...group}
+            codexAccountId={codexAccountId}
+          />
+        ))}
       </div>
 
       <footer className="flex items-center gap-2 border-t border-black/[0.08] px-3 dark:border-white/[0.1] py-2.5">
@@ -485,8 +659,11 @@ export function TrayPanel() {
           onClick={() => {
             void queryClient.invalidateQueries({ queryKey: ["tray-panel"] });
             void queryClient.invalidateQueries({
-              queryKey: ["codex_oauth", "quota"],
+              queryKey: ["managed-auth-status"],
             });
+            for (const key of ACCOUNT_QUOTA_KEYS) {
+              void queryClient.invalidateQueries({ queryKey: key });
+            }
           }}
           className="rounded-control p-1.5 text-fg-2 hover:bg-black/[0.06] dark:hover:bg-white/[0.08] hover:text-fg-1 disabled:opacity-50"
         >

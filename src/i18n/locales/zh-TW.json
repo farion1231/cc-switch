@@ -4574,11 +4574,11 @@
     "requests": "{{count}} 次請求",
     "resetIn": "{{time}} 後重設",
     "accounts": "{{count}} 個帳號",
-    "inUse": "使用中",
     "noUsageQuery": "未開啟額度查詢",
-    "empty": "還沒有使用中的供應商",
     "openMain": "開啟 CC Switch",
     "refresh": "重新整理",
-    "rightClickHint": "右鍵切換供應商"
+    "rightClickHint": "右鍵切換供應商",
+    "inUseBy": "{{app}} 使用中",
+    "reauthRequired": "需要重新登入"
   }
 }
