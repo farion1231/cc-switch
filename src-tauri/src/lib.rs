@@ -772,6 +772,13 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
+            // Existing official cards suppress first-run import. If the user
+            // restored a custom Codex config externally, reconcile the saved
+            // selection before UI queries, without projecting anything to live.
+            if let Err(e) = ProviderService::reconcile_codex_current_on_startup(&app_state) {
+                log::warn!("Failed to reconcile Codex current provider with live config: {e}");
+            }
+
             {
                 let db_for_codex_history_migration = app_state.db.clone();
                 tauri::async_runtime::spawn_blocking(move || {
