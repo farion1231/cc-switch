@@ -1,10 +1,14 @@
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import { RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { TONE_FILL, TONE_TEXT, useNow } from "@/components/quota/QuotaLines";
+import {
+  QuotaBreakdownChevron,
+  QuotaBreakdownRow,
+} from "@/components/quota/QuotaBreakdown";
 import {
   formatRelativeTime,
   tierLine,
@@ -66,53 +70,30 @@ export function AccountQuotaColumn({
     <>
       <div className="flex w-[212px] shrink-0 flex-col gap-0.5">
         {state.kind === "rows" &&
-          state.rows.map(({ label, line }) => {
-            const width = Number.isFinite(line.left)
-              ? Math.max(0, Math.min(100, line.left))
-              : 100;
-            const value = line.value ?? line.text;
-            return (
+          state.rows.map(({ label, line }) =>
+            line.breakdown ? (
+              <QuotaBreakdownRow
+                key={line.key}
+                line={line}
+                breakdown={line.breakdown}
+                className={ROW_CLASS}
+              >
+                <QuotaRowCells
+                  label={label}
+                  line={line}
+                  trailing={<QuotaBreakdownChevron />}
+                />
+              </QuotaBreakdownRow>
+            ) : (
               <div
                 key={line.key}
-                title={line.detail ?? value}
-                className="flex h-[18px] items-center gap-2 text-caption"
+                title={line.detail ?? line.value ?? line.text}
+                className={ROW_CLASS}
               >
-                <span className="min-w-[52px] shrink-0 whitespace-nowrap text-fg-2">
-                  {label}
-                </span>
-                {line.caption ? (
-                  <span className="min-w-0 flex-1 truncate text-fg-3">
-                    {line.caption}
-                  </span>
-                ) : (
-                  <span
-                    role="meter"
-                    aria-label={`${label}: ${value}`}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.round(width)}
-                    className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-chart-grid"
-                  >
-                    <span
-                      className={cn(
-                        "absolute inset-y-0 start-0 rounded-full",
-                        TONE_FILL[line.tone],
-                      )}
-                      style={{ width: `${width}%` }}
-                    />
-                  </span>
-                )}
-                <span
-                  className={cn(
-                    "w-14 shrink-0 whitespace-nowrap text-end tabular-nums",
-                    line.tone === "normal" ? "text-fg-1" : TONE_TEXT[line.tone],
-                  )}
-                >
-                  {value}
-                </span>
+                <QuotaRowCells label={label} line={line} />
               </div>
-            );
-          })}
+            ),
+          )}
         {state.kind === "failed" && (
           <>
             <span className="h-[18px] text-caption font-medium text-danger-text">
@@ -162,6 +143,63 @@ export function AccountQuotaColumn({
           </button>
         </HoverTip>
       </div>
+    </>
+  );
+}
+
+const ROW_CLASS = "flex h-[18px] items-center gap-2 text-caption";
+
+/** 一行额度：档名 + 额度条（或一句说明）+ 剩余 */
+function QuotaRowCells({
+  label,
+  line,
+  trailing,
+}: {
+  label: string;
+  line: QuotaLine;
+  /** 跟在说明文字后面的小图标（可点开的行用） */
+  trailing?: ReactNode;
+}) {
+  const width = Number.isFinite(line.left)
+    ? Math.max(0, Math.min(100, line.left))
+    : 100;
+  const value = line.value ?? line.text;
+  return (
+    <>
+      <span className="min-w-[52px] shrink-0 whitespace-nowrap text-fg-2">
+        {label}
+      </span>
+      {line.caption ? (
+        <span className="flex min-w-0 flex-1 items-center gap-0.5 text-fg-3">
+          <span className="truncate">{line.caption}</span>
+          {trailing}
+        </span>
+      ) : (
+        <span
+          role="meter"
+          aria-label={`${label}: ${value}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(width)}
+          className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-chart-grid"
+        >
+          <span
+            className={cn(
+              "absolute inset-y-0 start-0 rounded-full",
+              TONE_FILL[line.tone],
+            )}
+            style={{ width: `${width}%` }}
+          />
+        </span>
+      )}
+      <span
+        className={cn(
+          "w-14 shrink-0 whitespace-nowrap text-end tabular-nums",
+          line.tone === "normal" ? "text-fg-1" : TONE_TEXT[line.tone],
+        )}
+      >
+        {value}
+      </span>
     </>
   );
 }

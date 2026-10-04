@@ -4143,7 +4143,11 @@
       "expiresOn": "{{date}}到期",
       "noExpiry": "不會過期",
       "detail": "存下的限額重設剩餘 {{count}} 次 · 最早 {{date}}到期",
-      "detailNoExpiry": "存下的限額重設剩餘 {{count}} 次 · 不會過期"
+      "detailNoExpiry": "存下的限額重設剩餘 {{count}} 次 · 不會過期",
+      "title": "存下的限額重設",
+      "times": "{{count}} 次",
+      "inTime": "{{time}}後",
+      "showAll": "查看 {{count}} 次重設各自的到期時間"
     }
   },
   "appMatrix": {

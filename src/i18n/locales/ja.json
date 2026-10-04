@@ -4142,7 +4142,11 @@
       "expiresOn": "{{date}}に期限切れ",
       "noExpiry": "期限なし",
       "detail": "保存したリセット 残り {{count}} 回 · 最短の期限 {{date}}",
-      "detailNoExpiry": "保存したリセット 残り {{count}} 回 · 期限なし"
+      "detailNoExpiry": "保存したリセット 残り {{count}} 回 · 期限なし",
+      "title": "保存したリセット",
+      "times": "{{count}} 回",
+      "inTime": "{{time}}後",
+      "showAll": "{{count}} 回分のリセットの期限を表示"
     }
   },
   "appMatrix": {

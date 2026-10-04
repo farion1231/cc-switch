@@ -4142,7 +4142,11 @@
       "expiresOn": "Expires {{date}}",
       "noExpiry": "No expiry",
       "detail": "Saved limit resets left: {{count}} · next expires {{date}}",
-      "detailNoExpiry": "Saved limit resets left: {{count}} · no expiry"
+      "detailNoExpiry": "Saved limit resets left: {{count}} · no expiry",
+      "title": "Saved limit resets",
+      "times": "×{{count}}",
+      "inTime": "in {{time}}",
+      "showAll": "Show when each of the {{count}} resets expires"
     }
   },
   "appMatrix": {

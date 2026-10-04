@@ -23,6 +23,9 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     "quota.resetCredits.value": "剩余 {{count}} 次",
     "quota.resetCredits.expiresOn": "{{date}}到期",
     "quota.resetCredits.noExpiry": "不会过期",
+    "quota.resetCredits.title": "存下的限额重置",
+    "quota.resetCredits.times": "{{count}} 次",
+    "quota.resetCredits.inTime": "{{time}}后",
   };
   const template = templates[key] ?? key;
   return template.replace(/\{\{(\w+)\}\}/g, (_, name) =>
@@ -176,6 +179,34 @@ describe("saved limit resets", () => {
     expect(
       resetCreditsLine(t, { expiresAt: [null] }, { now, locale: "en" }),
     ).toMatchObject({ caption: "不会过期", tone: "normal" });
+  });
+
+  it("lists every expiry once there is more than one, same day grouped", () => {
+    // 只有一次：行里写全了，不给明细
+    expect(
+      resetCreditsLine(
+        t,
+        { expiresAt: [at(now + 10 * day)] },
+        { now, locale: "en" },
+      )?.breakdown,
+    ).toBeUndefined();
+
+    const soon = now + 2 * day;
+    const later = now + 20 * day;
+    const breakdown = resetCreditsLine(
+      t,
+      { expiresAt: [at(soon), at(soon + 60_000), at(later), null] },
+      { now, locale: "en-US" },
+    )?.breakdown;
+    expect(breakdown?.title).toBe("存下的限额重置");
+    expect(
+      breakdown?.items.map(({ hint, value, tone }) => [hint, value, tone]),
+    ).toEqual([
+      ["2d0h后", "2 次", "warning"],
+      ["20d0h后", "1 次", "normal"],
+      [undefined, "1 次", "normal"],
+    ]);
+    expect(breakdown?.items[2].label).toBe("不会过期");
   });
 
   it("stands out when the earliest one expires within three days", () => {

@@ -152,4 +152,47 @@ describe("quota column refresh", () => {
     expect(icon()).toBeNull();
     expect(result()).toBeNull();
   });
+
+  it("splits off the resets as a dropdown, the rest of the column still refreshes", () => {
+    const onRefresh = vi.fn();
+    const withResets: QuotaLine[] = [
+      { ...lines[0], short: "5 小时 82%", window: 0 },
+      {
+        key: "seven_day",
+        text: "每周剩余 64%",
+        short: "每周 64%",
+        tone: "normal",
+        left: 64,
+        window: 2,
+      },
+      {
+        key: "reset_credits",
+        text: "重置剩余 3 次",
+        short: "重置 3 次",
+        tone: "normal",
+        left: Infinity,
+        window: 99,
+        breakdown: {
+          title: "存下的限额重置",
+          openLabel: "查看到期时间",
+          items: [],
+        },
+      },
+    ];
+    render(<QuotaLines lines={withResets} onRefresh={onRefresh} />);
+
+    // 只有一个刷新按钮（键盘、读屏认它），重置次数自己是按钮
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(icon()).toHaveClass("hidden");
+
+    // 同一行的「每周」也能悬停露 ↻、点了重查
+    const weekly = screen.getByText("每周 64%");
+    fireEvent.mouseEnter(weekly);
+    expect(icon()).not.toHaveClass("hidden");
+    fireEvent.click(weekly);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "查看到期时间" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
 });

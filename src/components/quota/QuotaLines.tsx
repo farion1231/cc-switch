@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { Check, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ import {
   type QuotaLine,
   type QuotaTone,
 } from "./quotaRules";
+import { QuotaBreakdownChevron, QuotaBreakdownRow } from "./QuotaBreakdown";
 
 /**
  * 快用完只加深加粗、不用橙色：浅色模式的警告文字和可点击文字（主题橙）几乎同色，
@@ -146,6 +147,8 @@ export function QuotaLines({
   const spinning = refresh.phase === "spinning";
   // 点过之后，鼠标移出 / 焦点离开之前不再露 ↻：否则 ✓ 一消失，还停在上面的鼠标又把 ↻ 叫出来
   const [quiet, setQuiet] = useState(false);
+  // 拆开布局时刷新区不止一块，悬停改用状态记（见下）
+  const [hovered, setHovered] = useState(false);
   const ResultIcon = refresh.phase === "failed" ? X : Check;
   const rows = cardRows(lines, max);
   if (rows.length === 0) return null;
@@ -196,11 +199,71 @@ export function QuotaLines({
     );
   }
 
-  // ↻ 放在第一行左边：列是右对齐的，它出现 / 消失只占左侧空白，文字不挪位置
-  const [firstRow, ...restRows] = rowNodes;
   // 用 aria-disabled 不用 disabled：禁用的按钮在 Chromium 里可能收不到 mouseleave，
   // 转圈时把鼠标移走，quiet 就解不开了
   const busy = loading || spinning;
+  const refreshProps = {
+    "aria-busy": busy,
+    "aria-disabled": busy,
+    onClick: (event: MouseEvent) => {
+      event.stopPropagation();
+      if (busy) return;
+      setQuiet(true);
+      refresh.start(onRefresh());
+    },
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => {
+      setHovered(false);
+      setQuiet(false);
+    },
+    onBlur: () => setQuiet(false),
+  };
+  const split = rows.some((row) => row.some((line) => line.breakdown));
+  const icon =
+    refresh.phase === "succeeded" || refresh.phase === "failed" ? (
+      <ResultIcon
+        aria-hidden
+        data-testid={`quota-refresh-${refresh.phase}`}
+        className={cn(
+          "h-[11px] w-[11px] shrink-0 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-75",
+          refresh.phase === "failed" ? "text-danger-text" : "text-fg-3",
+        )}
+        strokeWidth={2}
+      />
+    ) : (
+      <RefreshCw
+        aria-hidden
+        data-testid="quota-refresh-icon"
+        className={cn(
+          "h-[11px] w-[11px] shrink-0 text-fg-3 group-hover:text-fg-2",
+          spinning
+            ? "motion-safe:animate-spin"
+            : quiet
+              ? "hidden"
+              : split
+                ? hovered
+                  ? "block"
+                  : "hidden group-focus-visible:block"
+                : "hidden group-hover:block group-focus-visible:block",
+        )}
+        strokeWidth={1.75}
+      />
+    );
+
+  if (split) {
+    return (
+      <SplitQuotaColumn
+        rows={rows}
+        className={className}
+        title={title}
+        icon={icon}
+        refreshProps={refreshProps}
+      />
+    );
+  }
+
+  // ↻ 放在第一行左边：列是右对齐的，它出现 / 消失只占左侧空白，文字不挪位置
+  const [firstRow, ...restRows] = rowNodes;
   return (
     <button
       type="button"
@@ -209,47 +272,142 @@ export function QuotaLines({
         "group rounded-control text-end transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
       )}
       title={title}
-      aria-busy={busy}
-      aria-disabled={busy}
-      onClick={(event) => {
-        event.stopPropagation();
-        if (busy) return;
-        setQuiet(true);
-        refresh.start(onRefresh());
-      }}
-      onMouseLeave={() => setQuiet(false)}
-      onBlur={() => setQuiet(false)}
+      {...refreshProps}
     >
       <span className="flex max-w-full items-center justify-end gap-1">
-        {refresh.phase === "succeeded" || refresh.phase === "failed" ? (
-          <ResultIcon
-            aria-hidden
-            data-testid={`quota-refresh-${refresh.phase}`}
-            className={cn(
-              "h-[11px] w-[11px] shrink-0 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-75",
-              refresh.phase === "failed" ? "text-danger-text" : "text-fg-3",
-            )}
-            strokeWidth={2}
-          />
-        ) : (
-          <RefreshCw
-            aria-hidden
-            data-testid="quota-refresh-icon"
-            className={cn(
-              "h-[11px] w-[11px] shrink-0 text-fg-3 group-hover:text-fg-2",
-              spinning
-                ? "motion-safe:animate-spin"
-                : quiet
-                  ? "hidden"
-                  : "hidden group-hover:block group-focus-visible:block",
-            )}
-            strokeWidth={1.75}
-          />
-        )}
+        {icon}
         <span className="flex min-w-0 flex-col items-end">{firstRow}</span>
       </span>
       {restRows}
     </button>
+  );
+}
+
+interface RefreshProps {
+  "aria-busy": boolean;
+  "aria-disabled": boolean;
+  onClick: (event: MouseEvent) => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+  onBlur: () => void;
+}
+
+/**
+ * 有一段能点开明细时（「每周 64% · 重置 3 次 ⌄」）：那一段单独做成下拉，其余照旧点了重查。
+ * 按钮里不能再套按钮，所以整列拆成几块：第一块刷新是真按钮（键盘、读屏都认它），
+ * 后面的刷新块只接鼠标点击，下拉段自己是按钮。
+ */
+function SplitQuotaColumn({
+  rows,
+  className,
+  title,
+  icon,
+  refreshProps,
+}: {
+  rows: QuotaLine[][];
+  className: string;
+  title: string;
+  icon: ReactNode;
+  refreshProps: RefreshProps;
+}) {
+  const { t } = useTranslation();
+  const refreshText = rows
+    .flat()
+    .filter((line) => !line.breakdown)
+    .map((line) => line.text)
+    .join(", ");
+  let mainPlaced = false;
+
+  return (
+    <div className={className}>
+      {rows.map((row, rowIndex) => {
+        const merged = row.length > 1;
+        // 连续的普通段并成一块刷新区，带明细的段单独成块
+        const parts: { breakdown: boolean; lines: QuotaLine[] }[] = [];
+        for (const line of row) {
+          const last = parts[parts.length - 1];
+          if (!line.breakdown && last && !last.breakdown) last.lines.push(line);
+          else
+            parts.push({ breakdown: Boolean(line.breakdown), lines: [line] });
+        }
+        let segment = 0;
+        const segmentText = (line: QuotaLine) => {
+          const node = (
+            <span key={line.key}>
+              {segment > 0 && " · "}
+              <span className={TONE_TEXT[line.tone]}>
+                {merged ? line.short : line.text}
+              </span>
+            </span>
+          );
+          segment += 1;
+          return node;
+        };
+
+        return (
+          <span
+            key={row.map((line) => line.key).join("+")}
+            className="flex max-w-full items-center justify-end text-fg-2"
+          >
+            {parts.map((part) => {
+              if (part.breakdown) {
+                const line = part.lines[0];
+                const separator = segment > 0;
+                segment += 1;
+                return (
+                  <span key={line.key} className="flex shrink-0 items-center">
+                    {separator && <span>&nbsp;·&nbsp;</span>}
+                    <QuotaBreakdownRow
+                      line={line}
+                      breakdown={line.breakdown!}
+                      align="end"
+                      className={cn(
+                        "flex items-center gap-0.5",
+                        TONE_TEXT[line.tone],
+                      )}
+                    >
+                      {merged ? line.short : line.text}
+                      <QuotaBreakdownChevron />
+                    </QuotaBreakdownRow>
+                  </span>
+                );
+              }
+              const key = part.lines.map((line) => line.key).join("+");
+              const text = part.lines.map(segmentText);
+              if (!mainPlaced) {
+                mainPlaced = true;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    title={title}
+                    aria-label={`${refreshText} · ${t("quota.clickToRefresh")}`}
+                    className="group flex min-w-0 items-center gap-1 rounded-control text-end focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    {...refreshProps}
+                  >
+                    {rowIndex === 0 && icon}
+                    <span className="min-w-0 truncate">{text}</span>
+                  </button>
+                );
+              }
+              return (
+                <span
+                  key={key}
+                  aria-hidden
+                  title={title}
+                  className="min-w-0 cursor-pointer truncate"
+                  onClick={refreshProps.onClick}
+                  onMouseEnter={refreshProps.onMouseEnter}
+                  onMouseLeave={refreshProps.onMouseLeave}
+                >
+                  {text}
+                </span>
+              );
+            })}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
@@ -263,6 +421,8 @@ interface QuotaBarsProps {
   footer?: ReactNode;
   className?: string;
 }
+
+const BAR_ROW_CLASS = "flex h-[18px] items-center gap-2 text-caption";
 
 /** 展开的额度条（授权中心、多套餐展开）：条越短剩得越少 */
 export function QuotaBars({
@@ -316,18 +476,15 @@ export function QuotaBars({
           const width = Number.isFinite(line.left)
             ? Math.max(0, Math.min(100, line.left))
             : 100;
-          return (
-            <div
-              key={line.key}
-              className="flex h-[18px] items-center gap-2 text-caption"
-              title={line.detail}
-            >
+          const cells = (
+            <>
               <span className="w-[72px] shrink-0 truncate text-fg-2">
                 {label}
               </span>
               {line.caption ? (
-                <span className="w-[120px] shrink-0 truncate text-fg-3">
-                  {line.caption}
+                <span className="flex w-[120px] shrink-0 items-center gap-0.5 text-fg-3">
+                  <span className="truncate">{line.caption}</span>
+                  {line.breakdown && <QuotaBreakdownChevron />}
                 </span>
               ) : (
                 <span
@@ -358,6 +515,20 @@ export function QuotaBars({
               {note && (
                 <span className="min-w-0 truncate text-fg-3">{note}</span>
               )}
+            </>
+          );
+          return line.breakdown ? (
+            <QuotaBreakdownRow
+              key={line.key}
+              line={line}
+              breakdown={line.breakdown}
+              className={BAR_ROW_CLASS}
+            >
+              {cells}
+            </QuotaBreakdownRow>
+          ) : (
+            <div key={line.key} className={BAR_ROW_CLASS} title={line.detail}>
+              {cells}
             </div>
           );
         })}

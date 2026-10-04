@@ -4142,7 +4142,11 @@
       "expiresOn": "{{date}}到期",
       "noExpiry": "不会过期",
       "detail": "存下的限额重置剩余 {{count}} 次 · 最早 {{date}}到期",
-      "detailNoExpiry": "存下的限额重置剩余 {{count}} 次 · 不会过期"
+      "detailNoExpiry": "存下的限额重置剩余 {{count}} 次 · 不会过期",
+      "title": "存下的限额重置",
+      "times": "{{count}} 次",
+      "inTime": "{{time}}后",
+      "showAll": "查看 {{count}} 次重置各自的到期时间"
     }
   },
   "appMatrix": {

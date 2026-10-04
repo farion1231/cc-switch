@@ -24,6 +24,26 @@ export interface QuotaLine {
   window?: number;
   /** 没有比例可画时，额度条的位置改写这句（重置次数写最早的到期日） */
   caption?: string;
+  /** 一行写不下的明细，点开额度行时逐条列出（重置次数按到期日分组） */
+  breakdown?: QuotaBreakdown;
+}
+
+export interface QuotaBreakdown {
+  title: string;
+  /** 点开按钮的无障碍名字 */
+  openLabel: string;
+  items: QuotaBreakdownItem[];
+}
+
+export interface QuotaBreakdownItem {
+  key: string;
+  /** 「10月12日」/「不会过期」 */
+  label: string;
+  /** 「8d3h后」 */
+  hint?: string;
+  /** 「2 次」 */
+  value: string;
+  tone: QuotaTone;
 }
 
 export const WARN_BELOW_PERCENT = 10;
@@ -43,9 +63,12 @@ function labelParams(label: string) {
 }
 
 /** 计算倒计时的纯时间字符串，如 "2h30m"、"3d12h" */
-export function countdownStr(resetsAt: string | null | undefined) {
+export function countdownStr(
+  resetsAt: string | null | undefined,
+  now = Date.now(),
+) {
   if (!resetsAt) return null;
-  const diffMs = new Date(resetsAt).getTime() - Date.now();
+  const diffMs = new Date(resetsAt).getTime() - now;
   if (!Number.isFinite(diffMs) || diffMs <= 0) return null;
   const hours = Math.floor(diffMs / (1000 * 60 * 60));
   const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -162,7 +185,48 @@ export function resetCreditsLine(
       ? t("quota.resetCredits.detail", { count, date })
       : t("quota.resetCredits.detailNoExpiry", { count }),
     window: RESET_CREDITS_WINDOW,
+    // 只有一次时行里已经写全了，不用再点开
+    breakdown:
+      count > 1
+        ? {
+            title: t("quota.resetCredits.title"),
+            openLabel: t("quota.resetCredits.showAll", { count }),
+            items: resetCreditGroups(t, expiries, { now, locale }),
+          }
+        : undefined,
   };
+}
+
+/** 同一天到期的并成一条（「10月12日 · 8d3h后 · 2 次」），不过期的排最后 */
+function resetCreditGroups(
+  t: TFunction,
+  expiries: (string | null)[],
+  { now, locale }: { now: number; locale: string },
+): QuotaBreakdownItem[] {
+  // 解析不出的到期时间和后端一样当作不过期
+  const groups = new Map<string, { at: string | null; count: number }>();
+  for (const at of expiries) {
+    const known = at && Number.isFinite(Date.parse(at)) ? at : null;
+    const key = known ? shortDate(known, locale) : "no_expiry";
+    const group = groups.get(key);
+    if (group) group.count += 1;
+    else groups.set(key, { at: known, count: 1 });
+  }
+  return [...groups].map(([key, { at, count }]) => {
+    const countdown = countdownStr(at, now);
+    return {
+      key,
+      label: at ? key : t("quota.resetCredits.noExpiry"),
+      hint: countdown
+        ? t("quota.resetCredits.inTime", { time: countdown })
+        : undefined,
+      value: t("quota.resetCredits.times", { count }),
+      tone:
+        at && Date.parse(at) - now < RESET_EXPIRING_SOON_MS
+          ? "warning"
+          : "normal",
+    };
+  });
 }
 
 export function balanceLine(
