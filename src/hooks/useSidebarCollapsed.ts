@@ -69,7 +69,8 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
     boxShadow: expanding ? `-1px 0 0 0 ${line}` : `1px 0 0 0 ${line}`,
   });
   nav.after(cover);
-  // 盖板要滑进去的那一侧压在它上面
+  // 盖板要滑进去的那一侧压在它上面；收起时 main 不抬高，靠它的 isolate
+  // 把内容区里带 z-index 的元素（sticky 表头、FullScreenPanel）一起压在盖板下
   (expanding ? main : nav).style.zIndex = "2";
 
   const animation = cover.animate(
