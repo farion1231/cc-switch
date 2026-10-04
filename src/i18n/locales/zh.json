@@ -2604,7 +2604,7 @@
   "prompts": {
     "add": "添加提示词",
     "addTitle": "添加提示词 · {{appName}}",
-    "editTitle": "编辑提示词 · {{name}}",
+    "editTitle": "编辑提示词",
     "enabled": "已启用",
     "enable": "启用",
     "loading": "加载中...",
@@ -4243,7 +4243,7 @@
     },
     "drawer": {
       "addTitle": "添加 MCP",
-      "editTitle": "编辑 MCP · {{id}}",
+      "editTitle": "编辑 MCP",
       "templates": "从模板开始",
       "paste": "粘贴配置",
       "pastePlaceholder": "粘贴 JSON 或 TOML，自动识别 mcpServers、Codex、OpenCode 的写法",

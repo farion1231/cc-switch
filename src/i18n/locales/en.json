@@ -2604,7 +2604,7 @@
   "prompts": {
     "add": "Add Prompt",
     "addTitle": "Add prompt · {{appName}}",
-    "editTitle": "Edit prompt · {{name}}",
+    "editTitle": "Edit prompt",
     "enabled": "Enabled",
     "enable": "Enable",
     "loading": "Loading...",
@@ -4243,7 +4243,7 @@
     },
     "drawer": {
       "addTitle": "Add MCP",
-      "editTitle": "Edit MCP · {{id}}",
+      "editTitle": "Edit MCP",
       "templates": "Start from a template",
       "paste": "Paste a config",
       "pastePlaceholder": "Paste JSON or TOML; mcpServers, Codex and OpenCode formats are recognized",

@@ -2605,7 +2605,7 @@
   "prompts": {
     "add": "新增提示詞",
     "addTitle": "新增提示詞 · {{appName}}",
-    "editTitle": "編輯提示詞 · {{name}}",
+    "editTitle": "編輯提示詞",
     "enabled": "已啟用",
     "enable": "啟用",
     "loading": "載入中...",
@@ -4244,7 +4244,7 @@
     },
     "drawer": {
       "addTitle": "新增 MCP",
-      "editTitle": "編輯 MCP · {{id}}",
+      "editTitle": "編輯 MCP",
       "templates": "從範本開始",
       "paste": "貼上設定",
       "pastePlaceholder": "貼上 JSON 或 TOML，自動辨識 mcpServers、Codex、OpenCode 的寫法",

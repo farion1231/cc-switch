@@ -1008,7 +1008,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
           visibleAppIds={appIds}
           onSave={() => setDrawer(null)}
           onClose={() => setDrawer(null)}
-          onRequestDelete={(id) => setDeleteId(id)}
         />
       )}
 

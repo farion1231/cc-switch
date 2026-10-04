@@ -385,19 +385,6 @@ describe("PromptPanel", () => {
     expect(within(menu).getByText("prompts.deleteBlocked")).toBeInTheDocument();
   });
 
-  it("deletes from the drawer after closing it", async () => {
-    renderPanel();
-    await waitForPanelReady();
-
-    fireEvent.click(editButton("Harbor Prompt"));
-    fireEvent.click(screen.getByRole("button", { name: "form-delete" }));
-
-    await waitFor(() =>
-      expect(mocks.deletePrompt).toHaveBeenCalledWith("second-record"),
-    );
-    expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
-  });
-
   it("disabling says the file was emptied and undo re-enables it", async () => {
     renderPanel({ appId: "hermes" });
     await waitForPanelReady();

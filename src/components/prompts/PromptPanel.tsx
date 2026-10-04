@@ -239,12 +239,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
     void performDelete(id);
   };
 
-  const handleDeleteFromDrawer = (id: string) => {
-    if (writeLockRef.current) return;
-    closeOverlay();
-    void performDelete(id);
-  };
-
   const handleToggle = async (id: string, enabled: boolean) => {
     const before = prompts;
     const target = before[id];
@@ -565,7 +559,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
           initialData={editingId ? prompts[editingId] : undefined}
           onSave={handleSave}
           onClose={handleCloseForm}
-          onDelete={handleDeleteFromDrawer}
         />
       )}
 
