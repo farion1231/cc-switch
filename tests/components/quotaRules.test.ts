@@ -74,12 +74,16 @@ describe("quota lines", () => {
     expect(toneForLeft(9)).toBe("warning");
   });
 
-  it("only colors a balance without a total once it runs out", () => {
+  it("only colors a balance once it runs out, even when nearly gone", () => {
     expect(balanceLine(t, { remaining: 82.1, unit: "¥" })).toMatchObject({
       text: "余额 82.10 ¥",
       tone: "normal",
     });
-    expect(balanceLine(t, { remaining: 5, total: 100 }).tone).toBe("warning");
+    // 不到总额 10% 也不加深，条长照旧按总额算
+    expect(balanceLine(t, { remaining: 5, total: 100 })).toMatchObject({
+      tone: "normal",
+      left: 5,
+    });
     expect(balanceLine(t, { remaining: 0 })).toMatchObject({
       text: "quota.balanceUsedUp",
       tone: "danger",

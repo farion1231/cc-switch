@@ -2,8 +2,8 @@ import type { TFunction } from "i18next";
 import type { QuotaTier, ResetCredits } from "@/types/subscription";
 
 /**
- * 额度的文字和颜色（v7 QuotaSpec）：一律写「剩余」，平时灰色；任一档剩余不到 10%（余额不到
- * 总额 10%）加深加粗（不用橙色，见 TONE_TEXT）；用完 / 过期 / 没查到红色。卡片最多两行：
+ * 额度的文字和颜色（v7 QuotaSpec）：一律写「剩余」，平时灰色；任一档剩余不到 10% 加深加粗
+ * （不用橙色，见 TONE_TEXT；余额不算，见 balanceLine）；用完 / 过期 / 没查到红色。卡片最多两行：
  * 档数更多时，第一行固定写窗口最短的那档，其余并成一行（见 cardRows）。
  */
 export type QuotaTone = "normal" | "warning" | "danger" | "muted";
@@ -251,6 +251,11 @@ function resetCreditGroups(
   });
 }
 
+/**
+ * 余额一律灰色，只有用完才变红：不做「快用完」的加深。几张卡片的余额深浅不一，
+ * 读起来像出了什么错，而不是「快用完了」（10-04 Jason 定）。left 照旧按总额算，
+ * 展开时的条长、多行时挑哪几行还用它
+ */
 export function balanceLine(
   t: TFunction,
   {
@@ -274,7 +279,7 @@ export function balanceLine(
   return {
     key,
     left,
-    tone: toneForLeft(left),
+    tone: remaining <= 0 ? "danger" : "normal",
     text:
       remaining <= 0 ? t("quota.balanceUsedUp") : t("quota.balance", { value }),
     detail,
