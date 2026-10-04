@@ -43,6 +43,7 @@ pub struct EditorView {
     pub settings: Value,
     /// 行里保存着、但不随切换生效的字段（值和显示的不同才列出）。
     pub inactive: Vec<InactiveField>,
+    pub codex_snapshot: Option<super::CodexEditorSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -107,6 +108,8 @@ pub struct EditorSave {
     pub draft: Option<Value>,
     #[serde(default)]
     pub on_conflict: ConflictPolicy,
+    #[serde(default)]
+    pub codex_snapshot: Option<super::CodexEditorSnapshot>,
 }
 
 /// 编辑器显示的内容。`settings_config` 是这个供应商的行（新增时是空对象）。
@@ -122,6 +125,7 @@ pub fn view(state: &AppState, settings_config: &Value) -> Result<EditorView, App
         &ClaudeProjection::of(settings_config),
     )?;
     Ok(EditorView {
+        codex_snapshot: None,
         inactive: inactive_fields(settings_config, &settings),
         settings,
     })

@@ -259,7 +259,11 @@ describe("Codex Copilot provider form", () => {
     const draft = { auth: preset.auth, config: preset.config };
     const base = { ...draft, config: `${preset.config}${liveToml}` };
     await waitFor(() =>
-      expect(onEditorBaseChange).toHaveBeenLastCalledWith(base, draft),
+      expect(onEditorBaseChange).toHaveBeenLastCalledWith(
+        base,
+        draft,
+        undefined,
+      ),
     );
     expect(requests.at(-1)).toEqual({
       app: "codex",
@@ -315,7 +319,7 @@ describe("Codex Copilot provider form", () => {
             : model,
       ),
     );
-    expect(onEditorBaseChange).toHaveBeenLastCalledWith(base, draft);
+    expect(onEditorBaseChange).toHaveBeenLastCalledWith(base, draft, undefined);
     expect(screen.queryByText("仍要保存")).not.toBeInTheDocument();
   });
 
@@ -332,7 +336,11 @@ describe("Codex Copilot provider form", () => {
     const waitForPreset = async (preset: typeof copilot) => {
       const draft = { auth: preset.auth, config: preset.config };
       await waitFor(() =>
-        expect(onEditorBaseChange).toHaveBeenLastCalledWith(draft, draft),
+        expect(onEditorBaseChange).toHaveBeenLastCalledWith(
+          draft,
+          draft,
+          undefined,
+        ),
       );
     };
     await waitForPreset(copilot);

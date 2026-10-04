@@ -197,6 +197,60 @@ describe("EditProviderDialog", () => {
     expect(screen.queryByTestId("settings-config")).not.toBeInTheDocument();
   });
 
+  it("冲突重试原样回传打开时的旧路由快照", async () => {
+    const settings = { config: "model = 'gpt-test'\n", auth: {} };
+    const provider: Provider = {
+      id: "test",
+      name: "Test",
+      settingsConfig: settings,
+    };
+    const codexSnapshot = {
+      selector: "custom",
+      legacyRoute: true,
+      legacyFingerprint: "c".repeat(64),
+      profileReferenced: false,
+    };
+    apiMocks.getEditorView.mockResolvedValue({
+      settings,
+      inactive: [],
+      codexSnapshot,
+    });
+    const handleSubmit = vi
+      .fn()
+      .mockRejectedValueOnce(
+        JSON.stringify({
+          code: "LIVE_EDIT_CONFLICT",
+          keys: ["model_providers.cc-switch-official"],
+        }),
+      )
+      .mockResolvedValueOnce(undefined);
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="codex"
+      />,
+    );
+    await screen.findByTestId("settings-config");
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "用我的修改覆盖" }),
+    );
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(2));
+    expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({
+      base: settings,
+      codexSnapshot,
+      onConflict: "refuse",
+    });
+    expect(handleSubmit.mock.calls[1][0].editorSave).toEqual({
+      base: settings,
+      codexSnapshot,
+      onConflict: "keepMine",
+    });
+  });
+
   it("Codex 显示后端算出的切换投影，并把它作为保存时三方比较的基准", async () => {
     const modelCatalog = {
       models: [{ model: "deepseek-v4-flash", contextWindow: 1000000 }],
@@ -217,7 +271,17 @@ describe("EditProviderDialog", () => {
         'approval_policy = "never"\nmodel_provider = "custom"\nmodel = "deepseek-v4-flash"\n',
       modelCatalog,
     };
-    apiMocks.getEditorView.mockResolvedValue({ settings: view, inactive: [] });
+    const codexSnapshot = {
+      selector: "custom",
+      legacyRoute: true,
+      legacyFingerprint: "a".repeat(64),
+      profileReferenced: false,
+    };
+    apiMocks.getEditorView.mockResolvedValue({
+      settings: view,
+      inactive: [],
+      codexSnapshot,
+    });
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
 
     render(
@@ -249,7 +313,11 @@ describe("EditProviderDialog", () => {
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
     const payload = handleSubmit.mock.calls[0][0];
     expect(payload.provider.settingsConfig).toEqual(view);
-    expect(payload.editorSave).toEqual({ base: view, onConflict: "refuse" });
+    expect(payload.editorSave).toEqual({
+      base: view,
+      codexSnapshot,
+      onConflict: "refuse",
+    });
   });
 
   it.each([undefined, "openai_responses"] as const)(

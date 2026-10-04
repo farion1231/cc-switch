@@ -8,6 +8,16 @@
 
 ## What problem it solves
 
+### Compatibility for older official proxy sessions
+
+Older official proxy sessions may still refer to `cc-switch-official`. An existing definition is retained during normal configuration writes, including switching and startup attachment. If no profile references it, CC Switch normalizes it to an official authentication mirror and refreshes its proxy address. This replaces custom names, extra keys and old credentials with just the name, official authentication requirement, disabled WebSockets, Responses protocol and proxy address. A definition referenced by any profile is left unchanged; an active profile conflicting with the target route still blocks the write.
+
+New official sessions keep the current routing: direct, proxy and aggregation modes use the native `openai` bucket when unified history is off, and `custom` when it is on. Retaining the old definition neither selects the old bucket nor migrates its sessions into the current default list. Missing definitions are not recreated, and sending requests is not guaranteed while the proxy is stopped.
+
+You can explicitly delete a dormant definition in the provider configuration editor; subsequent writes will not recreate it. Deletion or replacement is refused if the current selector or any existing or newly added profile references it, even with “Keep mine.” External changes made after opening the editor follow the usual conflict choices. Names and stale addresses already present before opening do not cause false conflicts. Without a valid opening snapshot, edits to the old definition are skipped.
+
+Explicit edits and conflict choices are preserved through that save and its proxy resync. Later independent configuration writes still maintain an existing definition as described above. Dormant drift alone does not cause an unchanged proxy contract to be rewritten. Resolving a definition, appearing in the default list, resuming a session and sending a request are separate outcomes; this compatibility measure is not a complete history migration.
+
 Codex classifies sessions by a "provider tag" (a field called `model_provider`), and **the resume / history list only shows sessions whose tag matches your currently active provider**. As a result, sessions are naturally sorted into two separate "drawers":
 
 - Sessions from your official subscription go under Codex's built-in **`openai`** tag;
