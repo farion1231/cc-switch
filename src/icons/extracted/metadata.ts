@@ -813,6 +813,49 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["xycai", "xyc", "aggregator", "relay", "gateway", "token"],
     defaultColor: "#1E88E5",
   },
+  bailing: {
+    name: "bailing",
+    displayName: "BaiLing",
+    category: "ai-provider",
+    keywords: ["bailing", "百灵", "ant ling", "antling", "ling", "ant group"],
+    defaultColor: "#1E6FFF",
+  },
+  dmxapi: {
+    name: "dmxapi",
+    displayName: "DMXAPI",
+    category: "ai-provider",
+    keywords: ["dmxapi", "dmx", "aggregator", "relay", "gateway"],
+    defaultColor: "currentColor",
+  },
+  therouter: {
+    name: "therouter",
+    displayName: "TheRouter",
+    category: "ai-provider",
+    keywords: ["therouter", "the router", "router", "aggregator", "gateway"],
+    defaultColor: "currentColor",
+  },
+  astron: {
+    name: "astron",
+    displayName: "Astron",
+    category: "ai-provider",
+    keywords: [
+      "astron",
+      "讯飞星辰",
+      "讯飞",
+      "xfyun",
+      "iflytek",
+      "maas",
+      "coding plan",
+    ],
+    defaultColor: "#6C4CF5",
+  },
+  together: {
+    name: "together",
+    displayName: "Together AI",
+    category: "ai-provider",
+    keywords: ["together", "together ai", "togetherai"],
+    defaultColor: "currentColor",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

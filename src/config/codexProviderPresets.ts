@@ -1217,6 +1217,7 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "dmxapi", // 促销信息 i18n key
+    icon: "dmxapi",
   },
   {
     name: "SudoCode.chat",
@@ -2913,6 +2914,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
+    icon: "astron",
   },
   {
     name: "BaiLing",
@@ -2934,6 +2936,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
+    icon: "bailing",
   },
   {
     name: "Xiaomi MiMo",
@@ -3407,6 +3410,7 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ),
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
+    icon: "therouter",
   },
   {
     name: "JieKou AI",
