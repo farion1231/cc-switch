@@ -87,6 +87,8 @@ const promptFileKey = (kind: EditablePiPromptFileKind) =>
   ["pi", "promptFile", kind] as const;
 
 export const promptTemplatesKey = ["pi", "promptTemplates"] as const;
+/** 编辑页保存用的 mutation key：页面据此在保存进行中锁住导航 */
+export const PI_PROMPT_SAVE_MUTATION_KEY = ["pi", "promptSave"] as const;
 
 export function usePiPromptTemplatesQuery() {
   return useQuery({
@@ -159,6 +161,7 @@ function PiInstructionFileEditor({
   const queryKey = promptFileKey(file.kind);
 
   const save = useMutation({
+    mutationKey: PI_PROMPT_SAVE_MUTATION_KEY,
     mutationFn: () =>
       promptsApi.replacePiPromptFile(file.kind, baseSnapshot.revision, draft),
     onSuccess: (nextSnapshot) => {
@@ -563,6 +566,7 @@ function PiPromptTemplateEditor({
         : t("pi.prompts.templateSaveTo", {
             path: `${SAVE_TO_PREFIX}${normalizedSlug}.md`,
           });
+    mutationKey: PI_PROMPT_SAVE_MUTATION_KEY,
 
   const save = useMutation({
     mutationFn: () =>
