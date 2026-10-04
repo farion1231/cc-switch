@@ -1464,11 +1464,9 @@ fn current_feedback() -> Option<TrayFeedback> {
 /// 点了托盘图标：这次弹出的菜单里已经有反馈行了，算显示过；下次重建（悬停图标时）就拿掉。
 /// 只算会弹出菜单的点击：Windows 左键是打开主界面、macOS 左键是用量面板，都不算。
 pub fn note_tray_click(button: tauri::tray::MouseButton) {
-    let opens_menu = match button {
-        tauri::tray::MouseButton::Right => true,
-        tauri::tray::MouseButton::Left => cfg!(target_os = "linux"),
-        _ => false,
-    };
+    use tauri::tray::MouseButton;
+    let opens_menu = matches!(button, MouseButton::Right)
+        || (cfg!(target_os = "linux") && matches!(button, MouseButton::Left));
     if opens_menu {
         if let Some(record) = lock(&FEEDBACK).as_mut() {
             record.seen = true;
