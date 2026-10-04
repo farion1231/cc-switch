@@ -508,7 +508,6 @@ interface PiPromptTemplateEditorProps {
   existingSlugs: Set<string>;
   onClose: () => void;
   onChanged: () => Promise<void>;
-  onDelete?: (template: PiPromptTemplate) => void;
 }
 
 function PiPromptTemplateEditor({
@@ -516,7 +515,6 @@ function PiPromptTemplateEditor({
   existingSlugs,
   onClose,
   onChanged,
-  onDelete,
 }: PiPromptTemplateEditorProps) {
   const { t } = useTranslation();
   const baseId = useId();
@@ -566,9 +564,9 @@ function PiPromptTemplateEditor({
         : t("pi.prompts.templateSaveTo", {
             path: `${SAVE_TO_PREFIX}${normalizedSlug}.md`,
           });
-    mutationKey: PI_PROMPT_SAVE_MUTATION_KEY,
 
   const save = useMutation({
+    mutationKey: PI_PROMPT_SAVE_MUTATION_KEY,
     mutationFn: () =>
       promptsApi.upsertPiPromptTemplate(
         normalizedSlug,
@@ -619,18 +617,6 @@ function PiPromptTemplateEditor({
       busy={busy}
       footer={
         <>
-          {!isCreate && onDelete ? (
-            <Button
-              type="button"
-              variant="quiet"
-              size="regular"
-              disabled={busy}
-              onClick={() => onDelete(template)}
-              className="-ms-2.5 text-danger-text"
-            >
-              {t("common.delete")}
-            </Button>
-          ) : null}
           <div className="flex-1" />
           <Button
             type="button"

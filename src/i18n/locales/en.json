@@ -2672,7 +2672,6 @@
     "copyContent": "Copy text",
     "copiedContent": "Copied the text of \"{{name}}\"",
     "deleteBlocked": "Disable it before deleting",
-    "deleteBlockedReason": "An enabled prompt can't be deleted. Disable it first.",
     "emptyTitle": "No {{app}} prompts yet",
     "emptyTarget": "The enabled prompt is written to {{path}}.",
     "emptyFile": "{{path}} already has {{size}} of content that isn't in CC Switch yet",
@@ -4333,8 +4332,7 @@
       "tags": "Tags",
       "tagsPlaceholder": "Comma-separated, e.g. docs, web",
       "homepage": "Homepage",
-      "docs": "Docs",
-      "delete": "Delete"
+      "docs": "Docs"
     },
     "resync": "Rewrite every app's config from these switches"
   },

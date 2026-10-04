@@ -2,7 +2,6 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DisabledReason } from "@/components/ui/help-tip";
 import {
   Sheet,
   SheetDescription,
@@ -26,8 +25,6 @@ interface PromptFormPanelProps {
   initialData?: Prompt;
   onSave: (id: string, prompt: Prompt) => Promise<void | boolean>;
   onClose: () => void;
-  /** 编辑时左下角的「删除」；不传就不显示 */
-  onDelete?: (id: string) => void;
 }
 
 /** 和 Input / Textarea 同一套外观（ui/input.tsx 的 fieldClass） */
@@ -59,7 +56,6 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   initialData,
   onSave,
   onClose,
-  onDelete,
 }) => {
   const { t } = useTranslation();
   const baseId = useId();
@@ -136,7 +132,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   };
 
   const title = editingId
-    ? t("prompts.editTitle", { name: initialData?.name ?? "" })
+    ? t("prompts.editTitle")
     : t("prompts.addTitle", { appName });
 
   const submitLabel = !editingId
@@ -280,26 +276,6 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
         </div>
 
         <div className="flex h-14 shrink-0 items-center gap-2 border-t border-border px-6">
-          {editingId && onDelete ? (
-            <DisabledReason
-              reason={isActive ? t("prompts.deleteBlockedReason") : undefined}
-              side="top"
-            >
-              <Button
-                type="button"
-                variant="quiet"
-                size="regular"
-                disabled={saving}
-                onClick={() => onDelete(editingId)}
-                className={cn(
-                  "-ms-2.5",
-                  isActive ? "text-fg-3" : "text-danger-text",
-                )}
-              >
-                {t("common.delete")}
-              </Button>
-            </DisabledReason>
-          ) : null}
           <div className="flex-1" />
           <Button
             type="button"

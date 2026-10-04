@@ -2672,7 +2672,6 @@
     "copyContent": "复制正文",
     "copiedContent": "已复制「{{name}}」的正文",
     "deleteBlocked": "启用中的不能删除，先停用",
-    "deleteBlockedReason": "启用中的不能删除，先停用。",
     "emptyTitle": "{{app}} 还没有提示词",
     "emptyTarget": "启用的那条会写进 {{path}}。",
     "emptyFile": "{{path}} 里已有 {{size}} 内容，还不在 CC Switch 里",
@@ -4333,8 +4332,7 @@
       "tags": "标签",
       "tagsPlaceholder": "用逗号分隔，例如 docs, web",
       "homepage": "主页",
-      "docs": "文档",
-      "delete": "删除"
+      "docs": "文档"
     },
     "resync": "按这里的开关重写各应用配置"
   },

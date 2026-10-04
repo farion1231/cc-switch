@@ -77,8 +77,6 @@ interface McpFormModalProps {
   visibleAppIds?: McpAppId[];
   onSave: () => void | Promise<void>;
   onClose: () => void;
-  /** 编辑时底栏左侧「删除…」 */
-  onRequestDelete?: (id: string) => void;
 }
 
 const emptyMeta = (): MetaDraft => ({
@@ -123,7 +121,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   visibleAppIds = MCP_APP_IDS,
   onSave,
   onClose,
-  onRequestDelete,
 }) => {
   const { t } = useTranslation();
   const upsertMutation = useUpsertMcpServer();
@@ -465,7 +462,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
   // ─── 渲染 ───────────────────────────────────────────────────────────
   const title = isEdit
-    ? t("mcpPage.drawer.editTitle", { id: editingId })
+    ? t("mcpPage.drawer.editTitle")
     : t("mcpPage.drawer.addTitle");
 
   const batchChosen = batch?.items.filter((item) => item.include) ?? [];
@@ -1324,19 +1321,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         </SheetBody>
 
         <SheetFooter className="h-14 px-6 py-0">
-          {isEdit && onRequestDelete && (
-            <Button
-              type="button"
-              variant="quiet"
-              size="regular"
-              className="-ms-2.5 text-danger-text hover:text-danger-text"
-              disabled={saving}
-              onClick={() => onRequestDelete(editingId as string)}
-            >
-              {t("mcpPage.drawer.delete")}
-            </Button>
-          )}
-          <div className="flex-1" />
           <Button
             type="button"
             variant="neutral"

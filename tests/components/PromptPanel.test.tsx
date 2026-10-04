@@ -81,13 +81,11 @@ vi.mock("@/components/prompts/PromptFormPanel", async (importOriginal) => {
       initialData,
       onSave,
       onClose,
-      onDelete,
     }: {
       editingId?: string;
       initialData?: Prompt;
       onSave: (id: string, prompt: Prompt) => Promise<void | boolean>;
       onClose: () => void;
-      onDelete?: (id: string) => void;
     }) => (
       <div data-testid="prompt-form">
         {editingId}:{initialData?.name}
@@ -111,11 +109,6 @@ vi.mock("@/components/prompts/PromptFormPanel", async (importOriginal) => {
         <button type="button" onClick={onClose}>
           form-close
         </button>
-        {editingId && onDelete ? (
-          <button type="button" onClick={() => onDelete(editingId)}>
-            form-delete
-          </button>
-        ) : null}
       </div>
     ),
   };

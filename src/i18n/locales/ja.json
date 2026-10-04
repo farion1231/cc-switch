@@ -2672,7 +2672,6 @@
     "copyContent": "本文をコピー",
     "copiedContent": "「{{name}}」の本文をコピーしました",
     "deleteBlocked": "有効なものは削除できません。先に無効にしてください",
-    "deleteBlockedReason": "有効なプロンプトは削除できません。先に無効にしてください。",
     "emptyTitle": "{{app}} のプロンプトはまだありません",
     "emptyTarget": "有効にしたものが {{path}} に書き込まれます。",
     "emptyFile": "{{path}} には CC Switch にまだない {{size}} の内容があります",
@@ -4333,8 +4332,7 @@
       "tags": "タグ",
       "tagsPlaceholder": "カンマ区切り（例：docs, web）",
       "homepage": "ホームページ",
-      "docs": "ドキュメント",
-      "delete": "削除"
+      "docs": "ドキュメント"
     },
     "resync": "ここのスイッチで各アプリの設定を書き直す"
   },
