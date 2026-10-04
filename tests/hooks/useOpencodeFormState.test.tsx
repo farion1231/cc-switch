@@ -215,4 +215,49 @@ describe("useOpencodeFormState", () => {
       timeout: 100,
     });
   });
+
+  it("removes extra options whose keys collide with Object.prototype properties", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai",
+      options: {
+        constructor: "custom-value",
+        toString: "false",
+        timeout: 100,
+      },
+      models: {},
+    });
+
+    const rows = { ...result.current.opencodeExtraOptions };
+    // Mirrors handleRemoveExtraOption, which deletes by a runtime key.
+    for (const key of ["constructor", "toString"]) delete rows[key];
+    act(() => {
+      result.current.handleOpencodeExtraOptionsChange(rows);
+    });
+
+    expect(JSON.parse(getSettingsConfig()).options).toEqual({
+      timeout: 100,
+    });
+  });
+
+  it("drops the old key when an extra option is renamed away from a prototype-named key", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai",
+      options: { valueOf: "3", timeout: 100 },
+      models: {},
+    });
+
+    // Mirrors handleExtraOptionKeyChange: rebuild the row map with the new key.
+    const rows: Record<string, string> = {};
+    for (const [k, v] of Object.entries(result.current.opencodeExtraOptions)) {
+      rows[k === "valueOf" ? "count" : k] = v;
+    }
+    act(() => {
+      result.current.handleOpencodeExtraOptionsChange(rows);
+    });
+
+    expect(JSON.parse(getSettingsConfig()).options).toEqual({
+      count: 3,
+      timeout: 100,
+    });
+  });
 });

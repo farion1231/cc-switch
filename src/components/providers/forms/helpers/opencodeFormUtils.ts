@@ -250,7 +250,13 @@ export function mergeOpencodeExtraOptionRows(
   }
 
   for (const k of Object.keys(options)) {
-    if (!isKnownOpencodeOptionKey(k) && !(k in nextRows)) {
+    // Own-property check: `k in nextRows` would also match inherited
+    // Object.prototype keys such as "constructor" or "toString", keeping
+    // rows the user deleted.
+    if (
+      !isKnownOpencodeOptionKey(k) &&
+      !Object.prototype.hasOwnProperty.call(nextRows, k)
+    ) {
       delete options[k];
     }
   }
