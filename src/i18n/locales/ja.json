@@ -4182,7 +4182,7 @@
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP の同期のしくみ",
-    "help": "ここが正です。チェックしたアプリの設定ファイルに書き込み、プロバイダー切り替え時にここから書き直します。Claude Desktop・OpenClaw・Pi は非対応のため列がありません。",
+    "help": "ここが正です。チェックしたアプリの設定ファイルに書き込み、プロバイダー切り替え時にここから書き直します。Claude Desktop・OpenClaw は非対応のため列がありません。Pi は 1.0 以降が必要で、SSE には対応していません。",
     "importFromApps": "アプリから取り込む",
     "add": "MCP を追加",
     "moreActions": "MCP のその他の操作",

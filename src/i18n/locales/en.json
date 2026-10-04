@@ -4182,7 +4182,7 @@
     "noun": "MCP servers",
     "listSeparator": ", ",
     "helpTitle": "How MCP syncs",
-    "help": "This list is the source of truth: it is written into the config files of the apps you tick, and rewritten from here when you switch providers. Claude Desktop, OpenClaw and Pi are not supported, so they have no column.",
+    "help": "This list is the source of truth: it is written into the config files of the apps you tick, and rewritten from here when you switch providers. Claude Desktop and OpenClaw are not supported, so they have no column; Pi needs 1.0 or later and does not support SSE.",
     "importFromApps": "Import from apps",
     "add": "Add MCP",
     "moreActions": "More MCP actions",
