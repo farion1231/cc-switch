@@ -861,13 +861,13 @@ export function FloatingUsageWindow() {
         onMouseUp={handleMouseUp}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className="group relative flex flex-col w-full p-2.5 rounded-xl bg-background/90 dark:bg-background/85 backdrop-blur-md border border-border/50 text-foreground shadow-lg cursor-move"
+        className="group relative flex flex-col w-full p-2.5 rounded-panel bg-surface border border-border text-fg-1 shadow-v7-lg cursor-move"
       >
         {/* 吸附隐藏成一条线时：露出的那条边用一根指示条强调（可见边与吸附边相对） */}
         {dockedPeeked && dockEdge && (
           <div
             className={
-              "absolute rounded-full bg-foreground/50 " +
+              "absolute rounded-full bg-action " +
               (dockEdge === "left"
                 ? "right-0 top-1/2 -translate-y-1/2 h-8 w-1"
                 : dockEdge === "right"
@@ -889,7 +889,7 @@ export function FloatingUsageWindow() {
               console.error("Failed to close floating usage window", err),
             );
           }}
-          className="absolute top-1 right-1 z-10 opacity-0 group-hover:opacity-100 transition-all duration-200 p-1 rounded-md hover:bg-red-500/15 hover:text-red-500 text-muted-foreground cursor-pointer"
+          className="absolute top-1 right-1 z-10 opacity-0 group-hover:opacity-100 transition-all duration-200 p-1 rounded-control hover:bg-danger-soft hover:text-danger-text text-fg-3 cursor-pointer"
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -910,21 +910,19 @@ export function FloatingUsageWindow() {
               onClick={(e) => {
                 e.stopPropagation();
               }}
-              className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 shrink-0 cursor-pointer pointer-events-auto transition-colors active:scale-95 duration-150"
+              className="p-1.5 rounded-control bg-action-soft text-action hover:bg-action hover:text-action-fg shrink-0 cursor-pointer pointer-events-auto transition-colors active:scale-95 duration-150"
             >
               <Zap className="h-4 w-4" />
             </div>
             <div className="flex flex-col min-w-0 pointer-events-none">
-              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider leading-none mb-0.5">
+              <span className="text-badge text-fg-2 uppercase tracking-wider leading-none mb-0.5">
                 {t("usage.presetToday", "Today")}
               </span>
               <div className="flex items-baseline gap-1.5 leading-none whitespace-nowrap">
-                <span className="text-sm font-bold tabular-nums">
+                <span className="text-strong tabular-nums text-fg-1">
                   {formatTokensShort(summary.realTotalTokens, lang)}
                 </span>
-                <span className="text-[10px] text-muted-foreground font-medium">
-                  ({formattedCost})
-                </span>
+                <span className="text-badge text-fg-3">({formattedCost})</span>
               </div>
             </div>
           </div>
@@ -936,7 +934,7 @@ export function FloatingUsageWindow() {
               e.stopPropagation();
               setIsExpanded(!isExpanded);
             }}
-            className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-1 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground cursor-pointer shrink-0 ml-1"
+            className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-1 rounded-control hover:bg-subtle text-fg-3 hover:text-fg-1 cursor-pointer shrink-0 ml-1"
           >
             <ChevronDown
               className={`h-3.5 w-3.5 transition-transform duration-200 ${
@@ -990,54 +988,54 @@ export function FloatingUsageWindow() {
                         : "relative w-full"
                     }
                   >
-                    <div className="pt-2.5 mt-2 border-t border-border/30 grid grid-cols-2 gap-1.5 text-xs">
-                      <div className="flex flex-col bg-muted/30 p-1.5 rounded-md">
-                        <span className="text-[10px] text-muted-foreground">
+                    <div className="pt-2 mt-2 border-t border-border grid grid-cols-2 gap-x-3 gap-y-2 text-caption px-1">
+                      <div className="flex flex-col">
+                        <span className="text-badge text-fg-2">
                           {t("usage.freshInput", "Input")}
                         </span>
-                        <span className="font-semibold tabular-nums text-blue-500">
+                        <span className="font-semibold tabular-nums text-blue-500 text-body">
                           {formatTokensShort(summary.inputTokens, lang)}
                         </span>
                       </div>
-                      <div className="flex flex-col bg-muted/30 p-1.5 rounded-md">
-                        <span className="text-[10px] text-muted-foreground">
+                      <div className="flex flex-col">
+                        <span className="text-badge text-fg-2">
                           {t("usage.output", "Output")}
                         </span>
-                        <span className="font-semibold tabular-nums text-purple-500">
+                        <span className="font-semibold tabular-nums text-purple-500 text-body">
                           {formatTokensShort(summary.outputTokens, lang)}
                         </span>
                       </div>
-                      <div className="flex flex-col bg-muted/30 p-1.5 rounded-md">
-                        <span className="text-[10px] text-muted-foreground">
+                      <div className="flex flex-col">
+                        <span className="text-badge text-fg-2">
                           {t("usage.cacheWrite", "Creation")}
                         </span>
-                        <span className="font-semibold tabular-nums text-amber-500">
+                        <span className="font-semibold tabular-nums text-amber-500 text-body">
                           {formatTokensShort(summary.cacheCreationTokens, lang)}
                         </span>
                       </div>
-                      <div className="flex flex-col bg-muted/30 p-1.5 rounded-md">
-                        <span className="text-[10px] text-muted-foreground">
+                      <div className="flex flex-col">
+                        <span className="text-badge text-fg-2">
                           {t("usage.cacheRead", "Hit")}
                         </span>
-                        <span className="font-semibold tabular-nums text-emerald-500">
+                        <span className="font-semibold tabular-nums text-emerald-500 text-body">
                           {formatTokensShort(summary.cacheReadTokens, lang)}
                         </span>
                       </div>
-                      <div className="col-span-2 bg-muted/30 p-1.5 rounded-md">
+                      <div className="col-span-2 pt-1">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] text-muted-foreground">
+                          <span className="text-badge text-fg-2">
                             {t("usage.cacheHitRate", "Cache Hit Rate")}
                           </span>
-                          <span className="font-semibold tabular-nums text-emerald-500 text-[11px]">
+                          <span className="font-semibold tabular-nums text-success text-badge">
                             {summary.cacheHitRate.toFixed(
                               summary.cacheHitRate >= 99.95 ? 0 : 1,
                             )}
                             %
                           </span>
                         </div>
-                        <div className="relative h-1 rounded-full bg-muted/60 overflow-hidden">
+                        <div className="relative h-1 rounded-full bg-border overflow-hidden">
                           <motion.div
-                            className="absolute inset-y-0 left-0 bg-emerald-500 rounded-full"
+                            className="absolute inset-y-0 left-0 bg-success rounded-full"
                             initial={{ width: 0 }}
                             animate={{
                               width: `${Math.max(0, Math.min(100, summary.cacheHitRate))}%`,
@@ -1063,13 +1061,13 @@ export function FloatingUsageWindow() {
                         : "absolute inset-0"
                     }
                   >
-                    <div className="pt-2.5 mt-2 border-t border-border/30 flex flex-col text-xs h-full pb-0.5">
+                    <div className="pt-2 mt-2 border-t border-border flex flex-col text-caption h-full pb-0.5">
                       {/* 模型汇总表头 */}
                       <div className="flex items-center justify-between px-1.5 pb-1.5">
-                        <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider leading-none">
+                        <span className="text-badge text-fg-2 uppercase tracking-wider leading-none">
                           {t("usage.byModel", "By Model")}
                         </span>
-                        <span className="text-[10px] text-muted-foreground tabular-nums leading-none">
+                        <span className="text-badge text-fg-3 tabular-nums leading-none">
                           {modelSummaries.length}
                         </span>
                       </div>
@@ -1108,19 +1106,19 @@ export function FloatingUsageWindow() {
                                     e.stopPropagation();
                                   }
                                 }}
-                                className="flex items-center justify-between gap-2 py-1 px-1.5 hover:bg-muted/30 rounded transition-colors min-w-0"
+                                className="flex items-center justify-between gap-2 py-1 px-1.5 hover:bg-subtle rounded-control transition-colors min-w-0"
                               >
-                                <span className="text-foreground/90 font-medium text-[11px] truncate min-w-0">
+                                <span className="text-fg-1 font-medium text-caption truncate min-w-0">
                                   {item.model}
                                 </span>
-                                <span className="font-semibold tabular-nums text-[11px] text-foreground shrink-0 whitespace-nowrap">
+                                <span className="font-semibold tabular-nums text-caption text-fg-1 shrink-0 whitespace-nowrap">
                                   {formatTokensShort(item.tokens, lang)}
                                 </span>
                               </div>
                             );
                           })
                         ) : (
-                          <div className="flex flex-col items-center justify-center py-6 text-muted-foreground text-[10px]">
+                          <div className="flex flex-col items-center justify-center py-6 text-fg-3 text-caption">
                             <span>{t("usage.noData", "No Data")}</span>
                           </div>
                         )}
