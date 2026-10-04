@@ -26,7 +26,8 @@ use crate::live::engine::{read_current, LiveFile};
 use crate::live::floor;
 use crate::live::patch::toml::parse;
 use crate::live::project::codex::{
-    is_keyless_fallback, CodexProjection, Route, RowInput, OFFICIAL_PROXY_ROUTE_ID, ROUTE_ID,
+    foreign_catalog, is_keyless_fallback, CodexProjection, Route, RowInput, MODEL_CATALOG_JSON,
+    OFFICIAL_PROXY_ROUTE_ID, ROUTE_ID,
 };
 use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
@@ -268,8 +269,8 @@ impl LiveOwner {
     }
 }
 
-/// live 里用户自己的独有字段：live 现在对应的那家带进来的（值还相同的）不算。只给不知道
-/// 草稿的新增用（见 [`Origin::Live`]）。
+/// live 里用户自己的独有字段和指向别的文件的模型目录指针：live 现在对应的那家带进来的
+/// （值还相同的）不算。只给不知道草稿的新增用（见 [`Origin::Live`]）。
 ///
 /// 只读 live、按值去掉那一家的，不走投影：投影会校验生效的 profile，而空行不写
 /// `model_provider`，profile 选了路由表就会被当成覆盖路由拒绝。
@@ -280,6 +281,10 @@ pub(crate) fn live_exclusive(state: &AppState) -> Result<Vec<Entry>, AppError> {
     let owned = codex_direct::outgoing_exclusive(&LiveOwner::read(state)?.owner());
     Ok(exclusive_entries(&doc)
         .into_iter()
+        .chain(foreign_catalog(&doc).map(|pointer| Entry {
+            path: vec![MODEL_CATALOG_JSON.to_string()],
+            item: Item::Value(pointer.clone()),
+        }))
         .filter(|entry| {
             !owned.iter().any(|(key, value)| {
                 entry.path[0] == *key && render(&entry.item) == render(&Item::Value(value.clone()))
@@ -358,6 +363,22 @@ pub(crate) fn plan_save(
     let removed_from_live = from_live
         .into_iter()
         .filter(|entry| edited_doc.get(&entry.path[0]).is_none());
+
+    // 用户写在 config.toml 里、指向别的文件的模型目录指针同理：用户没动就不收进行，否则保存
+    // 一次就成了这一家自己的指针，每次切到它都改用那个目录（聚合的模型也发布不了）。它是
+    // 关键字段，不进全局改动，删掉它走 Stack 提示上的「改用 CC Switch 的模型目录」。
+    let pointer_from_live = foreign_catalog(&base_doc).is_some_and(|pointer| match origin {
+        Origin::Row(row) => foreign_catalog(row).is_none(),
+        Origin::Live(live) => live.iter().any(|entry| {
+            entry.path == [MODEL_CATALOG_JSON]
+                && render(&entry.item) == render(&Item::Value(pointer.clone()))
+        }),
+    });
+    if pointer_from_live
+        && rendered(&edited_doc, MODEL_CATALOG_JSON) == rendered(&base_doc, MODEL_CATALOG_JSON)
+    {
+        projection.top.retain(|(key, _)| key != MODEL_CATALOG_JSON);
+    }
 
     // 打开时和保存时选中的路由表都归供应商：用户在编辑器里把 custom 改名成别的表，那张表
     // 连同里面的 Key 不能当成全局设置留在 live 里。

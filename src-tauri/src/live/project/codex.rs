@@ -30,7 +30,7 @@ pub const CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 pub use super::claude::PROXY_TOKEN_PLACEHOLDER;
 /// `web_search` 的禁用值。
 pub const WEB_SEARCH_DISABLED: &str = "disabled";
-const MODEL_CATALOG_JSON: &str = "model_catalog_json";
+pub const MODEL_CATALOG_JSON: &str = "model_catalog_json";
 
 /// Codex 内置的 provider id（大小写敏感，和上游一致：`OpenAI` 是合法的自定义 id）。
 const BUILT_IN_IDS: &[&str] = &[
@@ -156,15 +156,7 @@ impl CodexProjection {
             .collect();
         // 行里自己指定的模型目录（用户管理的文件）照写；指向 CC Switch 自己目录的不算，
         // 那个指针由写入方按有没有生成目录决定。
-        if let Some(pointer) =
-            doc.get(MODEL_CATALOG_JSON)
-                .and_then(Item::as_value)
-                .filter(|value| {
-                    value
-                        .as_str()
-                        .is_some_and(|path| !is_cc_switch_catalog(path))
-                })
-        {
+        if let Some(pointer) = foreign_catalog(&doc) {
             top.push((MODEL_CATALOG_JSON.to_string(), undecorated(pointer.clone())));
         }
         let nested = floor::CODEX_FLOOR_NESTED
@@ -566,11 +558,33 @@ fn is_cc_switch_catalog(value: &str) -> bool {
 /// 写入时照留（见 [`CodexConfigPatch::apply_to`] 第 5 步），Codex 只读那个文件，
 /// CC Switch 生成的目录不生效。
 pub fn live_catalog_is_foreign(config_text: &str) -> bool {
-    config_text.parse::<DocumentMut>().ok().is_some_and(|doc| {
-        doc.get(MODEL_CATALOG_JSON)
-            .and_then(Item::as_str)
-            .is_some_and(|path| !is_cc_switch_catalog(path))
-    })
+    live_foreign_catalog(config_text).is_some()
+}
+
+/// live 里指向别的目录的 `model_catalog_json` 的值（见 [`live_catalog_is_foreign`]）。
+pub fn live_foreign_catalog(config_text: &str) -> Option<TomlValue> {
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    foreign_catalog(&doc).cloned().map(undecorated)
+}
+
+/// 去掉行里自己指定的模型目录指针（[`row_catalog_pointer`]），其余内容原样；行里没有时为
+/// `None`。
+pub fn without_row_catalog(config_text: &str) -> Option<String> {
+    let mut doc = config_text.parse::<DocumentMut>().ok()?;
+    foreign_catalog(&doc)?;
+    doc.remove(MODEL_CATALOG_JSON);
+    Some(doc.to_string())
+}
+
+/// 顶层指向别的目录（不是 CC Switch 生成的那个）的 `model_catalog_json`。
+pub fn foreign_catalog(doc: &DocumentMut) -> Option<&TomlValue> {
+    doc.get(MODEL_CATALOG_JSON)
+        .and_then(Item::as_value)
+        .filter(|value| {
+            value
+                .as_str()
+                .is_some_and(|path| !is_cc_switch_catalog(path))
+        })
 }
 
 /// live 的 `model_catalog_json` 指向 CC Switch 生成的目录：新启动的 Codex 读的是它。

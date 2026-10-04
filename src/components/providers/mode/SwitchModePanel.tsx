@@ -12,6 +12,7 @@ import { proxyApi } from "@/lib/api/proxy";
 import { useSettingsQuery } from "@/lib/query";
 import {
   proxyKeys,
+  useAdoptCodexStackCatalog,
   useAppMode,
   useProxyStack,
   useProxyStatusQuery,
@@ -120,6 +121,7 @@ export function SwitchModePanel({
     isStackAppId(app),
   );
   const setStackMember = useSetProxyStackMember();
+  const adoptCatalog = useAdoptCodexStackCatalog();
   const skipNextStackHint = useStackModelsChangedHint(
     app,
     active === "stack" ? stack : undefined,
@@ -434,6 +436,19 @@ export function SwitchModePanel({
         key="stackNotice"
         tone="warning"
         title={t(`provider.${stack.notice}`)}
+        actions={
+          stack.notice === "routeOwnsCatalog" ||
+          stack.notice === "configOwnsCatalog" ? (
+            <Button
+              variant="neutral"
+              size="compact"
+              disabled={adoptCatalog.isPending}
+              onClick={() => adoptCatalog.mutate()}
+            >
+              {t("provider.adoptCatalog")}
+            </Button>
+          ) : undefined
+        }
       />,
     );
   }

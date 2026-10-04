@@ -35,9 +35,9 @@ use crate::live::engine::{digest, read_current, DeviceStore, LiveFile};
 use crate::live::patch::toml::{value_text, TomlDocPatch, TomlSteps};
 use crate::live::patch::{Guarded, LivePatch, WholeFile};
 use crate::live::project::codex::{
-    official_mirror_table, proxy_route_table, requires_openai_auth, row_catalog_pointer,
-    CodexConfigPatch, CodexProjection, KnownTable, Route, RouteAuth, RouteWrite, RowInput,
-    ROUTE_ID, WEB_SEARCH_DISABLED,
+    live_foreign_catalog, official_mirror_table, proxy_route_table, requires_openai_auth,
+    row_catalog_pointer, without_row_catalog, CodexConfigPatch, CodexProjection, KnownTable, Route,
+    RouteAuth, RouteWrite, RowInput, MODEL_CATALOG_JSON, ROUTE_ID, WEB_SEARCH_DISABLED,
 };
 use crate::mode::contract::CONTRACT_VERSION;
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
@@ -530,6 +530,16 @@ impl Planned {
     pub(crate) fn config(&self) -> &CodexConfigPatch {
         &self.config
     }
+
+    /// 改用 CC Switch 生成的目录：live 里用户自己写的、指向别的文件的指针这次也去掉（写入时
+    /// 值还相同才删）。行里自己指定的指针不在这里，由调用方先从行里去掉。
+    pub(crate) fn release_live_catalog(&mut self, config_text: &str) {
+        if let Some(pointer) = live_foreign_catalog(config_text) {
+            self.config
+                .outgoing
+                .push((MODEL_CATALOG_JSON.to_string(), pointer));
+        }
+    }
 }
 
 /// 算出写入内容；行有问题（比如会把官方登录发给第三方）就在这里报错，什么都不写。
@@ -700,6 +710,16 @@ pub(crate) fn check_stack_member(provider: &Provider) -> Result<(), AppError> {
 /// 文件，Stack 模型合并不进去。
 pub(crate) fn route_owns_catalog(route: &Provider) -> bool {
     project(route).is_ok_and(|projection| row_catalog_pointer(&projection.top).is_some())
+}
+
+/// 去掉路由那家行里自己指定的模型目录指针之后的 `settings_config`；行里没有时为 `None`。
+pub(crate) fn settings_without_row_catalog(route: &Provider) -> Option<Value> {
+    let text = without_row_catalog(route.settings_config.get("config")?.as_str()?)?;
+    let mut settings = route.settings_config.clone();
+    settings
+        .as_object_mut()?
+        .insert("config".to_string(), Value::String(text));
+    Some(settings)
 }
 
 /// 发布了 Stack 模型时不写进 `config.toml` 的全局键：Codex 拿它们覆盖目录里的每一行。

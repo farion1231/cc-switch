@@ -216,6 +216,8 @@ pub mod op {
     pub const ROUTE: &str = "route";
     /// 增删 Stack 模型（契约变了时同一操作里先改写客户端）。
     pub const STACK: &str = "stack";
+    /// Codex 改用 CC Switch 生成的模型目录（用户在 Stack 提示上点的）：一律重写客户端。
+    pub const CATALOG: &str = "catalog";
 }
 
 /// 一次操作的写前意图。

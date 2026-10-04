@@ -268,7 +268,8 @@ async fn write_proxy(
     next_stack: Option<StackState>,
 ) -> Result<(), String> {
     let (proxy_url, codex_base_url) = state.proxy_service.build_proxy_urls().await?;
-    let force = op_name == op::ATTACH;
+    // 改用 CC Switch 的目录时契约可能没变（指针只在 live 里），也要重写。
+    let force = op_name == op::ATTACH || op_name == op::CATALOG;
     let stack = match &next_stack {
         Some(next) => next.clone(),
         None => settled_stack(app)?,
@@ -327,7 +328,11 @@ async fn write_proxy(
             codex_direct::prepare_official_rows(&state.db, &owner, &spec, &mut prepared)
                 .await
                 .map_err(err)?;
-            let planned = codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
+            let mut planned =
+                codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
+            if op_name == op::CATALOG {
+                planned.release_live_catalog(&codex_direct::read_config_text());
+            }
             let unchanged = !force && live_now.has_contract(&planned.contract.key);
             target.contract = Some(planned.contract.clone());
             let pending = pending(target);
@@ -1146,6 +1151,31 @@ fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static s
         codex_official_models::NativeSource::Bundled => Some("officialModelsBundled"),
         codex_official_models::NativeSource::Unavailable => Some("officialModelsUnavailable"),
     }
+}
+
+/// Codex Stack 模式下聚合的模型被别的模型目录挡住（`routeOwnsCatalog` / `configOwnsCatalog`，
+/// 用户在提示上点了才调）：去掉路由那家行里和 `config.toml` 里指向别的文件的
+/// `model_catalog_json`，按当前路由重写，改用 CC Switch 生成的目录。返回之后还剩的提示。
+///
+/// 先改行再写客户端：写失败时契约里还记着旧指针，下一次重写按值删掉，不会留下。
+pub async fn adopt_codex_stack_catalog(state: &AppState) -> Result<Option<&'static str>, String> {
+    let app = AppType::Codex;
+    let _guard = lock_settled(state, &app).await.map_err(err)?;
+    let Some((mode, mut route)) = attached_route(state, &app)? else {
+        return Ok(None);
+    };
+    if let Some(settings) = codex_direct::settings_without_row_catalog(&route) {
+        state
+            .db
+            .update_provider_settings_config(app.as_str(), &route.id, &settings)
+            .map_err(err)?;
+        route.settings_config = settings;
+    }
+    let live_now = LiveNow::of(state, &app, &mode)?;
+    write_proxy(state, &app, op::CATALOG, &route, &live_now, mode, None).await?;
+    Ok(settled_stack(&app)
+        .ok()
+        .and_then(|stack| codex_stack_notice(state, &stack)))
 }
 
 /// 路由供应商的行或代理地址变了：按新契约重写客户端（契约没变就什么都不做）。调用方
@@ -5919,6 +5949,148 @@ model_provider = "c"
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
             Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+    }
+
+    /// 提示上的「改用 CC Switch 的模型目录」：去掉路由那家行里的指针，契约带进 live 的那份
+    /// 跟着删掉，换上合并目录，不再提示。行里其余内容原样。
+    #[tokio::test]
+    #[serial]
+    async fn codex_adopting_the_catalog_drops_the_route_rows_own_pointer() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let [_, deepseek, zhipu] = codex_stack_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "model_catalog_json = \"/opt/team/models.json\"\nmodel_verbosity = \"high\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some("/opt/team/models.json")
+        );
+
+        let notice = adopt_codex_stack_catalog(&state).await.expect("adopt");
+        assert_eq!(notice, None);
+        let row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let row_config = row.settings_config["config"].as_str().unwrap();
+        assert!(
+            !row_config.contains("model_catalog_json") && row_config.contains("model_verbosity"),
+            "{row_config}"
+        );
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+        let slugs: Vec<String> = codex_catalog()["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["slug"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            slugs.contains(&"ccs-deepseek/deepseek-v4-pro".to_string()),
+            "{slugs:?}"
+        );
+        assert_eq!(stack_views(&state, &AppType::Codex).unwrap().notice, None);
+    }
+
+    /// 指针是用户直接写在 config.toml 里的：契约没变也要重写，去掉它、换上合并目录。
+    #[tokio::test]
+    #[serial]
+    async fn codex_adopting_the_catalog_drops_a_users_own_pointer() {
+        let _home = Home::new();
+        seed_codex("model_catalog_json = \"/work/global-models.json\"\n", None);
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        let contract = mode(&AppType::Codex).contract.unwrap();
+
+        let notice = adopt_codex_stack_catalog(&state).await.expect("adopt");
+        assert_eq!(notice, None);
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+        assert_eq!(mode(&AppType::Codex).contract.unwrap(), contract);
+        assert_eq!(stack_views(&state, &AppType::Codex).unwrap().notice, None);
+    }
+
+    /// 用户写在 config.toml 里的模型目录指针：编辑器里原样保存不收进行（否则从此成了这一家
+    /// 自己的指针）；用户在编辑器里改了它的值才算这一家的。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_leaves_a_users_catalog_pointer_in_live() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(
+            &format!("model_catalog_json = \"/work/mine.json\"\n{CODEX_USER_LIVE}"),
+            None,
+        );
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let open = |id: &str| {
+            let row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            let view =
+                ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+                    .expect("view");
+            (row, view.settings)
+        };
+        let save = |mut row: Provider, edited: Value, base: Value| {
+            row.settings_config = edited;
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                None,
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+        };
+        let row_config = |id: &str| {
+            state
+                .db
+                .get_provider_by_id(id, "codex")
+                .unwrap()
+                .unwrap()
+                .settings_config["config"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+
+        for id in ["a", "b"] {
+            let (row, base) = open(id);
+            assert!(
+                base["config"].as_str().unwrap().contains("/work/mine.json"),
+                "{base}"
+            );
+            save(row, base.clone(), base).expect("save as is");
+            let config = row_config(id);
+            assert!(!config.contains("model_catalog_json"), "{id}: {config}");
+            assert_eq!(
+                codex_doc()["model_catalog_json"].as_str(),
+                Some("/work/mine.json")
+            );
+        }
+
+        let (row, base) = open("b");
+        let mut edited = base.clone();
+        edited["config"] = json!(base["config"]
+            .as_str()
+            .unwrap()
+            .replace("/work/mine.json", "/work/b.json"));
+        save(row, edited, base).expect("save changed pointer");
+        assert!(
+            row_config("b").contains("model_catalog_json = \"/work/b.json\""),
+            "{}",
+            row_config("b")
         );
     }
 

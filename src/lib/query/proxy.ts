@@ -152,6 +152,35 @@ export function useSetProxyStackMember() {
 }
 
 /**
+ * Codex 聚合的模型被别的模型目录挡住（routeOwnsCatalog / configOwnsCatalog）时，改用 CC Switch
+ * 生成的目录。客户端只在启动时读模型目录，成功后提示重启；还剩别的提示照样弹出。
+ */
+export function useAdoptCodexStackCatalog() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: () => proxyApi.adoptCodexStackCatalog(),
+    onSuccess: (notice) => {
+      toast.success(t("provider.adoptCatalogDone"), { closeButton: true });
+      if (notice) {
+        toast.warning(t(`provider.${notice}`), { closeButton: true });
+      }
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        t("provider.adoptCatalogFailed", {
+          error: extractErrorMessage(error),
+        }),
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
+    },
+  });
+}
+
+/**
  * 重启 Codex 的托管守护进程，让它重读模型目录。结束后重新查 Stack 名单：重启成功时
  * 「还在用旧模型列表」的提示随之消失。
  */
