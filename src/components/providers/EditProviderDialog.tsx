@@ -307,7 +307,13 @@ export function EditProviderDialog({
           provider: updatedProvider,
           originalId: provider.id,
           ...(editorView
-            ? { editorSave: { base: editorView.settings, onConflict } }
+            ? {
+                editorSave: {
+                  base: editorView.settings,
+                  codexSnapshot: editorView.codexSnapshot,
+                  onConflict,
+                },
+              }
             : {}),
         });
         closeDialog();

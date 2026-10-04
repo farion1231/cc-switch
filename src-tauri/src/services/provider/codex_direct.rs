@@ -32,7 +32,7 @@ use crate::config::sorted_json_bytes;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::live::engine::{digest, read_current, DeviceStore, LiveFile};
-use crate::live::patch::toml::{value_text, TomlDocPatch, TomlSteps};
+use crate::live::patch::toml::value_text;
 use crate::live::patch::{Guarded, LivePatch, WholeFile};
 use crate::live::project::codex::{
     official_mirror_table, proxy_route_table, requires_openai_auth, row_catalog_pointer,
@@ -655,6 +655,10 @@ pub(crate) fn plan(
         exclusive,
         outgoing: outgoing_exclusive(owner),
         route,
+        legacy_official_proxy_base_url: match target {
+            Target::Proxy { base_url, .. } => (*base_url).to_string(),
+            Target::Direct(_) => configured_proxy_base_url(db),
+        },
         catalog: catalog.is_some(),
         retired: facts.retired,
     };
@@ -924,7 +928,7 @@ pub(crate) fn run_with_edits(
     planned: Planned,
     prepared: &Prepared,
     pending: PendingTarget,
-    edits: Option<&super::editor_toml::TomlEdits>,
+    edits: Option<&super::codex_legacy_route::CodexEditorEdits>,
 ) -> Result<OperationReport, AppError> {
     // 先补完上一次的操作，再读 auth.json 和登录暂存：补完会改写它们，按补完前读到的内容
     // 写下去会被当成外部修改；`owner` 也是调用方按补完前的指针定的。
@@ -1066,13 +1070,12 @@ pub(crate) fn run_with_edits(
         })
         .transpose()?;
     let catalog_patch = planned.catalog.map(WholeFile::Write);
-    // 先应用编辑器里的全局改动（有的话），再换关键字段。
-    let mut config_steps: Vec<&dyn TomlDocPatch> = Vec::new();
-    if let Some(edits) = edits {
-        config_steps.push(edits);
-    }
-    config_steps.push(&config);
-    let config_patch = TomlSteps(config_steps);
+    // Resolve explicit legacy edits before projection, and keep their final result.
+    let editor_patch = edits.map(|edits| edits.project(&config));
+    let config_patch: &dyn LivePatch = match &editor_patch {
+        Some(patch) => patch,
+        None => &config,
+    };
 
     let mut changes: Vec<FileChange<'_>> = Vec::new();
     // auth.json 放第一个：Codex CLI 恰好在这时刷新了登录，就在发布任何文件之前停下。
@@ -1084,7 +1087,7 @@ pub(crate) fn run_with_edits(
     }
     changes.push(FileChange {
         file: LiveFile::private(get_codex_config_path()),
-        patch: &config_patch,
+        patch: config_patch,
     });
     if let Some(patch) = &catalog_patch {
         changes.push(FileChange {

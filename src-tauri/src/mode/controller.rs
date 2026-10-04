@@ -252,12 +252,16 @@ fn commit_state(state: &AppState, app: &AppType, target: &PendingTarget) -> Resu
         .map_err(err)
 }
 
+#[derive(Default)]
+struct ProxyWriteOptions<'a> {
+    /// 参与契约计算并随操作落定的名单；`None` 按已落定的名单算。
+    next_stack: Option<StackState>,
+    codex_edits: Option<&'a crate::services::provider::CodexEditorEdits>,
+}
+
 /// 写代理契约。`target` 的 `contract` 由这里填好。契约没变时不碰客户端文件；接上
 /// （启动时）一律重写：顺带核对路由供应商还能用（比如托管账号还在），并修正 CC Switch
 /// 没运行期间客户端文件里的漂移。
-///
-/// `next_stack` 是这次操作之后的 Stack 名单：参与契约计算，随同一个操作落定
-/// （`PendingTarget::stack`）；`None` 按已落定的名单算。
 async fn write_proxy(
     state: &AppState,
     app: &AppType,
@@ -265,8 +269,12 @@ async fn write_proxy(
     route: &Provider,
     live_now: &LiveNow,
     mut target: ModeState,
-    next_stack: Option<StackState>,
+    options: ProxyWriteOptions<'_>,
 ) -> Result<(), String> {
+    let ProxyWriteOptions {
+        next_stack,
+        codex_edits,
+    } = options;
     let (proxy_url, codex_base_url) = state.proxy_service.build_proxy_urls().await?;
     let force = op_name == op::ATTACH;
     let stack = match &next_stack {
@@ -334,7 +342,15 @@ async fn write_proxy(
             if unchanged {
                 commit_state(state, app, &pending)?;
             } else {
-                codex_direct::run(&state.db, op_name, planned, &prepared, pending).map_err(err)?;
+                codex_direct::run_with_edits(
+                    &state.db,
+                    op_name,
+                    planned,
+                    &prepared,
+                    pending,
+                    codex_edits,
+                )
+                .map_err(err)?;
             }
         }
         AppType::GrokBuild => {
@@ -631,7 +647,10 @@ async fn enter_locked(
             proxy_route: Some(route.id.clone()),
             contract: None,
         },
-        next_stack,
+        ProxyWriteOptions {
+            next_stack,
+            ..Default::default()
+        },
     )
     .await?;
     state.proxy_service.set_active_target(app, &route).await;
@@ -809,6 +828,15 @@ pub async fn switch_route_locked(
     app: &AppType,
     target: &Provider,
 ) -> Result<(), String> {
+    switch_route_with_edits_locked(state, app, target, None).await
+}
+
+async fn switch_route_with_edits_locked(
+    state: &AppState,
+    app: &AppType,
+    target: &Provider,
+    codex_edits: Option<&crate::services::provider::CodexEditorEdits>,
+) -> Result<(), String> {
     let mode = current::mode_state(app);
     if !mode.is_proxy() {
         return Err(format!("{} 不在代理模式", app.as_str()));
@@ -843,7 +871,10 @@ pub async fn switch_route_locked(
             target,
             &live_now,
             new_state,
-            next_stack,
+            ProxyWriteOptions {
+                next_stack,
+                codex_edits,
+            },
         )
         .await?;
     }
@@ -1057,7 +1088,19 @@ async fn set_stack_member_locked(
     match attached_route(state, app)? {
         Some((mode, route)) => {
             let live_now = LiveNow::of(state, app, &mode)?;
-            write_proxy(state, app, op::STACK, &route, &live_now, mode, Some(next)).await
+            write_proxy(
+                state,
+                app,
+                op::STACK,
+                &route,
+                &live_now,
+                mode,
+                ProxyWriteOptions {
+                    next_stack: Some(next),
+                    ..Default::default()
+                },
+            )
+            .await
         }
         None => commit_state(
             state,
@@ -1165,19 +1208,31 @@ pub async fn resync_saved_row_locked(
     app: &AppType,
     provider: &Provider,
 ) -> Result<(), String> {
+    resync_saved_row_with_edits_locked(state, app, provider, None).await
+}
+
+/// Editor saves carry their legacy decision through the ordinary route/member resync.
+pub(crate) async fn resync_saved_row_with_edits_locked(
+    state: &AppState,
+    app: &AppType,
+    provider: &Provider,
+    codex_edits: Option<&crate::services::provider::CodexEditorEdits>,
+) -> Result<(), String> {
     let mode = current::mode_state(app);
     if !mode.is_proxy() {
         return Ok(());
     }
     if mode.routes_to(&provider.id) {
-        return switch_route_locked(state, app, provider).await;
+        return switch_route_with_edits_locked(state, app, provider, codex_edits).await;
     }
     let in_stack = stack::is_member(app, &provider.id).unwrap_or_else(|error| {
         log::warn!("读取 {} 的 Stack 模型失败: {error}", app.as_str());
         false
     });
     if in_stack {
-        return resync_route_locked(state, app).await;
+        if let Some((_, route)) = attached_route(state, app)? {
+            return switch_route_with_edits_locked(state, app, &route, codex_edits).await;
+        }
     }
     Ok(())
 }
@@ -2430,6 +2485,7 @@ mod mode_tests {
             None,
             row,
             Some(crate::services::provider::EditorSave {
+                codex_snapshot: None,
                 base,
                 draft: None,
                 on_conflict: Default::default(),
@@ -3668,6 +3724,7 @@ model_provider = "c"
                 Some(id),
                 row,
                 Some(crate::services::provider::EditorSave {
+                    codex_snapshot: None,
                     base,
                     draft: None,
                     on_conflict: Default::default(),
@@ -3780,6 +3837,7 @@ model_provider = "c"
                 None,
                 row,
                 Some(crate::services::provider::EditorSave {
+                    codex_snapshot: None,
                     base,
                     draft: None,
                     on_conflict: Default::default(),
@@ -3874,6 +3932,7 @@ model_provider = "c"
             None,
             row,
             Some(crate::services::provider::EditorSave {
+                codex_snapshot: None,
                 base,
                 draft: None,
                 on_conflict: Default::default(),
@@ -3985,6 +4044,7 @@ model_provider = "c"
             legacy,
             true,
             Some(crate::services::provider::EditorSave {
+                codex_snapshot: None,
                 base,
                 draft: None,
                 on_conflict: Default::default(),
@@ -4031,6 +4091,7 @@ model_provider = "c"
             None,
             row,
             Some(crate::services::provider::EditorSave {
+                codex_snapshot: None,
                 base: view.settings,
                 draft: None,
                 on_conflict: Default::default(),
@@ -4310,6 +4371,7 @@ model_provider = "c"
             Some("a"),
             row,
             Some(crate::services::provider::EditorSave {
+                codex_snapshot: None,
                 base: view.settings.clone(),
                 draft: None,
                 on_conflict: Default::default(),
@@ -4352,6 +4414,7 @@ model_provider = "c"
             Some("vertex"),
             row,
             Some(crate::services::provider::EditorSave {
+                codex_snapshot: None,
                 base: view.settings,
                 draft: None,
                 on_conflict: Default::default(),
@@ -4640,6 +4703,7 @@ model_provider = "c"
             Some("a"),
             row,
             Some(crate::services::provider::EditorSave {
+                codex_snapshot: None,
                 base: view.settings,
                 draft: None,
                 on_conflict: Default::default(),
@@ -4694,6 +4758,7 @@ model_provider = "c"
             row,
             true,
             Some(crate::services::provider::EditorSave {
+                codex_snapshot: None,
                 base,
                 draft: Some(draft),
                 on_conflict: Default::default(),
@@ -6503,6 +6568,7 @@ model_provider = "c"
             None,
             row,
             Some(crate::services::provider::EditorSave {
+                codex_snapshot: None,
                 base,
                 draft: None,
                 on_conflict: Default::default(),
@@ -6541,5 +6607,430 @@ model_provider = "c"
         assert!(err.to_string().contains("requires_openai_auth"), "{err}");
         assert!(state.db.get_provider_by_id("c", "codex").unwrap().is_none());
         assert_eq!(codex_text(), before);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn legacy_official_definition_survives_upgrade_and_reattachment() {
+        for unified in [false, true] {
+            let _home = Home::new();
+            crate::settings::update_settings(crate::settings::AppSettings {
+                preserve_codex_official_auth_on_switch: true,
+                unify_codex_session_history: unified,
+                ..Default::default()
+            })
+            .unwrap();
+            let login = chatgpt_login("legacy-upgrade");
+            seed_codex("model_provider = \"cc-switch-official\"\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:9999/v1\"\nrequires_openai_auth = true\n", Some(&login));
+            let official = codex_official();
+            let state = state_with(AppType::Codex, &[official.clone()], &official.id).await;
+            enter(&state, &AppType::Codex, false)
+                .await
+                .expect("upgrade attachment");
+            let attached = codex_doc();
+            exit(&state, &AppType::Codex)
+                .await
+                .expect("release listener");
+            assert_eq!(
+                attached.get("model_provider").and_then(toml::Value::as_str),
+                unified.then_some("custom")
+            );
+            assert!(
+                attached
+                    .get("model_providers")
+                    .and_then(toml::Value::as_table)
+                    .is_some_and(|tables| tables.contains_key("cc-switch-official")),
+                "upgrading must preserve the old session definition"
+            );
+            assert_eq!(
+                crate::config::read_json_file::<Value>(&codex_auth_path()).unwrap(),
+                login
+            );
+            enter(&state, &AppType::Codex, false)
+                .await
+                .expect("reattach");
+            let reattached = codex_doc();
+            exit(&state, &AppType::Codex)
+                .await
+                .expect("release listener");
+            assert!(reattached["model_providers"]
+                .get("cc-switch-official")
+                .is_some());
+            assert!(codex_doc()["model_providers"]
+                .get("cc-switch-official")
+                .is_some());
+        }
+    }
+
+    const LEGACY_OFFICIAL_TABLE: &str = "\n[model_providers.cc-switch-official]\nname = \"Renamed\"\nbase_url = \"http://127.0.0.1:9999/v1\"\nexperimental_bearer_token = \"synthetic-legacy-key\"\nextra = true\n";
+
+    fn legacy_editor_save(
+        view: &crate::services::provider::EditorView,
+        policy: &str,
+    ) -> crate::services::provider::EditorSave {
+        serde_json::from_value(json!({
+            "base": view.settings, "codexSnapshot": view.codex_snapshot, "onConflict": policy
+        }))
+        .unwrap()
+    }
+
+    fn edit_legacy(view: &crate::services::provider::EditorView, overwrite: bool) -> Value {
+        let mut settings = view.settings.clone();
+        let mut doc: toml_edit::DocumentMut = settings["config"].as_str().unwrap().parse().unwrap();
+        doc["approval_policy"] = toml_edit::value("never");
+        if overwrite {
+            doc["model_providers"]["cc-switch-official"]["name"] = toml_edit::value("Edited");
+        } else {
+            doc["model_providers"]
+                .as_table_like_mut()
+                .unwrap()
+                .remove("cc-switch-official");
+        }
+        settings["config"] = json!(doc.to_string());
+        settings
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn legacy_editor_deletes_opening_drift_in_direct_and_proxy_save_paths() {
+        for (proxy, id) in [(false, "a"), (false, "b"), (true, "a")] {
+            let _home = Home::new();
+            set_preservation(true);
+            seed_codex(CODEX_USER_LIVE, None);
+            let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+            if proxy {
+                enter(&state, &AppType::Codex, false).await.unwrap();
+            }
+            fs::write(
+                codex_config_path(),
+                format!("{}{LEGACY_OFFICIAL_TABLE}", codex_text()),
+            )
+            .unwrap();
+            let mut row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            let view =
+                ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+                    .unwrap();
+            let snapshot = view.codex_snapshot.as_ref().unwrap();
+            assert!(snapshot.legacy_route);
+            assert!(!serde_json::to_string(snapshot)
+                .unwrap()
+                .contains("synthetic-legacy-key"));
+            assert!(!view.settings["config"]
+                .as_str()
+                .unwrap()
+                .contains("synthetic-legacy-key"));
+            row.settings_config = edit_legacy(&view, false);
+            row.name = "saved-with-delete".into();
+            let result = ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                None,
+                row,
+                Some(legacy_editor_save(&view, "refuse")),
+            );
+            let after = codex_doc();
+            if proxy {
+                exit(&state, &AppType::Codex).await.unwrap();
+            }
+            result.expect("opening drift must not be mistaken for an external change");
+            assert!(after["model_providers"].get("cc-switch-official").is_none());
+            assert_eq!(after["approval_policy"].as_str(), Some("never"));
+            assert_eq!(
+                state
+                    .db
+                    .get_provider_by_id(id, "codex")
+                    .unwrap()
+                    .unwrap()
+                    .name,
+                "saved-with-delete"
+            );
+            ProviderService::switch(&state, AppType::Codex, "b").unwrap();
+            assert!(codex_doc()["model_providers"]
+                .get("cc-switch-official")
+                .is_none());
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn legacy_editor_active_rejection_leaves_files_rows_and_pending_unchanged() {
+        let _home = Home::new();
+        set_preservation(true);
+        let original = format!("{CODEX_USER_LIVE}{LEGACY_OFFICIAL_TABLE}");
+        seed_codex(&original, Some(&chatgpt_login("protection")));
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let stored = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &stored.settings_config, None)
+                .unwrap();
+        let auth = fs::read(codex_auth_path()).unwrap();
+        for policy in ["refuse", "keepMine", "keepTheirs"] {
+            for overwrite in [false, true] {
+                for reference in ["selector", "profile", "new-profile"] {
+                    for add in [false, true] {
+                        let live = match reference {
+                            "selector" => original.replace("model_provider = \"custom\"", "model_provider = \"cc-switch-official\""),
+                            "profile" => format!("{original}\n[profiles.sleeping]\nmodel_provider = 'cc-switch-official'\n"),
+                            _ => original.clone(),
+                        };
+                        fs::write(codex_config_path(), &live).unwrap();
+                        let before_mode = mode(&AppType::Codex);
+                        let before_pending =
+                            state::pending(&DeviceStore::for_device(), "codex").unwrap();
+                        let mut row = stored.clone();
+                        row.name = "must-not-save".into();
+                        if add {
+                            row.id = "must-not-add".into();
+                        }
+                        row.settings_config = edit_legacy(&view, overwrite);
+                        if reference == "new-profile" {
+                            row.settings_config["config"] = json!(format!(
+                                "{}\n[profiles.new]\nmodel_provider = 'cc-switch-official'\n",
+                                row.settings_config["config"].as_str().unwrap()
+                            ));
+                        }
+                        let editor = Some(legacy_editor_save(&view, policy));
+                        let result = if add {
+                            ProviderService::add_from_editor(
+                                &state,
+                                AppType::Codex,
+                                row,
+                                false,
+                                editor,
+                            )
+                        } else {
+                            ProviderService::update_from_editor(
+                                &state,
+                                AppType::Codex,
+                                None,
+                                row,
+                                editor,
+                            )
+                        };
+                        assert!(
+                            matches!(
+                                result,
+                                Err(AppError::Localized {
+                                    key: "provider.codex.editor.official_route_in_use",
+                                    ..
+                                })
+                            ),
+                            "{reference} {policy} {overwrite} {add}: {result:?}"
+                        );
+                        assert_eq!(codex_text(), live);
+                        assert_eq!(fs::read(codex_auth_path()).unwrap(), auth);
+                        assert_eq!(
+                            serde_json::to_value(
+                                state.db.get_provider_by_id("a", "codex").unwrap().unwrap()
+                            )
+                            .unwrap(),
+                            serde_json::to_value(&stored).unwrap()
+                        );
+                        assert!(state
+                            .db
+                            .get_provider_by_id("must-not-add", "codex")
+                            .unwrap()
+                            .is_none());
+                        assert_eq!(mode(&AppType::Codex), before_mode);
+                        assert_eq!(
+                            state::pending(&DeviceStore::for_device(), "codex").unwrap(),
+                            before_pending
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn legacy_maintenance_follows_real_addresses_without_changing_contract_or_catalog() {
+        for unified in [false, true] {
+            let _home = Home::new();
+            crate::settings::update_settings(crate::settings::AppSettings {
+                preserve_codex_official_auth_on_switch: true,
+                unify_codex_session_history: unified,
+                ..Default::default()
+            })
+            .unwrap();
+            seed_codex(LEGACY_OFFICIAL_TABLE, Some(&chatgpt_login("maintenance")));
+            let official = codex_official();
+            let mut rows = codex_stack_rows().to_vec();
+            rows.push(official.clone());
+            let state = state_with(AppType::Codex, &rows, &official.id).await;
+            // Force startup reconciliation of the old selector, without invoking other apps.
+            fs::write(
+                codex_config_path(),
+                format!("model_provider = 'cc-switch-official'\n{LEGACY_OFFICIAL_TABLE}"),
+            )
+            .unwrap();
+            state.db.set_proxy_flags_sync("codex", true, false).unwrap();
+            startup_app(&state, &AppType::Codex).await.unwrap();
+            let first = codex_doc();
+            assert_eq!(
+                first.get("model_provider").and_then(toml::Value::as_str),
+                unified.then_some("custom")
+            );
+            let contract = mode(&AppType::Codex).contract;
+            let drift = codex_text();
+            let mut drift_doc: toml_edit::DocumentMut = drift.parse().unwrap();
+            drift_doc["model_providers"]["cc-switch-official"]["base_url"] =
+                toml_edit::value("http://127.0.0.1:9998/v1");
+            fs::write(codex_config_path(), drift_doc.to_string()).unwrap();
+            let before = codex_text();
+            resync_route(&state, &AppType::Codex).await.unwrap();
+            assert_eq!(
+                codex_text(),
+                before,
+                "dormant drift alone must not trigger a write"
+            );
+            assert_eq!(mode(&AppType::Codex).contract, contract);
+            exit(&state, &AppType::Codex).await.unwrap();
+            state
+                .db
+                .update_proxy_config(ProxyConfig {
+                    listen_address: "[::1]".into(),
+                    listen_port: 0,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            enter(&state, &AppType::Codex, true).await.unwrap();
+            set_codex_member(&state, "deepseek", true).await;
+            let mut member = state
+                .db
+                .get_provider_by_id("deepseek", "codex")
+                .unwrap()
+                .unwrap();
+            member.settings_config["modelCatalog"] =
+                json!({ "models": [{ "model": "deepseek-updated" }] });
+            let view =
+                ProviderService::editor_view(&state, AppType::Codex, &member.settings_config, None)
+                    .unwrap();
+            member.settings_config = view.settings.clone();
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                None,
+                member,
+                Some(legacy_editor_save(&view, "refuse")),
+            )
+            .unwrap();
+            let catalog = codex_catalog();
+            let active = codex_doc();
+            let address = active["model_providers"]["cc-switch-official"]["base_url"]
+                .as_str()
+                .unwrap();
+            assert!(address.starts_with("http://[::1]:"), "{address}");
+            assert_eq!(
+                active.get("model_provider").and_then(toml::Value::as_str),
+                unified.then_some("custom")
+            );
+            assert!(catalog["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["slug"] == "ccs-deepseek/deepseek-updated"));
+            ProviderService::switch(&state, AppType::Codex, "a").unwrap();
+            assert!(codex_doc()["model_providers"]
+                .get("cc-switch-official")
+                .is_some());
+            exit(&state, &AppType::Codex).await.unwrap();
+            ProviderService::switch(&state, AppType::Codex, "a").unwrap();
+            ProviderService::switch(&state, AppType::Codex, &official.id).unwrap();
+            assert!(codex_doc()["model_providers"]
+                .get("cc-switch-official")
+                .is_some());
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn legacy_editor_result_survives_direct_projection_and_proxy_resync() {
+        let mut failures = Vec::new();
+        for save_path in ["direct", "proxy", "stack"] {
+            for scenario in [
+                "overwrite",
+                "keep-theirs",
+                "missing-snapshot",
+                "bad-snapshot",
+            ] {
+                let _home = Home::new();
+                set_preservation(true);
+                seed_codex("", None);
+                let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
+                if save_path != "direct" {
+                    enter(&state, &AppType::Codex, save_path == "stack")
+                        .await
+                        .unwrap();
+                }
+                if save_path == "stack" {
+                    set_codex_member(&state, "deepseek", true).await;
+                }
+                let original = format!("{}{LEGACY_OFFICIAL_TABLE}", codex_text());
+                fs::write(codex_config_path(), &original).unwrap();
+                let id = if save_path == "stack" {
+                    "deepseek"
+                } else {
+                    "a"
+                };
+                let mut row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+                let view = ProviderService::editor_view(
+                    &state,
+                    AppType::Codex,
+                    &row.settings_config,
+                    None,
+                )
+                .unwrap();
+                let mut editor = legacy_editor_save(
+                    &view,
+                    if scenario == "keep-theirs" {
+                        "keepTheirs"
+                    } else {
+                        "refuse"
+                    },
+                );
+                if scenario == "missing-snapshot" {
+                    editor.codex_snapshot = None;
+                }
+                if scenario == "bad-snapshot" {
+                    editor.codex_snapshot.as_mut().unwrap().legacy_route = false;
+                }
+                if scenario == "keep-theirs" {
+                    fs::write(codex_config_path(), original.replace("Renamed", "External"))
+                        .unwrap();
+                }
+                row.settings_config = edit_legacy(&view, true);
+                // A changed model catalog makes the proxy/stack resync perform a real write.
+                row.settings_config["modelCatalog"] =
+                    json!({ "models": [{ "model": format!("{id}-edited") }] });
+                let saved = ProviderService::update_from_editor(
+                    &state,
+                    AppType::Codex,
+                    None,
+                    row,
+                    Some(editor),
+                );
+                let actual = codex_doc()["model_providers"]["cc-switch-official"]["name"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                if save_path != "direct" {
+                    exit(&state, &AppType::Codex).await.unwrap();
+                }
+                saved.unwrap();
+                let expected = match scenario {
+                    "overwrite" => "Edited",
+                    "keep-theirs" => "External",
+                    _ => "Renamed",
+                };
+                if actual != expected {
+                    failures.push(format!(
+                        "{save_path}/{scenario}: expected {expected}, got {actual}"
+                    ));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }

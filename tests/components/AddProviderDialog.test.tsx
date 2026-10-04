@@ -8,6 +8,7 @@ import {
 import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
+import type { CodexEditorSnapshot } from "@/lib/api/providers";
 import type { ProviderFormValues } from "@/components/providers/forms/ProviderForm";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 
@@ -38,6 +39,7 @@ let mockFormReady = true;
 let mockProjectedBase: Record<string, unknown> | null = null;
 // 投影成那份底的草稿（预设或模板）。
 let mockProjectedDraft: Record<string, unknown> | undefined;
+let mockCodexSnapshot: CodexEditorSnapshot | undefined;
 let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 
 vi.mock("@/components/providers/forms/ProviderForm", () => ({
@@ -53,6 +55,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     onEditorBaseChange?: (
       base: Record<string, unknown> | null,
       draft?: Record<string, unknown>,
+      codexSnapshot?: CodexEditorSnapshot,
     ) => void;
   }) => {
     useEffect(() => {
@@ -62,7 +65,11 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       }
     }, [onSubmitReadyChange]);
     useEffect(() => {
-      onEditorBaseChange?.(mockProjectedBase, mockProjectedDraft);
+      onEditorBaseChange?.(
+        mockProjectedBase,
+        mockProjectedDraft,
+        mockCodexSnapshot,
+      );
     }, [onEditorBaseChange]);
     return (
       <form
@@ -93,6 +100,7 @@ describe("AddProviderDialog", () => {
     mockFormReady = true;
     mockProjectedBase = null;
     mockProjectedDraft = undefined;
+    mockCodexSnapshot = undefined;
     submitReadyCallbacks = [];
     mockFormValues = {
       name: "Test Provider",
@@ -185,10 +193,19 @@ describe("AddProviderDialog", () => {
     "%s 新增时带上表单投影出的底，和编辑器同一套保存规则",
     async (appId) => {
       const handleSubmit = vi.fn().mockResolvedValue(undefined);
-      const projected = { config: "[ui]\ntheme = \"dark\"\n" };
+      const projected = { config: '[ui]\ntheme = "dark"\n' };
       const draft = { config: "" };
       mockProjectedBase = projected;
       mockProjectedDraft = draft;
+      mockCodexSnapshot =
+        appId === "codex"
+          ? {
+              selector: "custom",
+              legacyRoute: true,
+              legacyFingerprint: "b".repeat(64),
+              profileReferenced: false,
+            }
+          : undefined;
       mockFormValues = {
         name: "Draft",
         websiteUrl: "",
@@ -211,6 +228,7 @@ describe("AddProviderDialog", () => {
       expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({
         base: projected,
         draft,
+        codexSnapshot: mockCodexSnapshot,
         onConflict: "refuse",
       });
     },
