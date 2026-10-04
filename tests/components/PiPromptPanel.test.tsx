@@ -119,6 +119,35 @@ describe("Pi prompts page", () => {
     expect(screen.getByText("~/.pi/agent/prompts/")).toBeInTheDocument();
   });
 
+  it("locks navigation while a native system prompt editor is open", async () => {
+    const onNavigationBlockedChange = vi.fn();
+    renderWithClient(
+      <PromptPanel
+        appId="pi"
+        apps={["claude", "pi"]}
+        onAppChange={vi.fn()}
+        onNavigationBlockedChange={onNavigationBlockedChange}
+      />,
+    );
+    await screen.findByRole("button", { name: "prompts.add" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "pi.prompts.systemTab" }),
+    );
+    const create = await screen.findByRole("button", {
+      name: "pi.prompts.create APPEND_SYSTEM.md",
+    });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    await waitFor(() =>
+      expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(true),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
+    await waitFor(() =>
+      expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(false),
+    );
+  });
+
   it("warns about an external AGENTS.md and stores it in the library", async () => {
     renderWithClient(
       <PromptPanel appId="pi" apps={["pi"]} onAppChange={vi.fn()} />,

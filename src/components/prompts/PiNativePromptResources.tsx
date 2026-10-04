@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useEffect,
   useId,
   useImperativeHandle,
   useMemo,
@@ -318,7 +319,28 @@ function PiInstructionFileEditor({
 }
 
 /** Pi · 系统提示：两个固定文件，文件存在就生效，不加启用开关（Pi 规范 §5）。 */
-export function PiSystemPromptFiles() {
+export interface PiNativePromptNavigationProps {
+  /**
+   * 编辑页开着或删除进行中时为 true。编辑页只盖住内容区，侧栏仍可点；
+   * 上报给页面合进导航锁，离开页面才不会卸载编辑页、丢掉未保存的草稿。
+   */
+  onNavigationBlockedChange?: (blocked: boolean) => void;
+}
+
+/** 把「编辑页开着 / 写入进行中」上报给页面；卸载时释放 */
+function useReportNavigationBlocked(
+  blocked: boolean,
+  onChange: ((blocked: boolean) => void) | undefined,
+) {
+  useEffect(() => {
+    onChange?.(blocked);
+  }, [blocked, onChange]);
+  useEffect(() => () => onChange?.(false), [onChange]);
+}
+
+export function PiSystemPromptFiles({
+  onNavigationBlockedChange,
+}: PiNativePromptNavigationProps = {}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<EditablePiPromptFileKind | null>(null);
@@ -378,6 +400,10 @@ export function PiSystemPromptFiles() {
       await queryClient.invalidateQueries({ queryKey: promptFileKey(kind) });
     },
   });
+  useReportNavigationBlocked(
+    editing !== null || remove.isPending,
+    onNavigationBlockedChange,
+  );
 
   return (
     <ul
@@ -750,7 +776,7 @@ export interface PiPromptTemplatesHandle {
   openCreate: () => void;
 }
 
-interface PiPromptTemplatesProps {
+interface PiPromptTemplatesProps extends PiNativePromptNavigationProps {
   /** 搜索框在页面工具行里，这里只按它过滤 */
   search?: string;
   onClearSearch?: () => void;
@@ -760,7 +786,10 @@ interface PiPromptTemplatesProps {
 export const PiPromptTemplates = forwardRef<
   PiPromptTemplatesHandle,
   PiPromptTemplatesProps
->(function PiPromptTemplates({ search = "", onClearSearch }, ref) {
+>(function PiPromptTemplates(
+  { search = "", onClearSearch, onNavigationBlockedChange },
+  ref,
+) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [editor, setEditor] = useState<
@@ -803,6 +832,10 @@ export const PiPromptTemplates = forwardRef<
     onError: (error) =>
       showMutationError(error, t("pi.prompts.templateDeleteFailed")),
   });
+  useReportNavigationBlocked(
+    editor !== null || remove.isPending,
+    onNavigationBlockedChange,
+  );
 
   const filteredTemplates = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
