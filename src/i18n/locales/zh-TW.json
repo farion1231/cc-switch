@@ -4546,5 +4546,23 @@
       "refresh": "重新整理額度",
       "refreshAria": "重新整理 {{login}} 的額度"
     }
+  },
+  "trayPanel": {
+    "range": "統計範圍",
+    "ranges": {
+      "day": "今日",
+      "month": "本月",
+      "total": "全部"
+    },
+    "totalTokens": "Token 總量",
+    "requests": "{{count}} 次請求",
+    "resetIn": "{{time}} 後重設",
+    "accounts": "{{count}} 個帳號",
+    "inUse": "使用中",
+    "noUsageQuery": "未開啟額度查詢",
+    "empty": "還沒有使用中的供應商",
+    "openMain": "開啟 CC Switch",
+    "refresh": "重新整理",
+    "rightClickHint": "右鍵切換供應商"
   }
 }

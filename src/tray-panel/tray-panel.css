@@ -1,0 +1,13 @@
+/* 背景交给原生毛玻璃（NSVisualEffectView），网页本身必须透明 */
+html,
+body.tray-panel,
+body.tray-panel #root {
+  background: transparent;
+  overflow: hidden;
+}
+
+body.tray-panel {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}

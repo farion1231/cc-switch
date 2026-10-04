@@ -40,6 +40,7 @@ mod settings;
 mod store;
 
 mod tray;
+mod tray_panel;
 mod usage_events;
 mod usage_script;
 
@@ -407,6 +408,10 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
+            // 托盘面板自己处理关闭（只隐藏），不走主窗口的「最小化到托盘 / 退出」
+            if window.label() == tray_panel::PANEL_LABEL {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                 let in_db_recovery = crate::init_status::get_init_error()
@@ -444,6 +449,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(window_state_flags())
+                .with_denylist(&[tray_panel::PANEL_LABEL])
                 .build(),
         )
         .setup(|app| {
@@ -1090,7 +1096,19 @@ pub fn run() {
                 .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| {
                     // Windows 的习惯是左键打开应用、右键出菜单（按平台给默认值，不加开关）；
-                    // macOS 左键仍出菜单；Linux（AppIndicator）不派发点击事件，只能出菜单。
+                    // macOS 左键弹出用量面板、右键出菜单；Linux（AppIndicator）不派发点击事件，只能出菜单。
+                    #[cfg(target_os = "macos")]
+                    {
+                        if let TrayIconEvent::Click {
+                            button: tauri::tray::MouseButton::Left,
+                            button_state: tauri::tray::MouseButtonState::Up,
+                            rect,
+                            ..
+                        } = &event
+                        {
+                            tray_panel::toggle_panel(tray.app_handle(), rect);
+                        }
+                    }
                     #[cfg(target_os = "windows")]
                     {
                         if let TrayIconEvent::Click {
@@ -1127,7 +1145,7 @@ pub fn run() {
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
-                .show_menu_on_left_click(cfg!(not(target_os = "windows")));
+                .show_menu_on_left_click(cfg!(target_os = "linux"));
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）；出问题时 tray.rs 换成带圆点的那张
             if let Some((icon, template)) = tray::base_tray_icon(app.handle()) {
@@ -1376,6 +1394,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            tray_panel::get_tray_panel_apps,
+            tray_panel::refresh_tray_panel_apps,
+            tray_panel::tray_panel_hide,
+            tray_panel::tray_panel_set_height,
+            tray_panel::tray_panel_open_main,
             commands::get_providers,
             commands::get_current_provider,
             commands::add_provider,

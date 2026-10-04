@@ -4545,5 +4545,23 @@
       "refresh": "刷新额度",
       "refreshAria": "刷新 {{login}} 的额度"
     }
+  },
+  "trayPanel": {
+    "range": "统计范围",
+    "ranges": {
+      "day": "今日",
+      "month": "本月",
+      "total": "全部"
+    },
+    "totalTokens": "Token 总量",
+    "requests": "{{count}} 次请求",
+    "resetIn": "{{time}} 后重置",
+    "accounts": "{{count}} 个账号",
+    "inUse": "在用",
+    "noUsageQuery": "未开启额度查询",
+    "empty": "还没有在用的供应商",
+    "openMain": "打开 CC Switch",
+    "refresh": "刷新",
+    "rightClickHint": "右键切换供应商"
   }
 }

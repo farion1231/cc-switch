@@ -1462,11 +1462,11 @@ fn current_feedback() -> Option<TrayFeedback> {
 }
 
 /// 点了托盘图标：这次弹出的菜单里已经有反馈行了，算显示过；下次重建（悬停图标时）就拿掉。
-/// 只算会弹出菜单的点击：Windows 左键是打开主界面，不算。
+/// 只算会弹出菜单的点击：Windows 左键是打开主界面、macOS 左键是用量面板，都不算。
 pub fn note_tray_click(button: tauri::tray::MouseButton) {
     let opens_menu = match button {
         tauri::tray::MouseButton::Right => true,
-        tauri::tray::MouseButton::Left => !cfg!(target_os = "windows"),
+        tauri::tray::MouseButton::Left => cfg!(target_os = "linux"),
         _ => false,
     };
     if opens_menu {
@@ -2838,6 +2838,89 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     }
 
     join_all(usage_futures).await;
+}
+
+// ─── 左键弹出面板的数据 ─────────────────────────────────────────────────────────
+
+/// 托盘面板里一个应用：在用的那家 + 它的额度快照（只读 `UsageCache`，不发请求）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayPanelApp {
+    pub app_type: String,
+    pub app_name: &'static str,
+    pub provider_id: String,
+    pub provider_name: String,
+    /// `subscription` / `managedCodex` / `script`；没开用量查询时为空
+    pub usage_kind: Option<&'static str>,
+    /// 托管 Codex 账号卡绑定的账号
+    pub account_id: Option<String>,
+    /// 脚本用量是 Token Plan 模板（按档写剩余百分比）
+    pub token_plan: bool,
+    pub subscription: Option<crate::services::subscription::SubscriptionQuota>,
+    pub script: Option<crate::provider::UsageResult>,
+}
+
+/// 面板展示面与托盘菜单一致：只列在「应用」页可见、且有在用供应商的切换式应用。
+pub(crate) fn collect_panel_apps(app_state: &AppState) -> Vec<TrayPanelApp> {
+    let visible_apps = crate::settings::get_settings()
+        .visible_apps
+        .unwrap_or_default();
+    let cache = &app_state.usage_cache;
+    let mut apps = Vec::new();
+    for app_type in TRAY_APPS.iter() {
+        if !visible_apps.is_visible(app_type) {
+            continue;
+        }
+        let Ok(Some(provider_id)) = crate::mode::current::provider_for(
+            &app_state.db,
+            app_type,
+            crate::mode::current::Purpose::InUse,
+        ) else {
+            continue;
+        };
+        let Ok(Some(provider)) = app_state
+            .db
+            .get_provider_by_id(&provider_id, app_type.as_str())
+        else {
+            continue;
+        };
+        let source = tray_usage_source(app_type, &provider);
+        let token_plan = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.usage_script.as_ref())
+            .and_then(|s| s.template_type.as_deref())
+            == Some("token_plan");
+        let mut entry = TrayPanelApp {
+            app_type: app_type.as_str().to_string(),
+            app_name: app_display_name(app_type),
+            provider_id: provider_id.clone(),
+            provider_name: provider.name.clone(),
+            usage_kind: None,
+            account_id: None,
+            token_plan,
+            subscription: None,
+            script: None,
+        };
+        match source {
+            Some(TrayUsageSource::ManagedCodex(account_id)) => {
+                entry.usage_kind = Some("managedCodex");
+                entry.subscription = cache.with_codex_oauth(&account_id, Clone::clone);
+                entry.account_id = Some(account_id);
+            }
+            Some(TrayUsageSource::Subscription) => {
+                entry.usage_kind = Some("subscription");
+                entry.subscription = cache.with_subscription(app_type, Clone::clone);
+            }
+            Some(TrayUsageSource::Script) => {
+                entry.usage_kind = Some("script");
+                entry.script = cache.with_script(app_type, &provider_id, Clone::clone);
+            }
+            None => {}
+        }
+        apps.push(entry);
+    }
+    apps
 }
 
 #[cfg(test)]
