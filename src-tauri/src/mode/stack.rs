@@ -171,7 +171,8 @@ pub struct StackModel {
     pub description: String,
     /// 上游是 1M 窗口（id 带 `[1M]`）。
     pub one_m: bool,
-    /// 非 1M 模型的窗口：行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，没有是 200K。
+    /// 非 1M 模型的窗口：行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`；列表行还可以带行自己的
+    /// 窗口（`context_window`），没有是 200K。
     pub window: u64,
 }
 
@@ -198,11 +199,13 @@ struct Found {
     upstream: String,
     name: Option<String>,
     one_m: bool,
+    /// 行自己的上下文窗口（`None` 沿用供应商 env 的全局窗口）。
+    window: Option<u64>,
 }
 
 /// 按去掉 1M 标记后的名字去重地加入 `found`。同一个模型有一处带 1M 标记就按 1M，发往上游的
-/// 也用带标记的那个写法；显示名取第一个有的。
-fn push_found(found: &mut Vec<Found>, upstream: &str, name: Option<String>) {
+/// 也用带标记的那个写法；显示名和行窗口取第一个有的。
+fn push_found(found: &mut Vec<Found>, upstream: &str, name: Option<String>, window: Option<u64>) {
     let model = strip_one_m_suffix_for_upstream(upstream).trim().to_string();
     if model.is_empty() {
         return;
@@ -217,12 +220,16 @@ fn push_found(found: &mut Vec<Found>, upstream: &str, name: Option<String>) {
             if entry.name.is_none() {
                 entry.name = name;
             }
+            if entry.window.is_none() {
+                entry.window = window;
+            }
         }
         None => found.push(Found {
             model,
             upstream: upstream.to_string(),
             name,
             one_m,
+            window,
         }),
     }
 }
@@ -251,7 +258,8 @@ fn listed_models(list: &[ClaudeStackModel]) -> Vec<Found> {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(str::to_string);
-        push_found(&mut found, &upstream, name);
+        let window = entry.context_window.filter(|window| *window > 0);
+        push_found(&mut found, &upstream, name, window);
     }
     found
 }
@@ -283,15 +291,16 @@ fn mapped_models(env: &Map<String, Value>) -> Vec<Found> {
             continue;
         };
         let name = name_key.and_then(|name_key| env_string(env, name_key).map(str::to_string));
-        push_found(&mut found, upstream, name);
+        push_found(&mut found, upstream, name, None);
     }
     found
 }
 
-/// 给找到的模型加上前缀、显示名和窗口。非 1M 模型的窗口是行里的
-/// `CLAUDE_CODE_MAX_CONTEXT_TOKENS`（Claude Code 只有一个全局窗口，没法按模型设），没有是 200K。
+/// 给找到的模型加上前缀、显示名和窗口。非 1M 模型的窗口：行自己的（列表行的
+/// `contextWindow`，模型映射没有），没有用行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`
+/// （Claude Code 只有一个全局窗口，没法按模型设），再没有是 200K。
 fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackModel> {
-    let window = claude_env(provider)
+    let env_window = claude_env(provider)
         .and_then(|env| env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
         .and_then(|value| match value {
             Value::Number(number) => number.as_u64(),
@@ -304,6 +313,7 @@ fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackM
         .into_iter()
         .map(|found| {
             let name = found.name.unwrap_or_else(|| found.model.clone());
+            let window = found.window.unwrap_or(env_window);
             let shown_window = if found.one_m { 1_000_000 } else { window };
             StackModel {
                 id: encode(&AppType::Claude, key, &found.model, found.one_m),
@@ -904,6 +914,62 @@ mod tests {
                     true,
                     256_000,
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_row_window_beats_the_env_window_and_zero_counts_as_unset() {
+        let row = with_stack_models(
+            provider(
+                "p",
+                "Kimi",
+                None,
+                json!({
+                    "ANTHROPIC_MODEL": "kimi-k3",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "256000"
+                }),
+            ),
+            json!([
+                { "model": "kimi-k3", "contextWindow": 800000 },
+                { "model": "kimi-k3-air", "contextWindow": 0 },
+                { "model": "kimi-k3-pro" }
+            ]),
+        );
+        let summary: Vec<(String, u64)> = claude_models("kimi", &row)
+            .into_iter()
+            .map(|model| (model.description, model.window))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("kimi-k3 · 800K".to_string(), 800_000),
+                ("kimi-k3-air · 256K".to_string(), 256_000),
+                ("kimi-k3-pro · 256K".to_string(), 256_000),
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_rows_keep_the_first_window_they_got() {
+        let row = with_stack_models(
+            provider("p", "Kimi", None, json!({})),
+            json!([
+                { "model": "kimi-k3", "contextWindow": 800000 },
+                { "model": "kimi-k3", "contextWindow": 128000 },
+                { "model": "kimi-k3-air" },
+                { "model": "kimi-k3-air", "contextWindow": 96000 }
+            ]),
+        );
+        let summary: Vec<(String, u64)> = claude_models("kimi", &row)
+            .into_iter()
+            .map(|model| (model.description, model.window))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("kimi-k3 · 800K".to_string(), 800_000),
+                ("kimi-k3-air · 96K".to_string(), 96_000),
             ]
         );
     }

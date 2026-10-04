@@ -585,6 +585,10 @@ pub struct ClaudeStackModel {
     /// 上游是 1M 窗口。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub one_m: bool,
+    /// 行自己的上下文窗口（token 数）：非 1M 模型按这个算。`None` 沿用供应商 env 里的
+    /// `CLAUDE_CODE_MAX_CONTEXT_TOKENS`（再没有是 200K）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
 }
 
 /// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。
