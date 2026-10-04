@@ -2,9 +2,17 @@
 //! 写 token 用量和各应用在用那家的额度。右键仍是原生菜单（切换供应商）。
 //!
 //! 窗口懒创建、之后只隐藏不销毁；失焦即隐藏，像系统的菜单栏弹出面板。
+//! 额度不在弹出时查：后台每 5 分钟查一次写进缓存，面板只读缓存（手动刷新除外）。
 
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock;
 
+use once_cell::sync::Lazy;
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+
+use crate::proxy::providers::copilot_auth::CopilotUsageResponse;
+use crate::services::subscription::{CredentialStatus, QuotaTier, SubscriptionQuota};
 use crate::store::AppState;
 use crate::tray::TrayPanelApp;
 
@@ -191,25 +199,218 @@ mod popup {
         }
 
         position_panel(app, &window, icon);
+        // 先发再显示：前端借这一下先同步主题，少闪一下旧配色
+        let _ = window.emit_to(PANEL_LABEL, PANEL_SHOWN_EVENT, ());
         let _ = window.show();
         let _ = window.set_focus();
-        let _ = window.emit_to(PANEL_LABEL, PANEL_SHOWN_EVENT, ());
+    }
+}
+
+// ─── 定时查额度 ────────────────────────────────────────────────────────────────
+
+/// 面板不在弹出时查接口：后台每隔这么久查一次，面板只读缓存。
+#[cfg(target_os = "macos")]
+const QUOTA_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// 启动后等一会儿再查第一次，避开启动时的一堆初始化。
+#[cfg(target_os = "macos")]
+const QUOTA_FIRST_REFRESH_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
+/// 查完通知面板重新读缓存。
+const PANEL_UPDATED_EVENT: &str = "tray-panel-updated";
+
+/// 授权中心的三家，顺序和授权中心一致。
+const AUTH_PROVIDERS: [&str; 3] = ["github_copilot", "codex_oauth", "xai_oauth"];
+
+/// 授权中心里一个账号和它上次查到的额度。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayPanelAccount {
+    pub provider: &'static str,
+    pub account: crate::commands::ManagedAuthAccount,
+    /// 需要重新登录的账号不查，为空；Copilot 的高级请求也折成同样的结构
+    pub quota: Option<SubscriptionQuota>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayPanelSnapshot {
+    pub apps: Vec<TrayPanelApp>,
+    pub accounts: Vec<TrayPanelAccount>,
+    /// 上次定时 / 手动查询完成的时间（毫秒）
+    pub refreshed_at: Option<i64>,
+}
+
+#[derive(Default)]
+struct AccountsCache {
+    accounts: Vec<TrayPanelAccount>,
+    refreshed_at: Option<i64>,
+}
+
+static ACCOUNTS_CACHE: Lazy<RwLock<AccountsCache>> = Lazy::new(Default::default);
+/// 定时和手动刷新撞在一起时只跑一个。
+static REFRESHING: AtomicBool = AtomicBool::new(false);
+
+fn needs_reauth(account: &crate::commands::ManagedAuthAccount) -> bool {
+    account.reauth_required || account.requires_reauth
+}
+
+fn copilot_quota(result: Result<CopilotUsageResponse, String>) -> SubscriptionQuota {
+    match result {
+        Ok(usage) => {
+            let premium = &usage.quota_snapshots.premium_interactions;
+            let utilization = if premium.entitlement > 0 {
+                (premium.entitlement - premium.remaining) as f64 / premium.entitlement as f64
+                    * 100.0
+            } else {
+                0.0
+            };
+            SubscriptionQuota {
+                tool: "github_copilot".to_string(),
+                credential_status: CredentialStatus::Valid,
+                credential_message: None,
+                success: true,
+                tiers: vec![QuotaTier {
+                    name: "premium".to_string(),
+                    utilization,
+                    resets_at: Some(usage.quota_reset_date.clone()),
+                    used_value_usd: None,
+                    max_value_usd: None,
+                }],
+                extra_usage: None,
+                reset_credits: None,
+                error: None,
+                queried_at: Some(chrono::Utc::now().timestamp_millis()),
+            }
+        }
+        Err(e) => SubscriptionQuota::error("github_copilot", CredentialStatus::Valid, e),
+    }
+}
+
+/// 查一个账号的额度。瞬时网络错误时沿用上次查到的，免得面板一闪「没查到」。
+async fn query_account(
+    app: &AppHandle,
+    provider: &'static str,
+    account: &crate::commands::ManagedAuthAccount,
+    previous: Option<SubscriptionQuota>,
+) -> Option<SubscriptionQuota> {
+    if needs_reauth(account) {
+        return None;
+    }
+    let id = account.id.clone();
+    let result = match provider {
+        "codex_oauth" => {
+            crate::commands::get_codex_oauth_quota(app.clone(), app.state(), Some(id), app.state())
+                .await
+        }
+        "xai_oauth" => crate::commands::get_xai_oauth_quota(Some(id), app.state()).await,
+        _ => Ok(copilot_quota(
+            crate::commands::copilot_get_usage_for_account(id, app.state()).await,
+        )),
+    };
+    match result {
+        Ok(quota) => Some(quota),
+        Err(e) => {
+            log::debug!("[TrayPanel] 查 {provider} 账号额度失败: {e}");
+            previous.or_else(|| {
+                Some(SubscriptionQuota::error(
+                    provider,
+                    CredentialStatus::Valid,
+                    e,
+                ))
+            })
+        }
+    }
+}
+
+/// 查一遍：各应用在用那家（写进 UsageCache）+ 授权中心每个账号，然后通知面板。
+pub async fn refresh_quotas(app: &AppHandle) {
+    if REFRESHING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    crate::tray::refresh_all_usage_in_tray(app).await;
+
+    let previous = ACCOUNTS_CACHE
+        .read()
+        .map(|cache| cache.accounts.clone())
+        .unwrap_or_default();
+    let mut accounts = Vec::new();
+    for provider in AUTH_PROVIDERS {
+        let list = match crate::commands::auth_list_accounts(
+            provider.to_string(),
+            app.state(),
+            app.state(),
+            app.state(),
+        )
+        .await
+        {
+            Ok(list) => list,
+            Err(e) => {
+                log::debug!("[TrayPanel] 读 {provider} 账号失败: {e}");
+                continue;
+            }
+        };
+        let queries = list.into_iter().map(|account| {
+            let previous = previous
+                .iter()
+                .find(|entry| entry.provider == provider && entry.account.id == account.id)
+                .and_then(|entry| entry.quota.clone());
+            async move {
+                let quota = query_account(app, provider, &account, previous).await;
+                TrayPanelAccount {
+                    provider,
+                    account,
+                    quota,
+                }
+            }
+        });
+        accounts.extend(futures::future::join_all(queries).await);
+    }
+
+    if let Ok(mut cache) = ACCOUNTS_CACHE.write() {
+        cache.accounts = accounts;
+        cache.refreshed_at = Some(chrono::Utc::now().timestamp_millis());
+    }
+    REFRESHING.store(false, Ordering::Release);
+    let _ = app.emit_to(PANEL_LABEL, PANEL_UPDATED_EVENT, ());
+}
+
+/// 后台定时查额度（只有 macOS 有面板，其他平台不跑）。
+#[cfg(target_os = "macos")]
+pub fn start_quota_worker(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(QUOTA_FIRST_REFRESH_DELAY).await;
+        loop {
+            refresh_quotas(&app).await;
+            tokio::time::sleep(QUOTA_REFRESH_INTERVAL).await;
+        }
+    });
+}
+
+fn snapshot(app: &AppHandle) -> TrayPanelSnapshot {
+    let (accounts, refreshed_at) = ACCOUNTS_CACHE
+        .read()
+        .map(|cache| (cache.accounts.clone(), cache.refreshed_at))
+        .unwrap_or_default();
+    TrayPanelSnapshot {
+        apps: crate::tray::collect_panel_apps(&app.state::<AppState>()),
+        accounts,
+        refreshed_at,
     }
 }
 
 // ─── 命令 ──────────────────────────────────────────────────────────────────────
 
-/// 读缓存里的额度快照，不发请求。
+/// 读缓存，不发请求：额度由后台定时查（`start_quota_worker`）。
 #[tauri::command]
-pub fn get_tray_panel_apps(state: State<'_, AppState>) -> Vec<TrayPanelApp> {
-    crate::tray::collect_panel_apps(&state)
+pub fn get_tray_panel_snapshot(app: AppHandle) -> TrayPanelSnapshot {
+    snapshot(&app)
 }
 
-/// 刷新各应用在用那家的额度（与托盘悬停共用 10 秒节流）后返回快照。
+/// 面板上点刷新：立刻查一遍再返回。
 #[tauri::command]
-pub async fn refresh_tray_panel_apps(app: AppHandle) -> Vec<TrayPanelApp> {
-    crate::tray::refresh_all_usage_in_tray(&app).await;
-    crate::tray::collect_panel_apps(&app.state::<AppState>())
+pub async fn refresh_tray_panel(app: AppHandle) -> TrayPanelSnapshot {
+    refresh_quotas(&app).await;
+    snapshot(&app)
 }
 
 #[tauri::command]

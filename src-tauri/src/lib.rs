@@ -1134,6 +1134,8 @@ pub fn run() {
                             if let TrayIconEvent::Click { button, .. } = &event {
                                 tray::note_tray_click(*button);
                             }
+                            // macOS 由托盘面板的后台定时任务查额度，悬停 / 点击不再发请求。
+                            #[cfg(not(target_os = "macos"))]
                             tauri::async_runtime::spawn(async move {
                                 crate::tray::refresh_all_usage_in_tray(&app).await;
                             });
@@ -1153,6 +1155,8 @@ pub fn run() {
             }
 
             let _tray = tray_builder.build(app)?;
+            #[cfg(target_os = "macos")]
+            tray_panel::start_quota_worker(app.handle());
             crate::services::webdav_auto_sync::start_worker(
                 app_state.db.clone(),
                 app.handle().clone(),
@@ -1394,8 +1398,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            tray_panel::get_tray_panel_apps,
-            tray_panel::refresh_tray_panel_apps,
+            tray_panel::get_tray_panel_snapshot,
+            tray_panel::refresh_tray_panel,
             tray_panel::tray_panel_hide,
             tray_panel::tray_panel_set_height,
             tray_panel::tray_panel_open_main,

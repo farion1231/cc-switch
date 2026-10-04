@@ -7,7 +7,7 @@ import {
 } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { AppWindow, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -27,34 +27,25 @@ import {
   type QuotaTone,
 } from "@/components/quota/quotaRules";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { useTheme } from "@/components/theme-provider";
 import { fmtUsd } from "@/components/usage/format";
 import { usageApi } from "@/lib/api/usage";
-import {
-  authGetStatus,
-  type ManagedAuthAccount,
-  type ManagedAuthProvider,
-} from "@/lib/api/auth";
+import type { ManagedAuthProvider } from "@/lib/api/auth";
 import {
   trayPanelApi,
   TRAY_PANEL_SHOWN_EVENT,
+  TRAY_PANEL_UPDATED_EVENT,
+  type TrayPanelAccount,
   type TrayPanelApp,
 } from "@/lib/api/trayPanel";
-import {
-  useCodexOauthQuotaByAccountId,
-  useXaiOauthQuotaByAccountId,
-} from "@/lib/query/subscription";
-import { useCopilotQuota, type CopilotQuota } from "@/lib/query/copilot";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 import type { UsageResult } from "@/types";
 
 type Range = "day" | "month" | "total";
 
-/** 授权中心各家账号额度的查询 key 前缀 */
-const ACCOUNT_QUOTA_KEYS = [
-  ["codex_oauth", "quota"],
-  ["xai_oauth", "quota"],
-  ["copilot", "quota"],
-];
+/** 和主界面 ThemeProvider 的 storageKey 一致 */
+const THEME_STORAGE_KEY = "cc-switch-theme";
+
 const RANGES: Range[] = ["day", "month", "total"];
 
 function rangeStart(range: Range): number {
@@ -162,22 +153,6 @@ function resetCreditsRow(
     title: line.detail,
     wide: true,
   };
-}
-
-function copilotPanelQuota(
-  t: TFunction,
-  quota: CopilotQuota | undefined,
-): PanelQuota {
-  if (!quota) return null;
-  if (!quota.success) {
-    return {
-      kind: "failed",
-      reason: quota.error || t("subscription.queryFailed"),
-    };
-  }
-  const label = t("subscription.copilotPremium");
-  const rows = quota.tiers.map((tier) => tierRow(t, tier, label));
-  return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
 function scriptPanelQuota(
@@ -381,55 +356,20 @@ const AUTH_GROUPS: {
   { provider: "xai_oauth", title: "xAI", icon: "xai" },
 ];
 
-function needsReauth(account: ManagedAuthAccount): boolean {
+function needsReauth({ account }: TrayPanelAccount): boolean {
   return Boolean(account.reauth_required || account.requires_reauth);
 }
 
-/** 各家账号的额度 hook 不同，按分组挑一个；需要重新登录的账号不查 */
-function useAccountQuota(
-  provider: ManagedAuthProvider,
-  account: ManagedAuthAccount,
-): { quota: PanelQuota; queriedAt: number | null | undefined } {
-  const { t, i18n } = useTranslation();
-  const enabled = !needsReauth(account);
-  const options = { enabled: false, autoQuery: false };
-  const codex = useCodexOauthQuotaByAccountId(account.id, {
-    ...options,
-    enabled: enabled && provider === "codex_oauth",
-  });
-  const xai = useXaiOauthQuotaByAccountId(account.id, {
-    ...options,
-    enabled: enabled && provider === "xai_oauth",
-  });
-  const copilot = useCopilotQuota(account.id, {
-    ...options,
-    enabled: enabled && provider === "github_copilot",
-  });
-  if (provider === "github_copilot") {
-    return {
-      quota: copilotPanelQuota(t, copilot.data),
-      queriedAt: copilot.data?.queriedAt,
-    };
-  }
-  const data = provider === "codex_oauth" ? codex.data : xai.data;
-  return {
-    quota: subscriptionPanelQuota(t, data, i18n.language),
-    queriedAt: data?.queriedAt,
-  };
-}
-
 function AccountRow({
-  provider,
-  account,
+  entry,
   inUseBy,
 }: {
-  provider: ManagedAuthProvider;
-  account: ManagedAuthAccount;
+  entry: TrayPanelAccount;
   /** 正在用这个账号的应用名（Codex 绑定的托管账号） */
   inUseBy?: string;
 }) {
-  const { t } = useTranslation();
-  const { quota, queriedAt } = useAccountQuota(provider, account);
+  const { t, i18n } = useTranslation();
+  const { account, quota } = entry;
   return (
     <div className="mt-2.5">
       <div className="flex items-center gap-1.5 text-caption">
@@ -446,14 +386,14 @@ function AccountRow({
           </span>
         )}
       </div>
-      {needsReauth(account) ? (
+      {needsReauth(entry) ? (
         <p className="mt-1 text-caption font-medium text-danger-text">
           {t("trayPanel.reauthRequired")}
         </p>
       ) : (
         <>
-          <UpdatedAt at={queriedAt} />
-          <QuotaGrid quota={quota} />
+          <UpdatedAt at={quota?.queriedAt} />
+          <QuotaGrid quota={subscriptionPanelQuota(t, quota, i18n.language)} />
         </>
       )}
     </div>
@@ -461,39 +401,32 @@ function AccountRow({
 }
 
 function AuthGroupSection({
-  provider,
   title,
   icon,
+  entries,
   codexAccountId,
 }: {
-  provider: ManagedAuthProvider;
   title: string;
   icon: string;
+  entries: TrayPanelAccount[];
   codexAccountId: string | null;
 }) {
   const { t } = useTranslation();
-  // 和授权中心（useManagedAuth）共用同一个查询 key
-  const { data } = useQuery({
-    queryKey: ["managed-auth-status", provider],
-    queryFn: () => authGetStatus(provider),
-    staleTime: 30_000,
-  });
-  const accounts = data?.accounts ?? [];
-  if (accounts.length === 0) return null;
+  if (entries.length === 0) return null;
   return (
     <section className="px-4 py-3">
       <SectionHeader
         icon={<ProviderIcon icon={icon} name={title} size={16} />}
         title={title}
-        right={t("trayPanel.accounts", { count: accounts.length })}
+        right={t("trayPanel.accounts", { count: entries.length })}
       />
-      {accounts.map((account) => (
+      {entries.map((entry) => (
         <AccountRow
-          key={account.id}
-          provider={provider}
-          account={account}
+          key={entry.account.id}
+          entry={entry}
           inUseBy={
-            provider === "codex_oauth" && account.id === codexAccountId
+            entry.provider === "codex_oauth" &&
+            entry.account.id === codexAccountId
               ? "Codex"
               : undefined
           }
@@ -520,26 +453,49 @@ export function TrayPanel() {
       ),
     refetchInterval: 60_000,
   });
-  const apps = useQuery({
-    queryKey: ["tray-panel", "apps"],
-    queryFn: () => trayPanelApi.refreshApps(),
+  // 只读后端缓存，不发请求：额度由后台每 5 分钟查一次
+  const snapshot = useQuery({
+    queryKey: ["tray-panel", "snapshot"],
+    queryFn: () => trayPanelApi.getSnapshot(),
+  });
+  // 手动刷新才立刻查一遍
+  const refresh = useMutation({
+    mutationFn: () => trayPanelApi.refresh(),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["tray-panel", "snapshot"], data);
+    },
   });
 
-  // 每次弹出都重查：面板只隐藏不销毁
+  // 面板只隐藏不销毁，主界面切过深浅色后这里的主题还是建窗口时读的那个：
+  // 弹出前、以及别的窗口改了主题时，按主界面存的主题重新套一遍（也同步原生窗口外观，玻璃跟着变）
+  const { setTheme } = useTheme();
   useEffect(() => {
-    const unlisten = listen(TRAY_PANEL_SHOWN_EVENT, () => {
-      void queryClient.invalidateQueries({ queryKey: ["tray-panel"] });
-      void queryClient.invalidateQueries({ queryKey: ["managed-auth-status"] });
-      // 各账号额度有自己的 5 分钟缓存，超过一分钟的才重查
-      for (const key of ACCOUNT_QUOTA_KEYS) {
-        void queryClient.invalidateQueries({
-          queryKey: key,
-          predicate: (query) => Date.now() - query.state.dataUpdatedAt > 60_000,
-        });
+    const syncTheme = () => {
+      const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+      if (stored === "light" || stored === "dark" || stored === "system") {
+        setTheme(stored);
       }
-    });
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === THEME_STORAGE_KEY) syncTheme();
+    };
+    window.addEventListener("storage", onStorage);
+    const unlisten = listen(TRAY_PANEL_SHOWN_EVENT, syncTheme);
     return () => {
+      window.removeEventListener("storage", onStorage);
       void unlisten.then((off) => off());
+    };
+  }, [setTheme]);
+
+  // 弹出时、后台查完时重读缓存（都是本地读，不发额度请求）
+  useEffect(() => {
+    const reload = () =>
+      void queryClient.invalidateQueries({ queryKey: ["tray-panel"] });
+    const shown = listen(TRAY_PANEL_SHOWN_EVENT, reload);
+    const updated = listen(TRAY_PANEL_UPDATED_EVENT, reload);
+    return () => {
+      void shown.then((off) => off());
+      void updated.then((off) => off());
     };
   }, [queryClient]);
 
@@ -563,15 +519,17 @@ export function TrayPanel() {
   }, []);
 
   // Codex 绑的是授权中心的账号时，额度在 ChatGPT 账号那组里写（打 ✓），这里不重复
+  const apps = snapshot.data?.apps ?? [];
+  const accounts = snapshot.data?.accounts ?? [];
   const codexAccountId =
-    apps.data?.find(
+    apps.find(
       (app) => app.appType === "codex" && app.usageKind === "managedCodex",
     )?.accountId ?? null;
-  const appSections = (apps.data ?? []).filter(
+  const appSections = apps.filter(
     (app) => !(app.appType === "codex" && app.usageKind === "managedCodex"),
   );
   const totalTokens = summary.data?.realTotalTokens;
-  const refreshing = apps.isFetching || summary.isFetching;
+  const refreshing = refresh.isPending;
 
   return (
     <div
@@ -630,10 +588,12 @@ export function TrayPanel() {
         {appSections.map((app) => (
           <AppSection key={app.appType} app={app} />
         ))}
-        {AUTH_GROUPS.map((group) => (
+        {AUTH_GROUPS.map(({ provider, title, icon }) => (
           <AuthGroupSection
-            key={group.provider}
-            {...group}
+            key={provider}
+            title={title}
+            icon={icon}
+            entries={accounts.filter((entry) => entry.provider === provider)}
             codexAccountId={codexAccountId}
           />
         ))}
@@ -657,13 +617,10 @@ export function TrayPanel() {
           title={t("trayPanel.refresh")}
           disabled={refreshing}
           onClick={() => {
-            void queryClient.invalidateQueries({ queryKey: ["tray-panel"] });
+            refresh.mutate();
             void queryClient.invalidateQueries({
-              queryKey: ["managed-auth-status"],
+              queryKey: ["tray-panel", "summary"],
             });
-            for (const key of ACCOUNT_QUOTA_KEYS) {
-              void queryClient.invalidateQueries({ queryKey: key });
-            }
           }}
           className="rounded-control p-1.5 text-fg-2 hover:bg-black/[0.06] dark:hover:bg-white/[0.08] hover:text-fg-1 disabled:opacity-50"
         >
