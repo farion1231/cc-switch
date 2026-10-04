@@ -35,7 +35,6 @@ import {
 } from "@/hooks/useTrayNavigation";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
-import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 import {
   extractErrorMessage,
   translatePiProviderMutationError,
@@ -151,8 +150,6 @@ function App() {
   const [promptsApp, setPromptsApp] = useState<AppId>(() =>
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
-  const { collapsed: sidebarCollapsed, toggle: toggleSidebar } =
-    useSidebarCollapsed();
   const [isAddOpen, setIsAddOpen] = useState(false);
   // 托盘里点了直连下需要路由的那家：打开应用页后弹「需要路由」对话框
   const [trayNeedsRoute, setTrayNeedsRoute] = useState<{
@@ -660,8 +657,6 @@ function App() {
 
   const openSettingsRef = useRef(openSettings);
   openSettingsRef.current = openSettings;
-  const toggleSidebarRef = useRef(toggleSidebar);
-  toggleSidebarRef.current = toggleSidebar;
   const [usageAppFilter, setUsageAppFilter] = useState<AppTypeFilter>("all");
 
   useEffect(() => {
@@ -670,12 +665,6 @@ function App() {
       if (mod && event.key === ",") {
         event.preventDefault();
         openSettingsRef.current("general");
-        return;
-      }
-
-      if (mod && event.key === "\\") {
-        event.preventDefault();
-        toggleSidebarRef.current();
         return;
       }
 
@@ -1448,8 +1437,6 @@ function App() {
     >
       <div className="flex h-screen overflow-hidden bg-app text-fg-1 selection:bg-action/25">
         <Sidebar
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={toggleSidebar}
           activeApp={activeApp}
           view={currentView}
           visibleApps={visibleApps}

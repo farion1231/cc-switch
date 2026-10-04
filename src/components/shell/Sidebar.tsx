@@ -28,6 +28,11 @@ import type { GlobalPage, SettingsSection, View } from "@/lib/navigation";
 import { isAppPage } from "@/lib/navigation";
 import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
+import {
+  SIDEBAR_EXPANDED_WIDTH,
+  sidebarRailWidth,
+  useSidebarCollapsed,
+} from "@/hooks/useSidebarCollapsed";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { fmtUsd } from "@/components/usage/format";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -41,8 +46,6 @@ const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
 type IconComponent = ComponentType<{ className?: string }>;
 
 interface SidebarProps {
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
   activeApp: AppId;
   view: View;
   visibleApps: VisibleApps;
@@ -55,6 +58,8 @@ interface SidebarProps {
   appsUpdateAvailable?: boolean;
 }
 
+type DirectoryProps = SidebarProps & { collapsed: boolean };
+
 /**
  * 主导航（v7）：顶条 44 → 应用列表（唯一滚动的区域）→ 全局 6 项（贴底）→ 底栏「应用 · 设置」。
  * 进入设置后整条侧栏换成设置目录。收起时是 72px 的图标轨；
@@ -63,7 +68,8 @@ interface SidebarProps {
  */
 export function Sidebar(props: SidebarProps) {
   const { t } = useTranslation();
-  const { collapsed, onToggleCollapsed, view } = props;
+  const { collapsed, toggle } = useSidebarCollapsed();
+  const { view } = props;
   const inSettings = view === "settings";
 
   return (
@@ -71,9 +77,10 @@ export function Sidebar(props: SidebarProps) {
       aria-label={t("nav.mainLabel")}
       className={cn(
         "relative flex h-full shrink-0 flex-col overflow-hidden whitespace-nowrap border-e border-border bg-sidebar text-body text-fg-1 transition-[width] duration-200 ease-out motion-reduce:transition-none",
-        // macOS 的红绿灯（新版更大）要约 74px，收起的图标轨在 Mac 上放宽到 84
-        collapsed ? (isMac() ? "w-[84px]" : "w-[72px]") : "w-[200px]",
       )}
+      style={{
+        width: collapsed ? sidebarRailWidth() : SIDEBAR_EXPANDED_WIDTH,
+      }}
     >
       <a
         href="#main-content"
@@ -81,11 +88,11 @@ export function Sidebar(props: SidebarProps) {
       >
         {t("nav.skipToContent")}
       </a>
-      <SidebarTopBar collapsed={collapsed} onToggle={onToggleCollapsed} />
+      <SidebarTopBar collapsed={collapsed} onToggle={toggle} />
       {inSettings ? (
-        <SettingsDirectory {...props} />
+        <SettingsDirectory {...props} collapsed={collapsed} />
       ) : (
-        <MainDirectory {...props} />
+        <MainDirectory {...props} collapsed={collapsed} />
       )}
     </nav>
   );
@@ -202,7 +209,7 @@ function MainDirectory({
   onSelectApp,
   onSelectPage,
   appsUpdateAvailable = false,
-}: SidebarProps) {
+}: DirectoryProps) {
   const { t } = useTranslation();
   const { hasUpdate } = useUpdate();
   const { appStatus, todayCost, authNeedsAttention } = useSidebarStatus();
@@ -608,7 +615,7 @@ function SettingsDirectory({
   settingsSection,
   onSelectSettingsSection,
   onExitSettings,
-}: SidebarProps) {
+}: DirectoryProps) {
   const { t } = useTranslation();
   const { hasUpdate } = useUpdate();
   const { data: version } = useQuery({
