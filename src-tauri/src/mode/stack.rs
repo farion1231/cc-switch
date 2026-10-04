@@ -304,11 +304,12 @@ fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackM
         .into_iter()
         .map(|found| {
             let name = found.name.unwrap_or_else(|| found.model.clone());
+            let shown_window = if found.one_m { 1_000_000 } else { window };
             StackModel {
                 id: encode(&AppType::Claude, key, &found.model, found.one_m),
                 display_name: display_name(&name, &provider.name),
                 name,
-                description: routed_description(&provider.name),
+                description: model_description(&found.model, shown_window),
                 upstream: found.upstream,
                 one_m: found.one_m,
                 window,
@@ -336,9 +337,24 @@ pub fn display_name(model: &str, provider_name: &str) -> String {
     format!("{model}（{provider_name}）")
 }
 
-/// 选择器里 Stack 模型的说明。
-pub fn routed_description(provider_name: &str) -> String {
-    format!("经 CC Switch 路由到 {provider_name} (Routed by CC Switch to {provider_name})")
+/// 选择器里 Stack 模型的说明：`<上游模型名> · <窗口>`。显示名可以是用户自己起的，id 又带着
+/// 前缀，上游真正的模型名只有这里看得到；供应商名已经在显示名里，不再重复。窗口未知
+/// （`0`）时只写模型名。
+pub fn model_description(model: &str, window: u64) -> String {
+    match window_label(window) {
+        Some(window) => format!("{model} · {window}"),
+        None => model.to_string(),
+    }
+}
+
+/// 窗口的简写：整百万写 `1M`，其余按千写 `256K`，不足一千照原样。
+fn window_label(window: u64) -> Option<String> {
+    match window {
+        0 => None,
+        w if w % 1_000_000 == 0 => Some(format!("{}M", w / 1_000_000)),
+        w if w >= 1_000 => Some(format!("{}K", (w + 500) / 1_000)),
+        w => Some(w.to_string()),
+    }
 }
 
 /// 一家 Stack 供应商发布给客户端的模型 id。Codex 路由那家的整张目录就是默认路由的目录行，
@@ -777,8 +793,7 @@ mod tests {
                     upstream: "glm-5.2[1M]".to_string(),
                     name: "GLM 5.2".to_string(),
                     display_name: "GLM 5.2（Zhipu）".to_string(),
-                    description: "经 CC Switch 路由到 Zhipu (Routed by CC Switch to Zhipu)"
-                        .to_string(),
+                    description: "glm-5.2 · 1M".to_string(),
                     one_m: true,
                     window: 128_000,
                 },
@@ -787,8 +802,7 @@ mod tests {
                     upstream: "glm-4.7-air".to_string(),
                     name: "glm-4.7-air".to_string(),
                     display_name: "glm-4.7-air（Zhipu）".to_string(),
-                    description: "经 CC Switch 路由到 Zhipu (Routed by CC Switch to Zhipu)"
-                        .to_string(),
+                    description: "glm-4.7-air · 128K".to_string(),
                     one_m: false,
                     window: 128_000,
                 },
@@ -801,6 +815,15 @@ mod tests {
             claude_models("r", &default_window)[0].window,
             CLAUDE_DEFAULT_WINDOW
         );
+    }
+
+    #[test]
+    fn the_description_names_the_upstream_model_and_its_window() {
+        assert_eq!(model_description("kimi-k3", 256_000), "kimi-k3 · 256K");
+        assert_eq!(model_description("kimi-k3", 262_144), "kimi-k3 · 262K");
+        assert_eq!(model_description("glm-5.2", 1_000_000), "glm-5.2 · 1M");
+        assert_eq!(model_description("glm-5.2", 1_050_000), "glm-5.2 · 1050K");
+        assert_eq!(model_description("m", 0), "m");
     }
 
     fn with_stack_models(mut provider: Provider, models: Value) -> Provider {
