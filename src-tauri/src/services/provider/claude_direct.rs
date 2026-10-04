@@ -10,7 +10,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::live::engine::LiveFile;
 use crate::live::patch::json::JsonPatch;
-use crate::live::project::claude::{direct_patch, ClaudeProjection};
+use crate::live::project::claude::{direct_live_patch, ClaudeProjection};
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::state::{op, PendingTarget};
 use crate::provider::Provider;
@@ -52,7 +52,7 @@ fn write(
     pointer: Option<&str>,
 ) -> Result<OperationReport, AppError> {
     let prev = prev.map(|provider| ClaudeProjection::of(&provider.settings_config));
-    let patch = direct_patch(
+    let patch = direct_live_patch(
         prev.as_ref(),
         &ClaudeProjection::of(&target.settings_config),
     );

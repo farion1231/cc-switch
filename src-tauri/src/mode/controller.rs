@@ -25,7 +25,7 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::live::engine::DeviceStore;
 use crate::live::project::claude::{
-    direct_patch, proxy_projection, ClaudeProjection, ProxyAuth, StackRoleModel,
+    direct_live_patch, proxy_projection, ClaudeProjection, ProxyAuth, StackRoleModel,
     PROXY_TOKEN_PLACEHOLDER,
 };
 use crate::live::project::gemini::GeminiProjection;
@@ -317,7 +317,7 @@ async fn write_proxy(
             let (projection, contract) =
                 claude_contract(route, &proxy_url, &published, stack_default.as_ref());
             let unchanged = !force && live_now.has_contract(&contract.key);
-            let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
+            let patch = direct_live_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
             target.contract = Some(contract);
             claude_direct::run(
                 &state.db,
@@ -412,7 +412,7 @@ fn write_direct(
             let empty = ClaudeProjection::default();
             let projection = usable_direct(app, direct.as_ref())
                 .map(|provider| ClaudeProjection::of(&provider.settings_config));
-            let patch = direct_patch(
+            let patch = direct_live_patch(
                 live_now.claude_exclusive_owner().as_ref(),
                 projection.as_ref().unwrap_or(&empty),
             );
@@ -1689,7 +1689,7 @@ mod tests {
     fn takeover(live: &Value, provider: &Provider) -> Value {
         let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721", &[], None);
         let mut doc = live.clone();
-        direct_patch(None, &projection)
+        direct_live_patch(None, &projection)
             .apply_to(Path::new("settings.json"), &mut doc)
             .expect("apply proxy contract");
         doc

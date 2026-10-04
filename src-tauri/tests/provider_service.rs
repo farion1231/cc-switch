@@ -3239,6 +3239,54 @@ fn claude_editor_provider_fields_go_to_the_row() {
     );
 }
 
+/// 编辑别的供应商时，当前供应商缺失的关键字段不中和成空串：编辑视图显示的是供应商
+/// 自己的配置。前端按「存在的键优先」读写凭据（AUTH_TOKEN 优先于 API_KEY，
+/// AWS_BEARER_TOKEN_BEDROCK 截获 Bedrock Key），空串键会把只有 ANTHROPIC_API_KEY
+/// 的行显示成没有 Key，保存还会把改的 Key 写进 AUTH_TOKEN、原字段不动。
+#[test]
+fn claude_editor_view_does_not_show_prev_provider_neutralized_keys() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let with_token = json!({ "env": {
+        "ANTHROPIC_BASE_URL": "https://kimi.example",
+        "ANTHROPIC_AUTH_TOKEN": "sk-kimi"
+    }});
+    let api_key_row = json!({ "env": { "ANTHROPIC_API_KEY": "sk-b" } });
+    let bedrock = json!({ "env": {
+        "CLAUDE_CODE_USE_BEDROCK": "1",
+        "AWS_REGION": "us-west-2",
+        "AWS_BEARER_TOKEN_BEDROCK": "sk-bedrock"
+    }});
+    let state = seed_claude_switch_state(
+        &[
+            ("kimi", with_token.clone()),
+            ("b", api_key_row.clone()),
+            ("bedrock", bedrock),
+        ],
+        "kimi",
+        &serde_json::to_string(&with_token).expect("serialize"),
+    );
+
+    // 当前供应商用 AUTH_TOKEN：编辑只有 ANTHROPIC_API_KEY 的另一家，视图里没有 AUTH_TOKEN。
+    let (row, base) = open_claude_editor(&state, "b");
+    assert_eq!(base["env"], api_key_row["env"], "no neutralized AUTH_TOKEN");
+
+    // 不改 Key 直接保存：中和键不写进这一家的行。
+    save_claude_editor(&state, &row, &base, base.clone(), "refuse").expect("save b");
+    assert_eq!(claude_row(&state, "b"), api_key_row, "row stays clean");
+
+    // 当前供应商是 Bedrock：AWS_BEARER_TOKEN_BEDROCK 同样不进别家的编辑视图。
+    ProviderService::switch(&state, AppType::Claude, "bedrock").expect("switch to bedrock");
+    let (_, base) = open_claude_editor(&state, "b");
+    assert_eq!(
+        base["env"],
+        json!({ "ANTHROPIC_API_KEY": "sk-b" }),
+        "no neutralized Bedrock bearer key"
+    );
+}
+
 /// 深链带进来的非关键字段：编辑器提示它不随切换生效；加进全局设置后写进 live，
 /// 行里的原值还在。
 #[test]
