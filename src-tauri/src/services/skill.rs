@@ -2271,7 +2271,21 @@ impl SkillService {
                 // 工具的部署链接）不在此列。
                 if let Some(agents_dir) = &agents_dir {
                     if source.starts_with(agents_dir) && !Self::is_symlink(&source) {
-                        shared_source_copy = Some(source.clone());
+                        // 应用目录可被覆盖成共享目录本身（如 Pi agent 目录指到
+                        // ~/.agents），此时共享源就是该应用正在使用的部署目录，
+                        // 删除等于删掉应用的原生副本，且导入不会为它重建。凡与
+                        // 任一应用的部署路径重合或互为别名，一律按应用来源语义
+                        // 保留。
+                        let doubles_as_deployment = AppType::all().any(|app| {
+                            Self::get_app_skills_dir(&app)
+                                .map(|app_dir| {
+                                    Self::paths_overlap(&source, &app_dir.join(&dir_name))
+                                })
+                                .unwrap_or(false)
+                        });
+                        if !doubles_as_deployment {
+                            shared_source_copy = Some(source.clone());
+                        }
                     }
                 }
             }
@@ -5728,6 +5742,71 @@ mod tests {
             fs::read(external.join("SKILL.md")).unwrap(),
             original,
             "the symlink target must stay untouched"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn import_from_apps_keeps_shared_source_that_doubles_as_an_app_deployment_dir() {
+        // 回归（PR #7815 审查）：Pi 的 agent 目录可被覆盖为 ~/.agents，此时
+        // 应用的 skills 目录就是共享 agents 目录本身。导入不得把正在被应用
+        // 使用的共享源当作迁移残留删除，否则会删掉 Pi 的唯一原生部署，而
+        // get_all_installed 按目录存在性重算后 apps.pi 翻转为 false——一次
+        // 导入意外禁用现有技能。Claude 等支持目录覆盖的应用同理。
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _pi_dir =
+            crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
+        let db = Arc::new(Database::memory().unwrap());
+
+        let shared_source = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("test-skill");
+        write_skill(&shared_source, "shared");
+        let original = fs::read(shared_source.join("SKILL.md")).unwrap();
+        assert_eq!(
+            SkillService::get_app_skills_dir(&AppType::Pi).unwrap(),
+            super::get_agents_skills_dir().unwrap(),
+            "precondition: Pi's skills dir must be the shared agents dir"
+        );
+
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: SkillApps {
+                    pi: true,
+                    ..Default::default()
+                },
+            }],
+        )
+        .unwrap();
+        assert_eq!(imported.len(), 1);
+
+        let ssot_copy = SkillService::get_ssot_dir().unwrap().join("test-skill");
+        assert!(ssot_copy.join("SKILL.md").exists(), "SSOT copy must exist");
+        assert!(
+            shared_source.join("SKILL.md").exists(),
+            "a shared source that doubles as an app deployment dir must be kept"
+        );
+        assert_eq!(
+            fs::read(shared_source.join("SKILL.md")).unwrap(),
+            original,
+            "the app's native copy must stay untouched"
+        );
+        assert!(
+            imported[0].apps.pi,
+            "import must not disable the app whose deployment dir is the shared source"
+        );
+        let installed = SkillService::get_all_installed(&db).unwrap();
+        assert!(
+            installed
+                .iter()
+                .any(|skill| skill.directory == "test-skill" && skill.apps.pi),
+            "get_all_installed must still report Pi enabled after the import"
         );
     }
 
