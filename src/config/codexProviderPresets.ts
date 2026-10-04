@@ -3326,6 +3326,23 @@ requires_openai_auth = true`,
         displayName: "MiMo V2.5 Pro",
         contextWindow: 1048576,
       },
+      // models.dev（2026-10-04 核对 opencode-go）：MiMo V2.6 两档均已上架，
+      // interleaved.field = reasoning_content（与预设 outputFormat 一致）；
+      // reasoning_options 为空 → 该模型不暴露 effort 档位，故不声明
+      // reasoningLevels（同 mimo-v2.5-pro），代理查表为 None 时不发
+      // reasoning_effort。此前未收录会被静默覆写成 glm-5.3。
+      {
+        model: "mimo-v2.6-flash",
+        displayName: "MiMo V2.6 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+      },
+      {
+        model: "mimo-v2.6-pro",
+        displayName: "MiMo V2.6 Pro",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+      },
     ]),
     category: "third_party",
     icon: "opencode",

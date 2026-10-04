@@ -1,3 +1,15 @@
+//! Codex Chat 两条路径（Responses→Chat 请求侧、Chat→Responses 响应侧）共用的 reasoning
+//! 字段读写助手。
+//!
+//! ⚠️ 本模块的函数都是**无门控的纯助手**：只看字段内容，不知道 provider 身份。因此
+//! 「要不要把非标准字段（例如占位 `reasoning_content`）塞进请求体」属于 provider 级决策，
+//! 必须由上层判定后才调用这里的写入助手——
+//! 见 `transform_codex_chat::should_inject_tool_call_reasoning_placeholder`
+//! 与 `claude::should_preserve_reasoning_content_for_openai_chat`。
+//! 背景：严格 OpenAI 兼容的聚合 / 托管网关会把 `reasoning_content` 当非法参数拒收
+//! （issue #7608：OpenCode-Go + mimo-v2.6-flash → `400 Invalid request parameters`）。
+//! 新增写入调用点前，请先确认上层已做平台判定。
+
 use serde_json::{json, Map, Value};
 
 // 穷举上游可能的 reasoning 回传字段，优先级：reasoning_content > reasoning(字符串/对象) > reasoning_details。

@@ -1519,6 +1519,7 @@ impl RequestForwarder {
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
+                Some(provider),
             )?;
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,

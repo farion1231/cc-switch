@@ -311,14 +311,6 @@ fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
 }
 
 fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: &Value) -> bool {
-    if body
-        .get("model")
-        .and_then(|m| m.as_str())
-        .is_some_and(is_reasoning_vendor_identifier)
-    {
-        return true;
-    }
-
     let settings = &provider.settings_config;
     let base_urls = [
         settings
@@ -329,6 +321,24 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
         settings.get("baseURL").and_then(|v| v.as_str()),
         settings.get("apiEndpoint").and_then(|v| v.as_str()),
     ];
+
+    // 聚合 / 托管网关不认厂商私有的 `reasoning_content`，带上会被判非法参数 →
+    // `400 Invalid request parameters`（issue #7608）。注意必须先看平台：走网关的厂商
+    // 模型（如 opencode.ai 上的 mimo-v2.6-flash）会从下方 model hint 命中"需要回放"。
+    // 与 Codex Responses→Chat 路径（should_inject_tool_call_reasoning_placeholder）
+    // 保持语义对称。
+    if super::codex::platform_is_aggregator_gateway(&provider.name, base_urls.into_iter().flatten())
+    {
+        return false;
+    }
+
+    if body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .is_some_and(is_reasoning_vendor_identifier)
+    {
+        return true;
+    }
 
     base_urls
         .into_iter()
