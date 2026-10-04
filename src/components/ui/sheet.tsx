@@ -1,6 +1,8 @@
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
+import { ChevronLeft, X } from "lucide-react";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
@@ -68,6 +70,59 @@ const SheetContent = React.forwardRef<
 );
 SheetContent.displayName = "SheetContent";
 
+/**
+ * 整页版的 SheetContent：盖住内容区，页头带返回按钮（同 FullScreenPanel），内容居中 1008px。
+ * 仍是模态，编辑时侧栏不可操作；点外面不关。
+ */
+const SheetPageContent = React.forwardRef<
+  React.ElementRef<typeof DialogPrimitive.Content>,
+  Omit<
+    React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>,
+    "title"
+  > & {
+    title: React.ReactNode;
+    /** 返回按钮的无障碍名字 */
+    closeLabel: string;
+  }
+>(({ title, closeLabel, children, ...props }, ref) => (
+  <DialogPrimitive.Portal
+    container={document.getElementById("content-area") ?? undefined}
+  >
+    <DialogPrimitive.Content
+      ref={ref}
+      className="absolute inset-0 z-[60] flex flex-col bg-app text-fg-1 outline-none"
+      onInteractOutside={(event) => event.preventDefault()}
+      {...props}
+    >
+      <AppPageHeader
+        variant="app"
+        truncateTitle
+        title={
+          <DialogPrimitive.Title asChild>
+            <span>{title}</span>
+          </DialogPrimitive.Title>
+        }
+        leading={
+          <DialogPrimitive.Close asChild>
+            <Button
+              variant="quiet"
+              size="icon-compact"
+              className="h-8 w-8"
+              aria-label={closeLabel}
+            >
+              <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
+            </Button>
+          </DialogPrimitive.Close>
+        }
+      />
+      <div className="mx-auto flex min-h-0 w-full max-w-[1008px] flex-1 flex-col">
+        {children}
+      </div>
+    </DialogPrimitive.Content>
+  </DialogPrimitive.Portal>
+));
+SheetPageContent.displayName = "SheetPageContent";
+
 const SheetHeader = ({
   className,
   ...props
@@ -133,6 +188,7 @@ export {
   SheetTrigger,
   SheetClose,
   SheetContent,
+  SheetPageContent,
   SheetHeader,
   SheetBody,
   SheetFooter,

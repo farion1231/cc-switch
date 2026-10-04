@@ -59,8 +59,6 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<PiPromptTab>("global");
   const [isFormOpen, setIsFormOpen] = useState(false);
-  // Pi 原生资源（系统提示 / 模板）的编辑页开着或删除进行中
-  const [nativeEditorBlocked, setNativeEditorBlocked] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [copyingId, setCopyingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -88,8 +86,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
   const writePending = Boolean(togglingId) || busy;
   const interactionBlocked =
     loading || writePending || isFormOpen || dialogOpen;
-  const navigationBlocked =
-    writePending || isFormOpen || dialogOpen || nativeEditorBlocked;
+  const navigationBlocked = writePending || isFormOpen || dialogOpen;
   // 外观上的禁用晚 300ms 才出现：点一下启用这类很快的写入不让整列按钮闪一下变灰。
   // 拦截仍看 interactionBlocked；表单、对话框打开时照常立即禁用。
   const controlsDisabled =
@@ -519,15 +516,12 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
           />
         )
       ) : activeTab === "system" ? (
-        <PiSystemPromptFiles
-          onNavigationBlockedChange={setNativeEditorBlocked}
-        />
+        <PiSystemPromptFiles />
       ) : (
         <PiPromptTemplates
           ref={templatesRef}
           search={templateQuery}
           onClearSearch={() => setTemplateQuery("")}
-          onNavigationBlockedChange={setNativeEditorBlocked}
         />
       )}
 

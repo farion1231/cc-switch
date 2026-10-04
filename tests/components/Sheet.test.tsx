@@ -5,6 +5,7 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
+  SheetPageContent,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -54,6 +55,22 @@ describe("SheetContent", () => {
   it("closes on an outside click only when the drawer opts in", async () => {
     const { onOpenChange } = renderSheet({ dismissOnOutsideClick: true });
     await clickOutside();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("page mode renders a page header whose back button closes the sheet", () => {
+    const onOpenChange = vi.fn();
+    render(
+      <Sheet open onOpenChange={onOpenChange}>
+        <SheetPageContent title="Edit prompt" closeLabel="back">
+          body
+        </SheetPageContent>
+      </Sheet>,
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Edit prompt" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "back" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

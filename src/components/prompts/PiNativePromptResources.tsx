@@ -1,6 +1,5 @@
 import {
   forwardRef,
-  useEffect,
   useId,
   useImperativeHandle,
   useMemo,
@@ -28,7 +27,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import {
+  Sheet,
+  SheetDescription,
+  SheetPageContent,
+} from "@/components/ui/sheet";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
   promptsApi,
@@ -96,7 +99,7 @@ function showMutationError(error: unknown, fallback: string) {
   toast.error(extractErrorMessage(error) || fallback);
 }
 
-/** 编辑页外壳：整页面板，与其它二级编辑页同宽。 */
+/** 编辑页外壳：整页（带返回按钮的页头）、正文滚动、底栏 56。 */
 function PromptDrawer({
   title,
   description,
@@ -112,19 +115,24 @@ function PromptDrawer({
   footer: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
-    <FullScreenPanel
-      isOpen
-      title={title}
-      onClose={() => {
-        if (!busy) onClose();
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open && !busy) onClose();
       }}
-      contentClassName="flex min-h-full flex-col gap-5 space-y-0"
-      footer={footer}
     >
-      <p className="sr-only">{description}</p>
-      {children}
-    </FullScreenPanel>
+      <SheetPageContent title={title} closeLabel={t("common.back")}>
+        <SheetDescription className="sr-only">{description}</SheetDescription>
+        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5">
+          {children}
+        </div>
+        <div className="flex h-14 shrink-0 items-center gap-2 border-t border-border px-6">
+          {footer}
+        </div>
+      </SheetPageContent>
+    </Sheet>
   );
 }
 
@@ -319,28 +327,7 @@ function PiInstructionFileEditor({
 }
 
 /** Pi · 系统提示：两个固定文件，文件存在就生效，不加启用开关（Pi 规范 §5）。 */
-export interface PiNativePromptNavigationProps {
-  /**
-   * 编辑页开着或删除进行中时为 true。编辑页只盖住内容区，侧栏仍可点；
-   * 上报给页面合进导航锁，离开页面才不会卸载编辑页、丢掉未保存的草稿。
-   */
-  onNavigationBlockedChange?: (blocked: boolean) => void;
-}
-
-/** 把「编辑页开着 / 写入进行中」上报给页面；卸载时释放 */
-function useReportNavigationBlocked(
-  blocked: boolean,
-  onChange: ((blocked: boolean) => void) | undefined,
-) {
-  useEffect(() => {
-    onChange?.(blocked);
-  }, [blocked, onChange]);
-  useEffect(() => () => onChange?.(false), [onChange]);
-}
-
-export function PiSystemPromptFiles({
-  onNavigationBlockedChange,
-}: PiNativePromptNavigationProps = {}) {
+export function PiSystemPromptFiles() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<EditablePiPromptFileKind | null>(null);
@@ -355,7 +342,7 @@ export function PiSystemPromptFiles({
     }),
   ];
 
-  // 删除不弹确认框：直接删、关编辑页，toast 给「撤销」（原样写回）；原本是空白的文件不给撤销
+  // 删除不弹确认框：直接删、关抽屉，toast 给「撤销」（原样写回）；原本是空白的文件不给撤销
   const remove = useMutation({
     mutationFn: async ({
       kind,
@@ -400,10 +387,6 @@ export function PiSystemPromptFiles({
       await queryClient.invalidateQueries({ queryKey: promptFileKey(kind) });
     },
   });
-  useReportNavigationBlocked(
-    editing !== null || remove.isPending,
-    onNavigationBlockedChange,
-  );
 
   return (
     <ul
@@ -776,7 +759,7 @@ export interface PiPromptTemplatesHandle {
   openCreate: () => void;
 }
 
-interface PiPromptTemplatesProps extends PiNativePromptNavigationProps {
+interface PiPromptTemplatesProps {
   /** 搜索框在页面工具行里，这里只按它过滤 */
   search?: string;
   onClearSearch?: () => void;
@@ -786,10 +769,7 @@ interface PiPromptTemplatesProps extends PiNativePromptNavigationProps {
 export const PiPromptTemplates = forwardRef<
   PiPromptTemplatesHandle,
   PiPromptTemplatesProps
->(function PiPromptTemplates(
-  { search = "", onClearSearch, onNavigationBlockedChange },
-  ref,
-) {
+>(function PiPromptTemplates({ search = "", onClearSearch }, ref) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [editor, setEditor] = useState<
@@ -832,10 +812,6 @@ export const PiPromptTemplates = forwardRef<
     onError: (error) =>
       showMutationError(error, t("pi.prompts.templateDeleteFailed")),
   });
-  useReportNavigationBlocked(
-    editor !== null || remove.isPending,
-    onNavigationBlockedChange,
-  );
 
   const filteredTemplates = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
