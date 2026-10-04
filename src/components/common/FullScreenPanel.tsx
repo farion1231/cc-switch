@@ -154,6 +154,9 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           <AppPageHeader
             variant="app"
             title={title}
+            // 标题里常带用户起的名字（供应商、提示词、MCP ID），不限长度；
+            // 必须能收缩截断，否则会把右侧的窗口按钮挤出可视区
+            truncateTitle
             subtitle={subtitle}
             actions={actions}
             leading={
