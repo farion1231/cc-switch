@@ -23,6 +23,11 @@ export interface ExtraUsage {
   currency: string | null;
 }
 
+/** ChatGPT 订阅存下的限额重置：每一次的到期时间，先到期的在前，null 表示不过期 */
+export interface ResetCredits {
+  expiresAt: (string | null)[];
+}
+
 export interface SubscriptionQuota {
   tool: string;
   credentialStatus: CredentialStatus;
@@ -30,6 +35,8 @@ export interface SubscriptionQuota {
   success: boolean;
   tiers: QuotaTier[];
   extraUsage: ExtraUsage | null;
+  /** 只有 ChatGPT 订阅有；没查到时缺省 */
+  resetCredits?: ResetCredits | null;
   error: string | null;
   queriedAt: number | null;
 }

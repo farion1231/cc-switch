@@ -262,6 +262,7 @@ describe("subscriptionQuotaState", () => {
         queriedAt: 1,
       },
       false,
+      "zh",
     );
     expect(ok?.kind).toBe("rows");
     if (ok?.kind === "rows") {
@@ -285,9 +286,10 @@ describe("subscriptionQuotaState", () => {
           queriedAt: 1,
         },
         false,
+        "zh",
       ),
     ).toEqual({ kind: "failed", reason: "HTTP 500" });
-    expect(subscriptionQuotaState(t, undefined, true)).toEqual({
+    expect(subscriptionQuotaState(t, undefined, true, "zh")).toEqual({
       kind: "loading",
     });
   });

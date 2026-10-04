@@ -182,3 +182,39 @@ describe("credential failures", () => {
     expect(screen.getByText("登录已过期")).toBeInTheDocument();
   });
 });
+
+describe("ChatGPT saved limit resets", () => {
+  const codex = (inline: boolean) =>
+    renderQuota(baseTiers, inline, {
+      tool: "codex",
+      resetCredits: {
+        expiresAt: ["2026-09-20T00:00:00Z", null],
+      },
+    });
+
+  it("rides along with the weekly tier on the card", () => {
+    codex(true);
+    expect(screen.getByText("5 小时剩余 88%")).toBeInTheDocument();
+    expect(screen.getByText("重置 2 次")).toBeInTheDocument();
+    expect(screen.getByRole("button").getAttribute("title")).toContain(
+      "存下的限额重置剩余 2 次",
+    );
+  });
+
+  it("gets its own row in the expanded view, with the earliest expiry instead of a bar", () => {
+    codex(false);
+    expect(screen.getByText("重置")).toBeInTheDocument();
+    expect(screen.getByText("剩余 2 次")).toBeInTheDocument();
+    expect(screen.getByText(/到期$/)).toBeInTheDocument();
+    // 只有两档画额度条
+    expect(screen.getAllByRole("meter")).toHaveLength(2);
+  });
+
+  it("stays out of sight when nothing is saved", () => {
+    renderQuota(baseTiers, true, {
+      tool: "codex",
+      resetCredits: { expiresAt: [] },
+    });
+    expect(screen.queryByText(/重置/)).not.toBeInTheDocument();
+  });
+});

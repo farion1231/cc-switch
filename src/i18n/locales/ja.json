@@ -4133,7 +4133,17 @@
       "tokenRefreshPending": "トークンの更新待ち"
     },
     "updatedAt": "{{time}}に更新",
-    "clickToRefresh": "クリックで再取得"
+    "clickToRefresh": "クリックで再取得",
+    "resetCredits": {
+      "label": "リセット",
+      "left": "リセット 残り {{count}} 回",
+      "short": "リセット {{count}}回",
+      "value": "残り {{count}} 回",
+      "expiresOn": "{{date}}に期限切れ",
+      "noExpiry": "期限なし",
+      "detail": "保存したリセット 残り {{count}} 回 · 最短の期限 {{date}}",
+      "detailNoExpiry": "保存したリセット 残り {{count}} 回 · 期限なし"
+    }
   },
   "appMatrix": {
     "clearSearch": "検索をクリア",

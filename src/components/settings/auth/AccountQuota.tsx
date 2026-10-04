@@ -12,7 +12,7 @@ import {
 } from "@/components/quota/quotaRules";
 import {
   quotaFailureReason,
-  tierLines,
+  quotaRows,
 } from "@/components/SubscriptionQuotaFooter";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
@@ -80,22 +80,28 @@ export function AccountQuotaColumn({
                 <span className="min-w-[52px] shrink-0 whitespace-nowrap text-fg-2">
                   {label}
                 </span>
-                <span
-                  role="meter"
-                  aria-label={`${label}: ${value}`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(width)}
-                  className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-chart-grid"
-                >
+                {line.caption ? (
+                  <span className="min-w-0 flex-1 truncate text-fg-3">
+                    {line.caption}
+                  </span>
+                ) : (
                   <span
-                    className={cn(
-                      "absolute inset-y-0 start-0 rounded-full",
-                      TONE_FILL[line.tone],
-                    )}
-                    style={{ width: `${width}%` }}
-                  />
-                </span>
+                    role="meter"
+                    aria-label={`${label}: ${value}`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(width)}
+                    className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-chart-grid"
+                  >
+                    <span
+                      className={cn(
+                        "absolute inset-y-0 start-0 rounded-full",
+                        TONE_FILL[line.tone],
+                      )}
+                      style={{ width: `${width}%` }}
+                    />
+                  </span>
+                )}
                 <span
                   className={cn(
                     "w-14 shrink-0 whitespace-nowrap text-end tabular-nums",
@@ -165,6 +171,7 @@ export function subscriptionQuotaState(
   t: TFunction,
   quota: SubscriptionQuota | undefined,
   loading: boolean,
+  locale: string,
 ): AccountQuotaState {
   if (!quota) return loading ? { kind: "loading" } : null;
   // 没有凭据 / 凭据解析失败：和供应商卡片一样不显示
@@ -180,7 +187,7 @@ export function subscriptionQuotaState(
       reason: quotaFailureReason(t, quota),
     };
   }
-  const rows = tierLines(t, quota.tiers || []);
+  const rows = quotaRows(t, quota, locale);
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
@@ -242,7 +249,7 @@ export function XaiAccountQuota({
   accountId: string;
   login: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const {
     data: quota,
     isFetching: loading,
@@ -254,7 +261,7 @@ export function XaiAccountQuota({
   return (
     <AccountQuotaColumn
       login={login}
-      state={subscriptionQuotaState(t, quota, loading)}
+      state={subscriptionQuotaState(t, quota, loading, i18n.language)}
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}

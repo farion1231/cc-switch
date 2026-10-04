@@ -4133,7 +4133,17 @@
       "tokenRefreshPending": "令牌待刷新"
     },
     "updatedAt": "{{time}}更新",
-    "clickToRefresh": "点击重新查询"
+    "clickToRefresh": "点击重新查询",
+    "resetCredits": {
+      "label": "重置",
+      "left": "重置剩余 {{count}} 次",
+      "short": "重置 {{count}} 次",
+      "value": "剩余 {{count}} 次",
+      "expiresOn": "{{date}}到期",
+      "noExpiry": "不会过期",
+      "detail": "存下的限额重置剩余 {{count}} 次 · 最早 {{date}}到期",
+      "detailNoExpiry": "存下的限额重置剩余 {{count}} 次 · 不会过期"
+    }
   },
   "appMatrix": {
     "clearSearch": "清空搜索",

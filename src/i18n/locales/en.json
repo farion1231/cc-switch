@@ -4133,7 +4133,17 @@
       "tokenRefreshPending": "Token refresh pending"
     },
     "updatedAt": "Updated {{time}}",
-    "clickToRefresh": "Click to check again"
+    "clickToRefresh": "Click to check again",
+    "resetCredits": {
+      "label": "Resets",
+      "left": "Resets left: {{count}}",
+      "short": "Resets {{count}}",
+      "value": "{{count}} left",
+      "expiresOn": "Expires {{date}}",
+      "noExpiry": "No expiry",
+      "detail": "Saved limit resets left: {{count}} · next expires {{date}}",
+      "detailNoExpiry": "Saved limit resets left: {{count}} · no expiry"
+    }
   },
   "appMatrix": {
     "clearSearch": "Clear search",

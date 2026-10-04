@@ -4134,7 +4134,17 @@
       "tokenRefreshPending": "權杖待重新整理"
     },
     "updatedAt": "{{time}}更新",
-    "clickToRefresh": "點擊重新查詢"
+    "clickToRefresh": "點擊重新查詢",
+    "resetCredits": {
+      "label": "重設",
+      "left": "重設剩餘 {{count}} 次",
+      "short": "重設 {{count}} 次",
+      "value": "剩餘 {{count}} 次",
+      "expiresOn": "{{date}}到期",
+      "noExpiry": "不會過期",
+      "detail": "存下的限額重設剩餘 {{count}} 次 · 最早 {{date}}到期",
+      "detailNoExpiry": "存下的限額重設剩餘 {{count}} 次 · 不會過期"
+    }
   },
   "appMatrix": {
     "clearSearch": "清除搜尋",

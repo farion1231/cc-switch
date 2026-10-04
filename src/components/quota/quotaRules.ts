@@ -1,5 +1,5 @@
 import type { TFunction } from "i18next";
-import type { QuotaTier } from "@/types/subscription";
+import type { QuotaTier, ResetCredits } from "@/types/subscription";
 
 /**
  * 额度的文字和颜色（v7 QuotaSpec）：一律写「剩余」，平时灰色；任一档剩余不到 10%（余额不到
@@ -22,6 +22,8 @@ export interface QuotaLine {
   short?: string;
   /** 档位窗口的长短次序，越小越短（见 TIER_WINDOW_ORDER） */
   window?: number;
+  /** 没有比例可画时，额度条的位置改写这句（重置次数写最早的到期日） */
+  caption?: string;
 }
 
 export const WARN_BELOW_PERCENT = 10;
@@ -97,6 +99,69 @@ export function tierLine(
         ? undefined
         : t("quota.tierShort", { label: shortLabel, value: left }),
     window: TIER_WINDOW_ORDER[tier.name] ?? UNKNOWN_WINDOW,
+  };
+}
+
+/** 最早那次重置三天内就过期时加深提醒 */
+export const RESET_EXPIRING_SOON_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** 排在所有档位之后：卡片合并时跟在每周那档后面（「每周 64% · 重置 1 次」） */
+const RESET_CREDITS_WINDOW = UNKNOWN_WINDOW + 1;
+
+function shortDate(iso: string, locale: string): string {
+  const date = new Date(iso);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  try {
+    return new Intl.DateTimeFormat(
+      locale,
+      sameYear
+        ? { month: "short", day: "numeric" }
+        : { year: "numeric", month: "short", day: "numeric" },
+    ).format(date);
+  } catch {
+    return date.toLocaleDateString();
+  }
+}
+
+/**
+ * ChatGPT 订阅存下的限额重置 → 额度行；一次都没有时不显示（null）。
+ * 查询之后才过期的也在这里去掉（额度会缓存一阵）。
+ */
+export function resetCreditsLine(
+  t: TFunction,
+  credits: ResetCredits | null | undefined,
+  { now = Date.now(), locale }: { now?: number; locale: string },
+): QuotaLine | null {
+  const expiries = (credits?.expiresAt ?? []).filter((at) => {
+    if (!at) return true;
+    const ms = Date.parse(at);
+    return !Number.isFinite(ms) || ms > now;
+  });
+  const count = expiries.length;
+  if (count === 0) return null;
+
+  // 后端已按到期先后排好，不过期的在最后
+  const first = expiries[0];
+  const firstMs = first ? Date.parse(first) : NaN;
+  const date =
+    first && Number.isFinite(firstMs) ? shortDate(first, locale) : null;
+  const expiringSoon =
+    Number.isFinite(firstMs) && firstMs - now < RESET_EXPIRING_SOON_MS;
+
+  return {
+    key: "reset_credits",
+    left: Infinity,
+    tone: expiringSoon ? "warning" : "normal",
+    text: t("quota.resetCredits.left", { count }),
+    value: t("quota.resetCredits.value", { count }),
+    short: t("quota.resetCredits.short", { count }),
+    caption: date
+      ? t("quota.resetCredits.expiresOn", { date })
+      : t("quota.resetCredits.noExpiry"),
+    detail: date
+      ? t("quota.resetCredits.detail", { count, date })
+      : t("quota.resetCredits.detailNoExpiry", { count }),
+    window: RESET_CREDITS_WINDOW,
   };
 }
 

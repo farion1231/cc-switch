@@ -6,6 +6,7 @@ import {
   expiredLine,
   failedLines,
   pickLines,
+  resetCreditsLine,
   tierLine,
   toneForLeft,
 } from "@/components/quota/quotaRules";
@@ -17,6 +18,11 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     "quota.left": "剩余 {{value}}%",
     "quota.balance": "余额 {{value}}",
     "quota.tierShort": "{{label}} {{value}}%",
+    "quota.resetCredits.left": "重置剩余 {{count}} 次",
+    "quota.resetCredits.short": "重置 {{count}} 次",
+    "quota.resetCredits.value": "剩余 {{count}} 次",
+    "quota.resetCredits.expiresOn": "{{date}}到期",
+    "quota.resetCredits.noExpiry": "不会过期",
   };
   const template = templates[key] ?? key;
   return template.replace(/\{\{(\w+)\}\}/g, (_, name) =>
@@ -130,5 +136,85 @@ describe("quota lines", () => {
       tierLine(t, { name: "c", utilization: 60, resetsAt: null }, "C"),
     ];
     expect(keys(cardRows(plain))).toEqual([["b"], ["c"]]);
+  });
+});
+
+describe("saved limit resets", () => {
+  const now = Date.parse("2026-10-04T00:00:00Z");
+  const day = 24 * 60 * 60 * 1000;
+  const at = (ms: number) => new Date(ms).toISOString();
+
+  it("is hidden when there is no usable reset", () => {
+    expect(resetCreditsLine(t, undefined, { now, locale: "en" })).toBeNull();
+    expect(
+      resetCreditsLine(t, { expiresAt: [] }, { now, locale: "en" }),
+    ).toBeNull();
+    // 查询之后才过期的也不算
+    expect(
+      resetCreditsLine(
+        t,
+        { expiresAt: [at(now - 1000)] },
+        { now, locale: "en" },
+      ),
+    ).toBeNull();
+  });
+
+  it("counts what is left and writes the earliest expiry where the bar would be", () => {
+    const line = resetCreditsLine(
+      t,
+      { expiresAt: [at(now - day), at(now + 10 * day), null] },
+      { now, locale: "en-US" },
+    );
+    expect(line).toMatchObject({
+      text: "重置剩余 2 次",
+      short: "重置 2 次",
+      value: "剩余 2 次",
+      tone: "normal",
+      left: Infinity,
+    });
+    expect(line?.caption).toMatch(/到期$/);
+    expect(
+      resetCreditsLine(t, { expiresAt: [null] }, { now, locale: "en" }),
+    ).toMatchObject({ caption: "不会过期", tone: "normal" });
+  });
+
+  it("stands out when the earliest one expires within three days", () => {
+    expect(
+      resetCreditsLine(
+        t,
+        { expiresAt: [at(now + 2 * day)] },
+        { now, locale: "en" },
+      )?.tone,
+    ).toBe("warning");
+  });
+
+  it("joins the weekly tier on the card's second row", () => {
+    const fiveHour = tierLine(
+      t,
+      { name: "five_hour", utilization: 18, resetsAt: null },
+      "5 小时",
+      "5 小时",
+    );
+    const weekly = tierLine(
+      t,
+      { name: "seven_day", utilization: 36, resetsAt: null },
+      "每周",
+      "每周",
+    );
+    const resets = resetCreditsLine(
+      t,
+      { expiresAt: [null] },
+      { now, locale: "en" },
+    )!;
+    const rows = cardRows([fiveHour, weekly, resets]);
+    expect(rows.map((row) => row.map((line) => line.key))).toEqual([
+      ["five_hour"],
+      ["seven_day", "reset_credits"],
+    ]);
+    // 只有一档时各占一行，写全称
+    expect(cardRows([weekly, resets]).map((row) => row[0].text)).toEqual([
+      "每周剩余 64%",
+      "重置剩余 1 次",
+    ]);
   });
 });

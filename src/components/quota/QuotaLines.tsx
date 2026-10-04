@@ -200,22 +200,28 @@ export function QuotaBars({
               <span className="w-[72px] shrink-0 truncate text-fg-2">
                 {label}
               </span>
-              <span
-                role="meter"
-                aria-label={`${label}: ${line.value ?? line.text}`}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(width)}
-                className="relative h-1 w-[120px] shrink-0 overflow-hidden rounded-full bg-chart-grid"
-              >
+              {line.caption ? (
+                <span className="w-[120px] shrink-0 truncate text-fg-3">
+                  {line.caption}
+                </span>
+              ) : (
                 <span
-                  className={cn(
-                    "absolute inset-y-0 start-0 rounded-full",
-                    TONE_FILL[line.tone],
-                  )}
-                  style={{ width: `${width}%` }}
-                />
-              </span>
+                  role="meter"
+                  aria-label={`${label}: ${line.value ?? line.text}`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(width)}
+                  className="relative h-1 w-[120px] shrink-0 overflow-hidden rounded-full bg-chart-grid"
+                >
+                  <span
+                    className={cn(
+                      "absolute inset-y-0 start-0 rounded-full",
+                      TONE_FILL[line.tone],
+                    )}
+                    style={{ width: `${width}%` }}
+                  />
+                </span>
+              )}
               <span
                 className={cn(
                   "shrink-0 text-end tabular-nums whitespace-nowrap",

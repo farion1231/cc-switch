@@ -53,6 +53,15 @@ pub struct ExtraUsage {
     pub currency: Option<String>,
 }
 
+/// ChatGPT 订阅存下的限额重置次数（Codex「存下重置、需要时再用」）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCredits {
+    /// 每一次可用重置的到期时间（ISO 8601），先到期的在前，不过期的是 None 排最后；
+    /// 长度就是可用次数（只收 available 且查询时还没过期的）
+    pub expires_at: Vec<Option<String>>,
+}
+
 /// 订阅额度查询结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +72,9 @@ pub struct SubscriptionQuota {
     pub success: bool,
     pub tiers: Vec<QuotaTier>,
     pub extra_usage: Option<ExtraUsage>,
+    /// 只有 ChatGPT 订阅（codex / codex_oauth）有；没查到时为 None，不影响额度本身
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_credits: Option<ResetCredits>,
     pub error: Option<String>,
     pub queried_at: Option<i64>,
 }
@@ -76,6 +88,7 @@ impl SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
             error: None,
             queried_at: None,
         }
@@ -89,6 +102,7 @@ impl SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
             error: Some(message),
             queried_at: Some(now_millis()),
         }
@@ -546,6 +560,7 @@ fn parse_claude_quota(body: &serde_json::Value) -> SubscriptionQuota {
         success: true,
         tiers,
         extra_usage,
+        reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -836,12 +851,101 @@ fn unix_ts_to_iso(ts: i64) -> Option<String> {
     chrono::DateTime::from_timestamp(ts, 0).map(|dt| dt.to_rfc3339())
 }
 
-/// 查询 Codex / ChatGPT 反代订阅额度
+#[derive(Deserialize)]
+struct CodexResetCreditsResponse {
+    #[serde(default)]
+    credits: Vec<CodexResetCreditEntry>,
+}
+
+#[derive(Deserialize)]
+struct CodexResetCreditEntry {
+    status: Option<String>,
+    expires_at: Option<String>,
+}
+
+/// 解析 `wham/rate-limit-reset-credits`：不信 `available_count`，自己按
+/// status == "available" 且没过期来数（同 CodexBar），先到期的排前面
+fn parse_codex_reset_credits(
+    raw: &[u8],
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<ResetCredits> {
+    let body: CodexResetCreditsResponse = serde_json::from_slice(raw).ok()?;
+    let mut expiries: Vec<Option<chrono::DateTime<chrono::Utc>>> = body
+        .credits
+        .into_iter()
+        .filter(|credit| credit.status.as_deref() == Some("available"))
+        .filter_map(|credit| match credit.expires_at {
+            None => Some(None),
+            // 认不出的到期时间当作不过期，宁可多显示一次也不吞掉
+            Some(raw) => match chrono::DateTime::parse_from_rfc3339(&raw) {
+                Ok(at) => {
+                    let at = at.with_timezone(&chrono::Utc);
+                    (at > now).then_some(Some(at))
+                }
+                Err(_) => Some(None),
+            },
+        })
+        .collect();
+    // None（不过期）排最后
+    expiries.sort_by_key(|at| (at.is_none(), *at));
+    Some(ResetCredits {
+        expires_at: expiries
+            .into_iter()
+            .map(|at| at.map(|at| at.to_rfc3339()))
+            .collect(),
+    })
+}
+
+/// 查存下的限额重置次数。附带查询：任何失败都只返回 None，不连累额度本身
+async fn query_codex_reset_credits(
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Option<ResetCredits> {
+    let mut req = crate::proxy::http_client::get()
+        .get("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("User-Agent", "codex-cli")
+        .header("Accept", "application/json")
+        .header("OpenAI-Beta", "codex-1");
+    if let Some(id) = account_id {
+        req = req.header("ChatGPT-Account-Id", id);
+    }
+    let resp = req
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        log::debug!("Codex reset credits query failed: HTTP {}", resp.status());
+        return None;
+    }
+    let raw = resp.bytes().await.ok()?;
+    parse_codex_reset_credits(&raw, chrono::Utc::now())
+}
+
+/// 查询 Codex / ChatGPT 反代订阅额度（连同存下的重置次数，两个请求并行）
 ///
 /// 参数化 `tool_label` 和 `expired_message` 让该函数可被两个调用点共用：
 /// - `"codex"` + "Please re-login with Codex CLI."（CLI 凭据路径）
 /// - `"codex_oauth"` + "Please re-login via cc-switch."（cc-switch 自管 OAuth 路径）
 pub(crate) async fn query_codex_quota(
+    access_token: &str,
+    account_id: Option<&str>,
+    tool_label: &str,
+    expired_message: &str,
+) -> Result<SubscriptionQuota, String> {
+    let (quota, reset_credits) = tokio::join!(
+        query_codex_usage(access_token, account_id, tool_label, expired_message),
+        query_codex_reset_credits(access_token, account_id),
+    );
+    let mut quota = quota?;
+    if quota.success {
+        quota.reset_credits = reset_credits;
+    }
+    Ok(quota)
+}
+
+async fn query_codex_usage(
     access_token: &str,
     account_id: Option<&str>,
     tool_label: &str,
@@ -927,6 +1031,7 @@ pub(crate) async fn query_codex_quota(
         success: true,
         tiers,
         extra_usage: None,
+        reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -1390,6 +1495,7 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         success: true,
         tiers,
         extra_usage: None,
+        reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -1529,6 +1635,50 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_reset_credits_count_only_unexpired_available() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-04T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let raw = br#"{
+            "available_count": 9,
+            "credits": [
+                {"id":"a","reset_type":"weekly","status":"available","granted_at":"2026-09-20T00:00:00Z","expires_at":"2026-10-20T00:00:00Z"},
+                {"id":"b","reset_type":"weekly","status":"available","granted_at":"2026-09-01T00:00:00Z","expires_at":"2026-10-03T00:00:00Z"},
+                {"id":"c","reset_type":"weekly","status":"redeemed","granted_at":"2026-09-01T00:00:00Z","expires_at":"2026-10-30T00:00:00Z"},
+                {"id":"d","reset_type":"weekly","status":"available","granted_at":"2026-09-01T00:00:00Z","expires_at":null},
+                {"id":"e","reset_type":"weekly","status":"available","granted_at":"2026-09-25T00:00:00.123Z","expires_at":"2026-10-08T12:00:00.123Z"}
+            ]
+        }"#;
+        let credits = parse_codex_reset_credits(raw, now).unwrap();
+        // b 已过期、c 已用掉；剩下按到期先后，不过期的排最后
+        assert_eq!(credits.expires_at.len(), 3);
+        assert!(credits.expires_at[0]
+            .as_deref()
+            .unwrap()
+            .starts_with("2026-10-08T12:00:00.123"));
+        assert!(credits.expires_at[1]
+            .as_deref()
+            .unwrap()
+            .starts_with("2026-10-20"));
+        assert_eq!(credits.expires_at[2], None);
+    }
+
+    #[test]
+    fn codex_reset_credits_empty_and_malformed() {
+        let now = chrono::Utc::now();
+        let empty = parse_codex_reset_credits(br#"{"available_count":0,"credits":[]}"#, now);
+        assert_eq!(empty.unwrap().expires_at.len(), 0);
+        assert!(parse_codex_reset_credits(b"<html>", now).is_none());
+        // 新序列化的字段对旧缓存是可选的
+        let quota: SubscriptionQuota = serde_json::from_str(
+            r#"{"tool":"codex","credentialStatus":"valid","credentialMessage":null,
+                "success":true,"tiers":[],"extraUsage":null,"error":null,"queriedAt":1}"#,
+        )
+        .unwrap();
+        assert!(quota.reset_credits.is_none());
+    }
 
     /// 和 codex-rs `compute_store_key` 同一算法：路径不存在时按原样算，存在时先规范化
     /// （符号链接和它指向的目录是同一个账户）。
