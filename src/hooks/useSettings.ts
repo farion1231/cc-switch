@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -10,7 +10,11 @@ import {
   useSaveSettingsMutation,
 } from "@/lib/query";
 import type { Settings } from "@/types";
-import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
+import {
+  SETTINGS_DIRECTORY_FIELDS,
+  useSettingsForm,
+  type SettingsFormState,
+} from "./useSettingsForm";
 import {
   useDirectorySettings,
   type DirectoryAppId,
@@ -70,6 +74,30 @@ export function useSettings(): UseSettingsResult {
   const { data } = useSettingsQuery();
   const saveMutation = useSaveSettingsMutation();
   const queryClient = useQueryClient();
+  const settingsSaveQueue = useRef<Promise<void>>(Promise.resolve());
+
+  const persistSettings = useCallback(
+    (payload: Settings, keepSavedDirectories = false) => {
+      // A toggle can be clicked while an explicit directory Save is pending.
+      // Read its persisted paths only after earlier writes and refetches finish.
+      const pending = settingsSaveQueue.current
+        .catch(() => undefined)
+        .then(async () => {
+          if (keepSavedDirectories) {
+            const savedSettings =
+              queryClient.getQueryData<Settings>(["settings"]) ?? data;
+            if (!savedSettings) return;
+            for (const field of SETTINGS_DIRECTORY_FIELDS) {
+              payload[field] = sanitizeDir(savedSettings[field]);
+            }
+          }
+          await saveMutation.mutateAsync(payload);
+        });
+      settingsSaveQueue.current = pending;
+      return pending;
+    },
+    [data, queryClient, saveMutation],
+  );
 
   // 1️⃣ 表单状态管理
   const {
@@ -229,7 +257,9 @@ export function useSettings(): UseSettingsResult {
         ])?.enableClaudePluginIntegration;
 
         // 保存到配置文件
-        await saveMutation.mutateAsync(payload);
+        // Directory edits are drafts until explicit Save. Keep persisted paths
+        // while retaining optimistic changes to other settings.
+        await persistSettings(payload, true);
 
         // 如果开机自启状态改变，调用系统 API
         if (
@@ -314,7 +344,14 @@ export function useSettings(): UseSettingsResult {
         throw error;
       }
     },
-    [data, queryClient, saveMutation, settings, syncClaudePluginIfChanged, t],
+    [
+      data,
+      persistSettings,
+      queryClient,
+      settings,
+      syncClaudePluginIfChanged,
+      t,
+    ],
   );
 
   // 完整保存设置（用于 Advanced 标签页的手动保存）
@@ -371,7 +408,7 @@ export function useSettings(): UseSettingsResult {
           "settings",
         ])?.enableClaudePluginIntegration;
 
-        await saveMutation.mutateAsync(payload);
+        await persistSettings(payload);
 
         await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
         // 基准值换成刚存的：设置页不卸载，下次比较和「需要重启」都只跟真正没保存的改动走
@@ -502,8 +539,8 @@ export function useSettings(): UseSettingsResult {
       commitAppConfigDir,
       data,
       initialAppConfigDir,
+      persistSettings,
       queryClient,
-      saveMutation,
       settings,
       setRequiresRestart,
       syncClaudePluginIfChanged,

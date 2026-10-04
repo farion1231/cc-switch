@@ -30,7 +30,8 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("@/hooks/useSettingsForm", () => ({
+vi.mock("@/hooks/useSettingsForm", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useSettingsForm")>()),
   useSettingsForm: () => settingsFormMock,
 }));
 

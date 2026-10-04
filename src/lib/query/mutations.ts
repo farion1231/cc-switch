@@ -459,7 +459,13 @@ export const useSaveSettingsMutation = () => {
     mutationFn: async (settings: Settings) => {
       await settingsApi.save(settings);
     },
-    onSuccess: async () => {
+    onSuccess: async (_result, settings) => {
+      // A successful write is authoritative even if the following refetch fails.
+      // Preserve fields omitted by partial UI payloads (for example cloud sync).
+      queryClient.setQueryData<Settings>(["settings"], (previous) => ({
+        ...previous,
+        ...settings,
+      }));
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
       await queryClient.invalidateQueries({
         queryKey: ["opencode", "runtime-models"],

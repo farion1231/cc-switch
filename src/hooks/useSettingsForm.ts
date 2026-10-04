@@ -51,6 +51,17 @@ const sanitizeDir = (value?: string | null): string | undefined => {
   return trimmed.length > 0 ? trimmed : undefined;
 };
 
+export const SETTINGS_DIRECTORY_FIELDS = [
+  "claudeConfigDir",
+  "codexConfigDir",
+  "geminiConfigDir",
+  "grokConfigDir",
+  "opencodeConfigDir",
+  "openclawConfigDir",
+  "hermesConfigDir",
+  "piConfigDir",
+] as const;
+
 export interface UseSettingsFormResult {
   settings: SettingsFormState | null;
   isLoading: boolean;
@@ -78,6 +89,7 @@ export function useSettingsForm(): UseSettingsFormResult {
   );
 
   const initialLanguageRef = useRef<Language>("zh");
+  const savedSettingsRef = useRef<SettingsFormState | null>(null);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -129,7 +141,22 @@ export function useSettingsForm(): UseSettingsFormResult {
       language: normalizedLanguage,
     };
 
-    setSettingsState(normalized);
+    const previousSaved = savedSettingsRef.current;
+    savedSettingsRef.current = normalized;
+    setSettingsState((previous) => {
+      if (!previous || !previousSaved) return normalized;
+      const next = { ...normalized };
+      // Immediate-save switches refetch settings. Keep each unsaved directory
+      // edit (including reset-to-default) instead of replacing it on refetch.
+      for (const field of SETTINGS_DIRECTORY_FIELDS) {
+        if (
+          sanitizeDir(previous[field]) !== sanitizeDir(previousSaved[field])
+        ) {
+          next[field] = previous[field];
+        }
+      }
+      return next;
+    });
     initialLanguageRef.current = normalizedLanguage;
     syncLanguage(normalizedLanguage);
   }, [data, readPersistedLanguage, syncLanguage]);
@@ -197,6 +224,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         language: normalizedLanguage,
       };
 
+      savedSettingsRef.current = normalized;
       setSettingsState(normalized);
       syncLanguage(initialLanguageRef.current);
     },
