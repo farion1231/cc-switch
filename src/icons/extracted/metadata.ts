@@ -620,6 +620,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["hunyuan"],
     defaultColor: "#00A4FF",
   },
+  tuzi: {
+    name: "tuzi",
+    displayName: "Tu-zi",
+    category: "ai-provider",
+    keywords: [
+      "tuzi",
+      "tu-zi",
+      "兔子",
+      "aggregator",
+      "relay",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "currentColor",
+  },
   unity2: {
     name: "unity2",
     displayName: "Unity2.ai",

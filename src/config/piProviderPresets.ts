@@ -2449,6 +2449,32 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "tencent",
     iconColor: "#00A4FF",
   },
+  {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    providerKey: "cc-switch-tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    settingsConfig: {
+      name: "Tu-zi",
+      baseUrl: "https://api.tu-zi.com",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5", {
+          id: "claude-opus-5",
+        }),
+        piModel("anthropic/claude-sonnet-5", {
+          id: "claude-sonnet-5",
+        }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "tuzi",
+  },
 ];
 
 function materializeVerifiedThinkingProfiles(
