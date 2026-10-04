@@ -15,6 +15,8 @@ interface ApiKeyInputProps {
   id?: string;
   /** 标签行右侧（「获取 API Key ↗」） */
   labelAside?: React.ReactNode;
+  /** 输入框下方的说明文字 */
+  hint?: React.ReactNode;
 }
 
 const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
@@ -26,6 +28,7 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
   label = "API Key",
   id = "apiKey",
   labelAside,
+  hint,
 }) => {
   const { t } = useTranslation();
   const [showKey, setShowKey] = useState(false);
@@ -72,6 +75,7 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
           </button>
         )}
       </div>
+      {hint && <p className="text-caption text-fg-2">{hint}</p>}
     </div>
   );
 };

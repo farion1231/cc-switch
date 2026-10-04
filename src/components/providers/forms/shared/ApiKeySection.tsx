@@ -44,8 +44,14 @@ export function ApiKeySection({
 
   const finalPlaceholder = placeholder || defaultPlaceholder;
 
-  // 促销框已取消（v7 不画任何推广样式）；partnerPromotionKey 仍有别的判断在用，只是不再渲染。
-  void partnerPromotionKey;
+  const showLink = shouldShowLink && Boolean(websiteUrl);
+  // 推广语跟着「获取 API Key」走，按输入框说明文字的样式写在框下面（v7 不画推广框）
+  const promotion =
+    showLink && partnerPromotionKey
+      ? t(`providerForm.partnerPromotion.${partnerPromotionKey}`, {
+          defaultValue: "",
+        })
+      : "";
 
   return (
     <ApiKeyInput
@@ -60,7 +66,7 @@ export function ApiKeySection({
       }
       disabled={disabled ?? category === "official"}
       labelAside={
-        shouldShowLink && websiteUrl ? (
+        showLink ? (
           <a
             href={websiteUrl}
             target="_blank"
@@ -71,6 +77,7 @@ export function ApiKeySection({
           </a>
         ) : null
       }
+      hint={promotion || undefined}
     />
   );
 }
