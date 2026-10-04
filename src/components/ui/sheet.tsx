@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ChevronLeft, X } from "lucide-react";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
+import { DRAG_REGION_ATTR } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 
 /**
@@ -99,7 +100,7 @@ const SheetPageContent = React.forwardRef<
         truncateTitle
         title={
           <DialogPrimitive.Title asChild>
-            <span>{title}</span>
+            <span {...DRAG_REGION_ATTR}>{title}</span>
           </DialogPrimitive.Title>
         }
         leading={
