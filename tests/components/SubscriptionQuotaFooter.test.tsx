@@ -94,7 +94,12 @@ describe("Claude Fable subscription quota", () => {
       "font-medium",
       "text-fg-1",
     );
-    // 重置时间在悬停说明里
+    // 重置倒计时直接写在每行后面：5 小时那行没有重置时间，留空占位；合并行写最近的那次
+    expect(screen.getByText("2d12h")).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/后重置$/).map((node) => node.textContent),
+    ).toEqual(["2d12h后重置"]);
+    // 悬停说明照旧逐档写全
     expect(screen.getByRole("button").getAttribute("title")).toContain(
       "Fable · 2d12h后重置",
     );
@@ -133,10 +138,8 @@ describe("Claude Fable subscription quota", () => {
       screen.getByRole("meter", { name: "5 小时: 剩余 88%" }),
     ).toHaveAttribute("aria-valuenow", "88");
     expect(screen.getByText("已用完")).toHaveClass("text-danger-text");
-    expect(screen.getByText("Fable").closest("div")).toHaveAttribute(
-      "title",
-      "Fable · 2d12h后重置",
-    );
+    // 展开时重置时间直接写在数值后面
+    expect(screen.getByText("2d12h后重置")).toBeInTheDocument();
   });
 
   it("shows an unused Fable limit in the quiet color", () => {

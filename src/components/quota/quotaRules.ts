@@ -16,8 +16,12 @@ export interface QuotaLine {
   tone: QuotaTone;
   /** 剩余百分比；余额没有总额时是 Infinity，失败 / 过期是负数（排在最前） */
   left: number;
-  /** 悬停时补充的一句（重置时间、套餐名） */
+  /** 悬停时补充的一句（套餐名、失败原因）；重置时间不写这里，见 resetsAt */
   detail?: string;
+  /** 档名（「5 小时」），悬停说明里接在重置倒计时前面 */
+  label?: string;
+  /** 这档下次重置的时间；倒计时在渲染时按当前时间现算（resetText / lineHint） */
+  resetsAt?: string | null;
   /** 并进卡片合并行时的写法（「每周 64%」）；只有按档的额度行才有 */
   short?: string;
   /** 档位窗口的长短次序，越小越短（见 TIER_WINDOW_ORDER） */
@@ -104,7 +108,6 @@ export function tierLine(
 ): QuotaLine {
   const left = Math.max(0, Math.round(100 - (tier.utilization ?? 0)));
   const params = labelParams(label);
-  const countdown = countdownStr(tier.resetsAt);
   return {
     key: tier.name,
     left,
@@ -114,15 +117,34 @@ export function tierLine(
         ? t("quota.tierUsedUp", params)
         : t("quota.tierLeft", { ...params, value: left }),
     value: left <= 0 ? t("quota.usedUp") : t("quota.left", { value: left }),
-    detail: countdown
-      ? `${label} · ${t("subscription.resetsIn", { time: countdown })}`
-      : undefined,
+    label,
+    resetsAt: tier.resetsAt,
     short:
       shortLabel === undefined
         ? undefined
         : t("quota.tierShort", { label: shortLabel, value: left }),
     window: TIER_WINDOW_ORDER[tier.name] ?? UNKNOWN_WINDOW,
   };
+}
+
+/** 「2h30m后重置」；没有重置时间或已经过了时为 null */
+export function resetText(
+  t: TFunction,
+  line: Pick<QuotaLine, "resetsAt">,
+  now = Date.now(),
+): string | null {
+  const countdown = countdownStr(line.resetsAt, now);
+  return countdown ? t("subscription.resetsIn", { time: countdown }) : null;
+}
+
+/** 一行额度的悬停说明：补充说明 + 「档名 · x 后重置」；两样都没有时就是这行本身 */
+export function lineHint(t: TFunction, line: QuotaLine, now = Date.now()) {
+  const reset = resetText(t, line, now);
+  return (
+    [line.detail, reset && (line.label ? `${line.label} · ${reset}` : reset)]
+      .filter(Boolean)
+      .join(" · ") || line.text
+  );
 }
 
 /** 最早那次重置三天内就过期时加深提醒 */

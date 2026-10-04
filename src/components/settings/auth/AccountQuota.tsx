@@ -4,13 +4,20 @@ import { RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { TONE_FILL, TONE_TEXT, useNow } from "@/components/quota/QuotaLines";
+import {
+  ResetSlot,
+  TONE_FILL,
+  TONE_TEXT,
+  useNow,
+} from "@/components/quota/QuotaLines";
 import {
   QuotaBreakdownChevron,
   QuotaBreakdownRow,
 } from "@/components/quota/QuotaBreakdown";
 import {
+  countdownStr,
   formatRelativeTime,
+  lineHint,
   tierLine,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -57,9 +64,20 @@ export function AccountQuotaColumn({
   onRefresh,
 }: AccountQuotaColumnProps) {
   const { t } = useTranslation();
-  const now = useNow(Boolean(queriedAt));
+  const now = useNow(
+    Boolean(queriedAt) ||
+      (state?.kind === "rows" && state.rows.some(({ line }) => line.resetsAt)),
+  );
   const agoId = useId();
   if (!state) return null;
+  // 有一档带重置时间，每行数值后面都留出倒计时那一格（各行对齐），整列加宽
+  const showReset =
+    state.kind === "rows" &&
+    state.rows.some(({ line }) => countdownStr(line.resetsAt, now));
+  const resetCell = (line: QuotaLine) =>
+    showReset ? (
+      <ResetSlot countdown={countdownStr(line.resetsAt, now)} className="" />
+    ) : null;
 
   const ago = queriedAt ? formatRelativeTime(queriedAt, now, t) : "";
   const agoText = loading
@@ -68,7 +86,12 @@ export function AccountQuotaColumn({
 
   return (
     <>
-      <div className="flex w-[212px] shrink-0 flex-col gap-0.5">
+      <div
+        className={cn(
+          "flex shrink-0 flex-col gap-0.5",
+          showReset ? "w-[272px]" : "w-[212px]",
+        )}
+      >
         {state.kind === "rows" &&
           state.rows.map(({ label, line }) =>
             line.breakdown ? (
@@ -83,14 +106,16 @@ export function AccountQuotaColumn({
                   line={line}
                   trailing={<QuotaBreakdownChevron />}
                 />
+                {resetCell(line)}
               </QuotaBreakdownRow>
             ) : (
               <div
                 key={line.key}
-                title={line.detail ?? line.value ?? line.text}
+                title={lineHint(t, line, now)}
                 className={ROW_CLASS}
               >
                 <QuotaRowCells label={label} line={line} />
+                {resetCell(line)}
               </div>
             ),
           )}

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MIN_REFRESH_SPIN_MS,
+  QuotaBars,
   QuotaLines,
   REFRESH_RESULT_MS,
 } from "@/components/quota/QuotaLines";
@@ -194,5 +195,48 @@ describe("quota column refresh", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "查看到期时间" }));
     expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("expanded quota bars", () => {
+  it("writes the reset countdown after the value", () => {
+    vi.setSystemTime(new Date("2026-10-04T10:00:00Z"));
+    render(
+      <QuotaBars
+        rows={[
+          {
+            label: "5 小时",
+            line: {
+              key: "five_hour",
+              text: "5 小时剩余 69%",
+              value: "剩余 69%",
+              tone: "normal",
+              left: 69,
+              label: "5 小时",
+              resetsAt: "2026-10-04T12:30:00Z",
+            },
+          },
+        ]}
+      />,
+    );
+    // 测试里 t() 返回 key
+    expect(screen.getByText("subscription.resetsIn")).toBeInTheDocument();
+  });
+});
+
+describe("reset countdown on the card", () => {
+  it("only widens the column when some tier has a reset time", () => {
+    vi.setSystemTime(new Date("2026-10-04T10:00:00Z"));
+    const { container, rerender } = render(<QuotaLines lines={lines} />);
+    expect(container.firstElementChild).toHaveClass("w-[136px]");
+    expect(container.querySelector("svg")).toBeNull();
+
+    rerender(
+      <QuotaLines
+        lines={[{ ...lines[0], resetsAt: "2026-10-04T12:30:00Z" }]}
+      />,
+    );
+    expect(container.firstElementChild).toHaveClass("w-[194px]");
+    expect(screen.getByText("2h30m")).toBeInTheDocument();
   });
 });

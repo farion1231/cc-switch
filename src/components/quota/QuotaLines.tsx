@@ -1,12 +1,15 @@
 import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
-import { Check, RefreshCw, X } from "lucide-react";
+import { Check, Clock, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
   cardRows,
   FAILED_LINE_KEY,
+  countdownStr,
   formatRelativeTime,
+  lineHint,
+  resetText,
   type QuotaLine,
   type QuotaTone,
 } from "./quotaRules";
@@ -30,7 +33,7 @@ export const TONE_FILL: Record<QuotaTone, string> = {
   danger: "bg-danger",
 };
 
-/** 每 30 秒刷新一次「x 分钟前」 */
+/** 每 30 秒刷新一次「x 分钟前」和重置倒计时 */
 export function useNow(active: boolean) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -39,6 +42,50 @@ export function useNow(active: boolean) {
     return () => clearInterval(timer);
   }, [active]);
   return now;
+}
+
+/** 一行里最早到点的那次重置（合并行几档各有各的，写最近的那个）；都没有或都过了为 null */
+function rowCountdown(row: QuotaLine[], now: number) {
+  let earliest: string | null = null;
+  for (const line of row) {
+    if (!countdownStr(line.resetsAt, now)) continue;
+    if (!earliest || Date.parse(line.resetsAt!) < Date.parse(earliest)) {
+      earliest = line.resetsAt!;
+    }
+  }
+  return countdownStr(earliest, now);
+}
+
+/**
+ * 额度行后面的「⏱ 2h30m」（卡片、授权中心）：定宽、内容靠左，几行的时钟上下对齐；
+ * 这一行没有重置时间时留空占位，免得各行右边缘错开
+ */
+export function ResetSlot({
+  countdown,
+  className = "ms-1.5",
+}: {
+  countdown: string | null;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <span
+      className={cn(
+        "inline-flex w-[52px] shrink-0 items-center gap-0.5 text-fg-3",
+        className,
+      )}
+    >
+      {countdown && (
+        <>
+          <Clock aria-hidden className="h-2.5 w-2.5 shrink-0" strokeWidth={2} />
+          <span className="sr-only">
+            {t("subscription.resetsIn", { time: countdown })}
+          </span>
+          <span aria-hidden>{countdown}</span>
+        </>
+      )}
+    </span>
+  );
 }
 
 /** 点一下重查后图标至少转这么久：请求常常不到一秒，太短了看不出来查过 */
@@ -139,7 +186,7 @@ export function QuotaLines({
   onRefresh,
 }: QuotaLinesProps) {
   const { t } = useTranslation();
-  const now = useNow(Boolean(queriedAt));
+  const now = useNow(Boolean(queriedAt) || lines.some((line) => line.resetsAt));
   const refresh = useClickRefreshFeedback(
     loading,
     lines.some((line) => line.key === FAILED_LINE_KEY),
@@ -154,7 +201,7 @@ export function QuotaLines({
   if (rows.length === 0) return null;
 
   const title = [
-    ...lines.map((line) => line.detail ?? line.text),
+    ...lines.map((line) => lineHint(t, line, now)),
     queriedAt
       ? t("quota.updatedAt", { time: formatRelativeTime(queriedAt, now, t) })
       : null,
@@ -163,31 +210,38 @@ export function QuotaLines({
     .filter(Boolean)
     .join("\n");
 
-  const rowNodes = rows.map((row) =>
-    row.length === 1 ? (
-      <span
-        key={row[0].key}
-        className={cn("max-w-full truncate", TONE_TEXT[row[0].tone])}
-      >
-        {row[0].text}
-      </span>
-    ) : (
-      <span
-        key={row.map((line) => line.key).join("+")}
-        className="max-w-full truncate text-fg-2"
-      >
-        {row.map((line, index) => (
-          <span key={line.key}>
-            {index > 0 && " · "}
-            <span className={TONE_TEXT[line.tone]}>{line.short}</span>
-          </span>
-        ))}
-      </span>
-    ),
-  );
+  // 有一档带重置时间，每行后面就都留出倒计时那一格（v7 原来只放进悬停说明，看不到）
+  const showReset = rows.some((row) => rowCountdown(row, now));
+  const resetSlot = (row: QuotaLine[]) =>
+    showReset ? <ResetSlot countdown={rowCountdown(row, now)} /> : null;
+
+  const rowNodes = rows.map((row) => (
+    <span
+      key={row.map((line) => line.key).join("+")}
+      className="flex max-w-full items-center justify-end"
+    >
+      {row.length === 1 ? (
+        <span className={cn("min-w-0 truncate", TONE_TEXT[row[0].tone])}>
+          {row[0].text}
+        </span>
+      ) : (
+        <span className="min-w-0 truncate text-fg-2">
+          {row.map((line, index) => (
+            <span key={line.key}>
+              {index > 0 && " · "}
+              <span className={TONE_TEXT[line.tone]}>{line.short}</span>
+            </span>
+          ))}
+        </span>
+      )}
+      {resetSlot(row)}
+    </span>
+  ));
 
   const className = cn(
-    "flex w-[136px] shrink-0 flex-col items-end text-caption leading-[18px] tabular-nums whitespace-nowrap",
+    "flex shrink-0 flex-col items-end text-caption leading-[18px] tabular-nums whitespace-nowrap",
+    // 文字仍是 136 宽，倒计时那格（52 + 间距）另加
+    showReset ? "w-[194px]" : "w-[136px]",
     loading && !spinning && "opacity-60",
   );
 
@@ -257,6 +311,7 @@ export function QuotaLines({
         className={className}
         title={title}
         icon={icon}
+        resetSlot={resetSlot}
         refreshProps={refreshProps}
       />
     );
@@ -302,12 +357,14 @@ function SplitQuotaColumn({
   className,
   title,
   icon,
+  resetSlot,
   refreshProps,
 }: {
   rows: QuotaLine[][];
   className: string;
   title: string;
   icon: ReactNode;
+  resetSlot: (row: QuotaLine[]) => ReactNode;
   refreshProps: RefreshProps;
 }) {
   const { t } = useTranslation();
@@ -404,6 +461,7 @@ function SplitQuotaColumn({
                 </span>
               );
             })}
+            {resetSlot(row)}
           </span>
         );
       })}
@@ -435,7 +493,9 @@ export function QuotaBars({
   className,
 }: QuotaBarsProps) {
   const { t } = useTranslation();
-  const now = useNow(Boolean(queriedAt));
+  const now = useNow(
+    Boolean(queriedAt) || rows.some(({ line }) => line.resetsAt),
+  );
 
   return (
     <div
@@ -476,6 +536,10 @@ export function QuotaBars({
           const width = Number.isFinite(line.left)
             ? Math.max(0, Math.min(100, line.left))
             : 100;
+          // 展开时地方够，重置时间直接写在数值后面（卡片上只在悬停说明里）
+          const trailing = [resetText(t, line, now), note]
+            .filter(Boolean)
+            .join(" · ");
           const cells = (
             <>
               <span className="w-[72px] shrink-0 truncate text-fg-2">
@@ -512,8 +576,8 @@ export function QuotaBars({
               >
                 {line.value ?? line.text}
               </span>
-              {note && (
-                <span className="min-w-0 truncate text-fg-3">{note}</span>
+              {trailing && (
+                <span className="min-w-0 truncate text-fg-3">{trailing}</span>
               )}
             </>
           );
