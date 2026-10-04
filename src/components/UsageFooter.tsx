@@ -126,7 +126,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     enabled: usageEnabled,
     autoQueryInterval,
   });
-  const refresh = () => void refetch();
+  const refresh = () => refetch();
 
   // 只在启用用量查询且有数据时显示。后端把瞬时传输失败转成了 reject：有缓存
   // 成功值时 react-query 保留 data 照常展示；首次查询就失败则 data 为空——

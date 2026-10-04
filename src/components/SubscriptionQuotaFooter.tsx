@@ -24,7 +24,8 @@ interface SubscriptionQuotaFooterProps {
 interface SubscriptionQuotaViewProps {
   quota: SubscriptionQuota | undefined;
   loading: boolean;
-  refetch: () => void;
+  /** 原样传 refetch：额度列靠它返回的结果判断点击重查的成败 */
+  refetch: () => unknown;
   /** 用于 `subscription.expiredHint` 的 {tool} 插值；解耦了 hook 的 appId */
   appIdForExpiredHint: string;
   inline?: boolean;

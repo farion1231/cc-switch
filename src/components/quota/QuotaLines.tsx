@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { RefreshCw } from "lucide-react";
+import { Check, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
   cardRows,
+  FAILED_LINE_KEY,
   formatRelativeTime,
   type QuotaLine,
   type QuotaTone,
@@ -39,17 +40,95 @@ export function useNow(active: boolean) {
   return now;
 }
 
+/** 点一下重查后图标至少转这么久：请求常常不到一秒，太短了看不出来查过 */
+export const MIN_REFRESH_SPIN_MS = 600;
+/** 查完后 ✓ / ✗ 停留多久 */
+export const REFRESH_RESULT_MS = 1000;
+
+type RefreshPhase =
+  | { kind: "idle" }
+  | {
+      kind: "spinning";
+      since: number;
+      /** onRefresh 返回的 Promise 有结果了（没返回 Promise 时一开始就算有） */
+      settled: boolean;
+      /** 这次请求本身失败了 */
+      rejected: boolean;
+    }
+  | { kind: "succeeded" }
+  | { kind: "failed" };
+
+/** react-query refetch() 的结果：请求失败时 isError 为真（即使界面还留着上次成功的值） */
+function isRejectedResult(result: unknown): boolean {
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    (result as { isError?: unknown }).isError === true
+  );
+}
+
+/**
+ * 点击触发的重查：从点下去开始转，直到查完且满 MIN_REFRESH_SPIN_MS，再按结果换成 ✓ 或 ✗
+ * 停一会儿。✗ 不能省：本来就没查到、再点又失败时，红字前后一模一样，没有它就像没点过。
+ *
+ * 成败两头看：额度列换成了「额度没查到」，或 refetch() 的结果是失败——后者管的是
+ * 「保留上次成功值」窗口里的瞬时失败（界面照旧显示旧值，只看额度行会误打 ✓）。
+ * 要等 Promise 有结果且 loading 落下（新的额度行已渲染）两件事都到，才下结论。
+ *
+ * 只认点击，后台轮询 / 窗口聚焦的重查不转（照旧只变淡），免得几张卡片一起闪
+ */
+function useClickRefreshFeedback(loading: boolean, failed: boolean) {
+  const [phase, setPhase] = useState<RefreshPhase>({ kind: "idle" });
+  useEffect(() => {
+    if (phase.kind === "idle") return;
+    if (phase.kind === "spinning") {
+      if (loading || !phase.settled) return;
+      const wait = Math.max(0, phase.since + MIN_REFRESH_SPIN_MS - Date.now());
+      const outcome = failed || phase.rejected ? "failed" : "succeeded";
+      const timer = setTimeout(() => setPhase({ kind: outcome }), wait);
+      return () => clearTimeout(timer);
+    }
+    const timer = setTimeout(
+      () => setPhase({ kind: "idle" }),
+      REFRESH_RESULT_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [phase, loading, failed]);
+
+  const start = (result: unknown) => {
+    const since = Date.now();
+    const thenable =
+      typeof (result as PromiseLike<unknown> | undefined)?.then === "function";
+    setPhase({ kind: "spinning", since, settled: !thenable, rejected: false });
+    if (!thenable) return;
+    const settle = (rejected: boolean) =>
+      setPhase((current) =>
+        current.kind === "spinning" && current.since === since
+          ? { ...current, settled: true, rejected }
+          : current,
+      );
+    Promise.resolve(result).then(
+      (value) => settle(isRejectedResult(value)),
+      () => settle(true),
+    );
+  };
+
+  return { phase: phase.kind, start };
+}
+
 interface QuotaLinesProps {
   lines: QuotaLine[];
   max?: number;
   queriedAt?: number | null;
   loading?: boolean;
-  onRefresh?: () => void;
+  /** 返回 refetch() 的 Promise 时，点击后的 ✓ / ✗ 也认请求本身的成败 */
+  onRefresh?: () => unknown;
 }
 
 /**
  * 卡片右侧的额度列（v7）：最多两行、右对齐、平时灰色；档数多时第一行写窗口最短的那档，
  * 其余并成一行、每段各自上色（cardRows）。点一下重查，悬停说明每档、更新时间和重置时间。
+ * 能重查时，悬停 / 键盘聚焦在第一行左边露出 ↻，点了之后它转到查完，再按结果换成 ✓ / ✗ 停一秒。
  */
 export function QuotaLines({
   lines,
@@ -60,6 +139,14 @@ export function QuotaLines({
 }: QuotaLinesProps) {
   const { t } = useTranslation();
   const now = useNow(Boolean(queriedAt));
+  const refresh = useClickRefreshFeedback(
+    loading,
+    lines.some((line) => line.key === FAILED_LINE_KEY),
+  );
+  const spinning = refresh.phase === "spinning";
+  // 点过之后，鼠标移出 / 焦点离开之前不再露 ↻：否则 ✓ 一消失，还停在上面的鼠标又把 ↻ 叫出来
+  const [quiet, setQuiet] = useState(false);
+  const ResultIcon = refresh.phase === "failed" ? X : Check;
   const rows = cardRows(lines, max);
   if (rows.length === 0) return null;
 
@@ -73,7 +160,7 @@ export function QuotaLines({
     .filter(Boolean)
     .join("\n");
 
-  const body = rows.map((row) =>
+  const rowNodes = rows.map((row) =>
     row.length === 1 ? (
       <span
         key={row[0].key}
@@ -98,32 +185,70 @@ export function QuotaLines({
 
   const className = cn(
     "flex w-[136px] shrink-0 flex-col items-end text-caption leading-[18px] tabular-nums whitespace-nowrap",
-    loading && "opacity-60",
+    loading && !spinning && "opacity-60",
   );
 
   if (!onRefresh) {
     return (
       <span className={className} title={title}>
-        {body}
+        {rowNodes}
       </span>
     );
   }
+
+  // ↻ 放在第一行左边：列是右对齐的，它出现 / 消失只占左侧空白，文字不挪位置
+  const [firstRow, ...restRows] = rowNodes;
+  // 用 aria-disabled 不用 disabled：禁用的按钮在 Chromium 里可能收不到 mouseleave，
+  // 转圈时把鼠标移走，quiet 就解不开了
+  const busy = loading || spinning;
   return (
     <button
       type="button"
       className={cn(
         className,
-        "rounded-control text-end transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "group rounded-control text-end transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
       )}
       title={title}
-      aria-busy={loading}
-      disabled={loading}
+      aria-busy={busy}
+      aria-disabled={busy}
       onClick={(event) => {
         event.stopPropagation();
-        onRefresh();
+        if (busy) return;
+        setQuiet(true);
+        refresh.start(onRefresh());
       }}
+      onMouseLeave={() => setQuiet(false)}
+      onBlur={() => setQuiet(false)}
     >
-      {body}
+      <span className="flex max-w-full items-center justify-end gap-1">
+        {refresh.phase === "succeeded" || refresh.phase === "failed" ? (
+          <ResultIcon
+            aria-hidden
+            data-testid={`quota-refresh-${refresh.phase}`}
+            className={cn(
+              "h-[11px] w-[11px] shrink-0 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-75",
+              refresh.phase === "failed" ? "text-danger-text" : "text-fg-3",
+            )}
+            strokeWidth={2}
+          />
+        ) : (
+          <RefreshCw
+            aria-hidden
+            data-testid="quota-refresh-icon"
+            className={cn(
+              "h-[11px] w-[11px] shrink-0 text-fg-3 group-hover:text-fg-2",
+              spinning
+                ? "motion-safe:animate-spin"
+                : quiet
+                  ? "hidden"
+                  : "hidden group-hover:block group-focus-visible:block",
+            )}
+            strokeWidth={1.75}
+          />
+        )}
+        <span className="flex min-w-0 flex-col items-end">{firstRow}</span>
+      </span>
+      {restRows}
     </button>
   );
 }

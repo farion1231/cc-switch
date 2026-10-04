@@ -209,10 +209,18 @@ export function expiredLine(
   };
 }
 
+/** 查询失败那一行的 key：额度列靠它判断这次重查有没有成功 */
+export const FAILED_LINE_KEY = "failed";
+
 /** 查询失败：第一行红字，第二行灰字写原因 */
 export function failedLines(t: TFunction, reason?: string | null): QuotaLine[] {
   const lines: QuotaLine[] = [
-    { key: "failed", left: -2, tone: "danger", text: t("quota.failed") },
+    {
+      key: FAILED_LINE_KEY,
+      left: -2,
+      tone: "danger",
+      text: t("quota.failed"),
+    },
   ];
   const text = reason?.trim();
   if (text) lines.push({ key: "reason", left: -2, tone: "muted", text });
