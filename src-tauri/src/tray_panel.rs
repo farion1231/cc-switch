@@ -43,6 +43,7 @@ mod popup {
 
     /// 前端每次弹出时据此重新拉数据。
     const PANEL_SHOWN_EVENT: &str = "tray-panel-shown";
+    const PANEL_RADIUS: f64 = 14.0;
     /// 面板顶边离菜单栏图标的距离（逻辑像素）。
     const PANEL_GAP: f64 = 6.0;
     /// 面板离屏幕左右边缘至少留这么多（逻辑像素）。
@@ -69,15 +70,8 @@ mod popup {
                 .focused(false)
                 .shadow(true)
                 .transparent(true)
-                .effects(
-                    EffectsBuilder::new()
-                        .effect(Effect::Popover)
-                        // 失焦也保持毛玻璃（虽然失焦就会隐藏，但避免弹出瞬间闪灰）
-                        .state(EffectState::Active)
-                        .radius(14.0)
-                        .build(),
-                )
                 .build()?;
+        apply_glass(&window);
 
         let handle = window.clone();
         window.on_window_event(move |event| match event {
@@ -92,6 +86,59 @@ mod popup {
             _ => {}
         });
         Ok(window)
+    }
+
+    /// macOS 26+ 垫一层 Liquid Glass；更早的系统退回系统的 Popover 毛玻璃。
+    /// 都要在主线程上动 AppKit 视图。
+    fn apply_glass(window: &WebviewWindow) {
+        let target = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            if !attach_liquid_glass(&target) {
+                let _ = target.set_effects(
+                    EffectsBuilder::new()
+                        .effect(Effect::Popover)
+                        // 失焦也保持毛玻璃（虽然失焦就会隐藏，但避免弹出瞬间闪灰）
+                        .state(EffectState::Active)
+                        .radius(PANEL_RADIUS)
+                        .build(),
+                );
+            }
+        });
+    }
+
+    /// 在网页（透明）下面插一个铺满窗口的 `NSGlassEffectView`；系统没有这个类时返回 false。
+    fn attach_liquid_glass(window: &WebviewWindow) -> bool {
+        use objc2_06::{runtime::AnyClass, MainThreadMarker};
+        use objc2_app_kit_03::{
+            NSAutoresizingMaskOptions, NSGlassEffectView, NSGlassEffectViewStyle, NSWindow,
+            NSWindowOrderingMode,
+        };
+
+        if AnyClass::get(c"NSGlassEffectView").is_none() {
+            return false;
+        }
+        let Some(mtm) = MainThreadMarker::new() else {
+            return false;
+        };
+        let Ok(ns_window) = window.ns_window() else {
+            return false;
+        };
+        // SAFETY: 指针来自 tao，窗口存活期间有效；这里在主线程上只借用不持有。
+        let ns_window = unsafe { &*ns_window.cast::<NSWindow>() };
+        let Some(content) = ns_window.contentView() else {
+            return false;
+        };
+
+        let glass = NSGlassEffectView::initWithFrame(mtm.alloc(), content.bounds());
+        glass.setStyle(NSGlassEffectViewStyle::Regular);
+        glass.setCornerRadius(PANEL_RADIUS);
+        glass.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        // 放在所有子视图（WKWebView）下面
+        content.addSubview_positioned_relativeTo(&glass, NSWindowOrderingMode::Below, None);
+        true
     }
 
     /// 面板放在图标正下方、水平居中，左右不出屏。`icon` 是托盘点击事件带的图标矩形。
