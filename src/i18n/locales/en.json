@@ -4,6 +4,10 @@
     "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
   },
   "common": {
+    "unsavedLeaveTitle": "Unsaved changes",
+    "unsavedLeaveMessage": "If you leave, the changes on this editor page will not be saved.",
+    "unsavedLeaveConfirm": "Discard and leave",
+    "unsavedLeaveCancel": "Keep editing",
     "add": "Add",
     "edit": "Edit",
     "delete": "Delete",

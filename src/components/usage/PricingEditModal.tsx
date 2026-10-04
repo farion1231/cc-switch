@@ -88,6 +88,7 @@ export function PricingEditModal({
   return (
     <FullScreenPanel
       isOpen={open}
+      trackUnsavedChanges
       title={
         isNew
           ? t("usage.addPricing", "新增定价")

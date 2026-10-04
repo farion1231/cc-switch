@@ -358,6 +358,7 @@ export function EditProviderDialog({
   return (
     <FullScreenPanel
       isOpen={open}
+      trackUnsavedChanges
       title={t("provider.editProviderNamed", { name: provider.name })}
       subtitle={
         stackLayout

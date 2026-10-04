@@ -549,6 +549,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   type="button"
                   variant="quiet"
                   size="icon-compact"
+                  data-unsaved-ignore
                   aria-pressed={shown}
                   aria-label={t("mcpPage.drawer.revealValue", {
                     name: rowName,
@@ -854,7 +855,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 aria-labelledby="mcp-conn-title"
                 className="flex flex-col gap-4"
               >
-                <div className="flex items-center gap-3">
+                <div data-unsaved-ignore className="flex items-center gap-3">
                   <h3
                     id="mcp-conn-title"
                     className="m-0 flex-1 text-body font-semibold text-fg-1"
@@ -1116,6 +1117,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       {hasSecrets && (
                         <button
                           type="button"
+                          data-unsaved-ignore
                           aria-pressed={revealJson}
                           onClick={toggleRevealJson}
                           className="inline-flex h-7 items-center gap-1 rounded-control pe-2 ps-1.5 text-body font-medium text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"

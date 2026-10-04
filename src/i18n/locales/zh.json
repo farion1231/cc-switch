@@ -4,6 +4,10 @@
     "description": "Claude Code / Codex / Gemini CLI 全方位辅助工具"
   },
   "common": {
+    "unsavedLeaveTitle": "有未保存的修改",
+    "unsavedLeaveMessage": "离开后，当前编辑页里的修改不会保存。",
+    "unsavedLeaveConfirm": "放弃修改并离开",
+    "unsavedLeaveCancel": "继续编辑",
     "add": "添加",
     "edit": "编辑",
     "delete": "删除",

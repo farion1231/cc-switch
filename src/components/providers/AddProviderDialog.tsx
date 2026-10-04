@@ -534,6 +534,7 @@ export function AddProviderDialog({
   return (
     <FullScreenPanel
       isOpen={open}
+      trackUnsavedChanges={step === "form"}
       title={t("provider.addNewProvider")}
       subtitle={
         stackLayout

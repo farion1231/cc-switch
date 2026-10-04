@@ -4,6 +4,7 @@ import { ChevronLeft, X } from "lucide-react";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
 import { DRAG_REGION_ATTR } from "@/lib/platform";
+import { useUnsavedChangesTracker } from "@/lib/unsavedChanges";
 import { cn } from "@/lib/utils";
 
 /**
@@ -71,6 +72,15 @@ const SheetContent = React.forwardRef<
 );
 SheetContent.displayName = "SheetContent";
 
+/** 登记整页编辑器里的改动；`display: contents` 不影响布局 */
+function UnsavedChangesScope({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="contents" {...useUnsavedChangesTracker()}>
+      {children}
+    </div>
+  );
+}
+
 /**
  * 整页版的 SheetContent：盖住内容区，页头带返回按钮（同 FullScreenPanel），内容随窗口铺满。
  * 配合 `<Sheet modal={false}>` 使用：侧栏和窗口拖动区照常可用；点外面不关。
@@ -116,7 +126,7 @@ const SheetPageContent = React.forwardRef<
           </DialogPrimitive.Close>
         }
       />
-      {children}
+      <UnsavedChangesScope>{children}</UnsavedChangesScope>
     </DialogPrimitive.Content>
   </DialogPrimitive.Portal>
 ));

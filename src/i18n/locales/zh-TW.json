@@ -4,6 +4,10 @@
     "description": "Claude Code / Codex / Gemini CLI 全方位輔助工具"
   },
   "common": {
+    "unsavedLeaveTitle": "有未儲存的修改",
+    "unsavedLeaveMessage": "離開後，目前編輯頁裡的修改不會儲存。",
+    "unsavedLeaveConfirm": "放棄修改並離開",
+    "unsavedLeaveCancel": "繼續編輯",
     "add": "新增",
     "edit": "編輯",
     "delete": "刪除",

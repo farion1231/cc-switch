@@ -4,6 +4,10 @@
     "description": "Claude Code・Codex・Gemini CLI のためのオールインワンアシスタント"
   },
   "common": {
+    "unsavedLeaveTitle": "未保存の変更があります",
+    "unsavedLeaveMessage": "移動すると、この編集ページの変更は保存されません。",
+    "unsavedLeaveConfirm": "破棄して移動",
+    "unsavedLeaveCancel": "編集を続ける",
     "add": "追加",
     "edit": "編集",
     "delete": "削除",
