@@ -21,10 +21,6 @@ interface SheetContentProps
    * 误点一下就把草稿丢掉。只给没有草稿可丢的抽屉（只读详情、即点即存的开关）打开。
    */
   dismissOnOutsideClick?: boolean;
-  /**
-   * 整页：盖住内容区（侧栏留着但仍不可操作），内容居中、与其它二级编辑页同宽。
-   */
-  page?: boolean;
 }
 
 const SheetContent = React.forwardRef<
@@ -40,32 +36,17 @@ const SheetContent = React.forwardRef<
       style,
       dismissOnOutsideClick = false,
       onInteractOutside,
-      page = false,
       ...props
     },
     ref,
   ) => (
-    <DialogPrimitive.Portal
-      container={
-        page
-          ? (document.getElementById("content-area") ?? undefined)
-          : undefined
-      }
-    >
-      <DialogPrimitive.Overlay
-        className={
-          page
-            ? "absolute inset-0 z-[60] bg-app"
-            : "fixed inset-0 z-50 bg-overlay data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
-        }
-      />
+    <DialogPrimitive.Portal>
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
       <DialogPrimitive.Content
         ref={ref}
-        style={page ? style : { width, ...style }}
+        style={{ width, ...style }}
         className={cn(
-          page
-            ? "absolute inset-0 z-[60] mx-auto flex w-full max-w-[1008px] flex-col bg-app text-fg-1 outline-none"
-            : "fixed inset-y-0 end-0 z-50 flex max-w-[100vw] flex-col overflow-hidden rounded-s-dialog border-s border-border bg-surface text-fg-1 shadow-v7-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-right-4 data-[state=open]:slide-in-from-right-4",
+          "fixed inset-y-0 end-0 z-50 flex max-w-[100vw] flex-col overflow-hidden rounded-s-dialog border-s border-border bg-surface text-fg-1 shadow-v7-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-right-4 data-[state=open]:slide-in-from-right-4",
           className,
         )}
         onInteractOutside={(event) => {
