@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   extractErrorMessage,
+  translateMcpBackendError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 
@@ -29,5 +30,22 @@ describe("error utilities", () => {
         t,
       ),
     ).toBe("pi.form.providerKeyDuplicate");
+  });
+
+  it("maps Pi's app-level MCP refusals to localized messages", () => {
+    const t = vi.fn((key: string) => key);
+
+    expect(
+      translateMcpBackendError(
+        "Pi MCP server id 'my.server' must use only letters, digits, '_' and '-'",
+        t,
+      ),
+    ).toBe("mcp.error.piServerNameInvalid");
+    expect(
+      translateMcpBackendError(
+        "Pi MCP server 'sse-only' uses the 'sse' transport, which Pi does not support; Pi reaches a remote server over streamable HTTP, so use that endpoint (often '/mcp' instead of '/sse') and set type to 'http'",
+        t,
+      ),
+    ).toBe("mcp.error.piSseUnsupported");
   });
 });

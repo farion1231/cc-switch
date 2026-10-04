@@ -113,6 +113,11 @@ export const translateMcpBackendError = (
     return t("mcp.wizard.urlRequired");
   }
 
+  // App 级名称限制：Pi 只接受 [A-Za-z0-9_-]+ 作为 mcpServers 键
+  if (msg.includes("Pi MCP server id")) {
+    return t("mcp.error.piServerNameInvalid");
+  }
+
   // App 级传输限制：Pi 只加载 stdio 和 streamable HTTP，legacy SSE 在 Pi 适配层应被拒绝
   if (
     msg.includes("Pi MCP server") &&

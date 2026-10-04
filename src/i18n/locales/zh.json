@@ -2558,6 +2558,7 @@
       "tomlInvalid": "TOML 格式错误，请检查",
       "commandRequired": "请填写命令",
       "piSseUnsupported": "Pi MCP 暂不支持 SSE 传输",
+      "piServerNameInvalid": "Pi MCP 服务器名不合法,请使用字母、数字、下划线(_)和连字符(-)",
       "singleServerObjectRequired": "此处只需单个服务器对象，请不要粘贴包含 mcpServers 的整份配置",
       "saveFailed": "保存失败",
       "deleteFailed": "删除失败"

@@ -344,7 +344,7 @@ impl McpService {
         for server in servers.values() {
             let result = if server.apps.is_enabled_for(app) {
                 Self::sync_server_to_app(state, server, app)
-            } else if !matches!(app, AppType::Mcode) {
+            } else if !matches!(app, AppType::Mcode | AppType::Pi) {
                 Self::remove_server_from_app(state, &server.id, app)
             } else {
                 // MCode's false flag also covers pre-existing, unmanaged servers.

@@ -2558,6 +2558,7 @@
       "tomlInvalid": "Invalid TOML format",
       "commandRequired": "Please enter command",
       "piSseUnsupported": "Pi MCP does not support the SSE transport yet",
+      "piServerNameInvalid": "Pi MCP server name is invalid, only letters, digits, (_) and (-) are allowed",
       "singleServerObjectRequired": "Please paste a single MCP server object (do not include top-level mcpServers)",
       "saveFailed": "Save failed",
       "deleteFailed": "Delete failed"

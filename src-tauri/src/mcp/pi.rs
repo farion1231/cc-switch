@@ -2,9 +2,9 @@
 //!
 //! Each write is a read-modify-write of the whole document, so only the target id changes. An entry
 //! already in the file is the base: the connection fields are replaced with what CC Switch holds,
-//! and a key CC Switch also writes from its own tooling is overridden only when the spec carries a
-//! value. Everything else stays as Pi wrote it, which is how a Pi-side `description`, `auth` or
-//! `oauth` block survives a rewrite without this module knowing about it. Pi skips an entry it
+//! and a key Pi's own tooling writes too (`OVERRIDE_FIELDS`) is overridden only when the spec
+//! carries a value. Everything else stays as Pi wrote it, which is how a field a later Pi release
+//! introduces survives a rewrite without a change to this list. Pi skips an entry it
 //! cannot validate, logging a config error, so a bad entry drops out of Pi's server list.
 //! Pi loads stdio and streamable HTTP only; the legacy `sse` transport is refused here instead of
 //! written, because a `url` entry Pi is handed is always spoken as streamable HTTP (see
@@ -32,14 +32,22 @@ const STDIO_FIELDS: [&str; 4] = ["command", "args", "env", "cwd"];
 /// `OVERRIDE_FIELDS`).
 const HTTP_FIELDS: [&str; 2] = ["url", "headers"];
 /// Keys Pi's own tooling writes as well, so CC Switch overrides them only when its spec carries a
-/// value: `oauth` from `pi mcp add --oauth-client-*`, `description` from `pi mcp add --description`,
-/// and the settings Pi's `/mcp` manager edits. Every other key is left as the file holds it, so
-/// `auth` and any field a later Pi release adds survive without a change to this list.
+/// value: `oauth` and `auth` from `pi mcp add` and Pi's `/mcp` auth flow, `description` from
+/// `pi mcp add --description`, and the settings Pi's `/mcp` manager edits. Every other key is left
+/// as the file holds it, so a field a later Pi release adds survives without a change to this list.
+///
+/// `auth` has to be listed rather than inherited from the file alone: import keeps it in the spec,
+/// so once an entry has been removed and re-added the file no longer holds the original value and
+/// the server would silently lose its authentication. Like `oauth`, the stored value then wins over
+/// the file — Pi keeps the OAuth tokens themselves in `mcp-auth.json`, which is neither read nor
+/// written. Import never overwrites an existing row's spec, so a later Pi-side rewrite of this block
+/// is only picked up by editing the row here; that boundary is `oauth`'s as well.
 ///
 /// Only the spec counts here. The `description` CC Switch keeps on the row for its own server list
 /// is separate metadata and is never written to any App's config.
-const OVERRIDE_FIELDS: [&str; 6] = [
+const OVERRIDE_FIELDS: [&str; 7] = [
     "oauth",
+    "auth",
     "description",
     "exposure",
     "toolExposure",
@@ -170,9 +178,9 @@ fn unified_spec(spec: &Value) -> Value {
 
 /// Builds the entry written to Pi from the file's current entry and CC Switch's spec.
 ///
-/// The file's entry is the base, so a key CC Switch does not write (an `auth` block, an `oauth`
-/// registration from `pi mcp add`, or a field a later Pi release introduces) survives a rewrite
-/// untouched. The connection half is dropped, then the spec's own values go on top: the transport
+/// The file's entry is the base, so a key CC Switch does not write (a field a later Pi release
+/// introduces, or metadata Pi's own tooling added) survives a rewrite untouched. The connection
+/// half is dropped, then the spec's own values go on top: the transport
 /// fields for the transport the spec selects, plus `OVERRIDE_FIELDS`. An entry carrying both
 /// `command` and `url` is written as HTTP.
 fn outbound_entry(spec: &Value, previous: Option<&Value>) -> Value {

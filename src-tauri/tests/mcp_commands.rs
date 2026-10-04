@@ -2012,8 +2012,9 @@ fn pi_projection_aligns_with_panel_and_preserves_unmanaged_entries() {
         "mcpServers": {
             // Hand-written entry CC Switch does not know about: projection must not touch it.
             "external-only": {"command": "external", "exposure": "direct"},
-            // Same id as a server stored in CC Switch but not enabled for Pi: shared ownership removes it.
-            "disabled-for-pi": {"command": "handwritten"}
+            // Same id as a server stored in CC Switch but never enabled for Pi: the bulk projection
+            // only writes, so this hand-written entry with credentials must stay untouched.
+            "disabled-for-pi": {"command": "handwritten", "env": {"TOKEN": "secret"}}
         }
     });
     fs::write(&path, serde_json::to_string_pretty(&original).unwrap()).unwrap();
@@ -2044,8 +2045,12 @@ fn pi_projection_aligns_with_panel_and_preserves_unmanaged_entries() {
         "servers enabled in the panel must be written"
     );
     assert!(
-        written["mcpServers"].get("disabled-for-pi").is_none(),
-        "a stored entry not enabled for Pi is removed by shared ownership"
+        written["mcpServers"].get("disabled-for-pi").is_some(),
+        "a stored entry not enabled for Pi must not be deleted by the bulk projection"
+    );
+    assert_eq!(
+        written["mcpServers"]["disabled-for-pi"], original["mcpServers"]["disabled-for-pi"],
+        "a same-id entry CC Switch never took over must survive verbatim, credentials included"
     );
     assert_eq!(
         written["mcpServers"]["external-only"], original["mcpServers"]["external-only"],
@@ -2144,19 +2149,68 @@ fn pi_import_adopts_native_servers_and_normalizes_type() {
     );
 }
 
-/// A Pi provider change re-projects Pi's MCP file, the way every other app's switch does.
-/// Projection is idempotent maintenance, so this repairs a file that drifted earlier.
+/// Import keeps `auth` in the stored spec, so it must also be written back from the spec: an entry
+/// removed once no longer holds the original value in the file, and without this the server would
+/// come back without its authentication.
 #[test]
-fn pi_provider_change_reprojects_mcp_file() {
+fn pi_auth_survives_a_disable_enable_round_trip() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     seed_pi_agent_dir();
     let path = pi_mcp_path();
-    // Stale projection: the enabled server is missing and a disabled one is still there.
+    fs::write(
+        &path,
+        json!({
+            "mcpServers": {
+                "authed": {"url": "https://example.com/mcp", "auth": {"provider": "github"}}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let state = create_test_state().expect("create test state");
+    McpService::import_from_all_apps(&state).expect("import pi servers");
+    assert_eq!(
+        state.db.get_all_mcp_servers().unwrap()["authed"].server["auth"],
+        json!({"provider": "github"}),
+        "import keeps auth in the stored spec"
+    );
+
+    // Turning Pi off removes the entry, so turning it back on has no file value left to inherit:
+    // `auth` has to be written from the stored spec.
+    McpService::toggle_app(&state, "authed", AppType::Pi, false).expect("disable pi");
+    assert!(read_pi_mcp()["mcpServers"].get("authed").is_none());
+    McpService::toggle_app(&state, "authed", AppType::Pi, true).expect("re-enable pi");
+
+    let written = read_pi_mcp();
+    assert_eq!(
+        written["mcpServers"]["authed"]["auth"],
+        json!({"provider": "github"}),
+        "auth must come back from the stored spec, not only from the file"
+    );
+    assert_eq!(
+        written["mcpServers"]["authed"]["url"], "https://example.com/mcp",
+        "the connection fields must be written back alongside auth"
+    );
+}
+
+/// A Pi provider change re-projects Pi's MCP file, the way every other app's switch does. The
+/// projection only writes: a stored row that is not enabled for Pi must not delete a hand-written
+/// same-id entry, because the v20 migration leaves every pre-existing row at `enabled_pi = false`
+/// and that is not an instruction to delete (see the Mcode exception in `project_servers_to_app`).
+#[test]
+fn pi_provider_change_keeps_unmanaged_same_id_entries() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+    // The user's own entry, with credentials CC Switch has never owned.
+    let native = json!({"command": "my-own-fs", "env": {"TOKEN": "secret"}});
     fs::write(
         &path,
         serde_json::to_string_pretty(&json!({
-            "mcpServers": {"stale": {"command": "node"}}
+            "mcpServers": {"filesystem": native}
         }))
         .unwrap(),
     )
@@ -2167,10 +2221,18 @@ fn pi_provider_change_reprojects_mcp_file() {
         .db
         .save_mcp_server(&pi_server("kept", json!({"command": "node"}), true))
         .expect("seed an enabled server");
+    // Same id as the hand-written entry, but only Claude is enabled: the row exists while Pi has
+    // never taken the entry over.
+    let mut claude_only = pi_server(
+        "filesystem",
+        json!({"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem"]}),
+        false,
+    );
+    claude_only.apps.claude = true;
     state
         .db
-        .save_mcp_server(&pi_server("stale", json!({"command": "node"}), false))
-        .expect("seed a disabled server");
+        .save_mcp_server(&claude_only)
+        .expect("seed a claude-only server");
     state
         .db
         .save_provider(
@@ -2191,9 +2253,10 @@ fn pi_provider_change_reprojects_mcp_file() {
         live["mcpServers"]["kept"]["command"], "node",
         "an enabled server must be written when a Pi provider changes"
     );
-    assert!(
-        live["mcpServers"].get("stale").is_none(),
-        "a disabled server must be removed so the file matches the panel again"
+    assert_eq!(
+        live["mcpServers"]["filesystem"], native,
+        "a hand-written entry must survive a provider change even when a row with the same id is \
+         stored but not enabled for Pi, credentials included"
     );
 }
 
