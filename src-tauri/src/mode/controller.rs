@@ -4146,8 +4146,9 @@ model_provider = "c"
         );
     }
 
-    /// 编辑器里把路由表从 custom 改名成别的表：那张表归供应商（按内容收成 custom 表），
-    /// 不当成全局设置写进 live，切走后表和里面的 Key 都不会留下。
+    /// 编辑器里把路由表从 custom 改名成别的表：改名跟随该供应商（issue #7856，保存、
+    /// 切换不再强制改回 custom），那张表仍归供应商、不当成全局设置；切走后旧表和里面的
+    /// Key 都不会留下。
     #[tokio::test]
     #[serial]
     async fn codex_editor_route_table_renamed_in_the_editor_stays_with_the_provider() {
@@ -4185,8 +4186,18 @@ model_provider = "c"
         )
         .expect("save");
         let live = codex_text();
-        assert!(!live.contains("[model_providers.deepseek]"), "{live}");
+        assert!(live.contains("model_provider = \"deepseek\""), "{live}");
+        assert!(live.contains("[model_providers.deepseek]"), "{live}");
         assert!(live.contains("[model_providers.ollama_local]"), "{live}");
+        // 标记随行保存，切换/重启的投影据此放行显式标识。
+        let stored = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        assert_eq!(
+            stored
+                .settings_config
+                .get("modelProvider")
+                .and_then(|value| value.as_str()),
+            Some("deepseek")
+        );
 
         ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
         let live = codex_text();

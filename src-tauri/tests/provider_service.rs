@@ -344,6 +344,125 @@ requires_openai_auth = true
     );
 }
 
+/// issue #7856：显式指定 Provider ID 的行（settings_config.modelProvider），切换写 live
+/// 时选路和表键都跟到该 id；切走旧表按 retired 清理；切回来标识还原。没有标记的行仍写
+/// `custom`（上面那条测试锁定）。
+#[test]
+fn provider_service_switch_codex_honors_an_explicit_model_provider_marker() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let markered_config = r#"model_provider = "BenszAPI"
+model = "gpt-5.4"
+
+[model_providers.BenszAPI]
+name = "BenszAPI"
+base_url = "https://bensz.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    let custom_config = r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "plain-provider".to_string();
+        manager.providers.insert(
+            "markered-provider".to_string(),
+            Provider::with_id(
+                "markered-provider".to_string(),
+                "BenszAPI".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "bensz-key"},
+                    "modelProvider": "BenszAPI",
+                    "config": markered_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "plain-provider".to_string(),
+            Provider::with_id(
+                "plain-provider".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "fresh-key"},
+                    "config": custom_config
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+    let live = || {
+        let text = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+            .expect("read config.toml");
+        let parsed: toml::Value = toml::from_str(&text).expect("parse config.toml");
+        (text, parsed)
+    };
+
+    // 切到显式标识的供应商：选路和表键都是 BenszAPI。
+    ProviderService::switch(&state, AppType::Codex, "markered-provider")
+        .expect("switch to marked provider");
+    let (text, parsed) = live();
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("BenszAPI"),
+        "{text}"
+    );
+    assert_eq!(
+        parsed["model_providers"]["BenszAPI"]["base_url"].as_str(),
+        Some("https://bensz.example/v1"),
+        "{text}"
+    );
+
+    // 切走：custom 照旧，BenszAPI 表按 retired 清掉（里面的真实 Key 不能留在 live）。
+    ProviderService::switch(&state, AppType::Codex, "plain-provider")
+        .expect("switch back to plain provider");
+    let (text, parsed) = live();
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("custom"),
+        "{text}"
+    );
+    assert!(
+        parsed["model_providers"].get("BenszAPI").is_none(),
+        "the retired explicit-id table must not linger with its key: {text}"
+    );
+
+    // 再切回来：标识还原（重启/切换往返用的同一条投影路径）。
+    ProviderService::switch(&state, AppType::Codex, "markered-provider")
+        .expect("switch to marked provider again");
+    let (text, parsed) = live();
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("BenszAPI"),
+        "{text}"
+    );
+    assert_eq!(
+        parsed["model_providers"]["BenszAPI"]["base_url"].as_str(),
+        Some("https://bensz.example/v1"),
+        "{text}"
+    );
+    assert!(
+        parsed["model_providers"]
+            .get("custom")
+            .is_none_or(|custom| custom.get("experimental_bearer_token").is_none()),
+        "the previous provider's key must not linger in the custom seat: {text}"
+    );
+}
+
 #[test]
 fn provider_service_switch_codex_preserves_oauth_and_keeps_rows_untouched() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());

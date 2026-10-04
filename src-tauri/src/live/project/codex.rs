@@ -442,8 +442,9 @@ pub enum RouteWrite {
     Official { dormant_base_url: String },
     /// 官方直连且开了「统一会话历史」：选路写 custom，表是官方镜像（认证走官方登录）。
     OfficialMirror,
-    /// 第三方（直连或代理契约）：选路写 custom。
-    Custom(Table),
+    /// 第三方（直连或代理契约）：选路和表键按 `id` 写。直连默认是 `custom`；行里显式
+    /// 指定了 Provider ID（issue #7856）就跟到那个 id。本地代理路由固定 `custom`。
+    Custom { id: String, table: Table },
     /// Codex 内置的其他 provider。
     BuiltIn { id: String, table: Option<Table> },
     /// 第三方行没有路由：不写选路。
@@ -458,7 +459,8 @@ impl RouteWrite {
     fn selector(&self) -> Option<&str> {
         match self {
             Self::Official { .. } | Self::Default => None,
-            Self::OfficialMirror | Self::Custom(_) => Some(ROUTE_ID),
+            Self::OfficialMirror => Some(ROUTE_ID),
+            Self::Custom { id, .. } => Some(id),
             Self::BuiltIn { id, .. } => Some(id),
             Self::OfficialProxy { unified, .. } => unified.then_some(ROUTE_ID),
         }
@@ -784,8 +786,17 @@ impl CodexConfigPatch {
                     container_inline,
                 );
             }
-            RouteWrite::Custom(table) => {
-                put_table(providers, ROUTE_ID, table.clone(), container_inline);
+            RouteWrite::Custom { id, table } => {
+                // 写显式 id 时，custom 席位不再被覆盖：剥掉上一家留下的真实 Key，表本身
+                // 留着（旧会话还能 resume），和 Default 分支同语义。
+                if id != ROUTE_ID {
+                    if let Some(item) = providers.get_mut(ROUTE_ID) {
+                        if let Some(existing) = item.as_table_like_mut() {
+                            existing.remove("experimental_bearer_token");
+                        }
+                    }
+                }
+                put_table(providers, id, table.clone(), container_inline);
             }
             RouteWrite::OfficialProxy {
                 base_url,
@@ -819,7 +830,7 @@ impl CodexConfigPatch {
     /// 没有 `model_providers` 时要新建的那张表。
     fn owned_table(&self) -> Option<(&str, Table)> {
         match &self.route {
-            RouteWrite::Custom(table) => Some((ROUTE_ID, table.clone())),
+            RouteWrite::Custom { id, table } => Some((id.as_str(), table.clone())),
             RouteWrite::OfficialMirror => Some((ROUTE_ID, official_mirror_table(None, true))),
             RouteWrite::OfficialProxy {
                 base_url,
@@ -1143,12 +1154,59 @@ mod tests {
         let mut relay = Table::new();
         relay.insert("name", toml_edit::value("relay"));
         relay.insert("base_url", toml_edit::value("https://relay.example/v1"));
-        let third_party = apply(RouteWrite::Custom(relay), &proxied);
+        let third_party = apply(
+            RouteWrite::Custom {
+                id: ROUTE_ID.to_string(),
+                table: relay,
+            },
+            &proxied,
+        );
         assert!(
             third_party.get("openai_base_url").is_none(),
             "{third_party}"
         );
         assert_eq!(third_party["model_provider"].as_str(), Some(ROUTE_ID));
+    }
+
+    /// 显式指定的 Provider ID（issue #7856）：选路和表键都按指定 id 写，需要引号的键
+    /// （空格、中文）由 toml_edit 转义，写出来的 TOML 能原样解析回去。
+    #[test]
+    fn an_explicit_provider_id_is_written_verbatim() {
+        let mut table = Table::new();
+        table.insert("name", toml_edit::value("BenszAPI"));
+        table.insert("base_url", toml_edit::value("https://api.example/v1"));
+        let doc = apply(
+            RouteWrite::Custom {
+                id: "BenszAPI".to_string(),
+                table,
+            },
+            "model = \"gpt-5.5\"\n",
+        );
+        assert_eq!(doc["model_provider"].as_str(), Some("BenszAPI"), "{doc}");
+        assert_eq!(
+            doc["model_providers"]["BenszAPI"]["base_url"].as_str(),
+            Some("https://api.example/v1"),
+            "{doc}"
+        );
+
+        for id in ["My Provider", "中文名"] {
+            let mut table = Table::new();
+            table.insert("base_url", toml_edit::value("https://api.example/v1"));
+            let doc = apply(
+                RouteWrite::Custom {
+                    id: id.to_string(),
+                    table,
+                },
+                "model = \"gpt-5.5\"\n",
+            );
+            let text = doc.to_string();
+            let parsed = text.parse::<DocumentMut>().expect("quoted key parses");
+            assert_eq!(parsed["model_provider"].as_str(), Some(id), "{text}");
+            assert!(
+                parsed["model_providers"][id]["base_url"].as_str().is_some(),
+                "{text}"
+            );
+        }
     }
 
     #[test]

@@ -430,6 +430,67 @@ const getCodexCustomProviderSectionName = (
     : undefined;
 };
 
+// ========== Codex provider id utils (issue #7856) ==========
+
+// TOML 表键 token：裸键原样，其余（空格、中文、引号…）按基本字符串转义，
+// 生成 `[model_providers."My Provider"]`。
+const tomlTableKeyToken = (key: string): string =>
+  /^[A-Za-z0-9_-]+$/.test(key) ? key : tomlBasicString(key);
+
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// 显式 Provider ID 的校验，与后端 validate_codex_model_provider_id 对齐：
+// 保留名精确小写拒绝（"OpenAI" 合法）、控制字符拒绝。返回错误类别供表单提示。
+export const codexModelProviderIdError = (
+  providerId: string,
+): "reserved" | "control" | null => {
+  const id = providerId.trim();
+  if (!id) return null;
+  if (CODEX_RESERVED_MODEL_PROVIDER_IDS.has(id)) return "reserved";
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F]/.test(id)) return "control";
+  return null;
+};
+
+// 顶层 model_provider 选路值（Provider ID 输入框的回显来源）；没有选路行返回 undefined。
+export const extractCodexProviderId = (
+  configText: string | undefined | null,
+): string | undefined => {
+  if (typeof configText !== "string") return undefined;
+  return getCodexModelProviderName(configText);
+};
+
+// 把 Codex 配置的路由表改名为新的 Provider ID：顶层 `model_provider` 行和
+// `[model_providers.<old>]` 表头一起改；留空回到默认 `custom`。找不到选路行或
+// 表头锚点时原样返回（没有路由表的配置无 id 可改）。
+export const setCodexProviderId = (
+  configText: string,
+  providerId: string,
+): string => {
+  const normalizedText = normalizeTomlText(configText);
+  if (!normalizedText) return normalizedText;
+
+  const lines = normalizedText.split("\n");
+  const selectorIndex = getTopLevelModelProviderLineIndex(lines);
+  const currentId = getCodexModelProviderName(normalizedText);
+  if (selectorIndex === -1 || !currentId) return normalizedText;
+
+  const nextId = providerId.trim() || "custom";
+  if (nextId === currentId) return normalizedText;
+
+  const currentKey = tomlTableKeyToken(currentId);
+  const headerPattern = new RegExp(
+    `^\\s*\\[model_providers\\.${escapeRegExp(currentKey)}\\]\\s*$`,
+  );
+  const headerIndex = lines.findIndex((line) => headerPattern.test(line));
+  if (headerIndex === -1) return normalizedText;
+
+  lines[selectorIndex] = `model_provider = ${tomlBasicString(nextId)}`;
+  lines[headerIndex] = `[model_providers.${tomlTableKeyToken(nextId)}]`;
+  return finalizeTomlText(lines);
+};
+
 const findTomlAssignmentInRange = (
   lines: string[],
   pattern: RegExp,

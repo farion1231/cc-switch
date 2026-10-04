@@ -1915,7 +1915,12 @@
     "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
     "keyFieldsHint": "地址、Key、模型、推理档位、上下文窗口和兼容开关随供应商切换；其余是 Codex 全局设置，保存后对所有供应商生效。",
     "inactiveFieldsHint": "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击复制它的 TOML，按需粘贴到上方；供应商里保存的原值不会删除。",
-    "inactiveFieldCopied": "已复制"
+    "inactiveFieldCopied": "已复制",
+    "providerIdLabel": "Provider ID",
+    "providerIdPlaceholder": "默认 custom，可留空",
+    "providerIdHint": "写入 config.toml 的 model_provider 与提供商表键，和显示名称分开。留空保持默认 custom；修改后 Codex 历史会话按标识分桶，不会自动迁移。本地路由（聚合/代理）模式下仍使用 custom。",
+    "providerIdReservedError": "该标识是 Codex 保留名，请换一个（区分大小写，OpenAI 是合法的自定义 ID）。",
+    "providerIdControlError": "Provider ID 不能包含控制字符。"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -3395,7 +3400,8 @@
       "envHijack": "该配置包含可改变进程加载行为的环境变量（如注入动态库、替换 CA 证书），请确认来源可信。",
       "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
       "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。"
-    }
+    },
+    "modelProvider": "Provider ID"
   },
   "iconPicker": {
     "search": "搜索图标",

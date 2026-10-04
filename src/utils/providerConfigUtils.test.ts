@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   codexApiFormatFromWireApi,
-  isCodexAnthropicWireApi,
+  codexModelProviderIdError,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
+  extractCodexProviderId,
+  isCodexAnthropicWireApi,
   isCodexRemoteCompactionEnabled,
   setCodexModelName,
+  setCodexProviderId,
   setCodexRemoteCompaction,
 } from "./providerConfigUtils";
 
@@ -185,5 +188,64 @@ name = "Example"
 
     const singleQuoted = `model = 'kimi-k2.7'\n`;
     expect(extractCodexModelName(singleQuoted)).toBe("kimi-k2.7");
+  });
+});
+
+describe("Codex provider id helpers (issue #7856)", () => {
+  const template = `model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "Example"
+base_url = "https://example.com/v1"
+`;
+
+  it("extracts the current provider id", () => {
+    expect(extractCodexProviderId(template)).toBe("custom");
+    expect(extractCodexProviderId('model = "m"\n')).toBeUndefined();
+  });
+
+  it("renames the selector and the table key together", () => {
+    const result = setCodexProviderId(template, "BenszAPI");
+    expect(extractCodexProviderId(result)).toBe("BenszAPI");
+    // 裸键不加引号
+    expect(result).toContain("[model_providers.BenszAPI]");
+    expect(result).not.toContain("[model_providers.custom]");
+    // 表体原样跟随
+    expect(result).toContain('base_url = "https://example.com/v1"');
+  });
+
+  it("quotes and escapes ids that are not bare TOML keys", () => {
+    for (const id of ["My Provider", "中文名", 'A"B']) {
+      const result = setCodexProviderId(template, id);
+      expect(extractCodexProviderId(result)).toBe(id);
+      // 写出的 TOML 能被解析（表键带引号转义）
+      expect(result).toContain("[model_providers.");
+    }
+    const spaced = setCodexProviderId(template, "My Provider");
+    expect(spaced).toContain('[model_providers."My Provider"]');
+  });
+
+  it("falls back to custom when cleared", () => {
+    const renamed = setCodexProviderId(template, "BenszAPI");
+    const restored = setCodexProviderId(renamed, "");
+    expect(extractCodexProviderId(restored)).toBe("custom");
+    expect(restored).toContain("[model_providers.custom]");
+    expect(restored).not.toContain("BenszAPI");
+  });
+
+  it("returns the text unchanged when no route anchors exist", () => {
+    const withoutRoute = `model = "gpt-5.5"\n`;
+    expect(setCodexProviderId(withoutRoute, "BenszAPI")).toBe(withoutRoute);
+  });
+
+  it("validates reserved ids case-sensitively and control characters", () => {
+    expect(codexModelProviderIdError("openai")).toBe("reserved");
+    expect(codexModelProviderIdError("ollama")).toBe("reserved");
+    expect(codexModelProviderIdError("lmstudio")).toBe("reserved");
+    expect(codexModelProviderIdError("OpenAI")).toBeNull();
+    expect(codexModelProviderIdError("BenszAPI")).toBeNull();
+    expect(codexModelProviderIdError("")).toBeNull();
+    expect(codexModelProviderIdError("a\nb")).toBe("control");
   });
 });

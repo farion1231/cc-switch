@@ -460,6 +460,17 @@ export function DeepLinkImportDialog() {
                           </div>
                         </div>
                       )}
+                      {/* Codex Provider ID（可选；缺省 custom） */}
+                      {request.app === "codex" && request.modelProvider && (
+                        <div className="grid grid-cols-3 items-center gap-4">
+                          <div className="font-medium text-sm text-fg-2">
+                            {t("deeplink.modelProvider")}
+                          </div>
+                          <div className="col-span-2 text-sm font-mono">
+                            {request.modelProvider}
+                          </div>
+                        </div>
+                      )}
                     </>
                   )}
 

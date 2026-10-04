@@ -59,6 +59,7 @@ import { cn } from "@/lib/utils";
 import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import { codexPresetModelSources } from "@/config/presetModelMetadata";
+import { codexModelProviderIdError } from "@/utils/providerConfigUtils";
 import {
   fillCodexCatalogModel,
   metadataFilledAnything,
@@ -123,6 +124,10 @@ interface CodexFormFieldsProps {
   // Default model (config.toml top-level `model`)
   codexModel?: string;
   onModelChange?: (model: string) => void;
+
+  // Provider ID（config.toml 的 `model_provider` 与 `[model_providers.<id>]` 表键）
+  codexProviderId?: string;
+  onProviderIdChange?: (providerId: string) => void;
 
   // API Format
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
@@ -468,6 +473,8 @@ export function CodexFormFields({
   onAutoSelectChange,
   codexModel = "",
   onModelChange,
+  codexProviderId = "",
+  onProviderIdChange,
   apiFormat,
   onApiFormatChange,
   anthropicAuthField,
@@ -520,6 +527,8 @@ export function CodexFormFields({
   // api_backend 声明、请求体也不是 Codex 发出的）——提示文案按 appId 分流，
   // 对应词条在 grokBuild.* 下。
   const isGrokBuild = appId === "grokbuild";
+  // 与后端 validate_codex_model_provider_id 对齐：保留名/控制字符当场提示。
+  const providerIdError = codexModelProviderIdError(codexProviderId);
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
@@ -1669,6 +1678,49 @@ export function CodexFormFields({
                   defaultValue: "加入映射",
                 })}
               </Button>
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Provider ID —— config.toml 的 model_provider 与 [model_providers.<id>] 表键。
+          留空保持默认 custom（会话桶不变）；显式修改后 Codex 历史会话按新标识分桶。 */}
+      {category !== "official" && !isGrokBuild && onProviderIdChange && (
+        <div className="space-y-1.5">
+          <FormLabel htmlFor="codexProviderId">
+            {t("codexConfig.providerIdLabel", { defaultValue: "Provider ID" })}
+          </FormLabel>
+          <Input
+            id="codexProviderId"
+            value={codexProviderId}
+            onChange={(event) => onProviderIdChange(event.target.value)}
+            placeholder={t("codexConfig.providerIdPlaceholder", {
+              defaultValue: "默认 custom，可留空",
+            })}
+            aria-invalid={Boolean(providerIdError)}
+            className={cn(
+              "flex-1",
+              providerIdError &&
+                "border-destructive focus-visible:ring-destructive",
+            )}
+          />
+          {providerIdError ? (
+            <p className="text-xs leading-relaxed text-destructive">
+              {providerIdError === "reserved"
+                ? t("codexConfig.providerIdReservedError", {
+                    defaultValue:
+                      "该标识是 Codex 保留名，请换一个（区分大小写，OpenAI 是合法的自定义 ID）。",
+                  })
+                : t("codexConfig.providerIdControlError", {
+                    defaultValue: "Provider ID 不能包含控制字符。",
+                  })}
+            </p>
+          ) : (
+            <p className="text-xs leading-relaxed text-fg-2">
+              {t("codexConfig.providerIdHint", {
+                defaultValue:
+                  "写入 config.toml 的 model_provider 与提供商表键，和显示名称分开。留空保持默认 custom；修改后 Codex 历史会话按标识分桶，不会自动迁移。本地路由（聚合/代理）模式下仍使用 custom。",
+              })}
             </p>
           )}
         </div>

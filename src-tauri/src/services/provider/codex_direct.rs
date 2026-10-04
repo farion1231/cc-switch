@@ -570,7 +570,20 @@ pub(crate) fn plan(
                     auth,
                 ),
                 Route::Custom { table, auth: kind } => {
-                    (RouteWrite::Custom(table.clone()), Some(*kind), auth)
+                    // 行里显式指定了 Provider ID（settings_config.modelProvider）就跟到那个
+                    // id；缺省（含全部存量行）保持 custom，行为零变化（issue #7856）。
+                    let id = crate::codex_config::explicit_codex_model_provider_id(
+                        &provider.settings_config,
+                    )
+                    .unwrap_or_else(|| ROUTE_ID.to_string());
+                    (
+                        RouteWrite::Custom {
+                            id,
+                            table: table.clone(),
+                        },
+                        Some(*kind),
+                        auth,
+                    )
                 }
                 Route::BuiltIn { id, table } => (
                     RouteWrite::BuiltIn {
@@ -603,8 +616,13 @@ pub(crate) fn plan(
                     auth,
                 )
             } else {
+                // 本地代理路由固定 `custom`（issue #7856 第 5 点：本地路由模式用固定
+                // 标识，界面说明生效规则，不静默跟随显式配置）。
                 (
-                    RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false)),
+                    RouteWrite::Custom {
+                        id: ROUTE_ID.to_string(),
+                        table: proxy_route_table(ROUTE_ID, base_url, false),
+                    },
                     Some(RouteAuth::Bearer),
                     AuthGoal::KeepNative,
                 )
@@ -811,7 +829,7 @@ fn contract_of(
         Target::Direct(_) => "",
     };
     let (selector, table) = match &config.route {
-        RouteWrite::Custom(table) => (ROUTE_ID, table_text(table)),
+        RouteWrite::Custom { id, table } => (id.as_str(), table_text(table)),
         RouteWrite::OfficialProxy {
             base_url,
             unified: true,
@@ -1024,7 +1042,7 @@ pub(crate) fn run_with_edits(
         }
     };
     let mut config = planned.config;
-    if let (Some(kind), RouteWrite::Custom(table)) = (planned.stamp, &mut config.route) {
+    if let (Some(kind), RouteWrite::Custom { table, .. }) = (planned.stamp, &mut config.route) {
         if matches!(kind, RouteAuth::Bearer | RouteAuth::EnvKey) {
             table.insert(
                 "requires_openai_auth",
