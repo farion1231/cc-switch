@@ -104,7 +104,7 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://88api.ai/sign-up?aff=HSGY"><img src="assets/partners/logos/88api-banner.jpg" alt="88API" width="150"></a></td>
+<td width="180"><a href="https://88api.ai/sign-up?aff=HSGY"><img src="assets/partners/logos/88api-banner-en.jpg" alt="88API" width="150"></a></td>
 <td>Danke an die 88API Token-Aggregationsplattform für die Unterstützung dieses Projekts! 88API ist eine von einem Hongkonger Unternehmen betriebene All-in-one-Multi-Modell-API-Plattform, die sich vor allem an Entwickler, Kreative und Nutzer von KI-Anwendungen richtet. Über eine einheitliche Schnittstelle erhalten Sie Zugriff auf Text-, Bild-, Sprach- und Videomodelle – für gängige Workflows wie KI-Programmierung, intelligente Übersetzung, Content-Erstellung, Vertonung, Bild- und Videogenerierung. Der Anbieter lässt sich direkt in CC Switch hinzufügen und umschalten. 88API unterstützt die gängigen internationalen Zahlungsmethoden, kann Rechnungen ausstellen und bietet stabilen Service auf Enterprise-Niveau. Registrieren Sie sich über <a href="https://88api.ai/sign-up?aff=HSGY">diesen Link</a>, um exklusives Bonusguthaben zu erhalten!</td>
 </tr>
 
