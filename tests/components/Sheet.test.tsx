@@ -73,4 +73,26 @@ describe("SheetContent", () => {
     fireEvent.click(screen.getByRole("button", { name: "back" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  it("non-modal page mode leaves the rest of the window interactive", () => {
+    const onOpenChange = vi.fn();
+    const onOutside = vi.fn();
+    render(
+      <>
+        <button type="button" onClick={onOutside}>
+          sidebar
+        </button>
+        <Sheet open modal={false} onOpenChange={onOpenChange}>
+          <SheetPageContent title="Edit MCP" closeLabel="back">
+            body
+          </SheetPageContent>
+        </Sheet>
+      </>,
+    );
+    expect(document.body.style.pointerEvents).not.toBe("none");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "sidebar" }));
+    expect(onOutside).toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
 });

@@ -161,6 +161,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   return (
     <Sheet
       open
+      modal={false}
       onOpenChange={(open) => {
         if (!open) handleClose();
       }}

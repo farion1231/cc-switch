@@ -411,12 +411,12 @@ describe("UnifiedMcpPanel", () => {
     expect(screen.getByText("mcpPage.import.added")).toBeInTheDocument();
   });
 
-  it("reports the blocked state while the drawer is open", async () => {
+  it("does not lock navigation just because the editor page is open", async () => {
     const onBlocked = vi.fn();
     mocks.serversMap = { alpha: makeServer("alpha") };
     renderPanel(onBlocked);
     expect(onBlocked).toHaveBeenLastCalledWith(false);
     await userEvent.click(screen.getByRole("button", { name: "mcpPage.add" }));
-    expect(onBlocked).toHaveBeenLastCalledWith(true);
+    expect(onBlocked).toHaveBeenLastCalledWith(false);
   });
 });

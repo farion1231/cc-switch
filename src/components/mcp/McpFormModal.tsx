@@ -608,6 +608,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   return (
     <Sheet
       open
+      modal={false}
       onOpenChange={(open) => {
         if (!open && !savingRef.current) onClose();
       }}

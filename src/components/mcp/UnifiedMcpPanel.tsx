@@ -159,9 +159,15 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   // 写入本身仍由写锁（writeLockRef / interactionBlocked）拦着。
   const controlsDisabled = useDelayedFlag(interactionBlocked);
 
+  // 报给外壳的导航锁不算编辑页：编辑页只盖住内容区，离开页面就关掉它（同供应商编辑页）
+  const navigationBlocked =
+    writePending ||
+    mutationPending ||
+    deleteId !== null ||
+    importReport !== null;
   React.useEffect(() => {
-    onInteractionBlockedChange?.(interactionBlocked);
-  }, [interactionBlocked, onInteractionBlockedChange]);
+    onInteractionBlockedChange?.(navigationBlocked);
+  }, [navigationBlocked, onInteractionBlockedChange]);
 
   React.useEffect(
     () => () => onInteractionBlockedChange?.(false),

@@ -119,6 +119,7 @@ function PromptDrawer({
   return (
     <Sheet
       open
+      modal={false}
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
