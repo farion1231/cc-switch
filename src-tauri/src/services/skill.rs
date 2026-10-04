@@ -1773,6 +1773,62 @@ impl SkillService {
         result
     }
 
+    /// 为本地 Skill（无仓库来源）刷新过期元数据（name/description/content_hash）。
+    ///
+    /// 手动编辑 SSOT 目录下的 SKILL.md 后，数据库元数据仍是安装时的快照，
+    /// 技能列表会一直显示旧描述（issue #7848）。按 content_hash 失配检测
+    /// 本地文件变化并回写重新解析的结果。仓库 Skill 不在此处理：其哈希
+    /// 语义由 check_updates / update_skill 管理，重算会干扰远端更新比对。
+    pub fn refresh_local_skill_metadata(db: &Arc<Database>) -> Result<usize> {
+        let _state_guard = skill_state_write_guard();
+        let ssot_dir = Self::get_ssot_dir()?;
+        Self::refresh_local_skill_metadata_in(&ssot_dir, db)
+    }
+
+    fn refresh_local_skill_metadata_in(ssot_dir: &Path, db: &Arc<Database>) -> Result<usize> {
+        let skills = db.get_all_installed_skills()?;
+        let mut refreshed = 0;
+
+        for mut skill in skills.into_values() {
+            if skill.repo_owner.is_some() {
+                continue;
+            }
+            let directory = match Self::require_valid_directory(&skill.directory) {
+                Ok(d) => d,
+                Err(err) => {
+                    log::warn!("Skill directory 非法，跳过元数据刷新: {err}");
+                    continue;
+                }
+            };
+            let local_dir = ssot_dir.join(&directory);
+            let skill_md = local_dir.join("SKILL.md");
+            if !skill_md.is_file() {
+                continue;
+            }
+            let new_hash = match Self::compute_dir_hash(&local_dir) {
+                Ok(h) => h,
+                Err(err) => {
+                    log::warn!("计算 Skill {directory} 哈希失败，跳过元数据刷新: {err}");
+                    continue;
+                }
+            };
+            if skill.content_hash.as_deref() == Some(new_hash.as_str()) {
+                continue;
+            }
+            let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &directory);
+            skill.name = new_name;
+            skill.description = new_description;
+            skill.content_hash = Some(new_hash);
+            skill.updated_at = chrono::Utc::now().timestamp();
+            if db.update_skill_metadata(&skill)? {
+                refreshed += 1;
+                log::info!("已刷新本地 Skill {directory} 的过期元数据");
+            }
+        }
+
+        Ok(refreshed)
+    }
+
     /// 为缺少 content_hash 的已安装 Skill 补算哈希
     pub fn backfill_content_hashes(db: &Arc<Database>) -> Result<usize> {
         let _state_guard = skill_state_write_guard();
@@ -4692,6 +4748,60 @@ mod tests {
         drop(second_reader);
         drop(first_reader);
         assert!(skill_state_lock().try_write().is_ok());
+    }
+
+    #[test]
+    fn refresh_local_skill_metadata_updates_stale_snapshot() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let ssot = tempdir().expect("ssot tempdir");
+        let dir_name = "demo-skill";
+        let skill_dir = ssot.path().join(dir_name);
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: old snapshot\n---\nbody\n",
+        )
+        .unwrap();
+
+        let installed = InstalledSkill {
+            id: format!("local:{dir_name}"),
+            name: "demo".to_string(),
+            description: Some("old snapshot".to_string()),
+            directory: dir_name.to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps::only(&AppType::Claude),
+            installed_at: 1,
+            content_hash: Some("stale-hash".to_string()),
+            updated_at: 0,
+        };
+        db.save_skill(&installed).unwrap();
+
+        // 缓存哈希失配但文件未再变：回写真实哈希，description 保持原值
+        let refreshed = SkillService::refresh_local_skill_metadata_in(ssot.path(), &db).unwrap();
+        assert_eq!(refreshed, 1);
+        let after = db.get_installed_skill(&installed.id).unwrap().unwrap();
+        assert_eq!(after.description.as_deref(), Some("old snapshot"));
+        assert_ne!(after.content_hash.as_deref(), Some("stale-hash"));
+        let healed_hash = after.content_hash.clone();
+
+        // 手动编辑 SKILL.md：description 随哈希一起刷新
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: edited externally\n---\nbody\n",
+        )
+        .unwrap();
+        let refreshed = SkillService::refresh_local_skill_metadata_in(ssot.path(), &db).unwrap();
+        assert_eq!(refreshed, 1);
+        let after = db.get_installed_skill(&installed.id).unwrap().unwrap();
+        assert_eq!(after.description.as_deref(), Some("edited externally"));
+        assert_ne!(after.content_hash, healed_hash);
+
+        // 幂等：无变化时不再刷新
+        let refreshed = SkillService::refresh_local_skill_metadata_in(ssot.path(), &db).unwrap();
+        assert_eq!(refreshed, 0);
     }
 
     /// 构造一个模拟 GitHub 归档的 ZIP：带一层 `repo-main/` 根目录，
