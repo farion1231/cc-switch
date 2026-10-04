@@ -896,6 +896,49 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "88API",
+      options: {
+        baseURL: "https://api.88api.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "APIKEY.FUN",
     websiteUrl: "https://apikey.fan",
     apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",

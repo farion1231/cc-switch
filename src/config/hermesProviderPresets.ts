@@ -568,6 +568,46 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      name: "88api",
+      base_url: "https://api.88api.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+        {
+          id: "claude-fable-5-1",
+          name: "Claude Fable 5.1",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "88api" },
+    },
+  },
+  {
     name: "APIKEY.FUN",
     websiteUrl: "https://apikey.fan",
     apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",

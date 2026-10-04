@@ -543,6 +543,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "fluxa",
   },
   {
+    name: "88API",
+    providerKey: "cc-switch-88api",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      name: "88API",
+      baseUrl: "https://api.88api.ai",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5",
+        }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
+  },
+  {
     name: "APIKEY.FUN",
     providerKey: "cc-switch-apikey-fun",
     websiteUrl: "https://apikey.fan",

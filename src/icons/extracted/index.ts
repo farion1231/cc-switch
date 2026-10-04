@@ -1,6 +1,7 @@
 // Hand-curated icon index with optimized SVG content and custom name mappings.
 // Update entries deliberately; automatic regeneration is intentionally unsupported.
 
+import _88api from "./88api.png";
 import _a6api from "./a6-icon.png";
 import _apikeyfun from "./apikeyfun.png";
 import _apinebula from "./apinebula_icon.png";
@@ -123,6 +124,7 @@ export const icons: Record<string, string> = {
 };
 
 export const iconUrls: Record<string, string> = {
+  "88api": _88api,
   a6api: _a6api,
   apikeyfun: _apikeyfun,
   apinebula: _apinebula,

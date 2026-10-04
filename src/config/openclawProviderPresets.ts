@@ -980,6 +980,69 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      baseUrl: "https://api.88api.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+        {
+          id: "claude-fable-5-1",
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "88api/claude-opus-5-5",
+        fallbacks: ["88api/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "88api/claude-opus-5-5": { alias: "Opus" },
+        "88api/claude-sonnet-5-5": { alias: "Sonnet" },
+        "88api/claude-haiku-4-5": { alias: "Haiku" },
+      },
+    },
+  },
+  {
     name: "APIKEY.FUN",
     websiteUrl: "https://apikey.fan",
     apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",

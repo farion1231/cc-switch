@@ -423,6 +423,22 @@ export const providerPresets: ProviderPreset[] = [
     icon: "fluxa",
   },
   {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.88api.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://api.88api.ai", "https://88api.ai"],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
+  },
+  {
     name: "APIKEY.FUN",
     websiteUrl: "https://apikey.fan",
     apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",

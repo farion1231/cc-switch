@@ -219,6 +219,26 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "subrouter",
   },
   {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.88api.ai",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.88api.ai",
+    model: "gemini-3.8-flash",
+    description: "88API",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    endpointCandidates: ["https://api.88api.ai", "https://88api.ai"],
+    icon: "88api",
+  },
+  {
     name: "APIKEY.FUN",
     websiteUrl: "https://apikey.fan",
     apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
