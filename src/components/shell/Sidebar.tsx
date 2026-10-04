@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { useRef, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
@@ -28,11 +28,7 @@ import type { GlobalPage, SettingsSection, View } from "@/lib/navigation";
 import { isAppPage } from "@/lib/navigation";
 import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
-import {
-  SIDEBAR_EXPANDED_WIDTH,
-  sidebarRailWidth,
-  useSidebarCollapsed,
-} from "@/hooks/useSidebarCollapsed";
+import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { fmtUsd } from "@/components/usage/format";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -63,24 +59,24 @@ type DirectoryProps = SidebarProps & { collapsed: boolean };
 /**
  * 主导航（v7）：顶条 44 → 应用列表（唯一滚动的区域）→ 全局 6 项（贴底）→ 底栏「应用 · 设置」。
  * 进入设置后整条侧栏换成设置目录。收起时是 72px 的图标轨；
- * 展开 / 收起时宽度过渡 200ms，文字不换行、被裁掉而不是挤成两行。
+ * 展开 / 收起时宽度一步到位，边缘的滑动由盖板的 transform 动画画出（见 useSidebarCollapsed），文字不换行、被裁掉而不是挤成两行。
  * 收起时各行只剩图标，名字由 HoverTip 从右侧报；展开时文字可见，不再挂提示。
  */
 export function Sidebar(props: SidebarProps) {
   const { t } = useTranslation();
-  const { collapsed, toggle } = useSidebarCollapsed();
+  const navRef = useRef<HTMLElement>(null);
+  const { collapsed, toggle } = useSidebarCollapsed(navRef);
   const { view } = props;
   const inSettings = view === "settings";
 
   return (
     <nav
+      ref={navRef}
       aria-label={t("nav.mainLabel")}
       className={cn(
-        "relative flex h-full shrink-0 flex-col overflow-hidden whitespace-nowrap border-e border-border bg-sidebar text-body text-fg-1 transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        "relative flex h-full shrink-0 flex-col overflow-hidden whitespace-nowrap border-e border-border bg-sidebar text-body text-fg-1",
       )}
-      style={{
-        width: collapsed ? sidebarRailWidth() : SIDEBAR_EXPANDED_WIDTH,
-      }}
+      style={{ width: sidebarWidth(collapsed) }}
     >
       <a
         href="#main-content"
