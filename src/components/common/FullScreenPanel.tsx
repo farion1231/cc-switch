@@ -24,19 +24,11 @@ interface FullScreenPanelProps {
   /** Entry/exit motion. Nested navigation panels can opt into a horizontal transition. */
   motionPreset?: "fade" | "slide-from-right";
   /**
-   * 内容宽度：`form`（默认）为居中的表单列，内容与底栏按钮同宽对齐；
-   * `full` 铺满内容区，给自带布局的整页内容（预设选择、授权中心）用。
-   */
-  width?: "form" | "full";
-  /**
    * 覆盖内容区滚动容器的内边距/间距类。默认 `px-6 py-6 space-y-6`。
    * 通过 `cn`(twMerge) 合并，传入如 `pt-3` 只覆盖顶部内边距，其余保持默认。
    */
   contentClassName?: string;
 }
-
-/** 表单列：所有二级编辑页统一宽度并居中，底栏按钮跟内容右缘对齐 */
-const FORM_COLUMN = "mx-auto max-w-[1008px]";
 
 /** 外壳里的内容区（App 的 <main id="content-area">）：二级页只盖住它，侧栏留着 */
 const CONTENT_AREA_ID = "content-area";
@@ -75,7 +67,6 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   children,
   footer,
   contentClassName,
-  width = "form",
   motionPreset = "fade",
 }) => {
   const { t } = useTranslation();
@@ -154,8 +145,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           <AppPageHeader
             variant="app"
             title={title}
-            // 标题里常带用户起的名字（供应商、提示词、MCP ID），不限长度；
-            // 必须能收缩截断，否则会把右侧的窗口按钮挤出可视区
+            // 标题里常带用户起的名字，不限长度；必须能收缩截断，否则会把窗口按钮挤出可视区
             truncateTitle
             subtitle={subtitle}
             actions={actions}
@@ -176,27 +166,14 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           />
 
           <div className="flex-1 overflow-y-auto scroll-stable">
-            <div
-              className={cn(
-                "w-full space-y-6 px-6 py-6",
-                width === "form" && FORM_COLUMN,
-                contentClassName,
-              )}
-            >
+            <div className={cn("w-full space-y-6 px-6 py-6", contentClassName)}>
               {children}
             </div>
           </div>
 
           {footer && (
-            <div className="shrink-0 border-t border-border">
-              <div
-                className={cn(
-                  "flex h-14 w-full items-center justify-end gap-2 px-6",
-                  width === "form" && FORM_COLUMN,
-                )}
-              >
-                {footer}
-              </div>
+            <div className="flex h-14 shrink-0 items-center justify-end gap-2 border-t border-border px-6">
+              {footer}
             </div>
           )}
         </motion.div>

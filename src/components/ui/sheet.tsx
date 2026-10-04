@@ -71,8 +71,8 @@ const SheetContent = React.forwardRef<
 SheetContent.displayName = "SheetContent";
 
 /**
- * 整页版的 SheetContent：盖住内容区，页头带返回按钮（同 FullScreenPanel），内容居中 1008px。
- * 仍是模态，编辑时侧栏不可操作；点外面不关。
+ * 整页版的 SheetContent：盖住内容区，页头带返回按钮（同 FullScreenPanel），内容随窗口铺满。
+ * 配合 `<Sheet modal={false}>` 使用：侧栏和窗口拖动区照常可用；点外面不关。
  */
 const SheetPageContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
@@ -115,9 +115,7 @@ const SheetPageContent = React.forwardRef<
           </DialogPrimitive.Close>
         }
       />
-      <div className="mx-auto flex min-h-0 w-full max-w-[1008px] flex-1 flex-col">
-        {children}
-      </div>
+      {children}
     </DialogPrimitive.Content>
   </DialogPrimitive.Portal>
 ));

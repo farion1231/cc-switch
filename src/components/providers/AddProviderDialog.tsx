@@ -550,7 +550,6 @@ export function AddProviderDialog({
       }
       onClose={handlePanelClose}
       footer={footer}
-      width={step === "pick" ? "full" : "form"}
       contentClassName={
         step === "pick"
           ? "flex h-full flex-col space-y-0 p-0"
