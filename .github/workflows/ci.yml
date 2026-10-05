@@ -5,9 +5,14 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # 每周一次全量：push 到 main 也按路径过滤后，靠它在缓存被淘汰后重新建起来
+  schedule:
+    - cron: "41 19 * * 0" # 周一 03:41（北京时间）
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # 带上事件名：定时全量和 push 到 main 都在 refs/heads/main 上，别互相取消
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -18,8 +23,9 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      frontend: ${{ steps.filter.outputs.frontend }}
-      backend: ${{ steps.filter.outputs.backend }}
+      # 定时 / 手动运行不过滤（过滤步骤被跳过、输出为空），一律当作两边都有改动
+      frontend: ${{ steps.filter.outputs.frontend || 'true' }}
+      backend: ${{ steps.filter.outputs.backend || 'true' }}
     steps:
       # On pull_request the filter reads changed files via the API (no checkout);
       # on push it needs a local git history to diff against.
@@ -29,6 +35,7 @@ jobs:
 
       - name: Detect changed paths
         id: filter
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
@@ -56,8 +63,9 @@ jobs:
     name: Frontend Checks
     runs-on: ubuntu-latest
     needs: changes
-    # Pushes to main always run everything: they keep the caches that PRs restore from warm.
-    if: github.event_name != 'pull_request' || needs.changes.outputs.frontend == 'true'
+    # PR 和 push 到 main 都按路径过滤。缓存 key 精确命中时不会重存，main 全量跑并不能
+    # 预热什么；缓存被淘汰后由每周的定时全量重建。
+    if: needs.changes.outputs.frontend == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -106,7 +114,7 @@ jobs:
     name: Backend Checks
     runs-on: ${{ matrix.os }}
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
+    if: needs.changes.outputs.backend == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -175,7 +183,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 45
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
+    if: needs.changes.outputs.backend == 'true'
     permissions:
       contents: read
     steps:
