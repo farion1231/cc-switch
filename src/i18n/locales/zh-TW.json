@@ -4183,7 +4183,7 @@
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP 怎麼同步",
-    "help": "以這裡為準：寫進你勾選的應用的設定檔，切換供應商時按這裡重寫。Claude Desktop、OpenClaw、Pi 不支援，所以表格裡沒有這三欄。",
+    "help": "以這裡為準：寫進你勾選的應用的設定檔，切換供應商時按這裡重寫。Claude Desktop、OpenClaw 不支援，所以表格裡沒有這兩欄；Pi 需要 1.0 以上，且不支援 SSE。",
     "importFromApps": "從應用匯入",
     "add": "新增 MCP",
     "moreActions": "MCP 的更多操作",
