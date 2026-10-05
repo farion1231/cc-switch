@@ -2493,7 +2493,7 @@
       "title": "MCP 標題（唯一）",
       "titlePlaceholder": "my-mcp-server",
       "name": "顯示名稱",
-      "namePlaceholder": "例如 @modelcontextprotocol/server-time",
+      "namePlaceholder": "例如 mcp-server-time",
       "enabledApps": "啟用至應用程式",
       "noAppsWarning": "至少選擇一個應用程式",
       "description": "描述",
@@ -2583,7 +2583,7 @@
         "description": "通用 HTTP 請求工具，支援 GET/POST 等 HTTP 方法，適合快速請求 API / 抓取網頁資料"
       },
       "time": {
-        "name": "@modelcontextprotocol/server-time",
+        "name": "mcp-server-time",
         "description": "時間查詢工具，提供目前時間、時區轉換、日期計算等功能"
       },
       "memory": {

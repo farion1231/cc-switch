@@ -2492,7 +2492,7 @@
       "title": "MCP Title (Unique)",
       "titlePlaceholder": "my-mcp-server",
       "name": "Display Name",
-      "namePlaceholder": "e.g. @modelcontextprotocol/server-time",
+      "namePlaceholder": "e.g. mcp-server-time",
       "enabledApps": "Enable to Apps",
       "noAppsWarning": "At least one app must be selected",
       "description": "Description",
@@ -2582,7 +2582,7 @@
         "description": "Universal HTTP request tool, supports GET/POST and other HTTP methods, suitable for quick API requests and web data scraping"
       },
       "time": {
-        "name": "@modelcontextprotocol/server-time",
+        "name": "mcp-server-time",
         "description": "Time query tool providing current time, timezone conversion, and date calculation features"
       },
       "memory": {

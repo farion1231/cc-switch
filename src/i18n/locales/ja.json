@@ -2492,7 +2492,7 @@
       "title": "MCP ID（ユニーク）",
       "titlePlaceholder": "my-mcp-server",
       "name": "表示名",
-      "namePlaceholder": "例: @modelcontextprotocol/server-time",
+      "namePlaceholder": "例: mcp-server-time",
       "enabledApps": "適用するアプリ",
       "noAppsWarning": "少なくとも 1 つ選択してください",
       "description": "説明",
@@ -2582,7 +2582,7 @@
         "description": "汎用 HTTP リクエストツール。GET/POST などに対応し、API テストや Web データ取得に最適です"
       },
       "time": {
-        "name": "@modelcontextprotocol/server-time",
+        "name": "mcp-server-time",
         "description": "現在時刻、タイムゾーン変換、日付計算を提供する時間クエリツール"
       },
       "memory": {
