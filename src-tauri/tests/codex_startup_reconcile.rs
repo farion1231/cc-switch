@@ -32,6 +32,21 @@ fn bearer_config() -> String {
     )
 }
 
+fn top_level_reroute(explicit_selector: bool) -> String {
+    let selector = if explicit_selector {
+        "model_provider = 'openai'\n"
+    } else {
+        ""
+    };
+    format!(
+        "{selector}openai_base_url = 'https://relay.example/v1'\n\
+         model = 'custom-model'\n\n\
+         [model_providers.unused]\n\
+         base_url = 'https://unused.example/v1'\n\
+         experimental_bearer_token = 'unused-key'\n"
+    )
+}
+
 fn fixture(config: &str, auth: Option<&str>) -> AppState {
     reset_test_fs();
     fs::create_dir_all(get_codex_config_path().parent().unwrap()).unwrap();
@@ -135,6 +150,127 @@ fn stale_manual_official_is_reconciled_once_and_survives_restart() {
             .len(),
         2
     );
+}
+
+#[test]
+fn top_level_reroute_imports_legacy_key_despite_unused_provider_tables() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    for explicit_selector in [true, false] {
+        let config = top_level_reroute(explicit_selector);
+        let state = fixture(&config, Some(LEGACY_AUTH));
+        assert!(reconcile_without_live_writes(&state).unwrap());
+        let providers = ProviderService::list(&state, AppType::Codex).unwrap();
+        assert_eq!(providers.len(), 2);
+        assert_eq!(
+            providers["default"].settings_config["auth"],
+            json!({"OPENAI_API_KEY": "local-key"})
+        );
+        assert_eq!(providers["default"].settings_config["config"], config);
+        assert_eq!(
+            ProviderService::current(&state, AppType::Codex).unwrap(),
+            "default"
+        );
+        assert!(!reconcile_without_live_writes(&state).unwrap());
+    }
+}
+
+#[test]
+fn top_level_reroute_reuses_existing_card_with_the_same_key() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    for explicit_selector in [true, false] {
+        let config = top_level_reroute(explicit_selector);
+        // Both the original top-level shape and a custom table represent the
+        // same route once the switch engine has moved the key into the table.
+        for saved_config in [config.as_str(), CUSTOM] {
+            let state = fixture(&config, Some(LEGACY_AUTH));
+            let mut saved = Provider::with_id(
+                "saved-relay".into(),
+                "My relay".into(),
+                json!({"auth": {"OPENAI_API_KEY": "local-key"}, "config": saved_config}),
+                None,
+            );
+            saved.category = Some("custom".into());
+            saved.notes = Some("Keep my provider metadata".into());
+            state.db.save_provider("codex", &saved).unwrap();
+            let before = state
+                .db
+                .get_provider_by_id(&saved.id, "codex")
+                .unwrap()
+                .unwrap();
+            assert!(reconcile_without_live_writes(&state).unwrap());
+            assert_eq!(
+                ProviderService::current(&state, AppType::Codex).unwrap(),
+                saved.id
+            );
+            let providers = ProviderService::list(&state, AppType::Codex).unwrap();
+            assert_eq!(providers.len(), 2);
+            assert_eq!(
+                serde_json::to_value(&providers[&saved.id]).unwrap(),
+                serde_json::to_value(&before).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn top_level_reroute_keeps_bearer_after_switching_away_and_back() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    for explicit_selector in [true, false] {
+        for preserve in [false, true] {
+            let state = fixture(&top_level_reroute(explicit_selector), Some(LEGACY_AUTH));
+            update_settings(AppSettings {
+                current_provider_codex: Some("manual-official".into()),
+                preserve_codex_official_auth_on_switch: preserve,
+                ..Default::default()
+            })
+            .unwrap();
+            assert!(reconcile_without_live_writes(&state).unwrap());
+            ProviderService::switch(&state, AppType::Codex, "manual-official").unwrap();
+            ProviderService::switch(&state, AppType::Codex, "default").unwrap();
+            let config = fs::read_to_string(get_codex_config_path())
+                .unwrap()
+                .parse::<toml::Value>()
+                .unwrap();
+            assert_eq!(config["model_provider"].as_str(), Some("custom"));
+            let route = &config["model_providers"]["custom"];
+            assert_eq!(route["base_url"].as_str(), Some("https://relay.example/v1"));
+            assert_eq!(
+                route["experimental_bearer_token"].as_str(),
+                Some("local-key")
+            );
+            if !preserve {
+                assert!(!get_codex_auth_path().exists());
+            }
+            assert_eq!(
+                ProviderService::current(&state, AppType::Codex).unwrap(),
+                "default"
+            );
+        }
+    }
+}
+
+#[test]
+fn top_level_reroute_skips_import_without_an_unambiguous_legacy_key() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    for explicit_selector in [true, false] {
+        for auth in [
+            None,
+            Some("{}"),
+            Some(r#"{"tokens":{"access_token":"native-login"}}"#),
+            Some(r#"{"OPENAI_API_KEY":"unrelated-key","tokens":{"access_token":"native-login"}}"#),
+        ] {
+            let state = fixture(&top_level_reroute(explicit_selector), auth);
+            assert!(!reconcile_without_live_writes(&state).unwrap());
+            assert_eq!(
+                ProviderService::current(&state, AppType::Codex).unwrap(),
+                "manual-official"
+            );
+            assert_eq!(
+                ProviderService::list(&state, AppType::Codex).unwrap().len(),
+                1
+            );
+        }
+    }
 }
 
 #[test]
