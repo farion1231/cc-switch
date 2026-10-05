@@ -234,9 +234,18 @@ jobs:
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
             echo "=== macOS build/notarization attempt ${attempt}/${max_attempts} ==="
-            if pnpm tauri build --target universal-apple-darwin; then
+            build_log="$RUNNER_TEMP/tauri-build-macos-${attempt}.log"
+            if pnpm tauri build --target universal-apple-darwin 2>&1 | tee "$build_log"; then
               echo "✅ macOS build/notarization succeeded"
               exit 0
+            fi
+
+            # Apple 拒绝凭据或账号协议（401/403，例如 "A required agreement is missing or has expired"）
+            # 只能人工处理；重试只会把整套编译再跑一遍。
+            if grep -qE 'HTTP status code: 40[13]' "$build_log"; then
+              echo "❌ Apple rejected the notarization request (HTTP 401/403); retrying cannot fix this." >&2
+              echo "   If it mentions an agreement, the Account Holder must accept it at developer.apple.com, then re-run this job." >&2
+              exit 1
             fi
 
             if [ "$attempt" -eq "$max_attempts" ]; then
@@ -303,7 +312,11 @@ jobs:
           # 1) Collect .tar.gz (updater artifact)
           NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
           cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
-          [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found yet"
+          if [ ! -f "$TAR_GZ.sig" ]; then
+            echo "❌ Updater signature not found: $TAR_GZ.sig" >&2
+            exit 1
+          fi
+          cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig"
           echo "macOS updater artifact copied: $NEW_TAR_GZ"
 
           # 2) Collect .app as zip
@@ -455,15 +468,11 @@ jobs:
             if (Test-Path $sigPath) {
               Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
               Write-Host "Signature copied: $dest.sig"
-            } elseif ($isArm64) {
-              throw "Signature not found for $($msi.Name)"
             } else {
-              Write-Warning "Signature not found for $($msi.Name)"
+              throw "Signature not found for $($msi.Name)"
             }
-          } elseif ($isArm64) {
-            throw 'No Windows ARM64 MSI installer found'
           } else {
-            Write-Warning 'No Windows MSI installer found'
+            throw "No Windows MSI installer found ($env:WINDOWS_RELEASE_ARCH)"
           }
 
           # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
@@ -514,14 +523,18 @@ jobs:
           ARCH="${{ matrix.arch || 'x86_64' }}"
           # Updater artifact: AppImage（含对应 .sig）
           APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
-          if [ -n "$APPIMAGE" ]; then
-            NEW_APPIMAGE="CC-Switch-${VERSION}-Linux-${ARCH}.AppImage"
-            cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
-            [ -f "$APPIMAGE.sig" ] && cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig" || echo ".sig for AppImage not found"
-            echo "AppImage copied: $NEW_APPIMAGE"
-          else
-            echo "No AppImage found under target/release/bundle" >&2
+          if [ -z "$APPIMAGE" ]; then
+            echo "❌ No AppImage found under target/release/bundle" >&2
+            exit 1
           fi
+          if [ ! -f "$APPIMAGE.sig" ]; then
+            echo "❌ Updater signature not found: $APPIMAGE.sig" >&2
+            exit 1
+          fi
+          NEW_APPIMAGE="CC-Switch-${VERSION}-Linux-${ARCH}.AppImage"
+          cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
+          cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig"
+          echo "AppImage copied: $NEW_APPIMAGE"
           # 额外上传 .deb（用于手动安装，不参与 Updater）
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
           if [ -n "$DEB" ]; then
@@ -644,7 +657,8 @@ jobs:
           set -euxo pipefail
           TAG="${GITHUB_REF_NAME}"
           mkdir -p dl
-          gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY"
+          # latest.json 只需要签名内容，安装包本身不用下载
+          gh release download "$TAG" --dir dl --pattern '*.sig' --repo "$GITHUB_REPOSITORY"
           ls -la dl || true
       - name: Generate latest.json
         env:
@@ -681,7 +695,18 @@ jobs:
                 linux_x64_url="$url"; linux_x64_sig="$sig_content";;
             esac
           done
-          # 构造 JSON（仅包含存在的目标）
+          # 缺任一平台都不能发：缺的那批用户会静默收不到更新
+          missing=""
+          [ -n "$mac_sig" ] || missing="$missing macOS"
+          [ -n "$win_x64_sig" ] || missing="$missing windows-x86_64"
+          [ -n "$win_arm64_sig" ] || missing="$missing windows-aarch64"
+          [ -n "$linux_x64_sig" ] || missing="$missing linux-x86_64"
+          [ -n "$linux_arm64_sig" ] || missing="$missing linux-aarch64"
+          if [ -n "$missing" ]; then
+            echo "❌ Missing updater signatures for:$missing" >&2
+            exit 1
+          fi
+          # 构造 JSON
           tmp_json=$(mktemp)
           {
             echo '{'
