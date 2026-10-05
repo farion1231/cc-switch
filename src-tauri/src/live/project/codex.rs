@@ -324,6 +324,8 @@ fn third_party_route(doc: &DocumentMut, input: &RowInput<'_>) -> Result<Route, A
                 table.insert("name", toml_edit::value("Custom"));
                 table.insert("base_url", toml_edit::value(base_url));
                 table.insert("wire_api", toml_edit::value("responses"));
+                // 内置 openai 改道后仍依赖登录凭据，与未启用的 provider 表无关。
+                table.insert("requires_openai_auth", toml_edit::value(true));
                 (table, "Custom".to_string())
             }
             None if selector.is_none() => return default_route(doc, input),
@@ -383,9 +385,7 @@ fn custom_route(
             }
             None => {
                 let requires = table_bool(&table, "requires_openai_auth");
-                let rerouted =
-                    doc.get("openai_base_url").is_some() && doc.get("model_providers").is_none();
-                if (requires || rerouted) && !input.proxy_injected_oauth {
+                if requires && !input.proxy_injected_oauth {
                     return Err(keyless_fallback_error());
                 }
                 if table.get("query_params").is_some()
@@ -1064,6 +1064,46 @@ mod tests {
             Some("responses")
         );
         assert_eq!(table.get("name").and_then(Item::as_str), Some("Custom"));
+    }
+
+    #[test]
+    fn rerouted_openai_requires_credentials_even_with_unused_tables() {
+        for selector in ["", "model_provider = 'openai'\n"] {
+            for unused in [
+                "",
+                "[model_providers.unused]\nbase_url = 'https://unused.example/v1'\n",
+            ] {
+                let config =
+                    format!("{selector}openai_base_url = 'https://relay.example/v1'\n{unused}");
+                let error = project(&row(json!({}), &config)).unwrap_err();
+                assert!(is_keyless_fallback(&error), "{error}");
+                let projection =
+                    project(&row(json!({"OPENAI_API_KEY": "sk-relay"}), &config)).unwrap();
+                let (table, auth) = custom(&projection);
+                assert_eq!(auth, RouteAuth::Bearer);
+                assert_eq!(
+                    table
+                        .get("experimental_bearer_token")
+                        .and_then(Item::as_str),
+                    Some("sk-relay")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_inactive_openai_base_url_does_not_require_auth_for_a_custom_route() {
+        let config = "openai_base_url = 'https://unused.example/v1'\n\
+                      model_provider = 'local'\n\
+                      [model_providers.local]\n\
+                      base_url = 'http://localhost:1234/v1'\n";
+        let projection = project(&row(json!({}), config)).unwrap();
+        let (table, auth) = custom(&projection);
+        assert_eq!(auth, RouteAuth::None);
+        assert_eq!(
+            table.get("base_url").and_then(Item::as_str),
+            Some("http://localhost:1234/v1")
+        );
     }
 
     fn apply(route: RouteWrite, live: &str) -> DocumentMut {
