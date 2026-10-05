@@ -580,6 +580,7 @@ pub(crate) fn plan(
                         RouteWrite::Custom {
                             id,
                             table: table.clone(),
+                            dormant_base_url: configured_proxy_base_url(db),
                         },
                         Some(*kind),
                         auth,
@@ -622,6 +623,7 @@ pub(crate) fn plan(
                     RouteWrite::Custom {
                         id: ROUTE_ID.to_string(),
                         table: proxy_route_table(ROUTE_ID, base_url, false),
+                        dormant_base_url: configured_proxy_base_url(db),
                     },
                     Some(RouteAuth::Bearer),
                     AuthGoal::KeepNative,
@@ -829,7 +831,7 @@ fn contract_of(
         Target::Direct(_) => "",
     };
     let (selector, table) = match &config.route {
-        RouteWrite::Custom { id, table } => (id.as_str(), table_text(table)),
+        RouteWrite::Custom { id, table, .. } => (id.as_str(), table_text(table)),
         RouteWrite::OfficialProxy {
             base_url,
             unified: true,

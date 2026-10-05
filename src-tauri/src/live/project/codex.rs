@@ -444,7 +444,13 @@ pub enum RouteWrite {
     OfficialMirror,
     /// 第三方（直连或代理契约）：选路和表键按 `id` 写。直连默认是 `custom`；行里显式
     /// 指定了 Provider ID（issue #7856）就跟到那个 id。本地代理路由固定 `custom`。
-    Custom { id: String, table: Table },
+    /// `dormant_base_url` 是本地代理地址：写显式 id 时遗留的 custom 席位改写成休眠形态
+    /// 用（官方直连同款，见 [`RouteWrite::Official`]）。
+    Custom {
+        id: String,
+        table: Table,
+        dormant_base_url: String,
+    },
     /// Codex 内置的其他 provider。
     BuiltIn { id: String, table: Option<Table> },
     /// 第三方行没有路由：不写选路。
@@ -786,15 +792,19 @@ impl CodexConfigPatch {
                     container_inline,
                 );
             }
-            RouteWrite::Custom { id, table } => {
-                // 写显式 id 时，custom 席位不再被覆盖：剥掉上一家留下的真实 Key，表本身
-                // 留着（旧会话还能 resume），和 Default 分支同语义。
-                if id != ROUTE_ID {
-                    if let Some(item) = providers.get_mut(ROUTE_ID) {
-                        if let Some(existing) = item.as_table_like_mut() {
-                            existing.remove("experimental_bearer_token");
-                        }
-                    }
+            RouteWrite::Custom {
+                id,
+                table,
+                dormant_base_url,
+            } => {
+                // 写显式 id 时，custom 席位不再被覆盖：改成休眠形态（本地代理地址加占位
+                // Key，和官方直连的休眠表同形）。只剥真实 Key 会留下「第三方地址 +
+                // requires_openai_auth = true + 无凭据」，恢复旧会话或手动选回 custom 时
+                // Codex 会拿 auth.json 里的官方登录去访问那个地址（投影自己拒绝的那种
+                // 回退，不能作为遗留状态写进 live）。
+                if id != ROUTE_ID && providers.contains_key(ROUTE_ID) {
+                    let dormant = proxy_route_table(ROUTE_ID, dormant_base_url, false);
+                    put_table(providers, ROUTE_ID, dormant, container_inline);
                 }
                 put_table(providers, id, table.clone(), container_inline);
             }
@@ -830,7 +840,7 @@ impl CodexConfigPatch {
     /// 没有 `model_providers` 时要新建的那张表。
     fn owned_table(&self) -> Option<(&str, Table)> {
         match &self.route {
-            RouteWrite::Custom { id, table } => Some((id.as_str(), table.clone())),
+            RouteWrite::Custom { id, table, .. } => Some((id.as_str(), table.clone())),
             RouteWrite::OfficialMirror => Some((ROUTE_ID, official_mirror_table(None, true))),
             RouteWrite::OfficialProxy {
                 base_url,
@@ -1158,6 +1168,7 @@ mod tests {
             RouteWrite::Custom {
                 id: ROUTE_ID.to_string(),
                 table: relay,
+                dormant_base_url: PROXY.to_string(),
             },
             &proxied,
         );
@@ -1179,6 +1190,7 @@ mod tests {
             RouteWrite::Custom {
                 id: "BenszAPI".to_string(),
                 table,
+                dormant_base_url: PROXY.to_string(),
             },
             "model = \"gpt-5.5\"\n",
         );
@@ -1196,6 +1208,7 @@ mod tests {
                 RouteWrite::Custom {
                     id: id.to_string(),
                     table,
+                    dormant_base_url: PROXY.to_string(),
                 },
                 "model = \"gpt-5.5\"\n",
             );
@@ -1207,6 +1220,41 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    /// 切到显式 id 后，遗留的 custom 表改成安全休眠形态（和官方直连的休眠表同形）：
+    /// 只剥真实 Key 会留下「第三方地址 + requires_openai_auth = true + 无凭据」，恢复旧
+    /// 会话或手动选回 custom 时 Codex 会拿 auth.json 里的官方登录去访问那个地址。
+    #[test]
+    fn an_explicit_id_rewrites_the_leftover_custom_seat_to_the_dormant_form() {
+        let leftover = "model_provider = \"custom\"\nmodel = \"gpt-5.5\"\n\n[model_providers.custom]\nname = \"relay\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nexperimental_bearer_token = \"sk-relay\"\n";
+        let mut table = Table::new();
+        table.insert("name", toml_edit::value("BenszAPI"));
+        table.insert("base_url", toml_edit::value("https://bensz.example/v1"));
+        let doc = apply(
+            RouteWrite::Custom {
+                id: "BenszAPI".to_string(),
+                table,
+                dormant_base_url: PROXY.to_string(),
+            },
+            leftover,
+        );
+        assert_eq!(doc["model_provider"].as_str(), Some("BenszAPI"), "{doc}");
+        let custom = doc["model_providers"][ROUTE_ID].as_table().unwrap();
+        assert_eq!(custom["base_url"].as_str(), Some(PROXY), "{doc}");
+        assert_eq!(
+            custom["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER),
+            "{doc}"
+        );
+        assert!(
+            custom.get("requires_openai_auth").is_none(),
+            "the dormant seat must not pull the official login in: {doc}"
+        );
+        assert!(
+            !doc.to_string().contains("sk-relay"),
+            "the real key must be gone: {doc}"
+        );
     }
 
     #[test]
