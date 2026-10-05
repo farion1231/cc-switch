@@ -31,7 +31,10 @@ import { MCP_APP_IDS, isMcpAppId, type McpAppId } from "@/config/appConfig";
 import { mcpPresets } from "@/config/mcpPresets";
 import { settingsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import {
+  extractErrorMessage,
+  translateMcpBackendError,
+} from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import McpFormModal from "./McpFormModal";
 import {
@@ -218,7 +221,13 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       const next = { ...prev };
       const key = failKey(id, app);
       if (error === undefined) delete next[key];
-      else next[key] = { desired, error: extractErrorMessage(error) };
+      else {
+        const detail = extractErrorMessage(error);
+        next[key] = {
+          desired,
+          error: translateMcpBackendError(detail, t) || detail,
+        };
+      }
       return next;
     });
   };

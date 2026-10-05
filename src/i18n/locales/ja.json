@@ -2559,6 +2559,9 @@
       "tomlInvalid": "TOML 形式が無効です",
       "commandRequired": "コマンドを入力してください",
       "singleServerObjectRequired": "単一の MCP サーバーオブジェクトを貼り付けてください（トップレベルの mcpServers は不要）",
+      "piSseUnsupported": "Pi は SSE 接続の MCP サーバーに対応していません。HTTP（streamable HTTP）を使用してください",
+      "piInvalidName": "Pi の MCP サーバー名に使えるのは英数字、_、- のみです：{{id}}",
+      "piNameConflict": "Pi は - と _ だけが異なるサーバー名を同一とみなします：{{id}} は既存の {{other}} と競合しています",
       "saveFailed": "保存に失敗しました",
       "deleteFailed": "削除に失敗しました"
     },

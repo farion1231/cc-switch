@@ -2559,6 +2559,9 @@
       "tomlInvalid": "Invalid TOML format",
       "commandRequired": "Please enter command",
       "singleServerObjectRequired": "Please paste a single MCP server object (do not include top-level mcpServers)",
+      "piSseUnsupported": "Pi does not support SSE MCP servers. Use HTTP (streamable HTTP) instead",
+      "piInvalidName": "Pi MCP server names may only contain letters, digits, _ and -: {{id}}",
+      "piNameConflict": "Pi treats server names that differ only by - and _ as the same server: {{id}} conflicts with existing {{other}}",
       "saveFailed": "Save failed",
       "deleteFailed": "Delete failed"
     },

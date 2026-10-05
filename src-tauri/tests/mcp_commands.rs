@@ -280,6 +280,66 @@ fn pi_import_keeps_disabled_entries_unchecked() {
     assert_eq!(servers["off"].server["exposure"], "deferred");
 }
 
+/// 导入按 Pi 的规则校验：SSE、非法名、只差 - 和 _ 的条目不导入，免得之后每次同步报错
+#[test]
+fn pi_import_skips_entries_pi_rejects() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".pi/agent/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        json!({"mcpServers":{
+            "ok":{"command":"node"},
+            "remote":{"type":"sse","url":"https://example.com/sse"},
+            "bad name":{"command":"node"},
+            "dev-tools":{"command":"a"},
+            "dev_tools":{"command":"b"}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    assert!(McpService::import_from_all_apps(&state).is_err());
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(servers["ok"].apps.pi);
+    for id in ["remote", "bad name", "dev-tools", "dev_tools"] {
+        assert!(!servers.contains_key(id), "{id}");
+    }
+}
+
+/// Pi 没装（没有 Pi 配置目录）时勾选只入库，不新建 mcp.json；Pi 不接受的仍然拒绝
+#[test]
+fn pi_toggle_without_pi_dir_skips_the_file() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let dir = ensure_test_home().join(".pi/agent");
+    let _ = fs::remove_dir_all(&dir);
+    for (id, spec) in [
+        ("docs", json!({"type":"stdio","command":"node"})),
+        (
+            "remote",
+            json!({"type":"sse","url":"https://example.com/sse"}),
+        ),
+    ] {
+        let server: McpServer = serde_json::from_value(json!({
+            "id": id, "name": id, "server": spec, "apps": {}
+        }))
+        .unwrap();
+        state.db.save_mcp_server(&server).unwrap();
+    }
+
+    McpService::toggle_app(&state, "docs", AppType::Pi, true).unwrap();
+    assert!(state.db.get_all_mcp_servers().unwrap()["docs"].apps.pi);
+    McpService::sync_enabled_for_app(&state, &AppType::Pi).unwrap();
+    McpService::toggle_app(&state, "docs", AppType::Pi, false).unwrap();
+    McpService::delete_server(&state, "docs").unwrap();
+    assert!(McpService::toggle_app(&state, "remote", AppType::Pi, true).is_err());
+    assert!(!state.db.get_all_mcp_servers().unwrap()["remote"].apps.pi);
+    assert!(!dir.exists());
+}
+
 #[test]
 fn import_default_config_claude_persists_provider() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());

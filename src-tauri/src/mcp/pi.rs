@@ -53,6 +53,13 @@ pub(crate) fn config_path() -> Result<PathBuf, AppError> {
     Ok(crate::pi_config::get_pi_agent_dir()?.join("mcp.json"))
 }
 
+/// Pi 没装（没有 Pi 配置目录）时不写文件，和 Claude / Codex / Gemini 一致：
+/// 不为同步新建 `<Pi 配置目录>/mcp.json`
+fn installed_config_path() -> Result<Option<PathBuf>, AppError> {
+    let dir = crate::pi_config::get_pi_agent_dir()?;
+    Ok(dir.is_dir().then(|| dir.join("mcp.json")))
+}
+
 fn read(path: &Path) -> Result<Value, AppError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
@@ -86,6 +93,20 @@ fn normalized_name(id: &str) -> String {
     id.replace('-', "_")
 }
 
+/// Pi 不接受的条目（不看文件里的其他条目）：非法名、SSE、无效连接
+fn validate_entry(id: &str, spec: &Value) -> Result<(), AppError> {
+    validate_name(id)?;
+    native_transport(spec).map(|_| ())
+}
+
+/// Pi 没装时不写文件，但仍按 Pi 的规则拒绝，免得装上 Pi 后每次同步都报错
+fn validate_change(id: &str, change: PiChange<'_>) -> Result<(), AppError> {
+    match change {
+        PiChange::Enable(spec) => validate_entry(id, spec),
+        PiChange::Disable | PiChange::Remove => Ok(()),
+    }
+}
+
 /// CC Switch 的统一格式 → 写进 Pi 的连接字段。SSE 直接拒绝
 fn native_transport(spec: &Value) -> Result<Value, AppError> {
     super::validation::validate_server_spec(spec)?;
@@ -106,7 +127,11 @@ pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    sync_file(&config_path()?, id, PiChange::from_enabled(spec))
+    let change = PiChange::from_enabled(spec);
+    match installed_config_path()? {
+        Some(path) => sync_file(&path, id, change),
+        None => validate_change(id, change),
+    }
 }
 
 /// 删除服务器时清掉 Pi 里由 CC Switch 写入、后来被取消勾选的条目：
@@ -115,10 +140,9 @@ pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), A
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    let path = config_path()?;
-    if !path.exists() {
+    let Some(path) = installed_config_path()?.filter(|path| path.exists()) else {
         return Ok(());
-    }
+    };
     let managed = read(&path)?["mcpServers"].get(id).is_some_and(|entry| {
         entry.get("enabled") == Some(&json!(false)) && transport_spec(entry) == transport_spec(spec)
     });
@@ -137,7 +161,10 @@ pub(crate) fn sync_and_commit<T>(
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    let path = config_path()?;
+    let Some(path) = installed_config_path()? else {
+        validate_change(id, change)?;
+        return commit();
+    };
     crate::mcode_config::write_and_commit(&path, || sync_file(&path, id, change), commit)
 }
 
@@ -149,7 +176,7 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
     let servers = document["mcpServers"].as_object_mut().unwrap();
     match change {
         PiChange::Enable(spec) => {
-            validate_name(id)?;
+            validate_entry(id, spec)?;
             let key = normalized_name(id);
             if let Some(other) = servers
                 .keys()
@@ -200,10 +227,23 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     let mut existing = state.db.get_all_mcp_servers()?;
     let mut count = 0;
     let mut skipped = Vec::new();
-    for (id, native) in document["mcpServers"].as_object().into_iter().flatten() {
+    let natives = document["mcpServers"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    for (id, native) in &natives {
         let mut spec = unified_spec(native);
-        if super::validation::validate_server_spec(&spec).is_err() {
-            skipped.push(format!("'{id}': invalid transport configuration"));
+        // 按 Pi 的规则校验：导入后会勾上 Pi，不合规的条目之后每次同步都会报错
+        if validate_entry(id, &spec).is_err() {
+            skipped.push(format!("'{id}': not accepted by Pi"));
+            continue;
+        }
+        // 只差 - 和 _ 的几个条目在 Pi 里是同一个服务器，分不清该导哪个，都跳过
+        if let Some(other) = natives
+            .keys()
+            .find(|name| *name != id && normalized_name(name) == normalized_name(id))
+        {
+            skipped.push(format!("'{id}': same Pi server name as '{other}'"));
             continue;
         }
         let enabled = native
