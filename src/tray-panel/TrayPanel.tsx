@@ -28,6 +28,7 @@ import {
 } from "@/components/quota/quotaRules";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { useTheme } from "@/components/theme-provider";
+import { isPreferenceKey, syncPreferencesFromStorage } from "./syncPreferences";
 import { fmtUsd } from "@/components/usage/format";
 import { usageApi } from "@/lib/api/usage";
 import type { ManagedAuthProvider } from "@/lib/api/auth";
@@ -42,9 +43,6 @@ import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 import type { UsageResult } from "@/types";
 
 type Range = "day" | "month" | "total";
-
-/** 和主界面 ThemeProvider 的 storageKey 一致 */
-const THEME_STORAGE_KEY = "cc-switch-theme";
 
 const RANGES: Range[] = ["day", "month", "total"];
 
@@ -466,26 +464,26 @@ export function TrayPanel() {
     },
   });
 
-  // 面板只隐藏不销毁，主界面切过深浅色后这里的主题还是建窗口时读的那个：
-  // 弹出前、以及别的窗口改了主题时，按主界面存的主题重新套一遍（也同步原生窗口外观，玻璃跟着变）
+  // 面板只隐藏不销毁：弹出前、以及别的窗口改了主题 / 语言时，按主界面存的值重新套一遍
+  // （主题也会同步原生窗口外观，玻璃跟着变）
   const { setTheme } = useTheme();
   useEffect(() => {
-    const syncTheme = () => {
-      const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-      if (stored === "light" || stored === "dark" || stored === "system") {
-        setTheme(stored);
-      }
-    };
+    const sync = () =>
+      syncPreferencesFromStorage(window.localStorage, {
+        setTheme,
+        currentLanguage: i18n.language,
+        changeLanguage: (language) => i18n.changeLanguage(language),
+      });
     const onStorage = (event: StorageEvent) => {
-      if (event.key === THEME_STORAGE_KEY) syncTheme();
+      if (isPreferenceKey(event.key)) sync();
     };
     window.addEventListener("storage", onStorage);
-    const unlisten = listen(TRAY_PANEL_SHOWN_EVENT, syncTheme);
+    const unlisten = listen(TRAY_PANEL_SHOWN_EVENT, sync);
     return () => {
       window.removeEventListener("storage", onStorage);
       void unlisten.then((off) => off());
     };
-  }, [setTheme]);
+  }, [setTheme, i18n]);
 
   // 弹出时、后台查完时重读缓存（都是本地读，不发额度请求）
   useEffect(() => {

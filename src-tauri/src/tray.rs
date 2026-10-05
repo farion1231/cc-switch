@@ -2728,10 +2728,69 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 /// `TRAY_APPS.len()` 个用量查询；按供应商用量开关查询，Codex 托管账号
 /// 未保存开关时与卡片一致默认启用。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
+    refresh_usage_in_tray(app, RefreshMode::OnDemand).await;
+}
+
+/// 后台定时刷新（托盘面板的定时任务每分钟调一次）：只查到期的那几家。
+/// 和卡片一样按供应商保存的自动查询间隔算，间隔为 0（关闭自动查询）的不查。
+pub(crate) async fn refresh_due_usage_in_tray(app: &tauri::AppHandle) {
+    refresh_usage_in_tray(app, RefreshMode::Background).await;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RefreshMode {
+    /// 悬停 / 点击 / 手动刷新：10 秒节流，不看自动查询间隔
+    OnDemand,
+    /// 后台定时：按各家的自动查询间隔判断是否到期
+    Background,
+}
+
+/// 后台定时刷新时各家上次查询的时间，键是（应用, 供应商 id）。
+static LAST_BACKGROUND_QUERY: Lazy<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// 自动查询间隔（分钟），0 表示关闭。缺省值和供应商卡片一致：托管 Codex 账号 5 分钟，
+/// 官方订阅和脚本不自动查（见 ProviderCard 的 autoQueryInterval 取值）。
+fn auto_query_interval_minutes(source: &TrayUsageSource, provider: &Provider) -> u64 {
+    let saved = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .and_then(|script| script.auto_query_interval);
+    match source {
+        TrayUsageSource::ManagedCodex(_) => saved.unwrap_or(5),
+        TrayUsageSource::Subscription | TrayUsageSource::Script => saved.unwrap_or(0),
+    }
+}
+
+/// 后台这一轮该不该查这一家；到期时顺手记下这次的时间。
+fn background_query_due(
+    app_type: &AppType,
+    provider_id: &str,
+    interval_minutes: u64,
+    now: std::time::Instant,
+) -> bool {
+    if interval_minutes == 0 {
+        return false;
+    }
+    let interval = std::time::Duration::from_secs(interval_minutes.max(1) * 60);
+    let mut last = lock(&LAST_BACKGROUND_QUERY);
+    let key = (app_type.clone(), provider_id.to_string());
+    if last
+        .get(&key)
+        .is_some_and(|at| now.duration_since(*at) < interval)
+    {
+        return false;
+    }
+    last.insert(key, now);
+    true
+}
+
+async fn refresh_usage_in_tray(app: &tauri::AppHandle, mode: RefreshMode) {
     use crate::commands::CopilotAuthState;
     use futures::future::join_all;
 
-    {
+    if mode == RefreshMode::OnDemand {
         let mut guard = lock(&LAST_TRAY_USAGE_REFRESH);
         let now = std::time::Instant::now();
         if let Some(last) = *guard {
@@ -2787,6 +2846,16 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         };
 
         if let Some(source) = tray_usage_source(app_type, &current) {
+            if mode == RefreshMode::Background
+                && !background_query_due(
+                    app_type,
+                    &current_id,
+                    auto_query_interval_minutes(&source, &current),
+                    std::time::Instant::now(),
+                )
+            {
+                continue;
+            }
             let app_clone = app.clone();
             let state = app.state::<AppState>();
             let copilot_state = app.state::<CopilotAuthState>();
@@ -3555,6 +3624,87 @@ mod tests {
             title(usage_view(&cache, &en(), &AppType::Claude, &xai, "xai")),
             None
         );
+    }
+
+    // ─── 托盘面板的后台定时刷新：照供应商保存的自动查询间隔 ───
+
+    fn with_interval(mut provider: Provider, minutes: Option<u64>) -> Provider {
+        if let Some(script) = provider
+            .meta
+            .as_mut()
+            .and_then(|meta| meta.usage_script.as_mut())
+        {
+            script.auto_query_interval = minutes;
+        }
+        provider
+    }
+
+    #[test]
+    fn background_interval_defaults_match_provider_cards() {
+        let managed = codex_provider(Some("acc-1"), Some(true));
+        let source = TrayUsageSource::ManagedCodex("acc-1".into());
+        // 卡片：托管 Codex 没存间隔时按 5 分钟，官方订阅 / 脚本没存时不自动查
+        assert_eq!(auto_query_interval_minutes(&source, &managed), 5);
+        assert_eq!(
+            auto_query_interval_minutes(&TrayUsageSource::Subscription, &managed),
+            0
+        );
+        assert_eq!(
+            auto_query_interval_minutes(&TrayUsageSource::Script, &managed),
+            0
+        );
+        let saved = with_interval(managed, Some(60));
+        assert_eq!(auto_query_interval_minutes(&source, &saved), 60);
+        assert_eq!(
+            auto_query_interval_minutes(&TrayUsageSource::Script, &saved),
+            60
+        );
+        let off = with_interval(saved, Some(0));
+        assert_eq!(auto_query_interval_minutes(&source, &off), 0);
+    }
+
+    #[test]
+    fn background_refresh_skips_disabled_and_waits_for_the_interval() {
+        let now = std::time::Instant::now();
+        let minute = std::time::Duration::from_secs(60);
+        // 间隔 0：关闭自动查询，永远不查
+        assert!(!background_query_due(&AppType::Claude, "bg-off", 0, now));
+        assert!(!background_query_due(
+            &AppType::Claude,
+            "bg-off",
+            0,
+            now + 120 * minute
+        ));
+        // 正常间隔：第一次查，间隔内不查，到期再查
+        assert!(background_query_due(&AppType::Codex, "bg-5", 5, now));
+        assert!(!background_query_due(
+            &AppType::Codex,
+            "bg-5",
+            5,
+            now + 4 * minute
+        ));
+        assert!(background_query_due(
+            &AppType::Codex,
+            "bg-5",
+            5,
+            now + 5 * minute
+        ));
+        // 长间隔：每分钟一轮的定时任务也不会多查
+        assert!(background_query_due(&AppType::Claude, "bg-60", 60, now));
+        for tick in 1..60 {
+            assert!(!background_query_due(
+                &AppType::Claude,
+                "bg-60",
+                60,
+                now + tick * minute
+            ));
+        }
+        assert!(background_query_due(
+            &AppType::Claude,
+            "bg-60",
+            60,
+            now + 60 * minute
+        ));
     }
 
     // ─── 「需要路由」判定（和前端 providerNeedsRouting 对照）───

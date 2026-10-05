@@ -2,7 +2,7 @@
 //! 写 token 用量和各应用在用那家的额度。右键仍是原生菜单（切换供应商）。
 //!
 //! 窗口懒创建、之后只隐藏不销毁；失焦即隐藏，像系统的菜单栏弹出面板。
-//! 额度不在弹出时查：后台每 5 分钟查一次写进缓存，面板只读缓存（手动刷新除外）。
+//! 额度不在弹出时查：后台按各家的自动查询间隔查（账号每 5 分钟），面板只读缓存（手动刷新除外）。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
@@ -208,9 +208,13 @@ mod popup {
 
 // ─── 定时查额度 ────────────────────────────────────────────────────────────────
 
-/// 面板不在弹出时查接口：后台每隔这么久查一次，面板只读缓存。
+/// 面板不在弹出时查接口：后台每分钟看一次，各应用在用那家按供应商保存的自动查询间隔
+/// 到期才查（0 表示不自动查），面板只读缓存。
 #[cfg(target_os = "macos")]
-const QUOTA_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+const QUOTA_TICK: std::time::Duration = std::time::Duration::from_secs(60);
+/// 授权中心的账号没有自动查询间隔设置，固定这么久查一次。
+#[cfg(target_os = "macos")]
+const ACCOUNTS_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 /// 启动后等一会儿再查第一次，避开启动时的一堆初始化。
 #[cfg(target_os = "macos")]
 const QUOTA_FIRST_REFRESH_DELAY: std::time::Duration = std::time::Duration::from_secs(15);
@@ -321,13 +325,45 @@ async fn query_account(
     }
 }
 
+/// 怎么查：手动刷新全查；后台只查到期的，并照各家的自动查询间隔。
+#[derive(Clone, Copy, PartialEq, Eq)]
+// 后台那种只有 macOS 的定时任务会用
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+enum RefreshKind {
+    Manual,
+    Background { accounts_due: bool },
+}
+
 /// 查一遍：各应用在用那家（写进 UsageCache）+ 授权中心每个账号，然后通知面板。
-pub async fn refresh_quotas(app: &AppHandle) {
+async fn refresh_quotas(app: &AppHandle, kind: RefreshKind) {
     if REFRESHING.swap(true, Ordering::AcqRel) {
         return;
     }
-    crate::tray::refresh_all_usage_in_tray(app).await;
+    match kind {
+        RefreshKind::Manual => crate::tray::refresh_all_usage_in_tray(app).await,
+        RefreshKind::Background { .. } => crate::tray::refresh_due_usage_in_tray(app).await,
+    }
+    // 后台这一轮账号还没到期就只刷新了供应商
+    if !matches!(
+        kind,
+        RefreshKind::Background {
+            accounts_due: false
+        }
+    ) {
+        refresh_accounts(app, kind).await;
+    }
+    REFRESHING.store(false, Ordering::Release);
+    let _ = app.emit_to(PANEL_LABEL, PANEL_UPDATED_EVENT, ());
+}
 
+/// 授权中心的账号额度。Codex 在用的那个托管账号由上面的供应商刷新按它的自动查询间隔查
+/// （结果在 UsageCache），后台这里直接取缓存，不再额外查一次。
+async fn refresh_accounts(app: &AppHandle, kind: RefreshKind) {
+    let state = app.state::<AppState>();
+    let bound_codex = crate::tray::collect_panel_apps(&state)
+        .into_iter()
+        .find(|entry| entry.usage_kind == Some("managedCodex"))
+        .and_then(|entry| entry.account_id);
     let previous = ACCOUNTS_CACHE
         .read()
         .map(|cache| cache.accounts.clone())
@@ -353,8 +389,19 @@ pub async fn refresh_quotas(app: &AppHandle) {
                 .iter()
                 .find(|entry| entry.provider == provider && entry.account.id == account.id)
                 .and_then(|entry| entry.quota.clone());
+            let from_cache = kind != RefreshKind::Manual
+                && provider == "codex_oauth"
+                && bound_codex.as_deref() == Some(account.id.as_str());
+            let state = &state;
             async move {
-                let quota = query_account(app, provider, &account, previous).await;
+                let quota = if from_cache {
+                    state
+                        .usage_cache
+                        .with_codex_oauth(&account.id, Clone::clone)
+                        .or(previous)
+                } else {
+                    query_account(app, provider, &account, previous).await
+                };
                 TrayPanelAccount {
                     provider,
                     account,
@@ -369,8 +416,6 @@ pub async fn refresh_quotas(app: &AppHandle) {
         cache.accounts = accounts;
         cache.refreshed_at = Some(chrono::Utc::now().timestamp_millis());
     }
-    REFRESHING.store(false, Ordering::Release);
-    let _ = app.emit_to(PANEL_LABEL, PANEL_UPDATED_EVENT, ());
 }
 
 /// 后台定时查额度（只有 macOS 有面板，其他平台不跑）。
@@ -379,9 +424,15 @@ pub fn start_quota_worker(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(QUOTA_FIRST_REFRESH_DELAY).await;
+        let mut last_accounts: Option<std::time::Instant> = None;
         loop {
-            refresh_quotas(&app).await;
-            tokio::time::sleep(QUOTA_REFRESH_INTERVAL).await;
+            let accounts_due =
+                last_accounts.is_none_or(|at| at.elapsed() >= ACCOUNTS_REFRESH_INTERVAL);
+            if accounts_due {
+                last_accounts = Some(std::time::Instant::now());
+            }
+            refresh_quotas(&app, RefreshKind::Background { accounts_due }).await;
+            tokio::time::sleep(QUOTA_TICK).await;
         }
     });
 }
@@ -409,7 +460,7 @@ pub fn get_tray_panel_snapshot(app: AppHandle) -> TrayPanelSnapshot {
 /// 面板上点刷新：立刻查一遍再返回。
 #[tauri::command]
 pub async fn refresh_tray_panel(app: AppHandle) -> TrayPanelSnapshot {
-    refresh_quotas(&app).await;
+    refresh_quotas(&app, RefreshKind::Manual).await;
     snapshot(&app)
 }
 
