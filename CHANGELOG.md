@@ -5,6 +5,64 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.2] - 2026-10-06
+
+Fixes on top of the 4.0 previews: Claude Code on a ChatGPT account (through the Codex OAuth bridge) no longer breaks with a 400 on its next reply, a `model_catalog_json` left in Codex's `config.toml` no longer hides model mapping or aggregated models, and the time MCP preset starts again. In Claude Code's Aggregation mode, `/model` lists just the aggregated models instead of opening with four identical rows, and a running Claude Code picks up aggregation changes without a restart. MCP servers can now be synced to Pi 1.0, which moves the database schema to 20. After an update, a short dialog now lists what changed in the versions in between. The provider form follows the tab it was opened from, the full Codex form gets the fetched-model picker in its model mapping table, and provider icons with their own background fill the icon box.
+
+**Stats**: 15 commits | 94 files changed | +2,894 insertions | -659 deletions
+
+### Added
+
+- **Sync MCP Servers to Pi 1.0** (#7862 by Owlbay, co-authored by LystranG): Pi 1.0 ships built-in MCP with a user-level `<Pi agent dir>/mcp.json` in the same `mcpServers` shape as Claude Code and MiniMax Code, so Pi is now an MCP app instead of being marked unsupported.
+  - Writes replace only the connection fields (`command`, `args`, `env`, `cwd`, `url`, `headers`, `type`); Pi's own fields (`enabled`, `timeout`, `description`, `exposure`, `toolExposure`, `oauth`, `auth`) are kept as Pi wrote them.
+  - Unticking Pi marks the entry `enabled: false` instead of deleting it, so ticking it again restores Pi's settings; a missing entry is rebuilt from the Pi fields saved at import. Deleting the server in CC Switch removes the entry.
+  - What Pi refuses is refused up front: the SSE transport, names outside `[A-Za-z0-9_-]`, and names that collide once `-` and `_` are folded. The file and database are left untouched on refusal.
+  - Like MiniMax Code, the file is written first and the database committed after, restoring the file if the commit fails; a full resync never deletes same-name entries CC Switch does not manage.
+  - Import maps `streamable-http` to `http`, leaves `enabled: false` entries unticked, and skips same-name entries whose connection differs.
+- **A Short Summary of What Changed After Updating**: The in-app updater only follows stable releases and its manifest notes just say "Release vX", so users jumping between stable versions never saw what the versions in between changed, and the full release notes are too long for a popup.
+  - Each version gets `src/whats-new/<version>.json`: up to 4 one-line items (new / fix / improve) in zh, zh-TW, en and ja, bundled into the app at build time. `"items": []` marks a version that should not pop up.
+  - On the first launch after an update, a dialog lists every non-empty version between the last one seen and the current one, newest first; versions beyond the first three are collapsed. Each version links to its page in the website changelog.
+  - The last seen version is stored per device in `settings.json` (`whatsNewSeenVersion`) and only moves forward, so a downgrade and re-upgrade does not repeat anything. Without a record, only the current version is shown; with nothing to show, the version is recorded silently.
+  - The dialog waits for the welcome and new-layout dialogs, and confirming either of them also records the current version, so a 3.x user does not get two dialogs in a row.
+  - Settings > About gets a "Recent updates" button to open the summaries again, starting from 4.0.0.
+- **Pick Fetched Models Into the Codex Model Mapping Table**: In the full Codex form, fetching models only added a small dropdown arrow beside each row's model field, and nothing visible at all when the table was empty.
+  - Once models are fetched, the model mapping section shows the same searchable picker as the Aggregation layout. Picked models become rows named after the model ID, with the context window and reasoning levels filled from presets and models.dev; the per-row dropdown stays for swapping one row's model.
+  - The add buttons next to "Fetch models" (Codex model mapping and model list, Claude Code Aggregation model list, OpenCode model list) are renamed to "Add manually", and the picker's "Add selected" button is neutral so Save stays the only solid button on the form.
+
+### Fixed
+
+- **`/model` in Claude Code's Aggregation Mode Opened With Four Identical Rows**: All four model tiers point at the default provider's first model, and Claude Code keeps its built-in Opus / Sonnet / Haiku rows (plus Fable once its tier is set) above the discovered models, so the picker opened with four rows for that model and its own discovered row was deduplicated away. Dropping the tier variables does not hide those rows; they fall back to `claude-opus-5-5` and friends, which would go upstream as is.
+  - Aggregation mode now writes a top-level `modelPicker` to `settings.json` with `replaceBuiltInOptions: true` and one row per aggregated model (Stack id, display name, "<upstream model> · <window>"), so the picker shows Default plus these rows only. The four tier variables are still written, since Default, `--model opus` and subagent aliases resolve through them.
+  - `modelPicker` is a Claude top-level key field: Aggregation writes the list, routing and direct leave none. A picker set by hand is not kept, the same rule as Codex's `model_catalog_json` pointer.
+  - `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` is no longer written; a value written by an older contract is removed on the next rewrite like any other exclusive field, and a user's own value is left alone. The contract digest includes top-level fields only when there are any, so routing contracts are unchanged.
+  - Checked against Claude Code 2.1.287 with an isolated config directory and a fake gateway. Needs Claude Code 2.1.243 or later (see Upgrade notes).
+- **Many Reasoning Levels Stretched the Codex Model Catalog**: Each catalog row is its own grid whose `1fr` tracks could not shrink below their content, so a long levels label widened its own row and the rows stopped lining up with the header. The templates now use `minmax(0,1fr)`. The trigger label collapses runs of three or more adjacent levels into "first → last" ("low → max", "none, low → max"), never across a skipped level; hovering or focusing it lists every picked level and the default one.
+
+- **Claude Code on a ChatGPT Account Broke With `400 Unknown parameter: 'input[N].status'`** (#7876 by Lu Chong; fixes #7875): The Claude-to-Responses bridge carried the backend's reasoning output item verbatim inside the thinking signature and replayed it into `input` unchanged. Since 2026-10-03 the official Codex backend adds `status` to reasoning output items and rejects it on input, so every conversation broke on its next replay. Both sides of the envelope now keep only `type`, `id`, `summary` and `encrypted_content`; filtering on decode also recovers envelopes already saved in client histories, with no user action.
+- **A `model_catalog_json` Written by Another Tool Hid Codex Model Mapping and Aggregated Models**: A `model_catalog_json` in `config.toml` that no provider owned was never touched, and CC Switch skipped writing its own pointer while it was there. A pointer written by another Codex switcher, or left by an older version, could keep the generated catalog from taking effect, with no warning at all in direct mode, and a pointer written by hand was removed again by the next write.
+  - The pointer is now a plain key field and follows the target provider like `model` does: the provider's own pointer if its config has one, otherwise CC Switch's catalog when one is generated, otherwise none. Whatever `config.toml` held before is replaced.
+  - When the routed provider's own config points at another catalog, the aggregation warning offers "Use CC Switch's model catalog", which removes that pointer from the row and rewrites Codex even when the contract is unchanged.
+  - The provider editor no longer stores a pointer it only carried over from `config.toml`. Saving a card as is used to turn the user's global pointer into that card's own pointer (seen on the seeded OpenAI Official card).
+- **The Time MCP Preset Exited on Start** (#7863 by Owlbay; fixes the time part of #4663): The preset ran `npx -y @modelcontextprotocol/server-time`, which does not exist on npm (404), so clients reported the connection as closed. It now runs the official PyPI server with `uvx mcp-server-time`, like the fetch preset. Servers already added from the old preset keep their command and need to be edited by hand.
+- **Usage Range Picker Showed a Gray Box Inside the Orange Outline** (#7864 by Allen Xu): The active start/end card has a single orange outline, clicking into the date and time inputs no longer adds another ring, and the fields sit 12 px below the preset row.
+
+### Changed
+
+- **Claude Code Picks Up Aggregation Changes Without a Restart**: Aggregated models used to reach Claude Code through gateway discovery, which only runs at startup, so the UI asked for a restart after every change. With the models written into `settings.json` as `modelPicker`, a running Claude Code picks up added and removed models, a new default and window changes on its own. The Claude Code restart toasts and notes are removed (`useStackModelsChangedHint` included); adding or removing an aggregated provider now says it takes effect right away, and the Aggregation setting's description says only Codex needs a restart. Codex still reads its model catalog only at startup, so its hints stay.
+- **The Provider Form Follows the Tab It Was Opened From**: The add and edit forms chose the Aggregation layout from the mode the app was actually in, with a link to toggle between the simple and the full form. Claude Code and Codex now use the simple form only when opened from the Aggregation tab (without a tab, as from the tray, the actual mode decides as before); the toggle link is removed, and the dialog header reads "<app> (Aggregation mode)" while the simple form is in use.
+- **Provider Icons With Their Own Background Fill the Icon Box**: Icons that carry a solid background (88API, Qiniu, CherryIN, ...) used to sit as a small square inside the bordered box. A shared `ProviderIconBox` now draws the provider card, the name field's icon button and both preset lists: 28 icons marked `shape: "tile"` fill the box (clipped to its radius, with an inset ring so white tiles keep an edge), and transparent logos grow to a shared 22 px. Icons with wide transparent margins are cropped to their content, Xiaomi MiMo uses its official two-line wordmark on a black tile, and FennoAI's webp with a baked-in checkerboard is replaced by a transparent PNG.
+
+### Internal
+
+- **Release Gate for the Summary Files**: `release.yml` first requires the tagged version's `src/whats-new/<version>.json` and validates every bundled summary with the unit test before any build job starts, since a malformed item would crash the dialog and put the whole app on the error screen.
+- **Tests**: The Pi DeepSeek preset is pinned to declare image input for `deepseek-flash` and keep `deepseek-v4-pro` text-only (#7865 by Allen Xu; refs #7859).
+
+### Upgrade notes
+
+- **Claude Code's Aggregation mode needs Claude Code 2.1.243 or later**: The `modelPicker` setting was added in 2.1.243. Earlier versions ignore it, and with gateway discovery no longer turned on, `/model` lists none of the aggregated models; the default model still works, and others can be picked with `/model <id>`.
+- **Database schema 19 → 20**: Adds `mcp_servers.enabled_pi` (default 0), so upgrading writes nothing to Pi until a server is ticked. Once 4.0.2 has opened the database, 4.0.1, 4.0.0 and 3.x refuse it as "database version too new"; the pre-migration copy is saved under `~/.cc-switch/backups/` (`db_backup_*`).
+- **4.0 preview builds do not update themselves to 4.0.2.** The in-app updater only follows stable releases; download 4.0.2 from its release page.
+
 ## [4.0.1] - 2026-10-05
 
 Fixes on top of the 4.0.0 preview: Gemini CLI sessions written in the newer JSONL format show up again, OpenCode offers thinking variants for reasoning models added through CC Switch, an upstream rejection is no longer reported as an output-token limit, the Grok Build key link opens the preset's sign-up page, Codex config directories inside WSL no longer stall startup and the Sessions page, and the sidebar toggle animates at the display's refresh rate, with a few small UI touches. The release pipeline is rebuilt to build macOS architectures in parallel and to fail fast instead of shipping an incomplete update manifest.
