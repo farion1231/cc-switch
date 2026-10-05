@@ -2800,7 +2800,21 @@ mod tests {
     fn test_range_filter_matches_original_dedup() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         create_legacy_nullable_logs_table(&conn)?;
-        let rows: &[(&str, &str, &str, i64, i64, i64, i64, i64, i64, Option<&str>)] = &[
+        // request_id, app_type, model, input, output, cache_read, cache_creation,
+        // status_code, created_at, data_source
+        type LogRow = (
+            &'static str,
+            &'static str,
+            &'static str,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            Option<&'static str>,
+        );
+        let rows: &[LogRow] = &[
             // 和 proxy-1 重复（应被去掉）
             (
                 "p1",
