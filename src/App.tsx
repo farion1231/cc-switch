@@ -86,6 +86,7 @@ import { PROMPT_APP_IDS } from "@/lib/query/prompts";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
+import { WhatsNewNotice } from "@/components/WhatsNewDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -1568,6 +1569,7 @@ function App() {
       <DeepLinkImportDialog />
       <FirstRunNoticeDialog />
       <NewLayoutDialog />
+      <WhatsNewNotice />
     </WindowControlsContext.Provider>
   );
 }

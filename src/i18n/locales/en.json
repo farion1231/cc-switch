@@ -4514,6 +4514,20 @@
     "viewReleaseNotes": "View release notes",
     "confirm": "Got it"
   },
+  "whatsNew": {
+    "updatedTo": "Updated to v{{version}}",
+    "recentTitle": "Recent updates",
+    "since": "What changed since v{{version}}",
+    "types": {
+      "new": "New",
+      "fix": "Fix",
+      "improve": "Improved"
+    },
+    "versionDetails": "Details",
+    "showEarlier": "{{count}} earlier version(s)",
+    "viewFull": "View full changelog",
+    "confirm": "Got it"
+  },
   "authCenter": {
     "helpTitle": "What is Accounts?",
     "group": {

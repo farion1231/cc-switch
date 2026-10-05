@@ -4514,6 +4514,20 @@
     "viewReleaseNotes": "查看更新说明",
     "confirm": "我知道了"
   },
+  "whatsNew": {
+    "updatedTo": "已更新到 v{{version}}",
+    "recentTitle": "近期更新",
+    "since": "自 v{{version}} 以来的更新",
+    "types": {
+      "new": "新增",
+      "fix": "修复",
+      "improve": "改进"
+    },
+    "versionDetails": "详情",
+    "showEarlier": "还有 {{count}} 个更早的版本",
+    "viewFull": "查看完整更新内容",
+    "confirm": "知道了"
+  },
   "authCenter": {
     "helpTitle": "授权中心是什么",
     "group": {

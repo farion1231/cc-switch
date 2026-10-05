@@ -4514,6 +4514,20 @@
     "viewReleaseNotes": "リリースノートを見る",
     "confirm": "OK"
   },
+  "whatsNew": {
+    "updatedTo": "v{{version}} に更新しました",
+    "recentTitle": "最近の更新",
+    "since": "v{{version}} 以降の変更",
+    "types": {
+      "new": "新機能",
+      "fix": "修正",
+      "improve": "改善"
+    },
+    "versionDetails": "詳細",
+    "showEarlier": "さらに以前のバージョン {{count}} 件",
+    "viewFull": "すべての変更内容を見る",
+    "confirm": "OK"
+  },
   "authCenter": {
     "helpTitle": "アカウントとは",
     "group": {

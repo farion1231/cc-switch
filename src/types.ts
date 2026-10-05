@@ -409,6 +409,8 @@ export interface Settings {
   firstRunNoticeConfirmed?: boolean;
   // User has confirmed the one-time "new layout" dialog shown to upgrading users
   newLayoutNoticeConfirmed?: boolean;
+  // Highest app version whose "what's new" summary the user has seen on this device
+  whatsNewSeenVersion?: string;
   // User has confirmed the auto-sync traffic warning
   autoSyncConfirmed?: boolean;
   // User has confirmed the common config first-run notice

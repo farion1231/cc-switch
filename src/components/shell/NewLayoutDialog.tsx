@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { APP_IDS } from "@/config/appConfig";
 import { providersApi, settingsApi } from "@/lib/api";
 import { useSettingsQuery } from "@/lib/query";
+import { markSeen } from "@/lib/whatsNew";
+import type { Settings } from "@/types";
 
 const RELEASES_URL = "https://github.com/farion1231/cc-switch/releases";
 
@@ -32,20 +34,16 @@ async function hasAnyProvider(): Promise<boolean> {
 }
 
 /**
- * 「界面改版了」一次性弹窗：只给升级上来的老用户看，确认后写 newLayoutNoticeConfirmed。
+ * 「界面改版了」弹窗这次会不会出现：true 会，false 不会，undefined 还在查供应商。
  * - 必须已经确认过首次启动的欢迎弹窗。全新安装时后端会先导入当前配置、再预置官方
  *   供应商，单看「有没有供应商」分不出新老用户；新用户点欢迎弹窗的「我知道了」时
  *   会把这个字段一起写成 true，以后也不会再看到这里。
  * - 数据库里已经有供应商（任一应用）。
- * 弹窗盖在页面上，不占布局，晚一点出来也不会推动内容区。
+ * 更新摘要弹窗也读它，排在这个弹窗后面。
  */
-export function NewLayoutDialog() {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { data: settings } = useSettingsQuery();
-  // 点了就先关，不等保存回来
-  const [closed, setClosed] = useState(false);
-
+export function useNewLayoutNoticePending(
+  settings: Settings | undefined,
+): boolean | undefined {
   const eligible =
     settings != null &&
     settings.firstRunNoticeConfirmed === true &&
@@ -54,18 +52,41 @@ export function NewLayoutDialog() {
   const { data: hasProviders } = useQuery({
     queryKey: ["new-layout-notice", "has-providers"],
     queryFn: hasAnyProvider,
-    enabled: eligible && !closed,
+    enabled: eligible,
     staleTime: Infinity,
   });
 
-  const isOpen = eligible && !closed && hasProviders === true;
+  return eligible ? hasProviders : false;
+}
+
+/**
+ * 「界面改版了」一次性弹窗：只给升级上来的老用户看，确认后写 newLayoutNoticeConfirmed。
+ * 弹窗盖在页面上，不占布局，晚一点出来也不会推动内容区。
+ */
+export function NewLayoutDialog() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: settings } = useSettingsQuery();
+  // 点了就先关，不等保存回来
+  const [closed, setClosed] = useState(false);
+  const pending = useNewLayoutNoticePending(settings);
+
+  const isOpen = !closed && pending === true;
 
   const handleAcknowledge = async () => {
     setClosed(true);
     if (!settings) return;
     try {
       const { webdavSync: _, ...rest } = settings;
-      await settingsApi.save({ ...rest, newLayoutNoticeConfirmed: true });
+      // 更新摘要一并记成已看，不再接着弹第二个。看到这里的是从 3.x 升上来的用户，
+      // 之前没有记录，摘要本来也只会显示当前这一版；那几条是相对上一个 4.x 预览版
+      // 的改动，对他们不如这个弹窗和「查看更新说明」（正式版页面是 4.0 完整说明）有用。
+      const version = await getVersion().catch(() => undefined);
+      await settingsApi.save({
+        ...rest,
+        newLayoutNoticeConfirmed: true,
+        whatsNewSeenVersion: markSeen(settings.whatsNewSeenVersion, version),
+      });
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
     } catch (error) {
       console.error("Failed to save newLayoutNoticeConfirmed:", error);
