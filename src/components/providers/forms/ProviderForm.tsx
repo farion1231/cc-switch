@@ -704,6 +704,7 @@ function ProviderFormFull({
     codexBaseUrl,
     codexModel,
     codexProviderId,
+    codexProviderIdEdited,
     codexCatalogModels,
     codexAuthError,
     setCodexAuth,
@@ -1606,8 +1607,10 @@ function ProviderFormFull({
     }
 
     // Provider ID 保留名不当场拦下，后端会按旧规则静默归一回 custom——那正是
-    // issue #7856 要避免的静默覆盖，所以保存前给出明确错误。
-    if (appId === "codex") {
+    // issue #7856 要避免的静默覆盖，所以保存前给出明确错误。只校验用户输入过的自定义
+    // id：已有供应商合法选择内置路由（如 amazon-bedrock，后端 BuiltIn 分支支持）时，
+    // 字段里的保留名是从 TOML 回显的选路，不是用户新建的自定义表，不能拦住保存。
+    if (appId === "codex" && codexProviderIdEdited) {
       const providerIdIssue = codexModelProviderIdError(codexProviderId);
       if (providerIdIssue) {
         toast.error(
@@ -2627,6 +2630,7 @@ function ProviderFormFull({
               codexModel={codexModel}
               onModelChange={handleCodexModelChange}
               codexProviderId={codexProviderId}
+              providerIdEdited={codexProviderIdEdited}
               onProviderIdChange={handleCodexProviderIdChange}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}

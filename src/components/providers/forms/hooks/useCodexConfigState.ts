@@ -107,6 +107,10 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const [codexBaseUrl, setCodexBaseUrl] = useState("");
   const [codexModel, setCodexModel] = useState("");
   const [codexProviderId, setCodexProviderId] = useState("");
+  // Provider ID 输入框是否被用户改过：区分「用户输入的自定义 id」和「从 TOML 回显的
+  // 既有选路」。保留名（amazon-bedrock 等）作为已有 BuiltIn 路由是合法的，只有用户
+  // 新建/修改自定义 id 时才拦（issue #7856 review）。
+  const [codexProviderIdEdited, setCodexProviderIdEdited] = useState(false);
   const [codexCatalogModels, setCodexCatalogModels] = useState<
     CodexCatalogModel[]
   >([]);
@@ -178,6 +182,9 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     }
     const extracted = extractCodexProviderId(codexConfig) || "";
     setCodexProviderId((prev) => (prev === extracted ? prev : extracted));
+    // 回显的值（含已有内置路由如 amazon-bedrock 的选路）不是用户新建的自定义 id：
+    // 保留名校验只对用户输入过的值生效，配置一回显就复位。
+    setCodexProviderIdEdited(false);
   }, [codexConfig]);
 
   // 获取 API Key（从 auth JSON）
@@ -295,6 +302,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     (providerId: string) => {
       const sanitized = providerId.replace(/[\u0000-\u001f\u007f]/g, "");
       setCodexProviderId(sanitized);
+      setCodexProviderIdEdited(true);
 
       isUpdatingCodexProviderIdRef.current = true;
       setCodexConfig((prev) => setCodexProviderIdInConfig(prev, sanitized));
@@ -349,6 +357,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexBaseUrl,
     codexModel,
     codexProviderId,
+    codexProviderIdEdited,
     codexCatalogModels,
     codexAuthError,
     setCodexAuth,

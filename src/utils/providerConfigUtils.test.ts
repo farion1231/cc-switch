@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
+import { parse as parseToml } from "smol-toml";
 import {
   codexApiFormatFromWireApi,
   codexModelProviderIdError,
+  extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   extractCodexProviderId,
+  extractCodexWireApi,
   isCodexAnthropicWireApi,
   isCodexRemoteCompactionEnabled,
+  setCodexBaseUrl,
   setCodexModelName,
   setCodexProviderId,
   setCodexRemoteCompaction,
+  setCodexWireApi,
 } from "./providerConfigUtils";
 
 describe("Codex wire API helpers", () => {
@@ -247,5 +252,52 @@ base_url = "https://example.com/v1"
     expect(codexModelProviderIdError("BenszAPI")).toBeNull();
     expect(codexModelProviderIdError("")).toBeNull();
     expect(codexModelProviderIdError("a\nb")).toBe("control");
+  });
+
+  // 保存链路（setCodexWireApi、Base URL 等）必须和改名 helper 认同一张表：带引号的
+  // 表键找不到时，追加未转义表头会让后端整份拒绝解析（issue #7856 review）。
+  it("reads and writes the same quoted table after an explicit id is set", () => {
+    for (const id of ["My Provider", "中文名", 'A"B']) {
+      const renamed = setCodexProviderId(template, id);
+
+      const wired = setCodexWireApi(renamed, "chat");
+      expect(() => parseToml(wired)).not.toThrow();
+      expect(extractCodexProviderId(wired)).toBe(id);
+      expect(extractCodexWireApi(wired)).toBe("chat");
+      expect(
+        wired
+          .match(/^\[model_providers\..*\]$/gm)
+          ?.filter((header) => header.startsWith("[model_providers.")),
+      ).toHaveLength(1);
+
+      const based = setCodexBaseUrl(wired, "https://moved.example/v1");
+      expect(() => parseToml(based)).not.toThrow();
+      expect(extractCodexBaseUrl(based)).toBe("https://moved.example/v1");
+      expect(extractCodexWireApi(based)).toBe("chat");
+    }
+  });
+
+  // 改名必须整表迁移：http_headers、auth、aws 等子表跟着走，只改父表头会把路由配置
+  // 拆成两个 provider（靠 http_headers 认证的供应商改名后丢失认证头）。
+  it("moves sub-tables together with the renamed provider table", () => {
+    const withHeaders = `${template}
+[model_providers.custom.http_headers]
+Authorization = "Bearer token-x"
+`;
+    const result = setCodexProviderId(withHeaders, "BenszAPI");
+    expect(() => parseToml(result)).not.toThrow();
+    expect(extractCodexProviderId(result)).toBe("BenszAPI");
+    expect(result).toContain("[model_providers.BenszAPI.http_headers]");
+    expect(result).toContain('"Bearer token-x"');
+    expect(result).not.toContain("[model_providers.custom");
+  });
+
+  it("leaves the config untouched when the target id already exists", () => {
+    const conflicting = `${template}
+[model_providers.BenszAPI]
+name = "Other"
+base_url = "https://other.example/v1"
+`;
+    expect(setCodexProviderId(conflicting, "BenszAPI")).toBe(conflicting);
   });
 });

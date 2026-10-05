@@ -127,6 +127,9 @@ interface CodexFormFieldsProps {
 
   // Provider ID（config.toml 的 `model_provider` 与 `[model_providers.<id>]` 表键）
   codexProviderId?: string;
+  // 输入框是否被用户改过：回显的既有选路（含内置保留名如 amazon-bedrock）不当非法
+  // 自定义 id 提示，保留名校验只对用户输入的值生效。
+  providerIdEdited?: boolean;
   onProviderIdChange?: (providerId: string) => void;
 
   // API Format
@@ -474,6 +477,7 @@ export function CodexFormFields({
   codexModel = "",
   onModelChange,
   codexProviderId = "",
+  providerIdEdited = false,
   onProviderIdChange,
   apiFormat,
   onApiFormatChange,
@@ -527,8 +531,11 @@ export function CodexFormFields({
   // api_backend 声明、请求体也不是 Codex 发出的）——提示文案按 appId 分流，
   // 对应词条在 grokBuild.* 下。
   const isGrokBuild = appId === "grokbuild";
-  // 与后端 validate_codex_model_provider_id 对齐：保留名/控制字符当场提示。
-  const providerIdError = codexModelProviderIdError(codexProviderId);
+  // 与后端 validate_codex_model_provider_id 对齐：保留名/控制字符当场提示。只对用户
+  // 输入过的 id 生效——回显的既有选路（如 amazon-bedrock BuiltIn 路由）是合法状态。
+  const providerIdError = providerIdEdited
+    ? codexModelProviderIdError(codexProviderId)
+    : null;
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
