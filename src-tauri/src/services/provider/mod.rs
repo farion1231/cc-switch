@@ -5854,6 +5854,34 @@ impl ProviderService {
     /// - 直连模式：切换式应用只替换客户端文件里的关键字段（不回填），文件和指针在同一个
     ///   操作里提交；累加式应用按各自的规则写入。
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
+        let app = app_type.as_str().to_string();
+        let result = Self::switch_inner(state, app_type, id);
+        match &result {
+            Ok(result) if result.warnings.is_empty() => {
+                log::info!("[SWITCH] {app} 切到 {id} 完成");
+            }
+            Ok(result) => {
+                log::warn!(
+                    "[SWITCH] {app} 切到 {id} 完成，有警告: {:?}",
+                    result.warnings
+                );
+            }
+            // 规则拒绝：什么都没改。
+            Err(error @ AppError::Localized { key, .. })
+                if *key == "switch.official_blocked_by_proxy" =>
+            {
+                log::info!("[SWITCH] {app} 拒绝切到 {id}: {error}");
+            }
+            Err(error) => log::error!("[SWITCH] {app} 切到 {id} 失败: {error}"),
+        }
+        result
+    }
+
+    fn switch_inner(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+    ) -> Result<SwitchResult, AppError> {
         if app_type == AppType::Pi {
             return pi::enable(state, id);
         }
@@ -5897,7 +5925,15 @@ impl ProviderService {
                     "Cannot switch to an official provider in routing mode. Using a proxy with official APIs may cause account bans.",
                 ));
             }
-            log::info!("路由模式：{} 的代理路由切到 {}", app_type.as_str(), id);
+            log::info!(
+                "[SWITCH] {} 代理模式：路由 {} → {}",
+                app_type.as_str(),
+                crate::mode::current::mode_state(&app_type)
+                    .proxy_route
+                    .as_deref()
+                    .unwrap_or("（无）"),
+                id
+            );
             futures::executor::block_on(crate::mode::controller::switch_route_locked(
                 state, &app_type, _provider,
             ))
@@ -5920,6 +5956,23 @@ impl ProviderService {
         let provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        if app_type.is_additive_mode() {
+            log::info!("[SWITCH] {} 写入 {id}（累加式应用）", app_type.as_str());
+        } else {
+            let previous = crate::mode::current::provider_for(
+                &state.db,
+                &app_type,
+                crate::mode::current::Purpose::Direct,
+            )
+            .ok()
+            .flatten();
+            log::info!(
+                "[SWITCH] {} 直连：{} → {id}，写客户端配置",
+                app_type.as_str(),
+                previous.as_deref().unwrap_or("（无）")
+            );
+        }
 
         if matches!(app_type, AppType::Claude) {
             return Self::switch_claude_direct(state, provider, providers);

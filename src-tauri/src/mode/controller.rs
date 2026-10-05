@@ -236,6 +236,24 @@ fn settled_stack(app: &AppType) -> Result<StackState, String> {
     super::state::stack(&DeviceStore::for_device(), app.as_str()).map_err(err)
 }
 
+/// 日志里的模式名。
+fn mode_label(proxy: bool, stack: bool) -> &'static str {
+    match (proxy, stack) {
+        (false, _) => "直连",
+        (true, false) => "路由",
+        (true, true) => "聚合",
+    }
+}
+
+/// 日志里写没写客户端文件。
+fn rewrite_label(rewritten: bool) -> &'static str {
+    if rewritten {
+        "已重写"
+    } else {
+        "没变，未重写"
+    }
+}
+
 /// 发布 Stack 模型的成员（见 [`stack::published_members`]）。
 fn published_members(
     state: &AppState,
@@ -252,7 +270,7 @@ fn commit_state(state: &AppState, app: &AppType, target: &PendingTarget) -> Resu
         .map_err(err)
 }
 
-/// 写代理契约。`target` 的 `contract` 由这里填好。契约没变时不碰客户端文件；接上
+/// 写代理契约。`target` 的 `contract` 由这里填好。契约没变时不碰客户端文件（返回假）；接上
 /// （启动时）一律重写：顺带核对路由供应商还能用（比如托管账号还在），并修正 CC Switch
 /// 没运行期间客户端文件里的漂移。
 ///
@@ -266,7 +284,7 @@ async fn write_proxy(
     live_now: &LiveNow,
     mut target: ModeState,
     next_stack: Option<StackState>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let (proxy_url, codex_base_url) = state.proxy_service.build_proxy_urls().await?;
     let force = op_name == op::ATTACH;
     let stack = match &next_stack {
@@ -279,7 +297,7 @@ async fn write_proxy(
         stack: next_stack.clone(),
         ..PendingTarget::default()
     };
-    match app {
+    let unchanged = match app {
         AppType::Claude => {
             let members = published_members(state, app, &stack, route)?;
             let published = stack::claude_published(&members);
@@ -296,6 +314,7 @@ async fn write_proxy(
                 pending(target),
             )
             .map_err(err)?;
+            unchanged
         }
         AppType::Gemini => {
             let projection = GeminiProjection::proxy_contract(
@@ -313,6 +332,7 @@ async fn write_proxy(
                 pending(target),
             )
             .map_err(err)?;
+            unchanged
         }
         AppType::Codex => {
             let owner = live_now.codex_owner();
@@ -336,6 +356,7 @@ async fn write_proxy(
             } else {
                 codex_direct::run(&state.db, op_name, planned, &prepared, pending).map_err(err)?;
             }
+            unchanged
         }
         AppType::GrokBuild => {
             let base_url = format!("{}/grokbuild/v1", proxy_url.trim_end_matches('/'));
@@ -356,10 +377,11 @@ async fn write_proxy(
                 pending(target),
             )
             .map_err(err)?;
+            unchanged
         }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
-    }
-    Ok(())
+    };
+    Ok(!unchanged)
 }
 
 /// 写回直连投影（直连指针的供应商）。
@@ -553,6 +575,24 @@ pub async fn enter_with_route(
     stack_mode: bool,
     route: Option<&str>,
 ) -> Result<(), String> {
+    let result = try_enter_with_route(state, app, stack_mode, route).await;
+    if let Err(error) = &result {
+        log::error!(
+            "[MODE] {} 进入{}模式失败（路由目标 {}）: {error}",
+            app.as_str(),
+            mode_label(true, stack_mode),
+            route.unwrap_or("沿用上次")
+        );
+    }
+    result
+}
+
+async fn try_enter_with_route(
+    state: &AppState,
+    app: &AppType,
+    stack_mode: bool,
+    route: Option<&str>,
+) -> Result<(), String> {
     require_proxy_app(app)?;
     if stack_mode && !stack::supports_stack(app) {
         return Err(format!(
@@ -618,8 +658,11 @@ async fn enter_locked(
         }
         None => None,
     };
+    // 只给日志用，读不到不拦着进入。
+    let was_stack = settled_stack(app).is_ok_and(|stack| stack.enabled);
+    let stack_on = stack_mode.unwrap_or(was_stack);
     let live_now = LiveNow::of(state, app, &mode)?;
-    write_proxy(
+    let rewritten = write_proxy(
         state,
         app,
         op_name,
@@ -634,6 +677,14 @@ async fn enter_locked(
         next_stack,
     )
     .await?;
+    log::info!(
+        "[MODE] {} {op_name}：{} → {}，路由 {}，客户端配置{}",
+        app.as_str(),
+        mode_label(mode.is_proxy(), was_stack),
+        mode_label(true, stack_on),
+        route.id,
+        rewrite_label(rewritten)
+    );
     state.proxy_service.set_active_target(app, &route).await;
     warn_if_official_route(state, app, &route).await;
     Ok(())
@@ -699,13 +750,44 @@ fn exit_locked(state: &AppState, app: &AppType, keep_mode: bool) -> Result<(), S
         return Ok(());
     }
     if !keep_mode && !mode.is_proxy() && !mode.attached {
+        log::debug!("[MODE] {} 已经是直连，不用退出", app.as_str());
         return Ok(());
     }
-    let live_now = LiveNow::of(state, app, &mode)?;
+    let op_name = if keep_mode { op::DETACH } else { op::EXIT };
+    let was_stack = settled_stack(app).is_ok_and(|stack| stack.enabled);
+    let result = write_direct_for_exit(state, app, op_name, keep_mode, &mode);
+    match &result {
+        Ok(()) => log::info!(
+            "[MODE] {} {op_name}：{} → {}，客户端配置写回直连供应商 {}",
+            app.as_str(),
+            mode_label(mode.is_proxy(), was_stack),
+            if keep_mode {
+                "客户端指回直连，模式保留"
+            } else {
+                "直连"
+            },
+            direct_provider(state, app)
+                .ok()
+                .flatten()
+                .map_or_else(|| "（无）".to_string(), |provider| provider.id)
+        ),
+        Err(error) => log::error!("[MODE] {} {op_name} 失败: {error}", app.as_str()),
+    }
+    result
+}
+
+fn write_direct_for_exit(
+    state: &AppState,
+    app: &AppType,
+    op_name: &str,
+    keep_mode: bool,
+    mode: &ModeState,
+) -> Result<(), String> {
+    let live_now = LiveNow::of(state, app, mode)?;
     write_direct(
         state,
         app,
-        if keep_mode { op::DETACH } else { op::EXIT },
+        op_name,
         &live_now,
         ModeState {
             mode: Some(if keep_mode && mode.is_proxy() {
@@ -714,7 +796,7 @@ fn exit_locked(state: &AppState, app: &AppType, keep_mode: bool) -> Result<(), S
                 Mode::Direct
             }),
             attached: false,
-            proxy_route: mode.proxy_route,
+            proxy_route: mode.proxy_route.clone(),
             contract: None,
         },
     )
@@ -824,7 +906,7 @@ pub async fn switch_route_locked(
         add_default(app, &mut next, target);
     }
     let next_stack = (next != current).then_some(next);
-    if !mode.attached {
+    let rewritten = if !mode.attached {
         commit_state(
             state,
             app,
@@ -834,6 +916,7 @@ pub async fn switch_route_locked(
                 ..PendingTarget::default()
             },
         )?;
+        false
     } else {
         let live_now = LiveNow::of(state, app, &mode)?;
         write_proxy(
@@ -845,7 +928,19 @@ pub async fn switch_route_locked(
             new_state,
             next_stack,
         )
-        .await?;
+        .await?
+    };
+    // 编辑路由那家之后也走这里重算契约：路由没换、文件也没动的不记。
+    if rewritten || !mode.routes_to(&target.id) {
+        log::info!(
+            "[MODE] {} {}：{}模式路由 {} → {}，客户端配置{}",
+            app.as_str(),
+            op::ROUTE,
+            mode_label(true, current.enabled),
+            mode.proxy_route.as_deref().unwrap_or("（无）"),
+            target.id,
+            rewrite_label(rewritten)
+        );
     }
     state.proxy_service.set_active_target(app, target).await;
     Ok(())
@@ -905,6 +1000,7 @@ pub async fn set_route(state: &AppState, app: &AppType, provider_id: &str) -> Re
     if mode.proxy_route.as_deref() == Some(provider_id) {
         return Ok(());
     }
+    let previous = mode.proxy_route.clone();
     commit_state(
         state,
         app,
@@ -915,7 +1011,14 @@ pub async fn set_route(state: &AppState, app: &AppType, provider_id: &str) -> Re
             }),
             ..PendingTarget::default()
         },
-    )
+    )?;
+    log::info!(
+        "[MODE] {} 直连模式下记下路由 {} → {}，下次进入路由 / 聚合模式时用",
+        app.as_str(),
+        previous.as_deref().unwrap_or("（无）"),
+        provider_id
+    );
+    Ok(())
 }
 
 /// 代理模式下不能切到不支持代理的官方供应商（Codex 官方账号走客户端自己的登录，除外）。
@@ -1057,7 +1160,9 @@ async fn set_stack_member_locked(
     match attached_route(state, app)? {
         Some((mode, route)) => {
             let live_now = LiveNow::of(state, app, &mode)?;
-            write_proxy(state, app, op::STACK, &route, &live_now, mode, Some(next)).await
+            write_proxy(state, app, op::STACK, &route, &live_now, mode, Some(next))
+                .await
+                .map(|_| ())
         }
         None => commit_state(
             state,
