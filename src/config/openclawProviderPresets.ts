@@ -3968,8 +3968,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "xiaomimimo/mimo-v2.5-pro" },
-      modelCatalog: { "xiaomimimo/mimo-v2.5-pro": { alias: "MiMo" } },
+      model: { primary: "xiaomimimo/mimo-v2.6-pro" },
+      modelCatalog: { "xiaomimimo/mimo-v2.6-pro": { alias: "MiMo" } },
     },
   },
   {
@@ -4030,9 +4030,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "xiaomi-mimo-token-plan/mimo-v2.5-pro" },
+      model: { primary: "xiaomi-mimo-token-plan/mimo-v2.6-pro" },
       modelCatalog: {
-        "xiaomi-mimo-token-plan/mimo-v2.5-pro": {
+        "xiaomi-mimo-token-plan/mimo-v2.6-pro": {
           alias: "MiMo Token Plan (China)",
         },
         "xiaomi-mimo-token-plan/mimo-v2.5": {
