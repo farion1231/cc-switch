@@ -1817,6 +1817,7 @@
     "reasoningLevelsEmpty": "無等級",
     "defaultReasoningLevelLabel": "預設等級",
     "defaultReasoningLevelPlaceholder": "自動",
+    "defaultReasoningLevelTip": "預設等級：{{level}}",
     "catalogDisplayNamePlaceholder": "例如: DeepSeek V4 Flash",
     "catalogModelPlaceholder": "例如: deepseek-v4-flash",
     "contextWindow": "上下文視窗",

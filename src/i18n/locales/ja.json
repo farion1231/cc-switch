@@ -1824,6 +1824,7 @@
     "reasoningLevelsEmpty": "レベルなし",
     "defaultReasoningLevelLabel": "デフォルトレベル",
     "defaultReasoningLevelPlaceholder": "自動",
+    "defaultReasoningLevelTip": "デフォルトレベル：{{level}}",
     "reasoningModeToggle": "思考モードに対応",
     "reasoningModeHint": "上流の Chat Completions API が思考（thinking）のオン/オフ切り替えに対応している場合に有効化します。Kimi、GLM、Qwen などが通常このタイプに該当します。",
     "reasoningEffortToggle": "思考レベルに対応",
