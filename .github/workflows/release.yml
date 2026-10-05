@@ -4,12 +4,15 @@ on:
   push:
     tags:
       - 'v*'
+  # 手动触发即干跑：完整编译、签名、公证，产物只留在 workflow 里，不建 GitHub Release
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  # 带上事件名：手动干跑也能选 tag，和正式发布同组会把正在跑的发布取消掉
+  group: release-${{ github.event_name }}-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -26,7 +29,6 @@ jobs:
           - os: ubuntu-22.04
           - os: ubuntu-22.04-arm
             arch: arm64
-          - os: macos-14
 
     steps:
       - name: Checkout
@@ -55,11 +57,6 @@ jobs:
         if: runner.os == 'Windows' && matrix.arch == 'arm64'
         shell: pwsh
         run: rustup target add aarch64-pc-windows-msvc
-
-      - name: Add macOS targets
-        if: runner.os == 'macOS'
-        run: |
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - name: Install Linux system deps
         if: runner.os == 'Linux'
@@ -106,7 +103,7 @@ jobs:
         if: runner.os != 'Windows' || matrix.arch != 'arm64'
         id: pnpm-store
         shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm cache
         if: runner.os != 'Windows' || matrix.arch != 'arm64'
@@ -134,63 +131,301 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Prepare Tauri signing key
+        uses: ./.github/actions/prepare-tauri-signing-key
+        with:
+          private-key: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          password: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Build Tauri App (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 只发布 MSI（和便携版 exe），不打用不上的 NSIS 安装包
+          if ($env:WINDOWS_RELEASE_ARCH -eq 'arm64') {
+            pnpm tauri build --target aarch64-pc-windows-msvc --bundles msi
+          } else {
+            pnpm tauri build --bundles msi
+          }
+
+      - name: Build Tauri App (Linux)
+        if: runner.os == 'Linux'
+        run: pnpm tauri build --bundles appimage,deb,rpm
+
+      - name: Prepare Windows Assets
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          # e.g., v3.5.0；手动干跑时是分支名，斜杠会被当成目录，换成 -
+          $VERSION = $env:GITHUB_REF_NAME -replace '/', '-'
+          $isArm64 = $env:WINDOWS_RELEASE_ARCH -eq 'arm64'
+          $targetRoot = if ($isArm64) { 'src-tauri/target/aarch64-pc-windows-msvc/release' } else { 'src-tauri/target/release' }
+          $assetSuffix = if ($isArm64) { '-arm64' } else { '' }
+
+          # 仅打包 MSI 安装器 + .sig（用于 Updater）
+          $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/msi') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $msi) {
+            # 兜底：全局搜索 .msi
+            $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if ($null -ne $msi) {
+            $dest = "CC-Switch-$VERSION-Windows$assetSuffix.msi"
+            Copy-Item $msi.FullName (Join-Path release-assets $dest)
+            Write-Host "Installer copied: $dest"
+            $sigPath = "$($msi.FullName).sig"
+            if (Test-Path $sigPath) {
+              Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
+              Write-Host "Signature copied: $dest.sig"
+            } else {
+              throw "Signature not found for $($msi.Name)"
+            }
+          } else {
+            throw "No Windows MSI installer found ($env:WINDOWS_RELEASE_ARCH)"
+          }
+
+          # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
+          $exeCandidates = if ($isArm64) {
+            @('src-tauri/target/aarch64-pc-windows-msvc/release/cc-switch.exe')
+          } else {
+            @(
+              'src-tauri/target/release/cc-switch.exe',
+              'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
+            )
+          }
+          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($null -ne $exePath) {
+            $portableDir = 'release-assets/CC-Switch-Portable'
+            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+            Copy-Item $exePath $portableDir
+            $portableIniPath = Join-Path $portableDir 'portable.ini'
+            $portableContent = if ($isArm64) {
+              @(
+                '# CC Switch portable ARM64 build marker',
+                'portable=true',
+                'arch=arm64'
+              )
+            } else {
+              @(
+                '# CC Switch portable build marker',
+                'portable=true'
+              )
+            }
+            $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
+            $portableZip = "release-assets/CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
+            Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
+            Remove-Item -Recurse -Force $portableDir
+            Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
+          } elseif ($isArm64) {
+            throw 'Portable ARM64 exe not found'
+          } else {
+            Write-Warning 'Portable exe not found'
+          }
+
+      - name: Prepare Linux Assets
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          # 调试：检查 Secret 是否存在
-          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "❌ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在" >&2
-            echo "请检查 GitHub 仓库 Settings > Secrets and variables > Actions" >&2
+          set -euxo pipefail
+          mkdir -p release-assets
+          # e.g., v3.5.0；手动干跑时是分支名，斜杠会被当成目录，换成 -
+          VERSION="${GITHUB_REF_NAME//\//-}"
+          ARCH="${{ matrix.arch || 'x86_64' }}"
+          # Updater artifact: AppImage（含对应 .sig）
+          APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
+          if [ -z "$APPIMAGE" ]; then
+            echo "❌ No AppImage found under target/release/bundle" >&2
             exit 1
           fi
-          
-          RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
-          # 目标：提供正确的私钥“文件路径”给 Tauri CLI，避免内容解码歧义
-          KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
-          # 情况 1：原始两行文本（第一行以 "untrusted comment:" 开头）
-          if echo "$RAW" | head -n1 | grep -q '^untrusted comment:'; then
-            printf '%s\n' "$RAW" > "$KEY_PATH"
-            echo "✅ 使用原始两行密钥文件格式"
-          else
-            # 情况 2：整体被 base64 包裹（解包后应当是两行）
-            if DECODED=$(printf '%s' "$RAW" | (base64 --decode 2>/dev/null || base64 -D 2>/dev/null)) \
-               && echo "$DECODED" | head -n1 | grep -q '^untrusted comment:'; then
-              printf '%s\n' "$DECODED" > "$KEY_PATH"
-              echo "✅ 成功解码 base64 包裹密钥，已还原为两行文件"
-            else
-              # 情况 3：已是第二行（纯 Base64 一行）→ 构造两行文件
-              if echo "$RAW" | grep -Eq '^[A-Za-z0-9+/=]+$'; then
-                ONE=$(printf '%s' "$RAW" | tr -d '\r\n')
-                printf '%s\n%s\n' "untrusted comment: tauri signing key" "$ONE" > "$KEY_PATH"
-                echo "✅ 使用一行 Base64 私钥，已构造两行文件"
-              else
-                echo "❌ TAURI_SIGNING_PRIVATE_KEY 格式无法识别：既不是两行原文，也不是其 base64，亦非一行 base64" >&2
-                echo "密钥前10个字符: $(echo "$RAW" | head -c 10)..." >&2
-                exit 1
-              fi
-            fi
-          fi
-          # 将“完整两行内容”作为环境变量注入（Tauri 支持传入完整私钥文本或文件路径）
-          # 使用多行写入语法，保持换行以便解析
-          # 将完整两行私钥内容进行 base64 编码，作为单行内容注入环境变量
-          if command -v base64 >/dev/null 2>&1; then
-            KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
-          elif command -v openssl >/dev/null 2>&1; then
-            KEY_B64=$(openssl base64 -A -in "$KEY_PATH")
-          else
-            KEY_B64=$(KEY_PATH="$KEY_PATH" node -e "process.stdout.write(require('fs').readFileSync(process.env.KEY_PATH).toString('base64'))")
-          fi
-          if [ -z "$KEY_B64" ]; then
-            echo "❌ 无法生成私钥 base64 内容" >&2
+          if [ ! -f "$APPIMAGE.sig" ]; then
+            echo "❌ Updater signature not found: $APPIMAGE.sig" >&2
             exit 1
           fi
-          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
-          if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> $GITHUB_ENV
+          NEW_APPIMAGE="CC-Switch-${VERSION}-Linux-${ARCH}.AppImage"
+          cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
+          cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig"
+          echo "AppImage copied: $NEW_APPIMAGE"
+          # 额外上传 .deb（用于手动安装，不参与 Updater）
+          DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
+          if [ -n "$DEB" ]; then
+            cp "$DEB" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+            echo "Deb package copied: CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+          else
+            echo "No .deb found (optional)"
           fi
-          echo "✅ Tauri signing key prepared"
+          # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等，不参与 Updater）
+          RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
+          if [ -n "$RPM" ]; then
+            cp "$RPM" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+            echo "RPM package copied: CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+          else
+            echo "No .rpm found (optional)"
+          fi
+
+      - name: List prepared assets
+        shell: bash
+        run: |
+          ls -la release-assets || true
+
+      - name: Collect Signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Collected signatures (if any alongside artifacts):"
+          ls -la release-assets/*.sig || echo "No signatures found"
+
+      - name: Upload release artifacts to workflow
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-${{ runner.os }}-${{ matrix.arch || runner.arch }}
+          path: release-assets/*
+          if-no-files-found: error
+
+      - name: List generated bundles (debug)
+        if: always()
+        shell: bash
+        run: |
+          echo "Listing bundles in src-tauri/target..."
+          find src-tauri/target -maxdepth 4 -type f -name "*.*" 2>/dev/null || true
+
+  # macOS 两个架构分两台机器同时编译（以前在一台机器上串行），再由 macos-release 合并签名。
+  # 编译不需要任何 secret；挂 release environment 只是为了和其它平台在开头一起批准一次。
+  macos-binary:
+    name: Build macOS binary (${{ matrix.target }})
+    runs-on: macos-14
+    environment: release
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      # rust-toolchain.toml 是编译器版本的唯一来源：直接装它，免得先装 stable 再被 rustup 换掉
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
+
+      - name: Setup pnpm
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          corepack enable
+          corepack install
+          node --version
+          pnpm --version
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # 编译只做一次：编译失败是确定性的，重试没有意义。签名和公证依赖 Apple 的服务，
+      # 在 macos-release 里单独重试，不会再重编。
+      - name: Build Tauri App (${{ matrix.target }})
+        timeout-minutes: 60
+        run: pnpm tauri build --target ${{ matrix.target }} --no-bundle
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-binary-${{ matrix.target }}
+          path: src-tauri/target/${{ matrix.target }}/release/cc-switch
+          if-no-files-found: error
+          retention-days: 1
+
+  # 合并成 universal 二进制后打包、签名、公证。不挂 environment：它依赖的 macos-binary
+  # 已经过了 release 的批准，这里再挂会在半路要求第二次批准。secret 都是仓库级的。
+  macos-release:
+    name: Bundle macOS release
+    runs-on: macos-14
+    needs: macos-binary
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      # rust-toolchain.toml 是编译器版本的唯一来源：直接装它，免得先装 stable 再被 rustup 换掉
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Setup pnpm
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          corepack enable
+          corepack install
+          node --version
+          pnpm --version
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare Tauri signing key
+        uses: ./.github/actions/prepare-tauri-signing-key
+        with:
+          private-key: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          password: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Import Apple signing certificate
-        if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
@@ -231,10 +466,31 @@ jobs:
           # Cleanup certificate file
           rm -f "$CERT_PATH"
 
-      - name: Build Tauri App (macOS)
-        if: runner.os == 'macOS'
+      - name: Download macOS binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: macos-binary-*
+          path: macos-binaries
+
+      # tauri bundle 只读这个 universal 二进制（和 tauri build --target universal-apple-darwin
+      # 的 lipo 结果相同），不需要各架构的 target 目录。
+      - name: Merge universal binary
         shell: bash
-        timeout-minutes: 60
+        run: |
+          set -euo pipefail
+          out=src-tauri/target/universal-apple-darwin/release
+          mkdir -p "$out"
+          lipo -create -output "$out/cc-switch" \
+            macos-binaries/macos-binary-aarch64-apple-darwin/cc-switch \
+            macos-binaries/macos-binary-x86_64-apple-darwin/cc-switch
+          chmod +x "$out/cc-switch"
+          lipo -info "$out/cc-switch"
+
+      # 只打 .app（连同 updater 的 .app.tar.gz 和 .sig）：发布用的 DMG 在下面由 create-dmg 制作，
+      # Tauri 自己的 DMG 从来不上传。失败只重试这一步，不会重编。
+      - name: Bundle, sign and notarize (macOS)
+        shell: bash
+        timeout-minutes: 45
         env:
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -244,55 +500,38 @@ jobs:
           set -euo pipefail
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
-            echo "=== macOS build/notarization attempt ${attempt}/${max_attempts} ==="
-            build_log="$RUNNER_TEMP/tauri-build-macos-${attempt}.log"
-            if pnpm tauri build --target universal-apple-darwin 2>&1 | tee "$build_log"; then
-              echo "✅ macOS build/notarization succeeded"
+            echo "=== macOS bundle/notarization attempt ${attempt}/${max_attempts} ==="
+            bundle_log="$RUNNER_TEMP/tauri-bundle-macos-${attempt}.log"
+            if pnpm tauri bundle --target universal-apple-darwin --bundles app 2>&1 | tee "$bundle_log"; then
+              echo "✅ macOS bundle/notarization succeeded"
               exit 0
             fi
 
             # Apple 拒绝凭据或账号协议（401/403，例如 "A required agreement is missing or has expired"）
-            # 只能人工处理；重试只会把整套编译再跑一遍。
-            if grep -qE 'HTTP status code: 40[13]' "$build_log"; then
+            # 只能人工处理，重试没有意义。
+            if grep -qE 'HTTP status code: 40[13]' "$bundle_log"; then
               echo "❌ Apple rejected the notarization request (HTTP 401/403); retrying cannot fix this." >&2
               echo "   If it mentions an agreement, the Account Holder must accept it at developer.apple.com, then re-run this job." >&2
               exit 1
             fi
 
             if [ "$attempt" -eq "$max_attempts" ]; then
-              echo "❌ macOS build/notarization failed after ${max_attempts} attempts" >&2
+              echo "❌ macOS bundle/notarization failed after ${max_attempts} attempts" >&2
               exit 1
             fi
 
             sleep_seconds=$((attempt * 60))
-            echo "⚠️ macOS build/notarization failed, retrying in ${sleep_seconds}s..."
+            echo "⚠️ macOS bundle/notarization failed, retrying in ${sleep_seconds}s..."
             sleep "$sleep_seconds"
           done
 
-      - name: Build Tauri App (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:WINDOWS_RELEASE_ARCH -eq 'arm64') {
-            pnpm tauri build --target aarch64-pc-windows-msvc --bundles msi
-          } else {
-            pnpm tauri build
-          }
-
-      - name: Build Tauri App (Linux)
-        if: runner.os == 'Linux'
-        run: pnpm tauri build --bundles appimage,deb,rpm
-
       - name: Prepare macOS Assets
-        if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p release-assets
-          VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
+          # e.g., v3.5.0；手动干跑时是分支名，斜杠会被当成目录，换成 -
+          VERSION="${GITHUB_REF_NAME//\//-}"
 
           # Locate bundle artifacts
           TAR_GZ=""; APP_PATH=""
@@ -366,7 +605,6 @@ jobs:
           echo "✅ Styled DMG created: $NEW_DMG"
 
       - name: Notarize macOS DMG
-        if: runner.os == 'macOS'
         shell: bash
         timeout-minutes: 30
         env:
@@ -408,7 +646,6 @@ jobs:
           done
 
       - name: Verify macOS code signing and notarization
-        if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
@@ -452,133 +689,15 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare Windows Assets
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
-          $VERSION = $env:GITHUB_REF_NAME  # e.g., v3.5.0
-          $isArm64 = $env:WINDOWS_RELEASE_ARCH -eq 'arm64'
-          $targetRoot = if ($isArm64) { 'src-tauri/target/aarch64-pc-windows-msvc/release' } else { 'src-tauri/target/release' }
-          $assetSuffix = if ($isArm64) { '-arm64' } else { '' }
-
-          # 仅打包 MSI 安装器 + .sig（用于 Updater）
-          $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/msi') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -eq $msi) {
-            # 兜底：全局搜索 .msi
-            $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-          if ($null -ne $msi) {
-            $dest = "CC-Switch-$VERSION-Windows$assetSuffix.msi"
-            Copy-Item $msi.FullName (Join-Path release-assets $dest)
-            Write-Host "Installer copied: $dest"
-            $sigPath = "$($msi.FullName).sig"
-            if (Test-Path $sigPath) {
-              Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
-              Write-Host "Signature copied: $dest.sig"
-            } else {
-              throw "Signature not found for $($msi.Name)"
-            }
-          } else {
-            throw "No Windows MSI installer found ($env:WINDOWS_RELEASE_ARCH)"
-          }
-
-          # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
-          $exeCandidates = if ($isArm64) {
-            @('src-tauri/target/aarch64-pc-windows-msvc/release/cc-switch.exe')
-          } else {
-            @(
-              'src-tauri/target/release/cc-switch.exe',
-              'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
-            )
-          }
-          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if ($null -ne $exePath) {
-            $portableDir = 'release-assets/CC-Switch-Portable'
-            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
-            Copy-Item $exePath $portableDir
-            $portableIniPath = Join-Path $portableDir 'portable.ini'
-            $portableContent = if ($isArm64) {
-              @(
-                '# CC Switch portable ARM64 build marker',
-                'portable=true',
-                'arch=arm64'
-              )
-            } else {
-              @(
-                '# CC Switch portable build marker',
-                'portable=true'
-              )
-            }
-            $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
-            $portableZip = "release-assets/CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
-            Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
-            Remove-Item -Recurse -Force $portableDir
-            Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
-          } elseif ($isArm64) {
-            throw 'Portable ARM64 exe not found'
-          } else {
-            Write-Warning 'Portable exe not found'
-          }
-
-      - name: Prepare Linux Assets
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p release-assets
-          VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
-          ARCH="${{ matrix.arch || 'x86_64' }}"
-          # Updater artifact: AppImage（含对应 .sig）
-          APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
-          if [ -z "$APPIMAGE" ]; then
-            echo "❌ No AppImage found under target/release/bundle" >&2
-            exit 1
-          fi
-          if [ ! -f "$APPIMAGE.sig" ]; then
-            echo "❌ Updater signature not found: $APPIMAGE.sig" >&2
-            exit 1
-          fi
-          NEW_APPIMAGE="CC-Switch-${VERSION}-Linux-${ARCH}.AppImage"
-          cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
-          cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig"
-          echo "AppImage copied: $NEW_APPIMAGE"
-          # 额外上传 .deb（用于手动安装，不参与 Updater）
-          DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
-          if [ -n "$DEB" ]; then
-            cp "$DEB" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.deb"
-            echo "Deb package copied: CC-Switch-${VERSION}-Linux-${ARCH}.deb"
-          else
-            echo "No .deb found (optional)"
-          fi
-          # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等，不参与 Updater）
-          RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
-          if [ -n "$RPM" ]; then
-            cp "$RPM" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
-            echo "RPM package copied: CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
-          else
-            echo "No .rpm found (optional)"
-          fi
-
       - name: List prepared assets
         shell: bash
         run: |
           ls -la release-assets || true
 
-      - name: Collect Signatures
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Collected signatures (if any alongside artifacts):"
-          ls -la release-assets/*.sig || echo "No signatures found"
-
       - name: Upload release artifacts to workflow
         uses: actions/upload-artifact@v7
         with:
-          name: release-assets-${{ runner.os }}-${{ matrix.arch || runner.arch }}
+          name: release-assets-macOS
           path: release-assets/*
           if-no-files-found: error
 
@@ -590,7 +709,7 @@ jobs:
           find src-tauri/target -maxdepth 4 -type f -name "*.*" 2>/dev/null || true
 
       - name: Clean up Apple signing keychain
-        if: runner.os == 'macOS' && always()
+        if: always()
         shell: bash
         run: |
           if [ -n "${ORIGINAL_DEFAULT_KEYCHAIN:-}" ]; then
@@ -603,7 +722,10 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-22.04
-    needs: release
+    needs: [release, macos-release]
+    # 只有推 tag 才发布。手动触发时也能选 tag 作为运行版本，单看 ref_type 会把干跑当成正式发布，
+    # 覆盖已发布 release 的正文和安装包
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     permissions:
       contents: write
     steps:
@@ -620,57 +742,8 @@ jobs:
           set -euo pipefail
           ls -la release-assets
 
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: CC Switch ${{ github.ref_name }}
-          prerelease: true
-          body: |
-            ## CC Switch ${{ github.ref_name }}
-
-            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [ccswitch.io](https://ccswitch.io)
-
-            Claude Code 供应商切换工具
-
-            ### 下载
-
-            - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）
-            - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
-            - **Windows (ARM64)**: `CC-Switch-${{ github.ref_name }}-Windows-arm64.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-arm64-Portable.zip`（绿色版）
-            - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
-            - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
-
-            > `.tar.gz` 为 Tauri updater 自动更新专用，无需手动下载。
-
-            ---
-            macOS 版本已通过 Apple 代码签名和公证，可直接安装使用。
-          files: release-assets/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  assemble-latest-json:
-    name: Assemble latest.json
-    runs-on: ubuntu-22.04
-    needs: publish-release
-    permissions:
-      contents: write
-    steps:
-      - name: Prepare GH
-        run: |
-          gh --version || (type -p curl >/dev/null && sudo apt-get update && sudo apt-get install -y gh || true)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Download all release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euxo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          mkdir -p dl
-          # latest.json 只需要签名内容，安装包本身不用下载
-          gh release download "$TAG" --dir dl --pattern '*.sig' --repo "$GITHUB_REPOSITORY"
-          ls -la dl || true
+      # 签名就在刚下载的产物里：latest.json 随安装包一起上传。缺平台时在建 release 之前就失败，
+      # 不会留下一个缺 latest.json 的半成品 release。
       - name: Generate latest.json
         env:
           REPO: ${{ github.repository }}
@@ -687,7 +760,7 @@ jobs:
           linux_x64_url=""; linux_x64_sig=""
           linux_arm64_url=""; linux_arm64_sig=""
           shopt -s nullglob
-          for sig in dl/*.sig; do
+          for sig in release-assets/*.sig; do
             base=${sig%.sig}
             fname=$(basename "$base")
             url="$base_url/$fname"
@@ -758,10 +831,32 @@ jobs:
             echo '}'
           } > "$tmp_json"
           echo "Generated latest.json:" && cat "$tmp_json"
-          mv "$tmp_json" latest.json
-      - name: Upload latest.json to release
+          mv "$tmp_json" release-assets/latest.json
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: CC Switch ${{ github.ref_name }}
+          prerelease: true
+          body: |
+            ## CC Switch ${{ github.ref_name }}
+
+            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [ccswitch.io](https://ccswitch.io)
+
+            Claude Code 供应商切换工具
+
+            ### 下载
+
+            - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）
+            - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
+            - **Windows (ARM64)**: `CC-Switch-${{ github.ref_name }}-Windows-arm64.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-arm64-Portable.zip`（绿色版）
+            - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
+            - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
+
+            > `.tar.gz` 为 Tauri updater 自动更新专用，无需手动下载。
+
+            ---
+            macOS 版本已通过 Apple 代码签名和公证，可直接安装使用。
+          files: release-assets/*
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euxo pipefail
-          gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
