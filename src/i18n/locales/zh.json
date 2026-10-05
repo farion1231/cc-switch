@@ -119,7 +119,6 @@
     "officialModelsBundled": "官方模型列表暂未取到，暂用 Codex 内置列表，可能缺少账号专属模型",
     "officialModelsUnavailable": "聚合的模型暂不可用：读取不到 Codex 模型列表",
     "routeOwnsCatalog": "聚合的模型不会出现在 Codex 里：路由供应商使用自己的模型目录文件（model_catalog_json）",
-    "configOwnsCatalog": "聚合的模型不会出现在 Codex 里：config.toml 的 model_catalog_json 指向了别的模型目录文件",
     "adoptCatalog": "改用 CC Switch 的模型目录",
     "adoptCatalogDone": "已改用 CC Switch 的模型目录，重启 Codex 后生效",
     "adoptCatalogFailed": "改用 CC Switch 的模型目录失败：{{error}}",

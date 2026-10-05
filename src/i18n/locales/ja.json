@@ -119,7 +119,6 @@
     "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
     "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、集約したモデルは現在使用できません",
     "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、集約したモデルは Codex に表示されません",
-    "configOwnsCatalog": "config.toml の model_catalog_json が別のモデルカタログファイルを指しているため、集約したモデルは Codex に表示されません",
     "adoptCatalog": "CC Switch のモデルカタログを使う",
     "adoptCatalogDone": "CC Switch のモデルカタログに切り替えました。Codex を再起動すると反映されます",
     "adoptCatalogFailed": "CC Switch のモデルカタログへの切り替えに失敗しました：{{error}}",

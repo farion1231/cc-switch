@@ -437,8 +437,7 @@ export function SwitchModePanel({
         tone="warning"
         title={t(`provider.${stack.notice}`)}
         actions={
-          stack.notice === "routeOwnsCatalog" ||
-          stack.notice === "configOwnsCatalog" ? (
+          stack.notice === "routeOwnsCatalog" ? (
             <Button
               variant="neutral"
               size="compact"

@@ -328,11 +328,7 @@ async fn write_proxy(
             codex_direct::prepare_official_rows(&state.db, &owner, &spec, &mut prepared)
                 .await
                 .map_err(err)?;
-            let mut planned =
-                codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
-            if op_name == op::CATALOG {
-                planned.release_live_catalog(&codex_direct::read_config_text());
-            }
+            let planned = codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
             let unchanged = !force && live_now.has_contract(&planned.contract.key);
             target.contract = Some(planned.contract.clone());
             let pending = pending(target);
@@ -1097,13 +1093,13 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
 }
 
 /// [`stack_views`] 再加上 Codex 客户端是不是还在用旧的模型列表（要读进程表，放到阻塞线程池
-/// 里）。路由那家自己管理目录、或者用户自己指定了目录时，Stack 模型本来就不发布或不生效，重启
-/// 也看不到，已经有 `notice` 说明，不再查。
+/// 里）。路由那家自己管理目录时，Stack 模型本来就不发布，重启也看不到，已经有 `notice` 说明，
+/// 不再查。
 pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<StackView, String> {
     let mut view = stack_views(state, app)?;
     if matches!(app, AppType::Codex)
         && view.active
-        && !matches!(view.notice, Some("routeOwnsCatalog" | "configOwnsCatalog"))
+        && view.notice != Some("routeOwnsCatalog")
         && codex_publishes_stack_models(state, &settled_stack(app)?)
     {
         view.stale_clients = codex_direct::off_runtime(|| {
@@ -1127,8 +1123,7 @@ fn codex_publishes_stack_models(state: &AppState, stack: &StackState) -> bool {
 }
 
 /// Codex 在 Stack 模式下有要发布的 Stack 模型，客户端却看不到或看不全：路由那家自己管理模型
-/// 目录文件（Stack 模型不发布）；`config.toml` 里用户自己指定了模型目录（生成的目录不生效）；
-/// 或者官方做默认、最近一次写目录时没拿到官方列表。
+/// 目录文件（Stack 模型不发布）；或者官方做默认、最近一次写目录时没拿到官方列表。
 fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static str> {
     let (_, route) = attached_route(state, &AppType::Codex).ok()??;
     let published =
@@ -1138,10 +1133,6 @@ fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static s
     }
     if codex_direct::route_owns_catalog(&route) {
         return Some("routeOwnsCatalog");
-    }
-    // 按客户端里实际生效的指针看：用户直接写进 config.toml 的指针写入时照留。
-    if crate::live::project::codex::live_catalog_is_foreign(&codex_direct::read_config_text()) {
-        return Some("configOwnsCatalog");
     }
     if !codex_direct::is_official(&route) {
         return None;
@@ -1153,11 +1144,11 @@ fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static s
     }
 }
 
-/// Codex Stack 模式下聚合的模型被别的模型目录挡住（`routeOwnsCatalog` / `configOwnsCatalog`，
-/// 用户在提示上点了才调）：去掉路由那家行里和 `config.toml` 里指向别的文件的
-/// `model_catalog_json`，按当前路由重写，改用 CC Switch 生成的目录。返回之后还剩的提示。
+/// Codex Stack 模式下聚合的模型被路由那家自己的模型目录挡住（`routeOwnsCatalog`，用户在提示
+/// 上点了才调）：去掉它行里指向别的文件的 `model_catalog_json`，按当前路由重写，改用 CC Switch
+/// 生成的目录。返回之后还剩的提示。
 ///
-/// 先改行再写客户端：写失败时契约里还记着旧指针，下一次重写按值删掉，不会留下。
+/// 先改行再写客户端：写失败时下一次重写按新的行投影，指针照样清掉。
 pub async fn adopt_codex_stack_catalog(state: &AppState) -> Result<Option<&'static str>, String> {
     let app = AppType::Codex;
     let _guard = lock_settled(state, &app).await.map_err(err)?;
@@ -3132,13 +3123,18 @@ command = "fs-server"
         exit(&state, &AppType::Codex).await.expect("exit");
         assert_eq!(pointer(), None, "{}", codex_text());
 
-        // 用户自己写进 live 的指针不认领、不删，也不被 CC Switch 的指针替换。
+        // 指针是关键字段：手写进 live 的值不保留，有目录时换成 CC Switch 的，没有就删。
         let with_user = format!("model_catalog_json = \"/work/mine.json\"\n{}", codex_text());
         fs::write(codex_config_path(), with_user).unwrap();
         ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
-        assert_eq!(pointer().as_deref(), Some("/work/mine.json"));
+        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        let with_user = codex_text().replace(
+            &format!("model_catalog_json = \"{ours}\""),
+            "model_catalog_json = \"/work/mine.json\"",
+        );
+        fs::write(codex_config_path(), with_user).unwrap();
         ProviderService::switch(&state, AppType::Codex, "c").expect("to c");
-        assert_eq!(pointer().as_deref(), Some("/work/mine.json"));
+        assert_eq!(pointer(), None, "{}", codex_text());
     }
 
     #[tokio::test]
@@ -5921,30 +5917,23 @@ model_provider = "c"
     }
 
     /// 用户直接在 config.toml 里指定的模型目录：写入时照留，生成的目录不生效，同样要提示。
+    /// 手写进 config.toml 的指针挡不住聚合：进代理时按关键字段清掉，加进 Stack 后换上合并目录。
     #[tokio::test]
     #[serial]
-    async fn codex_a_users_own_catalog_pointer_reports_stack_models_unseen() {
+    async fn codex_a_hand_written_catalog_pointer_gives_way_to_the_stack_catalog() {
         let _home = Home::new();
         seed_codex("model_catalog_json = \"/work/global-models.json\"\n", None);
         let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
+        assert!(
+            codex_doc().get("model_catalog_json").is_none(),
+            "{}",
+            codex_text()
+        );
 
         let notice = set_stack_member(&state, &AppType::Codex, "deepseek", true)
             .await
             .expect("stack");
-        assert_eq!(notice, Some("configOwnsCatalog"));
-        assert_eq!(
-            codex_doc()["model_catalog_json"].as_str(),
-            Some("/work/global-models.json")
-        );
-
-        // 用户删掉自己的指针，下一次写入换上 CC Switch 的目录，不再提示。
-        let without =
-            codex_text().replace("model_catalog_json = \"/work/global-models.json\"\n", "");
-        fs::write(codex_config_path(), without).unwrap();
-        let notice = set_stack_member(&state, &AppType::Codex, "zhipu", true)
-            .await
-            .expect("stack zhipu");
         assert_eq!(notice, None);
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
@@ -5999,32 +5988,11 @@ model_provider = "c"
         assert_eq!(stack_views(&state, &AppType::Codex).unwrap().notice, None);
     }
 
-    /// 指针是用户直接写在 config.toml 里的：契约没变也要重写，去掉它、换上合并目录。
+    /// 编辑器里的模型目录指针归这张卡：live 里手写的不显示、不收进行，保存当前卡时清掉；用户在
+    /// 编辑器里写的外来指针存进行、随卡写入；指向 CC Switch 目录的指针不存（由写入方决定）。
     #[tokio::test]
     #[serial]
-    async fn codex_adopting_the_catalog_drops_a_users_own_pointer() {
-        let _home = Home::new();
-        seed_codex("model_catalog_json = \"/work/global-models.json\"\n", None);
-        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
-        enter(&state, &AppType::Codex, true).await.expect("enter");
-        set_codex_member(&state, "deepseek", true).await;
-        let contract = mode(&AppType::Codex).contract.unwrap();
-
-        let notice = adopt_codex_stack_catalog(&state).await.expect("adopt");
-        assert_eq!(notice, None);
-        assert_eq!(
-            codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
-        );
-        assert_eq!(mode(&AppType::Codex).contract.unwrap(), contract);
-        assert_eq!(stack_views(&state, &AppType::Codex).unwrap().notice, None);
-    }
-
-    /// 用户写在 config.toml 里的模型目录指针：编辑器里原样保存不收进行（否则从此成了这一家
-    /// 自己的指针）；用户在编辑器里改了它的值才算这一家的。
-    #[tokio::test]
-    #[serial]
-    async fn codex_editor_leaves_a_users_catalog_pointer_in_live() {
+    async fn codex_editor_catalog_pointer_belongs_to_the_card() {
         let _home = Home::new();
         set_preservation(true);
         seed_codex(
@@ -6064,34 +6032,52 @@ model_provider = "c"
                 .unwrap()
                 .to_string()
         };
+        let with_pointer = |base: &Value, pointer: &str| {
+            let mut edited = base.clone();
+            edited["config"] = json!(format!(
+                "model_catalog_json = {pointer:?}\n{}",
+                base["config"].as_str().unwrap()
+            ));
+            edited
+        };
+        let pointer = || {
+            codex_doc()
+                .get("model_catalog_json")
+                .and_then(|value| value.as_str().map(str::to_string))
+        };
 
-        for id in ["a", "b"] {
-            let (row, base) = open(id);
-            assert!(
-                base["config"].as_str().unwrap().contains("/work/mine.json"),
-                "{base}"
-            );
-            save(row, base.clone(), base).expect("save as is");
-            let config = row_config(id);
-            assert!(!config.contains("model_catalog_json"), "{id}: {config}");
-            assert_eq!(
-                codex_doc()["model_catalog_json"].as_str(),
-                Some("/work/mine.json")
-            );
-        }
+        let (row, base) = open("a");
+        assert!(
+            !base["config"]
+                .as_str()
+                .unwrap()
+                .contains("model_catalog_json"),
+            "{base}"
+        );
+        save(row, base.clone(), base).expect("save as is");
+        assert!(!row_config("a").contains("model_catalog_json"));
+        assert_eq!(pointer(), None, "{}", codex_text());
+
+        // 手写 CC Switch 自己的目录：a 没有模型映射，不生成目录，行里不存、live 里也不写。
+        let ours = crate::codex_config::get_codex_model_catalog_path()
+            .display()
+            .to_string();
+        let (row, base) = open("a");
+        save(row, with_pointer(&base, &ours), base).expect("save ours");
+        assert!(!row_config("a").contains("model_catalog_json"));
+        assert_eq!(pointer(), None, "{}", codex_text());
 
         let (row, base) = open("b");
-        let mut edited = base.clone();
-        edited["config"] = json!(base["config"]
-            .as_str()
-            .unwrap()
-            .replace("/work/mine.json", "/work/b.json"));
-        save(row, edited, base).expect("save changed pointer");
+        save(row, with_pointer(&base, "/work/b.json"), base).expect("save b pointer");
         assert!(
             row_config("b").contains("model_catalog_json = \"/work/b.json\""),
             "{}",
             row_config("b")
         );
+        ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
+        assert_eq!(pointer().as_deref(), Some("/work/b.json"));
+        ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
+        assert_eq!(pointer(), None, "{}", codex_text());
     }
 
     /// 普通保存入口（不带编辑器底）改了 Stack 里那家的模型目录：合并目录跟着重算。

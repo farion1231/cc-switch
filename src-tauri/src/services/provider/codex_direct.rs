@@ -35,9 +35,9 @@ use crate::live::engine::{digest, read_current, DeviceStore, LiveFile};
 use crate::live::patch::toml::{value_text, TomlDocPatch, TomlSteps};
 use crate::live::patch::{Guarded, LivePatch, WholeFile};
 use crate::live::project::codex::{
-    live_foreign_catalog, official_mirror_table, proxy_route_table, requires_openai_auth,
-    row_catalog_pointer, without_row_catalog, CodexConfigPatch, CodexProjection, KnownTable, Route,
-    RouteAuth, RouteWrite, RowInput, MODEL_CATALOG_JSON, ROUTE_ID, WEB_SEARCH_DISABLED,
+    official_mirror_table, proxy_route_table, requires_openai_auth, row_catalog_pointer,
+    without_row_catalog, CodexConfigPatch, CodexProjection, KnownTable, Route, RouteAuth,
+    RouteWrite, RowInput, ROUTE_ID, WEB_SEARCH_DISABLED,
 };
 use crate::mode::contract::CONTRACT_VERSION;
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
@@ -387,15 +387,11 @@ fn exclusive_of(provider: &Provider, projection: &CodexProjection) -> Vec<(Strin
     exclusive
 }
 
-/// live 现在对应的那一家带进来的独有字段和行里指定的模型目录指针：切走时值还相同就删。
+/// live 现在对应的那一家带进来的独有字段：切走时值还相同就删。
 pub(crate) fn outgoing_exclusive(owner: &Owner<'_>) -> Vec<(String, TomlValue)> {
     match owner {
         Owner::Provider(provider) => match project(provider) {
-            Ok(projection) => {
-                let mut fields = exclusive_of(provider, &projection);
-                fields.extend(row_catalog_pointer(&projection.top).cloned());
-                fields
-            }
+            Ok(projection) => exclusive_of(provider, &projection),
             Err(err) => {
                 log::warn!(
                     "无法投影 Codex 供应商 {} 的独有字段，切走时不清理它们: {err}",
@@ -529,16 +525,6 @@ impl Planned {
     /// `config.toml` 的补丁（编辑器显示用：在内存里对 live 做一次切换投影）。
     pub(crate) fn config(&self) -> &CodexConfigPatch {
         &self.config
-    }
-
-    /// 改用 CC Switch 生成的目录：live 里用户自己写的、指向别的文件的指针这次也去掉（写入时
-    /// 值还相同才删）。行里自己指定的指针不在这里，由调用方先从行里去掉。
-    pub(crate) fn release_live_catalog(&mut self, config_text: &str) {
-        if let Some(pointer) = live_foreign_catalog(config_text) {
-            self.config
-                .outgoing
-                .push((MODEL_CATALOG_JSON.to_string(), pointer));
-        }
     }
 }
 
@@ -873,7 +859,6 @@ fn contract_of(
         exclusive: config
             .exclusive
             .iter()
-            .chain(row_catalog_pointer(&config.top))
             .map(|(key, value)| (key.clone(), Value::String(value_text(value))))
             .collect(),
     }

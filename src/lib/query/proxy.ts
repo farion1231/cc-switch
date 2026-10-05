@@ -152,7 +152,7 @@ export function useSetProxyStackMember() {
 }
 
 /**
- * Codex 聚合的模型被别的模型目录挡住（routeOwnsCatalog / configOwnsCatalog）时，改用 CC Switch
+ * Codex 聚合的模型被路由供应商自己的模型目录挡住（routeOwnsCatalog）时，改用 CC Switch
  * 生成的目录。客户端只在启动时读模型目录，成功后提示重启；还剩别的提示照样弹出。
  */
 export function useAdoptCodexStackCatalog() {

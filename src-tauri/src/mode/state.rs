@@ -62,8 +62,8 @@ pub struct Contract {
     pub version: u32,
     /// 契约内容的摘要：切换路由时摘要相同，客户端文件就不用动。
     pub key: String,
-    /// 契约写进客户端的独有字段（Codex 还有路由行里指定的模型目录指针）。退出代理时按它
-    /// 删除（值相同才删）：路由供应商的行之后可能被编辑过，不能到时再按行重新计算。
+    /// 契约写进客户端的独有字段。退出代理时按它删除（值相同才删）：路由供应商的行之后可能
+    /// 被编辑过，不能到时再按行重新计算。
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub exclusive: Map<String, Value>,
 }
