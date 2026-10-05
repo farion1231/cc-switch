@@ -311,6 +311,7 @@ export function QuotaLines({
         className={className}
         title={title}
         icon={icon}
+        showReset={showReset}
         resetSlot={resetSlot}
         refreshProps={refreshProps}
       />
@@ -351,12 +352,14 @@ interface RefreshProps {
  * 有一段能点开明细时（「每周 64% · 重置 3 次 ⌄」）：那一段单独做成下拉，其余照旧点了重查。
  * 按钮里不能再套按钮，所以整列拆成几块：第一块刷新是真按钮（键盘、读屏都认它），
  * 后面的刷新块只接鼠标点击，下拉段自己是按钮。
+ * 下拉段独占一行且留了倒计时格时，⌄ 放进那一格，和上一行的 ⏱ 竖着对齐。
  */
 function SplitQuotaColumn({
   rows,
   className,
   title,
   icon,
+  showReset,
   resetSlot,
   refreshProps,
 }: {
@@ -364,6 +367,7 @@ function SplitQuotaColumn({
   className: string;
   title: string;
   icon: ReactNode;
+  showReset: boolean;
   resetSlot: (row: QuotaLine[]) => ReactNode;
   refreshProps: RefreshProps;
 }) {
@@ -379,6 +383,8 @@ function SplitQuotaColumn({
     <div className={className}>
       {rows.map((row, rowIndex) => {
         const merged = row.length > 1;
+        // 这一行只有下拉段：⌄ 占倒计时格的图标位，余下的宽度留空
+        const chevronInSlot = showReset && !merged && Boolean(row[0].breakdown);
         // 连续的普通段并成一块刷新区，带明细的段单独成块
         const parts: { breakdown: boolean; lines: QuotaLine[] }[] = [];
         for (const line of row) {
@@ -424,8 +430,16 @@ function SplitQuotaColumn({
                       )}
                     >
                       {merged ? line.short : line.text}
-                      <QuotaBreakdownChevron />
+                      {chevronInSlot ? (
+                        <span className="ms-1 flex">
+                          <QuotaBreakdownChevron />
+                        </span>
+                      ) : (
+                        <QuotaBreakdownChevron />
+                      )}
                     </QuotaBreakdownRow>
+                    {/* 和上一行的「ms-1.5 + 52 宽倒计时格」等宽：gap-0.5 + ms-1 + ⌄ 12 + 40 */}
+                    {chevronInSlot && <span className="w-10" />}
                   </span>
                 );
               }
@@ -461,7 +475,7 @@ function SplitQuotaColumn({
                 </span>
               );
             })}
-            {resetSlot(row)}
+            {!chevronInSlot && resetSlot(row)}
           </span>
         );
       })}
