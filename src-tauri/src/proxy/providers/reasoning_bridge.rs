@@ -38,11 +38,30 @@ pub(crate) fn encode_openai_reasoning_item(item: &Value) -> Option<String> {
     ))
 }
 
+/// Fields of a Responses `reasoning` item that the input schema accepts.
+///
+/// The envelope seals the complete backend output item, but the backend can
+/// add output fields at any time (it started emitting `status: "completed"`
+/// on reasoning items on 2026-10-03). Replaying unknown fields verbatim makes
+/// the official backend reject the request with
+/// `Unknown parameter: 'input[N].status'`, so replay keeps only this
+/// whitelist and self-heals envelopes sealed before such a change.
+const REPLAYABLE_REASONING_ITEM_FIELDS: &[&str] = &["type", "id", "summary", "encrypted_content"];
+
 pub(crate) fn decode_openai_reasoning_item(encoded: &str) -> Option<Value> {
     let payload = encoded.strip_prefix(OPENAI_REASONING_ITEM_PREFIX)?;
     let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
     let item: Value = serde_json::from_slice(&bytes).ok()?;
-    (item.get("type").and_then(Value::as_str) == Some("reasoning")).then_some(item)
+    if item.get("type").and_then(Value::as_str) != Some("reasoning") {
+        return None;
+    }
+    let mut sanitized = serde_json::Map::new();
+    for field in REPLAYABLE_REASONING_ITEM_FIELDS {
+        if let Some(value) = item.get(*field) {
+            sanitized.insert((*field).to_string(), value.clone());
+        }
+    }
+    Some(Value::Object(sanitized))
 }
 
 pub(crate) fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option<Value> {

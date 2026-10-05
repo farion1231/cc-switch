@@ -4621,6 +4621,96 @@ mod tests {
     }
 
     #[test]
+    fn test_replayed_reasoning_envelope_drops_backend_added_fields() {
+        // Since 2026-10-03 the official backend adds `status` to reasoning
+        // output items. The whole item is sealed into the thinking signature,
+        // and replaying it verbatim gets rejected with
+        // `Unknown parameter: 'input[N].status'`.
+        let poisoned = json!({
+            "type": "reasoning",
+            "id": "rs_7875",
+            "summary": [{"type": "summary_text", "text": "Need a tool."}],
+            "encrypted_content": "opaque-ciphertext",
+            "status": "completed"
+        });
+        let response = json!({
+            "id": "resp_7875",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [poisoned],
+            "usage": {"input_tokens": 10, "output_tokens": 2}
+        });
+
+        let anthropic = responses_to_anthropic(response).unwrap();
+        let thinking = anthropic["content"][0].clone();
+        assert_eq!(thinking["type"], "thinking");
+
+        let replay = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6",
+                "messages": [{"role": "assistant", "content": [
+                    thinking,
+                    {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {}}
+                ]}]
+            }),
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+
+        let replayed = &replay["input"][0];
+        assert_eq!(replayed["type"], "reasoning");
+        assert!(
+            replayed.get("status").is_none(),
+            "backend-added `status` leaked into replay input: {replayed}"
+        );
+        assert_eq!(replayed["id"], "rs_7875");
+        assert_eq!(replayed["encrypted_content"], "opaque-ciphertext");
+        assert_eq!(
+            replayed["summary"],
+            json!([{"type": "summary_text", "text": "Need a tool."}])
+        );
+    }
+
+    #[test]
+    fn test_replayed_redacted_reasoning_envelope_drops_backend_added_fields() {
+        let poisoned = json!({
+            "type": "reasoning",
+            "id": "rs_7876",
+            "summary": [],
+            "encrypted_content": "opaque-ciphertext",
+            "status": "completed"
+        });
+        let block = anthropic_block_from_openai_reasoning_item(&poisoned).unwrap();
+        assert_eq!(block["type"], "redacted_thinking");
+
+        let replay = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6",
+                "messages": [{"role": "assistant", "content": [
+                    block,
+                    {"type": "tool_use", "id": "call_1", "name": "lookup", "input": {}}
+                ]}]
+            }),
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+
+        let replayed = &replay["input"][0];
+        assert_eq!(replayed["type"], "reasoning");
+        assert!(
+            replayed.get("status").is_none(),
+            "backend-added `status` leaked into replay input: {replayed}"
+        );
+        assert_eq!(replayed["id"], "rs_7876");
+        assert_eq!(replayed["encrypted_content"], "opaque-ciphertext");
+        assert_eq!(replayed["summary"], json!([]));
+    }
+
+    #[test]
     fn test_reasoning_only_assistant_turn_is_not_replayed() {
         let item = json!({
             "type": "reasoning",
