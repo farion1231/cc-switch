@@ -5,10 +5,13 @@
 //! 「要不要把非标准字段（例如占位 `reasoning_content`）塞进请求体」属于 provider 级决策，
 //! 必须由上层判定后才调用这里的写入助手——
 //! 见 `transform_codex_chat::should_inject_tool_call_reasoning_placeholder`
-//! 与 `claude::should_preserve_reasoning_content_for_openai_chat`。
+//! 与 `claude::reasoning_content_policy_for_openai_chat`。
 //! 背景：严格 OpenAI 兼容的聚合 / 托管网关会把 `reasoning_content` 当非法参数拒收
 //! （issue #7608：OpenCode-Go + mimo-v2.6-flash → `400 Invalid request parameters`）。
 //! 新增写入调用点前，请先确认上层已做平台判定。
+//!
+//! 注意「占位」与「真实推理」是**两个独立决策**：网关只禁占位注入，真实 reasoning 仍照常
+//! 回放（见 `transform::ReasoningContentPolicy`）。
 
 use serde_json::{json, Map, Value};
 

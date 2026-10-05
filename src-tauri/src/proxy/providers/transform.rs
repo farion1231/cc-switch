@@ -154,17 +154,69 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
 /// 消费者），但保留其转换逻辑与下方测试套件，供代理转换路径复用 / 未来接线。
 #[allow(dead_code)]
 pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
-    anthropic_to_openai_with_reasoning_content(body, false)
+    anthropic_to_openai_with_reasoning_content(body, ReasoningContentPolicy::NONE)
+}
+
+/// `reasoning_content` 的回传策略。
+///
+/// 「回放assistant 历史里**真实存在**的 thinking」与「为缺失 / 不可恢复的推理补一个
+/// **虚构占位**」是两个必须独立决策的行为，不能共用一个 bool：
+///
+/// - 聚合 / 托管网关（OpenRouter / SiliconFlow / ModelScope / OpenCode Zen 等）严格校验
+///   未知字段，把 CC Switch 补的占位 `reasoning_content` 当非法参数拒收→
+///   `400 Invalid request parameters`（issue #7608），因此必须关掉占位注入；
+/// - 但同一份请求里由 Claude 真实产出、并经响应侧（`openai_to_anthropic` /
+///   流式 `thinking` 回传）回灌进历史的 thinking 是跨轮推理上下文的一部分。丢掉它会
+///   在工具续轮里静默切断推理往返——工具调用照发，配套推理却消失。
+///
+/// 故网关场景取 [`ReasoningContentPolicy::GATEWAY`]：只禁占位、继续回放真实推理。
+/// 这与 Codex Responses→Chat 路径的语义对称：`should_inject_tool_call_reasoning_placeholder`
+/// 只门控末端的占位回填，真实 reasoning 始终经 `attach_reasoning_content_field` 附挂。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ReasoningContentPolicy {
+    /// 把 assistant 历史中的真实 thinking 块回放为 `reasoning_content`。
+    pub(crate) replay_real_reasoning: bool,
+    /// 真实推理缺失或不可恢复（`redacted_thinking` / 完全没有）时补虚构占位。
+    pub(crate) inject_placeholder: bool,
+}
+
+impl ReasoningContentPolicy {
+    /// 直连 DeepSeek / MiMo 等明确需要 `reasoning_content` 的厂商：回放 + 补占位。
+    pub(crate) const VENDOR: Self = Self {
+        replay_real_reasoning: true,
+        inject_placeholder: true,
+    };
+    /// 通用 OpenAI-compatible 路径：两者都不做，不向严格后端发送非标准字段。
+    pub(crate) const NONE: Self = Self {
+        replay_real_reasoning: false,
+        inject_placeholder: false,
+    };
+    /// 聚合 / 托管网关：回放真实推理，但不补占位（issue #7608）。
+    pub(crate) const GATEWAY: Self = Self {
+        replay_real_reasoning: true,
+        inject_placeholder: false,
+    };
+}
+
+impl From<bool> for ReasoningContentPolicy {
+    /// 兼容旧的单一bool 语义：`true` → 直连厂商（回放 + 补占位），`false` → 都不做。
+    fn from(preserve_reasoning_content: bool) -> Self {
+        if preserve_reasoning_content {
+            Self::VENDOR
+        } else {
+            Self::NONE
+        }
+    }
 }
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
 ///
-/// `preserve_reasoning_content` 仅用于明确需要 DeepSeek/MiMo
-/// `reasoning_content` 兼容字段的 provider。默认转换保持通用 OpenAI-compatible
-/// 请求体，避免向严格后端发送未知字段。
-pub fn anthropic_to_openai_with_reasoning_content(
+/// `reasoning_content_policy` 决定 `reasoning_content` 的回放与占位注入，
+/// 见 [`ReasoningContentPolicy`]。默认转换保持通用 OpenAI-compatible 请求体，
+/// 避免向严格后端发送未知字段。
+pub(crate) fn anthropic_to_openai_with_reasoning_content(
     body: Value,
-    preserve_reasoning_content: bool,
+    reasoning_content_policy: ReasoningContentPolicy,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
@@ -205,7 +257,7 @@ pub fn anthropic_to_openai_with_reasoning_content(
         for msg in msgs {
             let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
             let content = msg.get("content");
-            let converted = convert_message_to_openai(role, content, preserve_reasoning_content)?;
+            let converted = convert_message_to_openai(role, content, reasoning_content_policy)?;
             messages.extend(converted);
         }
     }
@@ -342,7 +394,7 @@ fn map_tool_choice_to_chat(tool_choice: &Value) -> Value {
 fn convert_message_to_openai(
     role: &str,
     content: Option<&Value>,
-    preserve_reasoning_content: bool,
+    reasoning_content_policy: ReasoningContentPolicy,
 ) -> Result<Vec<Value>, ProxyError> {
     let mut result = Vec::new();
 
@@ -436,12 +488,13 @@ fn convert_message_to_openai(
                         }
                     }
                 }
-                "redacted_thinking" if preserve_reasoning_content => {
+                "redacted_thinking" if reasoning_content_policy.inject_placeholder => {
                     // Claude Code encrypts historical thinking into redacted_thinking blocks.
                     // MiMo/DeepSeek require non-empty reasoning_content on assistant tool-call
                     // messages, so inject a minimal placeholder when the real content is
-                    // unavailable. Skip when preserve_reasoning_content is off (generic
-                    // OpenAI-compatible path).
+                    // unavailable. Gated on inject_placeholder alone: the ciphertext is
+                    // unrecoverable, so replaying "real" reasoning is impossible here and this
+                    // is purely a placeholder (issue #7608 gateways must skip it).
                     reasoning_parts.push("[redacted thinking]".to_string());
                 }
                 _ => {}
@@ -476,13 +529,19 @@ fn convert_message_to_openai(
                 msg["tool_calls"] = json!(tool_calls);
             }
 
-            if preserve_reasoning_content && role == "assistant" && !tool_calls.is_empty() {
-                let reasoning_content = if reasoning_parts.is_empty() {
-                    "tool call".to_string()
-                } else {
-                    reasoning_parts.join("\n")
-                };
-                msg["reasoning_content"] = json!(reasoning_content);
+            // `reasoning_content` 回放：真实 thinking 与虚构占位是两个独立决策。
+            //  1) 有真实 thinking → 回放（replay_real_reasoning）。聚合网关同样需要：
+            //     这是上一轮真实产出的推理，丢掉会静默切断工具续轮的推理往返。
+            //  2) 没有真实 thinking → 仅在允许补占位时注入 "tool call"
+            //     （inject_placeholder）。严格网关会把该字段判非法参数（issue #7608）。
+            if role == "assistant" && !tool_calls.is_empty() {
+                if !reasoning_parts.is_empty() {
+                    if reasoning_content_policy.replay_real_reasoning {
+                        msg["reasoning_content"] = json!(reasoning_parts.join("\n"));
+                    }
+                } else if reasoning_content_policy.inject_placeholder {
+                    msg["reasoning_content"] = json!("tool call");
+                }
             }
 
             result.push(msg);
@@ -1081,7 +1140,9 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let result =
+            anthropic_to_openai_with_reasoning_content(input, ReasoningContentPolicy::VENDOR)
+                .unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
         assert_eq!(msg["reasoning_content"], "I should call the tool.");
@@ -1102,7 +1163,9 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let result =
+            anthropic_to_openai_with_reasoning_content(input, ReasoningContentPolicy::VENDOR)
+                .unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
         assert_eq!(msg["reasoning_content"], "tool call");
@@ -1125,7 +1188,9 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
+        let result =
+            anthropic_to_openai_with_reasoning_content(input, ReasoningContentPolicy::NONE)
+                .unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 3);
         // 带 description 的工具原样保留
@@ -1153,7 +1218,9 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let result =
+            anthropic_to_openai_with_reasoning_content(input, ReasoningContentPolicy::VENDOR)
+                .unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["reasoning_content"], "[redacted thinking]");
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
@@ -1195,6 +1262,146 @@ mod tests {
 
         let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    }
+
+    /// 聚合网关（issue #7608）：有真实 thinking 时必须**回放**，不能因禁占位而一并丢弃。
+    #[test]
+    fn gateway_policy_replays_real_reasoning_but_skips_placeholder() {
+        let with_real_thinking = json!({
+            "model": "mimo-v2.6-flash",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+        let msg = &anthropic_to_openai_with_reasoning_content(
+            with_real_thinking,
+            ReasoningContentPolicy::GATEWAY,
+        )
+        .unwrap()["messages"][0];
+        assert_eq!(
+            msg["reasoning_content"], "I should call the tool.",
+            "gateway must replay genuine thinking, otherwise tool continuation loses its reasoning"
+        );
+        assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+
+        // 裸 tool_use（无真实推理）→ 不补占位，避免网关 400。
+        let bare_tool_use = json!({
+            "model": "mimo-v2.6-flash",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+        let msg = &anthropic_to_openai_with_reasoning_content(
+            bare_tool_use,
+            ReasoningContentPolicy::GATEWAY,
+        )
+        .unwrap()["messages"][0];
+        assert!(
+            msg.get("reasoning_content").is_none(),
+            "gateway must not receive an invented placeholder"
+        );
+        assert!(msg.get("tool_calls").is_some());
+    }
+
+    /// `redacted_thinking` 的密文不可恢复，属于纯占位：网关必须跳过。
+    #[test]
+    fn gateway_policy_skips_redacted_thinking_placeholder() {
+        let input = json!({
+            "model": "mimo-v2.6-flash",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "redacted_thinking", "data": "opaque"},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let msg =
+            &anthropic_to_openai_with_reasoning_content(input, ReasoningContentPolicy::GATEWAY)
+                .unwrap()["messages"][0];
+        assert!(msg.get("reasoning_content").is_none());
+        assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    /// 直连厂商对照组：真实推理回放 + 占位注入都保持既有行为。
+    #[test]
+    fn vendor_policy_still_replays_and_injects_placeholder() {
+        let real = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "real thought"},
+                    {"type": "tool_use", "id": "call_1", "name": "t", "input": {}}
+                ]
+            }]
+        });
+        assert_eq!(
+            anthropic_to_openai_with_reasoning_content(real, ReasoningContentPolicy::VENDOR)
+                .unwrap()["messages"][0]["reasoning_content"],
+            "real thought"
+        );
+
+        let bare = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_1", "name": "t", "input": {}}
+                ]
+            }]
+        });
+        assert_eq!(
+            anthropic_to_openai_with_reasoning_content(bare, ReasoningContentPolicy::VENDOR)
+                .unwrap()["messages"][0]["reasoning_content"],
+            "tool call"
+        );
+    }
+
+    /// 通用 OpenAI-compatible 路径：真实推理与占位都不发。
+    #[test]
+    fn none_policy_emits_no_reasoning_content() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "real thought"},
+                    {"type": "tool_use", "id": "call_1", "name": "t", "input": {}}
+                ]
+            }]
+        });
+        let msg = &anthropic_to_openai_with_reasoning_content(input, ReasoningContentPolicy::NONE)
+            .unwrap()["messages"][0];
+        assert!(msg.get("reasoning_content").is_none());
+        assert!(msg.get("tool_calls").is_some());
+    }
+
+    /// 旧 bool 语义映射保持兼容：`true` = 直连厂商，`false` = 全关。
+    #[test]
+    fn policy_from_bool_preserves_legacy_semantics() {
+        assert_eq!(
+            ReasoningContentPolicy::from(true),
+            ReasoningContentPolicy::VENDOR
+        );
+        assert_eq!(
+            ReasoningContentPolicy::from(false),
+            ReasoningContentPolicy::NONE
+        );
     }
 
     #[test]
@@ -1564,7 +1771,11 @@ mod tests {
                 "content": anthropic_response["content"].clone()
             }]
         });
-        let replayed = anthropic_to_openai_with_reasoning_content(follow_up_request, true).unwrap();
+        let replayed = anthropic_to_openai_with_reasoning_content(
+            follow_up_request,
+            ReasoningContentPolicy::VENDOR,
+        )
+        .unwrap();
         let msg = &replayed["messages"][0];
 
         assert_eq!(
