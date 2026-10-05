@@ -960,6 +960,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_reads_timestamp_in_insertion_order() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let (path, conn) = hermes_db(dir.path());
         // Clock went backwards between the two rows: id order still wins.
@@ -980,6 +983,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_renders_tool_calls() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let (_path, conn) = hermes_db(dir.path());
         conn.execute(
@@ -1004,6 +1010,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_keeps_compacted_history_and_hides_rewound_rows() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let (_path, conn) = hermes_db(dir.path());
         insert_message(&conn, "s1", "user", "first question", 1.0);
@@ -1049,6 +1058,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_skips_model_only_rows() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let (_path, conn) = hermes_db(dir.path());
         insert_message(&conn, "s1", "user", "part one", 1.0);
@@ -1066,6 +1078,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_decodes_structured_content() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let (_path, conn) = hermes_db(dir.path());
         insert_message(
@@ -1082,6 +1097,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_reads_stores_without_newer_columns() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let conn = Connection::open(dir.path().join("state.db")).unwrap();
         conn.execute_batch(
@@ -1098,6 +1116,9 @@ mod tests {
 
     #[test]
     fn scan_sessions_sqlite_uses_first_user_message_for_missing_title_and_last_for_summary() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let (path, conn) = hermes_db(dir.path());
         conn.execute_batch(
@@ -1141,6 +1162,9 @@ mod tests {
 
     #[test]
     fn scan_sessions_sqlite_summary_is_the_last_user_or_assistant_message() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let (path, conn) = hermes_db(dir.path());
         conn.execute_batch(
@@ -1166,6 +1190,9 @@ mod tests {
 
     #[test]
     fn first_user_messages_is_scoped_to_listed_sessions() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let (_path, conn) = hermes_db(dir.path());
         for i in 0..=SQLITE_SCAN_LIMIT {
@@ -1188,6 +1215,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_pairs_tool_calls_with_results() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let (_path, conn) = hermes_db(dir.path());
         conn.execute_batch("ALTER TABLE messages ADD COLUMN reasoning TEXT;")

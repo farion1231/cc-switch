@@ -1366,6 +1366,9 @@ base_url = "https://aihubmix.example/v1"
 
     #[test]
     fn simulates_local_codex_provider_bucket_migration_end_to_end() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         let backup_root = dir.path().join("backup");
@@ -1626,6 +1629,9 @@ base_url = "https://proxy.example/v1"
 
     #[test]
     fn simulates_official_history_unify_migration_end_to_end() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         let backup_root = dir.path().join("backup");
@@ -1712,6 +1718,9 @@ base_url = "https://proxy.example/v1"
 
     #[test]
     fn restores_only_ledgered_official_sessions_from_backups() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         let ledger_parent = dir.path().join("ledger");
@@ -2016,6 +2025,9 @@ base_url = "https://proxy.example/v1"
 
     #[test]
     fn does_not_update_unknown_state_db_history_without_trusted_source_id() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
@@ -2058,6 +2070,9 @@ base_url = "https://proxy.example/v1"
 
     #[test]
     fn updates_codex_state_db_thread_provider_ids() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");

@@ -843,6 +843,9 @@ mod tests {
     /// Hermes：推理全文与 tool_calls 参数按白名单列回取，仍限定本会话的行
     #[test]
     fn hermes_sqlite_refs_cover_reasoning_and_tool_calls() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         use super::super::model::SessionBlock;
         use super::super::providers::hermes;
 
@@ -1132,6 +1135,9 @@ mod tests {
 
     #[test]
     fn sqlite_ref_is_scoped_to_whitelist_and_session() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().unwrap();
         let db = dir.path().join("opencode.db");
         let conn = Connection::open(&db).unwrap();

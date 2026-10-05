@@ -2240,6 +2240,9 @@ mod tests {
 
     #[test]
     fn load_thread_titles_from_state_db_trims_and_filters_titles() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join(CODEX_STATE_DB_FILENAME);
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -2277,6 +2280,9 @@ mod tests {
 
     #[test]
     fn load_thread_titles_from_state_db_keeps_title_when_first_user_message_null() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join(CODEX_STATE_DB_FILENAME);
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -2333,6 +2339,9 @@ mod tests {
 
     #[test]
     fn load_thread_titles_prefers_state_db_explicit_title_over_session_index() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let index_path = temp.path().join(CODEX_SESSION_INDEX_FILENAME);
         std::fs::write(

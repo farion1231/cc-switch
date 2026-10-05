@@ -1050,6 +1050,9 @@ mod tests {
     #[test]
     #[allow(deprecated)] // set_var/remove_var deprecated since Rust 1.81; safe here under mutex
     fn scan_sessions_sqlite_reads_temp_database() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1101,6 +1104,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_reads_messages_and_parts() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("opencode.db");
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -1164,6 +1170,9 @@ mod tests {
 
     #[test]
     fn delete_session_sqlite_removes_session() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1234,6 +1243,9 @@ mod tests {
 
     #[test]
     fn delete_session_sqlite_rejects_foreign_db_path() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1296,6 +1308,9 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn scan_sessions_sqlite_v2_reads_temp_database() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1346,6 +1361,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_v2_reads_messages() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("opencode.db");
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -1396,6 +1414,9 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn delete_session_sqlite_v2_removes_session() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1451,6 +1472,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_v2_orders_by_seq_instead_of_time_created() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("opencode.db");
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -1499,6 +1523,9 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn mixed_v1_v2_database_scans_loads_and_deletes_post_migration_v1_sessions() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");

@@ -1,8 +1,15 @@
 name: WSL2 Nightly
 
-# The full backend suite takes 50+ minutes on a \\wsl.localhost 9P filesystem,
-# so it runs nightly instead of per PR. The per-PR gate in ci.yml only runs the
+# Runs the backend library tests with HOME and TEMP on a \\wsl.localhost (9P)
+# share, nightly rather than per PR. The per-PR gate in ci.yml only runs the
 # atomic-write contract test against the same WSL2-backed environment.
+#
+# Windows cannot lock SQLite files on a 9P share. The app's database lives in
+# the Windows home unless the user explicitly overrides the app config dir, and
+# CC Switch skips Codex state DBs on WSL paths. So here
+# `database::` tests are skipped by name, tests that build SQLite fixtures skip
+# themselves (config::sqlite_unsupported_in_temp_dir), and integration tests,
+# which all create the app database, are not run.
 on:
   schedule:
     - cron: "23 18 * * *" # 02:23 Beijing time
@@ -10,9 +17,9 @@ on:
 
 jobs:
   backend-windows-wsl2-full:
-    name: Backend Full Suite (Windows + WSL2 home)
+    name: Backend Lib Suite (Windows + WSL2 home)
     runs-on: windows-2025
-    timeout-minutes: 90
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -60,7 +67,7 @@ jobs:
 
       - name: Compile backend tests with native temp
         # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path.
-        run: cargo test --tests --manifest-path src-tauri/Cargo.toml --no-run
+        run: cargo test --lib --manifest-path src-tauri/Cargo.toml --no-run
 
       - name: Run Windows-to-WSL2 filesystem contract
         shell: pwsh
@@ -68,7 +75,7 @@ jobs:
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
-          $testList = cargo test --tests --manifest-path src-tauri/Cargo.toml -- --ignored --list
+          $testList = cargo test --lib --manifest-path src-tauri/Cargo.toml -- --ignored --list
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -76,14 +83,14 @@ jobs:
           if ($testList -notcontains $expected) {
             throw "Expected ignored test was not discovered: $testName"
           }
-          cargo test --tests --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
+          cargo test --lib --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
 
-      - name: Run full test suite against WSL2-backed home
+      - name: Run lib tests against WSL2-backed home
         shell: pwsh
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          cargo test --tests --manifest-path src-tauri/Cargo.toml -- --test-threads=1
+          cargo test --lib --manifest-path src-tauri/Cargo.toml -- --test-threads=1 --skip database::

@@ -3240,7 +3240,8 @@ wire_api = "responses"
             let _home = TempHome::new();
             crate::settings::reload_settings().unwrap();
             let runtime = tauri::async_runtime::handle();
-            let state = AppState::new(Arc::new(Database::init().unwrap()));
+            let db = Arc::new(Database::memory().unwrap());
+            let state = AppState::new(db.clone());
             let token = crate::codex_config::test_codex_id_token("same-user");
             runtime.block_on(async {
                 state
@@ -3309,7 +3310,9 @@ wire_api = "responses"
             drop(state);
 
             crate::settings::reload_settings().unwrap();
-            let restarted = AppState::new(Arc::new(Database::init().unwrap()));
+            // 内存库跨重启沿用同一实例；要验证的持久化状态（账号库、live-state、
+            // settings、auth.json）都在磁盘上。
+            let restarted = AppState::new(db);
             assert_eq!(
                 ProviderService::managed_codex_oauth_account_id(
                     &restarted

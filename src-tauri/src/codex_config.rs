@@ -5476,10 +5476,22 @@ model_catalog_json = "cc-switch-model-catalog.json"
         let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
 "#;
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
-        assert_eq!(
-            result, None,
-            "symlink escaping the config dir must be rejected after canonicalization"
-        );
+        let via_link = base_dir
+            .join("link")
+            .join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        if via_link.exists() {
+            assert_eq!(
+                result, None,
+                "symlink escaping the config dir must be rejected after canonicalization"
+            );
+        } else {
+            // 链接穿不过去（Windows 访问 \\wsl.localhost 时不跟随远程符号链接）：
+            // 解析会原样返回词法路径，但经它读不到任何东西，同样不会越界。
+            assert!(
+                result.as_deref().is_none_or(|path| fs::read(path).is_err()),
+                "an untraversable symlink must not lead to the outside file"
+            );
+        }
     }
 
     #[test]

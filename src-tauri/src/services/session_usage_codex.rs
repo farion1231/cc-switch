@@ -2915,6 +2915,19 @@ mod tests {
         Ok(())
     }
 
+    /// 文件系统给不出文件身份时（如 Windows 访问 \\wsl.localhost）父时间线按设计不进缓存，
+    /// 这类环境只校验结果、不校验缓存复用。
+    fn parent_cache_supported(path: &Path) -> bool {
+        let supported = ParentFileStamp::from_file(&fs::File::open(path).unwrap()).is_some();
+        if !supported {
+            eprintln!(
+                "no file identity for {}; skipping parent cache assertions",
+                path.display()
+            );
+        }
+        supported
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_parent_rollout_is_cached_once_across_fork_cutoffs() -> Result<(), AppError> {
@@ -2934,16 +2947,22 @@ mod tests {
         let early = "2026-07-10T03:00:05Z".parse::<DateTime<Utc>>().unwrap();
         let late = "2026-07-10T03:00:15Z".parse::<DateTime<Utc>>().unwrap();
         assert_eq!(parent_signatures_before(&parent, early).unwrap().len(), 1);
-        let first_timeline =
-            Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
+        let first_timeline = parent_cache_supported(&parent).then(|| {
+            Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline)
+        });
         assert_eq!(parent_signatures_before(&parent, late).unwrap().len(), 2);
 
         let caches = replay_caches().lock().unwrap();
-        assert_eq!(caches.parent_timelines.len(), 1);
-        assert!(Arc::ptr_eq(
-            &first_timeline,
-            &caches.parent_timelines[&parent].timeline
-        ));
+        match first_timeline {
+            Some(first_timeline) => {
+                assert_eq!(caches.parent_timelines.len(), 1);
+                assert!(Arc::ptr_eq(
+                    &first_timeline,
+                    &caches.parent_timelines[&parent].timeline
+                ));
+            }
+            None => assert!(caches.parent_timelines.is_empty()),
+        }
         Ok(())
     }
 
@@ -2975,8 +2994,11 @@ mod tests {
         );
         assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 2);
 
-        let caches = replay_caches().lock().unwrap();
-        assert_eq!(caches.parent_timelines.len(), 1);
+        let expected_entries = usize::from(parent_cache_supported(&parent));
+        assert_eq!(
+            replay_caches().lock().unwrap().parent_timelines.len(),
+            expected_entries
+        );
         Ok(())
     }
 
@@ -3000,11 +3022,13 @@ mod tests {
         assert!(first_error.contains("token_count 缺少有效 timestamp"));
         let cached_timeline =
             || Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
-        let first_timeline = cached_timeline();
+        let first_timeline = parent_cache_supported(&parent).then(cached_timeline);
 
         let second_error = parent_signatures_before(&parent, cutoff).unwrap_err();
         assert_eq!(second_error, first_error);
-        assert!(Arc::ptr_eq(&first_timeline, &cached_timeline()));
+        if let Some(first_timeline) = first_timeline {
+            assert!(Arc::ptr_eq(&first_timeline, &cached_timeline()));
+        }
 
         fs::remove_file(&parent).unwrap();
         let open_error = parent_signatures_before(&parent, cutoff).unwrap_err();
@@ -3036,7 +3060,11 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(parent_signatures_before(&parent, after).unwrap().len(), 1);
-        assert_eq!(replay_caches().lock().unwrap().parent_timelines.len(), 1);
+        let expected_entries = usize::from(parent_cache_supported(&parent));
+        assert_eq!(
+            replay_caches().lock().unwrap().parent_timelines.len(),
+            expected_entries
+        );
     }
 
     #[cfg(any(unix, windows))]
@@ -3048,6 +3076,9 @@ mod tests {
         let values = [session_meta(PARENT_ID), token_count(100, 50, 10)];
         write_jsonl(&parent, &values);
         write_jsonl(&replacement, &values);
+        if !parent_cache_supported(&parent) {
+            return;
+        }
         let original_file = fs::File::open(&parent).unwrap();
         let original_metadata = original_file.metadata().unwrap();
         let replacement_file = fs::OpenOptions::new()
