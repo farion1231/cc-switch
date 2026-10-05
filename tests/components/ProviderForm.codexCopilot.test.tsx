@@ -221,8 +221,8 @@ describe("Codex Copilot provider form", () => {
     ]) {
       expect(screen.getByDisplayValue(model)).toBeVisible();
     }
-    expect(screen.getByDisplayValue("1050000")).toBeVisible();
-    expect(screen.getAllByDisplayValue("922000")).toHaveLength(4);
+    expect(screen.getAllByDisplayValue("272000")).toHaveLength(4);
+    expect(screen.getByDisplayValue("200000")).toBeVisible();
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
     expect(screen.getByText("模型映射")).toBeVisible();
   });
@@ -286,7 +286,7 @@ describe("Codex Copilot provider form", () => {
     fireEvent.change(screen.getByDisplayValue("gpt-5.6-sol"), {
       target: { value: "custom-copilot-model" },
     });
-    fireEvent.change(screen.getByDisplayValue("1050000"), {
+    fireEvent.change(screen.getAllByDisplayValue("272000")[0], {
       target: { value: "524288" },
     });
     fireEvent.click(screen.getByRole("button", { name: "save" }));

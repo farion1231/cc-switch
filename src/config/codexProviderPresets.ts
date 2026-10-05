@@ -167,7 +167,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       {
         model: "gpt-6-astra",
         displayName: "GPT-6 Astra",
-        contextWindow: 1050000,
+        contextWindow: 272000,
         reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
         inputModalities: ["text"],
@@ -175,7 +175,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       {
         model: "gpt-5.6-sol",
         displayName: "GPT-5.6 Sol",
-        contextWindow: 922000,
+        contextWindow: 272000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
         inputModalities: ["text"],
@@ -183,7 +183,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       {
         model: "gpt-5.6-terra",
         displayName: "GPT-5.6 Terra",
-        contextWindow: 922000,
+        contextWindow: 272000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
         inputModalities: ["text"],
@@ -191,7 +191,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       {
         model: "gpt-5.6-luna",
         displayName: "GPT-5.6 Luna",
-        contextWindow: 922000,
+        contextWindow: 200000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
         inputModalities: ["text"],
@@ -199,7 +199,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       {
         model: "gpt-5.5",
         displayName: "GPT-5.5",
-        contextWindow: 922000,
+        contextWindow: 272000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
         supportsParallelToolCalls: true,
         inputModalities: ["text"],
