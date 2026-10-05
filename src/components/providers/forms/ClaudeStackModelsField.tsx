@@ -68,6 +68,21 @@ export function normalizeClaudeStackModels(
   return result;
 }
 
+/**
+ * 输入框字符串 → `contextWindow`：对完整输入按数值解析，`8e5`、`800000.0` 都按本意取值。
+ * 只收 1 到 MAX_SAFE_INTEGER 的整数（后端是 u64，超出安全整数 JSON 会写成指数记法）；
+ * 空串、带尾巴的非数值、负数、小数一律清空。不做「删掉非数字字符」的清洗——那会改变
+ * 数值含义（`8e5` 变 85、`800000.0` 变 8000000）。
+ */
+export function parseContextWindowInput(value: string): number | undefined {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) &&
+    parsed >= 1 &&
+    parsed <= Number.MAX_SAFE_INTEGER
+    ? parsed
+    : undefined;
+}
+
 /** 模型映射里的字段：`ANTHROPIC_MODEL` 和各档，按后端 `mode::stack::mapped_models` 的顺序。 */
 const MAPPED_MODEL_FIELDS: Array<[string, string | null]> = [
   ["ANTHROPIC_MODEL", null],
@@ -304,14 +319,13 @@ export function ClaudeStackModelsField({
                   min={1}
                   inputMode="numeric"
                   value={row.contextWindow ?? ""}
-                  onChange={(event) => {
-                    const digits = event.target.value.replace(/[^\d]/g, "");
+                  onChange={(event) =>
                     updateRow(row.rowId, {
-                      contextWindow: digits
-                        ? Number.parseInt(digits, 10)
-                        : undefined,
-                    });
-                  }}
+                      contextWindow: parseContextWindowInput(
+                        event.target.value,
+                      ),
+                    })
+                  }
                   placeholder={t("providerForm.modelContextWindowPlaceholder", {
                     defaultValue: "留空继承全局",
                   })}
