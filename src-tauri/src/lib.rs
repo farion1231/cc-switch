@@ -76,11 +76,8 @@ pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-#[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, sync::Arc};
-#[cfg(target_os = "macos")]
-use tauri::image::Image;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
@@ -330,19 +327,6 @@ async fn update_tray_menu(
         Err(err) => {
             log::error!("创建托盘菜单失败: {err}");
             Ok(false)
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_tray_icon() -> Option<Image<'static>> {
-    const ICON_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
-
-    match Image::from_bytes(ICON_BYTES) {
-        Ok(icon) => Some(icon),
-        Err(err) => {
-            log::warn!("Failed to load macOS tray icon: {err}");
-            None
         }
     }
 }
@@ -1104,44 +1088,50 @@ pub fn run() {
             // 构建托盘
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
-                .on_tray_icon_event(|tray, event| match event {
-                    // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
-                    // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
-                    // refresh_all_usage_in_tray 内部有 10 秒防抖。
-                    TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
-                        let app = tray.app_handle().clone();
-                        tauri::async_runtime::spawn(async move {
-                            crate::tray::refresh_all_usage_in_tray(&app).await;
-                        });
+                .on_tray_icon_event(|tray, event| {
+                    // Windows 的习惯是左键打开应用、右键出菜单（按平台给默认值，不加开关）；
+                    // macOS 左键仍出菜单；Linux（AppIndicator）不派发点击事件，只能出菜单。
+                    #[cfg(target_os = "windows")]
+                    {
+                        if let TrayIconEvent::Click {
+                            button: tauri::tray::MouseButton::Left,
+                            button_state: tauri::tray::MouseButtonState::Up,
+                            ..
+                        } = &event
+                        {
+                            tray::show_main_window(tray.app_handle());
+                        }
                     }
-                    _ => log::debug!("unhandled event {event:?}"),
+                    match &event {
+                        // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
+                        // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
+                        // refresh_all_usage_in_tray 内部有 10 秒防抖。
+                        TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
+                            let app = tray.app_handle().clone();
+                            // 悬停时菜单还没打开：问题区该出现 / 消失了就趁这时重建。
+                            if matches!(event, TrayIconEvent::Enter { .. }) {
+                                tray::refresh_tray_if_problems_changed(&app);
+                            }
+                            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停时拿掉。
+                            if let TrayIconEvent::Click { button, .. } = &event {
+                                tray::note_tray_click(*button);
+                            }
+                            tauri::async_runtime::spawn(async move {
+                                crate::tray::refresh_all_usage_in_tray(&app).await;
+                            });
+                        }
+                        _ => log::debug!("unhandled event {event:?}"),
+                    }
                 })
                 .menu(&menu)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
-                .show_menu_on_left_click(true);
+                .show_menu_on_left_click(cfg!(not(target_os = "windows")));
 
-            // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
-            #[cfg(target_os = "macos")]
-            {
-                if let Some(icon) = macos_tray_icon() {
-                    tray_builder = tray_builder.icon(icon).icon_as_template(true);
-                } else if let Some(icon) = app.default_window_icon() {
-                    log::warn!("Falling back to default window icon for tray");
-                    tray_builder = tray_builder.icon(icon.clone());
-                } else {
-                    log::warn!("Failed to load macOS tray icon for tray");
-                }
-            }
-
-            #[cfg(not(target_os = "macos"))]
-            {
-                if let Some(icon) = app.default_window_icon() {
-                    tray_builder = tray_builder.icon(icon.clone());
-                } else {
-                    log::warn!("Failed to get default window icon for tray");
-                }
+            // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）；出问题时 tray.rs 换成带圆点的那张
+            if let Some((icon, template)) = tray::base_tray_icon(app.handle()) {
+                tray_builder = tray_builder.icon(icon).icon_as_template(template);
             }
 
             let _tray = tray_builder.build(app)?;
@@ -1246,6 +1236,8 @@ pub fn run() {
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
                 crate::mode::controller::startup(&state).await;
+                // 启动流程走完：托盘这时才开始报「路由服务没在运行」，并记下退回直连的应用。
+                crate::tray::mark_startup_settled(&app_handle);
                 // Codex 官方做路由、发布了 Stack 模型时，官方模型列表过期就在后台刷新。
                 crate::services::provider::codex_official_models::start_background_checks(
                     state.inner().clone(),
@@ -1344,9 +1336,15 @@ pub fn run() {
             let settings = crate::settings::get_settings();
             if let Some(window) = app.get_webview_window("main") {
                 // 在窗口首次显示前同步装饰状态，避免前端加载后再切换导致标题栏闪烁
-                // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
+                // Linux：由设置决定（解决 Wayland 下系统窗口按钮不可用的问题）
                 #[cfg(target_os = "linux")]
                 let _ = window.set_decorations(!settings.use_app_window_controls);
+                // Windows：一律去掉系统标题栏，用页头里的应用内窗口按钮；保留阴影和边缘缩放
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window.set_decorations(false);
+                    let _ = window.set_shadow(true);
+                }
                 if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();
@@ -1463,6 +1461,7 @@ pub fn run() {
             commands::delete_mcp_server,
             commands::toggle_mcp_app,
             commands::import_mcp_from_apps,
+            commands::resync_mcp_to_apps,
             // Prompt management
             commands::get_prompts,
             commands::upsert_prompt,
@@ -1470,6 +1469,7 @@ pub fn run() {
             commands::enable_prompt,
             commands::import_prompt_from_file,
             commands::get_current_prompt_file_content,
+            commands::get_prompt_file_location,
             commands::get_pi_prompt_file,
             commands::replace_pi_prompt_file,
             commands::delete_pi_prompt_file,
@@ -1546,8 +1546,11 @@ pub fn run() {
             commands::import_skills_from_apps,
             commands::discover_available_skills,
             commands::check_skill_updates,
+            commands::resync_skills_to_apps,
             commands::update_skill,
             commands::migrate_skill_storage,
+            commands::get_cc_switch_skills_dir,
+            commands::open_cc_switch_skills_dir,
             commands::search_skills_sh,
             // Skill management (legacy API compatibility)
             commands::get_skills,
@@ -1569,6 +1572,11 @@ pub fn run() {
             commands::stop_proxy_with_restore,
             commands::get_proxy_takeover_status,
             commands::set_proxy_takeover_for_app,
+            commands::get_app_mode,
+            commands::set_proxy_route,
+            commands::take_startup_attach_failures,
+            tray::take_tray_navigation,
+            tray::tray_app_page_seen,
             commands::exit_proxy_apps_in_mode,
             commands::get_direct_provider,
             commands::get_proxy_status,
@@ -1602,6 +1610,7 @@ pub fn run() {
             commands::set_auto_failover_enabled,
             // Usage statistics
             commands::get_usage_summary,
+            commands::get_session_usage_summary,
             commands::get_usage_summary_by_app,
             commands::get_usage_trends,
             commands::get_provider_stats,
@@ -1619,18 +1628,25 @@ pub fn run() {
             // Session usage sync
             commands::sync_session_usage,
             commands::rebuild_codex_usage,
+            commands::get_session_usage_last_sync,
             commands::get_usage_data_sources,
             // Stream health check
             commands::stream_check_provider,
             // Session manager
             commands::list_sessions,
             commands::get_session_messages,
+            commands::stream_session_messages,
+            commands::get_session_block_content,
+            commands::get_session_image,
+            commands::reveal_session_path,
+            commands::export_session_markdown,
             commands::delete_session,
             commands::delete_sessions,
             commands::launch_session_terminal,
             commands::get_tool_versions,
             commands::run_tool_lifecycle_action,
             commands::probe_tool_installations,
+            commands::list_tool_installations,
             // Provider terminal
             commands::open_provider_terminal,
             // Universal Provider management
@@ -1757,6 +1773,7 @@ pub fn run() {
                 //     与所有 Tauri 应用默认重启路径的行为一致，无需额外等待
                 ExitRequestAction::DeferToTauriRestart => {
                     log::info!("收到重启请求 (code={code:?})，交由 Tauri 默认重启流程 re-exec");
+                    RESTART_REQUESTED.store(true, Ordering::SeqCst);
                     return;
                 }
                 // 其它 Some(_)：用户主动调用 app.exit() 退出（如托盘菜单"退出"），
@@ -1784,6 +1801,16 @@ pub fn run() {
                 // 使用 std::process::exit 避免再次触发 ExitRequested
                 std::process::exit(0);
             });
+            return;
+        }
+
+        // macOS ⌘Q、Dock「退出」、注销关机走系统 terminate，不发 ExitRequested、只发
+        // RunEvent::Exit，回调一返回进程就结束，只能在这里同步补做退出清理。重启也会走到
+        // 这里，照上面 DeferToTauriRestart 的约定交还 Tauri 默认流程，不清理。
+        if matches!(event, RunEvent::Exit) {
+            if !RESTART_REQUESTED.load(Ordering::SeqCst) {
+                cleanup_before_system_exit(app_handle);
+            }
             return;
         }
 
@@ -1896,6 +1923,30 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         crate::mode::controller::detach_all(state.inner()).await;
         log::info!("退出清理完成：客户端已指回直连，代理已停止");
+    }
+}
+
+/// 系统终止应用时最多等退出清理这么久：停代理服务自带 5 秒超时，指回直连只是写几个文件。
+const SYSTEM_EXIT_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// 系统直接终止应用时（macOS ⌘Q、Dock「退出」、注销关机）的退出清理。
+///
+/// 这条路没有 `ExitRequested` 可以 `prevent_exit()` 再异步清理，只能在主线程上等清理做完。
+/// 清理放到异步运行时的线程上跑、主线程限时等：万一里面有步骤要等主线程，超时后照常退出，
+/// 不会把进程卡住。
+fn cleanup_before_system_exit(app_handle: &tauri::AppHandle) {
+    log::info!("系统终止应用，开始退出清理...");
+    let handle = app_handle.clone();
+    let task = tauri::async_runtime::spawn(async move { cleanup_before_exit(&handle).await });
+    // timeout 要在运行时里构造（它取当前运行时的计时器），所以包一层 async。
+    let finished = tauri::async_runtime::block_on(async move {
+        tokio::time::timeout(SYSTEM_EXIT_CLEANUP_TIMEOUT, task).await
+    });
+    if finished.is_err() {
+        log::warn!(
+            "退出清理 {} 秒内没做完，直接退出",
+            SYSTEM_EXIT_CLEANUP_TIMEOUT.as_secs()
+        );
     }
 }
 
@@ -2152,6 +2203,9 @@ enum ExitRequestAction {
     /// 其它 `Some(_)`：用户主动退出（托盘「退出」等），执行完整异步清理后结束进程。
     CleanupAndExit,
 }
+
+/// 收到过重启请求。重启时 Tauri 也会发 `RunEvent::Exit`，靠它跳过系统终止那条清理。
+static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 fn classify_exit_request(code: Option<i32>) -> ExitRequestAction {
     match code {

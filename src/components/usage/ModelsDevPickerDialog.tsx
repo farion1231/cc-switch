@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Check, Loader2, Search } from "lucide-react";
 import {
   Dialog,
@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Notice } from "@/components/ui/notice";
 import {
   Select,
   SelectContent,
@@ -183,25 +183,24 @@ export function ModelsDevPickerDialog({
         <div className="flex flex-1 min-h-0 flex-col gap-3 px-6 py-4">
           {isLoading ? (
             <div className="flex flex-1 items-center justify-center">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <Loader2 className="h-6 w-6 animate-spin text-fg-3" />
             </div>
           ) : error ? (
-            <Alert variant="destructive">
-              <AlertDescription className="flex items-center justify-between gap-3">
-                <span>
-                  {t("usage.modelsDevLoadError", "加载 models.dev 数据失败")}:{" "}
-                  {error instanceof Error ? error.message : String(error)}
-                </span>
+            <Notice
+              tone="danger"
+              title={`${t("usage.modelsDevLoadError", "加载 models.dev 数据失败")}: ${
+                error instanceof Error ? error.message : String(error)
+              }`}
+              actions={
                 <Button
-                  variant="outline"
-                  size="sm"
+                  variant="neutral"
+                  size="compact"
                   onClick={() => refetch()}
-                  className="shrink-0"
                 >
                   {t("usage.modelsDevRetry", "重试")}
                 </Button>
-              </AlertDescription>
-            </Alert>
+              }
+            />
           ) : (
             <>
               <div className="flex items-center gap-2">
@@ -224,7 +223,7 @@ export function ModelsDevPickerDialog({
                   </SelectContent>
                 </Select>
                 <div className="relative flex-1">
-                  <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-2" />
                   <Input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -237,13 +236,13 @@ export function ModelsDevPickerDialog({
                 </div>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-y-auto rounded-md border border-border/50">
+              <div className="flex-1 min-h-0 overflow-y-auto rounded-panel border border-border">
                 {filtered.length === 0 ? (
-                  <div className="flex h-full items-center justify-center py-8 text-sm text-muted-foreground">
+                  <div className="flex h-full items-center justify-center py-8 text-body text-fg-2">
                     {t("usage.modelsDevNoResults", "没有匹配的模型")}
                   </div>
                 ) : (
-                  <div className="divide-y divide-border/30">
+                  <div className="divide-y divide-border">
                     {visible.map((entry) => (
                       <div
                         key={entry.key}
@@ -252,12 +251,12 @@ export function ModelsDevPickerDialog({
                         onClick={() => toggleEntry(entry)}
                         className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${
                           selected?.key === entry.key
-                            ? "bg-accent/50"
-                            : "hover:bg-muted/40"
+                            ? "bg-selected"
+                            : "hover:bg-subtle"
                         }`}
                       >
                         <Check
-                          className={`h-4 w-4 shrink-0 text-primary ${
+                          className={`h-4 w-4 shrink-0 text-fg-1 ${
                             selected?.key === entry.key
                               ? "visible"
                               : "invisible"
@@ -265,20 +264,20 @@ export function ModelsDevPickerDialog({
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="truncate text-sm font-medium">
+                            <span className="truncate text-body font-medium">
                               {entry.modelName}
                             </span>
-                            <span className="shrink-0 text-xs text-muted-foreground">
+                            <span className="shrink-0 text-caption text-fg-2">
                               {entry.providerName}
                             </span>
                             {entry.releaseDate && (
-                              <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                              <span className="shrink-0 text-badge text-fg-3">
                                 {entry.releaseDate}
                               </span>
                             )}
                           </div>
                           <div
-                            className="truncate font-mono text-xs text-muted-foreground"
+                            className="truncate font-mono text-caption text-fg-2"
                             title={entry.modelId}
                           >
                             {entry.normalizedId}
@@ -287,10 +286,10 @@ export function ModelsDevPickerDialog({
                         <div className="flex shrink-0 gap-3 text-right">
                           {priceColumns(entry).map((column) => (
                             <div key={column.label} className="w-16">
-                              <div className="text-[10px] text-muted-foreground">
+                              <div className="text-badge text-fg-2">
                                 {column.label}
                               </div>
-                              <div className="font-mono text-xs">
+                              <div className="font-mono text-caption">
                                 ${formatPrice(column.value)}
                               </div>
                             </div>
@@ -299,7 +298,7 @@ export function ModelsDevPickerDialog({
                       </div>
                     ))}
                     {filtered.length > visible.length && (
-                      <div className="px-3 py-2 text-center text-xs text-muted-foreground">
+                      <div className="px-3 py-2 text-center text-caption text-fg-2">
                         {isFiltering
                           ? t("usage.modelsDevTruncated", {
                               shown: visible.length,
@@ -324,19 +323,22 @@ export function ModelsDevPickerDialog({
 
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="neutral"
+            size="regular"
             onClick={onClose}
             disabled={updatePricing.isPending}
           >
             {t("common.cancel", "取消")}
           </Button>
           <Button
+            variant="solid"
+            size="regular"
             onClick={handleImport}
             disabled={!selected || updatePricing.isPending}
           >
             {updatePricing.isPending ? (
               <>
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
                 {t("usage.modelsDevImporting", "导入中...")}
               </>
             ) : (

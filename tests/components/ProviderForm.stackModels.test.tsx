@@ -10,14 +10,17 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 
 const settingsState = vi.hoisted(() => ({ enableStackMode: true }));
 
-vi.mock("@/lib/query", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/query")>();
+// 聚合版式只看应用当前是不是聚合模式（和应用页同一份 get_app_mode 数据）
+vi.mock("@/lib/query/proxy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/query/proxy")>();
   return {
     ...actual,
-    useSettingsQuery: () => ({
+    useAppMode: () => ({
       data: {
-        commonConfigConfirmed: true,
-        enableStackMode: settingsState.enableStackMode,
+        mode: settingsState.enableStackMode ? "stack" : "direct",
+        attached: false,
+        routeProviderId: null,
+        directProviderId: null,
       },
     }),
   };
@@ -223,7 +226,7 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
     expect(screen.queryByText("模型列表")).toBeNull();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "返回叠加模式的简化表单" }),
+      screen.getByRole("button", { name: "返回聚合模式的简化表单" }),
     );
     const inputs = screen.getAllByPlaceholderText("例如 deepseek-v4-pro");
     expect(inputs.map((input) => (input as HTMLInputElement).value)).toEqual([
@@ -264,7 +267,7 @@ describe("ProviderForm Stack layout (Codex)", () => {
     expect(screen.getByText("模型列表")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "未配置模型：叠加模式下只发布这家的默认模型（config.toml 的 model）。",
+        "未配置模型：聚合模式下只发布这家的默认模型（config.toml 的 model）。",
       ),
     ).toBeInTheDocument();
     expect(document.getElementById("codexDefaultModel")).toBeNull();

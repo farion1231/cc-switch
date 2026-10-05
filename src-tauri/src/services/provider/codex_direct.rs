@@ -690,7 +690,7 @@ pub(crate) fn plan(
 pub(crate) fn check_stack_member(provider: &Provider) -> Result<(), AppError> {
     project(provider).map(|_| ()).map_err(|error| {
         AppError::Message(format!(
-            "「{name}」的配置有问题，不能叠加 (The configuration of \"{name}\" is invalid, so it cannot be a stacked model): {error}",
+            "「{name}」的配置有问题，不能加入聚合 (The configuration of \"{name}\" is invalid, so it cannot join the aggregation): {error}",
             name = provider.name
         ))
     })

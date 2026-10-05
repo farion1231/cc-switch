@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
@@ -86,7 +86,7 @@ import {
   type ClaudeStackModelRow,
 } from "./ClaudeStackModelsField";
 import { setClaudeOneMMarker } from "./hooks/useModelState";
-import { useSettingsQuery } from "@/lib/query";
+import { useAppMode } from "@/lib/query/proxy";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
@@ -674,7 +674,10 @@ function ProviderFormFull({
 
   // 设置里开了 Stack 模式时，Claude Code / Codex 的第三方供应商默认用简化面板（连接 + 模型
   // 列表 + 高级）；可以切到完整表单，两种布局共用同一份表单状态。
-  const { data: settingsData } = useSettingsQuery();
+  const { data: appModeView } = useAppMode(
+    appId,
+    appId === "claude" || appId === "codex",
+  );
   const [preferFullForm, setPreferFullForm] = useState(false);
 
   const {
@@ -905,8 +908,9 @@ function ProviderFormFull({
         selectedPresetEntry?.preset.category === "official"));
   const isCodexOfficialManagedOauthBound =
     isCodexOfficialProvider && Boolean(selectedCodexAccountId);
+  // 应用实际在聚合模式时，新增 / 编辑用聚合的简化表单
   const stackLayoutAvailable =
-    settingsData?.enableStackMode === true &&
+    appModeView?.mode === "stack" &&
     (appId === "claude" || appId === "codex") &&
     category !== "official" &&
     !isCodexOfficialProvider;
@@ -1525,7 +1529,7 @@ function ProviderFormFull({
           issues.push(
             t("providerForm.stackLayout.noModels", {
               defaultValue:
-                "模型列表为空：叠加这家后，模型选择器里不会多出它的模型",
+                "模型列表为空：把这家加入聚合后，模型选择器里不会多出它的模型",
             }),
           );
         }
@@ -2251,7 +2255,7 @@ function ProviderFormFull({
         <form
           id="provider-form"
           onSubmit={form.handleSubmit(handleSubmit)}
-          className="space-y-6 glass rounded-xl p-6 border border-white/10"
+          className="space-y-6"
         >
           {!initialData && (
             <ProviderPresetSelector
@@ -2321,7 +2325,7 @@ function ProviderFormFull({
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         opencodeForm.opencodeProviderKey,
                       )) && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-fg-2">
                         {isProviderKeyLocked
                           ? t("opencode.providerKeyLockedHint", {
                               defaultValue:
@@ -2384,7 +2388,7 @@ function ProviderFormFull({
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         openclawForm.openclawProviderKey,
                       )) && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-fg-2">
                         {isProviderKeyLocked
                           ? t("openclaw.providerKeyLockedHint", {
                               defaultValue:
@@ -2451,7 +2455,7 @@ function ProviderFormFull({
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         hermesForm.hermesProviderKey,
                       )) && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-fg-2">
                         {isProviderKeyLocked
                           ? t("hermes.form.providerKeyLockedHint", {
                               defaultValue:
@@ -2474,7 +2478,7 @@ function ProviderFormFull({
                 type="button"
                 variant="link"
                 size="sm"
-                className="h-auto p-0 text-xs text-muted-foreground"
+                className="h-auto p-0 text-xs text-fg-2"
                 onClick={() => setPreferFullForm((value) => !value)}
               >
                 {useStackLayout
@@ -2482,7 +2486,7 @@ function ProviderFormFull({
                       defaultValue: "显示完整表单",
                     })
                   : t("providerForm.stackLayout.simpleForm", {
-                      defaultValue: "返回叠加模式的简化表单",
+                      defaultValue: "返回聚合模式的简化表单",
                     })}
               </Button>
             </div>

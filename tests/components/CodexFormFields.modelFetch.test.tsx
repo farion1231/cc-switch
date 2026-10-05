@@ -1,10 +1,5 @@
 import type { ComponentProps } from "react";
-import {
-  act,
-  fireEvent,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { FormProvider, useForm } from "react-hook-form";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
@@ -144,7 +139,8 @@ const fetchMockFor = (kind: ProviderKind) =>
       ? vi.mocked(fetchXaiOauthModels)
       : vi.mocked(fetchModelsForConfig);
 
-const fetchButton = () => screen.getByTitle("providerForm.fetchModels");
+const fetchButton = () =>
+  screen.getAllByRole("button", { name: "providerForm.fetchModels" })[0];
 const providerKinds: ProviderKind[] = ["copilot", "xai", "config"];
 
 describe("Codex model-fetch lifecycle", () => {

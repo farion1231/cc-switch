@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -18,8 +19,12 @@ const {
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { count?: number }) =>
-      options?.count == null ? key : `${key}:${options.count}`,
+    t: (key: string, options?: { count?: number; status?: string }) =>
+      options?.count != null
+        ? `${key}:${options.count}`
+        : options?.status != null
+          ? `${key}:${options.status}`
+          : key,
     i18n: { resolvedLanguage: "en" },
   }),
 }));
@@ -115,13 +120,20 @@ describe("ModelsDevAutoSyncPanel", () => {
   });
 
   it("loads automatic sync as disabled by default", async () => {
+    const user = userEvent.setup();
     renderPanel();
 
     expect(
-      await screen.findByText("usage.modelsDevAutoSync.title"),
+      await screen.findByText(
+        "usage.pricing.modelsDevTitle:usage.modelsDevAutoSync.disabled",
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByText(state.configPath)).toBeInTheDocument();
     expect(screen.getByRole("switch")).not.toBeChecked();
+    // 本地定价文件路径在 ⋯ 菜单里
+    await user.click(
+      screen.getByRole("button", { name: "usage.pricing.moreActions" }),
+    );
+    expect(await screen.findByText(state.configPath)).toBeInTheDocument();
     expect(saveModelsDevSyncConfig).not.toHaveBeenCalled();
   });
 
@@ -188,10 +200,14 @@ describe("ModelsDevAutoSyncPanel", () => {
     getModelsDevSyncConfig
       .mockResolvedValueOnce(initialState)
       .mockResolvedValue(state);
+    const user = userEvent.setup();
     renderPanel();
 
-    fireEvent.click(
-      await screen.findByRole("button", {
+    await user.click(
+      await screen.findByRole("button", { name: "usage.pricing.moreActions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
         name: "usage.modelsDevAutoSync.reloadLocalFile",
       }),
     );

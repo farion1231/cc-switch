@@ -258,6 +258,21 @@ fn expected_item_id_prefix(item_type: &str) -> Option<&'static str> {
     })
 }
 
+/// id 前缀和条目类型对不上（转换器产出的、别家签发的）就去掉 id，返回是否去掉了。
+/// id 在输入里可省略，调用和结果靠 `call_id` 对应。
+pub(crate) fn strip_mismatched_item_id(item: &mut Value, item_type: &str) -> bool {
+    let Some(prefix) = expected_item_id_prefix(item_type) else {
+        return false;
+    };
+    let bad_id = item
+        .get("id")
+        .is_some_and(|id| !id.as_str().is_some_and(|id| id.starts_with(prefix)));
+    bad_id
+        && item
+            .as_object_mut()
+            .is_some_and(|obj| obj.remove("id").is_some())
+}
+
 /// 发往官方（ChatGPT 登录直通）前，清理同一线程里第三方回合留下、官方一定会拒的东西：
 /// - CC Switch 包装的压缩摘要：转成用户消息（官方验不了这段"密文"）；
 /// - 推理条目带着 CC Switch 包装的内容（Anthropic thinking 签名），或根本没有
@@ -299,17 +314,7 @@ pub(crate) fn scrub_ccswitch_state_for_official(body: &mut Value) -> bool {
             }
         }
 
-        if let Some(prefix) = expected_item_id_prefix(&item_type) {
-            let bad_id = item
-                .get("id")
-                .is_some_and(|id| !id.as_str().is_some_and(|id| id.starts_with(prefix)));
-            if bad_id {
-                if let Some(obj) = item.as_object_mut() {
-                    obj.remove("id");
-                    changed = true;
-                }
-            }
-        }
+        changed |= strip_mismatched_item_id(&mut item, &item_type);
 
         scrubbed.push(item);
     }

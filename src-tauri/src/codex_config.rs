@@ -2458,9 +2458,13 @@ pub(crate) fn plan_codex_stack_catalog(
                     member.provider_name
                 )),
             );
+            let window = obj
+                .get("context_window")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
             obj.insert(
                 "description".to_string(),
-                json!(crate::mode::stack::routed_description(member.provider_name)),
+                json!(crate::mode::stack::model_description(&model, window)),
             );
             // 第三方不支持 Responses Lite 协议。
             if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
@@ -5234,6 +5238,7 @@ wire_api = "responses"
         let stacked = &models[1];
         assert_eq!(stacked["slug"], "ccs-anth/claude-opus-5");
         assert_eq!(stacked["display_name"], "claude-opus-5（Anth）");
+        assert_eq!(stacked["description"], "claude-opus-5 · 400K");
         assert_eq!(stacked["shell_type"], "shell_command");
         assert!(stacked.get("apply_patch_tool_type").is_none());
         assert_eq!(stacked["context_window"], 400000);

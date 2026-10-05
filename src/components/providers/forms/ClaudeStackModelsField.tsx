@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Download, Loader2, Plus, Star, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
@@ -166,7 +167,7 @@ export function ClaudeStackModelsField({
             </Button>
           </div>
         </div>
-        <p className="text-xs leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-fg-2">
           {t("providerForm.stackModelsHint", {
             defaultValue:
               "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。修改后需要重启 Claude Code。",
@@ -185,15 +186,15 @@ export function ClaudeStackModelsField({
       )}
 
       {rows.length === 0 ? (
-        <p className="text-xs leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-fg-2">
           {t("providerForm.stackModelsEmpty", {
             defaultValue:
-              "未配置模型：叠加这家后，模型选择器里不会多出它的模型",
+              "未配置模型：把这家加入聚合后，模型选择器里不会多出它的模型",
           })}
         </p>
       ) : (
         <div className="space-y-2">
-          <div className="hidden grid-cols-[36px_1fr_minmax(0,1fr)_64px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+          <div className="hidden grid-cols-[36px_1fr_minmax(0,1fr)_64px_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
             <span />
             <span>
               {t("providerForm.modelDisplayNameLabel", {
@@ -225,25 +226,26 @@ export function ClaudeStackModelsField({
                 key={row.rowId}
                 className="grid grid-cols-1 gap-2 md:grid-cols-[36px_1fr_minmax(0,1fr)_64px_36px]"
               >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => makeDefault(row.rowId)}
-                  disabled={isDefault}
-                  aria-label={defaultLabel}
-                  aria-pressed={isDefault}
-                  title={defaultLabel}
-                  className="h-9 w-9 text-muted-foreground hover:text-amber-500 disabled:opacity-100"
-                >
-                  <Star
-                    className={
-                      isDefault
-                        ? "h-4 w-4 fill-amber-400 text-amber-500"
-                        : "h-4 w-4"
-                    }
-                  />
-                </Button>
+                <HoverTip content={defaultLabel}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => makeDefault(row.rowId)}
+                    disabled={isDefault}
+                    aria-label={defaultLabel}
+                    aria-pressed={isDefault}
+                    className="h-9 w-9 text-fg-2 hover:text-warning-text disabled:opacity-100"
+                  >
+                    <Star
+                      className={
+                        isDefault
+                          ? "h-4 w-4 fill-warning text-warning-text"
+                          : "h-4 w-4"
+                      }
+                    />
+                  </Button>
+                </HoverTip>
                 <ImeSafeInput
                   value={row.displayName ?? ""}
                   onValueChange={(value) =>
@@ -282,7 +284,7 @@ export function ClaudeStackModelsField({
                     />
                   )}
                 </div>
-                <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
                   <Checkbox
                     checked={
                       row.oneM === true || hasClaudeOneMMarker(row.model)
@@ -296,20 +298,22 @@ export function ClaudeStackModelsField({
                   />
                   {t("providerForm.modelOneMLabel", { defaultValue: "1M" })}
                 </label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() =>
-                    onRowsChange(
-                      rows.filter((other) => other.rowId !== row.rowId),
-                    )
-                  }
-                  aria-label={t("common.delete")}
-                  className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <HoverTip content={t("common.delete")}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() =>
+                      onRowsChange(
+                        rows.filter((other) => other.rowId !== row.rowId),
+                      )
+                    }
+                    aria-label={t("common.delete")}
+                    className="h-9 w-9 text-fg-2 hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </HoverTip>
               </div>
             );
           })}

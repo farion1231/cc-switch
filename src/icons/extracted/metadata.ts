@@ -2,6 +2,13 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
+  "88api": {
+    name: "88api",
+    displayName: "88API",
+    category: "ai-provider",
+    keywords: ["88api", "88", "aggregator", "gateway"],
+    defaultColor: "currentColor",
+  },
   "9527code": {
     name: "9527code",
     displayName: "9527CODE",
@@ -293,6 +300,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["cohere"],
     defaultColor: "#39594D",
+  },
+  commandcode: {
+    name: "commandcode",
+    displayName: "Command Code",
+    category: "ai-provider",
+    keywords: [
+      "commandcode",
+      "command code",
+      "aggregator",
+      "relay",
+      "gateway",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "#000000",
   },
   copilot: {
     name: "copilot",
@@ -598,6 +620,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["hunyuan"],
     defaultColor: "#00A4FF",
   },
+  tuzi: {
+    name: "tuzi",
+    displayName: "Tu-zi",
+    category: "ai-provider",
+    keywords: [
+      "tuzi",
+      "tu-zi",
+      "兔子",
+      "aggregator",
+      "relay",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "currentColor",
+  },
   unity2: {
     name: "unity2",
     displayName: "Unity2.ai",
@@ -797,6 +834,49 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["xycai", "xyc", "aggregator", "relay", "gateway", "token"],
     defaultColor: "#1E88E5",
+  },
+  bailing: {
+    name: "bailing",
+    displayName: "BaiLing",
+    category: "ai-provider",
+    keywords: ["bailing", "百灵", "ant ling", "antling", "ling", "ant group"],
+    defaultColor: "#1E6FFF",
+  },
+  dmxapi: {
+    name: "dmxapi",
+    displayName: "DMXAPI",
+    category: "ai-provider",
+    keywords: ["dmxapi", "dmx", "aggregator", "relay", "gateway"],
+    defaultColor: "currentColor",
+  },
+  therouter: {
+    name: "therouter",
+    displayName: "TheRouter",
+    category: "ai-provider",
+    keywords: ["therouter", "the router", "router", "aggregator", "gateway"],
+    defaultColor: "currentColor",
+  },
+  astron: {
+    name: "astron",
+    displayName: "Astron",
+    category: "ai-provider",
+    keywords: [
+      "astron",
+      "讯飞星辰",
+      "讯飞",
+      "xfyun",
+      "iflytek",
+      "maas",
+      "coding plan",
+    ],
+    defaultColor: "#6C4CF5",
+  },
+  together: {
+    name: "together",
+    displayName: "Together AI",
+    category: "ai-provider",
+    keywords: ["together", "together ai", "togetherai"],
+    defaultColor: "currentColor",
   },
 };
 
