@@ -74,6 +74,7 @@ pub fn view(
     let official = category == Some("official");
     let Ok(projection) = GrokProjection::of(settings_config, official) else {
         return Ok(EditorView {
+            codex_snapshot: None,
             settings: settings_config.clone(),
             inactive: Vec::new(),
         });
@@ -95,6 +96,7 @@ pub fn view(
     settings.insert("config".to_string(), Value::String(doc.to_string()));
     let row_table = row_table_name(settings_config);
     Ok(EditorView {
+        codex_snapshot: None,
         inactive: inactive_fields(
             config_text(settings_config),
             &doc,

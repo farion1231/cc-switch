@@ -34,8 +34,9 @@ use crate::provider::Provider;
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::store::AppState;
 
-use super::claude_editor::{ConflictPolicy, EditorView, InactiveField};
+use super::claude_editor::{EditorSave, EditorView, InactiveField};
 use super::codex_direct::{self, Owner, Prepared, Target};
+use super::codex_legacy_route::{CodexEditorEdits, CodexEditorSnapshot};
 use super::editor_toml::{self, config_text, insert_at, render, Entry, TomlEdits};
 
 fn app() -> &'static str {
@@ -109,6 +110,7 @@ pub fn view(
     let path = get_codex_config_path();
     let pre = read_current(&path)?;
     let mut doc = parse(&path, pre.as_deref())?;
+    let codex_snapshot = Some(CodexEditorSnapshot::of(&path, &doc)?);
 
     let mut provider =
         Provider::with_id(String::new(), String::new(), settings_config.clone(), None);
@@ -146,6 +148,7 @@ pub fn view(
         .entry("auth".to_string())
         .or_insert_with(|| Value::Object(Map::new()));
     Ok(EditorView {
+        codex_snapshot,
         inactive: inactive_fields(config_text(settings_config), &doc),
         settings: Value::Object(settings),
     })
@@ -240,7 +243,7 @@ fn inactive_fields(row_text: &str, display: &DocumentMut) -> Vec<InactiveField> 
 /// 一次编辑器保存：存进行的内容，和要写进 live 的全局改动。
 pub(crate) struct CodexEditorPlan {
     pub row_settings: Value,
-    pub edits: TomlEdits,
+    pub edits: CodexEditorEdits,
 }
 
 /// live 现在归谁：接上代理时是契约，否则是直连指针那家。
@@ -327,14 +330,13 @@ impl Origin {
 pub(crate) fn plan_save(
     stored_row: Option<&Value>,
     edited: &Value,
-    base: &Value,
+    editor: &EditorSave,
     origin: &Origin,
     official: bool,
     proxy_injected_oauth: bool,
-    on_conflict: ConflictPolicy,
 ) -> Result<CodexEditorPlan, AppError> {
     let edited_doc = parse_text(config_text(edited), "edited")?;
-    let base_doc = parse_text(config_text(base), "base")?;
+    let base_doc = parse_text(config_text(&editor.base), "base")?;
     let mut projection = project_for_save(&RowInput {
         settings: edited,
         official,
@@ -369,7 +371,17 @@ pub(crate) fn plan_save(
     base_entries.extend(removed_from_live);
     Ok(CodexEditorPlan {
         row_settings: store_into_row(stored_row, edited, &projection)?,
-        edits: TomlEdits::between(&base_entries, &entries(&edited_doc, &routes), on_conflict),
+        edits: CodexEditorEdits::new(
+            TomlEdits::between(
+                &base_entries,
+                &entries(&edited_doc, &routes),
+                editor.on_conflict,
+            ),
+            &base_doc,
+            &edited_doc,
+            editor.codex_snapshot.as_ref(),
+            editor.on_conflict,
+        )?,
     })
 }
 
@@ -474,7 +486,7 @@ pub(crate) enum KeyFields<'a> {
 pub(crate) fn write_live(
     db: &Database,
     manager: &Arc<CodexOAuthManager>,
-    edits: &TomlEdits,
+    edits: &CodexEditorEdits,
     key_fields: KeyFields<'_>,
 ) -> Result<(), AppError> {
     match key_fields {
@@ -516,6 +528,7 @@ pub(crate) fn write_live(
 
 #[cfg(test)]
 mod tests {
+    use super::super::claude_editor::ConflictPolicy;
     use super::*;
     use crate::live::patch::LiveWriteError;
     use serde_json::json;
@@ -579,11 +592,15 @@ mod tests {
         let plan = plan_save(
             Some(&stored),
             &edited,
-            &edited,
+            &EditorSave {
+                base: edited.clone(),
+                draft: None,
+                on_conflict: ConflictPolicy::Refuse,
+                codex_snapshot: None,
+            },
             &Origin::row(&stored).unwrap(),
             false,
             false,
-            ConflictPolicy::Refuse,
         )
         .unwrap();
         let row = &plan.row_settings;

@@ -531,6 +531,8 @@ pub struct CodexConfigPatch {
     /// 上一家带进来的独有字段和它行里指定的模型目录指针：live 里的值还相同才删。
     pub outgoing: Vec<(String, TomlValue)>,
     pub route: RouteWrite,
+    /// Maintain an existing legacy official-proxy definition; never create one.
+    pub legacy_official_proxy_base_url: String,
     /// 指向 CC Switch 生成的模型目录（用户自己的指针不认领、不删除）。
     pub catalog: bool,
     /// 旧版按别的 id 写进去的表，能证明是 CC Switch 写的就删掉（里面可能有真实 Key）。
@@ -747,16 +749,26 @@ impl CodexConfigPatch {
             providers.insert(&renamed, item);
         }
 
-        // 旧版按别的 id 写进去的表（含旧版代理官方路由表）、残留的代理占位表。被 profile
-        // 引用的不动。
+        if providers
+            .get(OFFICIAL_PROXY_ROUTE_ID)
+            .is_some_and(|item| item.as_table_like().is_none())
+        {
+            return Err(shape_error(
+                path,
+                &["model_providers".into(), OFFICIAL_PROXY_ROUTE_ID.into()],
+            ));
+        }
+
+        // Keep the legacy official definition for old sessions. Other retired and
+        // placeholder tables still follow the upstream cleanup policy.
+        // Tables referenced by any profile remain untouched.
         let doomed: Vec<String> = providers
             .iter()
             .filter(|(id, item)| {
                 *id != ROUTE_ID
+                    && *id != OFFICIAL_PROXY_ROUTE_ID
                     && !referenced.iter().any(|name| name == id)
-                    && (*id == OFFICIAL_PROXY_ROUTE_ID
-                        || holds_placeholder(item)
-                        || self.is_retired(id, item))
+                    && (holds_placeholder(item) || self.is_retired(id, item))
             })
             .map(|(id, _)| id.to_string())
             .collect();
@@ -818,6 +830,17 @@ impl CodexConfigPatch {
                     container_inline,
                 );
             }
+        }
+
+        if providers.contains_key(OFFICIAL_PROXY_ROUTE_ID)
+            && !referenced.iter().any(|id| id == OFFICIAL_PROXY_ROUTE_ID)
+        {
+            put_table(
+                providers,
+                OFFICIAL_PROXY_ROUTE_ID,
+                official_mirror_table(Some(&self.legacy_official_proxy_base_url), false),
+                container_inline,
+            );
         }
 
         if providers.is_empty() {
@@ -902,6 +925,12 @@ fn put_table(providers: &mut dyn TableLike, id: &str, table: Table, container_in
 }
 
 /// `[profiles.*]` 里 `model_provider` 引用的表 id。
+pub(crate) fn profile_references(root: &Table, id: &str) -> bool {
+    profile_selectors(root)
+        .iter()
+        .any(|selector| selector == id)
+}
+
 fn profile_selectors(root: &Table) -> Vec<String> {
     root.get("profiles")
         .and_then(Item::as_table_like)
@@ -1073,6 +1102,7 @@ mod tests {
             exclusive: Vec::new(),
             outgoing: Vec::new(),
             route,
+            legacy_official_proxy_base_url: PROXY.to_string(),
             catalog: false,
             retired: Vec::new(),
         };
@@ -1094,13 +1124,13 @@ mod tests {
 
     #[test]
     fn the_official_proxy_route_stays_in_the_built_in_openai_bucket() {
-        // 旧版写的 cc-switch-official 表删掉；第三方留下的 custom 表改成休眠形态。
+        // 旧官方代理表保留兼容；第三方留下的 custom 表改成休眠形态。
         let live = "model_provider = \"cc-switch-official\"\nopenai_base_url = \"https://stale.example/v1\"\nmodel = \"gpt-5.5\"\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"https://relay.example/v1\"\nexperimental_bearer_token = \"sk-relay\"\n";
         let doc = apply(official_proxy(false), live);
         assert!(doc.get("model_provider").is_none(), "{doc}");
         assert_eq!(doc["openai_base_url"].as_str(), Some(PROXY));
         let providers = doc["model_providers"].as_table().unwrap();
-        assert!(!providers.contains_key(OFFICIAL_PROXY_ROUTE_ID), "{doc}");
+        assert!(providers.contains_key(OFFICIAL_PROXY_ROUTE_ID), "{doc}");
         let dormant = providers[ROUTE_ID].as_table().unwrap();
         assert_eq!(dormant["base_url"].as_str(), Some(PROXY));
         assert_eq!(
@@ -1193,6 +1223,113 @@ mod tests {
             assert!(matches!(
                 project(&model_only).unwrap().route,
                 Route::Default
+            ));
+        }
+    }
+
+    #[test]
+    fn legacy_official_definition_survives_upgrade_without_selecting_the_old_bucket() {
+        let live = "model_provider = \"cc-switch-official\"\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:9999/v1\"\nrequires_openai_auth = true\n";
+        for unified in [false, true] {
+            let doc = apply(official_proxy(unified), live);
+            assert_eq!(
+                doc.get("model_provider").and_then(Item::as_str),
+                unified.then_some(ROUTE_ID)
+            );
+            assert!(
+                doc.get("model_providers")
+                    .and_then(Item::as_table_like)
+                    .is_some_and(|tables| tables.contains_key(OFFICIAL_PROXY_ROUTE_ID)),
+                "the legacy definition must remain resolvable after upgrade: {doc}"
+            );
+        }
+    }
+
+    #[test]
+    fn existing_legacy_tables_are_normalized_in_every_route_and_container_form() {
+        for live in [
+            "[model_providers.cc-switch-official]\nname = 'Renamed'\nbase_url = 'http://127.0.0.1:9999/v1'\nexperimental_bearer_token = 'synthetic-key'\nenv_key = 'LEGACY_KEY'\nhttp_headers = { Authorization = 'synthetic-header' }\nextra = true\n",
+            "model_providers = { cc-switch-official = { name = 'Renamed', base_url = 'http://127.0.0.1:9999/v1', experimental_bearer_token = 'synthetic-key' } }\n",
+            "[model_providers]\ncc-switch-official = { name = 'Renamed', experimental_bearer_token = 'synthetic-key' }\n",
+        ] {
+            for route in [
+                RouteWrite::Official { dormant_base_url: PROXY.into() },
+                RouteWrite::OfficialMirror, official_proxy(false), official_proxy(true),
+                RouteWrite::Custom(proxy_route_table(ROUTE_ID, PROXY, false)),
+                RouteWrite::Default,
+            ] {
+                let expected_selector = route.selector().map(str::to_string);
+                let doc = apply(route.clone(), live);
+                assert_eq!(doc.get("model_provider").and_then(Item::as_str), expected_selector.as_deref());
+                let table = doc["model_providers"][OFFICIAL_PROXY_ROUTE_ID].as_table_like().unwrap();
+                assert_eq!(table.len(), 5);
+                assert_eq!(table.get("name").and_then(Item::as_str), Some("OpenAI"));
+                assert_eq!(table.get("base_url").and_then(Item::as_str), Some(PROXY));
+                assert_eq!(table.get("requires_openai_auth").and_then(Item::as_bool), Some(true));
+                assert_eq!(table.get("supports_websockets").and_then(Item::as_bool), Some(false));
+                assert_eq!(table.get("wire_api").and_then(Item::as_str), Some("responses"));
+                assert!(!doc.to_string().contains("synthetic-"));
+                assert_eq!(apply(route, &doc.to_string()).to_string(), doc.to_string());
+            }
+        }
+    }
+
+    #[test]
+    fn profiles_preserve_the_legacy_table_but_cannot_override_the_current_route() {
+        let legacy = "[model_providers.cc-switch-official]\nname = 'User choice'\nbase_url = 'http://127.0.0.1:9999/v1'\nextra = true\n";
+        for profiles in [
+            "[profiles.sleeping]\nmodel_provider = 'cc-switch-official'\n",
+            "[profiles]\nsleeping = { model_provider = ' cc-switch-official ' }\n",
+        ] {
+            let live = format!("{legacy}{profiles}");
+            let doc = apply(official_proxy(false), &live);
+            assert!(doc.to_string().contains(legacy));
+            let active = format!("profile = 'sleeping'\n{live}");
+            let patch = CodexConfigPatch {
+                top: vec![],
+                nested: vec![],
+                exclusive: vec![],
+                outgoing: vec![],
+                route: official_proxy(false),
+                legacy_official_proxy_base_url: PROXY.into(),
+                catalog: false,
+                retired: vec![],
+            };
+            assert!(matches!(
+                patch.apply_to(Path::new("config.toml"), &mut active.parse().unwrap()),
+                Err(LiveWriteError::Route { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn missing_legacy_is_never_created_and_malformed_legacy_is_refused() {
+        let patch = CodexConfigPatch {
+            top: vec![],
+            nested: vec![],
+            exclusive: vec![],
+            outgoing: vec![],
+            route: official_proxy(true),
+            legacy_official_proxy_base_url: PROXY.into(),
+            catalog: false,
+            retired: vec![],
+        };
+        for live in ["", "[model_providers.custom]\nname = 'OpenAI'\n"] {
+            let mut doc: DocumentMut = live.parse().unwrap();
+            patch.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+            patch.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+            assert!(doc["model_providers"]
+                .get(OFFICIAL_PROXY_ROUTE_ID)
+                .is_none());
+        }
+        for live in [
+            "model_providers = { cc-switch-official = 42 }",
+            "[model_providers]\ncc-switch-official = ['bad']",
+        ] {
+            let mut doc: DocumentMut = live.parse().unwrap();
+            assert!(matches!(
+                patch.apply_to(Path::new("config.toml"), &mut doc),
+                Err(LiveWriteError::Shape { .. })
             ));
         }
     }

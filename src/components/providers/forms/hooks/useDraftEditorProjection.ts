@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { toast } from "@/lib/toast";
-import { providersApi, type AppId } from "@/lib/api";
+import { providersApi, type AppId, type CodexEditorSnapshot } from "@/lib/api";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 /** 编辑器投影读不了客户端配置文件（比如手改坏了）：编辑器退回显示保存的内容。 */
@@ -23,6 +23,7 @@ export function toastEditorViewFailed(t: TFunction, error: unknown) {
 export type EditorBaseChange = (
   base: Record<string, unknown> | null,
   draft?: Record<string, unknown>,
+  codexSnapshot?: CodexEditorSnapshot | null,
 ) => void;
 
 /**
@@ -59,7 +60,7 @@ export function useDraftEditorProjection(
         .then((view) => {
           if (current !== sequence.current) return;
           apply(view.settings);
-          onEditorBaseChange(view.settings, settings);
+          onEditorBaseChange(view.settings, settings, view.codexSnapshot);
         })
         .catch((error: unknown) => {
           if (current !== sequence.current) return;

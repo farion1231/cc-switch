@@ -43,12 +43,21 @@ export interface ClaudeDesktopStatus {
 /** 编辑器保存时，live 里的键在编辑期间被别的程序改过怎么办。 */
 export type EditorConflictPolicy = "refuse" | "keepMine" | "keepTheirs";
 
+/** 投影前的真实旧表状态，仅传递引用事实与语义指纹。 */
+export interface CodexEditorSnapshot {
+  selector: string | null;
+  legacyRoute: boolean;
+  legacyFingerprint: string | null;
+  profileReferenced: boolean;
+}
+
 /** 编辑器保存随供应商一起提交：打开时显示的完整配置，用来三方比较。 */
 export interface ProviderEditorSave {
   base: Record<string, unknown>;
   /** 新增对话框：投影成 `base` 的那份草稿（预设或模板）。后端按它区分预设带的和从 live 带进来的字段。 */
   draft?: Record<string, unknown>;
   onConflict?: EditorConflictPolicy;
+  codexSnapshot?: CodexEditorSnapshot | null;
 }
 
 /** 行里保存着、但不随切换生效的字段。 */
@@ -61,6 +70,7 @@ export interface ProviderEditorInactiveField {
 export interface ProviderEditorView {
   settings: Record<string, unknown>;
   inactive: ProviderEditorInactiveField[];
+  codexSnapshot?: CodexEditorSnapshot | null;
 }
 
 export interface ClaudeDesktopDefaultRoute {

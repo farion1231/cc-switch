@@ -14,6 +14,7 @@ import type { AppId } from "@/lib/api";
 import { providersApi, universalProvidersApi } from "@/lib/api";
 import type {
   EditorConflictPolicy,
+  CodexEditorSnapshot,
   ProviderEditorSave,
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
@@ -110,10 +111,14 @@ export function AddProviderDialog({
   const [draftEditorBase, setDraftEditorBase] = useState<{
     base: Record<string, unknown>;
     draft?: Record<string, unknown>;
+    codexSnapshot?: CodexEditorSnapshot | null;
   } | null>(null);
   const handleDraftEditorBase = useCallback(
-    (base: Record<string, unknown> | null, draft?: Record<string, unknown>) =>
-      setDraftEditorBase(base ? { base, draft } : null),
+    (
+      base: Record<string, unknown> | null,
+      draft?: Record<string, unknown>,
+      codexSnapshot?: CodexEditorSnapshot | null,
+    ) => setDraftEditorBase(base ? { base, draft, codexSnapshot } : null),
     [],
   );
   // 新增时表单自己把预设投影到配置文件上的应用（Claude Code 在对话框里取底，见上）。

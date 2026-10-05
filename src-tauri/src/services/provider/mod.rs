@@ -7,6 +7,7 @@ mod claude_editor;
 pub(crate) mod codex_client_catalog;
 pub(crate) mod codex_direct;
 mod codex_editor;
+mod codex_legacy_route;
 mod codex_login;
 pub(crate) mod codex_official_models;
 mod editor_toml;
@@ -46,6 +47,8 @@ pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError
 }
 
 pub use claude_editor::{EditorSave, EditorView};
+pub(crate) use codex_legacy_route::CodexEditorEdits;
+pub use codex_legacy_route::CodexEditorSnapshot;
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::{
@@ -5197,7 +5200,7 @@ impl ProviderService {
         let plan = codex_editor::plan_save(
             existing.as_ref().map(|row| &row.settings_config),
             &provider.settings_config,
-            &editor.base,
+            &editor,
             &match (existing.as_ref(), editor.draft.as_ref()) {
                 (Some(row), _) => codex_editor::Origin::row(&row.settings_config)?,
                 (None, Some(draft)) => codex_editor::Origin::row(draft)?,
@@ -5205,8 +5208,8 @@ impl ProviderService {
             },
             codex_direct::is_official(&provider),
             provider.uses_proxy_injected_oauth(),
-            editor.on_conflict,
         )?;
+        plan.edits.check_live()?;
         provider.settings_config = plan.row_settings.clone();
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
@@ -5236,7 +5239,18 @@ impl ProviderService {
                 &plan.edits,
                 codex_editor::KeyFields::None,
             )
-            .and_then(|()| Self::resync_proxy_for_saved_row(state, &app_type, &provider))
+            .and_then(|()| {
+                let legacy = plan.edits.legacy_only();
+                futures::executor::block_on(
+                    crate::mode::controller::resync_saved_row_with_edits_locked(
+                        state,
+                        &app_type,
+                        &provider,
+                        Some(&legacy),
+                    ),
+                )
+                .map_err(AppError::Message)
+            })
         };
         Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
