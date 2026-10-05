@@ -154,6 +154,10 @@ pub struct GlobalProxyConfig {
     pub listen_port: u16,
     /// 是否启用日志
     pub enable_logging: bool,
+    /// 写给客户端的代理主机（IP 或主机名）。空：按监听地址推（`0.0.0.0` → `127.0.0.1`）。
+    /// 客户端和代理不在同一个网络栈时用，比如 WSL2 NAT 模式里的会话连不到 Windows 的回环。
+    #[serde(default)]
+    pub client_host: String,
 }
 
 /// 应用级代理配置（每个 app 独立）

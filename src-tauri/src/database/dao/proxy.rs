@@ -34,7 +34,7 @@ impl Database {
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
-                "SELECT proxy_enabled, listen_address, listen_port, enable_logging
+                "SELECT proxy_enabled, listen_address, listen_port, enable_logging, client_host
                  FROM proxy_config WHERE app_type = 'claude'",
                 [],
                 |row| {
@@ -43,6 +43,7 @@ impl Database {
                         listen_address: row.get(1)?,
                         listen_port: row.get::<_, i32>(2)? as u16,
                         enable_logging: row.get::<_, i32>(3)? != 0,
+                        client_host: row.get(4)?,
                     })
                 },
             )
@@ -59,6 +60,7 @@ impl Database {
                     listen_address: "127.0.0.1".to_string(),
                     listen_port: 15721,
                     enable_logging: true,
+                    client_host: String::new(),
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -78,12 +80,14 @@ impl Database {
                 listen_address = ?2,
                 listen_port = ?3,
                 enable_logging = ?4,
+                client_host = ?5,
                 updated_at = datetime('now')",
             rusqlite::params![
                 if config.proxy_enabled { 1 } else { 0 },
                 config.listen_address,
                 config.listen_port as i32,
                 if config.enable_logging { 1 } else { 0 },
+                config.client_host.trim(),
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -785,9 +789,10 @@ impl Database {
     ///
     /// 用于托盘菜单构建等同步场景
     /// 返回 (enabled, auto_failover_enabled)
-    /// 同步读代理的监听地址和端口（读不到时用默认值）。给直连切换生成 Codex 休眠表的
-    /// 本地地址用，不需要代理在运行。
-    pub fn get_proxy_listen_sync(&self) -> (String, u16) {
+    /// 同步读客户端连代理用的主机和端口（读不到时用默认值）：设了客户端地址就用它，否则是
+    /// 监听地址（交给 `proxy_origin` 处理 `0.0.0.0`）。写进客户端文件的代理地址都按这个
+    /// 生成，不需要代理在运行。
+    pub fn get_proxy_client_endpoint_sync(&self) -> (String, u16) {
         let fallback = || {
             let defaults = crate::proxy::types::ProxyConfig::default();
             (defaults.listen_address, defaults.listen_port)
@@ -796,9 +801,19 @@ impl Database {
             return fallback();
         };
         conn.query_row(
-            "SELECT listen_address, listen_port FROM proxy_config WHERE app_type = 'claude'",
+            "SELECT listen_address, listen_port, client_host
+             FROM proxy_config WHERE app_type = 'claude'",
             [],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? as u16)),
+            |row| {
+                let listen_address: String = row.get(0)?;
+                let client_host: String = row.get(2)?;
+                let host = if client_host.trim().is_empty() {
+                    listen_address
+                } else {
+                    client_host.trim().to_string()
+                };
+                Ok((host, row.get::<_, i32>(1)? as u16))
+            },
         )
         .unwrap_or_else(|_| fallback())
     }

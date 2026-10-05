@@ -41,10 +41,10 @@ impl SavedProxyConfig {
     }
 }
 
-/// 客户端连接代理用的地址。`listen_address` 可能是 `0.0.0.0` / `::`（监听所有网卡），
-/// 客户端连不上这个地址，改用本机回环；IPv6 加方括号。
-pub(crate) fn proxy_origin(listen_address: &str, listen_port: u16) -> String {
-    let host = match listen_address {
+/// 客户端连接代理用的地址。`host` 是设置里的客户端地址，没设时是监听地址，后者可能是
+/// `0.0.0.0` / `::`（监听所有网卡），客户端连不上这个地址，改用本机回环；IPv6 加方括号。
+pub(crate) fn proxy_origin(host: &str, listen_port: u16) -> String {
+    let host = match host {
         "0.0.0.0" => "127.0.0.1",
         "::" => "::1",
         other => other,
@@ -263,7 +263,8 @@ impl ProxyService {
             return Err("代理监听端口为 0，但代理服务器尚未运行，无法生成接管地址".to_string());
         }
 
-        let proxy_url = proxy_origin(&config.listen_address, listen_port);
+        let (host, _) = self.db.get_proxy_client_endpoint_sync();
+        let proxy_url = proxy_origin(&host, listen_port);
         let proxy_codex_base_url = format!("{proxy_url}/v1");
         Ok((proxy_url, proxy_codex_base_url))
     }

@@ -231,14 +231,20 @@ pub async fn get_global_proxy_config(
 /// 更新统一的全局配置字段，四行镜像写，各应用自己的重试和超时不碰。设置页的按钮写着
 /// 「保存并重启服务」：服务在跑时地址或端口变了就重启、再按新地址重写接上路由的客户端
 /// （含 Claude Desktop 的模型映射卡），日志开关实时生效；只写库的话服务还在旧端口上听、
-/// 客户端也还指着旧端口。
+/// 客户端也还指着旧端口。客户端地址只影响写给客户端的地址，变了不用重启，直接重写。
 #[tauri::command]
 pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
+    let previous_client_host = state
+        .db
+        .get_global_proxy_config()
+        .await
+        .map_err(|e| e.to_string())?
+        .client_host;
     let restarted = state.proxy_service.update_global_config(&config).await?;
-    if restarted {
+    if restarted || config.client_host.trim() != previous_client_host {
         let mut failures = Vec::new();
         if let Err(error) = crate::mode::controller::resync_routes(state.inner()).await {
             failures.push(error);

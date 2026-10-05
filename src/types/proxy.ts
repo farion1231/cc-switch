@@ -192,6 +192,8 @@ export interface GlobalProxyConfig {
   listenAddress: string;
   listenPort: number;
   enableLogging: boolean;
+  /** 写给客户端的代理主机；空字符串表示按监听地址推 */
+  clientHost: string;
 }
 
 // 应用级代理配置（每个 app 独立）
