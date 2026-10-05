@@ -5,6 +5,47 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.1] - 2026-10-05
+
+Fixes on top of the 4.0.0 preview: Gemini CLI sessions written in the newer JSONL format show up again, OpenCode offers thinking variants for reasoning models added through CC Switch, an upstream rejection is no longer reported as an output-token limit, the Grok Build key link opens the preset's sign-up page, Codex config directories inside WSL no longer stall startup and the Sessions page, and the sidebar toggle animates at the display's refresh rate, with a few small UI touches. The release pipeline is rebuilt to build macOS architectures in parallel and to fail fast instead of shipping an incomplete update manifest.
+
+**Stats**: 20 commits | 47 files changed | +1,958 insertions | -624 deletions
+
+### Added
+
+- **OpenCode Offers Thinking Variants for Reasoning Models**: OpenCode generates thinking variants (Ctrl+T) only for models whose `capabilities.reasoning` is true, and falls back to models.dev only when the provider key matches a models.dev provider. CC Switch writes custom provider keys, so preset and fetched models never got any variants.
+  - A fetched model known to reason (from its preset row or models.dev) gets `reasoning: true`. `false` is never written, since it would shadow models.dev.
+  - Reasoning-capable models in the OpenCode presets are marked, cross-checked with models.dev. Non-reasoning models, router (`auto`) and mixed entries are skipped, and so is LongCat 2.0, whose preset turns thinking off.
+  - OpenCode derives the variants itself; CC Switch does not hardcode effort tables that drift between OpenCode releases.
+- **Help Tip for "Skip Claude Code Onboarding"**: The setting's help popover now says what the toggle does: it writes or removes `hasCompletedOnboarding` in `~/.claude.json`.
+
+### Fixed
+
+- **Gemini CLI Sessions Missing From the Sessions Page and Usage Sync** (#7866 by Allen Xu; fixes #7861): Newer Gemini CLI releases record chats as `tmp/<hash>/chats/session-*.jsonl` and migrate legacy `.json` files to `.jsonl` on resume, so the Sessions page showed no Gemini sessions and usage sync imported nothing from them.
+  - JSONL is replayed the way Gemini CLI's `loadConversationRecord` does (in-place upsert by id, `$set` and `$set.messages` checkpoints, `$rewindTo`), with an id index so replay stays linear. The session list, message loader, full-content search and usage sync share this parser.
+  - A legacy `.json` sitting beside its migrated `.jsonl` is hidden, and deleting the session removes both, legacy file first.
+  - Titles skip CLI-injected `<session_context>` / `<hook_context>` and slash commands, and the message view marks injected context.
+- **An Upstream Rejection Is No Longer Reported as an Output-Token Limit** (#7868 by Lu Chong): A Responses upstream can reject a request before processing it and still end the stream with `response.incomplete` and `incomplete_details.reason=max_output_tokens` while reporting zero input and output usage (seen with the ChatGPT Codex backend refusing a tool schema, such as a `pattern` regex with nested quantifiers). The converter mapped this to stop reason `max_tokens`, so Claude Code reported a limit that was never hit. When an incomplete terminal reports zero usage and produced no content, the proxy now emits an `api_error` event carrying the rejection details. Real truncation always reports non-zero usage and keeps `max_tokens`.
+- **Codex Config Directories Inside WSL Stalled Startup and Session Scans**: When the Codex config dir points into a WSL distro (`\\wsl$` or `\\wsl.localhost`), Windows reaches `state_*.sqlite` through the 9P redirector, which has no byte-range locks. Every open waited out the 5 s busy timeout and failed with "database is locked", so the history migration never finished and retried on each start, and every session scan stalled loading thread titles. Such databases are now skipped (one warning in the log): the migration counts them as empty and completes, and titles fall back to the session index.
+- **Codex Usage Sync Could Hang After an Unrelated Panic**: If a panic poisoned the replay-cache lock, syncing a Codex session with a parent thread locked the same mutex twice and hung, because the poisoned guard lived until the end of the `else` branch. The lookup is now copied out before the lock is released, and clearing the caches recovers from the poison.
+- **Grok Build's "Get API Key" Link Opened the Plain Homepage**: The form passed the preset's `websiteUrl` to the link, so sponsor presets lost their sign-up URL. It now prefers the preset's `apiKeyUrl`, like the other apps; the saved website URL is unchanged.
+- **Sidebar Bottom Divider Matches the One Above** (#7874 by Allen Xu): The bottom bar's border ran edge to edge and sat flush against the last global item, so a selected Usage row touched the line. It is now an inset divider with 6 px above and below, and the collapsed rail drops the extra gap between Apps and Settings.
+- **Reset-Credits Chevron Lines Up With the Countdown**: When the reset-credits dropdown sits on its own card row, its chevron takes the countdown's icon slot, under the clock of the row above.
+
+### Performance
+
+- **The Sidebar Toggle Animates at the Display's Refresh Rate** (#7860 by Allen Xu): The sidebar and content area are laid out at their final widths once, and the moving edge is drawn by a cover panel sliding on a 200 ms transform animation, so the toggle no longer runs at WKWebView's ~60 fps main-thread rate. Interrupting a toggle continues from the current edge; auto-collapse on window resize and `prefers-reduced-motion` skip the animation. This replaces the width transition from #7845.
+
+### Internal
+
+- **Release Pipeline Rebuilt**: macOS compiles aarch64 and x86_64 on separate runners and merges them with `lipo`, so a notarization retry re-runs only the bundle and sign step instead of recompiling both. HTTP 401/403 from Apple stops the job at once (an expired developer agreement cannot be fixed by retrying; v4.0.0 rebuilt twice more and hit the job timeout). A missing updater signature on any of the six platforms now fails the build before the release is created, instead of silently leaving that platform out of `latest.json`. Windows x64 builds only the MSI, the signing-key preparation is a shared composite action, and `workflow_dispatch` runs a full signed and notarized dry run without publishing.
+- **Release Builds Use 16 Codegen Units**: The main crate compiles about 64% faster for a binary about 17% larger; thin LTO and `opt-level = "s"` are unchanged.
+- **CI**: Jobs install the toolchain pinned in `rust-toolchain.toml` instead of downloading stable first. Backend tests run under `cargo nextest` (per-test 180 s timeout, no fail-fast, per-slot test homes for integration tests) with `Swatinem/rust-cache`. Pushes to main are path-filtered like pull requests, with a weekly full run to rebuild caches. The WSL2 nightly runs the lib suite with 9P-aware skips and passes again. Two clippy lints in test code are fixed so `cargo clippy --all-targets -- -D warnings` passes.
+
+### Upgrade notes
+
+- **4.0.0 preview builds do not update themselves to 4.0.1.** The in-app updater only follows stable releases; download 4.0.1 from its release page.
+
 ## [4.0.0] - 2026-10-04
 
 This is a very large release. The core is a ground-up rewrite of how CC Switch writes client config files: Claude Code, Codex, Gemini CLI, Grok Build and Claude Desktop are now switched by replacing only key fields (endpoint, credential, model, protocol) through one crash-safe write engine, with a per-app direct / routing mode kept in a device-local `live-state.json` and no more live-file backups. Hooks, plugins, MCP servers and everything else in your client files stay in place: TOML and dotenv files keep their untouched lines byte for byte, JSON files keep every other key, value and order. On top of that comes a new Aggregation mode (code name Stack), which publishes models from several providers in one Claude Code or Codex model picker. The whole UI is redesigned (v7 sidebar shell with global pages, a Direct / Routing / Aggregation mode layer and a rebuilt tray, then the v8 pass with the orange theme colour and virtualized lists), and the usage dashboard and session reader are rebuilt. Around them sit local-routing protocol fixes, models.dev metadata fill for fetched models, new presets and pricing rows, and tool-lifecycle and Codex MCP fixes. The database schema stays at 19, but client files and device-local state change enough that the upgrade notes carry explicit downgrade steps.

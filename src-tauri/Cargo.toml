@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "4.0.0"
+version = "4.0.1"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
