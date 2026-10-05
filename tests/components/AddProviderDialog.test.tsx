@@ -125,7 +125,7 @@ describe("AddProviderDialog", () => {
     // Claude 的表单要等 live 底读回来才渲染。
     await screen.findByRole("button", { name: "manage-auth" });
     fireEvent.click(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "common.add",
       }),
     );
