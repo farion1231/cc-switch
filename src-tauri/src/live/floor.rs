@@ -98,6 +98,9 @@ pub const CLAUDE_EXCLUSIVE_ENV: &[&str] = &[
     "CLAUDE_CODE_ALWAYS_ENABLE_EFFORT",
     "CLAUDE_CODE_EXTRA_BODY",
     "CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING",
+    // auto mode 的服务端分类器只有官方端点支持；网关场景要设 0，否则会话被
+    // 阻断式提示卡住（官方文档给代理、网关的兼容选项）。
+    "CLAUDE_CODE_AUTO_MODE_SERVER",
     // 窗口类：取值由上游模型的窗口决定。
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
