@@ -192,6 +192,7 @@
     },
     "backToList": "Back to providers",
     "editProviderNamed": "Edit {{name}}",
+    "formSubtitleStack": "{{app}} (Aggregation mode)",
     "editCurrentNoticeFile": "This is the provider in use. Saving writes it to",
     "editCurrentNoticeFileEnd": " right away; the next request uses it.",
     "editCurrentNotice": "This is the provider in use. Saving takes effect right away; the next request uses the new settings."
@@ -1553,8 +1554,6 @@
     "stackModelDefault": "Default model",
     "stackModelMakeDefault": "Make default model",
     "stackLayout": {
-      "fullForm": "Show full form",
-      "simpleForm": "Back to the Aggregation form",
       "advancedHint": "Custom User-Agent and request overrides; usually no need to change.",
       "noModels": "The model list is empty: this provider won't appear in the model picker once added to the aggregation"
     },

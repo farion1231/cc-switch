@@ -36,6 +36,7 @@ import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import type { ManagedAuthProvider } from "@/lib/api";
+import type { AppMode } from "@/types/proxy";
 
 interface AddProviderDialogProps {
   open: boolean;
@@ -50,6 +51,8 @@ interface AddProviderDialogProps {
       editorSave?: ProviderEditorSave;
     },
   ) => Promise<void> | void;
+  /** 从供应商页哪一格打开的，见 ProviderForm 的同名参数 */
+  modeView?: AppMode;
 }
 
 export function AddProviderDialog({
@@ -57,6 +60,7 @@ export function AddProviderDialog({
   onOpenChange,
   appId,
   onSubmit,
+  modeView,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
   // OpenCode and OpenClaw don't support universal providers
@@ -90,6 +94,8 @@ export function AddProviderDialog({
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
+  const [stackLayout, setStackLayout] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
     useState<ManagedAuthProvider | null>(null);
 
@@ -499,6 +505,8 @@ export function AddProviderDialog({
     <ProviderForm
       appId={appId}
       submitLabel={t("common.add")}
+      modeView={modeView}
+      onStackLayoutChange={setStackLayout}
       onSubmit={handleSubmit}
       onCancel={closeDialog}
       onManageAuthAccounts={setAuthSettingsTarget}
@@ -527,7 +535,14 @@ export function AddProviderDialog({
     <FullScreenPanel
       isOpen={open}
       title={t("provider.addNewProvider")}
-      subtitle={APP_DISPLAY_NAME[appId]}
+      subtitle={
+        stackLayout
+          ? t("provider.formSubtitleStack", {
+              app: APP_DISPLAY_NAME[appId],
+              defaultValue: "{{app}}（聚合模式）",
+            })
+          : APP_DISPLAY_NAME[appId]
+      }
       backLabel={
         step === "form"
           ? t("providerPreset.backToPick")

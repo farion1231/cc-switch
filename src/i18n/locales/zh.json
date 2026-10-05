@@ -192,6 +192,7 @@
     },
     "backToList": "返回供应商列表",
     "editProviderNamed": "编辑 {{name}}",
+    "formSubtitleStack": "{{app}}（聚合模式）",
     "editCurrentNoticeFile": "这是正在使用的供应商。保存后会立即写进",
     "editCurrentNoticeFileEnd": "，下一次请求生效。",
     "editCurrentNotice": "这是正在使用的供应商。保存后立即生效，下一次请求就用新的设置。"
@@ -1553,8 +1554,6 @@
     "stackModelDefault": "默认模型",
     "stackModelMakeDefault": "设为默认模型",
     "stackLayout": {
-      "fullForm": "显示完整表单",
-      "simpleForm": "返回聚合模式的简化表单",
       "advancedHint": "自定义 User-Agent 与请求覆盖，一般无需修改。",
       "noModels": "模型列表为空：把这家加入聚合后，模型选择器里不会多出它的模型"
     },

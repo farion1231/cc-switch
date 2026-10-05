@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
@@ -78,7 +85,7 @@ import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { DesktopAccessBar } from "@/components/providers/mode/DesktopAccessBar";
 import { proxyApi } from "@/lib/api/proxy";
-import type { StartupAttachFailure } from "@/types/proxy";
+import type { AppMode, StartupAttachFailure } from "@/types/proxy";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
@@ -152,6 +159,17 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  // 供应商页顶部正在看的那格（直连 / 路由 / 聚合），由 SwitchModePanel 报上来。打开新增、
+  // 编辑时记下当时那格，表单按它选布局：在聚合那格打开就是聚合的简化表单。
+  const [providerModeView, setProviderModeView] = useState<{
+    app: AppId;
+    view: AppMode;
+  } | null>(null);
+  const [formModeView, setFormModeView] = useState<AppMode>();
+  const handleProviderModeViewChange = useCallback(
+    (app: AppId, view: AppMode) => setProviderModeView({ app, view }),
+    [],
+  );
   // 托盘里点了直连下需要路由的那家：打开应用页后弹「需要路由」对话框
   const [trayNeedsRoute, setTrayNeedsRoute] = useState<{
     app: AppId;
@@ -263,6 +281,13 @@ function App() {
 
   const { isRunning: isProxyRunning, takeoverStatus } = useProxyStatus();
   const proxyAppId = isProxyAppId(activeApp) ? activeApp : null;
+  // 换了应用、新面板还没报上来时为 undefined：表单按应用实际生效的模式
+  const currentModeView =
+    providerModeView?.app === activeApp ? providerModeView.view : undefined;
+  const openAddProvider = (modeView: AppMode | undefined) => {
+    setFormModeView(modeView);
+    setIsAddOpen(true);
+  };
   const currentAppUsesProxy =
     proxyAppId !== null || activeApp === "claude-desktop";
   const isCurrentAppTakeoverActive = proxyAppId
@@ -640,7 +665,8 @@ function App() {
     }
     if (!navigation.app) return;
     selectApp(navigation.app);
-    if (navigation.intent === "add") setIsAddOpen(true);
+    // 托盘先换应用：新应用那格还没报上来，按它实际生效的模式
+    if (navigation.intent === "add") openAddProvider(undefined);
     if (navigation.intent === "needsRoute" && navigation.providerId) {
       setTrayNeedsRoute({
         app: navigation.app,
@@ -1117,7 +1143,7 @@ function App() {
             <Button
               variant="solid"
               size="regular"
-              onClick={() => setIsAddOpen(true)}
+              onClick={() => openAddProvider(currentModeView)}
             >
               <Plus className="h-4 w-4" />
               {t("provider.addProvider")}
@@ -1170,14 +1196,17 @@ function App() {
   };
 
   const listCallbacks = {
-    onEdit: (provider: Provider) => setEditingProvider(provider),
+    onEdit: (provider: Provider) => {
+      setFormModeView(currentModeView);
+      setEditingProvider(provider);
+    },
     onDelete: (provider: Provider) =>
       setConfirmAction({ provider, action: "delete" }),
     onDuplicate: handleDuplicateProvider,
     onConfigureUsage: setUsageProvider,
     onOpenWebsite: handleOpenWebsite,
     onOpenTerminal: activeApp === "claude" ? handleOpenTerminal : undefined,
-    onCreate: () => setIsAddOpen(true),
+    onCreate: () => openAddProvider(currentModeView),
   };
 
   const renderProviderList = () => {
@@ -1199,6 +1228,7 @@ function App() {
             trayNeedsRoute?.app === proxyAppId ? trayNeedsRoute : undefined
           }
           onNeedsRouteHandled={() => setTrayNeedsRoute(null)}
+          onViewChange={handleProviderModeViewChange}
           startupFailure={startupFailure}
           onDismissStartupFailure={() =>
             setStartupFailures((list) =>
@@ -1499,6 +1529,7 @@ function App() {
         onOpenChange={setIsAddOpen}
         appId={activeApp}
         onSubmit={addProvider}
+        modeView={formModeView}
       />
 
       <EditProviderDialog
@@ -1513,6 +1544,7 @@ function App() {
         appId={activeApp}
         isProxyTakeover={isCurrentAppTakeoverActive}
         isCurrent={effectiveEditingProvider?.id === currentProviderId}
+        modeView={formModeView}
       />
 
       {effectiveUsageProvider && (

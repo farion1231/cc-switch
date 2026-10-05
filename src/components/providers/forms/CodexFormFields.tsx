@@ -744,7 +744,7 @@ export function CodexFormFields({
     ? catalogRows.findIndex((row) => row.model.trim() === trimmedDefaultModel)
     : 0;
   // Stack 布局里默认模型那一行就代表 `model`：改它的名字、删掉它，`model` 当场跟着变，
-  // 两种布局共用这份状态，切到完整表单也看得到。没有这样的行时是 -1。
+  // 两种布局共用这份状态。没有这样的行时是 -1。
   const linkedDefaultIndex =
     variant === "stack" && trimmedDefaultModel ? stackDefaultIndex : -1;
 

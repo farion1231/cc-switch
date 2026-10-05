@@ -192,6 +192,7 @@
     },
     "backToList": "プロバイダー一覧に戻る",
     "editProviderNamed": "{{name}} を編集",
+    "formSubtitleStack": "{{app}}（集約モード）",
     "editCurrentNoticeFile": "使用中のプロバイダーです。保存するとすぐに",
     "editCurrentNoticeFileEnd": " に書き込まれ、次のリクエストから反映されます。",
     "editCurrentNotice": "使用中のプロバイダーです。保存するとすぐに反映され、次のリクエストから新しい設定が使われます。"
@@ -1553,8 +1554,6 @@
     "stackModelDefault": "デフォルトモデル",
     "stackModelMakeDefault": "デフォルトモデルにする",
     "stackLayout": {
-      "fullForm": "完全なフォームを表示",
-      "simpleForm": "集約簡易フォームに戻る",
       "advancedHint": "カスタム User-Agent とリクエスト上書き。通常は変更不要です。",
       "noModels": "モデル一覧が空です：集約に追加してもモデル選択には表示されません"
     },
