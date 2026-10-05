@@ -29,6 +29,7 @@
     "model",
     "fallbackModel",
     "modelOverrides",
+    "modelPicker",
     "advisorModel",
     "awsAuthRefresh",
     "awsCredentialExport",

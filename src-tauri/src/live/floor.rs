@@ -70,6 +70,8 @@ pub const CLAUDE_FLOOR_TOP: &[&str] = &[
     // 备用模型链；模型 ID → 供应商专属 ID（如 Bedrock ARN）。
     "fallbackModel",
     "modelOverrides",
+    // `/model` 选择器的行：聚合模式下是 CC Switch 列的 Stack 模型，其余时候不留。
+    "modelPicker",
     // advisor 只在 Anthropic API 上可用。
     "advisorModel",
     // Bedrock / Vertex 的凭据命令。

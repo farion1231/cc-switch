@@ -200,22 +200,33 @@ fn claude_contract(
     (projection, contract)
 }
 
-/// Claude Code 的模型发现开关：打开后启动时向 `ANTHROPIC_BASE_URL/v1/models` 取模型列表，
-/// Stack 模型才会出现在 `/model` 里。独有字段：记进契约，退出代理时按记录删（同值才删），
-/// 用户自己设的全局值在直连切换时不受影响。
-const CLAUDE_GATEWAY_DISCOVERY_ENV: &str = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY";
 const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 
-/// 发布了 Stack 模型时：打开模型发现；`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改由 Stack 模型决定，取
-/// 非 1M 模型里最小的窗口（等于默认 200K 时不写）。四档别名也写成 Stack id，同样受 MAX 约束；
-/// 1M 的 Stack 模型不受 MAX 影响。没有发布 Stack 模型时契约和原来逐字节一致。
+/// `/model` 选择器的配置（顶层关键字段）。`replaceBuiltInOptions` 让选择器只剩 Default 和
+/// 这里列的行：内置的 Opus / Sonnet / Haiku 行都指向默认那家的模型，留着就是几行重复，
+/// 还会把那个模型自己的行去重吃掉。四档别名仍然要写，Default、`--model opus` 和子代理靠它们。
+const CLAUDE_MODEL_PICKER: &str = "modelPicker";
+
+/// 发布了 Stack 模型时：`/model` 换成 Stack 模型列表；`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改由
+/// Stack 模型决定，取非 1M 模型里最小的窗口（等于默认 200K 时不写）。四档别名也写成 Stack id，
+/// 同样受 MAX 约束；1M 的 Stack 模型不受 MAX 影响。没有发布 Stack 模型时契约和原来逐字节一致。
 fn with_stack_models(projection: &mut ClaudeProjection, stack: &[StackModel]) {
     if stack.is_empty() {
         return;
     }
-    projection.exclusive.insert(
-        CLAUDE_GATEWAY_DISCOVERY_ENV.to_string(),
-        Value::String("1".to_string()),
+    let options: Vec<Value> = stack
+        .iter()
+        .map(|model| {
+            json!({
+                "model": model.id,
+                "label": model.display_name,
+                "description": model.description,
+            })
+        })
+        .collect();
+    projection.top.insert(
+        CLAUDE_MODEL_PICKER.to_string(),
+        json!({ "replaceBuiltInOptions": true, "options": options }),
     );
     projection.exclusive.shift_remove(CLAUDE_MAX_CONTEXT_ENV);
     let smallest = stack
@@ -4934,6 +4945,23 @@ model_provider = "c"
         state::stack(&DeviceStore::for_device(), "claude").unwrap()
     }
 
+    /// 用户自己可能打开的模型发现开关（聚合模式不再写它）。
+    const DISCOVERY_ENV: &str = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY";
+
+    /// `/model` 里列的 Stack 模型 id；没有 `modelPicker` 时为 `None`。
+    fn picker() -> Option<Vec<String>> {
+        let picker = settings().get(CLAUDE_MODEL_PICKER)?.clone();
+        assert_eq!(picker["replaceBuiltInOptions"], true, "{picker}");
+        Some(
+            picker["options"]
+                .as_array()
+                .expect("options")
+                .iter()
+                .map(|row| row["model"].as_str().expect("model").to_string())
+                .collect(),
+        )
+    }
+
     async fn set_member(state: &AppState, id: &str, enabled: bool) -> Vec<StackMemberView> {
         set_stack_member(state, &AppType::Claude, id, enabled)
             .await
@@ -4953,8 +4981,15 @@ model_provider = "c"
 
         // 进入 Stack 模式时默认那家（a）已经在名单里，照常发布；四档都指向它的第一个模型。
         assert_eq!(stack_state().members, vec!["a"]);
+        assert_eq!(
+            picker(),
+            Some(vec!["ccs-claude-a--claude-sonnet-4-6".to_string()])
+        );
+        let options = &settings()[CLAUDE_MODEL_PICKER]["options"][0];
+        assert_eq!(options["label"], "claude-sonnet-4-6（A）");
+        assert_eq!(options["description"], "claude-sonnet-4-6 · 200K");
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        assert!(env.get(DISCOVERY_ENV).is_none(), "{env}");
         for role in ["HAIKU", "SONNET", "OPUS", "FABLE"] {
             assert_eq!(
                 env[format!("ANTHROPIC_DEFAULT_{role}_MODEL")],
@@ -4973,8 +5008,14 @@ model_provider = "c"
         assert_eq!(views[0].model_ids, vec!["ccs-claude-a--claude-sonnet-4-6"]);
         assert_eq!(stack_state().key_of("kimi"), Some("kimi"));
         assert_eq!(views[1].model_ids, vec!["ccs-claude-kimi--kimi-k3"]);
+        assert_eq!(
+            picker(),
+            Some(vec![
+                "ccs-claude-a--claude-sonnet-4-6".to_string(),
+                "ccs-claude-kimi--kimi-k3".to_string(),
+            ])
+        );
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
         assert_eq!(
             env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
@@ -4989,8 +5030,14 @@ model_provider = "c"
         set_member(&state, "zhipu", true).await;
         assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
         set_member(&state, "kimi", false).await;
+        assert_eq!(
+            picker(),
+            Some(vec![
+                "ccs-claude-a--claude-sonnet-4-6".to_string(),
+                "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
+            ])
+        );
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
 
         // 只剩默认那家：客户端文件和契约回到刚进入时的样子，登记簿保留。
@@ -5014,16 +5061,38 @@ model_provider = "c"
     async fn a_users_own_model_discovery_switch_survives_switches_and_proxy_mode() {
         let _home = Home::new();
         let mut user: Value = serde_json::from_str(USER_SETTINGS).unwrap();
-        user["env"][CLAUDE_GATEWAY_DISCOVERY_ENV] = json!("1");
+        user["env"][DISCOVERY_ENV] = json!("1");
         seed_settings(&serde_json::to_string_pretty(&user).unwrap());
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
-        let discovery = || settings()["env"].get(CLAUDE_GATEWAY_DISCOVERY_ENV).cloned();
+        let discovery = || settings()["env"].get(DISCOVERY_ENV).cloned();
 
         ProviderService::switch(&state, AppType::Claude, "kimi").expect("direct kimi");
         assert_eq!(discovery(), Some(json!("1")));
         enter(&state, &AppType::Claude, false).await.expect("enter");
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_eq!(discovery(), Some(json!("1")), "no stacked models");
+    }
+
+    /// `modelPicker` 是关键字段：聚合模式下换成 Stack 模型列表，用户自己配的不保留；离开
+    /// 聚合模式（退出代理、直连切换）都清掉。
+    #[tokio::test]
+    #[serial]
+    async fn the_stack_model_picker_replaces_a_users_own_and_leaves_with_stack_mode() {
+        let _home = Home::new();
+        let mut user: Value = serde_json::from_str(USER_SETTINGS).unwrap();
+        user[CLAUDE_MODEL_PICKER] = json!({ "options": [{ "model": "mine" }] });
+        seed_settings(&serde_json::to_string_pretty(&user).unwrap());
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        assert_eq!(
+            picker(),
+            Some(vec!["ccs-claude-a--claude-sonnet-4-6".to_string()])
+        );
+
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert!(settings().get(CLAUDE_MODEL_PICKER).is_none());
+        assert_back_to_user_settings();
     }
 
     #[tokio::test]
@@ -5039,7 +5108,7 @@ model_provider = "c"
         assert!(stack_state().is_member("kimi"));
 
         enter(&state, &AppType::Claude, true).await.expect("enter");
-        assert_eq!(settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        assert!(picker().is_some());
         assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
 
         exit(&state, &AppType::Claude).await.expect("exit");
@@ -5072,8 +5141,8 @@ model_provider = "c"
 
         // 换默认到名单里的 kimi：四档跟着指向 kimi 的第一个模型，两家都照常发布。
         ProviderService::switch(&state, AppType::Claude, "kimi").expect("switch route");
+        assert!(picker().is_some());
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
         assert_eq!(
             env["ANTHROPIC_DEFAULT_OPUS_MODEL"],
@@ -5095,20 +5164,19 @@ model_provider = "c"
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         set_member(&state, "kimi", true).await;
-        let discovery = || settings()["env"].get(CLAUDE_GATEWAY_DISCOVERY_ENV).cloned();
 
         // 路由模式：名单在也不发布。
         enter(&state, &AppType::Claude, false)
             .await
             .expect("routing");
-        assert_eq!(discovery(), None);
+        assert_eq!(picker(), None);
         assert!(!stack_views(&state, &AppType::Claude).unwrap().active);
 
         // 已经在代理模式时换成 Stack 模式：默认那家加入名单，其余的发布。
         enter(&state, &AppType::Claude, true)
             .await
             .expect("stack mode");
-        assert_eq!(discovery(), Some(json!("1")));
+        assert!(picker().is_some());
         assert!(stack_views(&state, &AppType::Claude).unwrap().active);
         assert_eq!(stack_state().members, vec!["kimi", "a"]);
 
@@ -5116,7 +5184,7 @@ model_provider = "c"
         enter(&state, &AppType::Claude, false)
             .await
             .expect("routing again");
-        assert_eq!(discovery(), None);
+        assert_eq!(picker(), None);
         assert_eq!(stack_state().members, vec!["kimi", "a"]);
         assert!(!stack_state().enabled);
 
@@ -5126,7 +5194,7 @@ model_provider = "c"
         enter(&state, &AppType::Claude, true)
             .await
             .expect("stack mode again");
-        assert_eq!(discovery(), Some(json!("1")));
+        assert!(picker().is_some());
         assert_eq!(stack_state().members, vec!["kimi", "a"]);
     }
 
@@ -5235,8 +5303,8 @@ model_provider = "c"
         // 之后可以移除。四档指向新默认的第一个模型：1M 模型三档带标记，haiku 不带。
         ProviderService::switch(&state, AppType::Claude, "zhipu").expect("set default");
         assert_eq!(stack_state().members, vec!["a", "zhipu"]);
+        assert!(picker().is_some());
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(
             env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
             "ccs-claude-zhipu--glm-5.2[1M]"
@@ -5248,8 +5316,11 @@ model_provider = "c"
         let with_a = settings();
         set_member(&state, "a", false).await;
         assert_eq!(stack_state().members, vec!["zhipu"]);
+        assert_eq!(
+            picker(),
+            Some(vec!["ccs-claude-zhipu--glm-5.2[1M]".to_string()])
+        );
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(env, with_a["env"], "a is not the default any more");
     }
 
@@ -5503,11 +5574,7 @@ model_provider = "c"
             // 再发一次同样的目标值：先补完（或丢弃）上一次，再应用，结果都是新名单。
             set_member(&state, "kimi", true).await;
             assert!(stack_state().is_member("kimi"), "{point}");
-            assert_eq!(
-                settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV],
-                "1",
-                "{point}"
-            );
+            assert!(picker().is_some(), "{point}");
             assert!(state::pending(&DeviceStore::for_device(), "claude")
                 .unwrap()
                 .is_none());
@@ -5556,7 +5623,11 @@ model_provider = "c"
 
         ProviderService::delete(&state, AppType::Claude, "kimi").expect("delete kimi");
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1", "a still publishes");
+        assert_eq!(
+            picker(),
+            Some(vec!["ccs-claude-a--claude-sonnet-4-6".to_string()]),
+            "a still publishes"
+        );
         assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
         assert!(state
             .db
@@ -5635,7 +5706,7 @@ model_provider = "c"
         let env = settings()["env"].clone();
         assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-5");
         assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "claude-haiku-4-5");
-        assert!(env.get(CLAUDE_GATEWAY_DISCOVERY_ENV).is_none(), "{env}");
+        assert_eq!(picker(), None);
     }
 
     fn codex_native(id: &str, url: &str, extra: &str, catalog: Option<Value>) -> Provider {
