@@ -1,0 +1,33 @@
+{
+  "version": "4.0.2",
+  "items": [
+    {
+      "type": "fix",
+      "zh": "修复 Claude Code 用 ChatGPT 账号时报 400、会话中断",
+      "zh-TW": "修復 Claude Code 用 ChatGPT 帳號時報 400、工作階段中斷",
+      "en": "Fixed Claude Code with a ChatGPT account failing with 400 errors mid-session",
+      "ja": "Claude Code で ChatGPT アカウント利用時に 400 エラーで止まる問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 的聚合模型被旧的模型目录设置挡住、不显示",
+      "zh-TW": "修復 Codex 的聚合模型被舊的模型目錄設定擋住、不顯示",
+      "en": "Fixed Codex aggregated models not showing up because of a leftover model catalog setting",
+      "ja": "古いモデルカタログ設定のせいで Codex の集約モデルが表示されない問題を修正"
+    },
+    {
+      "type": "new",
+      "zh": "MCP 服务器可以同步到 Pi 1.0 了",
+      "zh-TW": "MCP 伺服器可以同步到 Pi 1.0 了",
+      "en": "MCP servers can now be synced to Pi 1.0",
+      "ja": "MCP サーバーを Pi 1.0 に同期できるように"
+    },
+    {
+      "type": "fix",
+      "zh": "修复时间 MCP 预设（time）一启动就退出",
+      "zh-TW": "修復時間 MCP 預設（time）一啟動就退出",
+      "en": "Fixed the time MCP preset exiting right after it starts",
+      "ja": "時刻 MCP プリセット（time）が起動直後に終了する問題を修正"
+    }
+  ]
+}
