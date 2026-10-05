@@ -36,6 +36,7 @@ import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import type { ManagedAuthProvider } from "@/lib/api";
+import { invalidateUniversalProviderCaches, queryClient } from "@/lib/query";
 
 interface AddProviderDialogProps {
   open: boolean;
@@ -59,11 +60,10 @@ export function AddProviderDialog({
   onSubmit,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
-  // OpenCode and OpenClaw don't support universal providers
+  // Additive apps need explicit universal projection support; Hermes has it.
   const showUniversalTab =
     appId !== "opencode" &&
     appId !== "openclaw" &&
-    appId !== "hermes" &&
     appId !== "pi" &&
     appId !== "mcode" &&
     appId !== "grokbuild" &&
@@ -208,6 +208,7 @@ export function AddProviderDialog({
 
       try {
         await universalProvidersApi.sync(provider.id);
+        await invalidateUniversalProviderCaches(queryClient);
         toast.success(
           t("universalProvider.addedAndSynced", {
             defaultValue: "统一供应商已添加并同步",
@@ -229,7 +230,7 @@ export function AddProviderDialog({
       setSelectedUniversalPreset(null);
       onOpenChange(false);
     },
-    [t, onOpenChange],
+    [queryClient, t, onOpenChange],
   );
 
   const handleUniversalFormClose = useCallback(() => {
