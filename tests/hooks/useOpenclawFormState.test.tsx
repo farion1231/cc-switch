@@ -96,3 +96,78 @@ describe("useOpenclawFormState User-Agent headers", () => {
     },
   );
 });
+
+const caseFixtures: { label: string; headers: Record<string, string> }[] = [
+  { label: "lowercase", headers: { "user-agent": "lower-agent" } },
+  { label: "uppercase", headers: { "USER-AGENT": "upper-agent" } },
+  { label: "mixed case", headers: { "uSeR-aGeNt": "mixed-agent" } },
+  {
+    label: "coexisting variants",
+    headers: {
+      "User-Agent": "canonical-agent",
+      "user-agent": "lower-agent",
+      "USER-AGENT": "upper-agent",
+      "uSeR-aGeNt": "mixed-agent",
+    },
+  },
+];
+const preservedHeaders: Record<string, string> = JSON.parse(
+  '{"X-Fixture":"keep","x-Custom":"case-sensitive-value","__proto__":"proto-value","constructor":"ctor-value","toString":"string-value"}',
+);
+
+describe.each(caseFixtures)(
+  "useOpenclawFormState imported UA: $label",
+  ({ headers }) => {
+    it("recognizes initial UA without rewriting the imported configuration", () => {
+      const test = mount({ ...preservedHeaders, ...headers });
+      expect(test.result.current.openclawUserAgent).toBe(true);
+      expect(test.read()).toEqual(test.original);
+      expect(test.onSettingsConfigChange).not.toHaveBeenCalled();
+    });
+
+    it("reset recognizes UA and then clears it for headers without UA", () => {
+      const test = mount();
+      act(() => test.result.current.resetOpenclawState({ ...base, headers }));
+      expect(test.result.current.openclawUserAgent).toBe(true);
+      act(() =>
+        test.result.current.resetOpenclawState({
+          ...base,
+          headers: preservedHeaders,
+        }),
+      );
+      expect(test.result.current.openclawUserAgent).toBe(false);
+      act(() => test.result.current.resetOpenclawState());
+      expect(test.result.current.openclawUserAgent).toBe(false);
+      expect(test.onSettingsConfigChange).not.toHaveBeenCalled();
+    });
+
+    it("normalizes all variants on enable and removes all on disable", () => {
+      const test = mount({ ...preservedHeaders, ...headers });
+      test.toggle(true);
+      expect(test.read()).toEqual({
+        ...base,
+        headers: {
+          ...preservedHeaders,
+          "User-Agent": OPENCLAW_DEFAULT_USER_AGENT,
+        },
+      });
+      test.toggle(false);
+      expect(test.read()).toEqual({ ...base, headers: preservedHeaders });
+    });
+
+    it("disabling sole imported UA variants removes the empty headers object", () => {
+      const test = mount(headers);
+      test.toggle(false);
+      expect(test.read()).toEqual(base);
+    });
+  },
+);
+
+it("reset tolerates null headers from JSON without rewriting settings", () => {
+  const test = mount({ "User-Agent": "fixture-agent" });
+  const config = JSON.parse('{"headers":null}');
+  act(() => test.result.current.resetOpenclawState(config));
+  expect(test.result.current.openclawUserAgent).toBe(false);
+  expect(test.read()).toEqual(test.original);
+  expect(test.onSettingsConfigChange).not.toHaveBeenCalled();
+});

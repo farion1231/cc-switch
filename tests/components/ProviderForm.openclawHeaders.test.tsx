@@ -76,19 +76,24 @@ async function mount(headers?: Record<string, string>) {
     const actual = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
     return actual;
   };
-  return { settingsConfig, toggle, save };
+  return {
+    settingsConfig,
+    toggle,
+    switchElement: within(section).getByRole("switch"),
+    save,
+  };
 }
 
+beforeEach(() => {
+  // All Tauri calls are intercepted fixtures; any unexpected request fails closed.
+  server.listen({ onUnhandledRequest: "error" });
+  server.use(
+    http.post("http://tauri.local/get_openclaw_live_provider_ids", () =>
+      HttpResponse.json(["fixture-provider"]),
+    ),
+  );
+});
 describe("ProviderForm OpenClaw User-Agent headers", () => {
-  beforeEach(() => {
-    // All Tauri calls are intercepted fixtures; any unexpected request fails closed.
-    server.listen({ onUnhandledRequest: "error" });
-    server.use(
-      http.post("http://tauri.local/get_openclaw_live_provider_ids", () =>
-        HttpResponse.json(["fixture-provider"]),
-      ),
-    );
-  });
   it("enabling User-Agent preserves headers in final submission", async () => {
     const test = await mount(customHeaders);
     test.toggle();
@@ -132,3 +137,86 @@ describe("ProviderForm OpenClaw User-Agent headers", () => {
     expect(await test.save()).toEqual(base);
   });
 });
+
+const caseFixtures: { label: string; headers: Record<string, string> }[] = [
+  { label: "lowercase", headers: { "user-agent": "lower-agent" } },
+  { label: "uppercase", headers: { "USER-AGENT": "upper-agent" } },
+  { label: "mixed case", headers: { "uSeR-aGeNt": "mixed-agent" } },
+  {
+    label: "coexisting variants",
+    headers: {
+      "User-Agent": "canonical-agent",
+      "user-agent": "lower-agent",
+      "USER-AGENT": "upper-agent",
+      "uSeR-aGeNt": "mixed-agent",
+    },
+  },
+];
+// JSON.parse creates own prototype-named properties, just like imported JSON.
+const preservedHeaders: Record<string, string> = JSON.parse(
+  '{"X-Fixture":"keep","x-Custom":"case-sensitive-value","__proto__":"proto-value","constructor":"ctor-value","toString":"string-value"}',
+);
+
+describe.each(caseFixtures)(
+  "ProviderForm imported UA: $label",
+  ({ headers }) => {
+    const importedHeaders = { ...preservedHeaders, ...headers };
+
+    it("recognizes an imported User-Agent in the initial switch", async () => {
+      const test = await mount(importedHeaders);
+      expect(test.switchElement).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("keeps untouched imported headers and all settings on save", async () => {
+      const test = await mount(importedHeaders);
+      expect(await test.save()).toEqual(test.settingsConfig);
+    });
+
+    it("turning the switch off removes every UA variant from submission", async () => {
+      const test = await mount(importedHeaders);
+      if (test.switchElement.getAttribute("aria-checked") === "true")
+        test.toggle();
+      expect(await test.save()).toEqual({ ...base, headers: preservedHeaders });
+    });
+
+    it("turning the switch on submits one canonical default UA", async () => {
+      const test = await mount(importedHeaders);
+      if (test.switchElement.getAttribute("aria-checked") === "true")
+        test.toggle();
+      test.toggle();
+      expect(await test.save()).toEqual({
+        ...base,
+        headers: {
+          ...preservedHeaders,
+          "User-Agent": OPENCLAW_DEFAULT_USER_AGENT,
+        },
+      });
+    });
+
+    it("on-off round trip removes imported UA variants from submission", async () => {
+      const test = await mount(importedHeaders);
+      if (test.switchElement.getAttribute("aria-checked") === "false")
+        test.toggle();
+      test.toggle();
+      expect(await test.save()).toEqual({ ...base, headers: preservedHeaders });
+    });
+
+    it("repeated off-on toggles preserve unrelated fields and one UA", async () => {
+      const test = await mount(importedHeaders);
+      if (test.switchElement.getAttribute("aria-checked") === "true")
+        test.toggle();
+      for (let i = 0; i < 3; i++) {
+        test.toggle();
+        test.toggle();
+      }
+      test.toggle();
+      expect(await test.save()).toEqual({
+        ...base,
+        headers: {
+          ...preservedHeaders,
+          "User-Agent": OPENCLAW_DEFAULT_USER_AGENT,
+        },
+      });
+    });
+  },
+);
