@@ -93,6 +93,38 @@ fn normalized_name(id: &str) -> String {
     id.replace('-', "_")
 }
 
+/// `names` 里有和 `id` 只差 `-` / `_` 的另一个名字就拒绝
+fn check_name_collision<'a>(
+    id: &str,
+    names: impl IntoIterator<Item = &'a String>,
+) -> Result<(), AppError> {
+    let key = normalized_name(id);
+    match names
+        .into_iter()
+        .find(|name| name.as_str() != id && normalized_name(name) == key)
+    {
+        Some(other) => Err(AppError::McpValidation(format!(
+            "Pi 把只差 - 和 _ 的服务器名视为同一个：{id} 与已有的 {other} 冲突"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// 在 Pi 上启用前对照数据库里已勾选 Pi 的服务器查重名。
+/// Pi 没装时没有文件可对照，不查的话两个只差 - 和 _ 的服务器都能勾上，装上 Pi 后每次同步都报错
+pub(crate) fn check_enabled_name_collision(
+    id: &str,
+    servers: &indexmap::IndexMap<String, McpServer>,
+) -> Result<(), AppError> {
+    check_name_collision(
+        id,
+        servers
+            .iter()
+            .filter(|(_, server)| server.apps.pi)
+            .map(|(name, _)| name),
+    )
+}
+
 /// Pi 不接受的条目（不看文件里的其他条目）：非法名、SSE、无效连接
 fn validate_entry(id: &str, spec: &Value) -> Result<(), AppError> {
     validate_name(id)?;
@@ -177,15 +209,7 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
     match change {
         PiChange::Enable(spec) => {
             validate_entry(id, spec)?;
-            let key = normalized_name(id);
-            if let Some(other) = servers
-                .keys()
-                .find(|name| name.as_str() != id && normalized_name(name) == key)
-            {
-                return Err(AppError::McpValidation(format!(
-                    "Pi 把只差 - 和 _ 的服务器名视为同一个：{id} 与已有的 {other} 冲突"
-                )));
-            }
+            check_name_collision(id, servers.keys())?;
             let transport = native_transport(spec)?;
             // 条目还在就沿用它（用户在 Pi 里改过的设置优先）；不在就从保存的 Pi 字段重建
             let mut merged = servers.get(id).cloned().unwrap_or_else(|| pi_fields(spec));
@@ -225,6 +249,7 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read(&config_path()?)?;
     let mut existing = state.db.get_all_mcp_servers()?;
+    let before = existing.clone();
     let mut count = 0;
     let mut skipped = Vec::new();
     let natives = document["mcpServers"]
@@ -250,6 +275,11 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
             .get("enabled")
             .and_then(Value::as_bool)
             .unwrap_or(true);
+        // 也不能和数据库里已勾选 Pi 的服务器只差 - 和 _（比如 Pi 没装时勾上的）
+        if enabled && check_enabled_name_collision(id, &before).is_err() {
+            skipped.push(format!("'{id}': same Pi server name as an enabled server"));
+            continue;
+        }
         spec.as_object_mut().unwrap().remove("enabled");
         let server = if let Some(mut server) = existing.shift_remove(id) {
             if transport_spec(&server.server) != transport_spec(&spec) {

@@ -286,6 +286,13 @@ fn pi_import_skips_entries_pi_rejects() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
     let state = create_test_state().unwrap();
+    // 数据库里已勾选 Pi 的 api_server（比如 Pi 没装时勾上的）：文件里的 api-server 不能再导入勾上
+    let ticked: McpServer = serde_json::from_value(json!({
+        "id":"api_server", "name":"api_server", "server":{"type":"stdio","command":"x"},
+        "apps":{"pi":true}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&ticked).unwrap();
     let path = ensure_test_home().join(".pi/agent/mcp.json");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
@@ -295,7 +302,8 @@ fn pi_import_skips_entries_pi_rejects() {
             "remote":{"type":"sse","url":"https://example.com/sse"},
             "bad name":{"command":"node"},
             "dev-tools":{"command":"a"},
-            "dev_tools":{"command":"b"}
+            "dev_tools":{"command":"b"},
+            "api-server":{"command":"y"}
         }})
         .to_string(),
     )
@@ -303,7 +311,7 @@ fn pi_import_skips_entries_pi_rejects() {
     assert!(McpService::import_from_all_apps(&state).is_err());
     let servers = state.db.get_all_mcp_servers().unwrap();
     assert!(servers["ok"].apps.pi);
-    for id in ["remote", "bad name", "dev-tools", "dev_tools"] {
+    for id in ["remote", "bad name", "dev-tools", "dev_tools", "api-server"] {
         assert!(!servers.contains_key(id), "{id}");
     }
 }
@@ -322,6 +330,8 @@ fn pi_toggle_without_pi_dir_skips_the_file() {
             "remote",
             json!({"type":"sse","url":"https://example.com/sse"}),
         ),
+        ("dev-tools", json!({"type":"stdio","command":"a"})),
+        ("dev_tools", json!({"type":"stdio","command":"b"})),
     ] {
         let server: McpServer = serde_json::from_value(json!({
             "id": id, "name": id, "server": spec, "apps": {}
@@ -337,6 +347,14 @@ fn pi_toggle_without_pi_dir_skips_the_file() {
     McpService::delete_server(&state, "docs").unwrap();
     assert!(McpService::toggle_app(&state, "remote", AppType::Pi, true).is_err());
     assert!(!state.db.get_all_mcp_servers().unwrap()["remote"].apps.pi);
+
+    // 没有文件可对照时，只差 - 和 _ 的名字对照数据库里已勾选 Pi 的服务器拒绝
+    McpService::toggle_app(&state, "dev-tools", AppType::Pi, true).unwrap();
+    assert!(McpService::toggle_app(&state, "dev_tools", AppType::Pi, true).is_err());
+    let mut edited = state.db.get_all_mcp_servers().unwrap()["dev_tools"].clone();
+    edited.apps.pi = true;
+    assert!(McpService::upsert_server(&state, edited).is_err());
+    assert!(!state.db.get_all_mcp_servers().unwrap()["dev_tools"].apps.pi);
     assert!(!dir.exists());
 }
 
