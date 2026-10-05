@@ -1473,7 +1473,7 @@ export function CodexFormFields({
                 {renderCatalogActionButtons(
                   handleAddCatalogRow,
                   t("codexConfig.addCatalogModel", {
-                    defaultValue: "添加模型",
+                    defaultValue: "手动添加",
                   }),
                 )}
               </div>
@@ -1756,7 +1756,7 @@ export function CodexFormFields({
                     {renderCatalogActionButtons(
                       handleAddCatalogRow,
                       t("codexConfig.addCatalogModel", {
-                        defaultValue: "添加模型",
+                        defaultValue: "手动添加",
                       }),
                     )}
                   </div>
@@ -1768,6 +1768,15 @@ export function CodexFormFields({
                   </p>
                 </div>
 
+                {fetchedModels.length > 0 && (
+                  <FetchedModelPicker
+                    models={fetchedModels}
+                    configuredModelIds={catalogRows.map((row) =>
+                      row.model.trim(),
+                    )}
+                    onAdd={handleAddFetchedCatalogRows}
+                  />
+                )}
                 {catalogRows.length > 0 && renderCatalogRows(false)}
               </div>
             )}

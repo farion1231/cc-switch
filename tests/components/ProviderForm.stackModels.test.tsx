@@ -167,7 +167,7 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
 
     expect(screen.getByDisplayValue("m-b")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("m-a")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "手动添加" }));
     const inputs = screen.getAllByPlaceholderText("例如 deepseek-v4-pro");
     fireEvent.change(inputs[1], { target: { value: "m-c[1M]" } });
 
