@@ -40,7 +40,7 @@ impl McpService {
             if server.apps.pi || prev_apps.pi {
                 mcp::pi::sync_and_commit(
                     &server.id,
-                    server.apps.pi.then_some(&server.server),
+                    mcp::pi::PiChange::from_enabled(server.apps.pi.then_some(&server.server)),
                     || state.db.save_mcp_server(&server),
                 )
             } else {
@@ -90,7 +90,9 @@ impl McpService {
         if let Some(server) = server {
             let delete_with_pi = || {
                 if server.apps.pi {
-                    mcp::pi::sync_and_commit(id, None, || state.db.delete_mcp_server(id))
+                    mcp::pi::sync_and_commit(id, mcp::pi::PiChange::Remove, || {
+                        state.db.delete_mcp_server(id)
+                    })
                 } else {
                     state.db.delete_mcp_server(id)
                 }
@@ -99,6 +101,12 @@ impl McpService {
                 mcp::mcode::sync_and_commit(id, None, delete_with_pi)?;
             } else {
                 delete_with_pi()?;
+            }
+            if !server.apps.pi {
+                // 取消勾选只在 Pi 里禁用、条目还留着：服务器删了就一并清掉（尽力而为）
+                if let Err(err) = mcp::pi::remove_disabled_if_managed(id, &server.server) {
+                    log::warn!("清理 Pi 中已禁用的 MCP 条目 '{id}' 失败: {err}");
+                }
             }
 
             // 从所有应用的 live 配置中移除
@@ -127,7 +135,11 @@ impl McpService {
                 if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
                 } else {
-                    mcp::pi::sync_and_commit(server_id, spec, commit)?;
+                    mcp::pi::sync_and_commit(
+                        server_id,
+                        mcp::pi::PiChange::from_enabled(spec),
+                        commit,
+                    )?;
                 }
             }
             return Ok(());

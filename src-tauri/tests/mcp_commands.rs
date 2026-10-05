@@ -180,9 +180,16 @@ fn pi_toggle_writes_its_mcp_json_and_keeps_pi_fields() {
     assert_eq!(docs["timeout"], 30);
     assert!(state.db.get_all_mcp_servers().unwrap()["docs"].apps.pi);
 
+    // 取消勾选只在 Pi 里禁用，保留条目和 Pi 自己的设置
     McpService::toggle_app(&state, "docs", AppType::Pi, false).unwrap();
-    assert!(read()["mcpServers"].get("docs").is_none());
+    let disabled = &read()["mcpServers"]["docs"];
+    assert_eq!(disabled["enabled"], false);
+    assert_eq!(disabled["exposure"], "direct");
     assert!(!state.db.get_all_mcp_servers().unwrap()["docs"].apps.pi);
+
+    // 在 CC Switch 里删除服务器才删掉条目
+    McpService::delete_server(&state, "docs").unwrap();
+    assert!(read()["mcpServers"].get("docs").is_none());
 
     // Pi 不支持 SSE：拒绝写入，数据库也不勾选
     let sse: McpServer = serde_json::from_value(json!({
@@ -193,6 +200,60 @@ fn pi_toggle_writes_its_mcp_json_and_keeps_pi_fields() {
     assert!(McpService::toggle_app(&state, "remote", AppType::Pi, true).is_err());
     assert!(!state.db.get_all_mcp_servers().unwrap()["remote"].apps.pi);
     assert!(read()["mcpServers"].get("remote").is_none());
+}
+
+/// 审查 #7862：导入 → 取消勾选 → 重新勾选（含批量禁用后撤销：前端逐个 toggle）
+/// 不能丢掉 timeout、toolExposure、oauth 等 Pi 自己的设置
+#[test]
+fn pi_disable_then_enable_round_trip_keeps_pi_settings() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".pi/agent/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let pi_settings = json!({
+        "timeout": 30000,
+        "exposure": "direct",
+        "toolExposure": {"delete_*": "hidden"},
+        "oauth": {"clientName": "custom-client"}
+    });
+    let mut servers = serde_json::Map::new();
+    for id in ["a", "b"] {
+        let mut entry = pi_settings.clone();
+        entry["command"] = json!("node");
+        entry["args"] = json!([format!("{id}.js")]);
+        servers.insert(id.into(), entry);
+    }
+    fs::write(&path, json!({"mcpServers": servers}).to_string()).unwrap();
+    McpService::import_from_all_apps(&state).unwrap();
+    let read = || -> serde_json::Value {
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap()
+    };
+
+    for id in ["a", "b"] {
+        McpService::toggle_app(&state, id, AppType::Pi, false).unwrap();
+    }
+    for id in ["a", "b"] {
+        McpService::toggle_app(&state, id, AppType::Pi, true).unwrap();
+    }
+    let written = read();
+    for id in ["a", "b"] {
+        let entry = &written["mcpServers"][id];
+        assert_eq!(entry["enabled"], true, "{id}");
+        assert_eq!(entry["args"], json!([format!("{id}.js")]), "{id}");
+        for field in ["timeout", "exposure", "toolExposure", "oauth"] {
+            assert_eq!(entry[field], pi_settings[field], "{id}.{field}");
+        }
+    }
+
+    // 条目在 Pi 里被删掉后再勾选：从导入时保存的 Pi 字段重建
+    fs::write(&path, json!({"mcpServers": {}}).to_string()).unwrap();
+    McpService::toggle_app(&state, "a", AppType::Pi, false).unwrap();
+    McpService::toggle_app(&state, "a", AppType::Pi, true).unwrap();
+    let rebuilt = &read()["mcpServers"]["a"];
+    for field in ["timeout", "exposure", "toolExposure", "oauth"] {
+        assert_eq!(rebuilt[field], pi_settings[field], "a.{field}");
+    }
 }
 
 #[test]

@@ -21,6 +21,33 @@ use std::{
 
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 const TRANSPORT_FIELDS: [&str; 7] = ["command", "args", "env", "cwd", "url", "headers", "type"];
+/// Pi 自己的条目字段：重建条目时从数据库里保存的连接定义（导入时原样存下）带回来
+const PI_FIELDS: [&str; 6] = [
+    "timeout",
+    "description",
+    "exposure",
+    "toolExposure",
+    "oauth",
+    "auth",
+];
+
+/// 对 Pi 条目的改动
+#[derive(Clone, Copy)]
+pub(crate) enum PiChange<'a> {
+    /// 写入连接字段并启用
+    Enable(&'a Value),
+    /// 取消勾选：只标 `enabled: false`，保留条目和 Pi 自己的设置，重新勾选时原样恢复
+    Disable,
+    /// 从 CC Switch 删除服务器：删掉条目
+    Remove,
+}
+
+impl<'a> PiChange<'a> {
+    /// 勾选状态 → 改动：勾选写入，未勾选只禁用
+    pub(crate) fn from_enabled(spec: Option<&'a Value>) -> Self {
+        spec.map_or(Self::Disable, Self::Enable)
+    }
+}
 
 pub(crate) fn config_path() -> Result<PathBuf, AppError> {
     Ok(crate::pi_config::get_pi_agent_dir()?.join("mcp.json"))
@@ -79,52 +106,84 @@ pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    sync_file(&config_path()?, id, spec)
+    sync_file(&config_path()?, id, PiChange::from_enabled(spec))
+}
+
+/// 删除服务器时清掉 Pi 里由 CC Switch 写入、后来被取消勾选的条目：
+/// 只删 `enabled: false` 且连接方式和这个服务器一致的同名条目，用户自己的同名条目不动
+pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), AppError> {
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
+    let path = config_path()?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let managed = read(&path)?["mcpServers"].get(id).is_some_and(|entry| {
+        entry.get("enabled") == Some(&json!(false)) && transport_spec(entry) == transport_spec(spec)
+    });
+    if managed {
+        sync_file(&path, id, PiChange::Remove)?;
+    }
+    Ok(())
 }
 
 /// 先写 Pi 的 `mcp.json` 再提交数据库；数据库失败就把文件恢复原样
 pub(crate) fn sync_and_commit<T>(
     id: &str,
-    spec: Option<&Value>,
+    change: PiChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
     let path = config_path()?;
-    crate::mcode_config::write_and_commit(&path, || sync_file(&path, id, spec), commit)
+    crate::mcode_config::write_and_commit(&path, || sync_file(&path, id, change), commit)
 }
 
-fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError> {
+fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError> {
     let mut document = read(path)?;
     if document.get("mcpServers").is_none() {
         document["mcpServers"] = json!({});
     }
     let servers = document["mcpServers"].as_object_mut().unwrap();
-    if let Some(spec) = spec {
-        validate_name(id)?;
-        let key = normalized_name(id);
-        if let Some(other) = servers
-            .keys()
-            .find(|name| name.as_str() != id && normalized_name(name) == key)
-        {
-            return Err(AppError::McpValidation(format!(
-                "Pi 把只差 - 和 _ 的服务器名视为同一个：{id} 与已有的 {other} 冲突"
-            )));
+    match change {
+        PiChange::Enable(spec) => {
+            validate_name(id)?;
+            let key = normalized_name(id);
+            if let Some(other) = servers
+                .keys()
+                .find(|name| name.as_str() != id && normalized_name(name) == key)
+            {
+                return Err(AppError::McpValidation(format!(
+                    "Pi 把只差 - 和 _ 的服务器名视为同一个：{id} 与已有的 {other} 冲突"
+                )));
+            }
+            let transport = native_transport(spec)?;
+            // 条目还在就沿用它（用户在 Pi 里改过的设置优先）；不在就从保存的 Pi 字段重建
+            let mut merged = servers.get(id).cloned().unwrap_or_else(|| pi_fields(spec));
+            let object = merged
+                .as_object_mut()
+                .ok_or_else(|| AppError::Config("Invalid Pi MCP entry".into()))?;
+            for field in TRANSPORT_FIELDS {
+                object.remove(field);
+            }
+            object.extend(transport.as_object().unwrap().clone());
+            object.insert("enabled".into(), json!(true));
+            servers.insert(id.into(), merged);
         }
-        let transport = native_transport(spec)?;
-        let mut merged = servers.get(id).cloned().unwrap_or_else(|| json!({}));
-        let object = merged
-            .as_object_mut()
-            .ok_or_else(|| AppError::Config("Invalid Pi MCP entry".into()))?;
-        for field in TRANSPORT_FIELDS {
-            object.remove(field);
+        PiChange::Disable => match servers.get_mut(id) {
+            Some(Value::Object(entry)) => {
+                entry.insert("enabled".into(), json!(false));
+            }
+            // 没有条目就没什么可禁用的，不为此新建
+            _ => return Ok(()),
+        },
+        PiChange::Remove => {
+            if servers.remove(id).is_none() {
+                return Ok(());
+            }
         }
-        object.extend(transport.as_object().unwrap().clone());
-        object.insert("enabled".into(), json!(true));
-        servers.insert(id.into(), merged);
-    } else {
-        servers.remove(id);
     }
     atomic_write_private(
         path,
@@ -195,6 +254,19 @@ fn transport_spec(spec: &Value) -> Value {
     spec
 }
 
+/// 连接定义里保存的 Pi 字段（导入时原样存下）→ 重建条目的起点
+fn pi_fields(spec: &Value) -> Value {
+    let mut fields = serde_json::Map::new();
+    if let Some(object) = spec.as_object() {
+        for field in PI_FIELDS {
+            if let Some(value) = object.get(field) {
+                fields.insert(field.into(), value.clone());
+            }
+        }
+    }
+    Value::Object(fields)
+}
+
 /// Pi 的条目 → CC Switch 的统一格式：`streamable-http` 记作 `http`，省略的 `type` 按字段补上
 pub(crate) fn unified_spec(native: &Value) -> Value {
     let mut spec = native.clone();
@@ -233,7 +305,9 @@ mod tests {
         sync_file(
             &path,
             "docs",
-            Some(&json!({"type": "http", "url": "https://example.com/mcp", "headers": {"X": "1"}})),
+            PiChange::Enable(
+                &json!({"type": "http", "url": "https://example.com/mcp", "headers": {"X": "1"}}),
+            ),
         )
         .unwrap();
         let written = read(&path).unwrap();
@@ -260,8 +334,55 @@ mod tests {
             );
         }
 
-        sync_file(&path, "docs", None).unwrap();
+        sync_file(&path, "docs", PiChange::Remove).unwrap();
         assert!(read(&path).unwrap()["mcpServers"].get("docs").is_none());
+    }
+
+    /// 审查 #7862：取消勾选再勾选不能丢掉 Pi 自己的设置
+    #[test]
+    fn disable_keeps_the_entry_and_enable_restores_it_with_pi_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let spec = json!({"type": "stdio", "command": "node", "args": ["server.js"]});
+        let pi_settings = json!({
+            "timeout": 30000,
+            "exposure": "direct",
+            "toolExposure": {"delete_*": "hidden"},
+            "oauth": {"clientName": "custom-client"}
+        });
+        let mut native = pi_settings.clone();
+        native["command"] = json!("node");
+        native["args"] = json!(["server.js"]);
+        fs::write(&path, json!({"mcpServers": {"srv": native}}).to_string()).unwrap();
+
+        sync_file(&path, "srv", PiChange::Disable).unwrap();
+        let disabled = &read(&path).unwrap()["mcpServers"]["srv"];
+        assert_eq!(disabled["enabled"], false);
+        sync_file(&path, "srv", PiChange::Enable(&spec)).unwrap();
+        let entry = read(&path).unwrap()["mcpServers"]["srv"].clone();
+        assert_eq!(entry["enabled"], true);
+        for field in ["timeout", "exposure", "toolExposure", "oauth"] {
+            assert_eq!(entry[field], pi_settings[field], "{field}");
+        }
+
+        // 条目被删掉了（比如用户在 Pi 里删的）：从保存的连接定义里的 Pi 字段重建
+        sync_file(&path, "srv", PiChange::Remove).unwrap();
+        let mut saved = spec.clone();
+        saved
+            .as_object_mut()
+            .unwrap()
+            .extend(pi_settings.as_object().unwrap().clone());
+        saved["tools"] = json!([{"name": "not a pi field"}]);
+        sync_file(&path, "srv", PiChange::Enable(&saved)).unwrap();
+        let rebuilt = read(&path).unwrap()["mcpServers"]["srv"].clone();
+        for field in ["timeout", "exposure", "toolExposure", "oauth"] {
+            assert_eq!(rebuilt[field], pi_settings[field], "{field}");
+        }
+        assert!(rebuilt.get("tools").is_none());
+
+        // 没有条目时禁用什么都不做，不新建
+        sync_file(&path, "absent", PiChange::Disable).unwrap();
+        assert!(read(&path).unwrap()["mcpServers"].get("absent").is_none());
     }
 
     #[test]
@@ -272,14 +393,14 @@ mod tests {
         fs::write(&path, original).unwrap();
 
         let sse = json!({"type": "sse", "url": "https://example.com/sse"});
-        assert!(sync_file(&path, "remote", Some(&sse)).is_err());
+        assert!(sync_file(&path, "remote", PiChange::Enable(&sse)).is_err());
         let stdio = json!({"command": "node"});
-        assert!(sync_file(&path, "bad name", Some(&stdio)).is_err());
-        assert!(sync_file(&path, "dev_tools", Some(&stdio)).is_err());
+        assert!(sync_file(&path, "bad name", PiChange::Enable(&stdio)).is_err());
+        assert!(sync_file(&path, "dev_tools", PiChange::Enable(&stdio)).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), original);
 
         fs::write(&path, "broken json").unwrap();
-        assert!(sync_file(&path, "new", Some(&stdio)).is_err());
+        assert!(sync_file(&path, "new", PiChange::Enable(&stdio)).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "broken json");
     }
 
@@ -290,7 +411,7 @@ mod tests {
         sync_file(
             &path,
             "fs",
-            Some(&json!({"command": "npx", "args": ["-y", "server"], "cwd": "."})),
+            PiChange::Enable(&json!({"command": "npx", "args": ["-y", "server"], "cwd": "."})),
         )
         .unwrap();
         assert_eq!(read(&path).unwrap()["mcpServers"]["fs"]["cwd"], ".");
