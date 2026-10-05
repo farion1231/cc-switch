@@ -3896,6 +3896,86 @@ model_provider = "c"
         assert_eq!(codex_text(), outside);
     }
 
+    /// 编辑器里把显式 Provider ID 改名（Aensz→Bensz）：live 里旧 id 的表连同真实 Key
+    /// 必须清掉。保存先把新行写进数据库，retired 集合从数据库已经看不见旧路由，得从
+    /// 编辑前的行（owner/prev）补齐。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_rename_of_an_explicit_provider_id_cleans_the_old_table() {
+        let _home = Home::new();
+        set_preservation(false);
+        seed_codex(CODEX_USER_LIVE, None);
+        let explicit_row = |id: &str, marker: &str, url: &str| {
+            Provider::with_id(
+                id.to_string(),
+                id.to_uppercase(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": format!("sk-{id}") },
+                    "modelProvider": marker,
+                    "config": format!(
+                        "model_provider = \"{marker}\"\nmodel = \"gpt-{id}\"\n\n[model_providers.{marker}]\nname = \"{marker}\"\nbase_url = \"{url}\"\nwire_api = \"responses\"\n"
+                    ),
+                }),
+                None,
+            )
+        };
+        let state = state_with(
+            AppType::Codex,
+            &[
+                explicit_row("a", "Aensz", "https://a.example/v1"),
+                codex_row("b", "https://b.example/v1", ""),
+            ],
+            "a",
+        )
+        .await;
+
+        // live 先落成显式形态（Aensz 表带真实 Key）。
+        ProviderService::switch(&state, AppType::Codex, "a").expect("switch to a");
+        assert_eq!(codex_doc()["model_provider"].as_str(), Some("Aensz"));
+
+        let a_row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &a_row.settings_config, None)
+                .expect("view a");
+        let mut edited = view.settings.clone();
+        edited["config"] = json!(view.settings["config"]
+            .as_str()
+            .unwrap()
+            .replace("Aensz", "Bensz"));
+        let mut row = a_row;
+        row.settings_config = edited;
+        ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("a"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base: view.settings,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save rename");
+
+        let live = codex_text();
+        let doc = codex_doc();
+        assert_eq!(doc["model_provider"].as_str(), Some("Bensz"), "{live}");
+        assert_eq!(
+            doc["model_providers"]["Bensz"]["base_url"].as_str(),
+            Some("https://a.example/v1"),
+            "{live}"
+        );
+        assert!(
+            doc["model_providers"].get("Aensz").is_none(),
+            "the renamed-away table must not linger with its key: {live}"
+        );
+        assert_eq!(
+            live.matches("sk-a").count(),
+            1,
+            "the key must live only in the renamed table, not in a leftover: {live}"
+        );
+    }
+
     /// live 里用户自己写的独有字段（`model_verbosity` 这类）不归当前供应商：原样保存不会
     /// 把它收进行，切走时也就不会删掉；在编辑器里删掉它就从 live 删；新加的独有字段归
     /// 供应商。
