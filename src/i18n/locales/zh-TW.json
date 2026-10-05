@@ -4394,6 +4394,7 @@
       "showAll": "顯示全部 Skill"
     },
     "selectAria": "選擇 {{name}}",
+    "selectAllAria": "全選目前清單",
     "rowFail": "在 {{app}} 啟用失敗：{{error}}",
     "fixSync": "改同步方式",
     "rowMoreAria": "{{name}} 的更多操作",

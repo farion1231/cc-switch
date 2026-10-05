@@ -4393,6 +4393,7 @@
       "showAll": "すべての Skill を表示"
     },
     "selectAria": "{{name}} を選択",
+    "selectAllAria": "表示中をすべて選択",
     "rowFail": "{{app}} での有効化に失敗：{{error}}",
     "fixSync": "同期方法を変更",
     "rowMoreAria": "{{name}} のその他の操作",
