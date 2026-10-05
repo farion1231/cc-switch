@@ -6,7 +6,7 @@
 use crate::codex_config::{
     get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
 };
-use crate::codex_state_db::codex_state_db_paths;
+use crate::codex_state_db::{codex_state_db_is_lockable, codex_state_db_paths};
 use crate::config::{atomic_write, copy_file, get_app_config_dir};
 use crate::database::{is_official_seed_id, Database};
 use crate::error::AppError;
@@ -402,6 +402,9 @@ fn restore_codex_official_history_inner(
 
     let mut restored_state_rows = 0;
     for db_path in codex_state_db_paths(codex_dir, config_text) {
+        if !codex_state_db_is_lockable(&db_path) {
+            continue;
+        }
         restored_state_rows += restore_codex_state_db_official_threads(
             &db_path,
             codex_dir,
@@ -1106,6 +1109,9 @@ fn migrate_codex_state_dbs(
     let config_text = read_codex_config_text().unwrap_or_default();
     let mut migrated = 0;
     for db_path in codex_state_db_paths(codex_dir, &config_text) {
+        if !codex_state_db_is_lockable(&db_path) {
+            continue;
+        }
         migrated += migrate_codex_state_db_provider_bucket(
             &db_path,
             codex_dir,
