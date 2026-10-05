@@ -1,7 +1,15 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsPage } from "@/components/settings/SettingsPage";
+import { useSettings } from "@/hooks/useSettings";
 import type { Settings } from "@/types";
 import type { SettingsSection } from "@/lib/navigation";
 
@@ -10,6 +18,23 @@ const saveMock = vi.fn();
 const getMock = vi.fn();
 const syncLiveMock = vi.fn();
 const selectDirectoryMock = vi.fn();
+
+function deferSaves() {
+  const saves: Array<{ finish: () => void; fail: () => void }> = [];
+  saveMock.mockImplementation(
+    (settings: Settings) =>
+      new Promise<boolean>((resolve, reject) => {
+        saves.push({
+          finish: () => {
+            persisted = { ...settings };
+            resolve(true);
+          },
+          fail: () => reject(new Error("synthetic save failure")),
+        });
+      }),
+  );
+  return saves;
+}
 
 // Exercise the real settings hooks, query/refetch cycle, and rendered controls.
 // Only the native boundary and unrelated settings panels are replaced.
@@ -25,6 +50,7 @@ vi.mock("@/lib/api", () => ({
     selectConfigDirectory: () => selectDirectoryMock(),
     applyClaudeOnboardingSkip: async () => true,
     clearClaudeOnboardingSkip: async () => true,
+    applyClaudePluginConfig: async () => true,
   },
   providersApi: { updateTrayMenu: async () => true },
 }));
@@ -94,6 +120,7 @@ beforeEach(() => {
     showInTray: true,
     minimizeToTrayOnClose: true,
     showProfileSwitcher: true,
+    checkToolUpdatesOnStartup: false,
     language: "zh",
     claudeConfigDir: "/fixture/saved/claude",
     codexConfigDir: "/fixture/saved/codex",
@@ -118,6 +145,299 @@ beforeEach(() => {
 });
 
 describe("SettingsPage directory drafts", () => {
+  it("merges an explicit hook Save queued between two immediate preference writes", async () => {
+    const saves = deferSaves();
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const { result } = renderHook(() => useSettings(), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    let first!: Promise<unknown>;
+    let explicit!: Promise<unknown>;
+    let last!: Promise<unknown>;
+    act(() => {
+      result.current.updateSettings({ minimizeToTrayOnClose: false });
+      first = result.current.autoSaveSettings({ minimizeToTrayOnClose: false });
+    });
+    await waitFor(() => expect(saves).toHaveLength(1));
+    act(() =>
+      result.current.updateDirectory("openclaw", "/fixture/explicitly-saved"),
+    );
+    act(() => {
+      explicit = result.current.saveSettings();
+    });
+    act(() => {
+      result.current.updateSettings({ showProfileSwitcher: false });
+      last = result.current.autoSaveSettings({ showProfileSwitcher: false });
+    });
+    await act(async () => saves[0].finish());
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect(result.current.settings?.showProfileSwitcher).toBe(false);
+    await act(async () => saves[1].finish());
+    await waitFor(() => expect(saves).toHaveLength(3));
+    await act(async () => {
+      saves[2].finish();
+      await Promise.all([first, explicit, last]);
+    });
+    expect(persisted).toMatchObject({
+      minimizeToTrayOnClose: false,
+      showProfileSwitcher: false,
+      openclawConfigDir: "/fixture/explicitly-saved",
+    });
+    expect(result.current.settings?.showProfileSwitcher).toBe(false);
+  });
+
+  it("preserves a repeated toggle back to the saved value before a third edit", async () => {
+    const saves = deferSaves();
+    const view = await renderSettings();
+    view.navigate("general");
+    const toggle = () =>
+      screen.getByRole("switch", { name: "settings.minimizeToTray" });
+    fireEvent.click(toggle()); // false
+    await waitFor(() => expect(saves).toHaveLength(1));
+    fireEvent.click(toggle()); // true (same as the original saved value)
+    expect(toggle()).toBeChecked(); // Before either write acknowledges.
+    await act(async () => saves[0].finish());
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect(toggle()).toBeChecked();
+    fireEvent.click(toggle()); // false
+    await act(async () => saves[1].finish());
+    await waitFor(() => expect(saves).toHaveLength(3));
+    expect(toggle()).not.toBeChecked();
+    await act(async () => saves[2].finish());
+    await waitFor(() => expect(view.client.isMutating()).toBe(0));
+    expect(saveMock.mock.calls.map(([s]) => s.minimizeToTrayOnClose)).toEqual([
+      false,
+      true,
+      false,
+    ]);
+    expect(persisted.minimizeToTrayOnClose).toBe(false);
+    expect(toggle()).not.toBeChecked();
+  });
+
+  it("keeps newer input when a failed toggle rolls back and the queue continues", async () => {
+    const saves = deferSaves();
+    const view = await renderSettings();
+    view.navigate("general");
+    const toggle = () =>
+      screen.getByRole("switch", { name: "settings.minimizeToTray" });
+    fireEvent.click(toggle());
+    await waitFor(() => expect(saves).toHaveLength(1));
+    fireEvent.click(toggle());
+    expect(toggle()).toBeChecked(); // Latest input is visible while A is pending.
+    await act(async () => saves[0].fail());
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect(toggle()).toBeChecked();
+    fireEvent.click(toggle());
+    await act(async () => saves[1].finish());
+    await waitFor(() => expect(saves).toHaveLength(3));
+    expect(toggle()).not.toBeChecked();
+    await act(async () => saves[2].finish());
+    await waitFor(() => expect(view.client.isMutating()).toBe(0));
+    expect(persisted.minimizeToTrayOnClose).toBe(false);
+    expect(toggle()).not.toBeChecked();
+  });
+
+  it.each(["success", "failure"])(
+    "shows the latest same-field input before acknowledgement and after B %s",
+    async (outcome) => {
+      const saves = deferSaves();
+      const view = await renderSettings();
+      view.navigate("general");
+      const toggle = () =>
+        screen.getByRole("switch", { name: "settings.minimizeToTray" });
+      fireEvent.click(toggle()); // A: false
+      await waitFor(() => expect(saves).toHaveLength(1));
+      fireEvent.click(toggle()); // B: true
+      expect(toggle()).toBeChecked();
+      expect(persisted.minimizeToTrayOnClose).toBe(true); // No ack yet.
+      await act(async () => saves[0].finish());
+      await waitFor(() => expect(saves).toHaveLength(2));
+      expect(persisted.minimizeToTrayOnClose).toBe(false);
+      expect(toggle()).toBeChecked(); // B remains visibly pending.
+      await act(async () => {
+        if (outcome === "success") saves[1].finish();
+        else saves[1].fail();
+      });
+      await waitFor(() => expect(view.client.isMutating()).toBe(0));
+      await waitFor(() =>
+        expect(toggle()).toHaveAttribute(
+          "aria-checked",
+          String(outcome === "success"),
+        ),
+      );
+      expect(persisted.minimizeToTrayOnClose).toBe(outcome === "success");
+    },
+  );
+
+  it.each(["failure", "delay"])(
+    "preserves pending preferences during a refetch %s",
+    async (refetch) => {
+      const saves = deferSaves();
+      const view = await renderSettings();
+      view.navigate("general");
+      let finishRefetch!: () => void;
+      if (refetch === "failure") {
+        getMock.mockRejectedValueOnce(new Error("synthetic refetch failure"));
+      } else {
+        getMock.mockImplementationOnce(
+          () =>
+            new Promise<Settings>((resolve) => {
+              finishRefetch = () => resolve({ ...persisted });
+            }),
+        );
+      }
+      fireEvent.click(
+        screen.getByRole("switch", { name: "settings.minimizeToTray" }),
+      );
+      await waitFor(() => expect(saves).toHaveLength(1));
+      fireEvent.click(
+        screen.getByRole("switch", {
+          name: "settings.appVisibility.showProfileSwitcher",
+        }),
+      );
+      await act(async () => saves[0].finish());
+      await waitFor(() =>
+        expect(
+          view.client.getQueryData<Settings>(["settings"])
+            ?.minimizeToTrayOnClose,
+        ).toBe(false),
+      );
+      expect(
+        screen.getByRole("switch", {
+          name: "settings.appVisibility.showProfileSwitcher",
+        }),
+      ).not.toBeChecked();
+      fireEvent.click(
+        screen.getByRole("switch", {
+          name: "settings.general.checkToolUpdates",
+        }),
+      );
+      if (refetch === "delay") {
+        expect(saves).toHaveLength(1);
+        await act(async () => finishRefetch());
+      }
+      await waitFor(() => expect(saves).toHaveLength(2));
+      await act(async () => saves[1].finish());
+      await waitFor(() => expect(saves).toHaveLength(3));
+      await act(async () => saves[2].finish());
+      await waitFor(() => expect(view.client.isMutating()).toBe(0));
+      expect(persisted).toMatchObject({
+        minimizeToTrayOnClose: false,
+        showProfileSwitcher: false,
+        checkToolUpdatesOnStartup: true,
+      });
+    },
+  );
+
+  it("preserves two pending preferences when an explicit Save acknowledges", async () => {
+    const saves = deferSaves();
+    const view = await renderSettings();
+    fireEvent.change(
+      screen.getByPlaceholderText("settings.browsePlaceholderOpenclaw"),
+      { target: { value: "/fixture/explicitly-saved" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    view.navigate("general");
+    fireEvent.click(
+      screen.getByRole("switch", { name: "settings.minimizeToTray" }),
+    );
+    await act(async () => saves[0].finish());
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect(
+      screen.getByRole("switch", { name: "settings.minimizeToTray" }),
+    ).not.toBeChecked();
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: "settings.appVisibility.showProfileSwitcher",
+      }),
+    );
+    await act(async () => saves[1].finish());
+    await waitFor(() => expect(saves).toHaveLength(3));
+    await act(async () => saves[2].finish());
+    await waitFor(() => expect(view.client.isMutating()).toBe(0));
+    expect(persisted).toMatchObject({
+      minimizeToTrayOnClose: false,
+      showProfileSwitcher: false,
+      openclawConfigDir: "/fixture/explicitly-saved",
+    });
+    expect(saveMock.mock.calls[2][0].openclawConfigDir).toBe(
+      "/fixture/explicitly-saved",
+    );
+  });
+
+  it("retains three preferences across acknowledgement of an earlier queued save", async () => {
+    const finishes: Array<() => void> = [];
+    saveMock.mockImplementation(
+      (settings: Settings) =>
+        new Promise<boolean>((resolve) => {
+          finishes.push(() => {
+            persisted = { ...settings };
+            resolve(true);
+          });
+        }),
+    );
+    const savedDirectories = { ...persisted };
+    const view = await renderSettings();
+    for (const [, placeholder] of directories) {
+      fireEvent.change(screen.getByPlaceholderText(placeholder), {
+        target: { value: "/fixture/pending/directory" },
+      });
+    }
+    view.navigate("general");
+    const minimize = () =>
+      screen.getByRole("switch", { name: "settings.minimizeToTray" });
+    const profile = () =>
+      screen.getByRole("switch", {
+        name: "settings.appVisibility.showProfileSwitcher",
+      });
+    const startup = () =>
+      screen.getByRole("switch", { name: "settings.general.checkToolUpdates" });
+    fireEvent.click(minimize()); // A
+    await waitFor(() => expect(finishes).toHaveLength(1));
+    fireEvent.click(profile()); // B, waiting for A
+    await act(async () => finishes[0]());
+    await waitFor(() => expect(finishes).toHaveLength(2));
+    await waitFor(() =>
+      expect(
+        view.client.getQueryData<Settings>(["settings"])?.minimizeToTrayOnClose,
+      ).toBe(false),
+    );
+    expect(minimize()).not.toBeChecked(); // The cache acknowledgement rendered.
+    fireEvent.click(startup()); // C, after A rendered and before B confirmed
+    await act(async () => finishes[1]());
+    await waitFor(() => expect(finishes).toHaveLength(3));
+    await act(async () => finishes[2]());
+    await waitFor(() => expect(view.client.isMutating()).toBe(0));
+    expect(persisted).toMatchObject({
+      minimizeToTrayOnClose: false,
+      showProfileSwitcher: false,
+      checkToolUpdatesOnStartup: true,
+    });
+    expect(minimize()).not.toBeChecked();
+    expect(profile()).not.toBeChecked();
+    expect(startup()).toBeChecked();
+    for (const [payload] of saveMock.mock.calls) {
+      for (const [field] of directories) {
+        expect(payload[field]).toBe(savedDirectories[field]);
+      }
+    }
+    view.navigate("appConfig");
+    for (const [, placeholder] of directories) {
+      expect(screen.getByPlaceholderText(placeholder)).toHaveValue(
+        "/fixture/pending/directory",
+      );
+    }
+  });
+
   it.each(directories)(
     "keeps %s pending through unrelated autosaves until Save is clicked",
     async (field, placeholder) => {

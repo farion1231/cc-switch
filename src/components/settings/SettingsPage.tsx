@@ -185,10 +185,7 @@ export function SettingsPage({
   const handleAutoSave = useCallback(
     async (updates: Partial<SettingsFormState>): Promise<boolean> => {
       if (!settings) return false;
-      // 乐观更新前捕获旧值：autoSaveSettings 发送的是全量表单状态，后端按
-      // diff 触发副作用（如统一会话开关的 live 重写与历史迁移）。保存失败
-      // 不回滚的话，失败的变更会滞留在表单里，被之后任意一次无关保存原样
-      // 重放，绕过确认弹窗。
+      // 乐观更新前捕获旧值。失败时恢复这些字段，但不能覆盖后续排队的输入。
       const previousValues = Object.fromEntries(
         Object.keys(updates).map((key) => [
           key,
@@ -201,7 +198,7 @@ export function SettingsPage({
         return true;
       } catch (error) {
         console.error("[SettingsPage] Failed to autosave settings", error);
-        updateSettings(previousValues);
+        updateSettings(previousValues, { preservePending: true });
         toast.error(
           t("settings.saveFailedGeneric", {
             defaultValue: "保存失败，请重试",

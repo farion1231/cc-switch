@@ -28,6 +28,43 @@ afterEach(() => {
 });
 
 describe("useSettingsForm Hook", () => {
+  it("keeps newer pending language and reconciles failed saves without a query update", () => {
+    const saved = {
+      showInTray: true,
+      minimizeToTrayOnClose: true,
+      language: "zh" as const,
+    };
+    useSettingsQueryMock.mockReturnValue({ data: saved, isLoading: false });
+    const { result, rerender } = renderHook(() => useSettingsForm());
+    let finishA!: () => void;
+    let finishB!: () => void;
+    act(() => {
+      result.current.updateSettings({ language: "en" });
+      finishA = result.current.trackPendingSettings({ language: "en" });
+    });
+    expect(result.current.settings?.language).toBe("en");
+    act(() => {
+      result.current.updateSettings({ language: "ja" });
+    });
+    // Input is applied before registering B, even with A still pending.
+    expect(result.current.settings?.language).toBe("ja");
+    expect(i18n.language).toBe("ja");
+    act(() => {
+      finishB = result.current.trackPendingSettings({ language: "ja" });
+    });
+    useSettingsQueryMock.mockReturnValue({
+      data: { ...saved, language: "en" },
+      isLoading: false,
+    });
+    rerender(); // A's query acknowledgement
+    act(() => finishA());
+    expect(result.current.settings?.language).toBe("ja");
+    expect(i18n.language).toBe("ja");
+    act(() => finishB()); // B failed; query remains at A's saved value.
+    expect(result.current.settings?.language).toBe("en");
+    expect(i18n.language).toBe("en");
+  });
+
   it("should normalize settings and sync language on initialization", async () => {
     useSettingsQueryMock.mockReturnValue({
       data: {

@@ -66,10 +66,14 @@ export interface UseSettingsFormResult {
   settings: SettingsFormState | null;
   isLoading: boolean;
   initialLanguage: Language;
-  updateSettings: (updates: Partial<SettingsFormState>) => void;
+  updateSettings: (
+    updates: Partial<SettingsFormState>,
+    options?: { preservePending?: boolean },
+  ) => void;
   resetSettings: (serverData: Settings | null) => void;
   readPersistedLanguage: () => Language;
   syncLanguage: (lang: Language) => void;
+  trackPendingSettings: (updates: Partial<SettingsFormState>) => () => void;
 }
 
 /**
@@ -90,6 +94,26 @@ export function useSettingsForm(): UseSettingsFormResult {
 
   const initialLanguageRef = useRef<Language>("zh");
   const savedSettingsRef = useRef<SettingsFormState | null>(null);
+  const pendingSettingsRef = useRef<Array<Partial<SettingsFormState>>>([]);
+  const [pendingVersion, setPendingVersion] = useState(0);
+
+  const trackPendingSettings = useCallback(
+    (updates: Partial<SettingsFormState>) => {
+      const pending = { ...updates };
+      // Directory edits have their own draft contract, including explicit Save.
+      for (const field of SETTINGS_DIRECTORY_FIELDS) delete pending[field];
+      pendingSettingsRef.current.push(pending);
+      return () => {
+        pendingSettingsRef.current = pendingSettingsRef.current.filter(
+          (entry) => entry !== pending,
+        );
+        // Failure can leave query data unchanged. Reconcile the visible form
+        // and language after removing the failed intention as well.
+        setPendingVersion((version) => version + 1);
+      };
+    },
+    [],
+  );
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -155,14 +179,22 @@ export function useSettingsForm(): UseSettingsFormResult {
           next[field] = previous[field];
         }
       }
+      // Acknowledging an earlier write must not reset newer queued intentions,
+      // even when a switch was toggled back to its original saved value.
+      Object.assign(next, ...pendingSettingsRef.current);
       return next;
     });
     initialLanguageRef.current = normalizedLanguage;
-    syncLanguage(normalizedLanguage);
-  }, [data, readPersistedLanguage, syncLanguage]);
+    const pendingLanguage = Object.assign({}, ...pendingSettingsRef.current)
+      .language as Language | undefined;
+    syncLanguage(pendingLanguage ?? normalizedLanguage);
+  }, [data, pendingVersion, readPersistedLanguage, syncLanguage]);
 
   const updateSettings = useCallback(
-    (updates: Partial<SettingsFormState>) => {
+    (
+      updates: Partial<SettingsFormState>,
+      options?: { preservePending?: boolean },
+    ) => {
       setSettingsState((prev) => {
         const base =
           prev ??
@@ -181,9 +213,14 @@ export function useSettingsForm(): UseSettingsFormResult {
           ...base,
           ...updates,
         };
+        // New input always wins. Only a rollback must yield to newer queued
+        // intentions; its caller captured previousValues before that input.
+        if (options?.preservePending) {
+          Object.assign(next, ...pendingSettingsRef.current);
+        }
 
-        if (updates.language) {
-          const normalized = normalizeLanguage(updates.language);
+        if (next.language) {
+          const normalized = normalizeLanguage(next.language);
           next.language = normalized;
           syncLanguage(normalized);
         }
@@ -239,5 +276,6 @@ export function useSettingsForm(): UseSettingsFormResult {
     resetSettings,
     readPersistedLanguage,
     syncLanguage,
+    trackPendingSettings,
   };
 }

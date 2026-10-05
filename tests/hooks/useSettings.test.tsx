@@ -1,4 +1,4 @@
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useSettings } from "@/hooks/useSettings";
 import type { Settings } from "@/types";
@@ -6,6 +6,7 @@ import type { Settings } from "@/types";
 const mutateAsyncMock = vi.fn();
 const useSettingsQueryMock = vi.fn();
 const setAppConfigDirOverrideMock = vi.fn();
+const setAutoLaunchMock = vi.fn();
 const applyClaudePluginConfigMock = vi.fn();
 const applyClaudeOnboardingSkipMock = vi.fn();
 const clearClaudeOnboardingSkipMock = vi.fn();
@@ -67,6 +68,7 @@ vi.mock("@tanstack/react-query", async () => {
 
 vi.mock("@/lib/api", () => ({
   settingsApi: {
+    setAutoLaunch: (...args: unknown[]) => setAutoLaunchMock(...args),
     setAppConfigDirOverride: (...args: unknown[]) =>
       setAppConfigDirOverrideMock(...args),
     applyClaudePluginConfig: (...args: unknown[]) =>
@@ -103,6 +105,7 @@ const createSettingsFormMock = (overrides: Record<string, unknown> = {}) => ({
   isLoading: false,
   initialLanguage: "zh",
   updateSettings: vi.fn(),
+  trackPendingSettings: vi.fn(() => vi.fn()),
   resetSettings: vi.fn(),
   syncLanguage: vi.fn(),
   ...overrides,
@@ -149,6 +152,7 @@ describe("useSettings hook", () => {
     mutateAsyncMock.mockReset();
     useSettingsQueryMock.mockReset();
     setAppConfigDirOverrideMock.mockReset();
+    setAutoLaunchMock.mockReset();
     applyClaudePluginConfigMock.mockReset();
     applyClaudeOnboardingSkipMock.mockReset();
     clearClaudeOnboardingSkipMock.mockReset();
@@ -192,6 +196,7 @@ describe("useSettings hook", () => {
 
     mutateAsyncMock.mockResolvedValue(true);
     setAppConfigDirOverrideMock.mockResolvedValue(true);
+    setAutoLaunchMock.mockResolvedValue(true);
     applyClaudePluginConfigMock.mockResolvedValue(true);
     applyClaudeOnboardingSkipMock.mockResolvedValue(true);
     clearClaudeOnboardingSkipMock.mockResolvedValue(true);
@@ -200,6 +205,82 @@ describe("useSettings hook", () => {
     getAllMock.mockResolvedValue({});
     // 默认将 queryClient 缓存对齐到 serverSettings，既有断言的 "prev === data" 语义保持不变
     getQueryDataMock.mockImplementation(() => serverSettings);
+  });
+
+  it("does not replay unrelated system side effects from stale form preferences", async () => {
+    serverSettings = {
+      ...serverSettings,
+      launchOnStartup: true,
+      skipClaudeOnboarding: false,
+      enableClaudePluginIntegration: true,
+    };
+    // The form still has the opposite values; only showInTray is requested.
+    const { result } = renderHook(() => useSettings());
+    await act(async () => {
+      await result.current.autoSaveSettings({ showInTray: false });
+    });
+    expect(mutateAsyncMock.mock.calls[0][0]).toMatchObject({
+      showInTray: false,
+      launchOnStartup: true,
+      skipClaudeOnboarding: false,
+      enableClaudePluginIntegration: true,
+    });
+    expect(setAutoLaunchMock).not.toHaveBeenCalled();
+    expect(applyClaudeOnboardingSkipMock).not.toHaveBeenCalled();
+    expect(clearClaudeOnboardingSkipMock).not.toHaveBeenCalled();
+    expect(applyClaudePluginConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("serializes rapid side-effect toggles against their acknowledged execution-time values", async () => {
+    serverSettings = {
+      ...serverSettings,
+      launchOnStartup: false,
+      skipClaudeOnboarding: false,
+      enableClaudePluginIntegration: false,
+    };
+    mutateAsyncMock.mockImplementation(async (payload: Settings) => {
+      serverSettings = { ...payload };
+    });
+    let finishLaunch!: () => void;
+    setAutoLaunchMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishLaunch = resolve;
+        }),
+    );
+    const { result } = renderHook(() => useSettings());
+    let first!: Promise<unknown>;
+    let second!: Promise<unknown>;
+    act(() => {
+      first = result.current.autoSaveSettings({
+        launchOnStartup: true,
+        skipClaudeOnboarding: true,
+        enableClaudePluginIntegration: true,
+      });
+      second = result.current.autoSaveSettings({
+        launchOnStartup: false,
+        skipClaudeOnboarding: false,
+        enableClaudePluginIntegration: false,
+      });
+    });
+    await waitFor(() => expect(setAutoLaunchMock).toHaveBeenCalledWith(true));
+    expect(mutateAsyncMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      finishLaunch();
+      await Promise.all([first, second]);
+    });
+    expect(setAutoLaunchMock.mock.calls).toEqual([[true], [false]]);
+    expect(applyClaudeOnboardingSkipMock).toHaveBeenCalledOnce();
+    expect(clearClaudeOnboardingSkipMock).toHaveBeenCalledOnce();
+    expect(applyClaudePluginConfigMock.mock.calls).toEqual([
+      [{ official: false }],
+      [{ official: true }],
+    ]);
+    expect(serverSettings).toMatchObject({
+      launchOnStartup: false,
+      skipClaudeOnboarding: false,
+      enableClaudePluginIntegration: false,
+    });
   });
 
   it("auto-saves and applies Claude onboarding skip when toggled on", async () => {

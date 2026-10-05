@@ -36,7 +36,10 @@ export interface UseSettingsResult {
   initialAppConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
   requiresRestart: boolean;
-  updateSettings: (updates: Partial<SettingsFormState>) => void;
+  updateSettings: (
+    updates: Partial<SettingsFormState>,
+    options?: { preservePending?: boolean },
+  ) => void;
   updateDirectory: (app: DirectoryAppId, value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
   browseDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -76,29 +79,6 @@ export function useSettings(): UseSettingsResult {
   const queryClient = useQueryClient();
   const settingsSaveQueue = useRef<Promise<void>>(Promise.resolve());
 
-  const persistSettings = useCallback(
-    (payload: Settings, keepSavedDirectories = false) => {
-      // A toggle can be clicked while an explicit directory Save is pending.
-      // Read its persisted paths only after earlier writes and refetches finish.
-      const pending = settingsSaveQueue.current
-        .catch(() => undefined)
-        .then(async () => {
-          if (keepSavedDirectories) {
-            const savedSettings =
-              queryClient.getQueryData<Settings>(["settings"]) ?? data;
-            if (!savedSettings) return;
-            for (const field of SETTINGS_DIRECTORY_FIELDS) {
-              payload[field] = sanitizeDir(savedSettings[field]);
-            }
-          }
-          await saveMutation.mutateAsync(payload);
-        });
-      settingsSaveQueue.current = pending;
-      return pending;
-    },
-    [data, queryClient, saveMutation],
-  );
-
   // 1️⃣ 表单状态管理
   const {
     settings,
@@ -107,7 +87,38 @@ export function useSettings(): UseSettingsResult {
     updateSettings,
     resetSettings: resetForm,
     syncLanguage,
+    trackPendingSettings,
   } = useSettingsForm();
+
+  const persistSettings = useCallback(
+    (
+      patch: Partial<SettingsFormState>,
+      onSaved?: (previous: Settings) => Promise<void>,
+    ) => {
+      const finishPending = trackPendingSettings(patch);
+      const pending = settingsSaveQueue.current
+        .catch(() => undefined)
+        .then(async () => {
+          // Queue edit intentions, not form snapshots. The cache contains only
+          // acknowledged settings, including earlier explicit directory Saves.
+          const previous =
+            queryClient.getQueryData<Settings>(["settings"]) ?? data;
+          if (!previous) throw new Error("Settings are not loaded");
+          const { webdavSync: _webdav, s3Sync: _s3, ...saved } = previous;
+          const payload: Settings = { ...saved, ...patch };
+          await saveMutation.mutateAsync(payload);
+          await onSaved?.(previous);
+          return { payload, previous };
+        })
+        .finally(finishPending);
+      settingsSaveQueue.current = pending.then(
+        () => undefined,
+        () => undefined,
+      );
+      return pending;
+    },
+    [data, queryClient, saveMutation, trackPendingSettings],
+  );
 
   // 2️⃣ 目录管理
   const {
@@ -163,14 +174,15 @@ export function useSettings(): UseSettingsResult {
 
   // 同步 Claude 插件集成配置到 ~/.claude/settings.json
   // 返回 true 表示已执行过 syncCurrentProvidersLiveSafe，调用方可跳过重复同步
-  // prevEnabled 必须由调用方在 saveMutation 之前从实时缓存（queryClient.getQueryData）捕获，
-  // 避免 useCallback closure 中 data 因未 re-render 而滞后导致的快速连切 race。
+  // prevEnabled 来自该次写入执行时的已确认缓存，避免 closure 中 data 滞后。
   const syncClaudePluginIfChanged = useCallback(
     async (
       enabled: boolean | undefined,
       prevEnabled: boolean | undefined,
     ): Promise<boolean> => {
-      if (enabled === undefined || enabled === prevEnabled) return false;
+      if (enabled === undefined || enabled === (prevEnabled ?? false)) {
+        return false;
+      }
       try {
         if (enabled) {
           const currentId = await providersApi.getCurrent("claude");
@@ -217,120 +229,87 @@ export function useSettings(): UseSettingsResult {
   // 保存基础配置 + 独立的系统 API 调用（开机自启）
   const autoSaveSettings = useCallback(
     async (updates: Partial<SettingsFormState>): Promise<SaveResult | null> => {
-      const mergedSettings = settings ? { ...settings, ...updates } : null;
-      if (!mergedSettings) return null;
+      if (!settings) return null;
+      // Immediate preferences cannot commit directory or cloud-sync drafts.
+      const { webdavSync: _webdav, s3Sync: _s3, ...patch } = updates;
+      for (const field of SETTINGS_DIRECTORY_FIELDS) delete patch[field];
 
       try {
-        const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
-        const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
-        const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
-        const sanitizedGrokDir = sanitizeDir(mergedSettings.grokConfigDir);
-        const sanitizedOpencodeDir = sanitizeDir(
-          mergedSettings.opencodeConfigDir,
-        );
-        const sanitizedOpenclawDir = sanitizeDir(
-          mergedSettings.openclawConfigDir,
-        );
-        const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
-        const {
-          webdavSync: _ignoredWebdavSync,
-          s3Sync: _ignoredS3Sync,
-          ...restSettings
-        } = mergedSettings;
+        await persistSettings(patch, async (previous) => {
+          // 如果开机自启状态改变，调用系统 API
+          if (
+            patch.launchOnStartup !== undefined &&
+            patch.launchOnStartup !== previous.launchOnStartup
+          ) {
+            try {
+              await settingsApi.setAutoLaunch(patch.launchOnStartup);
+            } catch (error) {
+              console.error("Failed to update auto-launch:", error);
+              toast.error(
+                t("settings.autoLaunchFailed", {
+                  defaultValue: "设置开机自启失败",
+                }),
+              );
+            }
+          }
 
-        const payload: Settings = {
-          ...restSettings,
-          claudeConfigDir: sanitizedClaudeDir,
-          codexConfigDir: sanitizedCodexDir,
-          geminiConfigDir: sanitizedGeminiDir,
-          grokConfigDir: sanitizedGrokDir,
-          opencodeConfigDir: sanitizedOpencodeDir,
-          openclawConfigDir: sanitizedOpenclawDir,
-          piConfigDir: sanitizedPiDir,
-          language: mergedSettings.language,
-        };
+          // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
+          // 仅在本次更新包含 skipClaudeOnboarding 时触发，避免其它自动保存误触发
+          const nextSkipClaudeOnboarding = updates.skipClaudeOnboarding;
+          if (
+            nextSkipClaudeOnboarding !== undefined &&
+            nextSkipClaudeOnboarding !==
+              (previous.skipClaudeOnboarding ?? false)
+          ) {
+            try {
+              if (nextSkipClaudeOnboarding) {
+                await settingsApi.applyClaudeOnboardingSkip();
+              } else {
+                await settingsApi.clearClaudeOnboardingSkip();
+              }
+            } catch (error) {
+              console.warn(
+                "[useSettings] Failed to sync Claude onboarding skip",
+                error,
+              );
+              toast.error(
+                nextSkipClaudeOnboarding
+                  ? t("notifications.skipClaudeOnboardingFailed", {
+                      defaultValue: "跳过 Claude Code 初次安装确认失败",
+                    })
+                  : t("notifications.clearClaudeOnboardingSkipFailed", {
+                      defaultValue: "恢复 Claude Code 初次安装确认失败",
+                    }),
+              );
+            }
+          }
 
-        // 在 mutate 之前从实时缓存捕获上一次持久化的插件集成状态，
-        // 避免 closure 里的 data 因 React 尚未 re-render 而滞后
-        const prevPluginEnabled = queryClient.getQueryData<Settings>([
-          "settings",
-        ])?.enableClaudePluginIntegration;
-
-        // 保存到配置文件
-        // Directory edits are drafts until explicit Save. Keep persisted paths
-        // while retaining optimistic changes to other settings.
-        await persistSettings(payload, true);
-
-        // 如果开机自启状态改变，调用系统 API
-        if (
-          payload.launchOnStartup !== undefined &&
-          payload.launchOnStartup !== data?.launchOnStartup
-        ) {
-          try {
-            await settingsApi.setAutoLaunch(payload.launchOnStartup);
-          } catch (error) {
-            console.error("Failed to update auto-launch:", error);
-            toast.error(
-              t("settings.autoLaunchFailed", {
-                defaultValue: "设置开机自启失败",
-              }),
+          if (patch.enableClaudePluginIntegration !== undefined) {
+            await syncClaudePluginIfChanged(
+              patch.enableClaudePluginIntegration,
+              previous.enableClaudePluginIntegration,
             );
           }
-        }
 
-        // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
-        // 仅在本次更新包含 skipClaudeOnboarding 时触发，避免其它自动保存误触发
-        const nextSkipClaudeOnboarding = updates.skipClaudeOnboarding;
-        if (
-          nextSkipClaudeOnboarding !== undefined &&
-          nextSkipClaudeOnboarding !== (data?.skipClaudeOnboarding ?? false)
-        ) {
+          // 持久化语言偏好
           try {
-            if (nextSkipClaudeOnboarding) {
-              await settingsApi.applyClaudeOnboardingSkip();
-            } else {
-              await settingsApi.clearClaudeOnboardingSkip();
+            if (typeof window !== "undefined" && updates.language) {
+              window.localStorage.setItem("language", updates.language);
             }
           } catch (error) {
             console.warn(
-              "[useSettings] Failed to sync Claude onboarding skip",
+              "[useSettings] Failed to persist language preference",
               error,
             );
-            toast.error(
-              nextSkipClaudeOnboarding
-                ? t("notifications.skipClaudeOnboardingFailed", {
-                    defaultValue: "跳过 Claude Code 初次安装确认失败",
-                  })
-                : t("notifications.clearClaudeOnboardingSkipFailed", {
-                    defaultValue: "恢复 Claude Code 初次安装确认失败",
-                  }),
-            );
           }
-        }
 
-        await syncClaudePluginIfChanged(
-          payload.enableClaudePluginIntegration,
-          prevPluginEnabled,
-        );
-
-        // 持久化语言偏好
-        try {
-          if (typeof window !== "undefined" && updates.language) {
-            window.localStorage.setItem("language", updates.language);
+          // 更新托盘菜单
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (error) {
+            console.warn("[useSettings] Failed to refresh tray menu", error);
           }
-        } catch (error) {
-          console.warn(
-            "[useSettings] Failed to persist language preference",
-            error,
-          );
-        }
-
-        // 更新托盘菜单
-        try {
-          await providersApi.updateTrayMenu();
-        } catch (error) {
-          console.warn("[useSettings] Failed to refresh tray menu", error);
-        }
+        });
 
         return { requiresRestart: false };
       } catch (error) {
@@ -344,14 +323,7 @@ export function useSettings(): UseSettingsResult {
         throw error;
       }
     },
-    [
-      data,
-      persistSettings,
-      queryClient,
-      settings,
-      syncClaudePluginIfChanged,
-      t,
-    ],
+    [persistSettings, settings, syncClaudePluginIfChanged, t],
   );
 
   // 完整保存设置（用于 Advanced 标签页的手动保存）
@@ -402,13 +374,16 @@ export function useSettings(): UseSettingsResult {
           language: mergedSettings.language,
         };
 
-        // 在 mutate 之前从实时缓存捕获上一次持久化的插件集成状态，
-        // 避免 closure 里的 data 因 React 尚未 re-render 而滞后
-        const prevPluginEnabled = queryClient.getQueryData<Settings>([
-          "settings",
-        ])?.enableClaudePluginIntegration;
-
-        await persistSettings(payload);
+        const saved = queryClient.getQueryData<Settings>(["settings"]) ?? data;
+        const patch: Partial<SettingsFormState> = Object.fromEntries(
+          Object.entries(payload).filter(
+            ([key, value]) =>
+              SETTINGS_DIRECTORY_FIELDS.some((field) => field === key) ||
+              !Object.is(value, saved?.[key as keyof Settings]),
+          ),
+        );
+        const { payload: acknowledged, previous } =
+          await persistSettings(patch);
 
         await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
         // 基准值换成刚存的：设置页不卸载，下次比较和「需要重启」都只跟真正没保存的改动走
@@ -416,11 +391,11 @@ export function useSettings(): UseSettingsResult {
 
         // 只在开机自启状态真正改变时调用系统 API
         if (
-          payload.launchOnStartup !== undefined &&
-          payload.launchOnStartup !== data?.launchOnStartup
+          acknowledged.launchOnStartup !== undefined &&
+          acknowledged.launchOnStartup !== previous.launchOnStartup
         ) {
           try {
-            await settingsApi.setAutoLaunch(payload.launchOnStartup);
+            await settingsApi.setAutoLaunch(acknowledged.launchOnStartup);
           } catch (error) {
             console.error("Failed to update auto-launch:", error);
             toast.error(
@@ -432,8 +407,9 @@ export function useSettings(): UseSettingsResult {
         }
 
         // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
-        const prevSkipClaudeOnboarding = data?.skipClaudeOnboarding ?? false;
-        const nextSkipClaudeOnboarding = payload.skipClaudeOnboarding ?? false;
+        const prevSkipClaudeOnboarding = previous.skipClaudeOnboarding ?? false;
+        const nextSkipClaudeOnboarding =
+          acknowledged.skipClaudeOnboarding ?? false;
         if (nextSkipClaudeOnboarding !== prevSkipClaudeOnboarding) {
           try {
             if (nextSkipClaudeOnboarding) {
@@ -459,13 +435,13 @@ export function useSettings(): UseSettingsResult {
         }
 
         const pluginSynced = await syncClaudePluginIfChanged(
-          payload.enableClaudePluginIntegration,
-          prevPluginEnabled,
+          acknowledged.enableClaudePluginIntegration,
+          previous.enableClaudePluginIntegration,
         );
 
         try {
-          if (typeof window !== "undefined" && payload.language) {
-            window.localStorage.setItem("language", payload.language);
+          if (typeof window !== "undefined" && acknowledged.language) {
+            window.localStorage.setItem("language", acknowledged.language);
           }
         } catch (error) {
           console.warn(

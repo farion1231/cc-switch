@@ -261,9 +261,10 @@ describe("SettingsPage", () => {
     );
 
     await waitFor(() =>
-      expect(settingsMock.updateSettings).toHaveBeenLastCalledWith({
-        minimizeToTrayOnClose: true,
-      }),
+      expect(settingsMock.updateSettings).toHaveBeenLastCalledWith(
+        { minimizeToTrayOnClose: true },
+        { preservePending: true },
+      ),
     );
     expect(toastErrorMock).toHaveBeenCalledWith("settings.saveFailedGeneric");
   });
