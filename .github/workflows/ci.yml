@@ -78,7 +78,7 @@ jobs:
       - name: Get pnpm store directory
         id: pnpm-store
         shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
         uses: actions/cache@v5
@@ -142,15 +142,18 @@ jobs:
           sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
             || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
 
-      - name: Cache Cargo registry and build
-        uses: actions/cache@v5
+      # 只缓存依赖：本仓库的 crate 每次都要重编，缓存它只会让缓存变大、恢复变慢。
+      # key 自带 OS、rustc 版本和 Cargo.lock；shared-key 让 WSL2 job 能读到 Windows 这份。
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          workspaces: src-tauri -> target
+          shared-key: backend
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: cargo-nextest
 
       - name: Create frontend dist placeholder
         shell: bash
@@ -162,8 +165,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
+      # 每个测试一个进程，单测超时见 src-tauri/.config/nextest.toml。doctest 目前只有两个
+      # ignored，nextest 不跑 doctest 也不漏。
       - name: Run tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo nextest run --manifest-path src-tauri/Cargo.toml --profile ci
 
   backend-windows-wsl2:
     name: Backend Checks (Windows + WSL2 home)
@@ -196,15 +201,14 @@ jobs:
           distribution: Ubuntu-24.04
           wsl-version: 2
 
-      - name: Cache Cargo registry and build
-        uses: actions/cache@v5
+      # 只恢复不保存：这里只编 lib 测试，若由它先存，同 key 的 Windows 缓存就只剩一小半。
+      # 完整缓存由 backend 矩阵的 Windows job 保存（同一个 shared-key）。
+      - name: Restore Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          workspaces: src-tauri -> target
+          shared-key: backend
+          save-if: false
 
       - name: Create frontend dist placeholder
         shell: bash

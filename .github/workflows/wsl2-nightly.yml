@@ -9,7 +9,9 @@ name: WSL2 Nightly
 # CC Switch skips Codex state DBs on WSL paths. So here
 # `database::` tests are skipped by name, tests that build SQLite fixtures skip
 # themselves (config::sqlite_unsupported_in_temp_dir), and integration tests,
-# which all create the app database, are not run.
+# which all create the app database, are not run. Tests run under cargo-nextest
+# one at a time, so a hung test is killed by the per-test timeout in
+# src-tauri/.config/nextest.toml instead of eating the whole job.
 on:
   schedule:
     - cron: "23 18 * * *" # 02:23 Beijing time
@@ -46,15 +48,19 @@ jobs:
           distribution: Ubuntu-24.04
           wsl-version: 2
 
-      - name: Cache Cargo registry and build
-        uses: actions/cache@v5
+      # 只恢复不保存：夜间只编 lib 测试，若由它存进 main 的缓存，PR 的 Windows job 会精确命中
+      # 这份不完整的缓存。完整缓存由 ci.yml backend 矩阵的 Windows job 保存（同一个 shared-key）。
+      - name: Restore Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          workspaces: src-tauri -> target
+          shared-key: backend
+          save-if: false
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: cargo-nextest
 
       - name: Create frontend dist placeholder
         shell: bash
@@ -104,4 +110,4 @@ jobs:
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          cargo test --lib --manifest-path src-tauri/Cargo.toml -- --test-threads=1 --skip database::
+          cargo nextest run --lib --manifest-path src-tauri/Cargo.toml --profile ci --test-threads 1 -E 'not test(/database::/)'
