@@ -294,10 +294,19 @@ function MainDirectory({
         ))}
       </div>
 
+      {/* 和上面那条分隔线同样缩进、上下各留 6px，选中的最后一项不会贴着线 */}
       <div
         className={cn(
-          "flex shrink-0 border-t border-border pb-2 pt-1.5",
-          collapsed ? "flex-col gap-0.5" : "mx-0 gap-1 px-2",
+          "my-1.5 h-px shrink-0 bg-border",
+          collapsed ? "mx-[18px]" : "mx-4",
+        )}
+      />
+
+      <div
+        className={cn(
+          "flex shrink-0 pb-2",
+          // 收起时竖排，和上面全局项一样无间隙
+          collapsed ? "flex-col" : "gap-1 px-2",
         )}
       >
         <NavItem
