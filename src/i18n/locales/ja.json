@@ -110,7 +110,7 @@
     "stackBadgeHint": "{{client}} のモデル選択で選べます：{{models}}",
     "stackBadgeNoModels": "モデルが設定されていないため、モデル選択には表示されません",
     "stackSaved": "保存しました。{{client}} を再起動すると反映されます",
-    "stackModelsChanged": "集約したモデルが変わりました。{{client}} を再起動すると反映されます",
+    "stackSavedLive": "保存しました。{{client}} にすぐ反映されます",
     "stackReselectHint": "CC Switch がクライアント設定を書き換えるたびに、モデル選択で集約したモデルを選び直してください",
     "stackPartial": "一部だけ書き込まれました。次の操作時または CC Switch の再起動時に完了します",
     "stackFailed": "集約したモデルの保存に失敗しました：{{error}}",
@@ -387,7 +387,7 @@
         "enableFeature": "メインページにルーティング切り替えを表示",
         "enableFeatureDescription": "有効にすると、メインページ上部にルーティングとフェイルオーバーの切り替えが表示されます",
         "enableStackMode": "メインページに集約モードのスイッチを表示",
-        "enableStackModeDescription": "オンにすると、Claude Code と Codex のメインページのスイッチが集約モードになります。OpenCode のように複数のプロバイダーを追加でき、それらのモデルがすべてクライアントのモデル一覧に表示されます（クライアント再起動後に反映）。フェイルオーバーは行いません。ローカルルーティングのスイッチとはどちらか一方のみで、切り替え時はオンになっている Claude Code、Codex をいったん直接接続に戻します",
+        "enableStackModeDescription": "オンにすると、Claude Code と Codex のメインページのスイッチが集約モードになります。OpenCode のように複数のプロバイダーを追加でき、それらのモデルがすべてクライアントのモデル一覧に表示されます（Codex は再起動後に反映）。フェイルオーバーは行いません。ローカルルーティングのスイッチとはどちらか一方のみで、切り替え時はオンになっている Claude Code、Codex をいったん直接接続に戻します",
         "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
         "running": "実行中",
@@ -1548,7 +1548,7 @@
     "modelMappingHint": "表示名は /model メニューだけに影響します。1M は Claude Code へのコンテキスト能力宣言です。",
     "stackModelsLabel": "モデル一覧",
     "addStackModel": "手動で追加",
-    "stackModelsHint": "これらのモデルは Claude Code の /model に表示され、選ぶとリクエストがこのプロバイダーへ直接送られます。先頭（★）がこのプロバイダーのデフォルトモデルで、このプロバイダーがデフォルトのとき Claude Code の起動時とバックグラウンドタスクで使われます。変更後は Claude Code を再起動してください。",
+    "stackModelsHint": "これらのモデルは Claude Code の /model に表示され、選ぶとリクエストがこのプロバイダーへ直接送られます。先頭（★）がこのプロバイダーのデフォルトモデルで、このプロバイダーがデフォルトのとき Claude Code の起動時とバックグラウンドタスクで使われます。",
     "stackModelsEmpty": "モデルが未設定です：集約に追加してもモデル選択には表示されません",
     "stackModelPlaceholder": "例: deepseek-v4-pro",
     "stackModelDefault": "デフォルトモデル",
@@ -3471,10 +3471,6 @@
     "stackMode": {
       "enabled": "{{app}} を集約モードにしました",
       "exitedToDirect": "{{apps}} を直接接続に戻しました",
-      "tooltip": {
-        "active": "{{appLabel}} の集約モードがオンです：追加したプロバイダーのモデルがモデル一覧に表示されます（クライアント再起動後に反映）",
-        "inactive": "集約モードに入る：複数のプロバイダーを追加し、それらのモデルをすべて {{appLabel}} のモデル一覧に表示します"
-      },
       "ariaLabel": "{{appLabel}} の集約モード",
       "failoverUnavailable": "{{appLabel}} は集約モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります",
       "codexStale": {
@@ -3972,6 +3968,7 @@
     "toast": {
       "enteredRoute": "{{app}} のルーティングを開始しました → {{provider}}。",
       "enteredStack": "{{app}} を集約に切り替えました。{{app}} を再起動すると /model に集約したモデルが表示されます。",
+      "enteredStackLive": "{{app}} を集約に切り替えました。集約したモデルが /model に表示されます。",
       "exited": "直接接続に戻しました：{{app}} は {{provider}} に直接接続しています。",
       "defaultRemembered": "集約に切り替えると、{{provider}} が既定のプロバイダーになります。",
       "restartHint": "{{app}} の再起動後に反映されます。",
@@ -3994,7 +3991,6 @@
       "stackNoteMembers": "ほかに {{names}} の計 {{count}} モデルが、ccs- プレフィックス付きで /model に表示されます。",
       "stackNoteEmpty": "ほかのプロバイダーはまだ追加されていないため、切り替え後は既定のプロバイダーだけです。あとで「集約」タブで追加できます。",
       "stackNoteNoFailover": "集約ではフェイルオーバーしません。キューと設定は保持され、ルーティングに戻すと復元されます。",
-      "stackNoteRestart": "{{app}} を再起動すると集約したモデルが表示されます。",
       "stackNoteRestartCodex": "{{app}} を再起動すると集約したモデルが表示されます。デスクトップ版は完全に終了してから開き直してください。",
       "stackToRouteNote": "集約したモデルは /model から外れます（リストは保持）。選択中の集約したモデルは通常のモデルに戻す必要があります。",
       "confirmRoute": "ルーティングを開始",

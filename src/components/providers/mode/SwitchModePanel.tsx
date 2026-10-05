@@ -26,7 +26,6 @@ import {
   useSetAutoFailoverEnabled,
 } from "@/lib/query/failover";
 import { useModeActions } from "@/hooks/useModeActions";
-import { useStackModelsChangedHint } from "@/hooks/useStackModelsChangedHint";
 import { getRoutingReason } from "@/utils/routingReason";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { Button } from "@/components/ui/button";
@@ -122,17 +121,9 @@ export function SwitchModePanel({
   const setFailover = useSetAutoFailoverEnabled();
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
-  const { data: stack, dataUpdatedAt: stackUpdatedAt } = useProxyStack(
-    app,
-    isStackAppId(app),
-  );
+  const { data: stack } = useProxyStack(app, isStackAppId(app));
   const setStackMember = useSetProxyStackMember();
   const adoptCatalog = useAdoptCodexStackCatalog();
-  const skipNextStackHint = useStackModelsChangedHint(
-    app,
-    active === "stack" ? stack : undefined,
-    stackUpdatedAt,
-  );
   const modeActions = useModeActions(app);
 
   const [dialog, setDialog] = useState<ModeDialogState | null>(null);
@@ -258,7 +249,6 @@ export function SwitchModePanel({
       queueMove: (provider: Provider, delta: -1 | 1) =>
         void queueMove(provider, delta),
       stackAdd: (provider: Provider) => {
-        skipNextStackHint();
         setStackMember.mutate({
           appType: app,
           providerId: provider.id,
@@ -266,7 +256,6 @@ export function SwitchModePanel({
         });
       },
       stackRemove: (provider: Provider) => {
-        skipNextStackHint();
         setStackMember.mutate({
           appType: app,
           providerId: provider.id,

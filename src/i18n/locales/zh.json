@@ -110,7 +110,7 @@
     "stackBadgeHint": "在 {{client}} 的模型选择器里选择：{{models}}",
     "stackBadgeNoModels": "这家没有配置模型，不会出现在模型选择器里",
     "stackSaved": "已保存，重启 {{client}} 后生效",
-    "stackModelsChanged": "聚合的模型有变化，重启 {{client}} 后生效",
+    "stackSavedLive": "已保存，{{client}} 里立即生效",
     "stackReselectHint": "CC Switch 每次改写客户端配置后，如果模型选择器里选的是聚合的模型，需要重新选一次",
     "stackPartial": "已部分写入，将在下次操作或重启 CC Switch 时补完",
     "stackFailed": "聚合的模型保存失败：{{error}}",
@@ -387,7 +387,7 @@
         "enableFeature": "在主页面显示本地路由开关",
         "enableFeatureDescription": "开启后，主页面顶部将显示路由和故障转移开关",
         "enableStackMode": "在主页面显示聚合模式开关",
-        "enableStackModeDescription": "开启后，Claude Code 和 Codex 的主页面开关换成聚合模式：像 OpenCode 一样添加多家供应商，它们的模型都会出现在客户端的模型列表里（重启客户端后生效），不做故障转移。和本地路由开关二选一，切换时已开启的 Claude Code、Codex 会先退回直连",
+        "enableStackModeDescription": "开启后，Claude Code 和 Codex 的主页面开关换成聚合模式：像 OpenCode 一样添加多家供应商，它们的模型都会出现在客户端的模型列表里（Codex 需要重启后生效），不做故障转移。和本地路由开关二选一，切换时已开启的 Claude Code、Codex 会先退回直连",
         "enableFailoverToggle": "在主页面显示故障转移开关",
         "enableFailoverToggleDescription": "开启后，主页面顶部将独立显示故障转移开关",
         "running": "运行中",
@@ -1548,7 +1548,7 @@
     "modelMappingHint": "显示名称只影响 /model 菜单；1M 只是给 Claude Code 的上下文能力声明。",
     "stackModelsLabel": "模型列表",
     "addStackModel": "手动添加",
-    "stackModelsHint": "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。修改后需要重启 Claude Code。",
+    "stackModelsHint": "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。",
     "stackModelsEmpty": "未配置模型：把这家加入聚合后，模型选择器里不会多出它的模型",
     "stackModelPlaceholder": "例如 deepseek-v4-pro",
     "stackModelDefault": "默认模型",
@@ -3471,10 +3471,6 @@
     "stackMode": {
       "enabled": "{{app}} 已进入聚合模式",
       "exitedToDirect": "{{apps}} 已退回直连",
-      "tooltip": {
-        "active": "{{appLabel}} 已开启聚合模式：添加的供应商的模型出现在模型列表里，重启客户端后生效",
-        "inactive": "进入聚合模式：添加多家供应商，它们的模型都出现在 {{appLabel}} 的模型列表里"
-      },
       "ariaLabel": "{{appLabel}} 聚合模式",
       "failoverUnavailable": "{{appLabel}} 在聚合模式下不做故障转移。队列和设置保留，回到路由模式后恢复",
       "codexStale": {
@@ -3972,6 +3968,7 @@
     "toast": {
       "enteredRoute": "{{app}} 已开始路由 → {{provider}}。",
       "enteredStack": "{{app}} 已切换到聚合模式。重启 {{app}} 后，聚合的模型出现在 /model 里。",
+      "enteredStackLive": "{{app}} 已切换到聚合模式，聚合的模型已出现在 /model 里。",
       "exited": "已回到直连：{{app}} 现在直接连接 {{provider}}。",
       "defaultRemembered": "切换到聚合模式后，默认供应商是 {{provider}}。",
       "restartHint": "重启 {{app}} 后生效。",
@@ -3994,7 +3991,6 @@
       "stackNoteMembers": "另有 {{names}} 共 {{count}} 个模型，会以 ccs- 前缀出现在 /model 里。",
       "stackNoteEmpty": "还没有添加其他供应商，切换后只有默认供应商；可以之后在「聚合」页签里添加。",
       "stackNoteNoFailover": "聚合模式不做故障转移；队列和设置会保留，回到路由模式后恢复。",
-      "stackNoteRestart": "需要重启 {{app}} 才能看到聚合的模型。",
       "stackNoteRestartCodex": "需要重启 {{app}} 才能看到聚合的模型；桌面版要彻底退出后重新打开。",
       "stackToRouteNote": "聚合的模型会从 /model 撤下（名单保留）；已选中的聚合模型需要改回普通模型。",
       "confirmRoute": "开始路由",

@@ -170,7 +170,7 @@ export function ClaudeStackModelsField({
         <p className="text-xs leading-relaxed text-fg-2">
           {t("providerForm.stackModelsHint", {
             defaultValue:
-              "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。修改后需要重启 Claude Code。",
+              "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。",
           })}
         </p>
       </div>
