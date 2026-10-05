@@ -44,20 +44,31 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
     expect(preset?.config).toContain("requires_openai_auth = false");
     expect(preset?.config).toContain('model = "gpt-6-astra"');
     expect(preset?.config).toContain('model_reasoning_effort = "high"');
-    expect(preset?.modelCatalog).toMatchObject(
-      [
-        { model: "gpt-6-astra", displayName: "GPT-6 Astra" },
-        { model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol" },
-        { model: "gpt-5.6-terra", displayName: "GPT-5.6 Terra" },
-        { model: "gpt-5.6-luna", displayName: "GPT-5.6 Luna" },
-        { model: "gpt-5.5", displayName: "GPT-5.5" },
-      ].map((model) => ({
-        ...model,
-        contextWindow: 1048576,
+    expect(preset?.modelCatalog).toEqual([
+      {
+        model: "gpt-6-astra",
+        displayName: "GPT-6 Astra",
+        contextWindow: 1050000,
         reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-        supportsParallelToolCalls: false,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      ...["Sol", "Terra", "Luna"].map((name) => ({
+        model: `gpt-5.6-${name.toLowerCase()}`,
+        displayName: `GPT-5.6 ${name}`,
+        contextWindow: 922000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
         inputModalities: ["text"],
       })),
-    );
+      {
+        model: "gpt-5.5",
+        displayName: "GPT-5.5",
+        contextWindow: 922000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+    ]);
   });
 });

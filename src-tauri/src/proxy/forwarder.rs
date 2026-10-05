@@ -322,15 +322,14 @@ impl RequestForwarder {
         &self,
         app_type: &AppType,
         provider: &Provider,
-        endpoint: &str,
+        codex_upstream_format: Option<CodexUpstreamFormat>,
         already_retried: bool,
         request: &Value,
         error: &ProxyError,
     ) -> Option<OpaqueStateRejection> {
         if already_retried
             || !matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            || super::providers::should_convert_codex_responses_to_chat(provider, endpoint)
-            || super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint)
+            || codex_upstream_format != Some(CodexUpstreamFormat::NativeResponses)
         {
             return None;
         }
@@ -766,6 +765,7 @@ impl RequestForwarder {
             self.note_attempt(provider).await;
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
+            let mut attempted_codex_upstream_format = None;
             match self
                 .forward(
                     app_type,
@@ -776,6 +776,7 @@ impl RequestForwarder {
                     &headers,
                     &extensions,
                     adapter.as_ref(),
+                    &mut attempted_codex_upstream_format,
                 )
                 .await
             {
@@ -818,6 +819,7 @@ impl RequestForwarder {
                                 super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER
                             );
 
+                            let mut media_retry_codex_upstream_format = None;
                             match self
                                 .forward(
                                     app_type,
@@ -828,6 +830,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    &mut media_retry_codex_upstream_format,
                                 )
                                 .await
                             {
@@ -871,7 +874,7 @@ impl RequestForwarder {
                     if let Some(rejection) = self.opaque_state_retry_rejection(
                         app_type,
                         provider,
-                        endpoint,
+                        attempted_codex_upstream_format,
                         opaque_rectifier_retried,
                         &provider_body,
                         &e,
@@ -889,6 +892,7 @@ impl RequestForwarder {
                                 provider.id
                             );
 
+                            let mut opaque_retry_codex_upstream_format = None;
                             match self
                                 .forward(
                                     app_type,
@@ -899,6 +903,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    &mut opaque_retry_codex_upstream_format,
                                 )
                                 .await
                             {
@@ -967,6 +972,7 @@ impl RequestForwarder {
                                 let _ = std::mem::replace(&mut rectifier_retried, true);
 
                                 // 使用同一供应商重试（不计入熔断器）
+                                let mut signature_retry_codex_upstream_format = None;
                                 match self
                                     .forward(
                                         app_type,
@@ -977,6 +983,7 @@ impl RequestForwarder {
                                         &headers,
                                         &extensions,
                                         adapter.as_ref(),
+                                        &mut signature_retry_codex_upstream_format,
                                     )
                                     .await
                                 {
@@ -1063,6 +1070,7 @@ impl RequestForwarder {
                             let _ = std::mem::replace(&mut budget_rectifier_retried, true);
 
                             // 使用同一供应商重试（不计入熔断器）
+                            let mut budget_retry_codex_upstream_format = None;
                             match self
                                 .forward(
                                     app_type,
@@ -1073,6 +1081,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    &mut budget_retry_codex_upstream_format,
                                 )
                                 .await
                             {
@@ -1210,6 +1219,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
+        codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
     ) -> Result<
         (
             ProxyResponse,
@@ -1219,6 +1229,7 @@ impl RequestForwarder {
         ),
         ProxyError,
     > {
+        *codex_upstream_format_out = None;
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1232,12 +1243,7 @@ impl RequestForwarder {
             && !provider.is_github_copilot();
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
-        let is_copilot = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("github_copilot")
-            || base_url.contains("githubcopilot.com");
+        let is_copilot = is_managed_copilot_request(app_type, provider, &base_url);
 
         // Codex upstream conversion mode — computed early because the [1m]-suffix strip
         // below must be skipped on the Anthropic path (the marker has to survive to
@@ -1486,6 +1492,7 @@ impl RequestForwarder {
         } else {
             None
         };
+        *codex_upstream_format_out = codex_upstream_format;
 
         // GitHub Copilot 动态 endpoint 路由
         // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
@@ -3440,6 +3447,15 @@ fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Opt
     };
 
     (rewritten, passthrough_query)
+}
+
+fn is_managed_copilot_request(app_type: &AppType, provider: &Provider, base_url: &str) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.provider_type.as_deref())
+        == Some("github_copilot")
+        || (!matches!(app_type, AppType::Codex) && base_url.contains("githubcopilot.com"))
 }
 
 fn codex_copilot_lookup_error(model_id: &str, error: CopilotAuthError) -> ProxyError {
@@ -5755,6 +5771,7 @@ mod tests {
             json!({"model": " \t "}),
             json!({"model": "gpt-5.5"}),
         ] {
+            let mut codex_upstream_format = None;
             let error = match forwarder
                 .forward(
                     &AppType::Codex,
@@ -5765,6 +5782,7 @@ mod tests {
                     &HeaderMap::new(),
                     &Extensions::new(),
                     adapter.as_ref(),
+                    &mut codex_upstream_format,
                 )
                 .await
             {
@@ -5971,6 +5989,8 @@ mod tests {
                 model_picker_enabled: false,
                 context_window: Some(400_000),
                 supported_endpoints: endpoints.into_iter().map(str::to_string).collect(),
+                supports_parallel_tool_calls: None,
+                reasoning_effort: None,
             }];
             let mut body = json!({"model": "GPT-5.6", "input": "Hello"});
             let resolved = resolve_model_with_format("GPT-5.6", &models, api_format);
@@ -6039,85 +6059,38 @@ mod tests {
     /// 验证 is_copilot 检测逻辑：通过 provider_type 判断
     #[test]
     fn copilot_detection_via_provider_type() {
-        use crate::provider::{Provider, ProviderMeta};
-
-        let provider = Provider {
-            id: "test".to_string(),
-            name: "Test Copilot".to_string(),
-            settings_config: serde_json::json!({}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: Some(ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                ..Default::default()
-            }),
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
-
-        let is_copilot = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("github_copilot");
-
-        assert!(is_copilot, "应该通过 provider_type 检测为 Copilot");
+        let provider = test_provider_with_type(Some("github_copilot"));
+        assert!(is_managed_copilot_request(
+            &AppType::Codex,
+            &provider,
+            "https://copilot-api.corp.example.com"
+        ));
     }
 
-    /// 验证 is_copilot 检测逻辑：通过 base_url 判断
+    /// Claude 保留旧 URL 识别；Codex 必须有显式托管身份，避免接管自建中转。
     #[test]
     fn copilot_detection_via_base_url() {
-        let base_url = "https://api.githubcopilot.com";
-        let is_copilot = base_url.contains("githubcopilot.com");
-        assert!(is_copilot, "应该通过 base_url 检测为 Copilot");
-
-        let non_copilot_url = "https://api.anthropic.com";
-        let is_not_copilot = non_copilot_url.contains("githubcopilot.com");
-        assert!(!is_not_copilot, "非 Copilot URL 不应被检测为 Copilot");
-    }
-
-    /// 验证企业版 endpoint（不包含 githubcopilot.com）场景下 is_copilot 仍然正确
-    #[test]
-    fn copilot_detection_for_enterprise_endpoint() {
-        use crate::provider::{Provider, ProviderMeta};
-
-        // 企业版场景：provider_type 是 github_copilot，但 base_url 可能是企业内部域名
-        let provider = Provider {
-            id: "enterprise".to_string(),
-            name: "Enterprise Copilot".to_string(),
-            settings_config: serde_json::json!({}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: Some(ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                ..Default::default()
-            }),
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
-
-        let enterprise_base_url = "https://copilot-api.corp.example.com";
-
-        // is_copilot 应该通过 provider_type 检测成功，即使 base_url 不包含 githubcopilot.com
-        let is_copilot = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("github_copilot")
-            || enterprise_base_url.contains("githubcopilot.com");
-
-        assert!(
-            is_copilot,
-            "企业版 Copilot 应该通过 provider_type 被正确检测"
-        );
+        let ordinary = test_provider_with_type(None);
+        assert!(is_managed_copilot_request(
+            &AppType::Claude,
+            &ordinary,
+            "https://api.githubcopilot.com"
+        ));
+        assert!(!is_managed_copilot_request(
+            &AppType::Codex,
+            &ordinary,
+            "https://api.githubcopilot.com"
+        ));
+        assert!(!is_managed_copilot_request(
+            &AppType::Codex,
+            &ordinary,
+            "https://copilot-api.example.com"
+        ));
+        assert!(!is_managed_copilot_request(
+            &AppType::Claude,
+            &ordinary,
+            "https://api.anthropic.com"
+        ));
     }
 
     /// 验证动态 endpoint 替换条件
@@ -6961,7 +6934,7 @@ mod tests {
                 forwarder.opaque_state_retry_rejection(
                     &app_type,
                     provider,
-                    "/responses",
+                    Some(CodexUpstreamFormat::NativeResponses),
                     false,
                     &request,
                     &unsupported,
@@ -6977,6 +6950,56 @@ mod tests {
             );
             assert_eq!(gate(AppType::Codex, &official), None);
             assert_eq!(gate(AppType::GrokBuild, &third_party), None);
+        }
+
+        #[test]
+        fn copilot_opaque_retry_uses_actual_transport_not_legacy_static_format() {
+            let forwarder = forwarder(false);
+            let mut provider = provider(
+                &Upstream {
+                    base_url: "https://api.githubcopilot.com".to_string(),
+                    seen: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+                },
+                "openai_chat",
+            );
+            provider.meta = Some(crate::provider::ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            });
+            let request = json!({ "input": [
+                { "type": "compaction", "encrypted_content": "gAAAA-openai" }
+            ] });
+            let unsupported = ProxyError::UpstreamError {
+                status: 400,
+                body: Some("unsupported input item".to_string()),
+            };
+
+            assert_eq!(
+                forwarder.opaque_state_retry_rejection(
+                    &AppType::Codex,
+                    &provider,
+                    Some(CodexUpstreamFormat::NativeResponses),
+                    false,
+                    &request,
+                    &unsupported,
+                ),
+                Some(OpaqueStateRejection {
+                    reasoning: false,
+                    compaction: true,
+                })
+            );
+            assert_eq!(
+                forwarder.opaque_state_retry_rejection(
+                    &AppType::Codex,
+                    &provider,
+                    Some(CodexUpstreamFormat::ChatCompletions),
+                    false,
+                    &request,
+                    &unsupported,
+                ),
+                None
+            );
         }
 
         /// 其他 400、转换成 Chat 的上游都不触发。

@@ -539,6 +539,10 @@ pub fn codex_stack_upstream_rejects_web_search(
     provider: &Provider,
     request_model: Option<&str>,
 ) -> bool {
+    if provider.is_github_copilot() {
+        return true;
+    }
+
     let projected =
         crate::live::project::codex::CodexProjection::of(&crate::live::project::codex::RowInput {
             settings: &provider.settings_config,
@@ -1227,6 +1231,26 @@ mod tests {
         assert!(headers
             .iter()
             .any(|(name, _)| name.as_str() == "copilot-integration-id"));
+    }
+
+    #[test]
+    fn stack_web_search_rejection_includes_managed_copilot() {
+        let copilot = create_copilot_provider();
+        assert!(codex_stack_upstream_rejects_web_search(&copilot, None));
+
+        let ordinary = create_provider(json!({
+            "config": r#"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://relay.example.com/v1"
+wire_api = "responses"
+"#
+        }));
+        assert!(!codex_stack_upstream_rejects_web_search(&ordinary, None));
+        assert!(codex_stack_upstream_rejects_web_search(
+            &ordinary,
+            Some("MiniMaxAI/MiniMax-M3")
+        ));
     }
 
     #[test]

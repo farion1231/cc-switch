@@ -328,7 +328,7 @@ describe("Codex model-fetch lifecycle", () => {
     },
   );
 
-  it("keeps Copilot filtering, explicit context values and default-model selection", async () => {
+  it("keeps Copilot filtering, applies reported prompt limits and selects a default model", async () => {
     vi.mocked(copilotGetModels).mockResolvedValue([
       advertisedModel(),
       {
@@ -351,10 +351,109 @@ describe("Codex model-fetch lifecycle", () => {
     expect(copilotGetModels).toHaveBeenCalledTimes(1);
     expect(copilotGetModelsForAccount).not.toHaveBeenCalled();
     expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
-      expect.objectContaining({ model: "model-1", contextWindow: 200_000 }),
+      expect.objectContaining({ model: "model-1", contextWindow: 400_000 }),
     ]);
     expect(screen.getAllByTestId("model-options")[0]).not.toHaveTextContent(
       "messages-only",
+    );
+  });
+
+  it("overrides stale managed metadata with live Copilot capabilities", async () => {
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
+      {
+        ...advertisedModel(),
+        context_window: 922_000,
+        supports_parallel_tool_calls: true,
+        reasoning_effort: ["none", "low", "medium", "high", "xhigh"],
+      },
+    ]);
+    const props = {
+      ...makeProps("copilot"),
+      catalogModels: [
+        {
+          model: "model-1",
+          contextWindow: 1_048_576,
+          supportsParallelToolCalls: false,
+          reasoningLevels: ["max"],
+          baseInstructions: "Keep me",
+        },
+      ],
+    };
+    render(<Harness {...props} />);
+    fireEvent.click(fetchButton());
+
+    await waitFor(() =>
+      expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
+        expect.objectContaining({
+          model: "model-1",
+          contextWindow: 922_000,
+          supportsParallelToolCalls: true,
+          reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
+          baseInstructions: "Keep me",
+        }),
+      ]),
+    );
+  });
+
+  it("preserves existing managed metadata when Copilot omits it", async () => {
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
+      {
+        ...advertisedModel(),
+        context_window: undefined,
+      },
+    ]);
+    const props = {
+      ...makeProps("copilot"),
+      catalogModels: [
+        {
+          model: "model-1",
+          contextWindow: 222_000,
+          supportsParallelToolCalls: true,
+          reasoningLevels: ["high", "max"],
+        },
+      ],
+    };
+    render(<Harness {...props} />);
+    fireEvent.click(fetchButton());
+
+    await waitFor(() =>
+      expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
+        expect.objectContaining({
+          model: "model-1",
+          contextWindow: 222_000,
+          supportsParallelToolCalls: true,
+          reasoningLevels: ["high", "max"],
+        }),
+      ]),
+    );
+  });
+
+  it("clears stale reasoning levels when Copilot explicitly reports none", async () => {
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
+      {
+        ...advertisedModel(),
+        reasoning_effort: [],
+      },
+    ]);
+    const props = {
+      ...makeProps("copilot"),
+      catalogModels: [
+        {
+          model: "model-1",
+          reasoningLevels: ["high", "max"],
+        },
+      ],
+    };
+    render(<Harness {...props} />);
+    fireEvent.click(fetchButton());
+
+    await waitFor(() =>
+      expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
+        expect.objectContaining({
+          model: "model-1",
+          reasoningLevels: [],
+        }),
+      ]),
     );
   });
 

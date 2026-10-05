@@ -107,11 +107,11 @@ export function isCopilotModelSupportedByCodex(
   );
 }
 
-export function resolveCopilotCatalogContextWindow(
+export function resolveCopilotReportedPromptLimit(
   current: CodexCatalogModel["contextWindow"],
   reported: number | undefined,
 ): CodexCatalogModel["contextWindow"] {
-  return String(current ?? "").trim() ? current : reported;
+  return reported ?? current;
 }
 
 interface CodexFormFieldsProps {
@@ -694,15 +694,20 @@ export function CodexFormFields({
                 ...(existing.get(model.id) ?? {}),
                 model: model.id,
                 displayName: model.name || model.id,
-                contextWindow: resolveCopilotCatalogContextWindow(
+                contextWindow: resolveCopilotReportedPromptLimit(
                   existing.get(model.id)?.contextWindow,
                   model.context_window,
                 ),
                 supportsParallelToolCalls:
-                  existing.get(model.id)?.supportsParallelToolCalls ?? false,
+                  model.supports_parallel_tool_calls ??
+                  existing.get(model.id)?.supportsParallelToolCalls ??
+                  false,
                 inputModalities: existing.get(model.id)?.inputModalities ?? [
                   "text",
                 ],
+                ...(model.reasoning_effort !== undefined
+                  ? { reasoningLevels: model.reasoning_effort }
+                  : {}),
               })),
             );
           }

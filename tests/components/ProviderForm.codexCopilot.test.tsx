@@ -21,6 +21,7 @@ import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const copilotAuthState = vi.hoisted(() => ({
+  isAuthenticated: true,
   isStatusSuccess: true,
   isStatusError: false,
 }));
@@ -72,7 +73,6 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
   return {
     ...actual,
     useCopilotAuth: () => ({
-      isAuthenticated: true,
       ...copilotAuthState,
       defaultAccountId: "copilot-account",
       accounts: [
@@ -182,6 +182,7 @@ async function selectFormat(format: CodexCopilotApiFormat) {
 
 describe("Codex Copilot provider form", () => {
   beforeEach(() => {
+    copilotAuthState.isAuthenticated = true;
     copilotAuthState.isStatusSuccess = true;
     copilotAuthState.isStatusError = false;
     toastError.mockReset();
@@ -220,7 +221,8 @@ describe("Codex Copilot provider form", () => {
     ]) {
       expect(screen.getByDisplayValue(model)).toBeVisible();
     }
-    expect(screen.getAllByDisplayValue("1048576")).toHaveLength(5);
+    expect(screen.getByDisplayValue("1050000")).toBeVisible();
+    expect(screen.getAllByDisplayValue("922000")).toHaveLength(4);
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
     expect(screen.getByText("模型映射")).toBeVisible();
   });
@@ -284,7 +286,7 @@ describe("Codex Copilot provider form", () => {
     fireEvent.change(screen.getByDisplayValue("gpt-5.6-sol"), {
       target: { value: "custom-copilot-model" },
     });
-    fireEvent.change(screen.getAllByDisplayValue("1048576")[0], {
+    fireEvent.change(screen.getByDisplayValue("1050000"), {
       target: { value: "524288" },
     });
     fireEvent.click(screen.getByRole("button", { name: "save" }));
@@ -507,6 +509,59 @@ describe("Codex Copilot provider form", () => {
       screen.queryByRole("button", { name: /providerPreset.custom/ }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("providerPreset.label")).not.toBeInTheDocument();
+  });
+
+  it("keeps a self-hosted copilot-api URL as an ordinary Codex provider", async () => {
+    copilotAuthState.isAuthenticated = false;
+    const onSubmit = vi.fn<(values: ProviderFormValues) => void>();
+    const config = `model_provider = "custom"
+model = "self-hosted-model"
+
+[model_providers.custom]
+name = "Self-hosted"
+base_url = "https://copilot-api.example.com"
+wire_api = "responses"
+requires_openai_auth = true`;
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <ProviderForm
+          appId="codex"
+          providerId="self-hosted"
+          submitLabel="save"
+          onSubmit={onSubmit}
+          onCancel={vi.fn()}
+          initialData={{
+            name: "Self-hosted Codex",
+            category: "third_party",
+            settingsConfig: {
+              auth: { OPENAI_API_KEY: "sk-self-hosted" },
+              config,
+            },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByDisplayValue("sk-self-hosted")).toBeVisible();
+    expect(
+      screen.getByDisplayValue("https://copilot-api.example.com"),
+    ).toBeVisible();
+    expect(
+      screen.queryByTestId("selected-copilot-account"),
+    ).not.toBeInTheDocument();
+
+    await selectFormat("openai_chat");
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    const saved = onSubmit.mock.calls[0][0];
+    expect(saved.meta?.providerType).toBeUndefined();
+    expect(saved.meta?.authBinding).toBeUndefined();
+    expect(saved.meta?.githubAccountId).toBeUndefined();
+    expect(saved.meta?.apiFormat).toBe("openai_chat");
+    expect(JSON.parse(saved.settingsConfig).auth).toEqual({
+      OPENAI_API_KEY: "sk-self-hosted",
+    });
   });
 
   it("loads a saved explicit protocol and can return it to automatic", async () => {

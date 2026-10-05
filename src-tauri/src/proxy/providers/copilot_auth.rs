@@ -265,12 +265,31 @@ pub struct CopilotModel {
     pub vendor: String,
     /// 是否在模型选择器中显示
     pub model_picker_enabled: bool,
-    /// Copilot-reported context window for this exact model ID.
+    /// Copilot-reported maximum prompt limit for this exact model ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
     /// Upstream protocols supported by this exact model ID.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub supported_endpoints: Vec<String>,
+    /// Whether the model supports parallel tool calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_parallel_tool_calls: Option<bool>,
+    /// Copilot-reported reasoning effort levels supported by this model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<Vec<CopilotReasoningEffort>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CopilotReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+    Ultra,
 }
 
 /// Copilot Models API 响应
@@ -292,11 +311,48 @@ struct CopilotModelsResponseItem {
     capabilities: Option<Value>,
 }
 
-fn extract_copilot_context_window(capabilities: Option<&Value>) -> Option<u64> {
-    capabilities?
-        .pointer("/limits/max_context_window_tokens")?
+fn positive_capability_limit(capabilities: &Value, pointer: &str) -> Option<u64> {
+    capabilities
+        .pointer(pointer)?
         .as_u64()
         .filter(|tokens| *tokens > 0)
+}
+
+fn extract_copilot_prompt_limit(capabilities: Option<&Value>) -> Option<u64> {
+    let capabilities = capabilities?;
+    positive_capability_limit(capabilities, "/limits/max_prompt_tokens")
+        .or_else(|| positive_capability_limit(capabilities, "/limits/max_context_window_tokens"))
+}
+
+fn extract_copilot_parallel_tool_calls(capabilities: Option<&Value>) -> Option<bool> {
+    capabilities?
+        .pointer("/supports/parallel_tool_calls")?
+        .as_bool()
+}
+
+fn extract_copilot_reasoning_effort(
+    capabilities: Option<&Value>,
+) -> Option<Vec<CopilotReasoningEffort>> {
+    let efforts = capabilities?
+        .pointer("/supports/reasoning_effort")
+        .or_else(|| capabilities?.get("reasoning_effort"))?
+        .as_array()?;
+    Some(
+        efforts
+            .iter()
+            .filter_map(|effort| match effort.as_str()? {
+                "none" => Some(CopilotReasoningEffort::None),
+                "minimal" => Some(CopilotReasoningEffort::Minimal),
+                "low" => Some(CopilotReasoningEffort::Low),
+                "medium" => Some(CopilotReasoningEffort::Medium),
+                "high" => Some(CopilotReasoningEffort::High),
+                "xhigh" => Some(CopilotReasoningEffort::Xhigh),
+                "max" => Some(CopilotReasoningEffort::Max),
+                "ultra" => Some(CopilotReasoningEffort::Ultra),
+                _ => None,
+            })
+            .collect(),
+    )
 }
 
 /// Copilot 认证错误
@@ -960,8 +1016,12 @@ impl CopilotAuthManager {
                 name: m.name,
                 vendor: m.vendor,
                 model_picker_enabled: m.model_picker_enabled,
-                context_window: extract_copilot_context_window(m.capabilities.as_ref()),
+                context_window: extract_copilot_prompt_limit(m.capabilities.as_ref()),
                 supported_endpoints: m.supported_endpoints,
+                supports_parallel_tool_calls: extract_copilot_parallel_tool_calls(
+                    m.capabilities.as_ref(),
+                ),
+                reasoning_effort: extract_copilot_reasoning_effort(m.capabilities.as_ref()),
             })
             .collect();
 
@@ -1639,7 +1699,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn extracts_model_context_and_supported_endpoints() {
+    fn extracts_model_capabilities_and_supported_endpoints() {
         let item: CopilotModelsResponseItem = serde_json::from_value(serde_json::json!({
             "id": "gpt-5.6",
             "name": "GPT-5.6",
@@ -1648,19 +1708,94 @@ mod tests {
             "supported_endpoints": ["/responses", "/chat/completions"],
             "capabilities": {
                 "limits": {
+                    "max_prompt_tokens": 922000,
                     "max_context_window_tokens": 400000
+                },
+                "supports": {
+                    "parallel_tool_calls": true,
+                    "reasoning_effort": ["none", "low", "turbo", "max", 7]
                 }
             }
         }))
         .unwrap();
 
         assert_eq!(
-            extract_copilot_context_window(item.capabilities.as_ref()),
-            Some(400_000)
+            extract_copilot_prompt_limit(item.capabilities.as_ref()),
+            Some(922_000)
+        );
+        assert_eq!(
+            extract_copilot_parallel_tool_calls(item.capabilities.as_ref()),
+            Some(true)
+        );
+        assert_eq!(
+            extract_copilot_reasoning_effort(item.capabilities.as_ref()),
+            Some(vec![
+                CopilotReasoningEffort::None,
+                CopilotReasoningEffort::Low,
+                CopilotReasoningEffort::Max,
+            ])
         );
         assert_eq!(
             item.supported_endpoints,
             vec!["/responses", "/chat/completions"]
+        );
+    }
+
+    #[test]
+    fn prompt_limit_falls_back_to_positive_context_window() {
+        let capabilities = serde_json::json!({
+            "limits": {
+                "max_prompt_tokens": 0,
+                "max_context_window_tokens": 400000
+            }
+        });
+
+        assert_eq!(
+            extract_copilot_prompt_limit(Some(&capabilities)),
+            Some(400_000)
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_preserves_absent_and_explicit_empty_capabilities() {
+        assert_eq!(extract_copilot_reasoning_effort(None), None);
+        assert_eq!(
+            extract_copilot_reasoning_effort(Some(&serde_json::json!({
+                "supports": { "reasoning_effort": [] }
+            }))),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn serializes_optional_live_model_capabilities() {
+        let model = CopilotModel {
+            id: "gpt-5.6-sol".to_string(),
+            name: "GPT-5.6 Sol".to_string(),
+            vendor: "OpenAI".to_string(),
+            model_picker_enabled: true,
+            context_window: Some(922_000),
+            supported_endpoints: vec!["/responses".to_string()],
+            supports_parallel_tool_calls: Some(true),
+            reasoning_effort: Some(vec![
+                CopilotReasoningEffort::None,
+                CopilotReasoningEffort::Xhigh,
+                CopilotReasoningEffort::Max,
+            ]),
+        };
+
+        assert_eq!(
+            serde_json::to_value(model).unwrap(),
+            serde_json::json!({
+                "id": "gpt-5.6-sol",
+                "name": "GPT-5.6 Sol",
+                "vendor": "OpenAI",
+                "model_picker_enabled": true,
+                "context_window": 922000,
+                "supported_endpoints": ["/responses"],
+                "supports_parallel_tool_calls": true,
+                "reasoning_effort": ["none", "xhigh", "max"]
+            })
         );
     }
 
@@ -1907,6 +2042,8 @@ mod tests {
                         model_picker_enabled: true,
                         context_window: None,
                         supported_endpoints: Vec::new(),
+                        supports_parallel_tool_calls: None,
+                        reasoning_effort: None,
                     },
                     CopilotModel {
                         id: "claude-sonnet-4".to_string(),
@@ -1915,6 +2052,8 @@ mod tests {
                         model_picker_enabled: true,
                         context_window: None,
                         supported_endpoints: Vec::new(),
+                        supports_parallel_tool_calls: None,
+                        reasoning_effort: None,
                     },
                     CopilotModel {
                         id: "gpt-hidden".to_string(),
@@ -1926,6 +2065,8 @@ mod tests {
                             "/v1/chat/completions".to_string(),
                             "/responses".to_string(),
                         ],
+                        supports_parallel_tool_calls: None,
+                        reasoning_effort: None,
                     },
                 ],
             );
@@ -2007,6 +2148,8 @@ mod tests {
                 .iter()
                 .map(|endpoint| endpoint.to_string())
                 .collect(),
+            supports_parallel_tool_calls: None,
+            reasoning_effort: None,
         };
         manager.copilot_models.write().await.extend([
             ("messages-only".to_string(), vec![model(&["/v1/messages"])]),

@@ -883,13 +883,13 @@ function ProviderFormFull({
   );
   const presetProviderType = getPresetProviderType(selectedPresetEntry?.preset);
   const initialProviderType = initialData?.meta?.providerType;
+  const hasManagedCopilotIdentity =
+    presetProviderType === "github_copilot" ||
+    initialProviderType === "github_copilot";
   const isCopilotProvider =
-    (appId === "claude" || appId === "codex") &&
-    (presetProviderType === "github_copilot" ||
-      initialProviderType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com") ||
-      codexBaseUrl.includes("githubcopilot.com") ||
-      codexBaseUrl.includes("copilot-api."));
+    (appId === "codex" && hasManagedCopilotIdentity) ||
+    (appId === "claude" &&
+      (hasManagedCopilotIdentity || baseUrl.includes("githubcopilot.com")));
   const isClaudeCodexOauthProvider =
     appId === "claude" &&
     (presetProviderType === "codex_oauth" ||

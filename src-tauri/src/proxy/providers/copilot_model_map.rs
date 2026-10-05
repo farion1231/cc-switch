@@ -413,6 +413,8 @@ mod tests {
             model_picker_enabled: true,
             context_window: None,
             supported_endpoints: Vec::new(),
+            supports_parallel_tool_calls: None,
+            reasoning_effort: None,
         }
     }
 
