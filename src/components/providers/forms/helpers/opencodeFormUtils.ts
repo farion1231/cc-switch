@@ -234,7 +234,9 @@ export function toOpencodeExtraOptions(
  * Reconciles the extra-option row editor's string map into the stored
  * `options` object in place. Rows whose text still matches the stored
  * value's display form were not touched by the user, so their stored
- * values (types included) are kept as-is; only added, edited and removed
+ * values (types included) are kept as-is; a renamed row carries its old
+ * display text under the new key, so its stored value is re-homed from
+ * the key that vanished from the rows. Only added, edited and removed
  * rows are rewritten.
  */
 export function mergeOpencodeExtraOptionRows(
@@ -249,6 +251,10 @@ export function mergeOpencodeExtraOptionRows(
     }
   }
 
+  // Keys that vanished from the rows were deleted or renamed away. Keep
+  // their stored values around: a renamed row's untouched display text is
+  // matched against them below to re-home the value with its type.
+  const renamedAway: Array<[string, unknown]> = [];
   for (const k of Object.keys(options)) {
     // Own-property check: `k in nextRows` would also match inherited
     // Object.prototype keys such as "constructor" or "toString", keeping
@@ -257,6 +263,7 @@ export function mergeOpencodeExtraOptionRows(
       !isKnownOpencodeOptionKey(k) &&
       !Object.prototype.hasOwnProperty.call(nextRows, k)
     ) {
+      renamedAway.push([k, options[k]]);
       delete options[k];
     }
   }
@@ -267,6 +274,18 @@ export function mergeOpencodeExtraOptionRows(
       existing !== undefined &&
       formatOpencodeExtraOptionValue(existing) === v
     ) {
+      continue;
+    }
+    // A key unknown to `options` can still be an untouched row, namely a
+    // rename: the editor moves the display text to the new key verbatim.
+    // Inherit the vanished key's stored value instead of re-parsing the
+    // text; same-text vanished keys render identically, so any match has
+    // the same display form and usually the same type.
+    const source = renamedAway.find(
+      ([, stored]) => formatOpencodeExtraOptionValue(stored) === v,
+    );
+    if (source) {
+      options[k] = source[1];
       continue;
     }
     try {

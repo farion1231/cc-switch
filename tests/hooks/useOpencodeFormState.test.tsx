@@ -256,7 +256,51 @@ describe("useOpencodeFormState", () => {
     });
 
     expect(JSON.parse(getSettingsConfig()).options).toEqual({
-      count: 3,
+      count: "3",
+      timeout: 100,
+    });
+  });
+
+  it("keeps a renamed extra option's stored value type when only the key changes", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai",
+      options: { name: "123", timeout: 100 },
+      models: {},
+    });
+
+    // Mirrors handleExtraOptionKeyChange: the row's display text moves to
+    // the new key untouched.
+    const rows: Record<string, string> = {};
+    for (const [k, v] of Object.entries(result.current.opencodeExtraOptions)) {
+      rows[k === "name" ? "label" : k] = v;
+    }
+    act(() => {
+      result.current.handleOpencodeExtraOptionsChange(rows);
+    });
+
+    const options = JSON.parse(getSettingsConfig()).options;
+    expect(options.label).toBe("123");
+    expect(options).not.toHaveProperty("name");
+  });
+
+  it("does not mistake a kept key with the same display text for a rename source", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai",
+      options: { name: "100", timeout: 100 },
+      models: {},
+    });
+
+    // Rename name -> label while timeout (also displayed as "100") stays.
+    const rows: Record<string, string> = {};
+    for (const [k, v] of Object.entries(result.current.opencodeExtraOptions)) {
+      rows[k === "name" ? "label" : k] = v;
+    }
+    act(() => {
+      result.current.handleOpencodeExtraOptionsChange(rows);
+    });
+
+    expect(JSON.parse(getSettingsConfig()).options).toEqual({
+      label: "100",
       timeout: 100,
     });
   });
