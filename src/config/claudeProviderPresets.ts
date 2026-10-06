@@ -1074,6 +1074,8 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "OpenCode Go",
+    family: "opencode",
+    planKey: "coding",
     websiteUrl: "https://opencode.ai/go",
     apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
     partnerPromotionKey: "opencode_go",
@@ -1094,6 +1096,31 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "third_party",
     endpointCandidates: ["https://opencode.ai/zen/go"],
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
+    // Zen 按量网关：Claude 模型原生走 /v1/messages，直连不需要路由。
+    // 和 Go 一样只认 x-api-key（Bearer 报 Missing API key）。
+    // 免费模型只能在 OpenCode 里用（外部调用 403 FreeTierError），默认不用。
+    name: "OpenCode Zen",
+    family: "opencode",
+    planKey: "payg",
+    websiteUrl: "https://opencode.ai/zen",
+    apiKeyUrl: "https://opencode.ai/auth",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://opencode.ai/zen"],
     icon: "opencode",
     iconColor: "#211E1E",
   },

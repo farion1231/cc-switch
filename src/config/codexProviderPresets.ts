@@ -3260,6 +3260,8 @@ requires_openai_auth = true`,
   },
   {
     name: "OpenCode Go",
+    family: "opencode",
+    planKey: "coding",
     websiteUrl: "https://opencode.ai/go",
     apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
     partnerPromotionKey: "opencode_go",
@@ -3328,6 +3330,27 @@ requires_openai_auth = true`,
       },
     ]),
     category: "third_party",
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
+    // Zen 按量网关：GPT 模型原生走 /v1/responses，直连不需要路由；
+    // 免费模型只能在 OpenCode 里用（外部调用 403 FreeTierError），默认不用。
+    // 默认不用全仓通用的 gpt-5.6-sol：Zen 上游对它返回 403「Model access is
+    // disabled」（2026-10-06 真 Key 实测），gpt-6-sol 经 Codex 跑通工具调用。
+    name: "OpenCode Zen",
+    family: "opencode",
+    planKey: "payg",
+    websiteUrl: "https://opencode.ai/zen",
+    apiKeyUrl: "https://opencode.ai/auth",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "opencode_zen",
+      "https://opencode.ai/zen/v1",
+      "gpt-6-sol",
+    ),
+    endpointCandidates: ["https://opencode.ai/zen/v1"],
+    category: "aggregator",
     icon: "opencode",
     iconColor: "#211E1E",
   },
