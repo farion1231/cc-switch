@@ -2026,6 +2026,10 @@
     "responseModel": "返回模型",
     "noData": "暂无数据",
     "unknownProvider": "未知供应商",
+    "sessionProvider": {
+      "label": "{{app}} · 会话日志",
+      "hint": "没开路由时从客户端的会话日志读取，分不出具体是哪家供应商"
+    },
     "stream": "流",
     "nonStream": "非流",
     "source": "来源",

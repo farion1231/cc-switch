@@ -2026,6 +2026,10 @@
     "responseModel": "Response Model",
     "noData": "No data",
     "unknownProvider": "Unknown Provider",
+    "sessionProvider": {
+      "label": "{{app}} · Session logs",
+      "hint": "Read from the client's session logs while routing is off, so the provider can't be told apart"
+    },
     "stream": "Stream",
     "nonStream": "Non-stream",
     "source": "Source",

@@ -2026,6 +2026,10 @@
     "responseModel": "レスポンスモデル",
     "noData": "データなし",
     "unknownProvider": "不明なプロバイダー",
+    "sessionProvider": {
+      "label": "{{app}} · セッションログ",
+      "hint": "ルーティングがオフの間はクライアントのセッションログから読み取るため、どのプロバイダーかは区別できません"
+    },
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
     "source": "ソース",

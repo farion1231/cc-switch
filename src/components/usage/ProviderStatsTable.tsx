@@ -14,6 +14,7 @@ import {
   getResolvedLang,
 } from "./format";
 import { usageTable } from "./usageTable";
+import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 import type { ProviderStats, UsageRangeSelection } from "@/types/usage";
 
 interface ProviderStatsTableProps {
@@ -112,6 +113,7 @@ export function ProviderStatsTable({
                 const estimatedSpeed =
                   exactSpeed == null ? getProviderEstimatedSpeed(stat) : null;
                 const speed = exactSpeed ?? estimatedSpeed;
+                const provider = getUsageProviderLabel(stat.providerName, t);
                 return (
                   <tr
                     key={`${stat.providerId}:${stat.providerName}`}
@@ -120,9 +122,9 @@ export function ProviderStatsTable({
                     <td className={usageTable.td}>
                       <span
                         className="block max-w-[260px] truncate"
-                        title={stat.providerName}
+                        title={usageProviderTitle(provider)}
                       >
-                        {stat.providerName}
+                        {provider.label}
                       </span>
                     </td>
                     <td className={usageTable.tdEnd}>
