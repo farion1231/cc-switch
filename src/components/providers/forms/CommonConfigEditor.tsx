@@ -82,9 +82,6 @@ export function CommonConfigEditor({
           config?.attribution?.commit === "" &&
           config?.attribution?.pr === "" &&
           config?.attribution?.sessionUrl === false,
-        teammates:
-          config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === "1" ||
-          config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 1,
         enableToolSearch:
           config?.env?.ENABLE_TOOL_SEARCH === "true" ||
           config?.env?.ENABLE_TOOL_SEARCH === "1",
@@ -102,7 +99,6 @@ export function CommonConfigEditor({
     } catch {
       return {
         hideAttribution: false,
-        teammates: false,
         enableToolSearch: false,
         effortMax: false,
         disableAutoUpgrade: false,
@@ -123,15 +119,6 @@ export function CommonConfigEditor({
               config.attribution = { commit: "", pr: "", sessionUrl: false };
             } else {
               delete config.attribution;
-            }
-            break;
-          case "teammates":
-            if (!config.env) config.env = {};
-            if (checked) {
-              config.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
-            } else {
-              delete config.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
-              if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
           case "enableToolSearch":
@@ -236,15 +223,6 @@ export function CommonConfigEditor({
             className="ui-checkbox"
           />
           <span>{t("claudeConfig.hideAttribution")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.teammates}
-            onChange={(e) => handleToggle("teammates", e.target.checked)}
-            className="ui-checkbox"
-          />
-          <span>{t("claudeConfig.enableTeammates")}</span>
         </label>
         <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
           <input

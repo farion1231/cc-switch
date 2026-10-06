@@ -71,7 +71,6 @@
     "configLabel": "Claude Code settings.json (JSON) *",
     "fullSettingsHint": "Claude Code の settings.json 全文",
     "hideAttribution": "AI署名を非表示",
-    "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
     "effortMax": "最大強度思考",
     "disableAutoUpgrade": "自動アップグレードを無効化",
