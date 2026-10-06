@@ -104,10 +104,8 @@ pub struct ProxyStatus {
     /// 内层 map 在该 provider 归零时整体移除，外层同理，因此 map 大小只反映
     /// 当前真有在飞流量的组合，不随 provider 增删无限增长。
     #[serde(default)]
-    pub in_flight_by_provider: std::collections::HashMap<
-        String,
-        std::collections::HashMap<String, usize>,
-    >,
+    pub in_flight_by_provider:
+        std::collections::HashMap<String, std::collections::HashMap<String, usize>>,
 }
 
 /// 活跃的代理目标信息

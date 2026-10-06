@@ -738,8 +738,7 @@ impl RequestForwarder {
         if !self.routing_state_enabled() {
             return self
                 .forward_with_retry_inner(
-                    app_type, method, endpoint, body, headers, extensions, providers,
-                    &mut guard,
+                    app_type, method, endpoint, body, headers, extensions, providers, &mut guard,
                 )
                 .await;
         }
