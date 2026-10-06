@@ -10,6 +10,7 @@ use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::RwLock;
@@ -23,6 +24,9 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
+    /// 上次保存后按新地址重写客户端失败了：库里已是新地址，客户端还指着旧的。下次保存
+    /// 即使地址没变也要再重写一遍。
+    client_resync_pending: Arc<AtomicBool>,
 }
 
 /// 重启失败时写回库的那份配置：设置页只动四个全局字段，旧接口是整份七个字段。
@@ -63,7 +67,17 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
+            client_resync_pending: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// 取走「客户端还没按新地址重写」的标记（见 `client_resync_pending`）。
+    pub fn take_client_resync_pending(&self) -> bool {
+        self.client_resync_pending.swap(false, Ordering::SeqCst)
+    }
+
+    pub fn mark_client_resync_pending(&self) {
+        self.client_resync_pending.store(true, Ordering::SeqCst);
     }
 
     /// 设置 AppHandle（在应用初始化时调用）

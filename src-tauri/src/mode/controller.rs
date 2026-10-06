@@ -2852,6 +2852,46 @@ mod mode_tests {
         state.proxy_service.stop().await.unwrap();
     }
 
+    /// 只改客户端地址、第一次重写失败（库里已是新地址）：改好客户端文件后原样再保存，
+    /// 还要按新地址重写，不能因为地址「没变」直接成功。
+    #[tokio::test]
+    #[serial]
+    async fn a_failed_client_host_rewrite_is_retried_on_the_same_save() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("enter claude");
+        let routed = fs::read_to_string(settings_path()).unwrap();
+
+        fs::write(settings_path(), "not json").unwrap();
+        let mut config = state.db.get_global_proxy_config().await.unwrap();
+        config.client_host = "172.25.144.1".to_string();
+        crate::commands::save_global_proxy_config(&state, config.clone())
+            .await
+            .expect_err("claude settings unreadable");
+
+        fs::write(settings_path(), &routed).unwrap();
+        crate::commands::save_global_proxy_config(&state, config.clone())
+            .await
+            .expect("retry the same save");
+        let settings = fs::read_to_string(settings_path()).unwrap();
+        assert!(settings.contains("http://172.25.144.1:"), "{settings}");
+
+        // 重写成功后标记清掉：再保存同一份不再重写。
+        fs::write(settings_path(), "not json").unwrap();
+        crate::commands::save_global_proxy_config(&state, config)
+            .await
+            .expect("nothing to rewrite");
+        state.proxy_service.stop().await.unwrap();
+    }
+
     #[tokio::test]
     #[serial]
     async fn codex_routes_between_official_and_third_party_contracts() {

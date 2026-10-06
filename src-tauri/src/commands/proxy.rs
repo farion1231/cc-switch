@@ -237,6 +237,15 @@ pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
+    save_global_proxy_config(state.inner(), config).await
+}
+
+/// [`update_global_proxy_config`] 的实现。重写客户端失败时库里已经是新地址，记下待重写，
+/// 改好客户端文件后原样再保存一次也会重写，而不是因为地址「没变」直接返回成功。
+pub(crate) async fn save_global_proxy_config(
+    state: &AppState,
+    config: GlobalProxyConfig,
+) -> Result<(), String> {
     let previous_client_host = state
         .db
         .get_global_proxy_config()
@@ -244,15 +253,17 @@ pub async fn update_global_proxy_config(
         .map_err(|e| e.to_string())?
         .client_host;
     let restarted = state.proxy_service.update_global_config(&config).await?;
-    if restarted || config.client_host.trim() != previous_client_host {
+    let pending = state.proxy_service.take_client_resync_pending();
+    if pending || restarted || config.client_host.trim() != previous_client_host {
         let mut failures = Vec::new();
-        if let Err(error) = crate::mode::controller::resync_routes(state.inner()).await {
+        if let Err(error) = crate::mode::controller::resync_routes(state).await {
             failures.push(error);
         }
         if let Err(error) = resync_claude_desktop_gateway(&state.db) {
             failures.push(format!("claude-desktop: {error}"));
         }
         if !failures.is_empty() {
+            state.proxy_service.mark_client_resync_pending();
             return Err(failures.join("; "));
         }
     }
