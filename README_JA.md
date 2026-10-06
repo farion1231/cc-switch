@@ -516,6 +516,24 @@ CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
 
 </details>
 
+<details>
+<summary><strong>Linux（AppImage + fcitx/ibus）：プロバイダの「編集」をクリックするとアプリ全体がフリーズする</strong></summary>
+
+AppImage の GTK 起動フックは `GTK_IM_MODULE_FILE` を無条件にエクスポートし、同梱の `immodules.cache` を指しますが、その中身は GTK 組み込みモジュールだけで、fcitx / ibus のエントリはありません。`GTK_IM_MODULE=fcitx` が設定されていると、GTK はこのキャッシュからモジュールを見つけられず XIM にフォールバックします。編集ページのテキスト欄にフォーカスが移った時点で、WebKitGTK がアプリ全体をフリーズさせることがあります（復旧には `SIGKILL` が必要）。この修正が対象にするのは `GTK_IM_MODULE` だけです：入力メソッドを `XMODIFIERS` だけで設定しているマシンは対象外です——GTK はモジュール選択時に `XMODIFIERS` を読み取らないため、そうした環境では GTK が直接 locale ベースのフォールバックへ進み、同じバンドルキャッシュから `xim` を選びます。キャッシュを書き換えてもこれは変わりません。なお、同じフックは AppDir 内を指す `GTK_EXE_PREFIX` もエクスポートするため、変数を単に削除しても効果はありません——GTK は同じバンドルキャッシュを再導出するだけです。CC Switch は起動時にこの特定の状況を検出し、ホスト側のキャッシュにあなたの入力メソッドが実際に含まれている場合に限り、`GTK_IM_MODULE_FILE` をそのキャッシュへ向けます。見つからなければ何も変更しません。対象となるのは、変数が実際に AppDir 内を指し、**かつ** そのバンドルキャッシュに入力メソッドが含まれていない場合だけです。deb / rpm 環境や、モジュールが存在する場合は変わりません。複数のモジュールを指定している場合（`GTK_IM_MODULE=fcitx:ibus`）、実際に有効になるのはホストキャッシュが提供する最初のモジュールであり、最上位に指定したものとは限りません。
+
+変数をホスト側のキャッシュへ向けることで XIM フォールバックの経路は避まり、フリーズは解消します——ただし、入力メソッドが引き続き使えるかどうかは、ホストの `im-fcitx5.so` / `im-ibus.so` が AppImage に同梱された GTK に対して読み込めるかに依存します。読み込めない場合（GTK のマイナーバージョンが異なる等）、GTK は組み込みの `simple` コンテキストにフォールバックします。フリーズは起きませんが入力メソッドは利用できないままなので、必要に応じて `CC_SWITCH_GTK_IM_MODULE_FILE=keep` で従来の動作に戻せます。
+
+この選択を上書きしたい場合は、内蔵のエスケープハッチを付けて起動してください（フックはこの変数を変更しません）：
+
+```bash
+CC_SWITCH_GTK_IM_MODULE_FILE=keep ./CC-Switch-*.AppImage                        # フックのパスをそのまま維持（旧動作）
+CC_SWITCH_GTK_IM_MODULE_FILE=/path/to/immodules.cache ./CC-Switch-*.AppImage    # 任意のキャッシュを指定
+```
+
+デスクトップアイコンから起動する場合は、`.desktop` の `Exec=` 行に追記してください（例：`env CC_SWITCH_GTK_IM_MODULE_FILE=keep /path/to/AppImage`）。CC Switch は処理内容（どのキャッシュを指したか、あるいは何も変更しなかった理由）を stderr に出力します。`.desktop` から起動した場合は見えないので、端末から AppImage を実行して確認してください。
+
+</details>
+
 その他の質問については、ユーザーマニュアルの[よくある質問](docs/user-manual/ja/5-faq/5.2-questions.md)をご覧ください。
 
 ## 貢献
