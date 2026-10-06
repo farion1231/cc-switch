@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::codex_config::{get_codex_config_dir, read_codex_config_text};
-use crate::codex_state_db::codex_state_db_paths;
+use crate::codex_state_db::{codex_state_db_is_lockable, codex_state_db_paths};
 use crate::session_manager::model::{
     project_content, ContentRef, EventKind, ImageRef, MessageMeta, SessionBlock, ToolKind,
     ToolStatus,
@@ -97,7 +97,10 @@ static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new
 fn load_thread_titles() -> HashMap<String, String> {
     let config_dir = get_codex_config_dir();
     let config_text = read_codex_config_text().unwrap_or_default();
-    let db_paths = codex_state_db_paths(&config_dir, &config_text);
+    let db_paths: Vec<PathBuf> = codex_state_db_paths(&config_dir, &config_text)
+        .into_iter()
+        .filter(|path| codex_state_db_is_lockable(path))
+        .collect();
     load_thread_titles_from_paths(&config_dir.join(CODEX_SESSION_INDEX_FILENAME), &db_paths)
 }
 
@@ -2237,6 +2240,9 @@ mod tests {
 
     #[test]
     fn load_thread_titles_from_state_db_trims_and_filters_titles() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join(CODEX_STATE_DB_FILENAME);
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -2274,6 +2280,9 @@ mod tests {
 
     #[test]
     fn load_thread_titles_from_state_db_keeps_title_when_first_user_message_null() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join(CODEX_STATE_DB_FILENAME);
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -2330,6 +2339,9 @@ mod tests {
 
     #[test]
     fn load_thread_titles_prefers_state_db_explicit_title_over_session_index() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let index_path = temp.path().join(CODEX_SESSION_INDEX_FILENAME);
         std::fs::write(

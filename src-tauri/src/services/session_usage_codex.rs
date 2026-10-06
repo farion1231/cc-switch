@@ -35,7 +35,7 @@ use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::SystemTime;
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
@@ -447,9 +447,12 @@ fn replay_caches() -> &'static Mutex<CodexReplayCaches> {
 }
 
 pub(crate) fn clear_codex_replay_caches() {
-    if let Ok(mut caches) = replay_caches().lock() {
-        *caches = CodexReplayCaches::default();
-    }
+    // 清空即丢弃持锁 panic 时可能写了一半的内容，所以顺带解除中毒。
+    let mut caches = replay_caches()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    *caches = CodexReplayCaches::default();
+    replay_caches().clear_poison();
 }
 
 fn is_rollout_filename(file_name: &str) -> bool {
@@ -1525,16 +1528,19 @@ fn sync_single_codex_file(
                     ),
                 ));
             };
-            if let Ok(caches) = replay_caches().lock() {
-                if let Some(prefix) = caches
+            // 先把查询结果拷出来再释放锁：Rust 2021 下 `if let .. else` 的临时值活到
+            // else 分支结束，锁中毒时 Err 里仍攥着 guard，else 里再加锁会自锁。
+            // None = 锁已中毒（不走缓存），Some(None) = 未命中。
+            let cached_prefix = replay_caches().lock().ok().map(|caches| {
+                caches
                     .replay_prefixes
                     .get(file_path)
                     .filter(|cached| cached.modified == file_modified && cached.size == file_size)
                     .map(|cached| cached.prefix)
-                {
-                    prefix
-                } else {
-                    drop(caches);
+            });
+            match cached_prefix {
+                Some(Some(prefix)) => prefix,
+                Some(None) => {
                     let parent_signatures =
                         match resolve_parent_signatures(parent_id, cutoff, rollout_index) {
                             Ok(signatures) => signatures,
@@ -1565,10 +1571,12 @@ fn sync_single_codex_file(
                     }
                     prefix
                 }
-            } else {
-                let parent_signatures = resolve_parent_signatures(parent_id, cutoff, rollout_index)
-                    .map_err(AppError::Config)?;
-                matching_replay_prefix(&parsed.token_events, &parent_signatures)
+                None => {
+                    let parent_signatures =
+                        resolve_parent_signatures(parent_id, cutoff, rollout_index)
+                            .map_err(AppError::Config)?;
+                    matching_replay_prefix(&parsed.token_events, &parent_signatures)
+                }
             }
         }
     };
@@ -2824,6 +2832,58 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn test_poisoned_replay_cache_does_not_deadlock_parented_sync() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        // 模拟持锁断言失败把缓存锁弄中毒。
+        let _ = std::thread::spawn(|| {
+            let _guard = replay_caches().lock().unwrap();
+            panic!("poison the replay cache");
+        })
+        .join();
+        assert!(replay_caches().is_poisoned());
+
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let child = rollout_path(temp.path(), CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:01Z"),
+                turn_context_at("2026-07-10T03:00:10Z"),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, None, Some(PARENT_ID), "2026-07-10T03:00:05Z"),
+                turn_context(),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:06Z"),
+                token_count_at(1_300, 1_050, 150, "2026-07-10T03:00:07Z"),
+            ],
+        );
+
+        // 放到子线程里跑：一旦回归成自锁，测试按超时失败而不是挂住整个测试进程。
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = sync_test_file(&db, &child, &[&parent, &child])
+                .map(|result| (result.imported, result.skipped, result.deferred));
+            let _ = tx.send(result);
+            drop(temp);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("parented sync deadlocked on a poisoned replay cache")?;
+        assert_eq!(result, (1, 1, false));
+
+        clear_codex_replay_caches();
+        assert!(!replay_caches().is_poisoned());
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_filtered_parent_events_use_subsequence_prefix_alignment() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -2855,6 +2915,19 @@ mod tests {
         Ok(())
     }
 
+    /// 文件系统给不出文件身份时（如 Windows 访问 \\wsl.localhost）父时间线按设计不进缓存，
+    /// 这类环境只校验结果、不校验缓存复用。
+    fn parent_cache_supported(path: &Path) -> bool {
+        let supported = ParentFileStamp::from_file(&fs::File::open(path).unwrap()).is_some();
+        if !supported {
+            eprintln!(
+                "no file identity for {}; skipping parent cache assertions",
+                path.display()
+            );
+        }
+        supported
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_parent_rollout_is_cached_once_across_fork_cutoffs() -> Result<(), AppError> {
@@ -2874,16 +2947,22 @@ mod tests {
         let early = "2026-07-10T03:00:05Z".parse::<DateTime<Utc>>().unwrap();
         let late = "2026-07-10T03:00:15Z".parse::<DateTime<Utc>>().unwrap();
         assert_eq!(parent_signatures_before(&parent, early).unwrap().len(), 1);
-        let first_timeline =
-            Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
+        let first_timeline = parent_cache_supported(&parent).then(|| {
+            Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline)
+        });
         assert_eq!(parent_signatures_before(&parent, late).unwrap().len(), 2);
 
         let caches = replay_caches().lock().unwrap();
-        assert_eq!(caches.parent_timelines.len(), 1);
-        assert!(Arc::ptr_eq(
-            &first_timeline,
-            &caches.parent_timelines[&parent].timeline
-        ));
+        match first_timeline {
+            Some(first_timeline) => {
+                assert_eq!(caches.parent_timelines.len(), 1);
+                assert!(Arc::ptr_eq(
+                    &first_timeline,
+                    &caches.parent_timelines[&parent].timeline
+                ));
+            }
+            None => assert!(caches.parent_timelines.is_empty()),
+        }
         Ok(())
     }
 
@@ -2915,8 +2994,11 @@ mod tests {
         );
         assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 2);
 
-        let caches = replay_caches().lock().unwrap();
-        assert_eq!(caches.parent_timelines.len(), 1);
+        let expected_entries = usize::from(parent_cache_supported(&parent));
+        assert_eq!(
+            replay_caches().lock().unwrap().parent_timelines.len(),
+            expected_entries
+        );
         Ok(())
     }
 
@@ -2940,11 +3022,13 @@ mod tests {
         assert!(first_error.contains("token_count 缺少有效 timestamp"));
         let cached_timeline =
             || Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
-        let first_timeline = cached_timeline();
+        let first_timeline = parent_cache_supported(&parent).then(cached_timeline);
 
         let second_error = parent_signatures_before(&parent, cutoff).unwrap_err();
         assert_eq!(second_error, first_error);
-        assert!(Arc::ptr_eq(&first_timeline, &cached_timeline()));
+        if let Some(first_timeline) = first_timeline {
+            assert!(Arc::ptr_eq(&first_timeline, &cached_timeline()));
+        }
 
         fs::remove_file(&parent).unwrap();
         let open_error = parent_signatures_before(&parent, cutoff).unwrap_err();
@@ -2976,7 +3060,11 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(parent_signatures_before(&parent, after).unwrap().len(), 1);
-        assert_eq!(replay_caches().lock().unwrap().parent_timelines.len(), 1);
+        let expected_entries = usize::from(parent_cache_supported(&parent));
+        assert_eq!(
+            replay_caches().lock().unwrap().parent_timelines.len(),
+            expected_entries
+        );
     }
 
     #[cfg(any(unix, windows))]
@@ -2988,6 +3076,9 @@ mod tests {
         let values = [session_meta(PARENT_ID), token_count(100, 50, 10)];
         write_jsonl(&parent, &values);
         write_jsonl(&replacement, &values);
+        if !parent_cache_supported(&parent) {
+            return;
+        }
         let original_file = fs::File::open(&parent).unwrap();
         let original_metadata = original_file.metadata().unwrap();
         let replacement_file = fs::OpenOptions::new()

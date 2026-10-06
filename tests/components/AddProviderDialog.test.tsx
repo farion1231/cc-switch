@@ -124,7 +124,11 @@ describe("AddProviderDialog", () => {
 
     // Claude 的表单要等 live 底读回来才渲染。
     await screen.findByRole("button", { name: "manage-auth" });
-    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "common.add",
+      }),
+    );
 
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
 
@@ -159,7 +163,11 @@ describe("AddProviderDialog", () => {
     );
 
     await screen.findByRole("button", { name: "manage-auth" });
-    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "common.add",
+      }),
+    );
 
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
 
@@ -177,7 +185,7 @@ describe("AddProviderDialog", () => {
     "%s 新增时带上表单投影出的底，和编辑器同一套保存规则",
     async (appId) => {
       const handleSubmit = vi.fn().mockResolvedValue(undefined);
-      const projected = { config: "[ui]\ntheme = \"dark\"\n" };
+      const projected = { config: '[ui]\ntheme = "dark"\n' };
       const draft = { config: "" };
       mockProjectedBase = projected;
       mockProjectedDraft = draft;
@@ -197,7 +205,9 @@ describe("AddProviderDialog", () => {
       );
 
       await screen.findByRole("button", { name: "manage-auth" });
-      fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "common.add" }),
+      );
 
       await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
       expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({

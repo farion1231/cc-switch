@@ -29,6 +29,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
+import { logFrontendInfo } from "@/lib/frontendLogger";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -178,6 +179,9 @@ export function useProviderActions(
         : getRoutingReason(activeApp, provider, t);
 
       if (proxyRequiredReason) {
+        logFrontendInfo(
+          `[SWITCH] ${activeApp} 直连切到 ${provider.id}，提示需要路由：${proxyRequiredReason}`,
+        );
         toast.warning(
           t("notifications.proxyRequiredForSwitch", {
             reason: proxyRequiredReason,
@@ -198,6 +202,9 @@ export function useProviderActions(
         provider.category === "official" &&
         !officialSupportsTakeover
       ) {
+        logFrontendInfo(
+          `[SWITCH] ${activeApp} 拒绝切到 ${provider.id}：路由模式下不能切到官方供应商`,
+        );
         toast.error(
           t("notifications.officialBlockedByProxy", {
             defaultValue:

@@ -17,7 +17,9 @@ import { DialogTitle } from "@/components/ui/dialog";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { useIsMutating } from "@tanstack/react-query";
 import {
+  MCP_UPSERT_MUTATION_KEY,
   useAllMcpServers,
   useBulkToggleMcpApp,
   useDeleteMcpServer,
@@ -84,8 +86,12 @@ const IMPORT_SOURCE_FILES: Record<
   grokbuild: { file: "~/.grok/config.toml" },
   opencode: { file: "~/.config/opencode/opencode.json" },
   hermes: { file: "~/.hermes/config.yaml" },
+  pi: { file: "~/.pi/agent/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
 };
+
+/** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
+const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set(["mcode", "pi"]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */
 interface WriteFailure {
@@ -107,7 +113,7 @@ interface ImportReport {
 
 /**
  * MCP 全局页（v7）：页头 + 应用矩阵 + 添加 / 编辑抽屉。
- * 以这里为准写进勾选的应用；不支持的应用（Claude Desktop、OpenClaw、Pi）没有列。
+ * 以这里为准写进勾选的应用；不支持的应用（Claude Desktop、OpenClaw）没有列。
  */
 const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   onInteractionBlockedChange,
@@ -155,9 +161,20 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   // 写入本身仍由写锁（writeLockRef / interactionBlocked）拦着。
   const controlsDisabled = useDelayedFlag(interactionBlocked);
 
+  // 编辑页自己的保存不在 mutationPending 里，按 mutation key 单独看
+  const editorSaving =
+    useIsMutating({ mutationKey: MCP_UPSERT_MUTATION_KEY }) > 0;
+  // 报给外壳的导航锁不算编辑页：编辑页只盖住内容区，离开页面就关掉它（同供应商编辑页）；
+  // 写入进行中（含编辑页自己的保存）仍锁
+  const navigationBlocked =
+    writePending ||
+    mutationPending ||
+    editorSaving ||
+    deleteId !== null ||
+    importReport !== null;
   React.useEffect(() => {
-    onInteractionBlockedChange?.(interactionBlocked);
-  }, [interactionBlocked, onInteractionBlockedChange]);
+    onInteractionBlockedChange?.(navigationBlocked);
+  }, [navigationBlocked, onInteractionBlockedChange]);
 
   React.useEffect(
     () => () => onInteractionBlockedChange?.(false),
@@ -295,7 +312,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       const next = { ...prev };
       for (const key of Object.keys(next)) {
         const app = key.split("\u0000")[1] as McpAppId;
-        if (okApps.has(app) && app !== "mcode") delete next[key];
+        if (okApps.has(app) && !WRITE_THEN_SAVE_APPS.has(app)) delete next[key];
       }
       return next;
     });
@@ -310,8 +327,8 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     try {
       const entries = rowFailsFor(app);
       let ok = true;
-      if (app === "mcode" && entries.length > 0) {
-        // MiniMax Code 写失败时开关没入库：按每行想要的值再写一次
+      if (WRITE_THEN_SAVE_APPS.has(app) && entries.length > 0) {
+        // MiniMax Code / Pi 写失败时开关没入库：按每行想要的值再写一次
         for (const [key, failure] of entries) {
           const id = key.split("\u0000")[0];
           const { failed } = await writeMany([{ id, app }], failure.desired);
@@ -1004,7 +1021,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
           visibleAppIds={appIds}
           onSave={() => setDrawer(null)}
           onClose={() => setDrawer(null)}
-          onRequestDelete={(id) => setDeleteId(id)}
         />
       )}
 

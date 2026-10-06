@@ -8,10 +8,8 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Sheet,
   SheetBody,
-  SheetContent,
+  SheetPageContent,
   SheetFooter,
-  SheetHeader,
-  SheetTitle,
 } from "@/components/ui/sheet";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
@@ -79,8 +77,6 @@ interface McpFormModalProps {
   visibleAppIds?: McpAppId[];
   onSave: () => void | Promise<void>;
   onClose: () => void;
-  /** 编辑时底栏左侧「删除…」 */
-  onRequestDelete?: (id: string) => void;
 }
 
 const emptyMeta = (): MetaDraft => ({
@@ -125,7 +121,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   visibleAppIds = MCP_APP_IDS,
   onSave,
   onClose,
-  onRequestDelete,
 }) => {
   const { t } = useTranslation();
   const upsertMutation = useUpsertMcpServer();
@@ -467,7 +462,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
   // ─── 渲染 ───────────────────────────────────────────────────────────
   const title = isEdit
-    ? t("mcpPage.drawer.editTitle", { id: editingId })
+    ? t("mcpPage.drawer.editTitle")
     : t("mcpPage.drawer.addTitle");
 
   const batchChosen = batch?.items.filter((item) => item.include) ?? [];
@@ -554,6 +549,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   type="button"
                   variant="quiet"
                   size="icon-compact"
+                  data-unsaved-ignore
                   aria-pressed={shown}
                   aria-label={t("mcpPage.drawer.revealValue", {
                     name: rowName,
@@ -610,21 +606,16 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   return (
     <Sheet
       open
+      modal={false}
       onOpenChange={(open) => {
         if (!open && !savingRef.current) onClose();
       }}
     >
-      <SheetContent
-        width={560}
-        closeLabel={t("common.close")}
+      <SheetPageContent
+        title={title}
+        closeLabel={t("common.back")}
         aria-describedby={undefined}
       >
-        <SheetHeader className="flex h-[52px] items-center space-y-0 border-b border-border pe-12 ps-6 pt-0">
-          <SheetTitle className="truncate text-section" title={title}>
-            {title}
-          </SheetTitle>
-        </SheetHeader>
-
         <SheetBody className="flex flex-col gap-5 px-6 pb-6 pt-5">
           {!isEdit && (
             <>
@@ -864,7 +855,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 aria-labelledby="mcp-conn-title"
                 className="flex flex-col gap-4"
               >
-                <div className="flex items-center gap-3">
+                <div data-unsaved-ignore className="flex items-center gap-3">
                   <h3
                     id="mcp-conn-title"
                     className="m-0 flex-1 text-body font-semibold text-fg-1"
@@ -1126,6 +1117,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       {hasSecrets && (
                         <button
                           type="button"
+                          data-unsaved-ignore
                           aria-pressed={revealJson}
                           onClick={toggleRevealJson}
                           className="inline-flex h-7 items-center gap-1 rounded-control pe-2 ps-1.5 text-body font-medium text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
@@ -1331,19 +1323,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         </SheetBody>
 
         <SheetFooter className="h-14 px-6 py-0">
-          {isEdit && onRequestDelete && (
-            <Button
-              type="button"
-              variant="quiet"
-              size="regular"
-              className="-ms-2.5 text-danger-text hover:text-danger-text"
-              disabled={saving}
-              onClick={() => onRequestDelete(editingId as string)}
-            >
-              {t("mcpPage.drawer.delete")}
-            </Button>
-          )}
-          <div className="flex-1" />
           <Button
             type="button"
             variant="neutral"
@@ -1363,7 +1342,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
             {saving ? t("common.saving") : submitLabel}
           </Button>
         </SheetFooter>
-      </SheetContent>
+      </SheetPageContent>
     </Sheet>
   );
 };

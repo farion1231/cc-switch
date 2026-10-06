@@ -2,19 +2,18 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useProviderStats } from "@/lib/query/usage";
 import { TablePagination, useClientPagination } from "./TablePagination";
-import { HelpTip } from "@/components/ui/help-tip";
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
   fmtUsd,
   formatTokensCompact,
-  formatTokensPerSecond,
-  getAggregateTokensPerSecond,
   getLocaleFromLanguage,
   getResolvedLang,
 } from "./format";
 import { usageTable } from "./usageTable";
-import type { ProviderStats, UsageRangeSelection } from "@/types/usage";
+import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
+import { SuccessSpeedCells, SuccessSpeedHeaders } from "./statsColumns";
+import type { UsageRangeSelection } from "@/types/usage";
 
 interface ProviderStatsTableProps {
   range: UsageRangeSelection;
@@ -22,26 +21,6 @@ interface ProviderStatsTableProps {
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
-}
-
-/** 一行供应商的汇总速度：Σ输出 ÷ Σ生成时间（后端只累加满足条件的请求）。 */
-export function getProviderSpeed(stat: ProviderStats): string | null {
-  return formatTokensPerSecond(
-    getAggregateTokensPerSecond(stat.speedOutputTokens, stat.speedGenerationMs),
-  );
-}
-
-/**
- * 会话日志导入的请求的汇总估算速度：Σ输出 ÷ Σ估算耗时（含首字等待）。
- * 没有精确速度时才拿它顶上，显示时前面带 ≈。
- */
-export function getProviderEstimatedSpeed(stat: ProviderStats): string | null {
-  return formatTokensPerSecond(
-    getAggregateTokensPerSecond(
-      stat.estSpeedOutputTokens,
-      stat.estSpeedDurationMs,
-    ),
-  );
 }
 
 export function ProviderStatsTable({
@@ -88,15 +67,7 @@ export function ProviderStatsTable({
               <th className={usageTable.thEnd}>{t("usage.requests")}</th>
               <th className={usageTable.thEnd}>{t("usage.tokens")}</th>
               <th className={usageTable.thEnd}>{t("usage.cost")}</th>
-              <th className={usageTable.thEnd}>{t("usage.successRate")}</th>
-              <th className={usageTable.thEnd}>
-                <span className="inline-flex items-center gap-0.5">
-                  {t("usage.speed")}
-                  <HelpTip title={t("usage.speedSumHelpTitle")} align="end">
-                    {t("usage.speedSumHelp")}
-                  </HelpTip>
-                </span>
-              </th>
+              <SuccessSpeedHeaders />
             </tr>
           </thead>
           <tbody>
@@ -108,10 +79,7 @@ export function ProviderStatsTable({
               </tr>
             ) : (
               pagination.pageRows.map((stat) => {
-                const exactSpeed = getProviderSpeed(stat);
-                const estimatedSpeed =
-                  exactSpeed == null ? getProviderEstimatedSpeed(stat) : null;
-                const speed = exactSpeed ?? estimatedSpeed;
+                const provider = getUsageProviderLabel(stat.providerName, t);
                 return (
                   <tr
                     key={`${stat.providerId}:${stat.providerName}`}
@@ -120,9 +88,9 @@ export function ProviderStatsTable({
                     <td className={usageTable.td}>
                       <span
                         className="block max-w-[260px] truncate"
-                        title={stat.providerName}
+                        title={usageProviderTitle(provider)}
                       >
-                        {stat.providerName}
+                        {provider.label}
                       </span>
                     </td>
                     <td className={usageTable.tdEnd}>
@@ -140,30 +108,7 @@ export function ProviderStatsTable({
                     >
                       {fmtUsd(stat.totalCost, 2)}
                     </td>
-                    <td className={usageTable.tdEnd}>
-                      {stat.successRate.toFixed(
-                        stat.successRate >= 99.95 ? 0 : 1,
-                      )}
-                      %
-                    </td>
-                    <td
-                      className={cn(
-                        usageTable.tdEnd,
-                        speed == null && usageTable.muted,
-                      )}
-                    >
-                      {speed == null ? (
-                        "—"
-                      ) : (
-                        <>
-                          {estimatedSpeed != null && "≈"}
-                          {speed}
-                          <span className="ms-0.5 text-badge font-normal text-fg-3">
-                            tok/s
-                          </span>
-                        </>
-                      )}
-                    </td>
+                    <SuccessSpeedCells stat={stat} />
                   </tr>
                 );
               })

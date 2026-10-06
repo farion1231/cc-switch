@@ -3,6 +3,7 @@ import type { TFunction } from "i18next";
 import {
   balanceLine,
   cardRows,
+  creditsLine,
   expiredLine,
   failedLines,
   lineHint,
@@ -28,6 +29,8 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     "quota.resetCredits.times": "{{count}} 次",
     "quota.resetCredits.inTime": "{{time}}后",
     "subscription.resetsIn": "{{time}}后重置",
+    "quota.credits.text": "Credits 约 {{usd}}",
+    "quota.credits.usd": "约 {{usd}}",
   };
   const template = templates[key] ?? key;
   return template.replace(/\{\{(\w+)\}\}/g, (_, name) =>
@@ -284,5 +287,29 @@ describe("reset time in hints", () => {
     expect(lineHint(t, fiveHour, Date.parse("2026-10-05T00:00:00Z"))).toBe(
       "5 小时剩余 69%",
     );
+  });
+});
+
+describe("Codex Credits balance", () => {
+  it("is hidden without a positive balance", () => {
+    expect(creditsLine(t, undefined, { locale: "en" })).toBeNull();
+    expect(creditsLine(t, null, { locale: "en" })).toBeNull();
+    expect(creditsLine(t, 0, { locale: "en" })).toBeNull();
+    expect(creditsLine(t, Number.NaN, { locale: "en" })).toBeNull();
+  });
+
+  it("counts credits and converts to whole dollars at $0.04 each", () => {
+    const line = creditsLine(t, 62500, { locale: "en" })!;
+    expect(line.caption).toBe("62,500");
+    expect(line.value).toBe("约 $2500");
+    expect(line.short).toBe("$2500");
+    expect(line.text).toBe("Credits 约 $2500");
+    expect(line.left).toBe(Infinity);
+    expect(line.tone).toBe("normal");
+    expect(creditsLine(t, 1234.5, { locale: "en" })!.short).toBe("$49");
+  });
+
+  it("says under a dollar instead of rounding a small balance to zero", () => {
+    expect(creditsLine(t, 10, { locale: "en" })!.short).toBe("<$1");
   });
 });

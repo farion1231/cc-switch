@@ -37,6 +37,8 @@ export interface SubscriptionQuota {
   extraUsage: ExtraUsage | null;
   /** 只有 ChatGPT 订阅有；没查到时缺省 */
   resetCredits?: ResetCredits | null;
+  /** ChatGPT 订阅买的 Codex Credits 余额（额度用完后才扣）；没有时缺省 */
+  creditsBalance?: number | null;
   error: string | null;
   queriedAt: number | null;
 }

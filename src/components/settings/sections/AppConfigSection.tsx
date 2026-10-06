@@ -162,6 +162,10 @@ export function AppConfigSection({
                 />
                 <SettingsSwitchRow
                   label={t("settings.skipClaudeOnboarding")}
+                  help={{
+                    title: t("settings.skipClaudeOnboarding"),
+                    body: t("settings.skipClaudeOnboardingDescription"),
+                  }}
                   checked={!!settings.skipClaudeOnboarding}
                   onCheckedChange={(value) =>
                     void onAutoSave({ skipClaudeOnboarding: value })

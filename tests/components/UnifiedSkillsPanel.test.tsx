@@ -338,6 +338,31 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
+  it("selects every listed Skill from the header checkbox", async () => {
+    m.installed = [
+      makeSkill({ id: "a", name: "A" }),
+      makeSkill({ id: "b", name: "B" }),
+    ];
+    renderPanel();
+    const all = screen.getByRole("checkbox", {
+      name: "skillsPage.selectAllAria",
+    }) as HTMLInputElement;
+    const picks = screen.getAllByRole("checkbox", {
+      name: "skillsPage.selectAria",
+    });
+
+    await userEvent.click(picks[0]);
+    expect(all.indeterminate).toBe(true);
+
+    await userEvent.click(all);
+    expect(all.checked).toBe(true);
+    for (const pick of picks) expect(pick).toBeChecked();
+
+    await userEvent.click(all);
+    expect(all.checked).toBe(false);
+    for (const pick of picks) expect(pick).not.toBeChecked();
+  });
+
   it("uninstalls through the row menu after confirming", async () => {
     m.installed = [makeSkill()];
     m.uninstall.mockResolvedValueOnce({
