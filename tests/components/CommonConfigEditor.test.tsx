@@ -152,3 +152,43 @@ describe("CommonConfigEditor inactive row fields", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("CommonConfigEditor auto mode server toggle", () => {
+  const autoModeServerCheckbox = () =>
+    screen.getByRole("checkbox", {
+      name: "claudeConfig.disableAutoModeServer",
+    });
+
+  it("reads CLAUDE_CODE_AUTO_MODE_SERVER=0 as checked", () => {
+    renderEditor(
+      JSON.stringify({ env: { CLAUDE_CODE_AUTO_MODE_SERVER: "0" } }),
+    );
+
+    expect(autoModeServerCheckbox()).toBeChecked();
+  });
+
+  it("writes and removes the env key", () => {
+    const onChange = renderEditor(
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://gw.example" } }),
+    );
+
+    fireEvent.click(autoModeServerCheckbox());
+
+    expect(JSON.parse(onChange.mock.calls[0][0])).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: "https://gw.example",
+        CLAUDE_CODE_AUTO_MODE_SERVER: "0",
+      },
+    });
+  });
+
+  it("drops an emptied env when unchecked", () => {
+    const onChange = renderEditor(
+      JSON.stringify({ env: { CLAUDE_CODE_AUTO_MODE_SERVER: "0" } }),
+    );
+
+    fireEvent.click(autoModeServerCheckbox());
+
+    expect(JSON.parse(onChange.mock.calls[0][0])).toEqual({});
+  });
+});

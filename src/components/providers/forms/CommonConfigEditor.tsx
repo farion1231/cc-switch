@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { Label } from "@/components/ui/label";
 import JsonEditor from "@/components/JsonEditor";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
+import { CLAUDE_AUTO_MODE_SERVER_ENV } from "@/utils/claudeEditorOverlay";
 import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
 
 interface CommonConfigEditorProps {
@@ -94,6 +95,9 @@ export function CommonConfigEditor({
         disableArtifact:
           config?.env?.CLAUDE_CODE_DISABLE_ARTIFACT === "1" ||
           config?.env?.CLAUDE_CODE_DISABLE_ARTIFACT === 1,
+        disableAutoModeServer:
+          config?.env?.[CLAUDE_AUTO_MODE_SERVER_ENV] === "0" ||
+          config?.env?.[CLAUDE_AUTO_MODE_SERVER_ENV] === 0,
       };
     } catch {
       return {
@@ -103,6 +107,7 @@ export function CommonConfigEditor({
         effortMax: false,
         disableAutoUpgrade: false,
         disableArtifact: false,
+        disableAutoModeServer: false,
       };
     }
   }, [localValue]);
@@ -165,6 +170,15 @@ export function CommonConfigEditor({
               config.env.CLAUDE_CODE_DISABLE_ARTIFACT = "1";
             } else {
               delete config.env.CLAUDE_CODE_DISABLE_ARTIFACT;
+              if (Object.keys(config.env).length === 0) delete config.env;
+            }
+            break;
+          case "disableAutoModeServer":
+            if (!config.env) config.env = {};
+            if (checked) {
+              config.env[CLAUDE_AUTO_MODE_SERVER_ENV] = "0";
+            } else {
+              delete config.env[CLAUDE_AUTO_MODE_SERVER_ENV];
               if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
@@ -269,6 +283,20 @@ export function CommonConfigEditor({
             className="ui-checkbox"
           />
           <span>{t("claudeConfig.disableArtifact")}</span>
+        </label>
+        <label
+          className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer"
+          title={t("claudeConfig.disableAutoModeServerHint")}
+        >
+          <input
+            type="checkbox"
+            checked={toggleStates.disableAutoModeServer}
+            onChange={(e) =>
+              handleToggle("disableAutoModeServer", e.target.checked)
+            }
+            className="ui-checkbox"
+          />
+          <span>{t("claudeConfig.disableAutoModeServer")}</span>
         </label>
       </div>
       <JsonEditor

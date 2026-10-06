@@ -76,6 +76,8 @@
     "effortMax": "最大強度思考",
     "disableAutoUpgrade": "自動アップグレードを無効化",
     "disableArtifact": "Artifact ツールを無効化",
+    "disableAutoModeServer": "auto mode のサーバー側チェックを無効化",
+    "disableAutoModeServerHint": "サードパーティのゲートウェイは auto mode のサーバー側チェックに対応していません。オンにすると Claude Code は自前のチェックを使い、セッションごとの「このセッションは対象外です」という通知が出なくなります（CLAUDE_CODE_AUTO_MODE_SERVER=0）。公式エンドポイントではオフのままにしてください。",
     "keyFieldsHint": "エンドポイント、キー、モデル、コンテキストウィンドウ、互換スイッチはプロバイダーの切り替えに従います。それ以外のフィールドは Claude Code のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
     "inactiveFieldsHint": "このプロバイダーには、切り替えても反映されないフィールドが {{count}} 件保存されています。クリックすると上のグローバル設定に追加され、保存時に設定ファイルへ書き込まれます。プロバイダーに保存された元の値は削除されません。",
     "addToGlobalSettings": "グローバル設定に追加"

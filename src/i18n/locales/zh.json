@@ -76,6 +76,8 @@
     "effortMax": "最大强度思考",
     "disableAutoUpgrade": "禁用自动升级",
     "disableArtifact": "禁用 Artifact 工具",
+    "disableAutoModeServer": "关闭 auto mode 服务端检查",
+    "disableAutoModeServerHint": "第三方网关不支持 auto mode 的服务端检查。勾选后 Claude Code 改用自己的检查，不再每个会话弹出“本会话不符合条件”的提示（CLAUDE_CODE_AUTO_MODE_SERVER=0）。官方端点不要勾选。",
     "keyFieldsHint": "地址、Key、模型、上下文窗口和兼容开关随供应商切换；其余字段是 Claude Code 全局设置，保存后对所有供应商生效。",
     "inactiveFieldsHint": "这个供应商还保存着 {{count}} 个不随切换生效的字段。点击可加入上方的全局设置，保存后写入配置文件；供应商里保存的原值不会删除。",
     "addToGlobalSettings": "加入全局设置"

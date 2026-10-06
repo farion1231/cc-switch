@@ -14,7 +14,10 @@ import {
 } from "@/lib/requestOverrides";
 import { providersApi, type AppId, type ManagedAuthProvider } from "@/lib/api";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
-import { overlayClaudeProviderFields } from "@/utils/claudeEditorOverlay";
+import {
+  overlayClaudeProviderFields,
+  withClaudeGatewayDefaults,
+} from "@/utils/claudeEditorOverlay";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
   ProviderCategory,
@@ -452,11 +455,14 @@ function ProviderFormFull({
       notes: initialData?.notes ?? "",
       settingsConfig: initialData?.settingsConfig
         ? JSON.stringify(initialData.settingsConfig, null, 2)
-        : appId === "claude" && claudeLiveBase
+        : appId === "claude"
           ? JSON.stringify(
               overlayClaudeProviderFields(
-                claudeLiveBase,
-                JSON.parse(CLAUDE_DEFAULT_CONFIG) as Record<string, unknown>,
+                claudeLiveBase ?? {},
+                withClaudeGatewayDefaults(
+                  JSON.parse(CLAUDE_DEFAULT_CONFIG) as Record<string, unknown>,
+                  "custom",
+                ),
               ),
               null,
               2,
@@ -2211,10 +2217,13 @@ function ProviderFormFull({
     );
     // 预设只带关键字段和独有字段，套在当前 live 上显示（和切换的结果一致）。
     const config =
-      appId === "claude" && claudeLiveBase
+      appId === "claude"
         ? overlayClaudeProviderFields(
-            claudeLiveBase,
-            templated as Record<string, unknown>,
+            claudeLiveBase ?? {},
+            withClaudeGatewayDefaults(
+              templated as Record<string, unknown>,
+              preset.category,
+            ),
           )
         : templated;
 

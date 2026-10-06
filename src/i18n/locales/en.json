@@ -76,6 +76,8 @@
     "effortMax": "Max Effort Thinking",
     "disableAutoUpgrade": "Disable Auto-Upgrade",
     "disableArtifact": "Disable Artifact Tool",
+    "disableAutoModeServer": "Disable Auto Mode Server Checks",
+    "disableAutoModeServerHint": "Third-party gateways can't run auto mode's server-side checks. When on, Claude Code uses its own checks and stops showing the \"this session isn't eligible\" notice in every session (CLAUDE_CODE_AUTO_MODE_SERVER=0). Leave off for the official endpoint.",
     "keyFieldsHint": "Endpoint, key, models, context window and compatibility switches follow the provider; everything else is a global Claude Code setting and applies to every provider once saved.",
     "inactiveFieldsHint": "This provider still stores {{count}} field(s) that do not take effect when switching. Click one to add it to the global settings above; it is written to the config file on save, and the value stored in the provider is kept.",
     "addToGlobalSettings": "Add to global settings"

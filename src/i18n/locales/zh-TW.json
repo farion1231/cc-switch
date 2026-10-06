@@ -76,6 +76,8 @@
     "effortMax": "最大強度思考",
     "disableAutoUpgrade": "停用自動升級",
     "disableArtifact": "停用 Artifact 工具",
+    "disableAutoModeServer": "停用 auto mode 伺服器端檢查",
+    "disableAutoModeServerHint": "第三方閘道不支援 auto mode 的伺服器端檢查。勾選後 Claude Code 改用自己的檢查，不再每個工作階段跳出「此工作階段不符合資格」的提示（CLAUDE_CODE_AUTO_MODE_SERVER=0）。官方端點請勿勾選。",
     "keyFieldsHint": "位址、Key、模型、上下文視窗和相容開關隨供應商切換；其餘欄位是 Claude Code 全域設定，儲存後對所有供應商生效。",
     "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的欄位。點擊可加入上方的全域設定，儲存後寫入設定檔；供應商裡保存的原值不會刪除。",
     "addToGlobalSettings": "加入全域設定"
