@@ -3511,18 +3511,22 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         // 故显式声明容量，取值与本 PR 的 Pi / OpenClaw 预设一致
         "deepseek-v4-flash-0731": {
           name: "DeepSeek V4 Flash",
+          reasoning: true,
           limit: { context: 1000000, output: 384000 },
         },
         "DeepSeek-V4-Pro": {
           name: "DeepSeek V4 Pro",
+          reasoning: true,
           limit: { context: 1000000, output: 384000 },
         },
         "GLM-5.3": {
           name: "GLM-5.3",
+          reasoning: true,
           limit: { context: 1048576, output: 131072 },
         },
         "Kimi-K2.7-Code": {
           name: "Kimi K2.7 Code",
+          reasoning: true,
           limit: { context: 262144, output: 262144 },
         },
         "qwen3-coder-plus": {

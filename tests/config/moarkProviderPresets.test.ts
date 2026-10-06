@@ -92,6 +92,18 @@ describe("MoArk (模力方舟) provider presets", () => {
     expect(models).toHaveProperty(DEFAULT_MODEL);
     expect(models).toHaveProperty("Kimi-K2.7-Code");
     expect(models[DEFAULT_MODEL]?.name).toBe("DeepSeek V4 Flash");
+
+    // OpenCode only offers thinking variants for models flagged as reasoning;
+    // Qwen3 Coder Plus has no thinking mode and stays unflagged.
+    for (const id of [
+      DEFAULT_MODEL,
+      "DeepSeek-V4-Pro",
+      "GLM-5.3",
+      "Kimi-K2.7-Code",
+    ]) {
+      expect(models[id]?.reasoning, `${id} reasoning`).toBe(true);
+    }
+    expect(models["qwen3-coder-plus"]?.reasoning).toBeUndefined();
   });
 
   it("uses the OpenAI Completions endpoint for OpenClaw", () => {
