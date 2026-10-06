@@ -1194,16 +1194,19 @@ mod tests {
             return;
         }
         let dir = tempdir().expect("tempdir");
-        let (_path, conn) = hermes_db(dir.path());
+        let (_path, mut conn) = hermes_db(dir.path());
+        // Batch fixture writes to avoid a disk sync per insert on Windows CI.
+        let tx = conn.transaction().expect("begin fixture transaction");
         for i in 0..=SQLITE_SCAN_LIMIT {
             let id = format!("s{i}");
-            conn.execute(
+            tx.execute(
                 "INSERT INTO sessions (id, started_at) VALUES (?1, 1.0)",
                 [&id],
             )
             .unwrap();
-            insert_message(&conn, &id, "user", "hello", 1.0);
+            insert_message(&tx, &id, "user", "hello", 1.0);
         }
+        tx.commit().expect("commit fixture transaction");
 
         let found = first_user_messages(&conn);
         assert_eq!(found.len(), SQLITE_SCAN_LIMIT);
