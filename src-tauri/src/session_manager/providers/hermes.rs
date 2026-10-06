@@ -1195,6 +1195,8 @@ mod tests {
         }
         let dir = tempdir().expect("tempdir");
         let (_path, conn) = hermes_db(dir.path());
+        // 一个事务里插完：逐条自动提交每次都落盘，Windows CI 上上千次写会超过 180 秒超时
+        conn.execute_batch("BEGIN").unwrap();
         for i in 0..=SQLITE_SCAN_LIMIT {
             let id = format!("s{i}");
             conn.execute(
@@ -1204,6 +1206,7 @@ mod tests {
             .unwrap();
             insert_message(&conn, &id, "user", "hello", 1.0);
         }
+        conn.execute_batch("COMMIT").unwrap();
 
         let found = first_user_messages(&conn);
         assert_eq!(found.len(), SQLITE_SCAN_LIMIT);
