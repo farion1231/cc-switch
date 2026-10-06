@@ -113,6 +113,82 @@ pub struct Written {
     pub extra: Map<String, Value>,
 }
 
+/// 可以绑定 Stack 模型的场景。四档角色别名写在 `settings.json` 的 `env` 里；辅助 / 压缩不在
+/// 客户端配置里，由代理按请求头 `x-claude-code-request-class` 分流。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Scenario {
+    Haiku,
+    Sonnet,
+    Opus,
+    Fable,
+    /// 子代理（`CLAUDE_CODE_SUBAGENT_MODEL`）。
+    Subagent,
+    /// 辅助请求（含 Auto Mode 分类器）。
+    Auxiliary,
+    /// 上下文压缩请求。
+    Compaction,
+}
+
+impl Scenario {
+    pub const ALL: [Scenario; 7] = [
+        Scenario::Haiku,
+        Scenario::Sonnet,
+        Scenario::Opus,
+        Scenario::Fable,
+        Scenario::Subagent,
+        Scenario::Auxiliary,
+        Scenario::Compaction,
+    ];
+
+    /// 请求头 `x-claude-code-request-class` 里的类别名对应哪个场景。
+    pub fn from_request_class(class: &str) -> Option<Self> {
+        match class.trim().to_ascii_lowercase().as_str() {
+            "auxiliary" => Some(Scenario::Auxiliary),
+            "compaction" => Some(Scenario::Compaction),
+            _ => None,
+        }
+    }
+}
+
+/// Claude Code 的场景绑定：某个场景指向哪个已发布的 Stack 模型 id（`ccs-claude-…`）。没绑的
+/// 场景保持原来的行为：四档都指向默认那家列表里的第一个模型、子代理跟随主模型、辅助 / 压缩
+/// 请求不分流。只对 Claude 有意义（Codex 的目录里没有这些别名）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClaudeScenarios {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub haiku: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sonnet: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opus: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fable: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auxiliary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<String>,
+}
+
+impl ClaudeScenarios {
+    pub fn is_empty(&self) -> bool {
+        Scenario::ALL.iter().all(|slot| self.slot(*slot).is_none())
+    }
+
+    pub fn slot(&self, slot: Scenario) -> Option<&str> {
+        match slot {
+            Scenario::Haiku => self.haiku.as_deref(),
+            Scenario::Sonnet => self.sonnet.as_deref(),
+            Scenario::Opus => self.opus.as_deref(),
+            Scenario::Fable => self.fable.as_deref(),
+            Scenario::Subagent => self.subagent.as_deref(),
+            Scenario::Auxiliary => self.auxiliary.as_deref(),
+            Scenario::Compaction => self.compaction.as_deref(),
+        }
+    }
+}
+
 /// 代理模式的 Stack 模型：这些供应商的模型以带前缀的 id 发布给客户端，选中后请求直达那一家
 /// （`mode::stack`）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -129,13 +205,21 @@ pub struct StackState {
     /// 客户端会一直带着选中过的 id，key 改了指向，旧 id 就会被悄悄发到另一家。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, String>,
+    /// Claude Code 的场景绑定（`mode::stack::claude_scenario_models`）。绑定 id 失效（成员
+    /// 移除、行里删了模型）时投影按没绑处理，值留着：成员加回来就恢复。
+    #[serde(default, skip_serializing_if = "ClaudeScenarios::is_empty")]
+    pub claude_scenarios: ClaudeScenarios,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl StackState {
     pub fn is_empty(&self) -> bool {
-        !self.enabled && self.members.is_empty() && self.keys.is_empty() && self.extra.is_empty()
+        !self.enabled
+            && self.members.is_empty()
+            && self.keys.is_empty()
+            && self.claude_scenarios.is_empty()
+            && self.extra.is_empty()
     }
 
     /// 这家在登记簿里的 key。

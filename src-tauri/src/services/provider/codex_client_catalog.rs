@@ -9,7 +9,8 @@
 //! 判断一个进程读到的是哪份目录，不能比文件时间：内容没变时引擎不重写文件，时间不动；退出
 //! CC Switch 时撤掉目录指针、下次启动再写回，时间变了，早先启动的进程读到的却正是现在这份。
 //! 所以记下目录的代次：从哪个时刻起，新启动的 Codex 会读到哪份目录（[`HISTORY_FILENAME`]）。
-//! 一个进程读到的，是它启动之前开始的最后一代。
+//! 一个进程读到的，是它启动之前开始的最后一代。进出一趟路由也会写 / 撤目录指针，读到过
+//! CC Switch 目录的进程在指针撤掉之后同样算旧 —— 手里还是那份。
 //!
 //! 进程只看不动：用户在界面上确认之后，才调 Codex 自己的 `codex app-server daemon restart`。
 //! 桌面版和编辑器插件不替用户重启，只提示彻底退出再开。进程表只在 macOS、Linux 上读（`ps`），
@@ -224,16 +225,13 @@ pub(crate) fn observe(store: &DeviceStore) {
     record(store, &current_fingerprint(), (env().now_ms)());
 }
 
-/// 还在用旧目录的 Codex 客户端。都是新的，或者新启动的 Codex 本来就不读 CC Switch 的目录时
-/// 为 `None`。要读进程表，放到阻塞线程池里调。
+/// 还在用旧目录的 Codex 客户端：读到的目录和现在配置里生效的不是同一份。都是新的，或者没有
+/// 客户端读到过 CC Switch 的目录时为 `None`。要读进程表，放到阻塞线程池里调。
 pub(crate) fn stale_clients(store: &DeviceStore) -> Option<StaleClients> {
     let env = env();
     let current = current_fingerprint();
     // 顺手记一次：兜住在 CC Switch 之外改了目录的情况。
     let history = record(store, &current, (env.now_ms)());
-    if current == NO_CATALOG {
-        return None;
-    }
     judge(&history, &current, &probe(&env))
 }
 
@@ -248,13 +246,18 @@ fn judge(history: &[Generation], current: &str, servers: &AppServers) -> Option<
     (daemon || others).then_some(StaleClients { daemon, others })
 }
 
-/// 启动于 `started_ms` 的进程读到的是不是别的目录。早于记下的第一代、判断不了的按旧的算。
+/// 启动于 `started_ms` 的进程读到的是不是别的目录。早于记下的第一代、判断不了的：现在读的是
+/// 我们的目录时按旧的算（宁可多提示一次）；现在不读我们的目录（直连、指针指向别处）时按新的
+/// 算 —— 没有「读到过我们的目录」的证据，别把从没进过代理模式的用户全提示一遍。
 fn is_stale(history: &[Generation], current: &str, started_ms: u64) -> bool {
-    history
+    match history
         .iter()
         .rev()
         .find(|generation| generation.since_ms.saturating_add(MARGIN_MS) <= started_ms)
-        .is_none_or(|generation| generation.fingerprint != current)
+    {
+        Some(generation) => generation.fingerprint != current,
+        None => current != NO_CATALOG,
+    }
 }
 
 fn probe(env: &Env) -> AppServers {
@@ -590,6 +593,16 @@ mod tests {
         ];
         assert!(!is_stale(&history, "a", 1_500_000));
         assert!(is_stale(&history, "a", 2_500_000));
+        // 现在的目录不归 CC Switch（直连）：读到过我们目录的进程才算旧。
+        let history = [
+            generation(1_000_000, "ours"),
+            generation(2_000_000, NO_CATALOG),
+        ];
+        assert!(is_stale(&history, NO_CATALOG, 1_500_000));
+        assert!(!is_stale(&history, NO_CATALOG, 2_500_000));
+        // 早于第一代、判断不了：现在不读我们的目录时按新的算，别误报。
+        let history = [generation(1_000_000, NO_CATALOG)];
+        assert!(!is_stale(&history, NO_CATALOG, 500_000));
     }
 
     #[test]
@@ -723,8 +736,71 @@ mod tests {
                 others: true
             })
         );
-        // 撤掉指针之后不提示（新启动的 Codex 也不读 CC Switch 的目录）。
+        // 撤掉指针（回直连）之后照样报：桌面版手里还是那份 CC Switch 的目录。
         point_at_catalog(None);
+        assert_eq!(
+            stale_clients(&store),
+            Some(StaleClients {
+                daemon: false,
+                others: true
+            })
+        );
+        // 撤掉之后启动的：读的是直连这份，不算旧。
+        clock.store(1_300_000, Ordering::SeqCst);
+        *table.lock().unwrap() =
+            "62347 00:05 /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex -c features.code_mode_host=true app-server".to_string();
+        assert_eq!(stale_clients(&store), None);
+    }
+
+    /// 退出路由（目录指针撤掉）之后，路由里启动的守护进程手里还是那家路由的目录；从没读到过
+    /// CC Switch 目录的进程不报（#7885 的反向）。
+    #[test]
+    #[serial]
+    fn leaving_route_reports_clients_on_the_route_catalog() {
+        let scope = Scope::new();
+        let store = scope.store();
+        let clock = Arc::new(AtomicU64::new(1_000_000));
+        let table = Arc::new(Mutex::new(String::new()));
+        fake_env(
+            clock.clone(),
+            table.clone(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        write_daemon_pid(59013);
+        let daemon_row = |elapsed: &str| {
+            format!("59013 {elapsed} {DAEMON} app-server --listen unix:// --managed-daemon")
+        };
+
+        // 直连：历史里还没有任何一份 CC Switch 的目录，守护进程再老也不提示。
+        clock.store(1_050_000, Ordering::SeqCst);
+        *table.lock().unwrap() = daemon_row("10:00");
+        assert_eq!(stale_clients(&store), None);
+
+        // 进路由：目录归 CC Switch，守护进程跟着重启，读到路由这份。
+        clock.store(1_100_000, Ordering::SeqCst);
+        point_at_catalog(Some("route"));
+        observe(&store);
+        clock.store(1_200_000, Ordering::SeqCst);
+        *table.lock().unwrap() = daemon_row("00:05");
+        assert_eq!(stale_clients(&store), None);
+
+        // 退出路由：指针撤掉，路由里启动的守护进程还拿着那份目录。
+        clock.store(1_300_000, Ordering::SeqCst);
+        point_at_catalog(None);
+        observe(&store);
+        clock.store(1_400_000, Ordering::SeqCst);
+        *table.lock().unwrap() = daemon_row("03:20");
+        assert_eq!(
+            stale_clients(&store),
+            Some(StaleClients {
+                daemon: true,
+                others: false
+            })
+        );
+
+        // 退出之后重启的守护进程读的是直连这份，不再提示。
+        clock.store(1_500_000, Ordering::SeqCst);
+        *table.lock().unwrap() = daemon_row("00:05");
         assert_eq!(stale_clients(&store), None);
     }
 

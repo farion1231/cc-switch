@@ -314,7 +314,8 @@
     "codexAuthCleanupFailed": "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
-    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由"
+    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
+    "codexPreservedLoginBodyCompression": "已按设置保留 Codex 官方登录：未开启路由接管时，Codex 桌面端会把请求体压缩（zstd）直连第三方地址，上游可能报「Failed to parse the request body as JSON」。请开启本地路由接管，或关闭「非接管切换时保留官方登录」"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -3477,14 +3478,14 @@
       "ariaLabel": "{{appLabel}} 聚合模式",
       "failoverUnavailable": "{{appLabel}} 在聚合模式下不做故障转移。队列和设置保留，回到路由模式后恢复",
       "codexStale": {
-        "title": "Codex 还在用旧的模型列表，聚合的模型不会出现",
+        "title": "Codex 还在用旧的模型列表",
         "daemon": "命令行：重开 codex 不够，要重启后台的守护进程。",
         "others": "桌面版：要彻底退出再重开（macOS 上按 ⌘Q，只关窗口不行）；编辑器插件要重开编辑器窗口。",
         "restart": "重启 Codex 守护进程",
         "confirmTitle": "重启 Codex 守护进程？",
-        "confirmMessage": "所有终端里的 codex 共用这个守护进程，正在运行的任务会被中断。重启之后重新打开 codex，就能看到聚合的模型。",
+        "confirmMessage": "所有终端里的 codex 共用这个守护进程，正在运行的任务会被中断。重启之后重新打开 codex，就能读到当前的模型列表。",
         "confirm": "重启",
-        "restarted": "Codex 守护进程已重启，重新打开 codex 就能看到聚合的模型",
+        "restarted": "Codex 守护进程已重启，重新打开 codex 就能读到当前的模型列表",
         "notRunning": "Codex 守护进程没在运行，下次打开 codex 时会读到新的模型列表",
         "failed": "重启 Codex 守护进程失败：{{error}}"
       }
@@ -3948,6 +3949,24 @@
     "routeSettings": "路由设置",
     "routeSettingsTitle": "路由设置",
     "moreRouteSettings": "更多路由设置",
+    "scenarios": {
+      "button": "场景绑定",
+      "title": "场景绑定",
+      "description": "四档别名、子代理和辅助 / 压缩请求分别指向名单里已发布的模型；没选的跟随默认行为。保存后立即生效。",
+      "haiku": "Haiku 档（小请求、后台任务）",
+      "sonnet": "Sonnet 档",
+      "opus": "Opus 档",
+      "fable": "Fable 档",
+      "subagent": "子代理（Subagent / Task）",
+      "auxiliary": "辅助请求（含 Auto Mode 分类器）",
+      "compaction": "上下文压缩",
+      "followDefault": "跟随默认模型",
+      "followMain": "跟随主模型",
+      "empty": "还没有能绑定的模型：先把供应商加入名单，且它的模型列表不为空。",
+      "stale": "已失效：模型不在发布的列表里，先按默认行为处理",
+      "saved": "场景绑定已保存",
+      "saveFailed": "保存场景绑定失败：{{error}}"
+    },
     "queueMoved": "{{name}} 移到第 {{position}} 位。",
     "status": {
       "directLead": "直连生效中 · 直接连接",

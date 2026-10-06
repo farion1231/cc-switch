@@ -4,6 +4,7 @@ import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import type {
   AppModeView,
+  ClaudeStackScenarios,
   GlobalProxyConfig,
   AppProxyConfig,
   ProxyStackWriteError,
@@ -85,6 +86,57 @@ export function useProxyStack(appType: string, enabled: boolean) {
     queryKey: ["providers", appType, "stack"] as const,
     queryFn: () => proxyApi.getProxyStack(appType),
     enabled,
+  });
+}
+
+/**
+ * Claude Code 的场景绑定和能绑定的模型（#7889）。放在 ["providers", appId] 前缀下：模式、
+ * 名单、模型变化时随列表一起失效。
+ */
+export function useClaudeStackScenarios(appType: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["providers", appType, "claudeScenarios"] as const,
+    queryFn: () => proxyApi.getClaudeStackScenarios(),
+    enabled,
+  });
+}
+
+/**
+ * 保存场景绑定。Claude Code 运行中就会读到改过的 settings.json；成功后重新查名单、绑定和
+ * 模式（契约重写会改「当前」显示的模型）。
+ */
+export function useSetClaudeStackScenarios() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      scenarios,
+    }: {
+      appType: string;
+      scenarios: ClaudeStackScenarios;
+    }) => proxyApi.setClaudeStackScenarios(appType, scenarios),
+    onSuccess: (_data, variables) => {
+      toast.success(t("mode.scenarios.saved"), { closeButton: true });
+      queryClient.invalidateQueries({
+        queryKey: ["providers", variables.appType],
+      });
+    },
+    onError: (error: unknown) => {
+      if (isStackWriteError(error) && error.partial) {
+        toast.warning(t("provider.stackPartial"), {
+          description: error.message,
+          closeButton: true,
+        });
+        return;
+      }
+      toast.error(
+        t("mode.scenarios.saveFailed", {
+          error: extractErrorMessage(error),
+        }),
+      );
+    },
   });
 }
 

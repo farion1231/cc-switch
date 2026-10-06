@@ -10,6 +10,8 @@ import type {
   CodexDaemonRestartOutcome,
   AppModeView,
   StartupAttachFailure,
+  ClaudeScenarioView,
+  ClaudeStackScenarios,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -106,6 +108,33 @@ export const proxyApi = {
   // model_catalog_json）。返回之后还剩的提示
   async adoptCodexStackCatalog(): Promise<ProxyStackNotice | null> {
     return invoke("adopt_codex_stack_catalog");
+  },
+
+  // Claude Code 的场景绑定：当前绑定和能绑定的模型（已发布的 Stack 模型，#7889）
+  async getClaudeStackScenarios(): Promise<ClaudeScenarioView> {
+    return invoke("get_claude_stack_scenarios");
+  },
+
+  // 保存 Claude Code 的场景绑定（null = 跟随默认行为）。四档别名 / 子代理写进 settings.json，
+  // 辅助 / 压缩请求由代理按请求类别分流；失败时抛出 ProxyStackWriteError
+  async setClaudeStackScenarios(
+    appType: string,
+    scenarios: ClaudeStackScenarios,
+  ): Promise<void> {
+    const bindings = {
+      haiku: null,
+      sonnet: null,
+      opus: null,
+      fable: null,
+      subagent: null,
+      auxiliary: null,
+      compaction: null,
+      ...scenarios,
+    };
+    return invoke("set_claude_stack_scenarios", {
+      appType,
+      scenarios: bindings,
+    });
   },
 
   // 重启 Codex 的托管守护进程（codex 命令行连的那个），让它重读模型目录。会中断正在运行的

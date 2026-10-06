@@ -147,7 +147,11 @@ fn is_claude_model_discovery(uri: &axum::http::Uri, headers: &axum::http::Header
 /// Claude Code 的 Stack 模型列表（Anthropic 形状）。只读数据库和 `live-state.json`，不做网络
 /// 请求：客户端只等 3 秒。不在代理模式、名单为空时返回空列表。
 fn claude_model_discovery(state: &ProxyState) -> Value {
-    let models = crate::mode::stack::claude_published_now(&state.db).unwrap_or_else(|error| {
+    let models = crate::mode::stack::claude_published_now(
+        &crate::live::engine::DeviceStore::for_device(),
+        &state.db,
+    )
+    .unwrap_or_else(|error| {
         log::warn!("[Claude] 读取 Stack 模型失败，返回空列表: {error}");
         Vec::new()
     });
@@ -166,6 +170,39 @@ fn claude_model_discovery(state: &ProxyState) -> Value {
         "data": data,
         "has_more": false,
     })
+}
+
+/// 辅助 / 压缩请求分流（#7889）：Claude Code 的请求带 `x-claude-code-request-class`（官方
+/// 契约：`main` / `subagent` / `auxiliary` / `compaction` / `workflow`），是 `auxiliary`
+/// （Auto Mode 分类器所在的桶）或 `compaction` 且 Stack 模式下绑了模型时，把请求体的模型换成
+/// 绑定的 Stack id，随后按 Stack 解析转发。
+///
+/// 绑定失效、没有绑定、不在 Stack 模式、或别的请求类别都不动：请求保持原样（跟随主模型）。
+/// 分类器这类请求不能因为绑定失效被拒。
+fn apply_claude_scenario_override(
+    state: &ProxyState,
+    app_type: &AppType,
+    headers: &axum::http::HeaderMap,
+    body: &mut Value,
+) {
+    if !matches!(app_type, AppType::Claude) {
+        return;
+    }
+    let Some(request_class) = headers
+        .get("x-claude-code-request-class")
+        .and_then(|value| value.to_str().ok())
+    else {
+        return;
+    };
+    match crate::mode::stack::claude_scenario_target(
+        &state.db,
+        &crate::live::engine::DeviceStore::for_device(),
+        request_class,
+    ) {
+        Ok(Some(model)) => body["model"] = Value::String(model.id),
+        Ok(None) => {}
+        Err(error) => log::warn!("读取 Claude Code 的场景绑定失败: {error}"),
+    }
 }
 
 /// Stack 模型（`mode::stack`）：请求带保留前缀的模型 id 时，查出 Stack 里的那一家，把请求体的
@@ -300,6 +337,7 @@ async fn handle_messages_for_app(
         .to_bytes();
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    apply_claude_scenario_override(&state, &app_type, &headers, &mut body);
     let stack = match resolve_stack_target(&state, &app_type, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
@@ -3976,6 +4014,7 @@ mod stack_tests {
     //! `/v1/models` 按请求方返回各自的形状。
     use super::*;
     use crate::database::Database;
+    use serial_test::serial;
     use std::sync::Arc;
 
     fn proxy_state() -> ProxyState {
@@ -4111,6 +4150,110 @@ mod stack_tests {
             (streaming.first_byte_timeout, streaming.idle_timeout),
             (0, 0)
         );
+    }
+
+    /// #7889：辅助 / 压缩请求带着 `x-claude-code-request-class` 进来且 Stack 模式下绑了模型时，
+    /// 代理把请求的模型换成绑定的 Stack id；别的类别、没有绑定、别的应用、绑定失效时都不动。
+    #[tokio::test]
+    #[serial]
+    async fn auxiliary_requests_follow_the_bound_stack_model() {
+        use crate::live::engine::DeviceStore;
+        use axum::http::{HeaderMap, HeaderValue};
+        use tempfile::TempDir;
+
+        struct Home {
+            dir: TempDir,
+            saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+        }
+        impl Home {
+            fn new() -> Self {
+                let dir = TempDir::new().expect("temp home");
+                let saved = ["HOME", "USERPROFILE", "CC_SWITCH_TEST_HOME"]
+                    .into_iter()
+                    .map(|key| {
+                        let old = std::env::var_os(key);
+                        std::env::set_var(key, dir.path());
+                        (key, old)
+                    })
+                    .collect();
+                crate::settings::reload_settings().expect("reload settings");
+                Self { dir, saved }
+            }
+        }
+        impl Drop for Home {
+            fn drop(&mut self) {
+                for (key, old) in self.saved.drain(..) {
+                    match old {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+                let _ = crate::settings::reload_settings();
+            }
+        }
+
+        let _home = Home::new();
+        let db = Arc::new(Database::memory().expect("memory db"));
+        for (id, model) in [("kimi", "kimi-k3"), ("zhipu", "glm-4.7-air")] {
+            let row = crate::provider::Provider::with_id(
+                id.to_string(),
+                id.to_string(),
+                json!({ "env": { "ANTHROPIC_MODEL": model } }),
+                None,
+            );
+            db.save_provider("claude", &row).unwrap();
+        }
+        crate::mode::state::update(&DeviceStore::for_device(), |live| {
+            let claude = live.apps.entry("claude".to_string()).or_default();
+            claude.mode = Some(crate::mode::state::Mode::Proxy);
+            let stack = &mut claude.stack;
+            stack.enabled = true;
+            stack.members = vec!["kimi".to_string(), "zhipu".to_string()];
+            for id in ["kimi", "zhipu"] {
+                stack.keys.insert(id.to_string(), id.to_string());
+            }
+            stack.claude_scenarios.auxiliary = Some("ccs-claude-zhipu--glm-4.7-air".to_string());
+            stack.claude_scenarios.compaction = Some("ccs-claude-kimi--kimi-k3".to_string());
+        })
+        .unwrap();
+        let state = ProxyState::for_test(db);
+        let class = |value: &'static str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "x-claude-code-request-class",
+                HeaderValue::from_static(value),
+            );
+            headers
+        };
+
+        // auxiliary → zhipu 的模型；compaction → kimi 的模型。
+        let mut body = json!({ "model": "ccs-claude-kimi--kimi-k3" });
+        apply_claude_scenario_override(&state, &AppType::Claude, &class("auxiliary"), &mut body);
+        assert_eq!(body["model"], "ccs-claude-zhipu--glm-4.7-air");
+        let mut body = json!({ "model": "claude-sonnet-5" });
+        apply_claude_scenario_override(&state, &AppType::Claude, &class("compaction"), &mut body);
+        assert_eq!(body["model"], "ccs-claude-kimi--kimi-k3");
+
+        // main / subagent / 没有头：不动。
+        for headers in [class("main"), class("subagent"), HeaderMap::new()] {
+            let mut body = json!({ "model": "claude-sonnet-5" });
+            apply_claude_scenario_override(&state, &AppType::Claude, &headers, &mut body);
+            assert_eq!(body["model"], "claude-sonnet-5");
+        }
+
+        // 别的应用（Codex 也带这个头）：不动。
+        let mut body = json!({ "model": "gpt-5.5" });
+        apply_claude_scenario_override(&state, &AppType::Codex, &class("auxiliary"), &mut body);
+        assert_eq!(body["model"], "gpt-5.5");
+
+        // 绑定失效（成员移除）：不动，请求跟随主模型（分类器请求不能被拒）。
+        crate::mode::state::update(&DeviceStore::for_device(), |live| {
+            live.apps.get_mut("claude").unwrap().stack.members = vec!["kimi".to_string()];
+        })
+        .unwrap();
+        let mut body = json!({ "model": "claude-sonnet-5" });
+        apply_claude_scenario_override(&state, &AppType::Claude, &class("auxiliary"), &mut body);
+        assert_eq!(body["model"], "claude-sonnet-5");
     }
 
     #[test]

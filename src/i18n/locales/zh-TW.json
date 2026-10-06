@@ -314,7 +314,8 @@
     "codexAuthCleanupFailed": "切換成功，但未能刪除 auth.json，官方登入憑證仍留在磁碟上；如需徹底移除請手動刪除 Codex 設定目錄中的 auth.json",
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
-    "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由"
+    "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
+    "codexPreservedLoginBodyCompression": "已依設定保留 Codex 官方登入：未開啟路由接管時，Codex 桌面端會把請求主體壓縮（zstd）直連第三方位址，上游可能回報「Failed to parse the request body as JSON」。請開啟本機路由接管，或關閉「非接管切換時保留官方登入」"
   },
   "confirm": {
     "deleteProvider": "刪除供應商",
@@ -3478,14 +3479,14 @@
       "ariaLabel": "{{appLabel}} 聚合模式",
       "failoverUnavailable": "{{appLabel}} 在聚合模式下不做故障轉移。佇列和設定保留，回到路由模式後恢復",
       "codexStale": {
-        "title": "Codex 還在用舊的模型清單，聚合的模型不會出現",
+        "title": "Codex 還在用舊的模型清單",
         "daemon": "命令列：重開 codex 不夠，要重新啟動背景的守護行程。",
         "others": "桌面版：要完全結束再重開（macOS 上按 ⌘Q，只關視窗不行）；編輯器擴充功能要重開編輯器視窗。",
         "restart": "重新啟動 Codex 守護行程",
         "confirmTitle": "重新啟動 Codex 守護行程？",
-        "confirmMessage": "所有終端機裡的 codex 共用這個守護行程，正在執行的任務會被中斷。重新啟動後重開 codex，就能看到聚合的模型。",
+        "confirmMessage": "所有終端機裡的 codex 共用這個守護行程，正在執行的任務會被中斷。重新啟動後重開 codex，就能讀到目前的模型清單。",
         "confirm": "重新啟動",
-        "restarted": "Codex 守護行程已重新啟動，重開 codex 就能看到聚合的模型",
+        "restarted": "Codex 守護行程已重新啟動，重開 codex 就能讀到目前的模型清單",
         "notRunning": "Codex 守護行程沒有在執行，下次開啟 codex 時會讀到新的模型清單",
         "failed": "重新啟動 Codex 守護行程失敗：{{error}}"
       }
@@ -3949,6 +3950,24 @@
     "routeSettings": "路由設定",
     "routeSettingsTitle": "路由設定",
     "moreRouteSettings": "更多路由設定",
+    "scenarios": {
+      "button": "場景綁定",
+      "title": "場景綁定",
+      "description": "四檔別名、子代理與輔助 / 壓縮請求分別指向名單中已發布的模型；未選擇的跟隨預設行為。儲存後立即生效。",
+      "haiku": "Haiku 檔（小請求、背景任務）",
+      "sonnet": "Sonnet 檔",
+      "opus": "Opus 檔",
+      "fable": "Fable 檔",
+      "subagent": "子代理（Subagent / Task）",
+      "auxiliary": "輔助請求（含 Auto Mode 分類器）",
+      "compaction": "上下文壓縮",
+      "followDefault": "跟隨預設模型",
+      "followMain": "跟隨主模型",
+      "empty": "還沒有可綁定的模型：先把供應商加入名單，且它的模型清單不為空。",
+      "stale": "已失效：模型不在發布的清單裡，先按預設行為處理",
+      "saved": "場景綁定已儲存",
+      "saveFailed": "儲存場景綁定失敗：{{error}}"
+    },
     "queueMoved": "{{name}} 移到第 {{position}} 位。",
     "status": {
       "directLead": "直連生效中 · 直接連線",
