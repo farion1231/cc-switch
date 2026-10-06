@@ -301,6 +301,54 @@ fn mirrored_host_cache(current: &str, appdir: &str) -> Option<String> {
     Some(mirrored)
 }
 
+/// 「要不要真去读文件」的前置判断：纯字符串，不碰 IO。
+///
+/// 与 [`resolve_im_module_file_action`] 的前四步一致，单独拆出来是因为它是
+/// [`apply_gtk_im_module_file_fix`] 里唯一能让整个修复静默空转的地方：门藏在
+/// 只做 IO 的函数里，就没有任何测试能碰到它——把开关反接，唯一的发布形态下
+/// 整个补丁变成 no-op，而其余测试照旧全绿。
+///
+/// 五个条件全部满足才返回 `true`，任一条不满足就一次 `read` 都不做：
+/// 1. 逃生开关没有非空取值（`keep` / 自定义路径都算用户已经表过态）；
+/// 2. `GTK_IM_MODULE_FILE` 有值（钩子没导出就不是 AppImage 启动）；
+/// 3. `APPDIR` 有值（拿不到就无法把路径归因给 bundle 缓存）；
+/// 4. 当前路径在 AppDir 内（见 [`is_appdir_relative`]）；
+/// 5. 请求的模块里至少有一个不是内置 id（见 [`NO_OP_MODULES`]）。
+///
+/// 参数传原始值即可：两端空白在这里被忽略（与 resolve 的处理一致），传已经
+/// trim 过的值也安全——trim 是幂等的。
+fn should_probe_files(
+    override_value: Option<&str>,
+    current: Option<&str>,
+    appdir: Option<&str>,
+    gtk_im_module: Option<&str>,
+) -> bool {
+    // 1) 显式逃生开关优先，与 resolve 第 1 步同一风格。
+    let override_value = override_value.map(str::trim).unwrap_or_default();
+    if !override_value.is_empty() {
+        return false;
+    }
+    // 2) 钩子没设 GTK_IM_MODULE_FILE（非 AppImage 启动）时无事可做。
+    let current = match current.map(str::trim).filter(|c| !c.is_empty()) {
+        Some(current) => current,
+        None => return false,
+    };
+    // 3) 没有 APPDIR 就无法把路径归因给 bundle 缓存。
+    let appdir = match appdir.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(appdir) => appdir,
+        None => return false,
+    };
+    // 4) 只处理指向 AppDir 内 bundle 缓存的路径。
+    if !is_appdir_relative(current, appdir) {
+        return false;
+    }
+    // 5) 请求的模块全是内置 id（或压根没配）时，主机缓存给不了更多信息。
+    match requested_im_modules(gtk_im_module) {
+        Some(modules) => modules.iter().any(|m| !NO_OP_MODULES.contains(m)),
+        None => false,
+    }
+}
+
 /// 在 GTK 初始化前修正 `GTK_IM_MODULE_FILE`：钩子写入的 bundle 缓存服务不了
 /// 用户请求的输入法模块时，把它改指向主机上真正列出该模块的缓存。
 /// 只在 Linux 编译。
@@ -314,7 +362,9 @@ pub fn apply_gtk_im_module_file_fix() {
     // 先用纯字符串判断把「不可能需要文件」的组合挡掉：非 AppImage 启动
     // （没有 APPDIR / 变量没设 / 变量指向 AppDir 之外）、显式用了逃生开关、
     // 或者压根没配非内置输入法模块时，连一次 read 都不做。判定条件与下面
-    // resolve 的前四步一致，只是为了把 IO 挡在最前面。
+    // resolve 的前四步一致，只是为了把 IO 挡在最前面——门本身拆到了
+    // should_probe_files()：它是 apply 里唯一能让整个修复静默空转的地方，
+    // 藏在只做 IO 的函数里就没有测试能碰到。
     let override_value = override_value.as_deref().map(str::trim).unwrap_or_default();
     let current_path = current.as_deref().map(str::trim).filter(|p| !p.is_empty());
     let appdir = appdir.as_deref().map(str::trim).filter(|d| !d.is_empty());
@@ -322,13 +372,12 @@ pub fn apply_gtk_im_module_file_fix() {
         (Some(path), Some(dir)) if is_appdir_relative(path, dir) => Some(path),
         _ => None,
     };
-    let modules = requested_im_modules(gtk_im_module.as_deref());
-    let wants_host_cache = modules
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .any(|module| !NO_OP_MODULES.contains(module));
-    let probe_files = override_value.is_empty() && bundle_path.is_some() && wants_host_cache;
+    let probe_files = should_probe_files(
+        Some(override_value),
+        current_path,
+        appdir,
+        gtk_im_module.as_deref(),
+    );
 
     // bundle 缓存与主机候选都是惰性的：上面的前置判断不通过时，前者保持
     // None（resolve 据此判断"没有正面证据"），探到主机缓存时才会逐个读。
@@ -542,6 +591,21 @@ mod tests {
         "/tmp/.mount_cc//usr/local/lib/x86_64-linux-gnu/gtk-3.0/3.0.0/immodules.cache";
     const SYSTEM_PATH: &str = "/usr/lib/gtk-3.0/3.0.0/immodules.cache";
 
+    /// 静态候选的**字面**清单：故意与 `HOST_IM_MODULE_CACHES` 重复一遍。
+    ///
+    /// 测试必须自己列出期望路径。若改成遍历 `HOST_IM_MODULE_CACHES`，从生产
+    /// 列表里删掉一项（例如唯一的 arm64-Debian 路径）也不会有任何测试变红
+    /// ——断言读的正是被删的那个常量。所以这里一个字一个字照抄：改了生产
+    /// 列表，就该有测试变红。
+    const EXPECTED_HOST_CACHES: [&str; 6] = [
+        "/usr/lib/gtk-3.0/3.0.0/immodules.cache",
+        "/usr/lib64/gtk-3.0/3.0.0/immodules.cache",
+        "/usr/lib/x86_64-linux-gnu/gtk-3.0/3.0.0/immodules.cache",
+        "/usr/lib/aarch64-linux-gnu/gtk-3.0/3.0.0/immodules.cache",
+        "/usr/local/lib/gtk-3.0/3.0.0/immodules.cache",
+        "/usr/local/lib64/gtk-3.0/3.0.0/immodules.cache",
+    ];
+
     /// 构造主机探测的候选表与 reader：路径即候选顺序，内容即"文件内容"，
     /// 一起交给真正的 `find_host_cache_with`。测试侧**不再**复制一份选择策略——
     /// 早期这里镜像过一份只实现「任一」的逻辑，于是 `find_host_cache` 改成两级
@@ -616,8 +680,10 @@ mod tests {
     }
 
     /// 直接测真正的 `find_host_cache_with`（经由 reader 注入内存表）。这些用例是
-    /// 两级策略唯一不会被镜像逻辑蒙混的守门人：把 prefer-first / fallback 两档
-    /// 换序、或者把 fallback 档删掉，下面第一条就会红。
+    /// 两级策略唯一不会被镜像逻辑蒙混的守门人：把 prefer-first 的优先级降到
+    /// fallback 之下、或者把 fallback 那一档整个删掉，下面的用例就会红。
+    /// （注意是**优先级**，不是语句顺序：any 那一档只往 fallback 里记一笔，
+    /// 所以把两个 if 的字面位置对调是等价变异，测不出来也不需要测。）
     #[test]
     fn host_probe_tiers_prefer_first_module_then_any() {
         let (paths, reader) = host_probe(&[HOST_FCITX5, HOST_FCITX]);
@@ -705,6 +771,10 @@ mod tests {
         // GTK 会自己落到 xim（用户列表里本来就允许），我们不动。
         let action = hooked(None, Some("fcitx:xim"), Some(BUNDLE), &[HOST_FCITX]);
         assert_eq!(action, ImModuleFileAction::Keep);
+        // 靠后那一项由 bundle 缓存列出时同样停手：thai 不是内置 id，它得真的
+        // 从 bundle 缓存里查出来，而不是靠 NO_OP 短路糊过去。
+        let action = hooked(None, Some("fcitx:thai"), Some(BUNDLE), &[HOST_FCITX]);
+        assert_eq!(action, ImModuleFileAction::Keep);
     }
 
     #[test]
@@ -768,7 +838,7 @@ mod tests {
     fn short_builtin_aliases_are_not_noop_ids() {
         // `simple` / `none` 是 GTK 不认的短名：不能算作"已满足"。这样的请求
         // 任何缓存都列不出来，结局仍是保守保持（但理由是主机缓存里没有）。
-        let action = hooked(None, Some("simple"), None, Some(BUNDLE), &[HOST_FCITX]);
+        let action = hooked(None, Some("simple"), Some(BUNDLE), &[HOST_FCITX]);
         let expected = ImModuleFileAction::KeepWithoutHostCache("simple".into());
         assert_eq!(action, expected);
     }
@@ -833,6 +903,96 @@ mod tests {
         assert_eq!(action, ImModuleFileAction::Keep);
     }
 
+    /// 门放行的组合：这些情况下 apply 必须真的去读文件。把 wants_host_cache
+    /// 反接成 false（或把整个门反过来）时，唯一的发布形态下整个补丁静默空转，
+    /// 而其余测试照旧全绿——这几条就是钉住它的钉子。
+    #[test]
+    fn a_non_builtin_input_method_needs_files() {
+        let hits = should_probe_files(None, Some(HOOK), Some(APP), Some("fcitx"));
+        assert!(hits);
+        // 钩子真实的双斜杠形态与 multiarch 布局同样放行。
+        let hits = should_probe_files(None, Some(HOOK_MULTIARCH), Some(APP), Some("fcitx"));
+        assert!(hits);
+        // 冒号列表里只要有一项不是内置 id 就要读文件：GTK 按顺序取第一个能解析
+        // 的项，fcitx 排在前、排在后都一样。
+        let hits = should_probe_files(None, Some(HOOK), Some(APP), Some("fcitx:xim"));
+        assert!(hits);
+        let hits = should_probe_files(None, Some(HOOK), Some(APP), Some("xim:fcitx"));
+        assert!(hits);
+        // " fcitx " 带空格：模块名不 trim（GTK 用 g_strcmp0 精确匹配），它仍然
+        // 不是内置 id，所以门放行；读不读得到由后面的缓存判定决定。
+        let hits = should_probe_files(None, Some(HOOK), Some(APP), Some(" fcitx "));
+        assert!(hits);
+    }
+
+    /// 显式逃生开关：keep / KEEP / 自定义路径 / 两端空白都不该触发读文件；
+    /// 纯空白按未设置处理，门照旧放行（否则用户只写了空格，补丁就空转）。
+    #[test]
+    fn an_explicit_escape_hatch_needs_no_files() {
+        for hatch in ["keep", "KEEP", "  keep  ", "/tmp/my.cache"] {
+            let hits = should_probe_files(Some(hatch), Some(HOOK), Some(APP), Some("fcitx"));
+            assert!(!hits);
+        }
+        let hits = should_probe_files(Some("   "), Some(HOOK), Some(APP), Some("fcitx"));
+        assert!(hits);
+    }
+
+    /// 钩子没设 GTK_IM_MODULE_FILE（未设 / 空串 / 纯空白）：非 AppImage 启动，
+    /// 一次 read 都不该做。
+    #[test]
+    fn no_files_without_a_hooked_cache_path() {
+        for current in [None, Some(""), Some("   ")] {
+            let hits = should_probe_files(None, current, Some(APP), Some("fcitx"));
+            assert!(!hits);
+        }
+    }
+
+    /// 路径不在 AppDir 内（deb / rpm / 自行解包启动）：连候选都不该组装。
+    #[test]
+    fn no_files_when_the_path_is_outside_appdir() {
+        let hits = should_probe_files(None, Some(SYSTEM_PATH), Some(APP), Some("fcitx"));
+        assert!(!hits);
+        // 只是拼接出来的前缀不算（.mount_cc-evil）。
+        let hits = should_probe_files(
+            None,
+            Some("/tmp/.mount_cc-evil/usr/lib/x"),
+            Some(APP),
+            Some("fcitx"),
+        );
+        assert!(!hits);
+    }
+
+    /// 拿不到 APPDIR（未设 / 空串 / 纯空白）：无法把路径归因给 bundle 缓存。
+    #[test]
+    fn no_files_without_an_appdir() {
+        for appdir in [None, Some(""), Some("   ")] {
+            let hits = should_probe_files(None, Some(HOOK), appdir, Some("fcitx"));
+            assert!(!hits);
+        }
+    }
+
+    /// 压根没配非内置输入法模块：未设 / 空串 / 纯空白 / 只有冒号，以及全是
+    /// GTK 真正认的内置 id（gtk-im-context-simple / gtk-im-context-none / xim）。
+    #[test]
+    fn no_files_without_a_real_input_method() {
+        for module in [None, Some(""), Some("   "), Some(":"), Some("::")] {
+            let hits = should_probe_files(None, Some(HOOK), Some(APP), module);
+            assert!(!hits);
+        }
+        for module in ["gtk-im-context-simple", "gtk-im-context-none", "xim"] {
+            let hits = should_probe_files(None, Some(HOOK), Some(APP), Some(module));
+            assert!(!hits);
+        }
+        // 冒号列表里全是内置 id 同样无事可做。
+        let hits = should_probe_files(
+            None,
+            Some(HOOK),
+            Some(APP),
+            Some("gtk-im-context-simple:xim"),
+        );
+        assert!(!hits);
+    }
+
     #[test]
     fn requested_modules_split_the_colon_list() {
         assert_eq!(
@@ -852,13 +1012,7 @@ mod tests {
         // `fcitx::ibus`：空项被丢掉。若没丢掉，"fcitx" 与 "" 都会被送去判定，
         // 而 bundle 缓存 locale 字段里的空串 `""` 会把空项判成"已列出"——整个
         // 请求就会被误判为已满足，该修的也没修。这里必须落到改指向主机缓存。
-        let action = hooked(
-            None,
-            Some("fcitx::ibus"),
-            None,
-            Some(BUNDLE),
-            &[HOST_FCITX5],
-        );
+        let action = hooked(None, Some("fcitx::ibus"), Some(BUNDLE), &[HOST_FCITX5]);
         let expected = ImModuleFileAction::Set(HOST_FCITX5.0.to_string());
         assert_eq!(action, expected);
         // 直接固定底层判定：空串在带空 locale 字段的缓存里确实"看起来被列出"，
@@ -898,6 +1052,15 @@ mod tests {
         assert_eq!(mirrored_host_cache(HOOK, "   "), None);
     }
 
+    /// 每个静态候选都必须出现，且只出现一次（去重不变量）。
+    /// 期望路径写死在 EXPECTED_HOST_CACHES 里，不从生产常量里取。
+    fn assert_static_candidates_present(candidates: &[String]) {
+        for path in EXPECTED_HOST_CACHES {
+            let found = candidates.iter().filter(|c| c.as_str() == path).count();
+            assert_eq!(found, 1, "{path} should appear exactly once");
+        }
+    }
+
     #[test]
     fn host_candidates_dedupe_the_mirrored_entry() {
         // 镜像路径与静态列表重复时只出现一次，且仍排在第一个。
@@ -906,7 +1069,9 @@ mod tests {
             candidates.first().map(String::as_str),
             Some("/usr/lib/x86_64-linux-gnu/gtk-3.0/3.0.0/immodules.cache")
         );
-        assert_eq!(candidates.len(), HOST_IM_MODULE_CACHES.len());
+        // 静态候选一个不少、也一个不多——镜像的那一个就在其中。
+        assert_eq!(candidates.len(), EXPECTED_HOST_CACHES.len());
+        assert_static_candidates_present(&candidates);
     }
 
     #[test]
@@ -917,10 +1082,9 @@ mod tests {
             candidates.first().map(String::as_str),
             Some("/usr/local/lib/x86_64-linux-gnu/gtk-3.0/3.0.0/immodules.cache")
         );
-        assert_eq!(candidates.len(), HOST_IM_MODULE_CACHES.len() + 1);
-        for candidate in HOST_IM_MODULE_CACHES {
-            assert!(candidates.iter().any(|existing| existing == candidate));
-        }
+        // 镜像候选 + 全部静态候选：静态的一个不少，也没有哪个出现两次。
+        assert_eq!(candidates.len(), EXPECTED_HOST_CACHES.len() + 1);
+        assert_static_candidates_present(&candidates);
     }
 
     /// 判定必须建立在**真实**的 `gtk-query-immodules` 输出形状上：`#` 头注释，
@@ -971,37 +1135,25 @@ mod tests {
         assert!(!cache_lists_module(HOST_NAME_ONLY.1, "fcitx"));
         assert!(cache_lists_module(HOST_NAME_ONLY.1, "mystery"));
 
-        // 端到端走一遍真实形状：fcitx5 + bundle 缓存 + 有 fcitx5 的主机缓存
-        // → 指向；fcitx5 + 系统路径（不在 APPDIR 下）→ 保持。
-        let action = hooked(None, Some("fcitx5"), None, Some(BUNDLE), &[HOST_FCITX5]);
-        let expected = ImModuleFileAction::Set(HOST_FCITX5.0.to_string());
-        assert_eq!(action, expected);
-        let action = resolve(
-            None,
-            Some("fcitx5"),
-            Some(SYSTEM_PATH),
-            Some(APP),
-            Some(BUNDLE),
-            &[HOST_FCITX5],
-        );
-        assert_eq!(action, ImModuleFileAction::Keep);
-
         // 负例走端到端：主机缓存只有显示名里带 "fcitx" → 判定为没有 → 保持现状，
-        // 并把原因带出来（不猜一个路径）。
-        let action = hooked(None, Some("fcitx"), None, Some(BUNDLE), &[HOST_NAME_ONLY]);
+        // 并把原因带出来（不猜一个路径）。另外两个端到端形状（fcitx5 命中主机
+        // 缓存、系统路径下不干预）已由 quoted_names_do_not_satisfy_a_different_module
+        // 与 non_appimage_path_is_untouched 各自覆盖，这里不再重复。
+        let action = hooked(None, Some("fcitx"), Some(BUNDLE), &[HOST_NAME_ONLY]);
         let expected = ImModuleFileAction::KeepWithoutHostCache("fcitx".into());
         assert_eq!(action, expected);
     }
 
     #[test]
-    fn appdir_prefix_check_tolerates_double_slash() {
-        // 钩子写出的是 `$APPDIR//usr/...`，APPDIR 也可能带尾斜杠。
+    fn appdir_prefix_check_tolerates_double_slash_and_rejects_the_rest() {
+        // 正向：钩子写出的是 `$APPDIR//usr/...`，APPDIR 也可能带尾斜杠；
+        // 少一个斜杠的普通拼接同样算。
         assert!(is_appdir_relative(HOOK, APP));
         assert!(is_appdir_relative("/tmp/.mount_cc/usr/lib/x", APP));
         assert!(is_appdir_relative(HOOK, "/tmp/.mount_cc/"));
-        // 只是拼接前缀不算（.mount_cc-evil）。
+        // 负向：只是拼接前缀不算（.mount_cc-evil）、AppDir 本身不是缓存路径、
+        // AppDir 空 / 纯空白时判定不了，一律当作"不是 bundle 缓存"。
         assert!(!is_appdir_relative("/tmp/.mount_cc-evil/usr/x", APP));
-        // AppDir 本身不是缓存文件路径。
         assert!(!is_appdir_relative(APP, APP));
         assert!(!is_appdir_relative(HOOK, "   "));
         assert!(!is_appdir_relative(HOOK, ""));
