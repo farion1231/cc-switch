@@ -2,6 +2,7 @@ pub mod cache;
 pub mod content;
 pub mod model;
 pub mod providers;
+pub mod search;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
@@ -155,6 +156,7 @@ pub fn delete_session(
     let deleted = delete_session_source(provider_id, session_id, source_path)?;
     if deleted {
         cache::global().remove(provider_id, source_path);
+        search::forget_source(provider_id, source_path);
     }
     Ok(deleted)
 }

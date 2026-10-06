@@ -388,6 +388,9 @@ pub struct AppSettings {
     /// 代理接管记账与启动费用回填（不读会话文件）不受此开关影响。
     #[serde(default = "default_session_auto_sync_enabled")]
     pub session_auto_sync_enabled: bool,
+    /// 会话页搜索消息正文（在本地建 `session-index.db` 索引）；关闭时删除索引
+    #[serde(default = "default_session_content_search_enabled")]
+    pub session_content_search_enabled: bool,
     /// Whether to show the failover toggle independently on the main page
     #[serde(default)]
     pub enable_failover_toggle: bool,
@@ -535,6 +538,10 @@ fn default_session_auto_sync_enabled() -> bool {
     true
 }
 
+fn default_session_content_search_enabled() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -551,6 +558,7 @@ impl Default for AppSettings {
             usage_confirmed: None,
             usage_dashboard_refresh_interval_ms: None,
             session_auto_sync_enabled: true,
+            session_content_search_enabled: true,
             enable_failover_toggle: false,
             show_profile_switcher: true,
             check_tool_updates_on_startup: false,

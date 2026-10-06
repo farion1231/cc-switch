@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use tauri::ipc::{Channel, Response};
+use tauri::Emitter;
 use tauri_plugin_dialog::DialogExt;
 
 use crate::session_manager;
@@ -14,6 +15,44 @@ pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String
         .await
         .map_err(|e| format!("Failed to scan sessions: {e}"))?;
     Ok(sessions)
+}
+
+/// 在后台把会话正文索引同步到当前会话列表；进度通过 `session-index-status` 事件推送。
+/// 已在同步时只排一次重跑，立即返回当前进度。
+#[tauri::command]
+pub async fn sync_session_index<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<session_manager::search::IndexStatus, String> {
+    Ok(session_manager::search::start_sync(move |status| {
+        let _ = app.emit("session-index-status", status);
+    }))
+}
+
+/// 在消息正文里搜索，按会话聚合；`providerIds` 为空时不按应用过滤
+#[tauri::command]
+pub async fn search_session_content(
+    query: String,
+    providerIds: Option<Vec<String>>,
+    limit: Option<usize>,
+) -> Result<session_manager::search::ContentSearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::search::search(
+            &query,
+            providerIds,
+            limit.unwrap_or(session_manager::search::DEFAULT_LIMIT),
+        )
+    })
+    .await
+    .map_err(|e| format!("Failed to search session content: {e}"))
+}
+
+/// 删除会话正文索引文件（关闭「搜索消息正文」时调用）
+#[tauri::command]
+pub async fn clear_session_index() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(session_manager::search::clear)
+        .await
+        .map_err(|e| format!("Failed to clear session index: {e}"))??;
+    Ok(true)
 }
 
 /// 一次性返回全部消息（兼容旧前端；「复制整段」等一次性场景也用它）。走解析缓存。

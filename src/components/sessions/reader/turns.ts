@@ -693,6 +693,64 @@ export const findSearchHits = (
   return hits;
 };
 
+/** 命中落在哪条消息上（最终回复可能由多条消息拼成，取起始消息） */
+const matchMessageIndex = (
+  turn: SessionTurn,
+  match: SearchMatch,
+): number | undefined => {
+  switch (match.target) {
+    case "question":
+      return turn.question?.messageIndex;
+    case "final":
+      return turn.final?.messageIndex;
+    case "event":
+      return [...turn.leadingEvents, ...turn.trailingEvents].find(
+        (event) => event.id === match.targetId,
+      )?.messageIndex;
+    case "step": {
+      for (const step of turn.steps) {
+        const candidates = step.kind === "merged" ? step.children : [step];
+        const found = candidates.find((item) => item.id === match.targetId);
+        if (found && "messageIndex" in found) return found.messageIndex;
+      }
+      return undefined;
+    }
+  }
+};
+
+/**
+ * 正文搜索命中的消息 → 查找栏里的第几个命中（1 起）。
+ * 优先找落在这条消息上的命中；最终回复跨多条消息时，落在回复范围内也算；
+ * 都没有时退回同一轮的第一个命中，再不行就是第 1 个。
+ */
+export const findMatchPositionForMessage = (
+  turns: SessionTurn[],
+  hits: SearchHits,
+  messageIndex: number,
+): number => {
+  let position = 1;
+  let sameTurn: number | null = null;
+  for (const match of hits.matches) {
+    const turn = turns[match.turn];
+    if (
+      turn &&
+      messageIndex >= turn.firstMessageIndex &&
+      messageIndex <= turn.lastMessageIndex
+    ) {
+      const at = matchMessageIndex(turn, match);
+      if (
+        at === messageIndex ||
+        (match.target === "final" && at !== undefined && messageIndex >= at)
+      ) {
+        return position;
+      }
+      sameTurn ??= position;
+    }
+    position += match.count;
+  }
+  return sameTurn ?? 1;
+};
+
 // ─── 行模型 ───────────────────────────────────────────────────────────────
 
 /** 失败步骤在折叠态下最多常显几条（规则 2） */

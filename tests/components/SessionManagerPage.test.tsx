@@ -41,6 +41,7 @@ vi.mock("@tanstack/react-virtual", () => ({
         key: index,
         start: index * 100,
       })),
+    measure: () => undefined,
     measureElement: () => undefined,
     scrollToIndex: () => undefined,
   }),
@@ -78,6 +79,68 @@ const openAppMenu = async () =>
   userEvent.click(screen.getByRole("button", { name: /^应用：/ }));
 
 const EXPANDED_KEY = "cc-switch.sessionManager.expandedProjects";
+
+const setupZetaSession = () => {
+  const source = "/mock/codex/needle.jsonl";
+  setSessionFixtures(
+    [
+      {
+        providerId: "codex",
+        sessionId: "needle-session",
+        title: "Needle Session",
+        projectDir: "/mock/codex",
+        createdAt: Date.now() - HOUR,
+        lastActiveAt: Date.now() - HOUR,
+        sourcePath: source,
+      },
+    ],
+    {
+      [`codex:${source}`]: [
+        {
+          role: "user",
+          content: "",
+          turnId: "t1",
+          blocks: [{ type: "text", text: "zeta first" }],
+        },
+        {
+          role: "assistant",
+          content: "",
+          turnId: "t1",
+          blocks: [{ type: "text", text: "reply" }],
+        },
+        {
+          role: "user",
+          content: "",
+          turnId: "t2",
+          blocks: [{ type: "text", text: "again" }],
+        },
+        {
+          role: "assistant",
+          content: "",
+          turnId: "t2",
+          blocks: [{ type: "text", text: "zeta second" }],
+        },
+      ],
+    },
+  );
+  // 后端认为最相关的是第 4 条消息（下标 3）
+  const searchSpy = vi.spyOn(sessionsApi, "searchContent").mockResolvedValue({
+    hits: [
+      {
+        providerId: "codex",
+        sourcePath: source,
+        snippets: [
+          { messageIndex: 3, text: "zeta second" },
+          { messageIndex: 0, text: "zeta first" },
+        ],
+        matchCount: 2,
+      },
+    ],
+    status: { running: false, processed: 1, total: 1 },
+  });
+
+  return searchSpy;
+};
 
 describe("SessionManagerPage", () => {
   beforeEach(() => {
@@ -249,6 +312,66 @@ describe("SessionManagerPage", () => {
     expect(await screen.findByText("Alpha")).toBeInTheDocument();
   });
 
+  it("finds sessions by message text and opens the reader at the match", async () => {
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "const a" },
+    });
+
+    // 标题和摘要里都没有这个词，只有正文命中
+    expect(await screen.findByText(/^正文：/)).toBeInTheDocument();
+    expect(screen.queryByText("Beta Session")).not.toBeInTheDocument();
+
+    openRow("Alpha Session");
+    expect(
+      await screen.findByRole("textbox", { name: "查找内容" }),
+    ).toHaveValue("const a");
+  });
+
+  it("jumps to the message behind the content hit, not the first match", async () => {
+    const searchSpy = setupZetaSession();
+    renderPage("codex");
+    await screen.findByText("Needle Session");
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "zeta" },
+    });
+    expect(await screen.findByText(/2 条消息命中/)).toBeInTheDocument();
+
+    openRow("Needle Session");
+    expect(await screen.findByText("2 / 2")).toBeInTheDocument();
+    searchSpy.mockRestore();
+  });
+
+  it("opens the reader at an extra snippet's message when it is clicked", async () => {
+    const searchSpy = setupZetaSession();
+    renderPage("codex");
+    await screen.findByText("Needle Session");
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "zeta" },
+    });
+
+    const extras = await screen.findByRole("list", { name: "更多正文命中" });
+    fireEvent.click(within(extras).getByRole("button"));
+    expect(await screen.findByText("1 / 2")).toBeInTheDocument();
+    searchSpy.mockRestore();
+  });
+
+  it("leaves message text out when content search is turned off", async () => {
+    setSettings({ sessionContentSearchEnabled: false });
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "const a" },
+    });
+
+    expect(
+      await screen.findByText("没有标题、目录或首末消息匹配“const a”的会话"),
+    ).toBeInTheDocument();
+  });
+
   it("switches to all apps and to time buckets", async () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
@@ -327,7 +450,7 @@ describe("SessionManagerPage", () => {
 
     fireEvent.change(search, { target: { value: "zzz" } });
     expect(
-      await screen.findByText("没有标题、目录或首末消息匹配“zzz”的会话"),
+      await screen.findByText("没有会话的标题、目录或消息正文包含“zzz”"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清除搜索" }));
     expect(await screen.findByText("Alpha Session")).toBeInTheDocument();

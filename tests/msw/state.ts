@@ -2,6 +2,7 @@ import type { AppId } from "@/lib/api/types";
 import type {
   McpServer,
   Provider,
+  SessionContentHit,
   SessionMessage,
   SessionMeta,
   Settings,
@@ -415,6 +416,48 @@ export const getSessionMessages = (providerId: string, sourcePath: string) =>
   deepClone(
     sessionMessagesState[sessionMessageKey(providerId, sourcePath)] ?? [],
   ) as SessionMessage[];
+
+/** 模拟后端正文搜索：用户 / Agent 的 Text 块按子串（不区分大小写）匹配 */
+export const searchSessionContent = (
+  query: string,
+  providerIds?: string[],
+): SessionContentHit[] => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return sessionsState.flatMap((session) => {
+    if (providerIds && !providerIds.includes(session.providerId)) return [];
+    const messages =
+      sessionMessagesState[
+        sessionMessageKey(session.providerId, session.sourcePath ?? "")
+      ] ?? [];
+    const matched = messages
+      .map((message, index) => ({
+        index,
+        text:
+          message.injected ||
+          (message.role !== "user" && message.role !== "assistant")
+            ? ""
+            : message.blocks?.length
+              ? message.blocks
+                  .map((block) => (block.type === "text" ? block.text : ""))
+                  .join("\n")
+              : (message.content ?? ""),
+      }))
+      .filter(({ text }) => text.toLowerCase().includes(needle));
+    if (matched.length === 0) return [];
+    return [
+      {
+        providerId: session.providerId,
+        sourcePath: session.sourcePath ?? "",
+        snippets: matched.slice(0, 3).map(({ index, text }) => ({
+          messageIndex: index,
+          text: text.replace(/\s+/g, " ").trim(),
+        })),
+        matchCount: matched.length,
+      },
+    ];
+  });
+};
 
 export const deleteSession = (
   providerId: string,
