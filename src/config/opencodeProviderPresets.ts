@@ -2982,7 +2982,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "OpenCode Go",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",

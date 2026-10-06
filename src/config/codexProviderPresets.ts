@@ -3263,7 +3263,7 @@ requires_openai_auth = true`,
     family: "opencode",
     planKey: "coding",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(

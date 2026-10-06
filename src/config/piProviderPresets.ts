@@ -1640,7 +1640,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     name: "OpenCode Go",
     providerKey: "cc-switch-open-code-go",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     settingsConfig: {
       name: "OpenCode Go",
       baseUrl: "https://opencode.ai/zen/go/v1",

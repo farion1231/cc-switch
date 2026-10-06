@@ -1077,7 +1077,7 @@ export const providerPresets: ProviderPreset[] = [
     family: "opencode",
     planKey: "coding",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     // Go 网关 /v1/messages 只认 x-api-key（Bearer 被静默忽略），
     // 必须用 ANTHROPIC_API_KEY，不能换回 ANTHROPIC_AUTH_TOKEN。
