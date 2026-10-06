@@ -401,7 +401,10 @@ fn find_host_cache_with(
             Some(content) => content,
             None => continue,
         };
-        if modules.first().is_some_and(|m| cache_lists_module(&content, m)) {
+        if modules
+            .first()
+            .is_some_and(|m| cache_lists_module(&content, m))
+        {
             return Some(candidate.clone());
         }
         if fallback.is_none() && modules.iter().any(|m| cache_lists_module(&content, m)) {
@@ -582,7 +585,14 @@ mod tests {
         bundle: Option<&str>,
         host: &[(&str, &str)],
     ) -> ImModuleFileAction {
-        run(override_value, gtk_im_module, Some(HOOK), Some(APP), bundle, host)
+        run(
+            override_value,
+            gtk_im_module,
+            Some(HOOK),
+            Some(APP),
+            bundle,
+            host,
+        )
     }
 
     /// 完整入口，供例外场景（非 bundle 路径 / 没有 APPDIR）使用。
@@ -645,7 +655,12 @@ mod tests {
     #[test]
     fn readable_host_cache_without_the_module_is_skipped() {
         // 第一个候选可读但不列 fcitx：不能因为"找到文件"就把变量指过去。
-        let action = hooked(None, Some("fcitx"), Some(BUNDLE), &[HOST_STOCK_ONLY, HOST_FCITX]);
+        let action = hooked(
+            None,
+            Some("fcitx"),
+            Some(BUNDLE),
+            &[HOST_STOCK_ONLY, HOST_FCITX],
+        );
         let expected = ImModuleFileAction::Set(HOST_FCITX.0.to_string());
         assert_eq!(action, expected);
     }
@@ -704,7 +719,12 @@ mod tests {
     fn host_cache_prefers_the_first_requested_module() {
         // GTK_IM_MODULE=fcitx:ibus：两个主机缓存都可用，一个列出靠后的 ibus、
         // 一个列出用户首选的 fcitx——必须选后者，否则等于替用户改偏好。
-        let action = hooked(None, Some("fcitx:ibus"), Some(BUNDLE), &[HOST_FCITX5, HOST_FCITX]);
+        let action = hooked(
+            None,
+            Some("fcitx:ibus"),
+            Some(BUNDLE),
+            &[HOST_FCITX5, HOST_FCITX],
+        );
         let expected = ImModuleFileAction::Set(HOST_FCITX.0.to_string());
         assert_eq!(action, expected);
     }
@@ -918,8 +938,19 @@ mod tests {
         assert!(!cache_lists_module(BUNDLE, "scim"));
         // bundle 自带的模块仍要认得出，否则会误改环境变量。
         for module in [
-            "am-et", "broadway", "cedilla", "cyrillic-translit", "ipa", "multipress", "thai",
-            "ti-er", "ti-et", "viqr", "wayland", "waylandgtk", "xim",
+            "am-et",
+            "broadway",
+            "cedilla",
+            "cyrillic-translit",
+            "ipa",
+            "multipress",
+            "thai",
+            "ti-er",
+            "ti-et",
+            "viqr",
+            "wayland",
+            "waylandgtk",
+            "xim",
         ] {
             assert!(
                 cache_lists_module(BUNDLE, module),
@@ -942,13 +973,7 @@ mod tests {
 
         // 端到端走一遍真实形状：fcitx5 + bundle 缓存 + 有 fcitx5 的主机缓存
         // → 指向；fcitx5 + 系统路径（不在 APPDIR 下）→ 保持。
-        let action = hooked(
-            None,
-            Some("fcitx5"),
-            None,
-            Some(BUNDLE),
-            &[HOST_FCITX5],
-        );
+        let action = hooked(None, Some("fcitx5"), None, Some(BUNDLE), &[HOST_FCITX5]);
         let expected = ImModuleFileAction::Set(HOST_FCITX5.0.to_string());
         assert_eq!(action, expected);
         let action = resolve(
