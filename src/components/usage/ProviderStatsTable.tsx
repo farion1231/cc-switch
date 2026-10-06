@@ -132,17 +132,19 @@ export function ProviderStatsTable({
                     className={usageTable.row}
                   >
                     <td className={usageTable.td}>
-                      <span
-                        className="block max-w-[260px] truncate"
-                        title={usageProviderTitle(provider)}
-                      >
-                        {provider.label}
-                      </span>
                       {/* providers 主键是 (id, app_type)：同一个 id 会在多个应用下各出一行，
                           名称又可能撞名，所以行上必须标出来源应用。 */}
-                      <span className="ms-1.5 inline-block rounded-control bg-subtle px-1 py-0.5 align-middle text-badge font-normal text-fg-3">
-                        {getAppLabel(stat.appType)}
-                      </span>
+                      <div className="flex max-w-[260px] items-center gap-1.5">
+                        <span
+                          className="min-w-0 truncate"
+                          title={usageProviderTitle(provider)}
+                        >
+                          {provider.label}
+                        </span>
+                        <span className="shrink-0 rounded-control bg-subtle px-1 py-0.5 text-badge font-normal text-fg-3">
+                          {getAppLabel(stat.appType)}
+                        </span>
+                      </div>
                     </td>
                     <td className={usageTable.tdEnd}>
                       {fmtInt(stat.requestCount, locale)}
