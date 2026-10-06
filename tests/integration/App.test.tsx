@@ -93,27 +93,35 @@ vi.mock("@/components/providers/AddProviderDialog", () => ({
     ) : null,
 }));
 
-vi.mock("@/components/providers/EditProviderDialog", () => ({
-  EditProviderDialog: ({ open, provider, onSubmit, onOpenChange }: any) =>
-    open ? (
-      <div data-testid="edit-provider-dialog">
-        <button
-          onClick={() =>
-            onSubmit({
-              provider: {
-                ...provider,
-                name: `${provider.name}-edited`,
-              },
-              originalId: provider.id,
-            })
-          }
-        >
-          confirm-edit
-        </button>
-        <button onClick={() => onOpenChange(false)}>close-edit</button>
-      </div>
-    ) : null,
-}));
+vi.mock("@/components/providers/EditProviderDialog", async () => {
+  const { useUnsavedChangesTracker } = await vi.importActual<
+    typeof import("@/lib/unsavedChanges")
+  >("@/lib/unsavedChanges");
+  // 和真的编辑页一样登记改动（真的由 FullScreenPanel 的 trackUnsavedChanges 负责）
+  const Body = ({ provider, onSubmit, onOpenChange }: any) => (
+    <div data-testid="edit-provider-dialog" {...useUnsavedChangesTracker()}>
+      <input aria-label="edit-field" />
+      <button
+        onClick={() =>
+          onSubmit({
+            provider: {
+              ...provider,
+              name: `${provider.name}-edited`,
+            },
+            originalId: provider.id,
+          })
+        }
+      >
+        confirm-edit
+      </button>
+      <button onClick={() => onOpenChange(false)}>close-edit</button>
+    </div>
+  );
+  return {
+    EditProviderDialog: (props: any) =>
+      props.open ? <Body {...props} /> : null,
+  };
+});
 
 vi.mock("@/components/UsageScriptModal", () => ({
   default: ({ isOpen, provider, onSave, onClose }: any) =>
@@ -308,7 +316,9 @@ describe("App integration with MSW", () => {
         "codex-1",
       ),
     );
-    expect(screen.queryByTestId("edit-provider-dialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("edit-provider-dialog"),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("usage"));
     expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
@@ -328,6 +338,53 @@ describe("App integration with MSW", () => {
     fireEvent.keyDown(window, { key: ",", metaKey: true });
     expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
     expect(screen.queryByTestId("add-provider-dialog")).not.toBeInTheDocument();
+  }, 10_000);
+
+  it("asks before leaving an editor page with unsaved changes", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+
+    // 没改过：照常离开，不问
+    fireEvent.click(screen.getByText("edit"));
+    fireEvent.click(sidebarApp("Codex"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "codex-1",
+      ),
+    );
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+
+    // 改过：先问；继续编辑就留在原页
+    // （ConfirmDialog 在这个文件里是 mock：只渲染消息和 confirm-delete / cancel-delete）
+    fireEvent.click(screen.getByText("edit"));
+    fireEvent.input(screen.getByLabelText("edit-field"), {
+      target: { value: "draft" },
+    });
+    fireEvent.click(sidebarApp("Claude Code"));
+    expect(await screen.findByTestId("confirm-message")).toHaveTextContent(
+      "common.unsavedLeaveMessage",
+    );
+    fireEvent.click(screen.getByText("cancel-delete"));
+    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-list").textContent).toContain(
+      "codex-1",
+    );
+
+    // ⌘, 也问；放弃后才离开
+    fireEvent.keyDown(window, { key: ",", metaKey: true });
+    expect(await screen.findByTestId("confirm-message")).toHaveTextContent(
+      "common.unsavedLeaveMessage",
+    );
+    fireEvent.click(screen.getByText("confirm-delete"));
+    expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("edit-provider-dialog"),
+    ).not.toBeInTheDocument();
   }, 10_000);
 
   it("shows toast when auto sync fails in background", async () => {

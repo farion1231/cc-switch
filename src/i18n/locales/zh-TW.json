@@ -4,6 +4,10 @@
     "description": "Claude Code / Codex / Gemini CLI 全方位輔助工具"
   },
   "common": {
+    "unsavedLeaveTitle": "有未儲存的修改",
+    "unsavedLeaveMessage": "離開後，目前編輯頁裡的修改不會儲存。",
+    "unsavedLeaveConfirm": "放棄修改並離開",
+    "unsavedLeaveCancel": "繼續編輯",
     "add": "新增",
     "edit": "編輯",
     "delete": "刪除",
@@ -2605,7 +2609,7 @@
   "prompts": {
     "add": "新增提示詞",
     "addTitle": "新增提示詞 · {{appName}}",
-    "editTitle": "編輯提示詞 · {{name}}",
+    "editTitle": "編輯提示詞",
     "enabled": "已啟用",
     "enable": "啟用",
     "loading": "載入中...",
@@ -2673,7 +2677,6 @@
     "copyContent": "複製正文",
     "copiedContent": "已複製「{{name}}」的正文",
     "deleteBlocked": "啟用中的不能刪除，先停用",
-    "deleteBlockedReason": "啟用中的不能刪除，先停用。",
     "emptyTitle": "{{app}} 還沒有提示詞",
     "emptyTarget": "啟用的那條會寫進 {{path}}。",
     "emptyFile": "{{path}} 裡已有 {{size}} 內容，還不在 CC Switch 裡",
@@ -4244,7 +4247,7 @@
     },
     "drawer": {
       "addTitle": "新增 MCP",
-      "editTitle": "編輯 MCP · {{id}}",
+      "editTitle": "編輯 MCP",
       "templates": "從範本開始",
       "paste": "貼上設定",
       "pastePlaceholder": "貼上 JSON 或 TOML，自動辨識 mcpServers、Codex、OpenCode 的寫法",
@@ -4334,8 +4337,7 @@
       "tags": "標籤",
       "tagsPlaceholder": "用逗號分隔，例如 docs, web",
       "homepage": "首頁",
-      "docs": "文件",
-      "delete": "刪除"
+      "docs": "文件"
     },
     "resync": "按這裡的開關重寫各應用設定"
   },

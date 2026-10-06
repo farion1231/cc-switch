@@ -4,6 +4,10 @@
     "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
   },
   "common": {
+    "unsavedLeaveTitle": "Unsaved changes",
+    "unsavedLeaveMessage": "If you leave, the changes on this editor page will not be saved.",
+    "unsavedLeaveConfirm": "Discard and leave",
+    "unsavedLeaveCancel": "Keep editing",
     "add": "Add",
     "edit": "Edit",
     "delete": "Delete",
@@ -2604,7 +2608,7 @@
   "prompts": {
     "add": "Add Prompt",
     "addTitle": "Add prompt · {{appName}}",
-    "editTitle": "Edit prompt · {{name}}",
+    "editTitle": "Edit prompt",
     "enabled": "Enabled",
     "enable": "Enable",
     "loading": "Loading...",
@@ -2672,7 +2676,6 @@
     "copyContent": "Copy text",
     "copiedContent": "Copied the text of \"{{name}}\"",
     "deleteBlocked": "Disable it before deleting",
-    "deleteBlockedReason": "An enabled prompt can't be deleted. Disable it first.",
     "emptyTitle": "No {{app}} prompts yet",
     "emptyTarget": "The enabled prompt is written to {{path}}.",
     "emptyFile": "{{path}} already has {{size}} of content that isn't in CC Switch yet",
@@ -4243,7 +4246,7 @@
     },
     "drawer": {
       "addTitle": "Add MCP",
-      "editTitle": "Edit MCP · {{id}}",
+      "editTitle": "Edit MCP",
       "templates": "Start from a template",
       "paste": "Paste a config",
       "pastePlaceholder": "Paste JSON or TOML; mcpServers, Codex and OpenCode formats are recognized",
@@ -4333,8 +4336,7 @@
       "tags": "Tags",
       "tagsPlaceholder": "Comma-separated, e.g. docs, web",
       "homepage": "Homepage",
-      "docs": "Docs",
-      "delete": "Delete"
+      "docs": "Docs"
     },
     "resync": "Rewrite every app's config from these switches"
   },

@@ -17,7 +17,9 @@ import { DialogTitle } from "@/components/ui/dialog";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { useIsMutating } from "@tanstack/react-query";
 import {
+  MCP_UPSERT_MUTATION_KEY,
   useAllMcpServers,
   useBulkToggleMcpApp,
   useDeleteMcpServer,
@@ -159,9 +161,20 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   // 写入本身仍由写锁（writeLockRef / interactionBlocked）拦着。
   const controlsDisabled = useDelayedFlag(interactionBlocked);
 
+  // 编辑页自己的保存不在 mutationPending 里，按 mutation key 单独看
+  const editorSaving =
+    useIsMutating({ mutationKey: MCP_UPSERT_MUTATION_KEY }) > 0;
+  // 报给外壳的导航锁不算编辑页：编辑页只盖住内容区，离开页面就关掉它（同供应商编辑页）；
+  // 写入进行中（含编辑页自己的保存）仍锁
+  const navigationBlocked =
+    writePending ||
+    mutationPending ||
+    editorSaving ||
+    deleteId !== null ||
+    importReport !== null;
   React.useEffect(() => {
-    onInteractionBlockedChange?.(interactionBlocked);
-  }, [interactionBlocked, onInteractionBlockedChange]);
+    onInteractionBlockedChange?.(navigationBlocked);
+  }, [navigationBlocked, onInteractionBlockedChange]);
 
   React.useEffect(
     () => () => onInteractionBlockedChange?.(false),
@@ -1008,7 +1021,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
           visibleAppIds={appIds}
           onSave={() => setDrawer(null)}
           onClose={() => setDrawer(null)}
-          onRequestDelete={(id) => setDeleteId(id)}
         />
       )}
 

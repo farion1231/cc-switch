@@ -4,6 +4,10 @@
     "description": "Claude Code・Codex・Gemini CLI のためのオールインワンアシスタント"
   },
   "common": {
+    "unsavedLeaveTitle": "未保存の変更があります",
+    "unsavedLeaveMessage": "移動すると、この編集ページの変更は保存されません。",
+    "unsavedLeaveConfirm": "破棄して移動",
+    "unsavedLeaveCancel": "編集を続ける",
     "add": "追加",
     "edit": "編集",
     "delete": "削除",
@@ -2604,7 +2608,7 @@
   "prompts": {
     "add": "プロンプトを追加",
     "addTitle": "プロンプトを追加 · {{appName}}",
-    "editTitle": "プロンプトを編集 · {{name}}",
+    "editTitle": "プロンプトを編集",
     "enabled": "有効",
     "enable": "有効にする",
     "loading": "読み込み中...",
@@ -2672,7 +2676,6 @@
     "copyContent": "本文をコピー",
     "copiedContent": "「{{name}}」の本文をコピーしました",
     "deleteBlocked": "有効なものは削除できません。先に無効にしてください",
-    "deleteBlockedReason": "有効なプロンプトは削除できません。先に無効にしてください。",
     "emptyTitle": "{{app}} のプロンプトはまだありません",
     "emptyTarget": "有効にしたものが {{path}} に書き込まれます。",
     "emptyFile": "{{path}} には CC Switch にまだない {{size}} の内容があります",
@@ -4243,7 +4246,7 @@
     },
     "drawer": {
       "addTitle": "MCP を追加",
-      "editTitle": "MCP を編集 · {{id}}",
+      "editTitle": "MCP を編集",
       "templates": "テンプレートから始める",
       "paste": "設定を貼り付け",
       "pastePlaceholder": "JSON か TOML を貼り付け。mcpServers・Codex・OpenCode の書式を自動認識します",
@@ -4333,8 +4336,7 @@
       "tags": "タグ",
       "tagsPlaceholder": "カンマ区切り（例：docs, web）",
       "homepage": "ホームページ",
-      "docs": "ドキュメント",
-      "delete": "削除"
+      "docs": "ドキュメント"
     },
     "resync": "ここのスイッチで各アプリの設定を書き直す"
   },
