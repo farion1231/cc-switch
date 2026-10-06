@@ -137,6 +137,12 @@ export interface ModelStats {
   totalTokens: number;
   totalCost: string;
   avgCostPerRequest: string;
+  successRate: number;
+  /** 速度分子分母，口径同 ProviderStats 的四个速度字段 */
+  speedOutputTokens?: number;
+  speedGenerationMs?: number;
+  estSpeedOutputTokens?: number;
+  estSpeedDurationMs?: number;
 }
 
 export interface LogFilters {

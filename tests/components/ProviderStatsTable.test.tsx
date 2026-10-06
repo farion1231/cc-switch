@@ -1,10 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { ProviderStatsTable } from "@/components/usage/ProviderStatsTable";
 import {
-  ProviderStatsTable,
-  getProviderEstimatedSpeed,
-  getProviderSpeed,
-} from "@/components/usage/ProviderStatsTable";
+  getStatsEstimatedSpeed,
+  getStatsSpeed,
+} from "@/components/usage/statsColumns";
 import type { ProviderStats } from "@/types/usage";
 
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
@@ -34,24 +34,24 @@ const stat = (overrides: Partial<ProviderStats>): ProviderStats => ({
 describe("ProviderStatsTable", () => {
   it("computes speed as total output over total generation time", () => {
     expect(
-      getProviderSpeed(
+      getStatsSpeed(
         stat({ speedOutputTokens: 1_200, speedGenerationMs: 10_500 }),
       ),
     ).toBe("114");
     expect(
-      getProviderSpeed(stat({ speedOutputTokens: 0, speedGenerationMs: 0 })),
+      getStatsSpeed(stat({ speedOutputTokens: 0, speedGenerationMs: 0 })),
     ).toBeNull();
     // 老后端没有这两个字段
-    expect(getProviderSpeed(stat({}))).toBeNull();
+    expect(getStatsSpeed(stat({}))).toBeNull();
   });
 
   it("falls back to the estimated speed, marked with ≈, when there is no exact one", () => {
     expect(
-      getProviderEstimatedSpeed(
+      getStatsEstimatedSpeed(
         stat({ estSpeedOutputTokens: 2_500, estSpeedDurationMs: 25_000 }),
       ),
     ).toBe("100");
-    expect(getProviderEstimatedSpeed(stat({}))).toBeNull();
+    expect(getStatsEstimatedSpeed(stat({}))).toBeNull();
 
     useProviderStatsMock.mockReturnValue({
       isLoading: false,
