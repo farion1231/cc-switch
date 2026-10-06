@@ -217,6 +217,7 @@ module.exports = {
         ],
       },
       animation: {
+        "skill-download": "skillDownload 1.2s ease-in-out infinite",
         "fade-in": "fadeIn 0.5s ease-out",
         "slide-up": "slideUp 0.5s ease-out",
         "slide-down": "slideDown 0.3s ease-out",
@@ -226,6 +227,10 @@ module.exports = {
         "accordion-up": "accordion-up 0.2s ease-out",
       },
       keyframes: {
+        skillDownload: {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(300%)" },
+        },
         fadeIn: {
           "0%": {
             opacity: "0",

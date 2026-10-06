@@ -8,8 +8,9 @@ use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillAppSyncOutcome,
-    SkillBackupEntry, SkillDiscoveryResult, SkillRepo, SkillService, SkillStorageLocation,
-    SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult, ZipInstallResult,
+    SkillBackupEntry, SkillDiscoveryResult, SkillInstallProgress, SkillRepo, SkillService,
+    SkillStorageLocation, SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult,
+    ZipInstallResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -53,16 +54,32 @@ pub fn delete_skill_backup(backup_id: String) -> Result<bool, String> {
 pub async fn install_skill_unified(
     skill: DiscoverableSkill,
     current_app: String,
+    on_progress: Option<tauri::ipc::JavaScriptChannelId>,
+    webview: tauri::Webview,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<InstalledSkill, String> {
     let app_type = parse_app_type(&current_app)?;
+    // Channel 本身不能作为 Option 反序列化；可选 ID 兼容旧调用方省略进度参数。
+    let on_progress = on_progress.map(|id| id.channel_on::<_, SkillInstallProgress>(webview));
+    let progress = |event| {
+        if let Some(channel) = &on_progress {
+            // 进度接收端关闭不影响正在进行的安装。
+            let _ = channel.send(event);
+        }
+    };
 
-    service
+    let installed = service
         .0
-        .install(&app_state.db, &skill, &app_type)
+        .install_with_progress(&app_state.db, &skill, &app_type, Some(&progress))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    progress(SkillInstallProgress {
+        phase: "completed",
+        downloaded_bytes: 0,
+        total_bytes: None,
+    });
+    Ok(installed)
 }
 
 /// 卸载 Skill（新版统一卸载）
@@ -329,6 +346,18 @@ pub fn uninstall_skill_for_app(
 }
 
 // ========== 仓库管理命令 ==========
+
+/// 获取本机 Skill 仓库下载超时。
+#[tauri::command]
+pub fn get_skill_download_timeout() -> u64 {
+    crate::settings::get_skill_download_timeout_seconds()
+}
+
+/// 校验并保存仓库管理中的下载超时，不影响其他设置。
+#[tauri::command]
+pub fn set_skill_download_timeout(seconds: u64) -> Result<(), String> {
+    crate::settings::set_skill_download_timeout_seconds(seconds).map_err(|e| e.to_string())
+}
 
 /// 获取技能仓库列表
 #[tauri::command]

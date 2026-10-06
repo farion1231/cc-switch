@@ -3194,7 +3194,14 @@
       "addFailed": "Failed to add",
       "removeSuccess": "Repository {{owner}}/{{name}} removed",
       "removeFailed": "Failed to remove",
-      "skillCount": "{{count}} skills detected"
+      "skillCount": "{{count}} skills detected",
+      "downloadSettings": "Download settings",
+      "downloadTimeout": "Download timeout (seconds)",
+      "downloadTimeoutHelp": "Default: 60 seconds. Range: 1–3600. Applies to repository discovery, installation and update downloads. Takes effect on the next download after saving.",
+      "timeoutInvalid": "Enter a whole number from 1 to 3600 seconds.",
+      "timeoutLoadFailed": "Could not load the timeout. Try again.",
+      "timeoutSaveFailed": "Could not save the timeout. Try again.",
+      "timeoutSaved": "Timeout saved"
     },
     "search": "Search Skills",
     "searchPlaceholder": "Search skill name or repo...",
@@ -3308,7 +3315,14 @@
       "syncCopyDesc": "Uses more disk space; copied again after each update",
       "moveHint": "Switching moves {{count}} Skills to the new location."
     },
-    "updatesIncomplete": "No updates found, but {{count}} repositories couldn't be read"
+    "updatesIncomplete": "No updates found, but {{count}} repositories couldn't be read",
+    "installProgress": {
+      "preparing": "Preparing download",
+      "downloading": "Downloading",
+      "extracting": "Extracting",
+      "installing": "Installing and syncing",
+      "completed": "Installed"
+    }
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",

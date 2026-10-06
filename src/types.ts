@@ -456,6 +456,8 @@ export interface Settings {
   skillSyncMethod?: SkillSyncMethod;
   // Skill 存储位置：cc_switch（默认）或 unified（~/.agents/skills/）
   skillStorageLocation?: SkillStorageLocation;
+  // Skill 仓库下载超时（秒），包含分支回退的总等待时间。
+  skillDownloadTimeoutSeconds?: number;
 
   // ===== WebDAV v2 同步设置 =====
   webdavSync?: WebDavSyncSettings;

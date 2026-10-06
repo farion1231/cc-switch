@@ -137,6 +137,32 @@ pub struct SkillRepo {
     pub enabled: bool,
 }
 
+/// 每次安装独立传输的进度；缺少 Content-Length 时 total 为 None。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillInstallProgress {
+    pub phase: &'static str,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+}
+
+pub type SkillProgressCallback<'a> = &'a (dyn Fn(SkillInstallProgress) + Send + Sync);
+
+fn report_skill_progress(
+    callback: Option<SkillProgressCallback<'_>>,
+    phase: &'static str,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+) {
+    if let Some(callback) = callback {
+        callback(SkillInstallProgress {
+            phase,
+            downloaded_bytes,
+            total_bytes,
+        });
+    }
+}
+
 /// 技能安装状态（旧版兼容）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillState {
@@ -850,6 +876,17 @@ impl SkillService {
         skill: &DiscoverableSkill,
         current_app: &AppType,
     ) -> Result<InstalledSkill> {
+        self.install_with_progress(db, skill, current_app, None)
+            .await
+    }
+
+    pub async fn install_with_progress(
+        &self,
+        db: &Arc<Database>,
+        skill: &DiscoverableSkill,
+        current_app: &AppType,
+        progress: Option<SkillProgressCallback<'_>>,
+    ) -> Result<InstalledSkill> {
         let ssot_dir = Self::get_ssot_dir()?;
 
         // 允许多级目录（如 a/b/c），但必须是安全的相对路径。
@@ -900,22 +937,8 @@ impl SkillService {
             };
 
             // 下载仓库
-            let (temp_guard, used_branch) = timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            .map_err(|_| {
-                anyhow!(format_skill_error(
-                    "DOWNLOAD_TIMEOUT",
-                    &[
-                        ("owner", &repo.owner),
-                        ("name", &repo.name),
-                        ("timeout", "60")
-                    ],
-                    Some("checkNetwork"),
-                ))
-            })??;
+            let (temp_guard, used_branch) =
+                self.download_repo_with_progress(&repo, progress).await?;
             let temp_dir = temp_guard.path();
             repo_branch = used_branch;
 
@@ -966,6 +989,7 @@ impl SkillService {
             }
         }
 
+        report_skill_progress(progress, "installing", 0, None);
         let doc_path = Self::choose_doc_path(
             resolved_doc_path,
             skill.readme_url.as_deref(),
@@ -1367,24 +1391,11 @@ impl SkillService {
             };
 
             // 下载仓库 ZIP
-            let (temp_guard, _used_branch) = match timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            {
-                Ok(Ok(result)) => result,
-                Ok(Err(e)) => {
+            let (temp_guard, _used_branch) = match self.download_repo(&repo).await {
+                Ok(result) => result,
+                Err(e) => {
                     log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
                     failures.push(Self::repo_failure(&repo, e.to_string()));
-                    continue;
-                }
-                Err(_) => {
-                    log::warn!("检查更新时下载 {}/{} 超时", owner, name);
-                    failures.push(Self::repo_failure(
-                        &repo,
-                        Self::download_timeout_error(&repo),
-                    ));
                     continue;
                 }
             };
@@ -1463,13 +1474,13 @@ impl SkillService {
         }
     }
 
-    fn download_timeout_error(repo: &SkillRepo) -> String {
+    fn download_timeout_error(repo: &SkillRepo, timeout_seconds: u64) -> String {
         format_skill_error(
             "DOWNLOAD_TIMEOUT",
             &[
                 ("owner", &repo.owner),
                 ("name", &repo.name),
-                ("timeout", "60"),
+                ("timeout", &timeout_seconds.to_string()),
             ],
             Some("checkNetwork"),
         )
@@ -1529,18 +1540,7 @@ impl SkillService {
         }
 
         // 下载仓库
-        let (temp_guard, used_branch) = timeout(
-            std::time::Duration::from_secs(60),
-            self.download_repo(&repo),
-        )
-        .await
-        .map_err(|_| {
-            anyhow!(format_skill_error(
-                "DOWNLOAD_TIMEOUT",
-                &[("owner", &owner), ("name", &name), ("timeout", "60")],
-                Some("checkNetwork"),
-            ))
-        })??;
+        let (temp_guard, used_branch) = self.download_repo(&repo).await?;
         let temp_dir = temp_guard.path();
 
         // 在解压的仓库中查找 Skill 源目录
@@ -3013,10 +3013,7 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_guard, resolved_branch) =
-            timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
-                .await
-                .map_err(|_| anyhow!(Self::download_timeout_error(repo)))??;
+        let (temp_guard, resolved_branch) = self.download_repo(repo).await?;
 
         let mut skills = Vec::new();
         let scan_dir = temp_guard.path();
@@ -3527,6 +3524,40 @@ impl SkillService {
     /// `check_updates`、`update_skill` 四条路径都经过它，而 `skill_repos` / `skills`
     /// 两张表都会被同步导入的远端快照整表覆盖，入库校验管不住它们。所以主防线放这里。
     async fn download_repo(&self, repo: &SkillRepo) -> Result<(tempfile::TempDir, String)> {
+        self.download_repo_with_progress(repo, None).await
+    }
+
+    /// 所有仓库下载共用一次超时预算，分支回退不重新计时。
+    async fn download_repo_with_progress(
+        &self,
+        repo: &SkillRepo,
+        progress: Option<SkillProgressCallback<'_>>,
+    ) -> Result<(tempfile::TempDir, String)> {
+        let seconds = crate::settings::get_skill_download_timeout_seconds();
+        timeout(
+            std::time::Duration::from_secs(seconds),
+            self.download_repo_inner(repo, seconds, progress),
+        )
+        .await
+        .map_err(|_| anyhow!(Self::download_timeout_error(repo, seconds)))?
+        .map_err(|error| {
+            if error
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(|error| error.is_timeout())
+            {
+                anyhow!(Self::download_timeout_error(repo, seconds))
+            } else {
+                error
+            }
+        })
+    }
+
+    async fn download_repo_inner(
+        &self,
+        repo: &SkillRepo,
+        timeout_seconds: u64,
+        progress: Option<SkillProgressCallback<'_>>,
+    ) -> Result<(tempfile::TempDir, String)> {
         Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
 
         // 守卫全程持有，成功后连同目录一起交给调用方（见 `extract_local_zip` 的说明）。
@@ -3561,7 +3592,10 @@ impl SkillService {
             );
             Self::assert_github_archive_url(&url, &repo.owner, &repo.name)?;
 
-            match self.download_and_extract(&url, &temp_path).await {
+            match self
+                .download_and_extract(&url, &temp_path, timeout_seconds, progress)
+                .await
+            {
                 Ok(_) => return Ok((temp_dir, branch.to_string())),
                 Err(e) => {
                     // 每个分支各自重算预算，所以失败后必须把上一轮的残留清掉——
@@ -3578,9 +3612,21 @@ impl SkillService {
     }
 
     /// 下载并解压 ZIP
-    async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
+    async fn download_and_extract(
+        &self,
+        url: &str,
+        dest: &Path,
+        timeout_seconds: u64,
+        progress: Option<SkillProgressCallback<'_>>,
+    ) -> Result<()> {
+        report_skill_progress(progress, "downloading", 0, None);
         let client = crate::proxy::http_client::get();
-        let response = client.get(url).send().await?;
+        // 覆盖共享客户端的 600 秒请求上限，让较大的自定义超时真正生效。
+        let response = client
+            .get(url)
+            .timeout(std::time::Duration::from_secs(timeout_seconds))
+            .send()
+            .await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(
@@ -3599,6 +3645,9 @@ impl SkillService {
         // 收进内存，之后才轮到 ZipArchive 和解压预算——那时候堆已经被吃光了。
         // 不能只信 Content-Length（可以撒谎或缺失），必须按实际收到的字节数算。
         let mut response = response;
+        let total = response.content_length().filter(|total| *total > 0);
+        report_skill_progress(progress, "downloading", 0, total);
+        let mut last_report = std::time::Instant::now();
         let mut body: Vec<u8> = Vec::new();
         while let Some(chunk) = response.chunk().await? {
             if body.len().saturating_add(chunk.len()) as u64 > MAX_ARCHIVE_DOWNLOAD_BYTES {
@@ -3610,7 +3659,15 @@ impl SkillService {
                 )));
             }
             body.extend_from_slice(&chunk);
+            // 限制 IPC 更新频率，避免高速下载时每个 chunk 都重绘界面。
+            if last_report.elapsed() >= std::time::Duration::from_millis(100) {
+                report_skill_progress(progress, "downloading", body.len() as u64, total);
+                last_report = std::time::Instant::now();
+            }
         }
+
+        report_skill_progress(progress, "downloading", body.len() as u64, total);
+        report_skill_progress(progress, "extracting", body.len() as u64, total);
 
         let cursor = std::io::Cursor::new(body);
         let archive = zip::ZipArchive::new(cursor)?;
@@ -4709,6 +4766,101 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    async fn serve_download_fixture(
+        body: Vec<u8>,
+        chunked: bool,
+        delay: std::time::Duration,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let app = axum::Router::new().route("/archive", axum::routing::get(move || {
+            let body = body.clone();
+            async move {
+                tokio::time::sleep(delay).await;
+                if chunked {
+                    let stream = async_stream::stream! {
+                        let mid = body.len() / 2;
+                        yield Ok::<_, std::io::Error>(bytes::Bytes::copy_from_slice(&body[..mid]));
+                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                        yield Ok::<_, std::io::Error>(bytes::Bytes::copy_from_slice(&body[mid..]));
+                    };
+                    axum::response::Response::new(axum::body::Body::from_stream(stream))
+                } else {
+                    axum::response::Response::builder()
+                        .header(http::header::CONTENT_LENGTH, body.len())
+                        .body(axum::body::Body::from(body)).unwrap()
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/archive", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (url, server)
+    }
+
+    #[tokio::test]
+    async fn archive_download_reports_actual_bytes_with_and_without_content_length() {
+        for chunked in [false, true] {
+            let body = build_zip_with_traversal_entry();
+            let expected_bytes = body.len() as u64;
+            let (url, server) =
+                serve_download_fixture(body, chunked, std::time::Duration::ZERO).await;
+            let temp = tempdir().unwrap();
+            let events = std::sync::Mutex::new(Vec::new());
+            let report = |event| events.lock().unwrap().push(event);
+            let result = SkillService::new()
+                .download_and_extract(&url, temp.path(), 5, Some(&report))
+                .await;
+            server.abort();
+            result.unwrap();
+            assert!(temp.path().join("SKILL.md").exists());
+            let events = events.into_inner().unwrap();
+            let last_download = events
+                .iter()
+                .filter(|event| event.phase == "downloading")
+                .last()
+                .unwrap();
+            assert_eq!(last_download.downloaded_bytes, expected_bytes);
+            assert_eq!(
+                last_download.total_bytes,
+                if chunked { None } else { Some(expected_bytes) }
+            );
+            assert_eq!(events.last().unwrap().phase, "extracting");
+        }
+    }
+
+    #[tokio::test]
+    async fn archive_request_honors_custom_timeout() {
+        let (url, server) = serve_download_fixture(
+            build_zip_with_traversal_entry(),
+            false,
+            std::time::Duration::from_millis(1500),
+        )
+        .await;
+        let temp = tempdir().unwrap();
+        let error = SkillService::new()
+            .download_and_extract(&url, temp.path(), 1, None)
+            .await
+            .unwrap_err();
+        server.abort();
+        assert!(error.downcast_ref::<reqwest::Error>().unwrap().is_timeout());
+        assert!(!temp.path().join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn download_timeout_error_reports_the_configured_limit() {
+        let repo = SkillRepo {
+            owner: "owner".into(),
+            name: "repo".into(),
+            branch: "main".into(),
+            enabled: true,
+        };
+        let error: serde_json::Value =
+            serde_json::from_str(&SkillService::download_timeout_error(&repo, 900)).unwrap();
+        assert_eq!(error["code"], "DOWNLOAD_TIMEOUT");
+        assert_eq!(error["context"]["timeout"], "900");
+    }
 
     #[test]
     fn skill_state_lock_allows_snapshots_but_excludes_writers() {

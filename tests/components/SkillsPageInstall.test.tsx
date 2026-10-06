@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -10,6 +10,7 @@ import type {
   SkillRepoFailure,
   SkillsShDiscoverableSkill,
   SkillsShSearchResult,
+  SkillInstallProgress,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 
@@ -167,6 +168,58 @@ describe("SkillsPage (Discover)", () => {
     m.installed = [];
     m.repos = [];
     searchCache.clear();
+  });
+
+  it("isolates concurrent progress and removes it when an install fails", async () => {
+    m.repos = [makeRepo()];
+    m.discoverable = [
+      makeDiscoverable(),
+      makeDiscoverable({
+        key: "second",
+        name: "second-skill",
+        directory: "second-skill",
+      }),
+    ];
+    const callbacks: Record<string, (event: SkillInstallProgress) => void> = {};
+    const rejects: Record<string, (error: Error) => void> = {};
+    m.install.mockImplementation(({ skill, onProgress }) => {
+      callbacks[skill.key] = onProgress;
+      return new Promise((_resolve, reject) => {
+        rejects[skill.key] = reject;
+      });
+    });
+    renderPage();
+    for (const button of screen.getAllByRole("button", {
+      name: "skillsPage.discover.installAria",
+    })) {
+      await userEvent.click(button);
+    }
+    act(() => {
+      callbacks[m.discoverable[0].key]({
+        phase: "downloading",
+        downloadedBytes: 1024,
+        totalBytes: 4096,
+      });
+      callbacks.second({
+        phase: "downloading",
+        downloadedBytes: 2048,
+        totalBytes: null,
+      });
+    });
+    const bars = screen.getAllByRole("progressbar");
+    expect(bars[0]).toHaveAttribute("aria-valuenow", "25");
+    expect(bars[1]).not.toHaveAttribute("aria-valuenow");
+    await act(async () => {
+      rejects[m.discoverable[0].key](new Error("timeout"));
+    });
+    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "skillsPage.discover.retryAria" }),
+    ).toBeInTheDocument();
+    await act(async () => {
+      rejects.second(new Error("timeout"));
+    });
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
   it("installs the chosen skills.sh result into the first install-to app", async () => {

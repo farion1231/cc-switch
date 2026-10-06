@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ExternalLink, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
 import { HoverTip } from "@/components/ui/hover-tip";
 import { settingsApi } from "@/lib/api";
 import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
+import { skillsApi } from "@/lib/api/skills";
 import { cn } from "@/lib/utils";
 import {
   CHECKBOX_CLASS,
@@ -66,6 +67,60 @@ export function RepoManagerPanel({
   const [branch, setBranch] = useState("");
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
+  const [timeoutSeconds, setTimeoutSeconds] = useState("");
+  const [savedTimeout, setSavedTimeout] = useState<number>();
+  const [timeoutError, setTimeoutError] = useState("");
+  const [timeoutSaved, setTimeoutSaved] = useState(false);
+  const [loadingTimeout, setLoadingTimeout] = useState(true);
+  const [savingTimeout, setSavingTimeout] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setLoadingTimeout(true);
+    setTimeoutError("");
+    skillsApi.getDownloadTimeout().then(
+      (seconds) => {
+        if (!active) return;
+        setTimeoutSeconds(String(seconds));
+        setSavedTimeout(seconds);
+        setLoadingTimeout(false);
+      },
+      () => {
+        if (!active) return;
+        setTimeoutError(t("skills.repo.timeoutLoadFailed"));
+        setLoadingTimeout(false);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [t, loadAttempt]);
+
+  const handleSaveTimeout = async () => {
+    const seconds = Number(timeoutSeconds);
+    if (
+      !/^\d+$/.test(timeoutSeconds) ||
+      !Number.isInteger(seconds) ||
+      seconds < 1 ||
+      seconds > 3600
+    ) {
+      setTimeoutError(t("skills.repo.timeoutInvalid"));
+      return;
+    }
+    setSavingTimeout(true);
+    setTimeoutError("");
+    setTimeoutSaved(false);
+    try {
+      await skillsApi.setDownloadTimeout(seconds);
+      setSavedTimeout(seconds);
+      setTimeoutSaved(true);
+    } catch {
+      setTimeoutError(t("skills.repo.timeoutSaveFailed"));
+    } finally {
+      setSavingTimeout(false);
+    }
+  };
 
   const handleAdd = async () => {
     setError("");
@@ -110,6 +165,94 @@ export function RepoManagerPanel({
           <SheetTitle>{t("skills.repo.title")}</SheetTitle>
         </SheetHeader>
         <SheetBody className="flex flex-col gap-6 px-6 pb-6 pt-5">
+          <section
+            aria-labelledby="sk-repo-timeout-title"
+            className="flex flex-col gap-3"
+          >
+            <h3
+              id="sk-repo-timeout-title"
+              className="m-0 text-body font-semibold text-fg-1"
+            >
+              {t("skills.repo.downloadSettings")}
+            </h3>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="sk-repo-timeout" className={LABEL_CLASS}>
+                {t("skills.repo.downloadTimeout")}
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="sk-repo-timeout"
+                  type="number"
+                  min={1}
+                  max={3600}
+                  step={1}
+                  className={cn(
+                    MONO_FIELD_CLASS,
+                    "min-w-0 flex-1 tabular-nums",
+                  )}
+                  value={timeoutSeconds}
+                  disabled={
+                    loadingTimeout ||
+                    savingTimeout ||
+                    savedTimeout === undefined
+                  }
+                  aria-invalid={Boolean(timeoutError)}
+                  aria-describedby={
+                    timeoutError
+                      ? "sk-repo-timeout-error sk-repo-timeout-help"
+                      : "sk-repo-timeout-help"
+                  }
+                  onChange={(event) => {
+                    setTimeoutSeconds(event.target.value);
+                    setTimeoutError("");
+                    setTimeoutSaved(false);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !savingTimeout)
+                      void handleSaveTimeout();
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="neutral"
+                  size="regular"
+                  disabled={
+                    loadingTimeout ||
+                    savingTimeout ||
+                    (savedTimeout !== undefined &&
+                      Number(timeoutSeconds) === savedTimeout)
+                  }
+                  onClick={() =>
+                    savedTimeout === undefined
+                      ? setLoadAttempt((attempt) => attempt + 1)
+                      : void handleSaveTimeout()
+                  }
+                >
+                  {savedTimeout === undefined && !loadingTimeout
+                    ? t("common.retry")
+                    : savingTimeout
+                      ? t("common.saving")
+                      : t("common.save")}
+                </Button>
+              </div>
+              <p
+                id="sk-repo-timeout-help"
+                className="m-0 text-caption leading-relaxed text-fg-2"
+              >
+                {t("skills.repo.downloadTimeoutHelp")}
+              </p>
+              {timeoutError && (
+                <FieldError id="sk-repo-timeout-error">
+                  {timeoutError}
+                </FieldError>
+              )}
+              {timeoutSaved && (
+                <p role="status" className="m-0 text-caption text-success-text">
+                  {t("skills.repo.timeoutSaved")}
+                </p>
+              )}
+            </div>
+          </section>
           <section
             aria-labelledby="sk-repo-add-title"
             className="flex flex-col gap-3"

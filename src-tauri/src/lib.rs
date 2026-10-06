@@ -1580,6 +1580,8 @@ pub fn run() {
             commands::uninstall_skill_for_app,
             commands::get_skill_repos,
             commands::add_skill_repo,
+            commands::get_skill_download_timeout,
+            commands::set_skill_download_timeout,
             commands::remove_skill_repo,
             commands::install_skills_from_zip,
             // Auto launch

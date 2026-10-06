@@ -485,6 +485,9 @@ pub struct AppSettings {
     /// Skill 存储位置：cc_switch（默认）或 unified（~/.agents/skills/）
     #[serde(default)]
     pub skill_storage_location: SkillStorageLocation,
+    /// Skill 仓库下载超时（秒），包含分支回退的总等待时间。
+    #[serde(default = "default_skill_download_timeout")]
+    pub skill_download_timeout_seconds: u64,
 
     // ===== WebDAV 同步设置 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -582,6 +585,7 @@ impl Default for AppSettings {
             current_provider_hermes: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
+            skill_download_timeout_seconds: default_skill_download_timeout(),
             webdav_sync: None,
             s3_sync: None,
             webdav_backup: None,
@@ -1093,6 +1097,32 @@ pub fn get_effective_current_provider(
 
 // ===== Skill 同步方式管理函数 =====
 
+pub const MAX_SKILL_DOWNLOAD_TIMEOUT_SECONDS: u64 = 3600;
+
+fn default_skill_download_timeout() -> u64 {
+    60
+}
+
+/// 手动编辑配置产生非法值时使用默认值，避免立即超时或无限等待。
+pub fn get_skill_download_timeout_seconds() -> u64 {
+    let seconds = get_settings().skill_download_timeout_seconds;
+    if (1..=MAX_SKILL_DOWNLOAD_TIMEOUT_SECONDS).contains(&seconds) {
+        seconds
+    } else {
+        default_skill_download_timeout()
+    }
+}
+
+/// 通过原子设置更新保存超时，避免覆盖并发修改的其他本机配置。
+pub fn set_skill_download_timeout_seconds(seconds: u64) -> Result<(), AppError> {
+    if !(1..=MAX_SKILL_DOWNLOAD_TIMEOUT_SECONDS).contains(&seconds) {
+        return Err(AppError::Message(
+            "下载超时必须是 1～3600 秒的整数".to_string(),
+        ));
+    }
+    mutate_settings(|settings| settings.skill_download_timeout_seconds = seconds)
+}
+
 /// 获取 Skill 同步方式配置
 pub fn get_skill_sync_method() -> SyncMethod {
     settings_store()
@@ -1212,6 +1242,29 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn legacy_settings_default_download_timeout_and_preserve_custom_value() {
+        let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("skillDownloadTimeoutSeconds");
+        let settings: AppSettings = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(settings.skill_download_timeout_seconds, 60);
+        legacy["skillDownloadTimeoutSeconds"] = serde_json::json!(900);
+        let settings: AppSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(settings.skill_download_timeout_seconds, 900);
+        let roundtrip: AppSettings =
+            serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
+        assert_eq!(roundtrip.skill_download_timeout_seconds, 900);
+    }
+
+    #[test]
+    fn invalid_download_timeouts_are_rejected_before_writing_settings() {
+        assert!(set_skill_download_timeout_seconds(0).is_err());
+        assert!(set_skill_download_timeout_seconds(3601).is_err());
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {

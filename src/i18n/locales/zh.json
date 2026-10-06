@@ -3194,7 +3194,14 @@
       "addFailed": "添加失败",
       "removeSuccess": "仓库 {{owner}}/{{name}} 已删除",
       "removeFailed": "删除失败",
-      "skillCount": "识别到 {{count}} 个技能"
+      "skillCount": "识别到 {{count}} 个技能",
+      "downloadSettings": "下载设置",
+      "downloadTimeout": "下载超时（秒）",
+      "downloadTimeoutHelp": "默认 60 秒，可设置 1～3600 秒。适用于所有仓库的发现、安装和更新下载，保存后从下次下载起生效。",
+      "timeoutInvalid": "请输入 1～3600 秒的整数。",
+      "timeoutLoadFailed": "无法读取超时设置，请重试。",
+      "timeoutSaveFailed": "保存失败，请重试。",
+      "timeoutSaved": "超时设置已保存"
     },
     "search": "搜索技能",
     "searchPlaceholder": "搜索技能名称或仓库名称...",
@@ -3308,7 +3315,14 @@
       "syncCopyDesc": "占用更多空间，更新后会重新复制",
       "moveHint": "切换位置会把 {{count}} 个 Skill 移动过去。"
     },
-    "updatesIncomplete": "没有发现更新，但有 {{count}} 个仓库没有读到"
+    "updatesIncomplete": "没有发现更新，但有 {{count}} 个仓库没有读到",
+    "installProgress": {
+      "preparing": "准备下载",
+      "downloading": "下载中",
+      "extracting": "解压中",
+      "installing": "安装与同步中",
+      "completed": "安装完成"
+    }
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",

@@ -48,6 +48,8 @@ fn merge_settings_for_save(
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
     incoming.local_migrations = existing.local_migrations.clone();
+    // 此项由仓库管理的专用命令保存，避免其他设置页的旧快照覆盖它。
+    incoming.skill_download_timeout_seconds = existing.skill_download_timeout_seconds;
     incoming
 }
 
@@ -320,6 +322,19 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn other_settings_saves_do_not_overwrite_repository_download_timeout() {
+        let existing = AppSettings {
+            skill_download_timeout_seconds: 900,
+            ..AppSettings::default()
+        };
+        let incoming = AppSettings::default();
+        assert_eq!(
+            merge_settings_for_save(incoming, &existing).skill_download_timeout_seconds,
+            900
+        );
+    }
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
