@@ -13,7 +13,10 @@ use super::{
     handlers,
     log_codes::srv as log_srv,
     provider_router::ProviderRouter,
-    providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
+    providers::{
+        codex_chat_history::CodexChatHistoryStore, codex_compaction::CompactionReplayStore,
+        gemini_shadow::GeminiShadowStore,
+    },
     types::*,
     ProxyError,
 };
@@ -44,6 +47,8 @@ pub struct ProxyState {
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
+    /// 压缩回合见证记录，用于判定游标整流删 previous_response_id 是否有依据
+    pub codex_compaction_replay: CompactionReplayStore,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -87,6 +92,7 @@ impl ProxyServer {
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            codex_compaction_replay: CompactionReplayStore::default(),
             app_handle,
             failover_manager,
         };

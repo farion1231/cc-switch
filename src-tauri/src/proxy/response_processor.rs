@@ -8,6 +8,7 @@ use super::{
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
+    providers::codex_compaction::CompactionWitnessObserver,
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
@@ -205,6 +206,8 @@ pub async fn handle_streaming(
         stream,
         ctx.tag,
         usage_collector,
+        // 普通响应签发/复用的 response id 与一条仍在册的压缩见证重名时，在转发现场作废它。
+        CompactionWitnessObserver::for_context(ctx, &state.codex_compaction_replay),
         timeout_config,
         connection_guard,
     );
@@ -244,6 +247,18 @@ pub async fn handle_non_streaming(
         ctx.tag,
         body_bytes.len()
     );
+
+    // 普通非流式成功响应也会给客户端签发 response id；一旦与一条仍在册的压缩见证
+    // 重名，那条见证必须作废——id 的语义已经被这次响应改写。
+    if status.is_success() {
+        if let Some(observer) =
+            CompactionWitnessObserver::for_context(ctx, &state.codex_compaction_replay)
+        {
+            if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
+                observer.observe_json_response(&json_value);
+            }
+        }
+    }
 
     // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
     if usage_logging_enabled(state) {
@@ -732,6 +747,9 @@ pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
     usage_collector: Option<SseUsageCollector>,
+    // 普通响应复用一条仍在册的压缩见证 response id 时，在转发现场作废那条见证（只对
+    // 与见证记录/游标整流同一作用面的 Codex / GrokBuild 且客户端提供了稳定会话身份时存在）。
+    witness_observer: Option<CompactionWitnessObserver>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
@@ -741,8 +759,9 @@ pub fn create_logged_passthrough_stream(
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
-        let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+        let inspect_sse_events = collector.is_some()
+            || witness_observer.is_some()
+            || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -807,6 +826,9 @@ pub fn create_logged_passthrough_stream(
                                     if let Some(data) = strip_sse_field(line, "data") {
                                         if let Some(c) = &collector {
                                             c.observe_data(event_name, data);
+                                        }
+                                        if let Some(observer) = &witness_observer {
+                                            observer.observe_sse_event(event_name, data);
                                         }
                                         if data.trim() != "[DONE]" {
                                             let collected = match &collector {
@@ -981,6 +1003,7 @@ mod tests {
             upstream,
             "test",
             Some(collector),
+            None,
             StreamingTimeoutConfig {
                 first_byte_timeout: 0,
                 idle_timeout: 0,
@@ -999,6 +1022,54 @@ mod tests {
             latency_ms >= first_token_ms + 50,
             "first_token_ms={first_token_ms}, latency_ms={latency_ms}"
         );
+    }
+
+    /// 回归：透传流在转发 `response.completed` 的现场作废被普通响应复用的见证 response
+    /// id；其余事件（如 response.created）不能动见证，别的 id 也不受影响。没有 usage
+    /// collector、也没开 debug 日志：观察器自身必须触发 SSE 解析。
+    #[tokio::test]
+    async fn logged_passthrough_stream_invalidates_a_reused_witness_on_completed() {
+        use crate::proxy::providers::codex_compaction::{
+            CompactionReplayStore, CompactionWitnessObserver,
+        };
+
+        let replay = CompactionReplayStore::default();
+        assert!(replay.record("session-1", "resp_same", "summary B"));
+        assert!(replay.record("session-1", "resp_other", "summary C"));
+        let observer = CompactionWitnessObserver::new(replay.clone(), "session-1".to_string());
+
+        let upstream = async_stream::stream! {
+            yield Ok::<_, std::io::Error>(Bytes::from(
+                "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_same\"}}\n\n",
+            ));
+            yield Ok(Bytes::from(
+                "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_other\"}}\n\n",
+            ));
+        };
+        let stream = create_logged_passthrough_stream(
+            upstream,
+            "test",
+            None,
+            Some(observer),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        futures::pin_mut!(stream);
+        let mut forwarded = String::new();
+        while let Some(chunk) = stream.next().await {
+            forwarded.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
+        }
+
+        assert!(forwarded.contains("response.completed"), "{forwarded}");
+        // created 事件带着 resp_same：见证不能被它动掉；completed 带着 resp_other：作废它。
+        assert_eq!(
+            replay.lookup("session-1", "resp_same").as_deref(),
+            Some("summary B")
+        );
+        assert_eq!(replay.lookup("session-1", "resp_other"), None);
     }
 
     #[test]

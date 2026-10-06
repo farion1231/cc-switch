@@ -15,8 +15,12 @@ use super::{
     },
     provider_router::ProviderRouter,
     providers::{
-        codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
-        AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
+        codex_chat_history::CodexChatHistoryStore,
+        codex_compaction::{
+            anchor_request_on_replay_summary, CompactionReplayStore, ReplayAnchorOutcome,
+        },
+        gemini_shadow::GeminiShadowStore,
+        get_adapter, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
@@ -343,6 +347,9 @@ pub struct RequestForwarder {
     current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     gemini_shadow: Arc<GeminiShadowStore>,
     codex_chat_history: Arc<CodexChatHistoryStore>,
+    /// 压缩回合见证记录：整流删 `previous_response_id` 前核对"这个游标是不是代理
+    /// 见证过的压缩响应"，核对得上才允许无游标重放（见 `CompactionReplayStore`）。
+    compaction_replay: CompactionReplayStore,
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
@@ -353,6 +360,10 @@ pub struct RequestForwarder {
     session_id: String,
     /// Session ID 是否由客户端提供；生成值不能作为上游缓存身份。
     session_client_provided: bool,
+    /// 压缩见证的隔离键（thread 级，来自 `RequestContext`）。None 时见证查询
+    /// fail-closed：`session-id` 被 root 与 descendant 线程共享，单凭它做隔离
+    /// 会让 sibling 线程互相命中对方的压缩见证。
+    witness_key: Option<String>,
     /// 整流器配置
     rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -372,6 +383,14 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+}
+
+/// 密文整流的一次重试计划：要清哪些状态，外加（仅删游标时）从见证记录里取回的压缩
+/// 摘要——整流前把摘要锚回 `input`，游标指向的历史由它接替。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpaqueStateRetryPlan {
+    rejection: OpaqueStateRejection,
+    replay_summary: Option<String>,
 }
 
 impl RequestForwarder {
@@ -421,19 +440,30 @@ impl RequestForwarder {
     }
 
     /// 反应式密文重试判定：原样转发的 Responses 上游拒绝了请求里别家签发的密文时，
-    /// 返回要去掉哪些状态，对同一供应商重试一次。
+    /// 返回要去掉哪些状态，对同一供应商重试。最多两轮：跨供应商的请求可能同时带着别家的
+    /// 响应游标和别家密文，上游一次只报一个——第一轮清掉被点名的那类（比如游标），重试后
+    /// 上游改报另一类（密文），第二轮再清一次。每轮只清被点名的那类，不误伤这家自己签发的状态。
+    ///
+    /// 游标维度的输入前提是请求自带非空游标：标准 Codex HTTP 请求体不含该字段（游标只
+    /// 随 Responses WebSocket 的 `response.create` 发送，见 `opaque_state_rectifier` 的
+    /// 可达性说明），无游标时直接 fail-closed。在这一前提之上另加一道见证核对：记录里
+    /// 查不到"这个游标是代理见证过的压缩响应"时，游标维度不参与整流（fail-closed，原样
+    /// 返回查找错误）；核对得上则把摘要放进 plan，整流前锚回 `input`——游标协议保证客户端
+    /// 在压缩响应之后没有别的回合，摘要覆盖压缩点之前的全部对话，两段拼起来就是完整历史。
     ///
     /// 转成 Chat / Anthropic 的上游收不到这些密文，不参与。受整流器总开关管辖。
+    /// 整流重试是兼容性修复，不计入 `max_retries` 的 provider 故障转移预算（与 thinking /
+    /// media 整流器的既有语义一致）。
     fn opaque_state_retry_rejection(
         &self,
         app_type: &AppType,
         provider: &Provider,
         codex_upstream_format: Option<CodexUpstreamFormat>,
-        already_retried: bool,
+        attempts: u8,
         request: &Value,
         error: &ProxyError,
-    ) -> Option<OpaqueStateRejection> {
-        if already_retried
+    ) -> Option<OpaqueStateRetryPlan> {
+        if attempts >= 2
             || !matches!(app_type, AppType::Codex | AppType::GrokBuild)
             || codex_upstream_format != Some(CodexUpstreamFormat::NativeResponses)
         {
@@ -441,7 +471,37 @@ impl RequestForwarder {
         }
         let codex_third_party = matches!(app_type, AppType::Codex)
             && !super::providers::is_codex_official_provider(provider);
-        detect_opaque_state_rejection(error, &self.rectifier_config, request, codex_third_party)
+        let mut rejection = detect_opaque_state_rejection(
+            error,
+            &self.rectifier_config,
+            request,
+            codex_third_party,
+        )?;
+        let mut replay_summary = None;
+        if rejection.previous_response_id {
+            // 见证记录按 thread 级隔离键查询：`response_id` 由上游签发，第三方实现
+            // 之间没有全局唯一性保证，裸 id 命中有可能捡到别的对话链的摘要。
+            // Codex 的 `session-id` 被 root 与 descendant 线程共享（sibling 线程撞
+            // id 会串摘要），因此隔离键由 session 拼写与 thread-id 复合；没有这个
+            // 键（生成的 UUID / 只有会话级身份）时宁可查不到。
+            let witnessed = self.witness_key.as_deref().and_then(|witness_key| {
+                request
+                    .get("previous_response_id")
+                    .and_then(Value::as_str)
+                    .and_then(|cursor| self.compaction_replay.lookup(witness_key, cursor))
+            });
+            match witnessed {
+                Some(summary) => replay_summary = Some(summary),
+                None => rejection.previous_response_id = false,
+            }
+        }
+        if !rejection.reasoning && !rejection.compaction && !rejection.previous_response_id {
+            return None;
+        }
+        Some(OpaqueStateRetryPlan {
+            rejection,
+            replay_summary,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -452,11 +512,13 @@ impl RequestForwarder {
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
         gemini_shadow: Arc<GeminiShadowStore>,
         codex_chat_history: Arc<CodexChatHistoryStore>,
+        compaction_replay: CompactionReplayStore,
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
         session_id: String,
         session_client_provided: bool,
+        witness_key: Option<String>,
         streaming_first_byte_timeout: u64,
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
@@ -473,11 +535,13 @@ impl RequestForwarder {
             current_providers,
             gemini_shadow,
             codex_chat_history,
+            compaction_replay,
             failover_manager,
             app_handle,
             current_provider_id_at_start,
             session_id,
             session_client_provided,
+            witness_key,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
@@ -816,7 +880,7 @@ impl RequestForwarder {
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
-            let mut opaque_rectifier_retried = false;
+            let mut opaque_rectifier_attempts = 0u8;
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
@@ -984,62 +1048,90 @@ impl RequestForwarder {
                         }
                     }
 
-                    if let Some(rejection) = self.opaque_state_retry_rejection(
+                    // 密文整流器：最多两轮。第一轮清掉上游点名的那类状态，重试后上游可能
+                    // 改报另一类（跨供应商请求常同时带着别家的响应游标和别家密文），第二轮
+                    // 再清一次后重试。每轮只清被点名的那类，不误伤这家自己签发的状态。
+                    let mut opaque_retry_body = provider_body.clone();
+                    while let Some(mut plan) = self.opaque_state_retry_rejection(
                         app_type,
                         provider,
                         attempted_codex_upstream_format,
-                        opaque_rectifier_retried,
-                        &provider_body,
+                        opaque_rectifier_attempts,
+                        &opaque_retry_body,
                         &e,
                     ) {
-                        let mut opaque_body = provider_body.clone();
-                        let rectified = rectify_opaque_state(&mut opaque_body, rejection);
-                        if rectified.applied {
-                            let _ = std::mem::replace(&mut opaque_rectifier_retried, true);
-                            log::info!(
-                                "[{app_type_str}] [RECT-020] 上游拒绝了请求里别家签发的状态，去掉 {} 个推理条目、{} 个加密片段、{} 个别家 id，换掉 {} 个压缩条目后对 provider={} 重试一次",
-                                rectified.removed_reasoning_items,
-                                rectified.replaced_encrypted_parts,
-                                rectified.removed_foreign_ids,
-                                rectified.replaced_compaction_items,
-                                provider.id
-                            );
-
-                            let mut opaque_retry_codex_upstream_format = None;
-                            match self
-                                .forward(
-                                    app_type,
-                                    &method,
-                                    provider,
-                                    endpoint,
-                                    &opaque_body,
-                                    &headers,
-                                    &extensions,
-                                    adapter.as_ref(),
-                                    &mut opaque_retry_codex_upstream_format,
-                                )
-                                .await
+                        // 见证过的压缩游标：先把摘要锚回 `input`（游标指向的历史由摘要接替），
+                        // 再删游标。摘要在当前 input 形态下放不进去时放弃游标维度——
+                        // 删了游标又没补上历史的请求不能发出去；其余维度照旧整流。
+                        let mut anchored = false;
+                        if let Some(summary) = plan.replay_summary.as_deref() {
+                            match anchor_request_on_replay_summary(&mut opaque_retry_body, summary)
                             {
-                                Ok(forwarded) => {
-                                    log::info!("[{app_type_str}] [RECT-021] 密文整流重试成功");
-                                    return Ok(self
-                                        .finish_success(
-                                            provider,
-                                            app_type_str,
-                                            used_half_open_permit,
-                                            forwarded,
-                                            opaque_retry_codex_upstream_format,
-                                        )
-                                        .await);
+                                ReplayAnchorOutcome::Inserted => anchored = true,
+                                ReplayAnchorOutcome::AlreadyCarried => {}
+                                ReplayAnchorOutcome::Refused => {
+                                    plan.rejection.previous_response_id = false;
+                                    plan.replay_summary = None;
+                                    if !plan.rejection.reasoning && !plan.rejection.compaction {
+                                        break;
+                                    }
                                 }
-                                // 重试仍失败：按这次的错误走常规分类，和没整流过一样
-                                // 决定是否计入熔断、是否换下一家。
-                                Err(retry_err) => {
-                                    log::warn!(
-                                        "[{app_type_str}] [RECT-022] 密文整流重试仍失败: {retry_err}"
-                                    );
-                                    e = retry_err;
-                                }
+                            }
+                        }
+                        let rectified =
+                            rectify_opaque_state(&mut opaque_retry_body, plan.rejection);
+                        if !rectified.applied {
+                            break;
+                        }
+                        opaque_rectifier_attempts += 1;
+                        log::info!(
+                            "[{app_type_str}] [RECT-020] 上游拒绝了请求里别家签发的状态，去掉 {} 个推理条目、{} 个加密片段、{} 个别家 id、{} 个响应游标{}，换掉 {} 个压缩条目后对 provider={} 重试一次",
+                            rectified.removed_reasoning_items,
+                            rectified.replaced_encrypted_parts,
+                            rectified.removed_foreign_ids,
+                            rectified.removed_previous_response_id,
+                            if anchored { "（锚回 1 份见证过的压缩摘要）" } else { "" },
+                            rectified.replaced_compaction_items,
+                            provider.id
+                        );
+
+                        let mut opaque_retry_codex_upstream_format = None;
+                        match self
+                            .forward(
+                                app_type,
+                                &method,
+                                provider,
+                                endpoint,
+                                &opaque_retry_body,
+                                &headers,
+                                &extensions,
+                                adapter.as_ref(),
+                                &mut opaque_retry_codex_upstream_format,
+                            )
+                            .await
+                        {
+                            Ok(forwarded) => {
+                                log::info!("[{app_type_str}] [RECT-021] 密文整流重试成功");
+                                return Ok(self
+                                    .finish_success(
+                                        provider,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                        forwarded,
+                                        opaque_retry_codex_upstream_format,
+                                    )
+                                    .await);
+                            }
+                            // 重试仍失败：用新的错误回到循环顶，换下一类状态再整流一次
+                            // （最多两轮）；没有新可整流内容时跳出，按这次的错误走常规分类。
+                            Err(retry_err) => {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-022] 密文整流重试仍失败: {retry_err}"
+                                );
+                                e = retry_err;
+                                // 记下这次实际使用的格式：第二轮整流判定以最近一次为准
+                                attempted_codex_upstream_format =
+                                    opaque_retry_codex_upstream_format;
                             }
                         }
                     }
@@ -4539,11 +4631,13 @@ mod tests {
             current_providers: Arc::new(RwLock::new(HashMap::new())),
             gemini_shadow: Arc::new(GeminiShadowStore::new()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            compaction_replay: CompactionReplayStore::default(),
             failover_manager: Arc::new(FailoverSwitchManager::new()),
             app_handle: None,
             current_provider_id_at_start: String::new(),
             session_id: String::new(),
             session_client_provided: false,
+            witness_key: None,
             rectifier_config: RectifierConfig::default(),
             optimizer_config: OptimizerConfig::default(),
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
@@ -6796,11 +6890,26 @@ mod tests {
         }
 
         fn forwarder(stack: bool) -> RequestForwarder {
-            let _ = rustls::crypto::ring::default_provider().install_default();
-            test_forwarder(Duration::from_secs(5), Duration::from_secs(5)).stack_request(stack)
+            forwarder_with_replay(stack, CompactionReplayStore::default())
         }
 
-        /// 官方做路由时 Codex 每个请求都带的 ChatGPT 身份。
+        /// 带压缩回合见证记录的转发器：游标整流删 `previous_response_id` 前，要在这里
+        /// 查到"这个会话里这个游标是代理见证过的压缩响应"。会话身份模拟客户端提供的
+        /// 稳定值（`session-1`）；没有它见证查询会 fail-closed。
+        fn forwarder_with_replay(stack: bool, replay: CompactionReplayStore) -> RequestForwarder {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let mut forwarder =
+                test_forwarder(Duration::from_secs(5), Duration::from_secs(5)).stack_request(stack);
+            forwarder.compaction_replay = replay;
+            forwarder.session_id = "session-1".to_string();
+            forwarder.session_client_provided = true;
+            // 见证隔离键模拟 thread 级身份；与 record("session-1", ...) 的旧测试键同值。
+            forwarder.witness_key = Some("session-1".to_string());
+            forwarder
+        }
+
+        /// 官方做路由时 Codex 每个请求都带的 ChatGPT 身份。`session_id` / `session-id`
+        /// 两种拼写都带上：前者是历史兼容形态，后者是当前 codex-rs 实际发送的形态。
         fn chatgpt_headers() -> HeaderMap {
             let mut headers = HeaderMap::new();
             for (name, value) in [
@@ -6809,6 +6918,7 @@ mod tests {
                 ("chatgpt-account-id", "acct-workspace"),
                 ("originator", "codex_cli_rs"),
                 ("session_id", "session-1"),
+                ("session-id", "session-1"),
                 ("x-codex-turn-state", "state"),
                 ("openai-beta", "responses=experimental"),
                 ("x-oai-attestation", "device-proof"),
@@ -6893,6 +7003,7 @@ mod tests {
             )
             .await;
             assert!(seen.headers.contains_key("session_id"));
+            assert!(seen.headers.contains_key("session-id"));
         }
 
         /// 原生 Responses 第三方收不了 Codex 私有的压缩触发：改成不带工具的摘要回合，
@@ -7207,6 +7318,1010 @@ mod tests {
             assert_eq!(upstream.seen.lock().await.len(), 2);
         }
 
+        /// 跨供应商请求同时带着别家的响应游标和别家密文：上游先报游标查不到，清掉游标重试后
+        /// 改报密文验不了，第二轮再清密文——两轮之后成功；第一轮只删游标，不误删这家
+        /// 自己可能还查得到的推理条目。游标是代理见证过的压缩响应（记录里有），删之前把
+        /// 摘要锚回 input 开头：游标指向的历史由摘要接替。
+        #[tokio::test]
+        async fn foreign_cursor_rejection_escalates_to_a_second_rectifier_round() {
+            use crate::proxy::providers::codex_compaction::SUMMARY_PREFIX;
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_foreign'. Previous response not found."
+                } }),
+            );
+            let upstream =
+                scripted_upstream(vec![cursor_rejection, blob_rejection(), response_ok()]).await;
+            let mut request = history_with_foreign_reasoning();
+            request["previous_response_id"] = json!("resp_foreign");
+            // 见证记录：resp_foreign 是代理亲手见证的压缩回合，摘要覆盖压缩点之前的全部历史。
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-1", "resp_foreign", "prior work"));
+            let result = forwarder_with_replay(true, replay)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await;
+            assert!(result.is_ok());
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 3);
+            // 第一次原样发出：游标和推理条目都在。
+            assert_eq!(seen[0].body["previous_response_id"], "resp_foreign");
+            assert!(carries_reasoning(&seen[0]));
+            // 第一轮只删游标：这家自己可能的推理条目保留；见证过的摘要锚回 input 开头。
+            assert!(seen[1].body.get("previous_response_id").is_none());
+            assert!(carries_reasoning(&seen[1]));
+            assert_eq!(seen[1].body["input"][0]["type"], "message");
+            assert_eq!(
+                seen[1].body["input"][0]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nprior work")
+            );
+            // 第二轮清掉密文类状态后再重试：摘要依据原样保留。
+            assert!(seen[2].body.get("previous_response_id").is_none());
+            assert!(!carries_reasoning(&seen[2]));
+            assert_eq!(seen[2].body["input"][0]["type"], "message");
+            assert_eq!(
+                seen[2].body["input"][0]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nprior work")
+            );
+        }
+
+        /// 游标被拒而密文类没被点名：游标是代理见证过的压缩响应（记录里有），删游标前把
+        /// 摘要锚回 input 开头，一轮就成功，推理条目不动。
+        #[tokio::test]
+        async fn cursor_only_rejection_retries_without_touching_reasoning() {
+            use crate::proxy::providers::codex_compaction::SUMMARY_PREFIX;
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "previous_response_id not found for this caller"
+                } }),
+            );
+            let upstream = scripted_upstream(vec![cursor_rejection, response_ok()]).await;
+            let mut request = history_with_foreign_reasoning();
+            request["previous_response_id"] = json!("resp_foreign");
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-1", "resp_foreign", "prior work"));
+            let result = forwarder_with_replay(true, replay)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await;
+            assert!(result.is_ok());
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(seen[1].body.get("previous_response_id").is_none());
+            assert!(carries_reasoning(&seen[1]));
+            // 见证过的摘要锚回 input 开头，内容为统一形态。
+            assert_eq!(seen[1].body["input"][0]["type"], "message");
+            assert_eq!(
+                seen[1].body["input"][0]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nprior work")
+            );
+        }
+
+        /// 游标 + 增量函数输出（携带游标的续聊形态，见 providers::codex_chat_history）：
+        /// 匹配的调用只在被拒游标后面，且这个游标没有见证记录（不是代理亲见的压缩回合），
+        /// 证明不了删掉游标后历史完整。宁可按"查不到"原样报错，也不删掉游标发第二次
+        /// 请求——上游要是照收，就成了丢上下文的静默成功。
+        #[tokio::test]
+        async fn incremental_function_call_output_is_not_retried_without_history() {
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_a'. Previous response not found."
+                } }),
+            );
+            // 只备一次应答：若代码真的发了第二次请求，脚本耗尽会直接翻车。
+            let upstream = scripted_upstream(vec![cursor_rejection]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_a");
+            request["input"] = json!([
+                { "type": "function_call_output", "call_id": "call_123", "output": "done" }
+            ]);
+            let error = forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("returned as-is");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].body["previous_response_id"], "resp_a");
+        }
+
+        /// 增量普通 user 回合：这个游标没有见证记录，整段历史可能只存在被拒游标后面。
+        /// 删掉游标重试即便上游照收 200，也是丢上下文的静默成功，所以原样返回错误，
+        /// 不发无游标的第二次请求。
+        #[tokio::test]
+        async fn cursor_only_incremental_user_turn_is_not_retried_without_history() {
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_a'. Previous response not found."
+                } }),
+            );
+            // 只备一次应答：若代码真的发了第二次请求，脚本耗尽会直接翻车。
+            let upstream = scripted_upstream(vec![cursor_rejection]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_a");
+            request["input"] = json!([
+                { "type": "message", "role": "user",
+                  "content": [{ "type": "input_text", "text": "continue from the previous answer" }] }
+            ]);
+            let error = forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("returned as-is");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].body["previous_response_id"], "resp_a");
+        }
+
+        /// 游标 + 最近一组完整工具对：配对完整只证明这组工具交互完整，且这个游标没有
+        /// 见证记录；上游点名游标查不到时也不删——更早的用户目标和约束可能只存在被拒
+        /// 游标后面。
+        #[tokio::test]
+        async fn cursor_only_recent_tool_pair_is_not_retried_without_history() {
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_a'. Previous response not found."
+                } }),
+            );
+            // 只备一次应答：若代码真的发了第二次请求，脚本耗尽会直接翻车。
+            let upstream = scripted_upstream(vec![cursor_rejection]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_a");
+            request["input"] = json!([
+                { "type": "function_call", "call_id": "call_123", "name": "shell", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "call_123", "output": "done" }
+            ]);
+            let error = forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("returned as-is");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].body["previous_response_id"], "resp_a");
+        }
+
+        /// 游标 + 仅推理条目与当前 user 回合：游标没有见证记录，首轮就不删游标，也就
+        /// 不会有"第二轮清掉推理、最后发出裸 user 请求"的蚀空路径。原错误直接返回。
+        #[tokio::test]
+        async fn cursor_and_encrypted_rejections_do_not_end_in_a_bare_user_request() {
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_a'. Previous response not found."
+                } }),
+            );
+            // 只备一次应答：若代码真的发了第二次请求，脚本耗尽会直接翻车。
+            let upstream = scripted_upstream(vec![cursor_rejection]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_a");
+            request["input"] = json!([
+                { "type": "reasoning", "id": "rs_1", "summary": [],
+                  "encrypted_content": "gAAAA-other-org" },
+                { "type": "message", "role": "user",
+                  "content": [{ "type": "input_text", "text": "continue" }] }
+            ]);
+            let error = forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("returned as-is");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].body["previous_response_id"], "resp_a");
+        }
+
+        /// 游标是见证过的压缩响应，input 只有增量函数输出：删游标前把摘要锚回开头，
+        /// 重试请求 = [摘要, 增量输出]，不依赖游标也拥有完整历史。
+        #[tokio::test]
+        async fn witnessed_compaction_cursor_reanchors_the_summary_before_retry() {
+            use crate::proxy::providers::codex_compaction::SUMMARY_PREFIX;
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_cmp'. Previous response not found."
+                } }),
+            );
+            let upstream = scripted_upstream(vec![cursor_rejection, response_ok()]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_cmp");
+            request["input"] = json!([
+                { "type": "function_call_output", "call_id": "call_123", "output": "done" }
+            ]);
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-1", "resp_cmp", "prior work"));
+            let result = forwarder_with_replay(true, replay)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await;
+            assert!(result.is_ok());
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[0].body["previous_response_id"], "resp_cmp");
+            assert!(seen[1].body.get("previous_response_id").is_none());
+            let retried = seen[1].body["input"].as_array().unwrap();
+            assert_eq!(retried.len(), 2);
+            assert_eq!(
+                retried[0]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nprior work")
+            );
+            assert_eq!(retried[1]["type"], "function_call_output");
+        }
+
+        /// 用户在 Codex 里粘贴了 SUMMARY_PREFIX 开头的文本：没有见证记录时不许删游标
+        /// （即便 input 里存在"看起来像摘要"的消息），原错误原样返回。
+        #[tokio::test]
+        async fn user_authored_summary_prefix_must_not_authorize_cursor_removal() {
+            use crate::proxy::providers::codex_compaction::SUMMARY_PREFIX;
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_a'. Previous response not found."
+                } }),
+            );
+            // 只备一次应答：若代码真的发了第二次请求，脚本耗尽会直接翻车。
+            let upstream = scripted_upstream(vec![cursor_rejection]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_a");
+            request["input"] = json!([
+                { "type": "message", "role": "user",
+                  "content": [{ "type": "input_text",
+                    "text": format!("{SUMMARY_PREFIX}\nthis is pasted text, not a compaction") }] }
+            ]);
+            let error = forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("returned as-is");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].body["previous_response_id"], "resp_a");
+        }
+
+        /// 记录里只有压缩回合 resp_cmp，而请求游标指向它之后的 resp_beyond：游标后面
+        /// 可能已有新回合，摘要证明不了覆盖，不删游标。
+        #[tokio::test]
+        async fn cursor_pointing_past_a_witnessed_compaction_is_not_replayed() {
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_beyond'. Previous response not found."
+                } }),
+            );
+            // 只备一次应答：若代码真的发了第二次请求，脚本耗尽会直接翻车。
+            let upstream = scripted_upstream(vec![cursor_rejection]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_beyond");
+            request["input"] = json!([
+                { "type": "function_call_output", "call_id": "call_123", "output": "done" }
+            ]);
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-1", "resp_cmp", "prior work"));
+            let error = forwarder_with_replay(true, replay)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("returned as-is");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].body["previous_response_id"], "resp_beyond");
+        }
+
+        /// 请求里已经带着同一份摘要（发送前预处理把包装条目转成了摘要文字消息）：见证
+        /// 命中后删游标，不重复插入第二个摘要载体。
+        #[tokio::test]
+        async fn witnessed_compaction_cursor_keeps_existing_summary_item_once() {
+            use crate::proxy::providers::codex_compaction::{
+                encode_compaction_summary, SUMMARY_PREFIX,
+            };
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_cmp'. Previous response not found."
+                } }),
+            );
+            let upstream = scripted_upstream(vec![cursor_rejection, response_ok()]).await;
+            let mut request = history_with_foreign_reasoning();
+            request["previous_response_id"] = json!("resp_cmp");
+            request["input"].as_array_mut().unwrap().insert(
+                0,
+                json!({ "type": "compaction",
+                    "encrypted_content": encode_compaction_summary("prior work") }),
+            );
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-1", "resp_cmp", "prior work"));
+            let result = forwarder_with_replay(true, replay)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await;
+            assert!(result.is_ok());
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(seen[1].body.get("previous_response_id").is_none());
+            let expected = format!("{SUMMARY_PREFIX}\nprior work");
+            let retried = seen[1].body["input"].as_array().unwrap();
+            let summary_carriers = retried
+                .iter()
+                .filter(|item| {
+                    item.pointer("/content/0/text").and_then(Value::as_str)
+                        == Some(expected.as_str())
+                })
+                .count();
+            assert_eq!(summary_carriers, 1);
+        }
+
+        /// 见证记录是别家会话写的：同样携带 `resp_shared` 的游标不能命中，不删游标，
+        /// 原查找错误原样返回——绝不让别家会话的摘要混进本会话请求。
+        #[tokio::test]
+        async fn witness_from_another_session_does_not_authorize_cursor_removal() {
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_shared'. Previous response not found."
+                } }),
+            );
+            // 只备一次应答：若代码真的发了第二次请求，脚本耗尽会直接翻车。
+            let upstream = scripted_upstream(vec![cursor_rejection]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_shared");
+            request["input"] = json!([
+                { "type": "function_call_output", "call_id": "call_123", "output": "done" }
+            ]);
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-other", "resp_shared", "summary of another session"));
+            let error = forwarder_with_replay(true, replay)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("returned as-is");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].body["previous_response_id"], "resp_shared");
+        }
+
+        /// 两个会话各自见证了相同 response id、不同摘要：本会话的 continuation 只能
+        /// 恢复自己的摘要，绝不能拿到别家的。
+        #[tokio::test]
+        async fn same_response_id_in_two_sessions_replays_only_its_own_summary() {
+            use crate::proxy::providers::codex_compaction::SUMMARY_PREFIX;
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_shared'. Previous response not found."
+                } }),
+            );
+            let upstream = scripted_upstream(vec![cursor_rejection, response_ok()]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_shared");
+            request["input"] = json!([
+                { "type": "function_call_output", "call_id": "call_123", "output": "done" }
+            ]);
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-other", "resp_shared", "summary of another session"));
+            assert!(replay.record("session-1", "resp_shared", "prior work"));
+            let result = forwarder_with_replay(true, replay)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await;
+            assert!(result.is_ok());
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(seen[1].body.get("previous_response_id").is_none());
+            assert_eq!(
+                seen[1].body["input"][0]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nprior work")
+            );
+        }
+
+        /// 客户端没提供 thread 级见证键（forwarder 只拿到每请求新生成的 UUID）：见证
+        /// 查询 fail-closed，即便记录里"碰巧"有同名 id 也不删游标。
+        #[tokio::test]
+        async fn without_a_client_session_a_witnessed_cursor_is_not_replayed() {
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_cmp'. Previous response not found."
+                } }),
+            );
+            // 只备一次应答：若代码真的发了第二次请求，脚本耗尽会直接翻车。
+            let upstream = scripted_upstream(vec![cursor_rejection]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_cmp");
+            request["input"] = json!([
+                { "type": "function_call_output", "call_id": "call_123", "output": "done" }
+            ]);
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-1", "resp_cmp", "prior work"));
+            let mut fwd = forwarder_with_replay(true, replay);
+            // 模拟客户端没给出可用的隔离身份（只有每请求新生成的 UUID / 只有会话级
+            // 身份）：见证查询没有键，fail-closed。
+            fwd.session_client_provided = false;
+            fwd.witness_key = None;
+            let error = fwd
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("returned as-is");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].body["previous_response_id"], "resp_cmp");
+        }
+
+        /// 生产入口回归：会话身份必须从 Codex CLI 实际发送的 wire 头提取。codex-rs 在
+        /// 每个 Responses 请求上发送连字符拼写的 `session-id` / `thread-id`
+        /// （codex-api/src/requests/headers.rs 的 build_session_headers，经
+        /// endpoint/responses.rs 注入）。这里完整走一遍真实链路：真实头 →
+        /// `extract_session_id`（handler_context 的入口）→ 用提取出的 thread 级见证键
+        /// 记录见证（对应 handlers.rs 的 `ctx.witness_key.clone()`）→ 同一 thread 的
+        /// 游标被拒 → 锚回摘要恢复。压缩流侧的记录环节由 codex_compaction 测试覆盖。
+        ///
+        /// 范围：本用例钉住的是"真实 wire 头 → 会话身份与见证键提取 → 见证恢复"这条链；
+        /// 请求体是携带游标的兼容形态（手工注入游标）。标准 Codex HTTP 请求体不含游标
+        /// （游标只随 WS `response.create` 发送），该边界由
+        /// `codex_http_schema_request_without_cursor_is_never_rectified` 另行钉住。
+        #[tokio::test]
+        async fn witness_recovery_uses_the_wire_headers_codex_actually_sends() {
+            use crate::proxy::providers::codex_compaction::SUMMARY_PREFIX;
+            use crate::proxy::session::{extract_session_id, SessionIdSource};
+
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_cmp'. Previous response not found."
+                } }),
+            );
+            let upstream = scripted_upstream(vec![cursor_rejection, response_ok()]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_cmp");
+            request["input"] = json!([
+                { "type": "function_call_output", "call_id": "call_123", "output": "done" }
+            ]);
+
+            // 真实 Codex wire 头：连字符拼写（fixture 里的下划线拼写是历史兼容形态）。
+            let mut headers = chatgpt_headers();
+            headers.insert(
+                "session-id",
+                "8b1f0b5e-6d3a-4c2f-9f0d-2a7c4e6b8d10".parse().unwrap(),
+            );
+            headers.insert(
+                "thread-id",
+                "1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f".parse().unwrap(),
+            );
+
+            // handler_context.rs 的生产入口：从请求本身提取会话身份。
+            let session = extract_session_id(&headers, &request, "codex");
+            assert_eq!(session.source, SessionIdSource::Header);
+            assert!(
+                session.client_provided,
+                "连字符 session-id 头必须被识别为客户端提供的稳定身份，否则见证与恢复永远不生效"
+            );
+            assert_eq!(
+                session.session_id,
+                "codex_8b1f0b5e-6d3a-4c2f-9f0d-2a7c4e6b8d10"
+            );
+            assert_eq!(
+                session.witness_key.as_deref(),
+                Some(
+                    "codex_8b1f0b5e-6d3a-4c2f-9f0d-2a7c4e6b8d10:\
+                     1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f"
+                ),
+                "游标恢复必须按 thread 级复合键查询，而不是共享的 session-id"
+            );
+
+            let replay = CompactionReplayStore::default();
+            // handlers.rs 的接线：只有客户端提供了完整的 thread 级见证键才留见证。
+            if let Some(witness_key) = &session.witness_key {
+                assert!(replay.record(witness_key, "resp_cmp", "prior work"));
+            }
+
+            // handler_context.rs create_forwarder 的接线：转发器拿提取结果。
+            let mut fwd = forwarder_with_replay(true, replay);
+            fwd.session_id = session.session_id.clone();
+            fwd.session_client_provided = session.client_provided;
+            fwd.witness_key = session.witness_key.clone();
+
+            let result = fwd
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    headers,
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await;
+            assert!(result.is_ok());
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(seen[1].body.get("previous_response_id").is_none());
+            assert_eq!(
+                seen[1].body["input"][0]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nprior work")
+            );
+        }
+
+        /// 生产形状回归：当前公开 Codex 的 HTTP 请求按 codex-api `ResponsesApiRequest` 的
+        /// 字段集序列化，不含 `previous_response_id`——Responses WebSocket 升级被本地代理
+        /// 426 拒绝后 Codex 改走 HTTP，游标只随 WS `response.create` 发送。因此标准 Codex
+        /// 请求在请求侧就不满足游标维度的输入前提：即使上游错误文本齐备地点名游标
+        /// （`param` 定位 + "not found" 原因），也不得发起整流重试。只备一次应答：若代码
+        /// 发了第二次请求，脚本耗尽会直接翻车；400 必须原样返回、发出去的 body 不被改写。
+        #[tokio::test]
+        async fn codex_http_schema_request_without_cursor_is_never_rectified() {
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "param": "previous_response_id",
+                    "message": "Invalid 'previous_response_id': 'resp_x'. Previous response not found."
+                } }),
+            );
+            let upstream = scripted_upstream(vec![cursor_rejection]).await;
+            // `ResponsesApiRequest` 的真实字段集（值取日常 CLI 形态；没有 previous_response_id）。
+            let mut request = body("gpt-5-codex", json!([]));
+            request["stream"] = json!(true);
+            request["tool_choice"] = json!("auto");
+            request["parallel_tool_calls"] = json!(false);
+            request["reasoning"] = json!({ "effort": "medium" });
+            request["store"] = json!(false);
+            request["include"] = json!([]);
+            request["prompt_cache_key"] = json!("8b1f0b5e-6d3a-4c2f-9f0d-2a7c4e6b8d10");
+            request["client_metadata"] = json!({ "originator": "codex_cli_rs" });
+
+            let error = forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("returned as-is");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert!(seen[0].body.get("previous_response_id").is_none());
+            assert_eq!(seen[0].body["model"], "gpt-5-codex");
+        }
+
+        /// witnessed compaction + 顶层 `input` 纯文本简写：锚回摘要时把 string 转成
+        /// 正规 message item，第二次发送的 input 全是合法条目，用户文本还在。
+        #[tokio::test]
+        async fn witnessed_compaction_cursor_normalizes_string_input() {
+            use crate::proxy::providers::codex_compaction::SUMMARY_PREFIX;
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_cmp'. Previous response not found."
+                } }),
+            );
+            let upstream = scripted_upstream(vec![cursor_rejection, response_ok()]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_cmp");
+            request["input"] = json!("continue");
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-1", "resp_cmp", "prior work"));
+            let result = forwarder_with_replay(true, replay)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await;
+            assert!(result.is_ok());
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(seen[1].body.get("previous_response_id").is_none());
+            let retried = seen[1].body["input"].as_array().unwrap();
+            assert_eq!(retried.len(), 2);
+            assert!(retried.iter().all(Value::is_object));
+            assert_eq!(
+                retried[0]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nprior work")
+            );
+            assert_eq!(retried[1]["type"], "message");
+            assert_eq!(retried[1]["role"], "user");
+            assert_eq!(retried[1]["content"][0]["text"], "continue");
+        }
+
+        /// 回归：同一会话切到另一家 Provider，那家的普通响应复用了见证过的 response id——
+        /// 旧见证被转发现场作废后，游标被拒时不得再授权"锚摘要 + 删游标"的恢复，原错误
+        /// 照常回给客户端（没有活见证就不重试）。
+        #[tokio::test]
+        async fn a_plain_response_reusing_a_witnessed_id_does_not_authorize_replay() {
+            use crate::proxy::providers::codex_compaction::{
+                CompactionReplayStore, CompactionWitnessObserver,
+            };
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_same'. Previous response not found."
+                } }),
+            );
+            // 只备一次应答：若代码真的发了第二次请求，脚本耗尽会直接翻车。
+            let upstream = scripted_upstream(vec![cursor_rejection]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_same");
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-1", "resp_same", "summary B"));
+
+            // Provider A 的普通响应也返回 resp_same：转发现场作废旧见证（response_processor
+            // / handlers 接线的核心动作）。
+            let observer = CompactionWitnessObserver::new(replay.clone(), "session-1".to_string());
+            observer.observe_sse_event(
+                Some("response.completed"),
+                r#"{"type":"response.completed","response":{"id":"resp_same"}}"#,
+            );
+            assert_eq!(replay.lookup("session-1", "resp_same"), None);
+
+            let error = forwarder_with_replay(true, replay)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("returned as-is");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].body["previous_response_id"], "resp_same");
+        }
+
+        /// 回归：被普通响应作废过的 id 后来又成为一次新的压缩回合——恢复只能锚回最新一次
+        /// 见证的摘要，被改写过语义的旧摘要绝不能出现。
+        #[tokio::test]
+        async fn a_reused_id_that_became_a_compaction_again_replays_only_the_latest_summary() {
+            use crate::proxy::providers::codex_compaction::{
+                CompactionReplayStore, CompactionWitnessObserver, SUMMARY_PREFIX,
+            };
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_same'. Previous response not found."
+                } }),
+            );
+            let upstream = scripted_upstream(vec![cursor_rejection, response_ok()]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_same");
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("session-1", "resp_same", "summary B"));
+
+            // Provider A 的普通响应复用了 resp_same：旧见证作废。
+            let observer = CompactionWitnessObserver::new(replay.clone(), "session-1".to_string());
+            observer.observe_json_response(&json!({ "id": "resp_same" }));
+            assert_eq!(replay.lookup("session-1", "resp_same"), None);
+
+            // 之后同一会话又一次压缩回合发回同一个 id：新摘要成为唯一见证。
+            assert!(replay.record("session-1", "resp_same", "summary B2"));
+
+            let result = forwarder_with_replay(true, replay)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await;
+            assert!(result.is_ok());
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(seen[1].body.get("previous_response_id").is_none());
+            assert_eq!(
+                seen[1].body["input"][0]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nsummary B2")
+            );
+        }
+
+        /// 回归（sibling thread 隔离·恢复侧）：同一 root session 下的两个 thread（Codex
+        /// 把 `session-id` 共享给 root 与所有 descendant，`thread-id` 各自独立）都完成过
+        /// 压缩，第三方 Provider 返回了相同的 response id——A 的游标被拒只能锚回 A 的
+        /// 摘要，B 同理由自己恢复，见证绝不能跨 thread 串。
+        #[tokio::test]
+        async fn sibling_threads_sharing_a_session_replay_only_their_own_summaries() {
+            use crate::proxy::providers::codex_compaction::SUMMARY_PREFIX;
+
+            let cursor_rejection = || {
+                (
+                    400,
+                    json!({ "error": {
+                        "type": "invalid_request_error",
+                        "message": "Invalid 'previous_response_id': 'resp_same'. Previous response not found."
+                    } }),
+                )
+            };
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("codex_shared_session:thread-a", "resp_same", "summary A"));
+            assert!(replay.record("codex_shared_session:thread-b", "resp_same", "summary B"));
+
+            for (thread_witness_key, expected_summary) in [
+                ("codex_shared_session:thread-a", "summary A"),
+                ("codex_shared_session:thread-b", "summary B"),
+            ] {
+                let upstream = scripted_upstream(vec![cursor_rejection(), response_ok()]).await;
+                let mut request = body("listed", json!([]));
+                request["previous_response_id"] = json!("resp_same");
+                let mut fwd = forwarder_with_replay(true, replay.clone());
+                fwd.witness_key = Some(thread_witness_key.to_string());
+
+                let result = fwd
+                    .forward_with_retry(
+                        &AppType::Codex,
+                        http::Method::POST,
+                        "/responses",
+                        request,
+                        chatgpt_headers(),
+                        Extensions::new(),
+                        vec![provider(&upstream, "openai_responses")],
+                    )
+                    .await;
+                assert!(
+                    result.is_ok(),
+                    "{thread_witness_key} 的游标应能按自己的见证恢复"
+                );
+
+                let seen = upstream.seen.lock().await;
+                assert_eq!(seen.len(), 2);
+                assert!(seen[1].body.get("previous_response_id").is_none());
+                assert_eq!(
+                    seen[1].body["input"][0]["content"][0]["text"],
+                    format!("{SUMMARY_PREFIX}\n{expected_summary}"),
+                    "只能锚回本 thread 的摘要，不得命中 sibling thread 的同名见证"
+                );
+            }
+        }
+
+        /// 回归（sibling thread 隔离·作废侧）：B 的普通响应复用了 A 见证过的 response id，
+        /// 而两者 thread 级见证键不同——B 的作废观察只作用于 B 自己的键，A 的见证仍在册，
+        /// A 的游标被拒后照常按自己的摘要恢复。
+        #[tokio::test]
+        async fn a_sibling_threads_plain_response_does_not_invalidate_the_other_threads_witness() {
+            use crate::proxy::providers::codex_compaction::{
+                CompactionWitnessObserver, SUMMARY_PREFIX,
+            };
+
+            let cursor_rejection = (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid 'previous_response_id': 'resp_same'. Previous response not found."
+                } }),
+            );
+            let upstream = scripted_upstream(vec![cursor_rejection, response_ok()]).await;
+            let mut request = body("listed", json!([]));
+            request["previous_response_id"] = json!("resp_same");
+            let replay = CompactionReplayStore::default();
+            assert!(replay.record("codex_shared_session:thread-a", "resp_same", "summary A"));
+
+            // sibling thread B 的普通响应也签发 resp_same：作废观察按 B 自己的见证键执行。
+            let observer = CompactionWitnessObserver::new(
+                replay.clone(),
+                "codex_shared_session:thread-b".to_string(),
+            );
+            observer.observe_json_response(&json!({ "id": "resp_same" }));
+            assert_eq!(
+                replay.lookup("codex_shared_session:thread-a", "resp_same"),
+                Some("summary A".to_string()),
+                "B 的普通响应不得作废 A 的见证"
+            );
+
+            let mut fwd = forwarder_with_replay(true, replay);
+            fwd.witness_key = Some("codex_shared_session:thread-a".to_string());
+            let result = fwd
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await;
+            assert!(result.is_ok());
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(seen[1].body.get("previous_response_id").is_none());
+            assert_eq!(
+                seen[1].body["input"][0]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nsummary A")
+            );
+        }
+
         /// Stack 模式下官方压缩过、再切到别家原生 Responses 模型：官方的压缩密文原样发出，
         /// 那家网关不认识、报错措辞又不在清单里时，只换掉压缩条目对同一家重试一次，
         /// 这家自己的推理条目照旧发。
@@ -7268,7 +8383,7 @@ mod tests {
                     &app_type,
                     provider,
                     Some(CodexUpstreamFormat::NativeResponses),
-                    false,
+                    0,
                     &request,
                     &unsupported,
                 )
@@ -7276,9 +8391,13 @@ mod tests {
 
             assert_eq!(
                 gate(AppType::Codex, &third_party),
-                Some(OpaqueStateRejection {
-                    reasoning: false,
-                    compaction: true
+                Some(OpaqueStateRetryPlan {
+                    rejection: OpaqueStateRejection {
+                        reasoning: false,
+                        compaction: true,
+                        previous_response_id: false,
+                    },
+                    replay_summary: None,
                 })
             );
             assert_eq!(gate(AppType::Codex, &official), None);
@@ -7313,13 +8432,17 @@ mod tests {
                     &AppType::Codex,
                     &provider,
                     Some(CodexUpstreamFormat::NativeResponses),
-                    false,
+                    0,
                     &request,
                     &unsupported,
                 ),
-                Some(OpaqueStateRejection {
-                    reasoning: false,
-                    compaction: true,
+                Some(OpaqueStateRetryPlan {
+                    rejection: OpaqueStateRejection {
+                        reasoning: false,
+                        compaction: true,
+                        previous_response_id: false,
+                    },
+                    replay_summary: None,
                 })
             );
             assert_eq!(
@@ -7327,7 +8450,7 @@ mod tests {
                     &AppType::Codex,
                     &provider,
                     Some(CodexUpstreamFormat::ChatCompletions),
-                    false,
+                    0,
                     &request,
                     &unsupported,
                 ),
