@@ -1,10 +1,20 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Label } from "@/components/ui/label";
+import { HelpTip } from "@/components/ui/help-tip";
 import JsonEditor from "@/components/JsonEditor";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
 import { CLAUDE_AUTO_MODE_SERVER_ENV } from "@/utils/claudeEditorOverlay";
 import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
+
+/** 编辑框上方的快捷开关，顺序即显示顺序；文案在 `claudeConfig.<key>` 和 `claudeConfig.<key>Help`。 */
+const QUICK_TOGGLES = [
+  "hideAttribution",
+  "enableToolSearch",
+  "disableAutoUpgrade",
+  "disableArtifact",
+  "disableAutoModeServer",
+] as const;
 
 interface CommonConfigEditorProps {
   value: string;
@@ -107,7 +117,7 @@ export function CommonConfigEditor({
   }, [localValue]);
 
   const handleToggle = useCallback(
-    (toggleKey: string, checked: boolean) => {
+    (toggleKey: (typeof QUICK_TOGGLES)[number], checked: boolean) => {
       try {
         const config = JSON.parse(localValue || "{}");
 
@@ -204,58 +214,22 @@ export function CommonConfigEditor({
         })}
       </p>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.hideAttribution}
-            onChange={(e) => handleToggle("hideAttribution", e.target.checked)}
-            className="ui-checkbox"
-          />
-          <span>{t("claudeConfig.hideAttribution")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.enableToolSearch}
-            onChange={(e) => handleToggle("enableToolSearch", e.target.checked)}
-            className="ui-checkbox"
-          />
-          <span>{t("claudeConfig.enableToolSearch")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.disableAutoUpgrade}
-            onChange={(e) =>
-              handleToggle("disableAutoUpgrade", e.target.checked)
-            }
-            className="ui-checkbox"
-          />
-          <span>{t("claudeConfig.disableAutoUpgrade")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.disableArtifact}
-            onChange={(e) => handleToggle("disableArtifact", e.target.checked)}
-            className="ui-checkbox"
-          />
-          <span>{t("claudeConfig.disableArtifact")}</span>
-        </label>
-        <label
-          className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer"
-          title={t("claudeConfig.disableAutoModeServerHint")}
-        >
-          <input
-            type="checkbox"
-            checked={toggleStates.disableAutoModeServer}
-            onChange={(e) =>
-              handleToggle("disableAutoModeServer", e.target.checked)
-            }
-            className="ui-checkbox"
-          />
-          <span>{t("claudeConfig.disableAutoModeServer")}</span>
-        </label>
+        {QUICK_TOGGLES.map((key) => (
+          <span key={key} className="inline-flex items-center gap-1">
+            <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={toggleStates[key]}
+                onChange={(e) => handleToggle(key, e.target.checked)}
+                className="ui-checkbox"
+              />
+              <span>{t(`claudeConfig.${key}`)}</span>
+            </label>
+            <HelpTip title={t(`claudeConfig.${key}`)}>
+              {t(`claudeConfig.${key}Help`)}
+            </HelpTip>
+          </span>
+        ))}
       </div>
       <JsonEditor
         value={localValue}

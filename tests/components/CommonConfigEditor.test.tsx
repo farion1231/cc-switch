@@ -139,3 +139,25 @@ describe("CommonConfigEditor auto mode server toggle", () => {
     expect(JSON.parse(onChange.mock.calls[0][0])).toEqual({});
   });
 });
+
+describe("CommonConfigEditor quick toggle help", () => {
+  it("gives every toggle a help button that does not toggle it", () => {
+    const onChange = renderEditor("{}");
+
+    for (const key of [
+      "hideAttribution",
+      "enableToolSearch",
+      "disableAutoUpgrade",
+      "disableArtifact",
+      "disableAutoModeServer",
+    ]) {
+      const help = screen.getByRole("button", { name: `claudeConfig.${key}` });
+      expect(help).toHaveAccessibleDescription(`claudeConfig.${key}Help`);
+      fireEvent.click(help);
+      expect(
+        screen.getByRole("checkbox", { name: `claudeConfig.${key}` }),
+      ).not.toBeChecked();
+    }
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
