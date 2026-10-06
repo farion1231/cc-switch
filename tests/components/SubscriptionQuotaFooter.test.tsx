@@ -247,3 +247,91 @@ describe("ChatGPT saved limit resets", () => {
     expect(screen.queryByText(/重置/)).not.toBeInTheDocument();
   });
 });
+
+describe("ChatGPT Credits balance", () => {
+  const credits = {
+    tool: "codex",
+    creditsBalance: 62500,
+    resetCredits: { expiresAt: ["2026-09-20T00:00:00Z", null] },
+  };
+  const usedUp: QuotaTier[] = [
+    { name: "five_hour", utilization: 100, resetsAt: null },
+    { name: "seven_day", utilization: 25, resetsAt: null },
+  ];
+
+  it("gets its own row in the expanded view: credits where the bar would be, dollars last", () => {
+    renderQuota(baseTiers, false, credits);
+    expect(screen.getByText("Credits")).toBeInTheDocument();
+    expect(screen.getByText("62,500")).toBeInTheDocument();
+    expect(screen.getByText("约 $2500")).toBeInTheDocument();
+    // 只有两档画额度条
+    expect(screen.getAllByRole("meter")).toHaveLength(2);
+  });
+
+  it("stays off the card while no tier is used up", () => {
+    renderQuota(baseTiers, true, credits);
+    expect(screen.queryByText(/\$2500/)).not.toBeInTheDocument();
+    expect(screen.getByText("重置 2 次")).toBeInTheDocument();
+  });
+
+  it("shows up on the card in dollars once a tier is used up, ahead of the resets", () => {
+    renderQuota(usedUp, true, credits);
+    expect(screen.getByText("$2500")).toBeInTheDocument();
+    expect(screen.getByText("每周 75%")).toBeInTheDocument();
+    // 合并行只放得下两段：余额排在重置次数前面
+    expect(screen.queryByText("重置 2 次")).not.toBeInTheDocument();
+    // 没有下拉段时整列是一个按钮，悬停说明里写全余额
+    expect(
+      screen.getByRole("button", { name: /\$2500/ }).getAttribute("title"),
+    ).toContain("Credits 余额 62,500");
+  });
+
+  it("keeps both the balance and the resets when the plan has a single tier", () => {
+    renderQuota(
+      [{ name: "seven_day", utilization: 100, resetsAt: null }],
+      true,
+      credits,
+    );
+    expect(screen.getByText("$2500")).toBeInTheDocument();
+    expect(screen.getByText("重置 2 次")).toBeInTheDocument();
+  });
+
+  it("is listed under the resets when they drop down on the card", () => {
+    renderQuota(baseTiers, true, credits);
+    fireEvent.click(
+      screen.getByRole("button", { name: "查看 2 次重置各自的到期时间" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "存下的限额重置" });
+    // 两次到期日 + 一条余额
+    expect(within(dialog).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(dialog).getByText("Credits")).toBeInTheDocument();
+    expect(within(dialog).getByText("62,500")).toBeInTheDocument();
+    expect(within(dialog).getByText("约 $2500")).toBeInTheDocument();
+  });
+
+  it("lets a single saved reset drop down too, so the balance can be seen", () => {
+    renderQuota(baseTiers, true, {
+      ...credits,
+      resetCredits: { expiresAt: ["2026-09-20T00:00:00Z"] },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "查看 1 次重置各自的到期时间" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "存下的限额重置" });
+    expect(within(dialog).getByText("约 $2500")).toBeInTheDocument();
+  });
+
+  it("does not repeat the balance inside the drop-down when expanded", () => {
+    renderQuota(baseTiers, false, credits);
+    fireEvent.click(
+      screen.getByRole("button", { name: "查看 2 次重置各自的到期时间" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "存下的限额重置" });
+    expect(within(dialog).getAllByRole("listitem")).toHaveLength(2);
+  });
+
+  it("stays out of sight without a balance", () => {
+    renderQuota(usedUp, false, { tool: "codex" });
+    expect(screen.queryByText("Credits")).not.toBeInTheDocument();
+  });
+});

@@ -4154,6 +4154,12 @@
       "times": "{{count}} 次",
       "inTime": "{{time}}後",
       "showAll": "查看 {{count}} 次重設各自的到期時間"
+    },
+    "credits": {
+      "label": "Credits",
+      "text": "Credits 約 {{usd}}",
+      "usd": "約 {{usd}}",
+      "detail": "Credits 餘額 {{balance}} · 按 API 價折算約 {{usd}} · 額度用完後才扣"
     }
   },
   "appMatrix": {

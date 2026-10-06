@@ -4153,6 +4153,12 @@
       "times": "{{count}} 回",
       "inTime": "{{time}}後",
       "showAll": "{{count}} 回分のリセットの期限を表示"
+    },
+    "credits": {
+      "label": "Credits",
+      "text": "Credits 約 {{usd}}",
+      "usd": "約 {{usd}}",
+      "detail": "Credits 残高 {{balance}} · API 価格換算で約 {{usd}} · 上限に達した後にのみ消費"
     }
   },
   "appMatrix": {

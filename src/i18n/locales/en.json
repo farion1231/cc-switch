@@ -4153,6 +4153,12 @@
       "times": "×{{count}}",
       "inTime": "in {{time}}",
       "showAll": "Show when each of the {{count}} resets expires"
+    },
+    "credits": {
+      "label": "Credits",
+      "text": "Credits ≈ {{usd}}",
+      "usd": "≈ {{usd}}",
+      "detail": "Credits balance {{balance}} · ≈ {{usd}} at API prices · used only after your limits run out"
     }
   },
   "appMatrix": {

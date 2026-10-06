@@ -37,6 +37,8 @@ export interface QuotaBreakdown {
   /** 点开按钮的无障碍名字 */
   openLabel: string;
   items: QuotaBreakdownItem[];
+  /** 分隔线下面另列的几条（卡片上点开重置次数时，附带 Credits 余额） */
+  footer?: QuotaBreakdownItem[];
 }
 
 export interface QuotaBreakdownItem {
@@ -175,7 +177,11 @@ function shortDate(iso: string, locale: string): string {
 export function resetCreditsLine(
   t: TFunction,
   credits: ResetCredits | null | undefined,
-  { now = Date.now(), locale }: { now?: number; locale: string },
+  {
+    now = Date.now(),
+    locale,
+    footer,
+  }: { now?: number; locale: string; footer?: QuotaBreakdownItem[] },
 ): QuotaLine | null {
   const expiries = (credits?.expiresAt ?? []).filter((at) => {
     if (!at) return true;
@@ -207,15 +213,75 @@ export function resetCreditsLine(
       ? t("quota.resetCredits.detail", { count, date })
       : t("quota.resetCredits.detailNoExpiry", { count }),
     window: RESET_CREDITS_WINDOW,
-    // 只有一次时行里已经写全了，不用再点开
+    // 只有一次时行里已经写全了，不用再点开；除非还要附带别的（footer）
     breakdown:
-      count > 1
+      count > 1 || footer?.length
         ? {
             title: t("quota.resetCredits.title"),
             openLabel: t("quota.resetCredits.showAll", { count }),
             items: resetCreditGroups(t, expiries, { now, locale }),
+            footer: footer?.length ? footer : undefined,
           }
         : undefined,
+  };
+}
+
+/**
+ * Codex Credits 按 API 价计量：官方价目表每百万 token 的 Credits 数 = API 美元价 × 25
+ * （GPT-6 Astra 输入 250 Credits ↔ $10，Sol、Luna 同比），即 1 Credit = $0.04。
+ * 接口不给这个比例，OpenAI 改价时只改这里
+ */
+export const CODEX_USD_PER_CREDIT = 0.04;
+
+/** 排在重置次数之后 */
+const CREDITS_WINDOW = RESET_CREDITS_WINDOW + 1;
+
+/**
+ * ChatGPT 订阅买的 Codex Credits 余额 → 额度行；没有时不显示（null）。
+ * 展开时额度条位置写 Credits 数、数值写约合美元（钱在最后）；卡片上只用美元（short / text）
+ */
+export function creditsLine(
+  t: TFunction,
+  balance: number | null | undefined,
+  { locale }: { locale: string },
+): QuotaLine | null {
+  if (typeof balance !== "number" || !Number.isFinite(balance) || balance <= 0)
+    return null;
+  const usd = Math.round(balance * CODEX_USD_PER_CREDIT);
+  // 美元取整、不加千位分隔（「约 $2500」）；不到 $1 时写「< $1」
+  const dollars = usd >= 1 ? `$${usd}` : "<$1";
+  let count: string;
+  try {
+    count = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(
+      balance,
+    );
+  } catch {
+    count = String(balance);
+  }
+  return {
+    key: "credits_balance",
+    left: Infinity,
+    tone: "normal",
+    text: t("quota.credits.text", { usd: dollars }),
+    value: t("quota.credits.usd", { usd: dollars }),
+    short: dollars,
+    caption: count,
+    detail: t("quota.credits.detail", { balance: count, usd: dollars }),
+    window: CREDITS_WINDOW,
+  };
+}
+
+/** Credits 余额写成下拉里的一条（「Credits  62,500  约 $2500」），钱在最后 */
+export function creditsBreakdownItem(
+  t: TFunction,
+  line: QuotaLine,
+): QuotaBreakdownItem {
+  return {
+    key: line.key,
+    label: t("quota.credits.label"),
+    hint: line.caption,
+    value: line.value ?? line.text,
+    tone: line.tone,
   };
 }
 

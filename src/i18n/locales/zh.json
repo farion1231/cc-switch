@@ -4153,6 +4153,12 @@
       "times": "{{count}} 次",
       "inTime": "{{time}}后",
       "showAll": "查看 {{count}} 次重置各自的到期时间"
+    },
+    "credits": {
+      "label": "Credits",
+      "text": "Credits 约 {{usd}}",
+      "usd": "约 {{usd}}",
+      "detail": "Credits 余额 {{balance}} · 按 API 价折算约 {{usd}} · 额度用完后才扣"
     }
   },
   "appMatrix": {
