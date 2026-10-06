@@ -513,9 +513,12 @@ html:not([data-keyboard]) [tabindex]:focus {
   }
 
   /* 滚动条常显且占 8px：主滚动区、大列表先把这条槽留出来，
-     内容高度跨过能否滚动的临界时整列不会左右横跳 */
+     内容高度跨过能否滚动的临界时整列不会左右横跳。
+     不用 scrollbar-gutter: stable：WKWebView（macOS）对自定义 ::-webkit-scrollbar 不留槽；
+     overflow-y: scroll 两边都留，轨道透明、不能滚时不画滑块，看起来和留槽一样。
+     这条排在 overflow-*-auto 之后，同权重时它生效。 */
   .scroll-stable {
-    scrollbar-gutter: stable;
+    overflow-y: scroll;
   }
 
   .border-default {
