@@ -72,7 +72,6 @@
     "fullSettingsHint": "Claude Code の settings.json 全文",
     "hideAttribution": "AI署名を非表示",
     "enableToolSearch": "Tool Search を有効化",
-    "effortMax": "最大強度思考",
     "disableAutoUpgrade": "自動アップグレードを無効化",
     "disableArtifact": "Artifact ツールを無効化",
     "disableAutoModeServer": "auto mode のサーバー側チェックを無効化",

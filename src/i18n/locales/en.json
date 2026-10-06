@@ -72,7 +72,6 @@
     "fullSettingsHint": "Full Claude Code settings.json content",
     "hideAttribution": "Hide AI Attribution",
     "enableToolSearch": "Enable Tool Search",
-    "effortMax": "Max Effort Thinking",
     "disableAutoUpgrade": "Disable Auto-Upgrade",
     "disableArtifact": "Disable Artifact Tool",
     "disableAutoModeServer": "Disable Auto Mode Server Checks",

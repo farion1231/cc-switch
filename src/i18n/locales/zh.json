@@ -72,7 +72,6 @@
     "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",
     "hideAttribution": "隐藏 AI 署名",
     "enableToolSearch": "启用 Tool Search",
-    "effortMax": "最大强度思考",
     "disableAutoUpgrade": "禁用自动升级",
     "disableArtifact": "禁用 Artifact 工具",
     "disableAutoModeServer": "关闭 auto mode 服务端检查",

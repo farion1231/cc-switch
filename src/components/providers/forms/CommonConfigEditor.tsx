@@ -85,7 +85,6 @@ export function CommonConfigEditor({
         enableToolSearch:
           config?.env?.ENABLE_TOOL_SEARCH === "true" ||
           config?.env?.ENABLE_TOOL_SEARCH === "1",
-        effortMax: config?.env?.CLAUDE_CODE_EFFORT_LEVEL === "max",
         disableAutoUpgrade:
           config?.env?.DISABLE_AUTOUPDATER === "1" ||
           config?.env?.DISABLE_AUTOUPDATER === 1,
@@ -100,7 +99,6 @@ export function CommonConfigEditor({
       return {
         hideAttribution: false,
         enableToolSearch: false,
-        effortMax: false,
         disableAutoUpgrade: false,
         disableArtifact: false,
         disableAutoModeServer: false,
@@ -127,15 +125,6 @@ export function CommonConfigEditor({
               config.env.ENABLE_TOOL_SEARCH = "true";
             } else {
               delete config.env.ENABLE_TOOL_SEARCH;
-              if (Object.keys(config.env).length === 0) delete config.env;
-            }
-            break;
-          case "effortMax":
-            if (!config.env) config.env = {};
-            if (checked) {
-              config.env.CLAUDE_CODE_EFFORT_LEVEL = "max";
-            } else {
-              delete config.env.CLAUDE_CODE_EFFORT_LEVEL;
               if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
@@ -232,15 +221,6 @@ export function CommonConfigEditor({
             className="ui-checkbox"
           />
           <span>{t("claudeConfig.enableToolSearch")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.effortMax}
-            onChange={(e) => handleToggle("effortMax", e.target.checked)}
-            className="ui-checkbox"
-          />
-          <span>{t("claudeConfig.effortMax")}</span>
         </label>
         <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
           <input

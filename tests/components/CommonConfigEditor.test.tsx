@@ -34,9 +34,6 @@ function renderEditor(
   return onChange;
 }
 
-const effortCheckbox = () =>
-  screen.getByRole("checkbox", { name: "claudeConfig.effortMax" });
-
 const hideAttributionCheckbox = () =>
   screen.getByRole("checkbox", { name: "claudeConfig.hideAttribution" });
 
@@ -60,56 +57,6 @@ describe("CommonConfigEditor hide attribution toggle", () => {
         commit: "",
         pr: "",
         sessionUrl: false,
-      },
-    });
-  });
-});
-
-describe("CommonConfigEditor max effort toggle", () => {
-  it("does not treat legacy top-level effortLevel=max as checked", () => {
-    renderEditor(JSON.stringify({ effortLevel: "max" }, null, 2));
-
-    expect(effortCheckbox()).not.toBeChecked();
-  });
-
-  it("writes max effort through CLAUDE_CODE_EFFORT_LEVEL env", () => {
-    const onChange = renderEditor("{}");
-
-    fireEvent.click(effortCheckbox());
-
-    expect(onChange).toHaveBeenCalledTimes(1);
-    const nextConfig = JSON.parse(onChange.mock.calls[0][0]);
-    expect(nextConfig).toEqual({
-      env: {
-        CLAUDE_CODE_EFFORT_LEVEL: "max",
-      },
-    });
-    expect(nextConfig).not.toHaveProperty("effortLevel");
-  });
-
-  it("removes only the CLAUDE_CODE_EFFORT_LEVEL env entry when unchecked", () => {
-    const onChange = renderEditor(
-      JSON.stringify(
-        {
-          effortLevel: "max",
-          env: {
-            CLAUDE_CODE_EFFORT_LEVEL: "max",
-            ENABLE_TOOL_SEARCH: "true",
-          },
-        },
-        null,
-        2,
-      ),
-    );
-
-    fireEvent.click(effortCheckbox());
-
-    expect(onChange).toHaveBeenCalledTimes(1);
-    const nextConfig = JSON.parse(onChange.mock.calls[0][0]);
-    expect(nextConfig).toEqual({
-      effortLevel: "max",
-      env: {
-        ENABLE_TOOL_SEARCH: "true",
       },
     });
   });
