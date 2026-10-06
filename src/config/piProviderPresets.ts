@@ -10,6 +10,7 @@ import {
   resolvePiThinkingProfile,
   type PiThinkingLevelMap,
 } from "./piThinkingProfiles";
+import type { PresetFamilyFields } from "./presetFamilies";
 
 export type PiApiFormat =
   | "openai-completions"
@@ -23,7 +24,7 @@ export type PiPresetModel = PiCatalogModel & {
   compat?: Record<string, unknown>;
 };
 
-export interface PiProviderPreset {
+export interface PiProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string;
   providerKey: string;
@@ -101,8 +102,12 @@ const KIMI_K3_COMPAT = {
 const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Kimi",
+    family: "kimi",
+    planKey: "payg",
+    regionKey: "cn",
     providerKey: "cc-switch-kimi",
-    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
+    websiteUrl:
+      "https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
     settingsConfig: {
       name: "Kimi",
@@ -137,8 +142,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
   {
     name: "Kimi Global",
+    family: "kimi",
+    planKey: "payg",
+    regionKey: "intl",
     providerKey: "cc-switch-kimi-global",
-    websiteUrl: "https://platform.kimi.ai?aff=cc-switch",
+    websiteUrl:
+      "https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.ai/console/api-keys?aff=cc-switch",
     settingsConfig: {
       name: "Kimi",
@@ -171,6 +180,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
+    family: "kimi",
+    planKey: "coding",
+    regionKey: "cn",
     providerKey: "cc-switch-kimi-for-coding",
     websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
@@ -195,6 +207,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   // 海外/Global 变体：kimi.ai/code + api.kimi.ai 端点，其余与国内版一致
   {
     name: "Kimi For Coding Global",
+    family: "kimi",
+    planKey: "coding",
+    regionKey: "intl",
     providerKey: "cc-switch-kimi-for-coding-global",
     websiteUrl: "https://www.kimi.ai/code?aff=cc-switch",
     apiKeyUrl: "https://www.kimi.ai/code?aff=cc-switch",
@@ -528,6 +543,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "fluxa",
   },
   {
+    name: "88API",
+    providerKey: "cc-switch-88api",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      name: "88API",
+      baseUrl: "https://api.88api.ai",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5",
+        }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
+  },
+  {
     name: "APIKEY.FUN",
     providerKey: "cc-switch-apikey-fun",
     websiteUrl: "https://apikey.fan",
@@ -687,6 +726,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "火山Agentplan",
+    family: "volcengine",
+    planKey: "agentPlan",
     providerKey: "cc-switch-agentplan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
@@ -735,6 +776,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Volcengine Doubao",
+    family: "volcengine",
+    planKey: "payg",
     nameKey: "providerForm.presets.doubaoseed",
     providerKey: "cc-switch-dou-bao-seed",
     websiteUrl:
@@ -901,31 +944,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#E96B2C",
   },
   {
-    name: "ETok.ai",
-    providerKey: "cc-switch-etok-ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    settingsConfig: {
-      name: "ETok",
-      baseUrl: "https://api.etok.ai",
-      api: "anthropic-messages",
-      apiKey: "",
-      models: [
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
-        }),
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
-        }),
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "etok",
-    icon: "etok",
-    iconColor: "#000000",
-  },
-  {
     name: "Cubence",
     providerKey: "cc-switch-cubence",
     websiteUrl: "https://cubence.com",
@@ -998,9 +1016,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "dmxapi",
+    icon: "dmxapi",
   },
   {
     name: "SudoCode.chat",
+    family: "sudocode",
     providerKey: "cc-switch-sudo-code-chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
@@ -1026,6 +1046,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "SudoCode.us",
+    family: "sudocode",
     providerKey: "cc-switch-sudo-code-us",
     websiteUrl: "https://sudocode.us",
     apiKeyUrl: "https://sudocode.us",
@@ -1135,6 +1156,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Zhipu GLM",
+    family: "zhipu",
+    regionKey: "cn",
     providerKey: "cc-switch-zhipu-glm",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
@@ -1156,6 +1179,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Zhipu GLM en",
+    family: "zhipu",
+    regionKey: "intl",
     providerKey: "cc-switch-zhipu-glm-en",
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
@@ -1177,6 +1202,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "千问AI平台",
+    family: "qianwen",
+    planKey: "payg",
     providerKey: "cc-switch-qianwenai",
     websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
     apiKeyUrl:
@@ -1201,6 +1228,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "千问AI平台 Token Plan",
+    family: "qianwen",
+    planKey: "tokenPlan",
     providerKey: "cc-switch-qianwenai-token-plan",
     websiteUrl:
       "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
@@ -1232,6 +1261,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   // 按量付费与 Token Plan 都走 OpenAI 兼容层（/compatible-mode/v1）。
   {
     name: "QwenCloud",
+    family: "qwencloud",
+    planKey: "payg",
     providerKey: "cc-switch-qwencloud",
     websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
@@ -1261,6 +1292,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "QwenCloud For Coding",
+    family: "qwencloud",
+    planKey: "coding",
     providerKey: "cc-switch-qwencloud-coding",
     websiteUrl: "https://www.qwencloud.com",
     apiKeyUrl: "https://home.qwencloud.com/api-keys",
@@ -1283,6 +1316,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "QwenCloud Token Plan",
+    family: "qwencloud",
+    planKey: "tokenPlan",
     providerKey: "cc-switch-qwencloud-token-plan",
     websiteUrl:
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
@@ -1314,6 +1349,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "StepFun",
+    family: "stepfun",
+    regionKey: "cn",
     providerKey: "cc-switch-step-fun",
     websiteUrl: "https://platform.stepfun.com/step-plan",
     apiKeyUrl: "https://platform.stepfun.com/interface-key",
@@ -1340,6 +1377,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "StepFun en",
+    family: "stepfun",
+    regionKey: "intl",
     providerKey: "cc-switch-step-fun-en",
     websiteUrl: "https://platform.stepfun.ai/step-plan",
     apiKeyUrl: "https://platform.stepfun.ai/interface-key",
@@ -1448,6 +1487,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "MiniMax",
+    family: "minimax",
+    regionKey: "cn",
     providerKey: "cc-switch-mini-max",
     websiteUrl: "https://platform.minimax.cn",
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
@@ -1473,6 +1514,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "MiniMax en",
+    family: "minimax",
+    regionKey: "intl",
     providerKey: "cc-switch-mini-max-en",
     websiteUrl: "https://platform.minimax.io",
     apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
@@ -1513,9 +1556,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "cn_official",
+    icon: "bailing",
   },
   {
     name: "Xiaomi MiMo",
+    family: "xiaomi-mimo",
+    planKey: "payg",
     providerKey: "cc-switch-xiaomi-mi-mo",
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
@@ -1559,6 +1605,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Xiaomi MiMo Token Plan (China)",
+    family: "xiaomi-mimo",
+    planKey: "tokenPlan",
     providerKey: "cc-switch-xiaomi-mi-mo-token-plan-china",
     websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
@@ -1748,6 +1796,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "therouter",
   },
   {
     name: "Novita AI",
@@ -1916,6 +1965,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   // endpointCandidates 字段），需要第二地域的用户在 UI 中手动改 baseUrl。
   {
     name: "Tencent Token Plan",
+    family: "tencent",
+    planKey: "tokenPlan",
+    regionKey: "cn",
     providerKey: "cc-switch-tencent-token-plan",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
@@ -1956,6 +2008,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Tencent Token Plan (Intl)",
+    family: "tencent",
+    planKey: "tokenPlan",
+    regionKey: "intl",
     providerKey: "cc-switch-tencent-token-plan-intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
@@ -1993,6 +2048,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Tencent Token Plan Enterprise Pro",
+    family: "tencent",
+    planKey: "enterprisePro",
+    regionKey: "cn",
     providerKey: "cc-switch-tencent-token-plan-enterprise-pro",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
@@ -2073,6 +2131,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Tencent Token Plan Enterprise Pro (Intl)",
+    family: "tencent",
+    planKey: "enterprisePro",
+    regionKey: "intl",
     providerKey: "cc-switch-tencent-token-plan-enterprise-pro-intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
@@ -2148,6 +2209,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Tencent Token Plan Enterprise Lite",
+    family: "tencent",
+    planKey: "enterpriseLite",
+    regionKey: "cn",
     providerKey: "cc-switch-tencent-token-plan-enterprise-lite",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
@@ -2164,6 +2228,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Tencent Token Plan Enterprise Lite (Intl)",
+    family: "tencent",
+    planKey: "enterpriseLite",
+    regionKey: "intl",
     providerKey: "cc-switch-tencent-token-plan-enterprise-lite-intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
@@ -2185,6 +2252,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   // 专用模型不收录（无法用于编码 agent）。
   {
     name: "Tencent TokenHub",
+    family: "tencent",
+    planKey: "payg",
+    regionKey: "cn",
     providerKey: "cc-switch-tencent-tokenhub",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
@@ -2278,6 +2348,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "Tencent TokenHub (Intl)",
+    family: "tencent",
+    planKey: "payg",
+    regionKey: "intl",
     providerKey: "cc-switch-tencent-tokenhub-intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/apikey",
@@ -2375,6 +2448,32 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "cn_official",
     icon: "tencent",
     iconColor: "#00A4FF",
+  },
+  {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    providerKey: "cc-switch-tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    settingsConfig: {
+      name: "Tu-zi",
+      baseUrl: "https://api.tu-zi.com",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5", {
+          id: "claude-opus-5",
+        }),
+        piModel("anthropic/claude-sonnet-5", {
+          id: "claude-sonnet-5",
+        }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "tuzi",
   },
 ];
 

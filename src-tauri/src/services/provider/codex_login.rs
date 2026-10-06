@@ -119,6 +119,8 @@ fn is_residue(auth: &Value, third_party_keys: &[String]) -> bool {
 /// 目标供应商对 `auth.json` 的要求。
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum AuthTarget<'a> {
+    /// 历史选路重投影：保持当前登录和暂存，包括客户端已换号或登出的状态。
+    HistoryOnly,
     /// 直连的第三方：保留登录开关关闭时删掉 `auth.json`。
     ThirdParty { preserve: bool },
     /// 代理的第三方路由：不动用户的原生登录（请求凭据由代理注入）。
@@ -155,6 +157,15 @@ pub(crate) struct AuthPlan {
 }
 
 pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
+    if matches!(input.target, AuthTarget::HistoryOnly) {
+        return AuthPlan {
+            auth: None,
+            stash: None,
+            login_on_disk: input
+                .live
+                .is_some_and(codex_auth_has_openai_account_material),
+        };
+    }
     let original = input.stash.clone();
     let mut stash = input.stash;
     let managed = input.live_is_managed;
@@ -182,6 +193,7 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
     }
 
     let auth = match input.target {
+        AuthTarget::HistoryOnly => unreachable!("history-only projection returned above"),
         AuthTarget::ThirdParty { preserve } => {
             if let Some(live) = native.filter(|_| !preserve) {
                 stash.put(live);

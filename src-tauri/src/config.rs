@@ -33,6 +33,44 @@ pub fn get_home_dir() -> PathBuf {
     })
 }
 
+/// 检测路径是否为 WSL 网络路径（如 \\wsl$\Ubuntu\... 或 \\wsl.localhost\Ubuntu\...）
+/// 注意：仅检测直接 UNC 路径，映射磁盘符（如 Z: -> \\wsl$\...）无法检测
+#[cfg(windows)]
+pub(crate) fn is_wsl_path(path: &Path) -> bool {
+    use std::path::Prefix;
+    if let Some(Component::Prefix(prefix)) = path.components().next() {
+        match prefix.kind() {
+            Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) => {
+                let s = server.to_string_lossy();
+                s.eq_ignore_ascii_case("wsl$") || s.eq_ignore_ascii_case("wsl.localhost")
+            }
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn is_wsl_path(_path: &Path) -> bool {
+    false
+}
+
+/// 临时目录在 WSL 共享路径上时（WSL2 夜间测试），SQLite 拿不到文件锁，
+/// 在磁盘上建 SQLite 夹具的测试只能跳过。
+#[cfg(test)]
+pub(crate) fn sqlite_unsupported_in_temp_dir() -> bool {
+    let temp = std::env::temp_dir();
+    let unsupported = is_wsl_path(&temp);
+    if unsupported {
+        eprintln!(
+            "temp dir {} is a WSL share where SQLite cannot lock; skipping",
+            temp.display()
+        );
+    }
+    unsupported
+}
+
 /// 获取 Claude Code 配置目录路径
 pub fn get_claude_config_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_claude_override_dir() {

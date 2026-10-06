@@ -20,13 +20,29 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// 打开外部链接
+/// 外部链接白名单：只允许 `http:` / `https:` / `mailto:`。
+/// 不带协议的裸域名（如 `example.com/docs`）按旧行为补 `https://`；
+/// `javascript:`、`file:`、`data:` 及其他自定义协议一律拒绝（前端已过滤，这里是第二道）。
+fn validate_external_url(raw: &str) -> Result<String, String> {
+    let raw = raw.trim();
+    let parsed = match url::Url::parse(raw) {
+        Ok(parsed) => parsed,
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            url::Url::parse(&format!("https://{raw}")).map_err(|_| "链接格式无效".to_string())?
+        }
+        Err(_) => return Err("链接格式无效".to_string()),
+    };
+    match parsed.scheme() {
+        "http" | "https" if parsed.host_str().is_some_and(|h| !h.is_empty()) => Ok(parsed.into()),
+        "mailto" => Ok(parsed.into()),
+        "http" | "https" => Err("链接格式无效".to_string()),
+        _ => Err("只能打开 http、https 或 mailto 链接".to_string()),
+    }
+}
+
 #[tauri::command]
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
-    let url = if url.starts_with("http://") || url.starts_with("https://") {
-        url
-    } else {
-        format!("https://{url}")
-    };
+    let url = validate_external_url(&url)?;
 
     app.opener()
         .open_url(&url, None::<String>)
@@ -971,24 +987,14 @@ fn windows_cmd_double_quote_arg(value: &str) -> String {
 }
 
 /// 获取单个工具的版本信息（内部实现）
-async fn get_single_tool_version_impl(
+/// 本机工具的版本（只探测本地，不联网）。
+fn probe_local_version(
     tool: &str,
+    wsl_distro: Option<&str>,
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
-) -> ToolVersion {
-    debug_assert!(
-        VALID_TOOLS.contains(&tool),
-        "unexpected tool name in get_single_tool_version_impl: {tool}"
-    );
-
-    // 判断该工具的运行环境 & WSL distro（如有）
-    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
-
-    // 使用全局 HTTP 客户端（已包含代理配置）
-    let client = crate::proxy::http_client::get();
-
-    // 1. 获取本地版本
-    let probe = if let Some(distro) = wsl_distro.as_deref() {
+) -> ShellProbe {
+    if let Some(distro) = wsl_distro {
         try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
     } else {
         #[cfg(target_os = "windows")]
@@ -1019,7 +1025,36 @@ async fn get_single_tool_version_impl(
                 found => found,
             }
         }
-    };
+    }
+}
+
+/// 本机实际安装的工具版本（和「关于」页探测的是同一个）；拿不到为 `None`。
+pub(crate) fn local_tool_version(tool: &str) -> Option<String> {
+    let (_, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+    match probe_local_version(tool, wsl_distro.as_deref(), None, None) {
+        ShellProbe::Found(version) => Some(version),
+        _ => None,
+    }
+}
+
+async fn get_single_tool_version_impl(
+    tool: &str,
+    wsl_shell: Option<&str>,
+    wsl_shell_flag: Option<&str>,
+) -> ToolVersion {
+    debug_assert!(
+        VALID_TOOLS.contains(&tool),
+        "unexpected tool name in get_single_tool_version_impl: {tool}"
+    );
+
+    // 判断该工具的运行环境 & WSL distro（如有）
+    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+
+    // 使用全局 HTTP 客户端（已包含代理配置）
+    let client = crate::proxy::http_client::get();
+
+    // 1. 获取本地版本
+    let probe = probe_local_version(tool, wsl_distro.as_deref(), wsl_shell, wsl_shell_flag);
     let (local_version, local_error, installed_but_broken) = match probe {
         ShellProbe::Found(v) => (Some(v), None, false),
         ShellProbe::FoundButFailed(e) => (None, Some(e), true),
@@ -4258,6 +4293,15 @@ pub async fn probe_tool_installations(
     .map_err(|e| format!("probe task join error: {e}"))
 }
 
+/// 「应用」页显示每个工具的路径、安装来源和多处安装。和升级前的预检是同一份枚举，
+/// 单列一个命令只为把「打开页面时的展示」和「点升级时的预检」分开调用。
+#[tauri::command]
+pub async fn list_tool_installations(
+    tools: Vec<String>,
+) -> Result<Vec<ToolInstallationReport>, String> {
+    probe_tool_installations(tools).await
+}
+
 #[cfg(target_os = "windows")]
 fn wsl_distro_for_tool(tool: &str) -> Option<String> {
     let override_dir = match tool {
@@ -5305,6 +5349,32 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_url_whitelist() {
+        assert_eq!(
+            validate_external_url("https://example.com/a").unwrap(),
+            "https://example.com/a"
+        );
+        assert!(validate_external_url("http://localhost:3000").is_ok());
+        assert!(validate_external_url("mailto:a@example.com").is_ok());
+        assert_eq!(
+            validate_external_url("example.com/docs").unwrap(),
+            "https://example.com/docs"
+        );
+        for bad in [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            " javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:text/html,<script>alert(1)</script>",
+            "vscode://open",
+            "https://",
+            "",
+        ] {
+            assert!(validate_external_url(bad).is_err(), "{bad}");
+        }
+    }
     use std::path::{Path, PathBuf};
 
     #[tokio::test]

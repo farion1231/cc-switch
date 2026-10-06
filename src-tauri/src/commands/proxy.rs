@@ -58,19 +58,71 @@ pub async fn get_proxy_takeover_status(
     state.proxy_service.get_takeover_status().await
 }
 
-/// 为指定应用进入 / 退出代理模式
+/// 为指定应用进入 / 退出代理模式。`stack` 为真时进入的是 Stack 模式（和路由模式二选一），
+/// `route` 是确认框里选的路由目标（Stack 模式下是默认那家，不传沿用上次的路由）；退出时
+/// 两者都不看。
 #[tauri::command]
 pub async fn set_proxy_takeover_for_app(
     state: tauri::State<'_, AppState>,
     app_type: String,
     enabled: bool,
+    stack: Option<bool>,
+    route: Option<String>,
 ) -> Result<(), String> {
     let app = require_proxy_app(&app_type)?;
     if enabled {
-        crate::mode::controller::enter(state.inner(), &app).await
+        crate::mode::controller::enter_with_route(
+            state.inner(),
+            &app,
+            stack.unwrap_or(false),
+            route.as_deref(),
+        )
+        .await
     } else {
         crate::mode::controller::exit(state.inner(), &app).await
     }
+}
+
+/// 应用页模式行用：生效的模式、路由目标（直连时是上次路由的那家）、直连那家。
+#[tauri::command]
+pub fn get_app_mode(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+) -> Result<crate::mode::controller::AppModeView, String> {
+    let app = require_proxy_app(&app_type)?;
+    crate::mode::controller::app_mode_view(state.inner(), &app)
+}
+
+/// 指定路由目标（聚合模式下是默认那家）。直连模式下只记下来，下次进入路由 / 聚合模式时用它；
+/// 已经在路由 / 聚合模式时当场生效。
+#[tauri::command]
+pub async fn set_proxy_route(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    provider_id: String,
+) -> Result<(), String> {
+    let app = require_proxy_app(&app_type)?;
+    let result = crate::mode::controller::set_route(state.inner(), &app, &provider_id).await;
+    // 已经在路由 / 聚合模式时换的是正在用的那家，托盘跟着变
+    crate::tray::refresh_tray_menu(&app_handle);
+    result
+}
+
+/// 启动时没能接上代理、已退回直连的应用（取一次就清空）。
+#[tauri::command]
+pub fn take_startup_attach_failures() -> Vec<crate::mode::controller::StartupAttachFailure> {
+    crate::mode::controller::take_startup_attach_failures()
+}
+
+/// 设置里在路由和 Stack 之间换的时候：处于另一种模式（`stack` 为真是 Stack 模式）的
+/// Claude Code、Codex 先退回直连。返回退回直连的应用。
+#[tauri::command]
+pub async fn exit_proxy_apps_in_mode(
+    state: tauri::State<'_, AppState>,
+    stack: bool,
+) -> Result<Vec<String>, String> {
+    crate::mode::controller::exit_apps_in_mode(state.inner(), stack).await
 }
 
 /// 直连指针：代理模式下退出代理时写回的供应商
@@ -81,6 +133,57 @@ pub fn get_direct_provider(
 ) -> Result<Option<String>, String> {
     let app = require_proxy_app(&app_type)?;
     crate::mode::controller::direct_provider_id(state.inner(), &app).map_err(|e| e.to_string())
+}
+
+/// Stack 模型：名单里的每一家和它发布的模型 id，以及还在用旧模型列表的 Codex 客户端
+#[tauri::command]
+pub async fn get_proxy_stack(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+) -> Result<crate::mode::stack::StackView, String> {
+    let app = require_proxy_app(&app_type)?;
+    crate::mode::controller::stack_view_with_clients(state.inner(), &app).await
+}
+
+/// 重启 Codex 的托管守护进程（`codex` TUI 连的那个），让它重读模型目录。会中断守护进程里
+/// 正在运行的任务，只在用户确认之后调。
+#[tauri::command]
+pub async fn restart_codex_app_server_daemon(
+) -> Result<crate::services::provider::codex_client_catalog::RestartOutcome, String> {
+    crate::services::provider::codex_direct::off_runtime(
+        crate::services::provider::codex_client_catalog::restart_daemon,
+    )
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Stack 模型：把一家加入或移出名单（`enabled` 是目标值）。成功时返回客户端看不到或看不全
+/// Stack 模型的提示；失败时 `partial` 为真表示已部分写入，下次操作或重启 CC Switch 时补完。
+#[tauri::command]
+pub async fn set_proxy_stack_member(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    provider_id: String,
+    enabled: bool,
+) -> Result<Option<&'static str>, crate::mode::controller::StackWriteError> {
+    let app = require_proxy_app(&app_type)
+        .map_err(crate::mode::controller::StackWriteError::unchanged)?;
+    let result =
+        crate::mode::controller::set_stack_member(state.inner(), &app, &provider_id, enabled).await;
+    // 托盘的聚合子菜单只列名单成员；部分写入也已经改了名单，一律重建。
+    // 不重建的话，托盘里还列着刚移出的那家，点一下会把它重新加回并设为默认
+    crate::tray::refresh_tray_menu(&app_handle);
+    result
+}
+
+/// Codex 聚合的模型被别的模型目录挡住时，改用 CC Switch 生成的目录（去掉指向别的文件的
+/// `model_catalog_json`）。返回之后还剩的提示。
+#[tauri::command]
+pub async fn adopt_codex_stack_catalog(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<&'static str>, String> {
+    crate::mode::controller::adopt_codex_stack_catalog(state.inner()).await
 }
 
 /// 获取代理服务器状态
@@ -125,16 +228,44 @@ pub async fn get_global_proxy_config(
 
 /// 更新全局代理配置
 ///
-/// 更新统一的全局配置字段，会同时更新三行（claude/codex/gemini）
+/// 更新统一的全局配置字段，四行镜像写，各应用自己的重试和超时不碰。设置页的按钮写着
+/// 「保存并重启服务」：服务在跑时地址或端口变了就重启、再按新地址重写接上路由的客户端
+/// （含 Claude Desktop 的模型映射卡），日志开关实时生效；只写库的话服务还在旧端口上听、
+/// 客户端也还指着旧端口。
 #[tauri::command]
 pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
-    let db = &state.db;
-    db.update_global_proxy_config(config)
-        .await
-        .map_err(|e| e.to_string())
+    let restarted = state.proxy_service.update_global_config(&config).await?;
+    if restarted {
+        let mut failures = Vec::new();
+        if let Err(error) = crate::mode::controller::resync_routes(state.inner()).await {
+            failures.push(error);
+        }
+        if let Err(error) = resync_claude_desktop_gateway(&state.db) {
+            failures.push(format!("claude-desktop: {error}"));
+        }
+        if !failures.is_empty() {
+            return Err(failures.join("; "));
+        }
+    }
+    Ok(())
+}
+
+/// Claude Desktop 的模型映射卡把本地网关地址写死在 profile 里，不在 `resync_routes` 的
+/// 四个路由应用之内：服务换了地址就按当前那张卡重写一遍。
+fn resync_claude_desktop_gateway(db: &crate::database::Database) -> Result<(), String> {
+    if !crate::claude_desktop_config::current_provider_uses_proxy(db) {
+        return Ok(());
+    }
+    let Some(provider) =
+        crate::mode::current::direct_provider(db, &crate::app_config::AppType::ClaudeDesktop)
+            .map_err(|e| e.to_string())?
+    else {
+        return Ok(());
+    };
+    crate::claude_desktop_config::apply_provider(db, &provider).map_err(|e| e.to_string())
 }
 
 /// 获取指定应用的代理配置

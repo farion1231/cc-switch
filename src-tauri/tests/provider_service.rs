@@ -1,9 +1,8 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, update_settings, write_codex_live_atomic, AppError,
-    AppSettings, AppType, McpApps, McpServer, MultiAppConfig, Provider, ProviderMeta,
-    ProviderService,
+    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
+    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
 };
 
 #[path = "support.rs"]
@@ -169,6 +168,7 @@ command = "say"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -614,7 +614,7 @@ wire_api = "responses"
         "normal switch should inject the DeepSeek key into config.toml"
     );
 
-    cc_switch_lib::mode::controller::enter(&state, &AppType::Codex)
+    cc_switch_lib::mode::controller::enter(&state, &AppType::Codex, false)
         .await
         .expect("enter Codex routing mode");
     let proxy_status = state
@@ -670,332 +670,96 @@ wire_api = "responses"
     );
 }
 
-#[tokio::test(flavor = "current_thread")]
-#[allow(
-    clippy::await_holding_lock,
-    reason = "this integration-style test must serialize global test HOME and settings mutations across async takeover calls"
-)]
-async fn codex_official_takeover_reprojects_live_when_unified_history_toggles() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    let initial_oauth_auth = json!({
-        "auth_mode": "chatgpt",
-        "tokens": {
-            "access_token": "oauth-access-initial",
-            "id_token": "oauth-id-initial",
-            "refresh_token": "oauth-refresh-initial",
-            "account_id": "official-account"
-        }
-    });
-    write_codex_live_atomic(&initial_oauth_auth, Some(""))
-        .expect("seed official Codex OAuth live config");
-
-    let mut initial_config = MultiAppConfig::default();
-    {
-        let manager = initial_config
-            .get_manager_mut(&AppType::Codex)
-            .expect("codex manager");
-        manager.current = "codex-official".to_string();
-        let mut official_provider = Provider::with_id(
-            "codex-official".to_string(),
-            "OpenAI Official".to_string(),
-            json!({
-                "auth": initial_oauth_auth,
-                "config": ""
-            }),
+#[test]
+fn codex_history_toggle_keeps_native_login_and_stash_in_direct_and_proxy_modes() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    let login = |account: &str| {
+        json!({
+            "auth_mode": "chatgpt",
+            "tokens": { "access_token": format!("access-{account}"),
+                "refresh_token": format!("refresh-{account}"), "account_id": account }
+        })
+    };
+    let settings = |unified| cc_switch_lib::AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        unify_codex_session_history: unified,
+        current_provider_codex: Some("official".to_string()),
+        ..Default::default()
+    };
+    for proxy in [false, true] {
+        reset_test_fs();
+        let mut config = MultiAppConfig::default();
+        let manager = config.get_manager_mut(&AppType::Codex).unwrap();
+        manager.current = "official".to_string();
+        let mut provider = Provider::with_id(
+            "official".to_string(),
+            "Official".to_string(),
+            json!({ "auth": login("a"), "config": "" }),
             None,
         );
-        official_provider.category = Some("official".to_string());
-        manager
-            .providers
-            .insert("codex-official".to_string(), official_provider);
-    }
-
-    update_settings(AppSettings {
-        preserve_codex_official_auth_on_switch: true,
-        current_provider_codex: Some("codex-official".to_string()),
-        ..Default::default()
-    })
-    .expect("seed settings with unified history disabled");
-    let state = create_test_state_with_config(&initial_config).expect("create test state");
-
-    let mut proxy_config = state.db.get_proxy_config().await.expect("get proxy config");
-    proxy_config.listen_port = 0;
-    state
-        .db
-        .update_proxy_config(proxy_config)
-        .await
-        .expect("use ephemeral proxy port");
-    tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        cc_switch_lib::mode::controller::enter(&state, &AppType::Codex),
-    )
-    .await
-    .expect("enter official Codex routing mode must not deadlock")
-    .expect("enter official Codex routing mode");
-
-    let dedicated_mode = cc_switch_lib::mode::current::mode_state(&AppType::Codex);
-    assert!(dedicated_mode.routes_to("codex-official"));
-    assert!(dedicated_mode.attached);
-    let dedicated_contract = dedicated_mode.contract.expect("official proxy contract").key;
-
-    let dedicated_live =
-        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live");
-    assert!(dedicated_live.contains("model_provider = \"cc-switch-official\""));
-    let refreshed_oauth_auth = json!({
-        "auth_mode": "chatgpt",
-        "tokens": {
-            "access_token": "oauth-access-refreshed",
-            "id_token": "oauth-id-refreshed",
-            "refresh_token": "oauth-refresh-refreshed",
-            "account_id": "official-account"
+        provider.category = Some("official".to_string());
+        manager.providers.insert(provider.id.clone(), provider);
+        let state = create_test_state_with_config(&config).unwrap();
+        cc_switch_lib::update_settings(settings(false)).unwrap();
+        write_codex_live_atomic(&login("a"), Some("")).unwrap();
+        if proxy {
+            tauri::async_runtime::block_on(async {
+                let mut config = state.db.get_proxy_config().await.unwrap();
+                config.listen_port = 0;
+                state.db.update_proxy_config(config).await.unwrap();
+                cc_switch_lib::mode::controller::enter(&state, &AppType::Codex, false)
+                    .await
+                    .unwrap();
+            });
         }
-    });
-    write_codex_live_atomic(&refreshed_oauth_auth, Some(&dedicated_live))
-        .expect("simulate Codex rotating OAuth tokens during takeover");
-
-    update_settings(AppSettings {
-        preserve_codex_official_auth_on_switch: true,
-        unify_codex_session_history: true,
-        current_provider_codex: Some("codex-official".to_string()),
-        ..Default::default()
-    })
-    .expect("enable unified history setting");
-    assert!(
-        tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            cc_switch_lib::reapply_current_codex_official_live_async(&state),
-        )
-        .await
-        .expect("shared-bucket reprojection must not deadlock")
-        .expect("reproject active official takeover into shared bucket")
-    );
-
-    let unified_live =
-        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live");
-    assert!(unified_live.contains("model_provider = \"custom\""));
-    assert!(unified_live.contains("[model_providers.cc-switch-official]"));
-    assert!(unified_live.contains("http://127.0.0.1:"));
-    let unified_mode = cc_switch_lib::mode::current::mode_state(&AppType::Codex);
-    assert!(unified_mode.routes_to("codex-official"));
-    assert!(unified_mode.attached);
-    assert_ne!(
-        unified_mode.contract.expect("unified proxy contract").key,
-        dedicated_contract,
-        "changing the history selector must replace the proxy contract"
-    );
-    let unified_auth: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read unified live auth");
-    assert_eq!(unified_auth, refreshed_oauth_auth);
-
-    update_settings(AppSettings {
-        preserve_codex_official_auth_on_switch: true,
-        current_provider_codex: Some("codex-official".to_string()),
-        ..Default::default()
-    })
-    .expect("disable unified history setting");
-    assert!(
-        tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            cc_switch_lib::reapply_current_codex_official_live_async(&state),
-        )
-        .await
-        .expect("dedicated-bucket reprojection must not deadlock")
-        .expect("reproject active official takeover into dedicated bucket")
-    );
-
-    let dedicated_live_after_toggle =
-        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live");
-    assert!(dedicated_live_after_toggle.contains("model_provider = \"cc-switch-official\""));
-    assert!(!dedicated_live_after_toggle.contains("model_provider = \"custom\""));
-    let dedicated_mode_after_toggle = cc_switch_lib::mode::current::mode_state(&AppType::Codex);
-    assert!(dedicated_mode_after_toggle.routes_to("codex-official"));
-    assert!(dedicated_mode_after_toggle.attached);
-    assert_eq!(
-        dedicated_mode_after_toggle
-            .contract
-            .expect("dedicated proxy contract")
-            .key,
-        dedicated_contract,
-        "disabling unified history must restore the dedicated proxy contract"
-    );
-    let dedicated_auth: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read dedicated live auth");
-    assert_eq!(dedicated_auth, refreshed_oauth_auth);
-
-    tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        cc_switch_lib::mode::controller::exit(&state, &AppType::Codex),
-    )
-    .await
-    .expect("exit official Codex routing mode must not deadlock")
-    .expect("exit official Codex routing mode");
-    let restored_mode = cc_switch_lib::mode::current::mode_state(&AppType::Codex);
-    assert!(!restored_mode.is_proxy());
-    assert!(!restored_mode.attached);
-    assert!(restored_mode.contract.is_none());
-    let restored_config = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read direct official config");
-    let restored_doc: toml::Table =
-        toml::from_str(&restored_config).expect("parse direct official config");
-    assert!(
-        restored_doc.get("model_provider").is_none(),
-        "direct official mode must use the built-in route, not a dormant proxy table"
-    );
-    assert!(restored_doc
-        .get("model_providers")
-        .and_then(|providers| providers.get("cc-switch-official"))
-        .is_none());
-    let restored_auth: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read restored auth");
-    assert_eq!(restored_auth, refreshed_oauth_auth);
-}
-
-#[test]
-fn reapply_codex_official_live_preserves_refreshed_live_oauth() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    let stored_oauth_auth = json!({
-        "auth_mode": "chatgpt",
-        "tokens": {
-            "access_token": "oauth-access-stored",
-            "id_token": "oauth-id-stored",
-            "refresh_token": "oauth-refresh-stored",
-            "account_id": "official-account"
-        }
-    });
-    let refreshed_oauth_auth = json!({
-        "auth_mode": "chatgpt",
-        "tokens": {
-            "access_token": "oauth-access-refreshed",
-            "id_token": "oauth-id-refreshed",
-            "refresh_token": "oauth-refresh-refreshed",
-            "account_id": "official-account"
-        }
-    });
-    let mut initial_config = MultiAppConfig::default();
-    {
-        let manager = initial_config
-            .get_manager_mut(&AppType::Codex)
-            .expect("codex manager");
-        manager.current = "codex-official".to_string();
-        let mut official_provider = Provider::with_id(
-            "codex-official".to_string(),
-            "OpenAI Official".to_string(),
-            json!({
-                "auth": stored_oauth_auth,
-                "config": ""
-            }),
-            None,
-        );
-        official_provider.category = Some("official".to_string());
-        manager
-            .providers
-            .insert("codex-official".to_string(), official_provider);
-    }
-    update_settings(AppSettings {
-        preserve_codex_official_auth_on_switch: true,
-        unify_codex_session_history: true,
-        current_provider_codex: Some("codex-official".to_string()),
-        ..Default::default()
-    })
-    .expect("enable unified history setting");
-    let state = create_test_state_with_config(&initial_config).expect("create test state");
-    write_codex_live_atomic(&refreshed_oauth_auth, Some(""))
-        .expect("simulate Codex rotating OAuth tokens before reapply");
-
-    assert!(cc_switch_lib::reapply_current_codex_official_live(&state)
-        .expect("reapply official live config"));
-
-    let live_auth: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read live auth");
-    assert_eq!(live_auth, refreshed_oauth_auth);
-    let live_config =
-        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live config");
-    assert!(live_config.contains("model_provider = \"custom\""));
-}
-
-#[test]
-fn reapply_codex_official_live_does_not_switch_or_restore_native_login() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-    let stored_auth = json!({
-        "auth_mode": "chatgpt",
-        "tokens": {
-            "access_token": "stored-access-a",
-            "refresh_token": "stored-refresh-a",
-            "account_id": "account-a"
-        }
-    });
-    let native_auth = json!({
-        "auth_mode": "chatgpt",
-        "tokens": {
-            "access_token": "native-access-b",
-            "refresh_token": "native-refresh-b",
-            "account_id": "account-b"
-        }
-    });
-    let mut initial_config = MultiAppConfig::default();
-    let manager = initial_config
-        .get_manager_mut(&AppType::Codex)
-        .expect("codex manager");
-    manager.current = "codex-official".to_string();
-    let mut official_provider = Provider::with_id(
-        "codex-official".to_string(),
-        "OpenAI Official".to_string(),
-        json!({ "auth": stored_auth, "config": "" }),
-        None,
-    );
-    official_provider.category = Some("official".to_string());
-    manager
-        .providers
-        .insert("codex-official".to_string(), official_provider);
-    let state = create_test_state_with_config(&initial_config).expect("create test state");
-    let stash_path =
-        cc_switch_lib::live::engine::DeviceStore::for_device().file("codex-login-stash.json");
-    let stash_bytes = serde_json::to_vec_pretty(&json!({
-        "logins": { "account:account-a": stored_auth },
-        "last": "account:account-a"
-    }))
-    .expect("serialize device login stash");
-    std::fs::write(&stash_path, &stash_bytes).expect("seed device login stash for account A");
-    write_codex_live_atomic(&native_auth, Some(""))
-        .expect("simulate native CLI switching to account B");
-    let auth_path = cc_switch_lib::get_codex_auth_path();
-    let native_bytes = std::fs::read(&auth_path).expect("read native account B bytes");
-
-    for logged_in in [true, false] {
-        if !logged_in {
-            std::fs::remove_file(&auth_path).expect("simulate native CLI logout");
-        }
-        for unified in [true, false] {
-            update_settings(AppSettings {
-                preserve_codex_official_auth_on_switch: true,
-                unify_codex_session_history: unified,
-                current_provider_codex: Some("codex-official".to_string()),
-                ..Default::default()
-            })
-            .expect("toggle unified history");
-            assert!(cc_switch_lib::reapply_current_codex_official_live(&state)
-                .expect("reapply history without changing the native login"));
-            if logged_in {
-                assert_eq!(std::fs::read(&auth_path).unwrap(), native_bytes);
-            } else {
-                assert!(!auth_path.exists(), "a history toggle must not log back in");
+        let auth_path = cc_switch_lib::get_codex_auth_path();
+        let config_path = cc_switch_lib::get_codex_config_path();
+        let stash_path =
+            cc_switch_lib::live::engine::DeviceStore::for_device().file("codex-login-stash.json");
+        let stash = serde_json::to_vec(&json!({
+            "logins": { "account:a": login("a") }, "last": "account:a"
+        }))
+        .unwrap();
+        std::fs::write(&stash_path, &stash).unwrap();
+        let native = serde_json::to_vec(&login("b")).unwrap();
+        std::fs::write(&auth_path, &native).unwrap();
+        for logged_in in [true, false] {
+            if !logged_in {
+                std::fs::remove_file(&auth_path).unwrap();
             }
-            assert_eq!(std::fs::read(&stash_path).unwrap(), stash_bytes);
-            let config = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-                .expect("read reprojected history config");
-            let doc: toml::Table = toml::from_str(&config).expect("parse history config");
-            assert_eq!(
-                doc.get("model_provider").and_then(toml::Value::as_str),
-                unified.then_some("custom")
-            );
+            for unified in [true, false] {
+                cc_switch_lib::update_settings(settings(unified)).unwrap();
+                assert!(cc_switch_lib::reapply_current_codex_official_live(&state).unwrap());
+                assert_eq!(
+                    std::fs::read(&auth_path).ok(),
+                    logged_in.then(|| native.clone())
+                );
+                assert_eq!(std::fs::read(&stash_path).unwrap(), stash);
+                let config: toml::Value =
+                    toml::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+                assert_eq!(
+                    config.get("model_provider").and_then(toml::Value::as_str),
+                    unified.then_some("custom")
+                );
+            }
+        }
+        // A failed write must not restore a login or consume the stash; retry stays safe.
+        let before = std::fs::read(&config_path).unwrap();
+        std::fs::write(&config_path, "[broken").unwrap();
+        cc_switch_lib::update_settings(settings(true)).unwrap();
+        assert!(cc_switch_lib::reapply_current_codex_official_live(&state).is_err());
+        assert!(!auth_path.exists());
+        assert_eq!(std::fs::read(&stash_path).unwrap(), stash);
+        std::fs::write(&config_path, before).unwrap();
+        assert!(cc_switch_lib::reapply_current_codex_official_live(&state).unwrap());
+        assert!(!auth_path.exists());
+        assert_eq!(std::fs::read(&stash_path).unwrap(), stash);
+        if proxy {
+            tauri::async_runtime::block_on(cc_switch_lib::mode::controller::exit(
+                &state,
+                &AppType::Codex,
+            ))
+            .unwrap();
         }
     }
 }
@@ -1908,6 +1672,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1970,6 +1735,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -2280,7 +2046,7 @@ fn sync_current_provider_for_app_leaves_the_proxy_contract_alone() {
             .update_proxy_config(proxy_config)
             .await
             .expect("use ephemeral proxy port");
-        cc_switch_lib::mode::controller::enter(&state, &AppType::Claude)
+        cc_switch_lib::mode::controller::enter(&state, &AppType::Claude, false)
             .await
             .expect("enter routing mode");
     });

@@ -47,7 +47,7 @@ pub(crate) fn write_and_commit<T>(
             };
             if let Err(rollback_error) = rollback {
                 return Err(AppError::Message(format!(
-                    "MiniMax Code update failed ({error}); restoring {} also failed: {rollback_error}",
+                    "Config update failed ({error}); restoring {} also failed: {rollback_error}",
                     path.display()
                 )));
             }

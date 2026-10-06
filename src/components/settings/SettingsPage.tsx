@@ -5,18 +5,19 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentType,
 } from "react";
-import { motion } from "framer-motion";
 import {
-  Loader2,
-  Save,
-  FolderSearch,
   Database,
-  Cloud,
-  ScrollText,
-  HardDriveDownload,
+  Folder,
+  Globe,
+  Info,
+  Loader2,
+  Route,
+  SlidersHorizontal,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
+import { useTranslation } from "react-i18next";
 import {
   Dialog,
   DialogContent,
@@ -24,51 +25,62 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { settingsApi } from "@/lib/api";
-import { LanguageSettings } from "@/components/settings/LanguageSettings";
-import { ThemeSettings } from "@/components/settings/ThemeSettings";
-import { WindowSettings } from "@/components/settings/WindowSettings";
-import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
-import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
-import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
-import { TerminalSettings } from "@/components/settings/TerminalSettings";
-import { DirectorySettings } from "@/components/settings/DirectorySettings";
+import { settingsApi, type AppId } from "@/lib/api";
+import { useSettingsQuery } from "@/lib/query";
+import type { SettingsSection } from "@/lib/navigation";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
+import { DirectoryInput } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { BackupListSection } from "@/components/settings/BackupListSection";
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
 import { AboutSection } from "@/components/settings/AboutSection";
-import { ProxyTabContent } from "@/components/settings/ProxyTabContent";
-import { UsageDashboard } from "@/components/usage/UsageDashboard";
+import { RoutingSection } from "@/components/settings/sections/RoutingSection";
+import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
-import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
-import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
-import { useInstalledSkills } from "@/hooks/useSkills";
+import { GeneralSection } from "@/components/settings/sections/GeneralSection";
+import { AppConfigSection } from "@/components/settings/sections/AppConfigSection";
+import {
+  SettingsBlock,
+  SettingsBody,
+  SettingsCard,
+  SettingsRow,
+} from "@/components/settings/SettingsLayout";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
-import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
 
-interface SettingsDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+const SECTION_ICON: Record<
+  SettingsSection,
+  ComponentType<{ className?: string; strokeWidth?: number | string }>
+> = {
+  general: SlidersHorizontal,
+  appConfig: Folder,
+  routing: Route,
+  network: Globe,
+  data: Database,
+  about: Info,
+};
+
+interface SettingsPageProps {
+  section: SettingsSection;
   onImportSuccess?: () => void | Promise<void>;
-  defaultTab?: string;
+  /** 「在侧栏显示哪些应用」跳到「应用」页 */
+  onOpenApps: () => void;
+  /** 本地路由 →「正在使用路由的应用」的「前往」 */
+  onOpenApp: (app: AppId) => void;
 }
 
+/**
+ * 设置（v7）：侧栏换成设置目录，这里只渲染当前分组。设置里只放偏好，功能页都在侧栏。
+ * 开关类即时保存；路径类改完点本节的「保存」。
+ */
 export function SettingsPage({
-  open,
-  onOpenChange,
+  section,
   onImportSuccess,
-  defaultTab = "general",
-}: SettingsDialogProps) {
+  onOpenApps,
+  onOpenApp,
+}: SettingsPageProps) {
   const { t } = useTranslation();
   const {
     settings,
@@ -76,6 +88,7 @@ export function SettingsPage({
     isSaving,
     isPortable,
     appConfigDir,
+    initialAppConfigDir,
     resolvedDirs,
     updateSettings,
     updateDirectory,
@@ -89,6 +102,7 @@ export function SettingsPage({
     requiresRestart,
     acknowledgeRestart,
   } = useSettings();
+  const { data: savedSettings } = useSettingsQuery();
 
   const {
     selectedFile,
@@ -103,18 +117,12 @@ export function SettingsPage({
     resetStatus,
   } = useImportExport({ onImportSuccess });
 
-  const { data: installedSkills } = useInstalledSkills();
-
-  const [activeTab, setActiveTab] = useState<string>("general");
   const [showRestartPrompt, setShowRestartPrompt] = useState(false);
-  const tabScrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (open) {
-      setActiveTab(defaultTab);
-      resetStatus();
-    }
-  }, [open, resetStatus, defaultTab]);
+    resetStatus();
+  }, [resetStatus]);
 
   useEffect(() => {
     if (requiresRestart) {
@@ -123,19 +131,16 @@ export function SettingsPage({
   }, [requiresRestart]);
 
   useLayoutEffect(() => {
-    if (tabScrollContainerRef.current) {
-      tabScrollContainerRef.current.scrollTop = 0;
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
     }
-  }, [activeTab]);
+  }, [section]);
 
-  const closeAfterSave = useCallback(() => {
-    // 保存成功后关闭：不再重置语言，避免需要“保存两次”才生效
+  const afterSave = useCallback(() => {
     acknowledgeRestart();
-    clearSelection();
-    resetStatus();
-    onOpenChange(false);
-  }, [acknowledgeRestart, clearSelection, onOpenChange, resetStatus]);
+  }, [acknowledgeRestart]);
 
+  // 路径类设置（配置目录、CC Switch 数据目录）点「保存」才写入；改了数据目录要重启
   const handleSave = useCallback(async () => {
     try {
       const result = await saveSettings(undefined, { silent: false });
@@ -144,22 +149,22 @@ export function SettingsPage({
         setShowRestartPrompt(true);
         return;
       }
-      closeAfterSave();
+      afterSave();
     } catch (error) {
       console.error("[SettingsPage] Failed to save settings", error);
     }
-  }, [closeAfterSave, saveSettings]);
+  }, [afterSave, saveSettings]);
 
   const handleRestartLater = useCallback(() => {
     setShowRestartPrompt(false);
-    closeAfterSave();
-  }, [closeAfterSave]);
+    afterSave();
+  }, [afterSave]);
 
   const handleRestartNow = useCallback(async () => {
     setShowRestartPrompt(false);
     if (import.meta.env.DEV) {
       toast.success(t("settings.devModeRestartHint"), { closeButton: true });
-      closeAfterSave();
+      afterSave();
       return;
     }
 
@@ -169,9 +174,9 @@ export function SettingsPage({
       console.error("[SettingsPage] Failed to restart app", error);
       toast.error(t("settings.restartFailed"));
     } finally {
-      closeAfterSave();
+      afterSave();
     }
-  }, [closeAfterSave, t]);
+  }, [afterSave, t]);
 
   // 通用设置即时保存（无需手动点击）
   // 使用 autoSaveSettings 避免误触发系统 API（开机自启、Claude 插件等）
@@ -209,353 +214,215 @@ export function SettingsPage({
   );
 
   const isBusy = useMemo(() => isLoading && !settings, [isLoading, settings]);
+  const SectionIcon = SECTION_ICON[section];
+
+  const appConfigDirty =
+    (appConfigDir?.trim() || undefined) !==
+    (initialAppConfigDir?.trim() || undefined);
+
+  const renderSection = () => {
+    if (!settings) return null;
+    switch (section) {
+      case "general":
+        return (
+          <GeneralSection
+            settings={settings}
+            onAutoSave={handleAutoSave}
+            onOpenApps={onOpenApps}
+          />
+        );
+      case "appConfig":
+        return (
+          <AppConfigSection
+            settings={settings}
+            savedSettings={savedSettings}
+            resolvedDirs={resolvedDirs}
+            isSaving={isSaving}
+            onAutoSave={handleAutoSave}
+            onDirectoryChange={updateDirectory}
+            onBrowseDirectory={browseDirectory}
+            onResetDirectory={resetDirectory}
+            onSaveDirectories={handleSave}
+          />
+        );
+      case "routing":
+        return <RoutingSection onOpenApp={onOpenApp} />;
+      case "network":
+        return (
+          <SettingsBlock
+            title={t("settings.advanced.globalProxy.title")}
+            help={{
+              title: t("settings.advanced.globalProxy.title"),
+              body: t("settings.advanced.globalProxy.description"),
+            }}
+          >
+            <div className="rounded-panel border border-border bg-surface p-5">
+              <GlobalProxySettings />
+            </div>
+          </SettingsBlock>
+        );
+      case "data":
+        return (
+          <>
+            <SettingsBlock
+              title={t("settings.data.location")}
+              actions={
+                appConfigDirty ? (
+                  <Button
+                    variant="solid"
+                    size="compact"
+                    disabled={isSaving}
+                    onClick={() => void handleSave()}
+                  >
+                    {isSaving && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    )}
+                    {t("common.save")}
+                  </Button>
+                ) : null
+              }
+            >
+              <SettingsCard>
+                <SettingsRow
+                  label={t("settings.appConfigDir")}
+                  help={{
+                    title: t("settings.appConfigDir"),
+                    body: t("settings.appConfigDirDescription"),
+                  }}
+                >
+                  <DirectoryInput
+                    label=""
+                    value={appConfigDir}
+                    resolvedValue={resolvedDirs.appConfig}
+                    placeholder={t("settings.browsePlaceholderApp")}
+                    onChange={updateAppConfigDir}
+                    onBrowse={browseAppConfigDir}
+                    onReset={resetAppConfigDir}
+                  />
+                </SettingsRow>
+              </SettingsCard>
+            </SettingsBlock>
+            <SettingsBlock
+              title={t("settings.advanced.data.title")}
+              help={{
+                title: t("settings.advanced.data.title"),
+                body: t("settings.advanced.data.description"),
+              }}
+            >
+              <div className="rounded-panel border border-border bg-surface p-5">
+                <ImportExportSection
+                  status={importStatus}
+                  selectedFile={selectedFile}
+                  errorMessage={errorMessage}
+                  backupId={backupId}
+                  isImporting={isImporting}
+                  onSelectFile={selectImportFile}
+                  onImport={importConfig}
+                  onExport={exportConfig}
+                  onClear={clearSelection}
+                />
+              </div>
+            </SettingsBlock>
+            <SettingsBlock
+              title={t("settings.advanced.backup.title")}
+              help={{
+                title: t("settings.advanced.backup.title"),
+                body: t("settings.advanced.backup.description"),
+              }}
+            >
+              <div className="rounded-panel border border-border bg-surface p-5">
+                <BackupListSection
+                  backupIntervalHours={settings.backupIntervalHours}
+                  backupRetainCount={settings.backupRetainCount}
+                  onSettingsChange={(updates) => handleAutoSave(updates)}
+                />
+              </div>
+            </SettingsBlock>
+            <SettingsBlock
+              title={t("settings.advanced.cloudSync.title")}
+              help={{
+                title: t("settings.advanced.cloudSync.title"),
+                body: t("settings.advanced.cloudSync.description"),
+              }}
+            >
+              <div className="rounded-panel border border-border bg-surface p-5">
+                <WebdavSyncSection
+                  config={settings.webdavSync}
+                  s3Config={settings.s3Sync}
+                  settings={settings}
+                  onAutoSave={handleAutoSave}
+                />
+              </div>
+            </SettingsBlock>
+            <SettingsBlock
+              title={t("settings.advanced.logConfig.title")}
+              help={{
+                title: t("settings.advanced.logConfig.title"),
+                body: t("settings.advanced.logConfig.description"),
+              }}
+            >
+              <div className="rounded-panel border border-border bg-surface p-5">
+                <LogConfigPanel />
+              </div>
+            </SettingsBlock>
+          </>
+        );
+      case "about":
+        return <AboutSection isPortable={isPortable} />;
+    }
+  };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden px-6">
-      {isBusy ? (
-        <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
-      ) : (
-        <Tabs
-          value={activeTab}
-          onValueChange={setActiveTab}
-          className="flex flex-col h-full"
-        >
-          <TabsList className="grid w-full grid-cols-6 mb-6 glass rounded-lg">
-            <TabsTrigger value="general">
-              {t("settings.tabGeneral")}
-            </TabsTrigger>
-            <TabsTrigger value="proxy">{t("settings.tabProxy")}</TabsTrigger>
-            <TabsTrigger value="auth">
-              {t("settings.tabAuth", { defaultValue: "认证" })}
-            </TabsTrigger>
-            <TabsTrigger value="advanced">
-              {t("settings.tabAdvanced")}
-            </TabsTrigger>
-            <TabsTrigger value="usage">{t("usage.title")}</TabsTrigger>
-            <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
-          </TabsList>
-
-          <div className="flex-1 min-h-0 flex flex-col">
-            <div
-              ref={tabScrollContainerRef}
-              className="flex-1 overflow-y-auto overflow-x-hidden pr-2"
-            >
-              <TabsContent value="general" className="space-y-6 mt-0">
-                {settings ? (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="space-y-6"
-                  >
-                    <LanguageSettings
-                      value={settings.language}
-                      onChange={(lang) => handleAutoSave({ language: lang })}
-                    />
-                    <ThemeSettings />
-                    <AppVisibilitySettings
-                      settings={settings}
-                      onChange={handleAutoSave}
-                    />
-                    <SkillStorageLocationSettings
-                      value={settings.skillStorageLocation ?? "cc_switch"}
-                      installedCount={installedSkills?.length ?? 0}
-                      onMigrated={(location) =>
-                        updateSettings({ skillStorageLocation: location })
-                      }
-                    />
-                    <SkillSyncMethodSettings
-                      value={settings.skillSyncMethod ?? "auto"}
-                      onChange={(method) =>
-                        handleAutoSave({ skillSyncMethod: method })
-                      }
-                    />
-                    <CodexAuthSettings
-                      settings={settings}
-                      onChange={handleAutoSave}
-                    />
-                    <WindowSettings
-                      settings={settings}
-                      onChange={handleAutoSave}
-                    />
-                    <TerminalSettings
-                      value={settings.preferredTerminal}
-                      onChange={(terminal) =>
-                        handleAutoSave({ preferredTerminal: terminal })
-                      }
-                    />
-                  </motion.div>
-                ) : null}
-              </TabsContent>
-
-              <TabsContent value="proxy" className="space-y-6 mt-0 pb-4">
-                {settings ? (
-                  <ProxyTabContent
-                    settings={settings}
-                    onAutoSave={handleAutoSave}
-                  />
-                ) : null}
-              </TabsContent>
-
-              <TabsContent value="auth" className="space-y-6 mt-0 pb-4">
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="space-y-6"
-                >
-                  <AuthCenterPanel />
-                </motion.div>
-              </TabsContent>
-
-              <TabsContent value="advanced" className="space-y-6 mt-0 pb-4">
-                {settings ? (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="space-y-4"
-                  >
-                    <Accordion
-                      type="multiple"
-                      defaultValue={[]}
-                      className="w-full space-y-4"
-                    >
-                      <AccordionItem
-                        value="directory"
-                        className="rounded-xl glass-card overflow-hidden"
-                      >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
-                          <div className="flex items-center gap-3">
-                            <FolderSearch className="h-5 w-5 text-primary" />
-                            <div className="text-left">
-                              <h3 className="text-base font-semibold">
-                                {t("settings.advanced.configDir.title")}
-                              </h3>
-                              <p className="text-sm text-muted-foreground font-normal">
-                                {t("settings.advanced.configDir.description")}
-                              </p>
-                            </div>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <DirectorySettings
-                            appConfigDir={appConfigDir}
-                            resolvedDirs={resolvedDirs}
-                            onAppConfigChange={updateAppConfigDir}
-                            onBrowseAppConfig={browseAppConfigDir}
-                            onResetAppConfig={resetAppConfigDir}
-                            claudeDir={settings.claudeConfigDir}
-                            codexDir={settings.codexConfigDir}
-                            geminiDir={settings.geminiConfigDir}
-                            grokDir={settings.grokConfigDir}
-                            opencodeDir={settings.opencodeConfigDir}
-                            openclawDir={settings.openclawConfigDir}
-                            hermesDir={settings.hermesConfigDir}
-                            piDir={settings.piConfigDir}
-                            onDirectoryChange={updateDirectory}
-                            onBrowseDirectory={browseDirectory}
-                            onResetDirectory={resetDirectory}
-                          />
-                        </AccordionContent>
-                      </AccordionItem>
-
-                      <AccordionItem
-                        value="data"
-                        className="rounded-xl glass-card overflow-hidden"
-                      >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
-                          <div className="flex items-center gap-3">
-                            <Database className="h-5 w-5 text-blue-500" />
-                            <div className="text-left">
-                              <h3 className="text-base font-semibold">
-                                {t("settings.advanced.data.title")}
-                              </h3>
-                              <p className="text-sm text-muted-foreground font-normal">
-                                {t("settings.advanced.data.description")}
-                              </p>
-                            </div>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <ImportExportSection
-                            status={importStatus}
-                            selectedFile={selectedFile}
-                            errorMessage={errorMessage}
-                            backupId={backupId}
-                            isImporting={isImporting}
-                            onSelectFile={selectImportFile}
-                            onImport={importConfig}
-                            onExport={exportConfig}
-                            onClear={clearSelection}
-                          />
-                        </AccordionContent>
-                      </AccordionItem>
-
-                      <AccordionItem
-                        value="backup"
-                        className="rounded-xl glass-card overflow-hidden"
-                      >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
-                          <div className="flex items-center gap-3">
-                            <HardDriveDownload className="h-5 w-5 text-amber-500" />
-                            <div className="text-left">
-                              <h3 className="text-base font-semibold">
-                                {t("settings.advanced.backup.title", {
-                                  defaultValue: "Backup & Restore",
-                                })}
-                              </h3>
-                              <p className="text-sm text-muted-foreground font-normal">
-                                {t("settings.advanced.backup.description", {
-                                  defaultValue:
-                                    "Manage automatic backups, view and restore database snapshots",
-                                })}
-                              </p>
-                            </div>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <BackupListSection
-                            backupIntervalHours={settings.backupIntervalHours}
-                            backupRetainCount={settings.backupRetainCount}
-                            onSettingsChange={(updates) =>
-                              handleAutoSave(updates)
-                            }
-                          />
-                        </AccordionContent>
-                      </AccordionItem>
-
-                      <AccordionItem
-                        value="cloudSync"
-                        className="rounded-xl glass-card overflow-hidden"
-                      >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
-                          <div className="flex items-center gap-3">
-                            <Cloud className="h-5 w-5 text-blue-500" />
-                            <div className="text-left">
-                              <h3 className="text-base font-semibold">
-                                {t("settings.advanced.cloudSync.title")}
-                              </h3>
-                              <p className="text-sm text-muted-foreground font-normal">
-                                {t("settings.advanced.cloudSync.description")}
-                              </p>
-                            </div>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <WebdavSyncSection
-                            config={settings?.webdavSync}
-                            s3Config={settings?.s3Sync}
-                            settings={settings}
-                            onAutoSave={handleAutoSave}
-                          />
-                        </AccordionContent>
-                      </AccordionItem>
-
-                      <AccordionItem
-                        value="logConfig"
-                        className="rounded-xl glass-card overflow-hidden"
-                      >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
-                          <div className="flex items-center gap-3">
-                            <ScrollText className="h-5 w-5 text-cyan-500" />
-                            <div className="text-left">
-                              <h3 className="text-base font-semibold">
-                                {t("settings.advanced.logConfig.title")}
-                              </h3>
-                              <p className="text-sm text-muted-foreground font-normal">
-                                {t("settings.advanced.logConfig.description")}
-                              </p>
-                            </div>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <LogConfigPanel />
-                        </AccordionContent>
-                      </AccordionItem>
-                    </Accordion>
-                  </motion.div>
-                ) : null}
-              </TabsContent>
-
-              <TabsContent value="about" className="mt-0">
-                <AboutSection isPortable={isPortable} />
-              </TabsContent>
-
-              <TabsContent value="usage" className="mt-0">
-                <UsageDashboard
-                  refreshIntervalMs={settings?.usageDashboardRefreshIntervalMs}
-                  onRefreshIntervalChange={(usageDashboardRefreshIntervalMs) =>
-                    handleAutoSave({ usageDashboardRefreshIntervalMs })
-                  }
-                  sessionAutoSyncEnabled={
-                    settings?.sessionAutoSyncEnabled ?? true
-                  }
-                  onSessionAutoSyncEnabledChange={(sessionAutoSyncEnabled) =>
-                    handleAutoSave({ sessionAutoSyncEnabled })
-                  }
-                />
-              </TabsContent>
-            </div>
-
-            {activeTab === "advanced" && settings && (
-              <div
-                className="flex-shrink-0 pt-4 border-t border-border-default"
-                style={{ backgroundColor: "hsl(var(--background))" }}
-              >
-                <div className="px-6 flex items-center justify-end gap-3">
-                  <Button onClick={handleSave} disabled={isSaving}>
-                    {isSaving ? (
-                      <span className="inline-flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        {t("settings.saving")}
-                      </span>
-                    ) : (
-                      <>
-                        <Save className="mr-2 h-4 w-4" />
-                        {t("common.save")}
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
-            )}
+    <>
+      <AppPageHeader
+        icon={<SectionIcon className="h-5 w-5" strokeWidth={1.5} />}
+        title={t(`settings.sections.${section}`)}
+      />
+      <div
+        ref={scrollRef}
+        id="main-content"
+        className="min-h-0 flex-1 overflow-y-auto scroll-stable"
+      >
+        {isBusy ? (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-fg-3" />
           </div>
-        </Tabs>
-      )}
+        ) : (
+          <SettingsBody>{renderSection()}</SettingsBody>
+        )}
+      </div>
 
       <Dialog
         open={showRestartPrompt}
         onOpenChange={(open) => !open && handleRestartLater()}
       >
-        <DialogContent zIndex="alert" className="max-w-md glass border-border">
+        <DialogContent zIndex="alert" className="max-w-md">
           <DialogHeader>
             <DialogTitle>{t("settings.restartRequired")}</DialogTitle>
           </DialogHeader>
           <div className="px-6">
-            <p className="text-sm text-muted-foreground">
+            <p className="text-body text-fg-2">
               {t("settings.restartRequiredMessage")}
             </p>
           </div>
           <DialogFooter>
             <Button
-              variant="ghost"
+              variant="neutral"
+              size="regular"
               onClick={handleRestartLater}
-              className="hover:bg-muted/50"
             >
               {t("settings.restartLater")}
             </Button>
             <Button
-              onClick={handleRestartNow}
-              className="bg-primary hover:bg-primary/90"
+              variant="solid"
+              size="regular"
+              onClick={() => void handleRestartNow()}
             >
               {t("settings.restartNow")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

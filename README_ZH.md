@@ -29,11 +29,11 @@
 <details open>
 <summary>点击折叠</summary>
 
-[![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-zh.png)](https://platform.kimi.com?track_id=track-6840233b42274ab4bcfd283e2bdd2aee&aff=cc-switch)
+[![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-zh.png)](https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch)
 
 Kimi K3 是 Moonshot AI 迄今能力最强的模型，也是全球首个开源 3T 级模型。K3 拥有 2.8T 参数、原生视觉能力与 100 万 Token 上下文，在长程编码、知识工作和推理任务中展现前沿性能。使用 CC Switch，可以在各类 Agent 工具中便捷配置和切换 Kimi。
 
-主要进行编程工作？可以试试 **Kimi Code 订阅**（[中文站](https://www.kimi.com/code?aff=cc-switch) | [Global](https://www.kimi.ai/code?aff=cc-switch)），或通过 Kimi 开放平台使用 **API**（[中文站](https://platform.kimi.com?track_id=track-6840233b42274ab4bcfd283e2bdd2aee&aff=cc-switch) | [Global](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)）。
+主要进行编程工作？可以试试 **Kimi Code 订阅**（[中文站](https://www.kimi.com/code?aff=cc-switch) | [Global](https://www.kimi.ai/code?aff=cc-switch)），或通过 Kimi 开放平台使用 **API**（[中文站](https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch) | [Global](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)）。
 
 **新用户首充福利**：通过上方 API 链接注册并完成首次充值，即可获赠充值金额 10% 的 API 额度，最高赠送 ¥1,000。
 
@@ -101,6 +101,11 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 <tr>
 <td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
 <td>感谢 FluxA &amp; Baidu AI Cloud 赞助了本项目！ FluxA 与百度智能云联合推出 AgenticPlan，为 AI Agent 提供自主购买/管理/使用模型、API、工具的能力。内含百度千帆 TokenPlan，低至6折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗舰模型，并获赠 FluxA AgentMarket API的调用额度，解锁搜索、数据抓取、社交媒体、金融、加密、生图、视频等 13000+ 付费 API。<br>在用户授权下，AI Agent 还可借助官方的Visa卡支付自主采购资源、管理 API Key、监控用量并规划续费，帮助 Agent 从「自主完成任务」升级为真正能够「自主规划预算，完成任务」。通过<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">此链接</a>购买！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://88api.ai/sign-up?aff=HSGY"><img src="assets/partners/logos/88api-banner.jpg" alt="88API" width="150"></a></td>
+<td>感谢 88API Token聚合平台赞助了本项目！88API 是一家由香港企业运营并且主要面向开发者、创作者与 AI 应用用户的一站式多模型 API 平台，通过统一接口接入文本、图片、语音和视频模型，覆盖 AI 编程、智能翻译、内容创作、配音、图像生成、视频生成等常见工作流。可以直接在 CC Switch 中完成 Provider 添加并切换，支持国际主流付款方式，可提供发票，提供企业级稳定服务。通过<a href="https://88api.ai/sign-up?aff=HSGY">此链接</a>注册可以获取专属赠送额度！</td>
 </tr>
 
 <tr>
@@ -188,11 +193,6 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 <tr>
 <td width="180"><a href="https://www.rightapi.ai/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
 <td>感谢 Right Code 赞助了本项目！Right Code 稳定提供 Claude Code、Codex、Gemini 等模型的中转服务，并可选按量、包月两种计费模式。充值即可开票，企业、团队用户一对一对接。同时为 CC Switch 的用户提供了特别优惠：通过<a href="https://www.rightapi.ai/register?aff=CCSWITCH">此链接</a>注册，每次充值均可获得实付金额5%的按量额度！</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
-<td>感谢 ETok.ai 赞助了本项目！ETok.ai 致力于打造一站式 AI 编程工具服务平台。我们提供 Claude Code 专业套餐及技术社群服务，同时支持 Google Gemini 和 OpenAI Codex。通过精心设计的套餐方案和专业的技术社群，为开发者提供稳定的服务保障和持续的技术支持，让 AI 辅助编程真正成为开发者的生产力工具。点击<a href="https://etok.ai">这里</a>注册！</td>
 </tr>
 
 <tr>

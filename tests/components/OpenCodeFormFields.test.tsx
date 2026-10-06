@@ -1,11 +1,11 @@
 import {
   act,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
@@ -438,7 +438,7 @@ describe("OpenCodeFormFields", () => {
     renderOpenCodeForm();
 
     const section = screen.getByText("Models").closest("div.border-l");
-    expect(section).toHaveClass("border-border-default", "pl-3");
+    expect(section).toHaveClass("border-border", "pl-3");
   });
 
   it("surfaces existing model token limits", () => {

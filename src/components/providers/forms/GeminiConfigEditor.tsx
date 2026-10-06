@@ -99,7 +99,7 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
 
   return (
     <div className="space-y-6">
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-fg-2">
         {t("geminiConfig.keyFieldsHint", {
           defaultValue:
             "地址、Key、模型名和认证方式随供应商切换；其余环境变量和 settings.json 是 Gemini CLI 全局设置，保存后对所有供应商生效。",

@@ -340,6 +340,15 @@ pub struct CodexOfficialHistoryUnifyMigration {
     /// 切换 codex_config_dir 后旧标记不会挡住新目录的迁移。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
+    /// Older markers only covered openai; allow one pass for the legacy proxy bucket.
+    #[serde(default)]
+    pub includes_legacy_official_proxy: bool,
+}
+
+impl CodexOfficialHistoryUnifyMigration {
+    fn covers_dir(&self, codex_dir: &str) -> bool {
+        self.includes_legacy_official_proxy && self.codex_config_dir.as_deref() == Some(codex_dir)
+    }
 }
 
 /// 应用设置结构
@@ -371,6 +380,10 @@ pub struct AppSettings {
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
+    /// 是否在主页面显示 Stack 模式开关（默认关闭）。和 `enable_local_proxy` 二选一，只影响
+    /// Claude Code、Codex：它们的开关换成 Stack 模式开关，其余应用仍显示路由开关。
+    #[serde(default)]
+    pub enable_stack_mode: bool,
     /// User has confirmed the local proxy first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_confirmed: Option<bool>,
@@ -390,6 +403,10 @@ pub struct AppSettings {
     /// Whether to show the project profile switcher on the main page header
     #[serde(default = "default_show_profile_switcher")]
     pub show_profile_switcher: bool,
+    /// Check installed CLI tools for new versions at startup (off by default:
+    /// many users do not want to chase every release).
+    #[serde(default)]
+    pub check_tool_updates_on_startup: bool,
     /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
@@ -410,6 +427,12 @@ pub struct AppSettings {
     /// User has confirmed the first-run welcome notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_run_notice_confirmed: Option<bool>,
+    /// User has confirmed the one-time "new layout" dialog shown to upgrading users
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_layout_notice_confirmed: Option<bool>,
+    /// Highest app version whose "what's new" summary the user has seen on this device
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whats_new_seen_version: Option<String>,
     /// User has confirmed the common config first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub common_config_confirmed: Option<bool>,
@@ -532,17 +555,21 @@ impl Default for AppSettings {
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,
+            enable_stack_mode: false,
             proxy_confirmed: None,
             usage_confirmed: None,
             usage_dashboard_refresh_interval_ms: None,
             session_auto_sync_enabled: true,
             enable_failover_toggle: false,
             show_profile_switcher: true,
+            check_tool_updates_on_startup: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
+            new_layout_notice_confirmed: None,
+            whats_new_seen_version: None,
             common_config_confirmed: None,
             language: None,
             visible_apps: None,
@@ -850,14 +877,14 @@ pub fn mark_codex_provider_template_migrated(
     })
 }
 
-/// 统一会话迁移标记是否覆盖指定目录。标记里没记目录（不应出现的旧格式）
-/// 视为不匹配——重跑迁移是幂等的，宁可重迁也不漏迁。
+/// 统一会话迁移标记是否覆盖指定目录及旧官方代理桶。旧标记视为不匹配，
+/// 允许补迁 cc-switch-official；重跑迁移是幂等的。
 pub fn is_codex_official_history_unify_migrated_for_dir(codex_dir: &str) -> bool {
     get_settings()
         .local_migrations
         .as_ref()
         .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
-        .is_some_and(|migration| migration.codex_config_dir.as_deref() == Some(codex_dir))
+        .is_some_and(|migration| migration.covers_dir(codex_dir))
 }
 
 /// 条件写入迁移完成标记：仅当此刻开关仍开启且迁移意愿仍在时才写。
@@ -1194,6 +1221,25 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn official_history_marker_requires_legacy_proxy_coverage() {
+        let mut marker: CodexOfficialHistoryUnifyMigration =
+            serde_json::from_value(serde_json::json!({
+                "completedAt": "2026-06-12T00:00:00Z",
+                "targetProviderId": "custom",
+                "codexConfigDir": "/test/codex"
+            }))
+            .expect("old marker remains readable");
+
+        assert!(!marker.covers_dir("/test/codex"));
+        marker.includes_legacy_official_proxy = true;
+        let marker: CodexOfficialHistoryUnifyMigration =
+            serde_json::from_value(serde_json::to_value(marker).expect("save upgraded marker"))
+                .expect("read upgraded marker");
+        assert!(marker.covers_dir("/test/codex"));
+        assert!(!marker.covers_dir("/other/codex"));
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {

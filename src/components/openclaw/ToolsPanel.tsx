@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2, Save, TriangleAlert } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useOpenClawTools, useSaveOpenClawTools } from "@/hooks/useOpenClaw";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -115,21 +116,19 @@ const ToolsPanel: React.FC = () => {
   if (isLoading) {
     return (
       <div className="px-6 pt-4 pb-8 flex items-center justify-center min-h-[200px]">
-        <div className="text-sm text-muted-foreground">
-          {t("common.loading")}
-        </div>
+        <div className="text-sm text-fg-2">{t("common.loading")}</div>
       </div>
     );
   }
 
   return (
     <div className="px-6 pt-4 pb-8">
-      <p className="text-sm text-muted-foreground mb-6">
+      <p className="text-sm text-fg-2 mb-6">
         {t("openclaw.tools.description")}
       </p>
 
       {unsupportedProfile && (
-        <Alert className="mb-6 border-amber-500/30 bg-amber-500/5">
+        <Alert className="mb-6 border-transparent bg-warning-soft">
           <TriangleAlert className="h-4 w-4" />
           <AlertTitle>
             {t("openclaw.tools.unsupportedProfileTitle", {
@@ -201,14 +200,17 @@ const ToolsPanel: React.FC = () => {
                 placeholder={t("openclaw.tools.patternPlaceholder")}
                 className="font-mono text-xs"
               />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="flex-shrink-0 h-9 w-9 text-muted-foreground hover:text-destructive"
-                onClick={() => removeListItem(setAllowList, index)}
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
+              <HoverTip content={t("common.delete")}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("common.delete")}
+                  className="flex-shrink-0 h-9 w-9 text-fg-2 hover:text-destructive"
+                  onClick={() => removeListItem(setAllowList, index)}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </HoverTip>
             </div>
           ))}
           <Button
@@ -240,14 +242,17 @@ const ToolsPanel: React.FC = () => {
                 placeholder={t("openclaw.tools.patternPlaceholder")}
                 className="font-mono text-xs"
               />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="flex-shrink-0 h-9 w-9 text-muted-foreground hover:text-destructive"
-                onClick={() => removeListItem(setDenyList, index)}
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
+              <HoverTip content={t("common.delete")}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("common.delete")}
+                  className="flex-shrink-0 h-9 w-9 text-fg-2 hover:text-destructive"
+                  onClick={() => removeListItem(setDenyList, index)}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </HoverTip>
             </div>
           ))}
           <Button

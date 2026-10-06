@@ -29,11 +29,11 @@
 <details open>
 <summary>Zum Einklappen klicken</summary>
 
-[![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-en.png)](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)
+[![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-en.png)](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)
 
 Kimi K3 ist das bislang leistungsstärkste Modell von Moonshot AI und das weltweit erste offene Modell der 3T-Klasse. Mit 2,8 Billionen Parametern, nativen visuellen Fähigkeiten und einem Kontextfenster von 1 Million Token liefert K3 Spitzenleistung bei langfristigen Programmieraufgaben, Wissensarbeit und Reasoning. Mit CC Switch lässt sich Kimi in den verschiedensten Agenten-Tools bequem konfigurieren und umschalten.
 
-Arbeiten Sie hauptsächlich mit Programmierung? Probieren Sie einen **Kimi Code Tarif** ([中文站](https://www.kimi.com/code?aff=cc-switch) | [Global](https://www.kimi.ai/code?aff=cc-switch)) aus, oder nutzen Sie die **API** über die Kimi Open Platform ([中文站](https://platform.kimi.com?track_id=track-6840233b42274ab4bcfd283e2bdd2aee&aff=cc-switch) | [Global](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)).
+Arbeiten Sie hauptsächlich mit Programmierung? Probieren Sie einen **Kimi Code Tarif** ([中文站](https://www.kimi.com/code?aff=cc-switch) | [Global](https://www.kimi.ai/code?aff=cc-switch)) aus, oder nutzen Sie die **API** über die Kimi Open Platform ([中文站](https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch) | [Global](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)).
 
 **Bonus für die erste Aufladung neuer Nutzer**: Registrieren Sie sich über die obigen API-Links und schließen Sie Ihre erste Aufladung ab, um 10 % des Betrags als Bonus-API-Guthaben zu erhalten – bis zu CNY ¥1.000.
 
@@ -101,6 +101,11 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 <tr>
 <td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
 <td>Danke an FluxA &amp; Baidu AI Cloud für die Unterstützung dieses Projekts! FluxA und Baidu AI Cloud haben gemeinsam AgenticPlan gestartet: KI-Agenten erhalten damit die Fähigkeit, Modelle, APIs und Werkzeuge eigenständig zu kaufen, zu verwalten und zu nutzen. Enthalten ist der Baidu-Qianfan-TokenPlan mit bis zu 40 % Rabatt und Zugriff auf Spitzenmodelle wie DeepSeek V4, GLM 5.2 und Kimi. Dazu kommt Guthaben für die APIs des FluxA AgentMarket, das mehr als 13.000 kostenpflichtige APIs freischaltet – für Suche, Daten-Scraping, soziale Medien, Finanzen, Krypto, Bildgenerierung, Video und mehr.<br>Mit Zustimmung der Nutzerinnen und Nutzer kann ein KI-Agent außerdem mit der offiziellen Visa-Karte bezahlen, um selbstständig Ressourcen zu beschaffen, API-Schlüssel zu verwalten, die Nutzung zu überwachen und Verlängerungen zu planen. So entwickelt sich der Agent von „Aufgaben eigenständig erledigen“ zu „eigenständig Budgets planen und Aufgaben erledigen“. Kaufen Sie über <a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">diesen Link</a>!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://88api.ai/sign-up?aff=HSGY"><img src="assets/partners/logos/88api-banner-en.jpg" alt="88API" width="150"></a></td>
+<td>Danke an die 88API Token-Aggregationsplattform für die Unterstützung dieses Projekts! 88API ist eine von einem Hongkonger Unternehmen betriebene All-in-one-Multi-Modell-API-Plattform, die sich vor allem an Entwickler, Kreative und Nutzer von KI-Anwendungen richtet. Über eine einheitliche Schnittstelle erhalten Sie Zugriff auf Text-, Bild-, Sprach- und Videomodelle – für gängige Workflows wie KI-Programmierung, intelligente Übersetzung, Content-Erstellung, Vertonung, Bild- und Videogenerierung. Der Anbieter lässt sich direkt in CC Switch hinzufügen und umschalten. 88API unterstützt die gängigen internationalen Zahlungsmethoden, kann Rechnungen ausstellen und bietet stabilen Service auf Enterprise-Niveau. Registrieren Sie sich über <a href="https://88api.ai/sign-up?aff=HSGY">diesen Link</a>, um exklusives Bonusguthaben zu erhalten!</td>
 </tr>
 
 <tr>
@@ -188,11 +193,6 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 <tr>
 <td width="180"><a href="https://www.rightapi.ai/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
 <td>Danke an Right Code für die Unterstützung dieses Projekts! Right Code stellt zuverlässig Routing-Dienste für Modelle wie Claude Code, Codex und Gemini bereit, wahlweise mit nutzungsbasierter Abrechnung oder monatlichem Abonnement. Rechnungen sind beim Aufladen verfügbar, und Unternehmens- sowie Teamkunden erhalten dedizierten Einzelsupport. Right Code bietet außerdem einen exklusiven Rabatt für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://www.rightapi.ai/register?aff=CCSWITCH">diesen Link</a> und erhalten Sie bei jeder Aufladung nutzungsbasiertes Guthaben in Höhe von 5 % des gezahlten Betrags.</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
-<td>Danke an ETok.ai für die Unterstützung dieses Projekts! ETok.ai widmet sich dem Aufbau einer Komplettlösung für KI-Programmierwerkzeuge. Wir bieten professionelle Claude-Code-Pakete und Dienste einer technischen Community, mit Unterstützung für Google Gemini und OpenAI Codex. Durch sorgfältig gestaltete Pläne und eine professionelle Tech-Community geben wir Entwicklern verlässliche Servicegarantien und kontinuierlichen technischen Support an die Hand und machen KI-gestützte Programmierung zu einem echten Produktivitätswerkzeug. Klicken Sie <a href="https://etok.ai">hier</a>, um sich zu registrieren!</td>
 </tr>
 
 <tr>
