@@ -578,10 +578,11 @@ pub async fn enter_with_route(
     let result = try_enter_with_route(state, app, stack_mode, route).await;
     if let Err(error) = &result {
         log::error!(
-            "[MODE] {} 进入{}模式失败（路由目标 {}）: {error}",
+            "[MODE] {} 进入{}模式失败（路由目标 {}）: {}",
             app.as_str(),
             mode_label(true, stack_mode),
-            route.unwrap_or("沿用上次")
+            route.unwrap_or("沿用上次"),
+            crate::error_for_log(error)
         );
     }
     result
@@ -771,7 +772,11 @@ fn exit_locked(state: &AppState, app: &AppType, keep_mode: bool) -> Result<(), S
                 .flatten()
                 .map_or_else(|| "（无）".to_string(), |provider| provider.id)
         ),
-        Err(error) => log::error!("[MODE] {} {op_name} 失败: {error}", app.as_str()),
+        Err(error) => log::error!(
+            "[MODE] {} {op_name} 失败: {}",
+            app.as_str(),
+            crate::error_for_log(error)
+        ),
     }
     result
 }
@@ -6105,6 +6110,34 @@ model_provider = "c"
             mode(&AppType::Codex).proxy_route.as_deref(),
             Some("deepseek")
         );
+    }
+
+    /// 行里的 TOML 坏在密钥那一行：解析诊断会带上这行原文，失败日志不能把它写进日志文件。
+    #[tokio::test]
+    #[serial]
+    async fn failure_logs_drop_the_config_line_a_broken_row_quotes() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let secret = "sk-review-only-secret";
+        let mut rows = codex_stack_rows().to_vec();
+        let mut broken = codex_native("broken", "https://b.example/v1", "", None);
+        broken.settings_config["config"] =
+            json!(format!("experimental_bearer_token = \"{secret}\" !\n"));
+        rows.push(broken);
+        let state = state_with(AppType::Codex, &rows, "a").await;
+
+        let switch_error = ProviderService::switch(&state, AppType::Codex, "broken")
+            .unwrap_err()
+            .to_string();
+        let enter_error = enter_with_route(&state, &AppType::Codex, false, Some("broken"))
+            .await
+            .unwrap_err();
+        for error in [switch_error, enter_error] {
+            assert!(error.contains(secret), "前提：错误里带配置原文 {error}");
+            let logged = crate::error_for_log(&error);
+            assert!(!logged.contains(secret), "{logged}");
+            assert!(logged.contains("line 1"), "{logged}");
+        }
     }
 
     #[tokio::test]

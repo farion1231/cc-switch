@@ -5872,7 +5872,10 @@ impl ProviderService {
             {
                 log::info!("[SWITCH] {app} 拒绝切到 {id}: {error}");
             }
-            Err(error) => log::error!("[SWITCH] {app} 切到 {id} 失败: {error}"),
+            Err(error) => log::error!(
+                "[SWITCH] {app} 切到 {id} 失败: {}",
+                crate::error_for_log(&error.to_string())
+            ),
         }
         result
     }
