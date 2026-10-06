@@ -6,7 +6,8 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::{
-    fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL,
+    fresh_input_sql, real_total_tokens_sql, INPUT_TOKEN_SEMANTICS_FRESH,
+    INPUT_TOKEN_SEMANTICS_TOTAL,
 };
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -119,6 +120,7 @@ pub struct ProviderStats {
     pub provider_id: String,
     pub provider_name: String,
     pub request_count: u64,
+    /// 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径。
     pub total_tokens: u64,
     pub total_cost: String,
     pub success_rate: f32,
@@ -176,6 +178,7 @@ fn speed_estimate_eligible_sql(alias: &str) -> String {
 pub struct ModelStats {
     pub model: String,
     pub request_count: u64,
+    /// 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径。
     pub total_tokens: u64,
     pub total_cost: String,
     pub avg_cost_per_request: String,
@@ -1571,8 +1574,8 @@ impl Database {
         // UNION detail logs + rollup data, then aggregate
         let detail_pname = provider_name_coalesce("l", "p");
         let rollup_pname = provider_name_coalesce("r", "p2");
-        let fresh_input_detail = fresh_input_sql("l");
-        let fresh_input_rollup = fresh_input_sql("r");
+        let real_total_detail = real_total_tokens_sql("l");
+        let real_total_rollup = real_total_tokens_sql("r");
         let speed_ok = speed_eligible_sql("l");
         let est_ok = speed_estimate_eligible_sql("l");
         let sql = format!(
@@ -1593,7 +1596,7 @@ impl Database {
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
                     COUNT(*) as request_count,
-                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({real_total_detail}), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
                     COALESCE(SUM(l.latency_ms), 0) as latency_sum,
@@ -1609,7 +1612,7 @@ impl Database {
                 SELECT r.provider_id, r.app_type,
                     {rollup_pname} as provider_name,
                     COALESCE(SUM(r.request_count), 0),
-                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM({real_total_rollup}), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.success_count), 0),
                     COALESCE(SUM(r.avg_latency_ms * r.request_count), 0),
@@ -1748,8 +1751,8 @@ impl Database {
         // 定价算的，金额与定价表自洽），NULL/'' 回落 model。默认 response 计价
         // 模式下两者相同，行为不变；request 模式 + 路由接管下，钱挂在实际计价
         // 基准名下，而不是上游回显/客户端别名名下。
-        let fresh_input_detail = fresh_input_sql("l");
-        let fresh_input_rollup = fresh_input_sql("r");
+        let real_total_detail = real_total_tokens_sql("l");
+        let real_total_rollup = real_total_tokens_sql("r");
         let detail_model = effective_model_sql("l");
         let rollup_model = effective_model_sql("r");
         let sql = format!(
@@ -1761,7 +1764,7 @@ impl Database {
             FROM (
                 SELECT {detail_model} as model,
                     COUNT(*) as request_count,
-                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({real_total_detail}), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
                 FROM proxy_request_logs l
                 {detail_join}
@@ -1770,7 +1773,7 @@ impl Database {
                 UNION ALL
                 SELECT {rollup_model},
                     COALESCE(SUM(r.request_count), 0),
-                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM({real_total_rollup}), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0)
                 FROM usage_daily_rollups r
                 {rollup_join}
@@ -4937,6 +4940,90 @@ mod tests {
         assert_eq!(stats[1].total_tokens, 600);
         assert_eq!(stats[2].request_count, 1);
         assert_eq!(stats[2].total_tokens, 275);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_provider_and_model_stats_tokens_sum_to_summary_real_total() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            // Claude：input 不含缓存。真实消耗 = 100 + 200 + 1000 + 5000
+            insert_usage_log(
+                &conn,
+                "claude-1",
+                "claude",
+                "p-claude",
+                "claude-x",
+                "session_log",
+                1000,
+                100,
+                200,
+                5000,
+                1000,
+                200,
+                "0.10",
+            )?;
+            // Codex：input 已含缓存命中 600。真实消耗 = (1000 - 600) + 50 + 600
+            insert_usage_log(
+                &conn,
+                "codex-1",
+                "codex",
+                "p-codex",
+                "gpt-x",
+                "codex_session",
+                1000,
+                1000,
+                50,
+                600,
+                0,
+                200,
+                "0.05",
+            )?;
+            // 日汇总行同样要带上缓存。真实消耗 = (900 - 300) + 40 + 300 + 0
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "2020-01-01",
+                    "codex",
+                    "p-codex",
+                    "gpt-x",
+                    3,
+                    3,
+                    900,
+                    40,
+                    300,
+                    0,
+                    "0.30",
+                    100
+                ],
+            )?;
+        }
+
+        let summary = db.get_usage_summary(None, None, None, None, None)?;
+        assert_eq!(summary.real_total_tokens, 6300 + 1050 + 940);
+
+        let providers = db.get_provider_stats(None, None, None, None, None)?;
+        let tokens_of = |id: &str| {
+            providers
+                .iter()
+                .find(|s| s.provider_id == id)
+                .map(|s| s.total_tokens)
+        };
+        assert_eq!(tokens_of("p-claude"), Some(6300));
+        assert_eq!(tokens_of("p-codex"), Some(1050 + 940));
+        let provider_sum: u64 = providers.iter().map(|s| s.total_tokens).sum();
+        assert_eq!(provider_sum, summary.real_total_tokens);
+
+        let models = db.get_model_stats(None, None, None, None, None)?;
+        let model_sum: u64 = models.iter().map(|s| s.total_tokens).sum();
+        assert_eq!(model_sum, summary.real_total_tokens);
 
         Ok(())
     }
