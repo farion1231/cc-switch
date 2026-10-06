@@ -31,7 +31,7 @@
 //! | 20 | 进入代理不写 auth.json；第三方路由契约用字面值 `PROXY_MANAGED` | 已有 `codex_official_to_deepseek_then_takeover_...` |
 //! | 21 | 代理下官方路由不写占位凭据，客户端带自己的真实登录 | crate 内：`mode::controller` 的 `codex_routes_between_official_and_third_party_contracts` |
 //! | 22 | 退出代理不覆盖用户此刻的登录状态（期间登出就保持登出，重新登录就保留新登录） | 本文件 |
-//! | 23 | `model_catalog_json` 只认领 `cc-switch-model-catalog.json`；用户自己的指针不认领、不删除 | 本文件 |
+//! | 23 | `model_catalog_json` 是关键字段：卡里自带的指针随卡写入；否则有生成的目录写 `cc-switch-model-catalog.json`，没有就删；live 里手写的值不保留 | 本文件 |
 //! | 24 | `web_search = "disabled"` 只删 CC Switch 写的哨兵值，用户的其他值保留 | 本文件 |
 //! | 25 | auth.json 删不掉时切换照常成功，返回 `codex_auth_cleanup_failed` 警告 | 本文件 |
 //!
@@ -683,7 +683,29 @@ fn model_catalog_pointer_ownership() {
     assert_eq!(
         live_config()["model_catalog_json"].as_str(),
         Some("/Users/me/my-catalog.json"),
-        "a user-managed catalog pointer is never claimed or removed"
+        "a card's own catalog pointer wins over the generated catalog"
+    );
+
+    let hand_written = live_config_text().replace(
+        "model_catalog_json = \"/Users/me/my-catalog.json\"",
+        "model_catalog_json = \"/Users/me/hand-written.json\"",
+    );
+    std::fs::write(get_codex_config_path(), hand_written).expect("hand-write a pointer");
+    switch(&state, "owned").expect("switch back to owned");
+    assert_eq!(
+        live_config()["model_catalog_json"].as_str(),
+        Some("cc-switch-model-catalog.json"),
+        "a pointer written into config.toml by hand is replaced like any key field"
+    );
+    let hand_written = live_config_text().replace(
+        "model_catalog_json = \"cc-switch-model-catalog.json\"",
+        "model_catalog_json = \"/Users/me/hand-written.json\"",
+    );
+    std::fs::write(get_codex_config_path(), hand_written).expect("hand-write a pointer");
+    switch(&state, "plain").expect("switch to plain again");
+    assert!(
+        live_config().get("model_catalog_json").is_none(),
+        "a hand-written pointer is removed when the target has no catalog"
     );
 }
 
@@ -795,7 +817,7 @@ async fn check_proxy_exit_keeps_login(current: &str, after_login: Option<&str>) 
         switch(&state, "relay").expect("switch to relay");
     }
     use_ephemeral_proxy_port(&state).await;
-    cc_switch_lib::mode::controller::enter(&state, &AppType::Codex)
+    cc_switch_lib::mode::controller::enter(&state, &AppType::Codex, false)
         .await
         .expect("enter proxy");
     if current == "codex-official" {

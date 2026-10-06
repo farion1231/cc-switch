@@ -1,0 +1,33 @@
+{
+  "version": "4.0.2",
+  "items": [
+    {
+      "type": "fix",
+      "zh": "修复 Claude Code 用 ChatGPT 账号时报 400、会话中断",
+      "zh-TW": "修復 Claude Code 用 ChatGPT 帳號時報 400、工作階段中斷",
+      "en": "Fixed Claude Code with a ChatGPT account failing with 400 errors mid-session",
+      "ja": "Claude Code で ChatGPT アカウント利用時に 400 エラーで止まる問題を修正"
+    },
+    {
+      "type": "improve",
+      "zh": "Claude Code 聚合模式的 /model 只列聚合的模型，改动无需重启",
+      "zh-TW": "Claude Code 聚合模式的 /model 只列聚合的模型，變更無需重啟",
+      "en": "Claude Code Aggregation now lists only your aggregated models in /model, no restart needed",
+      "ja": "Claude Code の集約モードで /model に集約モデルだけを表示、変更は再起動不要に"
+    },
+    {
+      "type": "fix",
+      "zh": "修复其他工具写入的模型目录设置挡住 Codex 的聚合模型",
+      "zh-TW": "修復其他工具寫入的模型目錄設定擋住 Codex 的聚合模型",
+      "en": "Fixed a model catalog setting written by another tool hiding Codex aggregated models",
+      "ja": "他のツールが書き込んだモデルカタログ設定で Codex の集約モデルが隠れる問題を修正"
+    },
+    {
+      "type": "new",
+      "zh": "MCP 服务器可以同步到 Pi 1.0 了",
+      "zh-TW": "MCP 伺服器可以同步到 Pi 1.0 了",
+      "en": "MCP servers can now be synced to Pi 1.0",
+      "ja": "MCP サーバーを Pi 1.0 に同期できるように"
+    }
+  ]
+}

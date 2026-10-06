@@ -1,14 +1,37 @@
 //! Opaque reasoning transport helpers shared by the Messages ↔ Responses bridge.
 //!
 //! The Anthropic Messages protocol has no field for an OpenAI Responses
-//! `reasoning` item. To keep stateless tool loops lossless, the complete item is
+//! `reasoning` item. To keep stateless tool loops lossless, the item is
 //! carried in a versioned thinking signature/redacted-thinking payload and
 //! restored when the client replays the assistant message.
+//!
+//! Only fields the Responses input schema accepts on a `reasoning` item are
+//! transported. Backends periodically grow output-only fields on reasoning
+//! items (the official Codex backend added `status` on 2026-10-03) and reject
+//! them as unknown parameters once replayed into `input`, so both the storing
+//! side and the restoring side keep the same whitelist. Restoring must stay
+//! whitelisted forever: envelopes written before this constraint sit in
+//! existing client histories and still carry the raw output fields.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde_json::{json, Value};
 
 pub(crate) const OPENAI_REASONING_ITEM_PREFIX: &str = "ccswitch-openai-reasoning-v1:";
+
+/// The only fields safe to send back as a `reasoning` input item:
+/// `encrypted_content` is the stateless-replay payload, `id`/`summary` are
+/// accepted context, and everything else the backend emits is output-only.
+const REPLAYABLE_REASONING_FIELDS: &[&str] = &["type", "id", "summary", "encrypted_content"];
+
+fn sanitize_reasoning_item(item: &Value) -> Value {
+    let mut sanitized = serde_json::Map::new();
+    for field in REPLAYABLE_REASONING_FIELDS {
+        if let Some(value) = item.get(*field) {
+            sanitized.insert((*field).to_string(), value.clone());
+        }
+    }
+    Value::Object(sanitized)
+}
 
 pub(crate) fn reasoning_summary_text(item: &Value) -> String {
     item.get("summary")
@@ -31,7 +54,7 @@ pub(crate) fn encode_openai_reasoning_item(item: &Value) -> Option<String> {
     if item.get("type").and_then(Value::as_str) != Some("reasoning") {
         return None;
     }
-    let bytes = serde_json::to_vec(item).ok()?;
+    let bytes = serde_json::to_vec(&sanitize_reasoning_item(item)).ok()?;
     Some(format!(
         "{OPENAI_REASONING_ITEM_PREFIX}{}",
         URL_SAFE_NO_PAD.encode(bytes)
@@ -42,7 +65,8 @@ pub(crate) fn decode_openai_reasoning_item(encoded: &str) -> Option<Value> {
     let payload = encoded.strip_prefix(OPENAI_REASONING_ITEM_PREFIX)?;
     let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
     let item: Value = serde_json::from_slice(&bytes).ok()?;
-    (item.get("type").and_then(Value::as_str) == Some("reasoning")).then_some(item)
+    (item.get("type").and_then(Value::as_str) == Some("reasoning"))
+        .then(|| sanitize_reasoning_item(&item))
 }
 
 pub(crate) fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option<Value> {
@@ -126,6 +150,65 @@ mod tests {
         assert_eq!(
             openai_reasoning_item_from_anthropic_block(&block),
             Some(item)
+        );
+    }
+
+    #[test]
+    fn replay_drops_backend_only_fields() {
+        let item = json!({
+            "id": "rs_3",
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "Need a tool."}],
+            "encrypted_content": "opaque",
+            "status": "completed",
+            "content": [{"type": "reasoning_text", "text": "output-only plaintext"}]
+        });
+        let block = anthropic_block_from_openai_reasoning_item(&item).unwrap();
+        assert_eq!(
+            openai_reasoning_item_from_anthropic_block(&block),
+            Some(json!({
+                "id": "rs_3",
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "Need a tool."}],
+                "encrypted_content": "opaque"
+            }))
+        );
+    }
+
+    #[test]
+    fn decode_strips_fields_from_legacy_envelopes() {
+        // Envelopes written before the whitelist kept the backend output item
+        // verbatim (e.g. `status`, plaintext `content`); replay must drop
+        // those fields even though encode no longer stores them.
+        let legacy = json!({
+            "id": "rs_4",
+            "type": "reasoning",
+            "summary": [],
+            "encrypted_content": "opaque",
+            "status": "completed",
+            "content": [{"type": "reasoning_text", "text": "legacy"}]
+        });
+        let encoded = format!(
+            "{OPENAI_REASONING_ITEM_PREFIX}{}",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&legacy).unwrap())
+        );
+        let expected = json!({
+            "id": "rs_4",
+            "type": "reasoning",
+            "summary": [],
+            "encrypted_content": "opaque"
+        });
+        assert_eq!(
+            decode_openai_reasoning_item(&encoded),
+            Some(expected.clone())
+        );
+        // Same guarantee through the redacted_thinking carrier.
+        assert_eq!(
+            openai_reasoning_item_from_anthropic_block(&json!({
+                "type": "redacted_thinking",
+                "data": encoded
+            })),
+            Some(expected)
         );
     }
 }

@@ -100,6 +100,18 @@ describe("Pi provider presets", () => {
     expect(models.every((model) => model.contextWindow === 272_000)).toBe(true);
   });
 
+  // #7859: 官方 V4.1 Flash 识图，V4 Pro 仍是纯文本
+  it("declares image input for official DeepSeek V4.1 Flash only", () => {
+    const models =
+      piProviderPresets.find((preset) => preset.name === "DeepSeek")
+        ?.settingsConfig.models ?? [];
+    const input = (id: string) =>
+      models.find((model) => model.id === id)?.input;
+
+    expect(input("deepseek-flash")).toEqual(["text", "image"]);
+    expect(input("deepseek-v4-pro")).toEqual(["text"]);
+  });
+
   it("keeps provider-specific OpenAI compatibility metadata", () => {
     const preset = (name: string) => {
       const found = piProviderPresets.find((item) => item.name === name);

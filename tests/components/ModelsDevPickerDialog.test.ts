@@ -3,54 +3,54 @@ import { describe, expect, it } from "vitest";
 import {
   flattenModels,
   formatPrice,
-  normalizeModelIdForPricing,
 } from "@/components/usage/ModelsDevPickerDialog";
+import { normalizeModelsDevModelId } from "@/lib/modelsDev";
 import {
   getCommonModelKeys,
   resolveModelsDevSelection,
   toModelPricing,
 } from "@/lib/modelsDevPricing";
 
-describe("normalizeModelIdForPricing", () => {
+describe("normalizeModelsDevModelId", () => {
   it("keeps already-normalized ids unchanged", () => {
-    expect(normalizeModelIdForPricing("claude-opus-4-5")).toBe(
+    expect(normalizeModelsDevModelId("claude-opus-4-5")).toBe(
       "claude-opus-4-5",
     );
   });
 
   it("strips the vendor prefix before the last slash", () => {
-    expect(normalizeModelIdForPricing("z-ai/glm-4.7")).toBe("glm-4.7");
-    expect(normalizeModelIdForPricing("clarifai/main/models/mm-poly-8b")).toBe(
+    expect(normalizeModelsDevModelId("z-ai/glm-4.7")).toBe("glm-4.7");
+    expect(normalizeModelsDevModelId("clarifai/main/models/mm-poly-8b")).toBe(
       "mm-poly-8b",
     );
   });
 
   it("lowercases the id", () => {
-    expect(normalizeModelIdForPricing("MiniMaxAI/MiniMax-M2.1")).toBe(
+    expect(normalizeModelsDevModelId("MiniMaxAI/MiniMax-M2.1")).toBe(
       "minimax-m2.1",
     );
   });
 
   it("truncates colon suffixes", () => {
-    expect(normalizeModelIdForPricing("claude-sonnet-4-thinking:8192")).toBe(
+    expect(normalizeModelsDevModelId("claude-sonnet-4-thinking:8192")).toBe(
       "claude-sonnet-4-thinking",
     );
   });
 
   it("maps @ to -", () => {
-    expect(normalizeModelIdForPricing("claude-sonnet-4@20250514")).toBe(
+    expect(normalizeModelsDevModelId("claude-sonnet-4@20250514")).toBe(
       "claude-sonnet-4-20250514",
     );
   });
 
   it("strips the [1m] context marker", () => {
-    expect(normalizeModelIdForPricing("claude-sonnet-4-5[1m]")).toBe(
+    expect(normalizeModelsDevModelId("claude-sonnet-4-5[1m]")).toBe(
       "claude-sonnet-4-5",
     );
   });
 
   it("combines all rules", () => {
-    expect(normalizeModelIdForPricing("Vendor/Claude-Sonnet-4@2025:free")).toBe(
+    expect(normalizeModelsDevModelId("Vendor/Claude-Sonnet-4@2025:free")).toBe(
       "claude-sonnet-4-2025",
     );
   });

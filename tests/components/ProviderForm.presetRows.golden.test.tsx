@@ -36,6 +36,10 @@ import {
 } from "@/components/providers/forms/ProviderForm";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
+import {
+  PRESET_FAMILIES,
+  type PresetFamilyInfo,
+} from "@/config/presetFamilies";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const TEST_API_KEY = "sk-golden-test";
@@ -169,15 +173,59 @@ function renderForm(
   );
 }
 
-function clickPreset(presetName: string) {
+function clickRow(rowName: string) {
   const matches = screen
     .getAllByRole("button")
     .filter(
       (button) =>
-        button.querySelector("span.truncate")?.textContent === presetName,
+        button.querySelector("span.truncate")?.textContent === rowName,
     );
-  expect(matches, `预设按钮「${presetName}」应唯一`).toHaveLength(1);
+  expect(matches, `预设按钮「${rowName}」应唯一`).toHaveLength(1);
   fireEvent.click(matches[0]);
+}
+
+function clickButtonIn(group: HTMLElement, label: string) {
+  const button = Array.from(group.querySelectorAll("button")).find(
+    (item) => item.textContent === label,
+  );
+  expect(button, `版本按钮「${label}」应存在`).toBeDefined();
+  fireEvent.click(button!);
+}
+
+/**
+ * 同一家的多个版本合成一行：先点那一行，再选版本。套餐、地区都在变（完整网格）时
+ * 分别点套餐和地区；只有一维在变时「版本」里的按钮只写那一维。
+ */
+function clickPreset(appId: GoldenAppId, presetName: string) {
+  const preset = (
+    appId === "claude" ? providerPresets : codexProviderPresets
+  ).find((item) => item.name === presetName);
+  if (!preset?.family) {
+    clickRow(presetName);
+    return;
+  }
+  const family: PresetFamilyInfo = PRESET_FAMILIES[preset.family];
+  clickRow(family.nameKey ?? family.name);
+  const planLabel = `providerPreset.plan.${preset.planKey}`;
+  const regionLabel = `providerPreset.region.${preset.regionKey}`;
+  const plans = screen.queryByRole("group", {
+    name: "providerPreset.planLabel",
+  });
+  if (plans) {
+    clickButtonIn(plans, planLabel);
+    clickButtonIn(
+      screen.getByRole("group", { name: "providerPreset.regionLabel" }),
+      regionLabel,
+    );
+    return;
+  }
+  const versions = screen.getByRole("group", {
+    name: "providerPreset.versionLabel",
+  });
+  const label = Array.from(versions.querySelectorAll("button"))
+    .map((item) => item.textContent)
+    .find((text) => text === planLabel || text === regionLabel);
+  clickButtonIn(versions, label ?? planLabel);
 }
 
 function fillInputById(container: HTMLElement, id: string, value: string) {
@@ -230,7 +278,7 @@ async function submitPresetRow(appId: GoldenAppId, testCase: GoldenCase) {
   const onSubmit = vi.fn();
   const { container } = renderForm(appId, onSubmit);
 
-  clickPreset(testCase.preset);
+  clickPreset(appId, testCase.preset);
 
   for (const [key, value] of Object.entries(testCase.templateValues ?? {})) {
     fillInputById(container, `template-${key}`, value);

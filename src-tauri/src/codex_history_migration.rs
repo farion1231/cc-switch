@@ -6,7 +6,7 @@
 use crate::codex_config::{
     get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
 };
-use crate::codex_state_db::codex_state_db_paths;
+use crate::codex_state_db::{codex_state_db_is_lockable, codex_state_db_paths};
 use crate::config::{atomic_write, copy_file, get_app_config_dir};
 use crate::database::{is_official_seed_id, Database};
 use crate::error::AppError;
@@ -222,10 +222,10 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     }
     // live 必须已实际路由到共享 custom 桶才允许迁移：官方配置的注入可能被拒
     // （已有显式 model_provider / 形态冲突的 custom 表，见
-    // `inject_codex_unified_session_bucket`），代理接管期间的 live 也不带统一
-    // 路由（注入只进备份）。这些状态下新会话仍落 "openai" 桶，迁移只会把
-    // 历史搬进当前 live 看不见的桶里。开关与迁移意愿保持不动，待 live 真正
-    // 统一后（下次切换 / 接管释放后的启动重试）再迁。
+    // `inject_codex_unified_session_bucket`），live 也可能还没按开关重写。
+    // 这些状态下新会话仍落 "openai" 桶，迁移只会把历史搬进当前 live 看不见的
+    // 桶里。开关与迁移意愿保持不动，待 live 真正统一后（下次切换 / 启动重试）
+    // 再迁。
     if !codex_config_text_routes_custom(&read_codex_config_text().unwrap_or_default()) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("live_not_unified".to_string()),
@@ -402,6 +402,9 @@ fn restore_codex_official_history_inner(
 
     let mut restored_state_rows = 0;
     for db_path in codex_state_db_paths(codex_dir, config_text) {
+        if !codex_state_db_is_lockable(&db_path) {
+            continue;
+        }
         restored_state_rows += restore_codex_state_db_official_threads(
             &db_path,
             codex_dir,
@@ -1106,6 +1109,9 @@ fn migrate_codex_state_dbs(
     let config_text = read_codex_config_text().unwrap_or_default();
     let mut migrated = 0;
     for db_path in codex_state_db_paths(codex_dir, &config_text) {
+        if !codex_state_db_is_lockable(&db_path) {
+            continue;
+        }
         migrated += migrate_codex_state_db_provider_bucket(
             &db_path,
             codex_dir,
@@ -1360,6 +1366,9 @@ base_url = "https://aihubmix.example/v1"
 
     #[test]
     fn simulates_local_codex_provider_bucket_migration_end_to_end() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         let backup_root = dir.path().join("backup");
@@ -1620,6 +1629,9 @@ base_url = "https://proxy.example/v1"
 
     #[test]
     fn simulates_official_history_unify_migration_end_to_end() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         let backup_root = dir.path().join("backup");
@@ -1706,6 +1718,9 @@ base_url = "https://proxy.example/v1"
 
     #[test]
     fn restores_only_ledgered_official_sessions_from_backups() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         let ledger_parent = dir.path().join("ledger");
@@ -2010,6 +2025,9 @@ base_url = "https://proxy.example/v1"
 
     #[test]
     fn does_not_update_unknown_state_db_history_without_trusted_source_id() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
@@ -2052,6 +2070,9 @@ base_url = "https://proxy.example/v1"
 
     #[test]
     fn updates_codex_state_db_thread_provider_ids() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");

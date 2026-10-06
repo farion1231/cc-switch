@@ -125,7 +125,7 @@ describe("AddProviderDialog", () => {
     // Claude 的表单要等 live 底读回来才渲染。
     await screen.findByRole("button", { name: "manage-auth" });
     fireEvent.click(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "common.add",
       }),
     );
@@ -164,7 +164,7 @@ describe("AddProviderDialog", () => {
 
     await screen.findByRole("button", { name: "manage-auth" });
     fireEvent.click(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "common.add",
       }),
     );
@@ -185,7 +185,7 @@ describe("AddProviderDialog", () => {
     "%s 新增时带上表单投影出的底，和编辑器同一套保存规则",
     async (appId) => {
       const handleSubmit = vi.fn().mockResolvedValue(undefined);
-      const projected = { config: "[ui]\ntheme = \"dark\"\n" };
+      const projected = { config: '[ui]\ntheme = "dark"\n' };
       const draft = { config: "" };
       mockProjectedBase = projected;
       mockProjectedDraft = draft;
@@ -205,7 +205,9 @@ describe("AddProviderDialog", () => {
       );
 
       await screen.findByRole("button", { name: "manage-auth" });
-      fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "common.add" }),
+      );
 
       await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
       expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({
@@ -235,7 +237,7 @@ describe("AddProviderDialog", () => {
     );
 
     await screen.findByRole("button", { name: "manage-auth" });
-    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
 
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
     expect(handleSubmit.mock.calls[0][0].editorSave).toBeUndefined();
@@ -274,7 +276,7 @@ describe("AddProviderDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
 
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
     expect(handleSubmit).toHaveBeenCalledWith(
@@ -349,7 +351,7 @@ context_window = 500000
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
 
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
 
@@ -392,7 +394,7 @@ context_window = 500000
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
     expect(handleSubmit.mock.calls[0][0]).toMatchObject({
       providerKey: "pi-provider",

@@ -10,6 +10,9 @@ use super::{
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
+    opaque_state_rectifier::{
+        detect_opaque_state_rejection, rectify_opaque_state, OpaqueStateRejection,
+    },
     provider_router::ProviderRouter,
     providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
@@ -188,6 +191,9 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
+    /// 生效。见 [`Self::routing_state_enabled`]。
+    stack_request: bool,
 }
 
 impl RequestForwarder {
@@ -236,6 +242,31 @@ impl RequestForwarder {
             && super::media_sanitizer::is_unsupported_image_error(error)
     }
 
+    /// 反应式密文重试判定：原样转发的 Responses 上游拒绝了请求里别家签发的密文时，
+    /// 返回要去掉哪些状态，对同一供应商重试一次。
+    ///
+    /// 转成 Chat / Anthropic 的上游收不到这些密文，不参与。受整流器总开关管辖。
+    fn opaque_state_retry_rejection(
+        &self,
+        app_type: &AppType,
+        provider: &Provider,
+        endpoint: &str,
+        already_retried: bool,
+        request: &Value,
+        error: &ProxyError,
+    ) -> Option<OpaqueStateRejection> {
+        if already_retried
+            || !matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            || super::providers::should_convert_codex_responses_to_chat(provider, endpoint)
+            || super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint)
+        {
+            return None;
+        }
+        let codex_third_party = matches!(app_type, AppType::Codex)
+            && !super::providers::is_codex_official_provider(provider);
+        detect_opaque_state_rejection(error, &self.rectifier_config, request, codex_third_party)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<ProviderRouter>,
@@ -278,7 +309,27 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            stack_request: false,
         }
+    }
+
+    /// 标记为 Stack 模型的请求。
+    pub fn stack_request(mut self, stack_request: bool) -> Self {
+        self.stack_request = stack_request;
+        self
+    }
+
+    /// 这个请求读写路由状态吗：熔断器（许可、结果、健康度）、「正在使用」、代理统计
+    /// （总数、成功率、故障转移次数、最近错误、活跃连接）、故障转移切换。Stack 模型的请求
+    /// 和普通路由完全分开，一律不碰；只有用量日志照常按供应商记。以后新增路由状态也先问它。
+    fn routing_state_enabled(&self) -> bool {
+        !self.stack_request
+    }
+
+    /// 请求体里的模型名已经是这家的上游名（Stack 模型的请求）：不按角色映射、不换成行里配置
+    /// 的模型。以后新增模型改写也先问它。
+    fn keeps_resolved_model(&self) -> bool {
+        self.stack_request
     }
 
     async fn record_success_result(
@@ -341,42 +392,154 @@ impl RequestForwarder {
         };
 
         if is_provider_error {
-            let _ = self
-                .router
-                .record_result(
-                    &provider.id,
-                    app_type_str,
-                    used_half_open_permit,
-                    false,
-                    Some(retry_err.to_string()),
-                )
-                .await;
-            {
-                let mut status = self.status.write().await;
-                status.last_error = Some(format!(
+            self.record_provider_failure(
+                provider,
+                app_type_str,
+                used_half_open_permit,
+                &retry_err,
+                format!(
                     "Provider {} {rectifier_label}重试失败: {}",
                     provider.name, retry_err
-                ));
-            }
+                ),
+            )
+            .await;
             *last_error = Some(retry_err);
             *last_provider = Some(provider.clone());
             return None;
         }
 
-        self.router
-            .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
+        Some(
+            self.finish_neutral_failure(retry_err, provider, app_type_str, used_half_open_permit)
+                .await,
+        )
+    }
+
+    // 一次尝试和一个客户端请求的收尾记账（熔断器、「正在使用」、代理统计、故障转移切换）
+    // 都经下面这几个方法，不在重试循环里直接写。
+
+    /// 开始尝试一家：界面上显示正在尝试哪家。
+    async fn note_attempt(&self, provider: &Provider) {
+        if !self.routing_state_enabled() {
+            return;
+        }
+        let mut status = self.status.write().await;
+        status.current_provider = Some(provider.name.clone());
+        status.current_provider_id = Some(provider.id.clone());
+    }
+
+    /// 请求成功：记熔断器成功，更新「正在使用」和成功统计。实际用的不是请求开始时那家，
+    /// 就计一次故障转移，并异步把当前供应商切过去（同步 UI/托盘）。
+    async fn finish_success(
+        &self,
+        provider: &Provider,
+        app_type_str: &str,
+        used_half_open_permit: bool,
+        (response, claude_api_format, outbound_model): (
+            ProxyResponse,
+            Option<String>,
+            Option<String>,
+        ),
+    ) -> ForwardResult {
+        let result = ForwardResult {
+            response,
+            provider: provider.clone(),
+            claude_api_format,
+            outbound_model,
+            connection_guard: None,
+        };
+        if !self.routing_state_enabled() {
+            return result;
+        }
+
+        // 普通闭合熔断状态异步记录，避免阻塞流式首包返回；
+        // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
+        self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
             .await;
+
+        {
+            let mut current_providers = self.current_providers.write().await;
+            current_providers.insert(
+                app_type_str.to_string(),
+                (provider.id.clone(), provider.name.clone()),
+            );
+        }
+
+        {
+            let mut status = self.status.write().await;
+            status.success_requests += 1;
+            status.last_error = None;
+            if self.current_provider_id_at_start.as_str() != provider.id.as_str() {
+                status.failover_count += 1;
+
+                let fm = self.failover_manager.clone();
+                let ah = self.app_handle.clone();
+                let pid = provider.id.clone();
+                let pname = provider.name.clone();
+                let at = app_type_str.to_string();
+                tokio::spawn(async move {
+                    let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
+                });
+            }
+            refresh_success_rate(&mut status);
+        }
+
+        result
+    }
+
+    /// 这家本身出了问题（下一家可能可用）：记熔断器失败，更新最近错误。调用方接着试下一家。
+    async fn record_provider_failure(
+        &self,
+        provider: &Provider,
+        app_type_str: &str,
+        used_half_open_permit: bool,
+        error: &ProxyError,
+        last_error: String,
+    ) {
+        if !self.routing_state_enabled() {
+            return;
+        }
+        let _ = self
+            .router
+            .record_result(
+                &provider.id,
+                app_type_str,
+                used_half_open_permit,
+                false,
+                Some(error.to_string()),
+            )
+            .await;
+        self.status.write().await.last_error = Some(last_error);
+    }
+
+    /// 不计入熔断的失败（客户端错误、整流后仍被拒）：只释放 HalfOpen 名额，这个请求记为失败。
+    async fn finish_neutral_failure(
+        &self,
+        error: ProxyError,
+        provider: &Provider,
+        app_type_str: &str,
+        used_half_open_permit: bool,
+    ) -> ForwardError {
+        if self.routing_state_enabled() {
+            self.router
+                .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
+                .await;
+            self.record_failed_request(error.to_string()).await;
+        }
+        ForwardError {
+            error,
+            provider: Some(provider.clone()),
+        }
+    }
+
+    /// 这个客户端请求最终失败：失败数加一，记下错误，重算成功率。
+    async fn record_failed_request(&self, last_error: String) {
+        if !self.routing_state_enabled() {
+            return;
+        }
         let mut status = self.status.write().await;
         status.failed_requests += 1;
-        status.last_error = Some(retry_err.to_string());
-        if status.total_requests > 0 {
-            status.success_rate =
-                (status.success_requests as f32 / status.total_requests as f32) * 100.0;
-        }
-        Some(ForwardError {
-            error: retry_err,
-            provider: Some(provider.clone()),
-        })
+        status.last_error = Some(last_error);
+        refresh_success_rate(&mut status);
     }
 
     /// 转发请求（带故障转移）
@@ -396,6 +559,13 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
+        if !self.routing_state_enabled() {
+            return self
+                .forward_with_retry_inner(
+                    app_type, method, endpoint, body, headers, extensions, providers,
+                )
+                .await;
+        }
         let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
         {
             let mut s = self.status.write().await;
@@ -457,8 +627,8 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
-        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
-        let bypass_circuit_breaker = providers.len() == 1;
+        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；Stack 模型的请求不碰熔断器。
+        let bypass_circuit_breaker = providers.len() == 1 || !self.routing_state_enabled();
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
@@ -467,6 +637,7 @@ impl RequestForwarder {
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
+            let mut opaque_rectifier_retried = false;
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
@@ -518,11 +689,7 @@ impl RequestForwarder {
             // total_requests / last_request_at / active_connections 已由
             // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
             // 新「正在尝试哪个 provider」的展示字段。
-            {
-                let mut status = self.status.write().await;
-                status.current_provider = Some(provider.name.clone());
-                status.current_provider_id = Some(provider.id.clone());
-            }
+            self.note_attempt(provider).await;
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
@@ -538,59 +705,12 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format, outbound_model)) => {
-                    // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
-                    // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
-                    self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
-                        .await;
-
-                    // 更新当前应用类型使用的 provider
-                    {
-                        let mut current_providers = self.current_providers.write().await;
-                        current_providers.insert(
-                            app_type_str.to_string(),
-                            (provider.id.clone(), provider.name.clone()),
-                        );
-                    }
-
-                    // 更新成功统计
-                    {
-                        let mut status = self.status.write().await;
-                        status.success_requests += 1;
-                        status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
-                        if should_switch {
-                            status.failover_count += 1;
-
-                            // 异步触发供应商切换，更新 UI/托盘，并把“当前供应商”同步为实际使用的 provider
-                            let fm = self.failover_manager.clone();
-                            let ah = self.app_handle.clone();
-                            let pid = provider.id.clone();
-                            let pname = provider.name.clone();
-                            let at = app_type_str.to_string();
-
-                            tokio::spawn(async move {
-                                let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
-                            });
-                        }
-                        // 重新计算成功率
-                        if status.total_requests > 0 {
-                            status.success_rate = (status.success_requests as f32
-                                / status.total_requests as f32)
-                                * 100.0;
-                        }
-                    }
-
-                    return Ok(ForwardResult {
-                        response,
-                        provider: provider.clone(),
-                        claude_api_format,
-                        outbound_model,
-                        connection_guard: None,
-                    });
+                Ok(forwarded) => {
+                    return Ok(self
+                        .finish_success(provider, app_type_str, used_half_open_permit, forwarded)
+                        .await);
                 }
-                Err(e) => {
+                Err(mut e) => {
                     // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
@@ -637,61 +757,18 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok(forwarded) => {
                                     log::info!(
                                         "[{app_type_str}] [Media] Unsupported-image retry succeeded"
                                     );
-                                    self.record_success_result(
-                                        &provider.id,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await;
-
-                                    {
-                                        let mut current_providers =
-                                            self.current_providers.write().await;
-                                        current_providers.insert(
-                                            app_type_str.to_string(),
-                                            (provider.id.clone(), provider.name.clone()),
-                                        );
-                                    }
-
-                                    {
-                                        let mut status = self.status.write().await;
-                                        status.success_requests += 1;
-                                        status.last_error = None;
-                                        let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
-                                        if should_switch {
-                                            status.failover_count += 1;
-                                            let fm = self.failover_manager.clone();
-                                            let ah = self.app_handle.clone();
-                                            let pid = provider.id.clone();
-                                            let pname = provider.name.clone();
-                                            let at = app_type_str.to_string();
-
-                                            tokio::spawn(async move {
-                                                let _ = fm
-                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
-                                                    .await;
-                                            });
-                                        }
-                                        if status.total_requests > 0 {
-                                            status.success_rate = (status.success_requests as f32
-                                                / status.total_requests as f32)
-                                                * 100.0;
-                                        }
-                                    }
-
-                                    return Ok(ForwardResult {
-                                        response,
-                                        provider: provider.clone(),
-                                        claude_api_format,
-                                        outbound_model,
-                                        connection_guard: None,
-                                    });
+                                    return Ok(self
+                                        .finish_success(
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            forwarded,
+                                        )
+                                        .await);
                                 }
                                 Err(retry_err) => {
                                     log::warn!(
@@ -717,6 +794,63 @@ impl RequestForwarder {
                         }
                     }
 
+                    if let Some(rejection) = self.opaque_state_retry_rejection(
+                        app_type,
+                        provider,
+                        endpoint,
+                        opaque_rectifier_retried,
+                        &provider_body,
+                        &e,
+                    ) {
+                        let mut opaque_body = provider_body.clone();
+                        let rectified = rectify_opaque_state(&mut opaque_body, rejection);
+                        if rectified.applied {
+                            let _ = std::mem::replace(&mut opaque_rectifier_retried, true);
+                            log::info!(
+                                "[{app_type_str}] [RECT-020] 上游拒绝了请求里别家签发的状态，去掉 {} 个推理条目、{} 个加密片段、{} 个别家 id，换掉 {} 个压缩条目后对 provider={} 重试一次",
+                                rectified.removed_reasoning_items,
+                                rectified.replaced_encrypted_parts,
+                                rectified.removed_foreign_ids,
+                                rectified.replaced_compaction_items,
+                                provider.id
+                            );
+
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    provider,
+                                    endpoint,
+                                    &opaque_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                )
+                                .await
+                            {
+                                Ok(forwarded) => {
+                                    log::info!("[{app_type_str}] [RECT-021] 密文整流重试成功");
+                                    return Ok(self
+                                        .finish_success(
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            forwarded,
+                                        )
+                                        .await);
+                                }
+                                // 重试仍失败：按这次的错误走常规分类，和没整流过一样
+                                // 决定是否计入熔断、是否换下一家。
+                                Err(retry_err) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [RECT-022] 密文整流重试仍失败: {retry_err}"
+                                    );
+                                    e = retry_err;
+                                }
+                            }
+                        }
+                    }
+
                     if is_anthropic_provider {
                         let error_message = extract_error_message(&e);
                         if should_rectify_thinking_signature(
@@ -726,26 +860,15 @@ impl RequestForwarder {
                             // 已经重试过：直接返回错误（不可重试客户端错误）
                             if rectifier_retried {
                                 log::warn!("[{app_type_str}] [RECT-005] 整流器已触发过，不再重试");
-                                // 释放 HalfOpen permit（不记录熔断器，这是客户端兼容性问题）
-                                self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
+                                // 不记录熔断器，这是客户端兼容性问题
+                                return Err(self
+                                    .finish_neutral_failure(
+                                        e,
+                                        provider,
                                         app_type_str,
                                         used_half_open_permit,
                                     )
-                                    .await;
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
-                                }
-                                return Err(ForwardError {
-                                    error: e,
-                                    provider: Some(provider.clone()),
-                                });
+                                    .await);
                             }
 
                             // 首次触发：整流请求体
@@ -783,64 +906,16 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok((response, claude_api_format, outbound_model)) => {
+                                    Ok(forwarded) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
-                                        self.record_success_result(
-                                            &provider.id,
-                                            app_type_str,
-                                            used_half_open_permit,
-                                        )
-                                        .await;
-
-                                        // 更新当前应用类型使用的 provider
-                                        {
-                                            let mut current_providers =
-                                                self.current_providers.write().await;
-                                            current_providers.insert(
-                                                app_type_str.to_string(),
-                                                (provider.id.clone(), provider.name.clone()),
-                                            );
-                                        }
-
-                                        // 更新成功统计
-                                        {
-                                            let mut status = self.status.write().await;
-                                            status.success_requests += 1;
-                                            status.last_error = None;
-                                            let should_switch =
-                                                self.current_provider_id_at_start.as_str()
-                                                    != provider.id.as_str();
-                                            if should_switch {
-                                                status.failover_count += 1;
-
-                                                // 异步触发供应商切换，更新 UI/托盘
-                                                let fm = self.failover_manager.clone();
-                                                let ah = self.app_handle.clone();
-                                                let pid = provider.id.clone();
-                                                let pname = provider.name.clone();
-                                                let at = app_type_str.to_string();
-
-                                                tokio::spawn(async move {
-                                                    let _ = fm
-                                                        .try_switch(ah.as_ref(), &at, &pid, &pname)
-                                                        .await;
-                                                });
-                                            }
-                                            if status.total_requests > 0 {
-                                                status.success_rate = (status.success_requests
-                                                    as f32
-                                                    / status.total_requests as f32)
-                                                    * 100.0;
-                                            }
-                                        }
-
-                                        return Ok(ForwardResult {
-                                            response,
-                                            provider: provider.clone(),
-                                            claude_api_format,
-                                            outbound_model,
-                                            connection_guard: None,
-                                        });
+                                        return Ok(self
+                                            .finish_success(
+                                                provider,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                                forwarded,
+                                            )
+                                            .await);
                                     }
                                     Err(retry_err) => {
                                         log::warn!(
@@ -879,25 +954,14 @@ impl RequestForwarder {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-013] budget 整流器已触发过，不再重试"
                                 );
-                                self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
+                                return Err(self
+                                    .finish_neutral_failure(
+                                        e,
+                                        provider,
                                         app_type_str,
                                         used_half_open_permit,
                                     )
-                                    .await;
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
-                                }
-                                return Err(ForwardError {
-                                    error: e,
-                                    provider: Some(provider.clone()),
-                                });
+                                    .await);
                             }
 
                             let budget_rectified = rectify_thinking_budget(&mut provider_body);
@@ -905,25 +969,14 @@ impl RequestForwarder {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
                                 );
-                                self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
+                                return Err(self
+                                    .finish_neutral_failure(
+                                        e,
+                                        provider,
                                         app_type_str,
                                         used_half_open_permit,
                                     )
-                                    .await;
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
-                                }
-                                return Err(ForwardError {
-                                    error: e,
-                                    provider: Some(provider.clone()),
-                                });
+                                    .await);
                             }
 
                             log::info!(
@@ -949,58 +1002,16 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok(forwarded) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
-                                    self.record_success_result(
-                                        &provider.id,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await;
-
-                                    {
-                                        let mut current_providers =
-                                            self.current_providers.write().await;
-                                        current_providers.insert(
-                                            app_type_str.to_string(),
-                                            (provider.id.clone(), provider.name.clone()),
-                                        );
-                                    }
-
-                                    {
-                                        let mut status = self.status.write().await;
-                                        status.success_requests += 1;
-                                        status.last_error = None;
-                                        let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
-                                        if should_switch {
-                                            status.failover_count += 1;
-                                            let fm = self.failover_manager.clone();
-                                            let ah = self.app_handle.clone();
-                                            let pid = provider.id.clone();
-                                            let pname = provider.name.clone();
-                                            let at = app_type_str.to_string();
-                                            tokio::spawn(async move {
-                                                let _ = fm
-                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
-                                                    .await;
-                                            });
-                                        }
-                                        if status.total_requests > 0 {
-                                            status.success_rate = (status.success_requests as f32
-                                                / status.total_requests as f32)
-                                                * 100.0;
-                                        }
-                                    }
-
-                                    return Ok(ForwardResult {
-                                        response,
-                                        provider: provider.clone(),
-                                        claude_api_format,
-                                        outbound_model,
-                                        connection_guard: None,
-                                    });
+                                    return Ok(self
+                                        .finish_success(
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            forwarded,
+                                        )
+                                        .await);
                                 }
                                 Err(retry_err) => {
                                     log::warn!(
@@ -1027,25 +1038,14 @@ impl RequestForwarder {
                     }
 
                     if signature_rectifier_non_retryable_client_error {
-                        self.router
-                            .release_permit_neutral(
-                                &provider.id,
+                        return Err(self
+                            .finish_neutral_failure(
+                                e,
+                                provider,
                                 app_type_str,
                                 used_half_open_permit,
                             )
-                            .await;
-                        let mut status = self.status.write().await;
-                        status.failed_requests += 1;
-                        status.last_error = Some(e.to_string());
-                        if status.total_requests > 0 {
-                            status.success_rate = (status.success_requests as f32
-                                / status.total_requests as f32)
-                                * 100.0;
-                        }
-                        return Err(ForwardError {
-                            error: e,
-                            provider: Some(provider.clone()),
-                        });
+                            .await);
                     }
 
                     // 先分类错误，决定是否计入 provider 健康度
@@ -1056,22 +1056,14 @@ impl RequestForwarder {
                     match category {
                         ErrorCategory::Retryable => {
                             // 可重试：真正的 provider 故障 → 记录失败并更新熔断器/DB 健康度
-                            let _ = self
-                                .router
-                                .record_result(
-                                    &provider.id,
-                                    app_type_str,
-                                    used_half_open_permit,
-                                    false,
-                                    Some(e.to_string()),
-                                )
-                                .await;
-
-                            {
-                                let mut status = self.status.write().await;
-                                status.last_error =
-                                    Some(format!("Provider {} 失败: {}", provider.name, e));
-                            }
+                            self.record_provider_failure(
+                                provider,
+                                app_type_str,
+                                used_half_open_permit,
+                                &e,
+                                format!("Provider {} 失败: {}", provider.name, e),
+                            )
+                            .await;
 
                             let (log_code, log_message) = build_retryable_failure_log(
                                 &provider.name,
@@ -1088,27 +1080,14 @@ impl RequestForwarder {
                         }
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
                             // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
-                            self.router
-                                .release_permit_neutral(
-                                    &provider.id,
+                            return Err(self
+                                .finish_neutral_failure(
+                                    e,
+                                    provider,
                                     app_type_str,
                                     used_half_open_permit,
                                 )
-                                .await;
-                            {
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
-                                }
-                            }
-                            return Err(ForwardError {
-                                error: e,
-                                provider: Some(provider.clone()),
-                            });
+                                .await);
                         }
                     }
                 }
@@ -1117,15 +1096,8 @@ impl RequestForwarder {
 
         if attempted_providers == 0 {
             // providers 列表非空，但全部被熔断器拒绝（典型：HalfOpen 探测名额被占用）
-            {
-                let mut status = self.status.write().await;
-                status.failed_requests += 1;
-                status.last_error = Some("所有供应商暂时不可用（熔断器限制）".to_string());
-                if status.total_requests > 0 {
-                    status.success_rate =
-                        (status.success_requests as f32 / status.total_requests as f32) * 100.0;
-                }
-            }
+            self.record_failed_request("所有供应商暂时不可用（熔断器限制）".to_string())
+                .await;
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
@@ -1133,15 +1105,8 @@ impl RequestForwarder {
         }
 
         // 所有供应商都失败了
-        {
-            let mut status = self.status.write().await;
-            status.failed_requests += 1;
-            status.last_error = Some("所有供应商都失败".to_string());
-            if status.total_requests > 0 {
-                status.success_rate =
-                    (status.success_requests as f32 / status.total_requests as f32) * 100.0;
-            }
-        }
+        self.record_failed_request("所有供应商都失败".to_string())
+            .await;
 
         if let Some((log_code, log_message)) =
             build_terminal_failure_log(attempted_providers, providers.len(), last_error.as_ref())
@@ -1199,6 +1164,7 @@ impl RequestForwarder {
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
+        let codex_stack_request = self.stack_request && matches!(app_type, AppType::Codex);
 
         if codex_official_auth_passthrough {
             let (expected_chatgpt_account_id, managed_session_matches) = match provider
@@ -1248,6 +1214,8 @@ impl RequestForwarder {
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+        } else if self.keeps_resolved_model() {
+            body.clone()
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
@@ -1543,7 +1511,9 @@ impl RequestForwarder {
                     "[Codex] Restored or enriched {restored} cached function call item(s) for Chat upstream"
                 );
             }
-            super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+            if !self.keeps_resolved_model() {
+                super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+            }
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
@@ -1560,7 +1530,9 @@ impl RequestForwarder {
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
-            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            if !self.keeps_resolved_model() {
+                super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            }
             // Per-provider output ceiling override. Codex does not forward its
             // `model_max_output_tokens` in the request body, so honor the value
             // configured on the provider here — it takes precedence over any
@@ -1634,6 +1606,34 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Codex 远程压缩，以及同一线程里别家回合留下的状态（见 `codex_compaction`）。
+        // Chat / Anthropic 转换在转换器里处理；这里管原样转发的两种上游：官方清掉
+        // CC Switch 产出、官方一定会拒的条目，原生 Responses 第三方把压缩触发和
+        // CC Switch 包装的压缩摘要改成普通消息。看不出来源的密文原样发出，被拒后由
+        // `opaque_state_rectifier` 处理。请求里没有这些条目时逐字节不变。
+        if matches!(app_type, AppType::Codex)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            if codex_official_auth_passthrough {
+                if super::providers::codex_compaction::scrub_ccswitch_state_for_official(
+                    &mut request_body,
+                ) {
+                    log::debug!(
+                        "[Codex] Scrubbed third-party turn state before the official upstream (provider={})",
+                        provider.id
+                    );
+                }
+            } else if super::providers::codex_compaction::prepare_native_third_party_request(
+                &mut request_body,
+            ) {
+                log::debug!(
+                    "[Codex] Rewrote compaction items for a native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
+        }
+
         // Native Responses passthrough to a strict third-party gateway (xAI).
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
@@ -1651,12 +1651,38 @@ impl RequestForwarder {
                     provider.id
                 );
             }
+            // Stack 请求只做字段兼容。
+            let upstream_model = if self.keeps_resolved_model() {
+                None
+            } else {
+                super::providers::codex_provider_upstream_model(provider)
+            };
             super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
                 &mut request_body,
                 &provider.id,
-                super::providers::codex_provider_upstream_model(provider).as_deref(),
+                upstream_model.as_deref(),
                 &provider.settings_config,
             );
+        }
+
+        // Stack 请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
+        // Anthropic 转换丢掉托管工具是同一件事。只对 Stack 请求、只对名单上的上游生效；
+        // 路由请求和其他 Stack 请求逐字节不变。
+        if codex_stack_request && !codex_responses_to_chat && !codex_responses_to_anthropic {
+            let request_model = request_body
+                .get("model")
+                .and_then(|model| model.as_str())
+                .map(str::to_string);
+            if super::providers::codex_stack_upstream_rejects_web_search(
+                provider,
+                request_model.as_deref(),
+            ) && super::providers::strip_codex_hosted_web_search(&mut request_body)
+            {
+                log::debug!(
+                    "[Codex] Dropped hosted web_search for a stacked model (provider={})",
+                    provider.id
+                );
+            }
         }
 
         // Moonshot / Kimi Chat Completions reject `$ref` nodes that carry sibling
@@ -2115,7 +2141,14 @@ impl RequestForwarder {
             // can defeat strict gateway fingerprint checks.
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
-            if codex_responses_to_anthropic && is_codex_client_fingerprint_header(key_str) {
+            // Codex Stack 请求发往第三方时同样剥掉：官方做路由时 Codex 每个请求都带着 ChatGPT
+            // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。Stack 目标不会是官方账号，
+            // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
+            // 是 Anthropic SDK 的正常请求头，Stack 请求照常转发。
+            if (codex_responses_to_anthropic
+                || (codex_stack_request && !codex_official_auth_passthrough))
+                && is_codex_client_fingerprint_header(key_str)
+            {
                 continue;
             }
 
@@ -2843,6 +2876,13 @@ fn is_bedrock_provider(provider: &Provider) -> bool {
         .unwrap_or(false)
 }
 
+fn refresh_success_rate(status: &mut ProxyStatus) {
+    if status.total_requests > 0 {
+        status.success_rate =
+            (status.success_requests as f32 / status.total_requests as f32) * 100.0;
+    }
+}
+
 fn build_retryable_failure_log(
     provider_name: &str,
     attempted_providers: usize,
@@ -3051,13 +3091,20 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
             | "thread-id"
             | "conversation_id"
             | "chatgpt-account-id"
-            | "x-openai-subagent"
             | "x-client-request-id"
             | "openai-beta"
             | "openai-organization"
             | "openai-project"
+            // Codex 内置 openai 的固定请求头（值是 Codex 版本号）。
+            | "version"
     ) || key_str.starts_with("x-stainless-")
         || key_str.starts_with("x-codex-")
+        // ChatGPT 登录态下 Codex 每个请求都带：`x-oai-attestation`（设备证明）、
+        // `x-openai-fedramp`、`x-openai-account-routing-override`、`x-openai-memgen-request`、
+        // `x-openai-internal-codex-responses-lite`、`x-responsesapi-include-timing-metrics`。
+        || key_str.starts_with("x-oai-")
+        || key_str.starts_with("x-openai-")
+        || key_str.starts_with("x-responsesapi-")
 }
 
 fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
@@ -3892,6 +3939,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            stack_request: false,
         }
     }
 
@@ -4510,9 +4558,17 @@ mod tests {
             "openai-beta",
             "openai-organization",
             "openai-project",
+            "version",
             "x-stainless-lang",
             "x-stainless-runtime",
             "x-codex-turn-id",
+            // ChatGPT 登录态下的身份头，Stack 请求发往第三方时同样不能带出去。
+            "x-oai-attestation",
+            "x-openai-fedramp",
+            "x-openai-account-routing-override",
+            "x-openai-memgen-request",
+            "x-openai-internal-codex-responses-lite",
+            "x-responsesapi-include-timing-metrics",
         ] {
             assert!(
                 is_codex_client_fingerprint_header(header),
@@ -5521,5 +5577,1273 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    /// Codex Stack 请求的转发改写：身份头、模型名、托管 web_search。
+    /// 在本机一个空闲端口上起假上游 `app`，返回它的地址。
+    async fn serve_upstream(app: axum::Router) -> String {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream address");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    mod codex_stack {
+        use super::*;
+        use tokio::sync::Mutex;
+
+        struct Seen {
+            headers: HeaderMap,
+            body: Value,
+        }
+
+        struct Upstream {
+            base_url: String,
+            seen: Arc<Mutex<Vec<Seen>>>,
+        }
+
+        /// 什么都回 200 的假上游，记下请求头和请求体。
+        async fn upstream() -> Upstream {
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let app = {
+                let seen = seen.clone();
+                axum::Router::new().fallback(move |headers: HeaderMap, body: Bytes| {
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().await.push(Seen {
+                            headers,
+                            body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+                        });
+                        (
+                            StatusCode::OK,
+                            [(http::header::CONTENT_TYPE, "application/json")],
+                            json!({ "id": "r1", "object": "response", "output": [] }).to_string(),
+                        )
+                    }
+                })
+            };
+            Upstream {
+                base_url: serve_upstream(app).await,
+                seen,
+            }
+        }
+
+        /// 一家 Codex 第三方供应商：行里的模型是 `row-model`，目录里只有 `listed`。
+        fn provider(upstream: &Upstream, api_format: &str) -> Provider {
+            let mut provider = test_provider_with_type(None);
+            provider.id = format!("p-{api_format}");
+            provider.settings_config = json!({
+                "auth": { "OPENAI_API_KEY": "sk-third-party" },
+                "config": format!(
+                    "model_provider = \"custom\"\nmodel = \"row-model\"\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"{}/v1\"\nwire_api = \"responses\"\n",
+                    upstream.base_url
+                ),
+                "modelCatalog": { "models": [{ "model": "listed" }] },
+            });
+            provider.meta = Some(crate::provider::ProviderMeta {
+                api_format: Some(api_format.to_string()),
+                ..Default::default()
+            });
+            provider
+        }
+
+        fn forwarder(stack: bool) -> RequestForwarder {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            test_forwarder(Duration::from_secs(5), Duration::from_secs(5)).stack_request(stack)
+        }
+
+        /// 官方做路由时 Codex 每个请求都带的 ChatGPT 身份。
+        fn chatgpt_headers() -> HeaderMap {
+            let mut headers = HeaderMap::new();
+            for (name, value) in [
+                ("content-type", "application/json"),
+                ("authorization", "Bearer chatgpt-access-token"),
+                ("chatgpt-account-id", "acct-workspace"),
+                ("originator", "codex_cli_rs"),
+                ("session_id", "session-1"),
+                ("x-codex-turn-state", "state"),
+                ("openai-beta", "responses=experimental"),
+                ("x-oai-attestation", "device-proof"),
+                ("x-openai-fedramp", "true"),
+            ] {
+                headers.insert(
+                    http::HeaderName::from_static(name),
+                    HeaderValue::from_static(value),
+                );
+            }
+            headers
+        }
+
+        fn body(model: &str, tools: Value) -> Value {
+            json!({
+                "model": model,
+                "input": [{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }],
+                "tools": tools,
+                "stream": false
+            })
+        }
+
+        async fn send(
+            forwarder: &RequestForwarder,
+            upstream: &Upstream,
+            provider: Provider,
+            endpoint: &str,
+            body: Value,
+        ) -> Seen {
+            forwarder
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    endpoint,
+                    body,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("forward");
+            upstream.seen.lock().await.pop().expect("upstream request")
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_never_carry_the_chatgpt_identity() {
+            let upstream = upstream().await;
+            for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                let seen = send(
+                    &forwarder(true),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("listed", json!([])),
+                )
+                .await;
+                for (name, _) in seen.headers.iter() {
+                    assert!(
+                        !is_codex_client_fingerprint_header(name.as_str()),
+                        "{api_format}: {name} reached a third party"
+                    );
+                }
+                let auth = seen
+                    .headers
+                    .get("authorization")
+                    .or_else(|| seen.headers.get("x-api-key"))
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                assert!(auth.contains("sk-third-party"), "{api_format}: {auth}");
+                assert!(!auth.contains("chatgpt"), "{api_format}: {auth}");
+            }
+
+            // 对照：路由请求发往原生 Responses 时照旧转发这些头。
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                body("listed", json!([])),
+            )
+            .await;
+            assert!(seen.headers.contains_key("session_id"));
+        }
+
+        /// 原生 Responses 第三方收不了 Codex 私有的压缩触发：改成不带工具的摘要回合，
+        /// CC Switch 包装的压缩摘要改成普通消息；看不出来源的压缩密文原样发出。
+        #[tokio::test]
+        async fn native_third_party_compaction_becomes_summary_turn() {
+            use crate::proxy::providers::codex_compaction::{
+                encode_compaction_summary, COMPACT_PROMPT, SUMMARY_PREFIX,
+            };
+            let upstream = upstream().await;
+            let mut request = body(
+                "listed",
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
+            );
+            request["input"] = json!([
+                { "type": "compaction", "encrypted_content": "gAAAA-openai" },
+                { "type": "compaction", "encrypted_content": encode_compaction_summary("prior work") },
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "compaction_trigger" }
+            ]);
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                request,
+            )
+            .await;
+            assert!(seen.body.get("tools").is_none());
+            let input = seen.body["input"].as_array().unwrap();
+            assert_eq!(
+                input[0],
+                json!({ "type": "compaction", "encrypted_content": "gAAAA-openai" })
+            );
+            assert_eq!(
+                input[1]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nprior work")
+            );
+            assert!(input
+                .iter()
+                .all(|item| item["type"] != "compaction_trigger"));
+            assert_eq!(input.last().unwrap()["content"][0]["text"], COMPACT_PROMPT);
+
+            // 同一家上游自己签发的压缩密文：请求逐字节不改，不能把已压缩的历史换成占位文字。
+            let mut own_history = body("listed", json!([]));
+            own_history["input"] = json!([
+                { "type": "compaction", "id": "cmp_1", "encrypted_content": "gAAAA-issued-here" },
+                { "role": "user", "content": [{ "type": "input_text", "text": "go on" }] }
+            ]);
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                own_history.clone(),
+            )
+            .await;
+            assert_eq!(seen.body["input"], own_history["input"]);
+
+            // 对照：普通请求逐字节不改。
+            let plain = body(
+                "listed",
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
+            );
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                plain.clone(),
+            )
+            .await;
+            assert_eq!(seen.body["tools"], plain["tools"]);
+            assert_eq!(seen.body["input"], plain["input"]);
+        }
+
+        /// 剥身份头只针对 Codex：Claude Code 的 Stack 请求照常带着 Anthropic SDK 的请求头。
+        #[tokio::test]
+        async fn claude_stacked_requests_keep_sdk_headers() {
+            let upstream = upstream().await;
+            let mut provider = test_provider_with_type(None);
+            provider.settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": upstream.base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "sk-third-party",
+                }
+            });
+            let mut headers = HeaderMap::new();
+            for (name, value) in [
+                ("content-type", "application/json"),
+                ("x-stainless-lang", "js"),
+                ("x-stainless-package-version", "0.60.0"),
+            ] {
+                headers.insert(
+                    http::HeaderName::from_static(name),
+                    HeaderValue::from_static(value),
+                );
+            }
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Claude,
+                    http::Method::POST,
+                    "/v1/messages",
+                    json!({
+                        "model": "stacked-model",
+                        "max_tokens": 16,
+                        "messages": [{ "role": "user", "content": "hi" }]
+                    }),
+                    headers,
+                    Extensions::new(),
+                    vec![provider],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("forward");
+            let seen = upstream.seen.lock().await.pop().expect("upstream request");
+            assert_eq!(seen.headers["x-stainless-lang"], "js");
+            assert_eq!(seen.headers["x-stainless-package-version"], "0.60.0");
+            assert_eq!(seen.body["model"], "stacked-model");
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_are_not_rewritten_to_the_rows_model() {
+            let upstream = upstream().await;
+            for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                let seen = send(
+                    &forwarder(true),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("not-listed", json!([])),
+                )
+                .await;
+                assert_eq!(seen.body["model"], "not-listed", "{api_format}");
+            }
+
+            // 对照：路由请求发往 Chat 转换时，目录外的模型换成行里的模型。
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_chat"),
+                "/responses",
+                body("not-listed", json!([])),
+            )
+            .await;
+            assert_eq!(seen.body["model"], "row-model");
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_drop_hosted_web_search_only_where_it_is_rejected() {
+            let upstream = upstream().await;
+            let function = json!({ "type": "function", "name": "shell", "parameters": {} });
+            let tools = json!([function.clone(), { "type": "web_search" }]);
+            let with_choice = |model: &str| {
+                let mut body = body(model, tools.clone());
+                body["tool_choice"] = json!({ "type": "web_search" });
+                body
+            };
+
+            // GLM 的原生 Responses 网关不认托管 web_search：去掉工具和指向它的 tool_choice。
+            for endpoint in ["/responses", "/responses/compact"] {
+                let seen = send(
+                    &forwarder(true),
+                    &upstream,
+                    provider(&upstream, "openai_responses"),
+                    endpoint,
+                    with_choice("glm-5.2"),
+                )
+                .await;
+                assert_eq!(seen.body["tools"], json!([function.clone()]), "{endpoint}");
+                assert!(seen.body.get("tool_choice").is_none(), "{endpoint}");
+            }
+
+            // 只剩它一个工具时整个 `tools` 删掉。
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                body("glm-5.2", json!([{ "type": "web_search" }])),
+            )
+            .await;
+            assert!(seen.body.get("tools").is_none(), "{}", seen.body);
+
+            // 对照：支持的上游、路由请求都原样转发。
+            for (stack, model) in [(true, "deepseek-v4-pro"), (false, "glm-5.2")] {
+                let seen = send(
+                    &forwarder(stack),
+                    &upstream,
+                    provider(&upstream, "openai_responses"),
+                    "/responses",
+                    with_choice(model),
+                )
+                .await;
+                assert_eq!(seen.body["tools"], tools, "stack={stack} {model}");
+                assert_eq!(seen.body["tool_choice"]["type"], "web_search");
+            }
+        }
+
+        /// 按脚本依次回应的假上游，记下请求头和请求体。
+        async fn scripted_upstream(script: Vec<(u16, Value)>) -> Upstream {
+            let script = Arc::new(Mutex::new(std::collections::VecDeque::from(script)));
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let app = {
+                let seen = seen.clone();
+                axum::Router::new().fallback(move |headers: HeaderMap, body: Bytes| {
+                    let script = script.clone();
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().await.push(Seen {
+                            headers,
+                            body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+                        });
+                        let (status, body) = script
+                            .lock()
+                            .await
+                            .pop_front()
+                            .expect("upstream script exhausted");
+                        (
+                            StatusCode::from_u16(status).expect("status"),
+                            [(http::header::CONTENT_TYPE, "application/json")],
+                            body.to_string(),
+                        )
+                    }
+                })
+            };
+            Upstream {
+                base_url: serve_upstream(app).await,
+                seen,
+            }
+        }
+
+        fn blob_rejection() -> (u16, Value) {
+            (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "code": "invalid_encrypted_content",
+                    "message": "The encrypted content could not be verified."
+                } }),
+            )
+        }
+
+        fn response_ok() -> (u16, Value) {
+            (
+                200,
+                json!({ "id": "r1", "object": "response", "output": [] }),
+            )
+        }
+
+        /// 上一轮是别家原生 Responses 上游，历史里留着它签发的推理密文。
+        fn history_with_foreign_reasoning() -> Value {
+            let mut request = body("listed", json!([]));
+            request["input"] = json!([
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA-other-org" },
+                { "type": "message", "id": "msg_1", "role": "assistant",
+                  "content": [{ "type": "output_text", "text": "a" }] },
+                { "role": "user", "content": [{ "type": "input_text", "text": "again" }] }
+            ]);
+            request
+        }
+
+        async fn forward_codex(
+            forwarder: &RequestForwarder,
+            provider: Provider,
+        ) -> Result<ForwardResult, ForwardError> {
+            forwarder
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    history_with_foreign_reasoning(),
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider],
+                )
+                .await
+        }
+
+        fn carries_reasoning(seen: &Seen) -> bool {
+            seen.body["input"]
+                .as_array()
+                .is_some_and(|input| input.iter().any(|item| item["type"] == "reasoning"))
+        }
+
+        /// 上游明确说验不了别家签发的密文：去掉推理条目，对同一家只重试一次。
+        #[tokio::test]
+        async fn foreign_blob_rejection_is_retried_once_without_reasoning() {
+            for stack in [true, false] {
+                let upstream = scripted_upstream(vec![blob_rejection(), response_ok()]).await;
+                let result =
+                    forward_codex(&forwarder(stack), provider(&upstream, "openai_responses")).await;
+                assert!(result.is_ok(), "stack={stack}");
+                let seen = upstream.seen.lock().await;
+                assert_eq!(seen.len(), 2, "stack={stack}");
+                assert!(carries_reasoning(&seen[0]));
+                assert!(!carries_reasoning(&seen[1]));
+                assert_eq!(seen[1].body["input"].as_array().unwrap().len(), 3);
+            }
+
+            // 重试仍被拒：不再重试，把第二次的错误交回客户端。
+            let upstream = scripted_upstream(vec![blob_rejection(), blob_rejection()]).await;
+            let error = forward_codex(&forwarder(true), provider(&upstream, "openai_responses"))
+                .await
+                .err()
+                .expect("still rejected");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+            assert_eq!(upstream.seen.lock().await.len(), 2);
+        }
+
+        /// Stack 模式下官方压缩过、再切到别家原生 Responses 模型：官方的压缩密文原样发出，
+        /// 那家网关不认识、报错措辞又不在清单里时，只换掉压缩条目对同一家重试一次，
+        /// 这家自己的推理条目照旧发。
+        #[tokio::test]
+        async fn unrecognized_compaction_is_replaced_after_a_native_third_party_rejects_it() {
+            use crate::proxy::providers::codex_compaction::OPAQUE_COMPACTION_NOTE;
+            let unsupported = (
+                400,
+                json!({ "error": { "message": "unsupported input item type: compaction" } }),
+            );
+            let upstream = scripted_upstream(vec![unsupported, response_ok()]).await;
+            let mut request = history_with_foreign_reasoning();
+            request["input"].as_array_mut().unwrap().insert(
+                0,
+                json!({ "type": "compaction", "encrypted_content": "gAAAA-openai" }),
+            );
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("retried");
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[0].body["input"][0]["type"], "compaction");
+            let retried = seen[1].body["input"].as_array().unwrap();
+            assert_eq!(retried.len(), 5);
+            assert_eq!(retried[0]["content"][0]["text"], OPAQUE_COMPACTION_NOTE);
+            assert!(carries_reasoning(&seen[1]));
+        }
+
+        /// 措辞不在清单里的兜底只给 Codex 的原生 Responses 第三方：官方的压缩密文只在错误
+        /// 点名时才换，Grok Build 的压缩密文是 xAI 自己的。
+        #[tokio::test]
+        async fn generic_compaction_retry_is_limited_to_codex_third_parties() {
+            let upstream = upstream().await;
+            let third_party = provider(&upstream, "openai_responses");
+            let mut official = third_party.clone();
+            official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+            official.category = Some("official".to_string());
+            let request = json!({ "input": [
+                { "type": "compaction", "encrypted_content": "gAAAA-openai" }
+            ] });
+            let unsupported = ProxyError::UpstreamError {
+                status: 400,
+                body: Some("unsupported input item".to_string()),
+            };
+            let forwarder = forwarder(false);
+            let gate = |app_type: AppType, provider: &Provider| {
+                forwarder.opaque_state_retry_rejection(
+                    &app_type,
+                    provider,
+                    "/responses",
+                    false,
+                    &request,
+                    &unsupported,
+                )
+            };
+
+            assert_eq!(
+                gate(AppType::Codex, &third_party),
+                Some(OpaqueStateRejection {
+                    reasoning: false,
+                    compaction: true
+                })
+            );
+            assert_eq!(gate(AppType::Codex, &official), None);
+            assert_eq!(gate(AppType::GrokBuild, &third_party), None);
+        }
+
+        /// 其他 400、转换成 Chat 的上游都不触发。
+        #[tokio::test]
+        async fn blob_retry_only_follows_self_identified_rejections_on_native_upstreams() {
+            let unrelated = (
+                400,
+                json!({ "error": { "type": "invalid_request_error", "message": "Invalid value for 'model'." } }),
+            );
+            let upstream = scripted_upstream(vec![unrelated]).await;
+            assert!(
+                forward_codex(&forwarder(true), provider(&upstream, "openai_responses"))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+
+            let upstream = scripted_upstream(vec![blob_rejection()]).await;
+            assert!(
+                forward_codex(&forwarder(true), provider(&upstream, "openai_chat"))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+    }
+
+    /// 一次请求结束后留下的记账：代理统计、「正在使用」、熔断器。每条出口路径各断言一次，
+    /// 锁住成功、失败、不计入熔断三种收尾对路由状态的影响。
+    mod bookkeeping {
+        use super::*;
+        use std::collections::VecDeque;
+        use tokio::sync::Mutex;
+
+        struct Upstream {
+            base_url: String,
+            requests: Arc<Mutex<Vec<Value>>>,
+        }
+
+        /// 按脚本依次返回响应的假上游，记下收到的请求体。
+        async fn upstream(script: Vec<(u16, Value)>) -> Upstream {
+            let script = Arc::new(Mutex::new(VecDeque::from(script)));
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let app = {
+                let requests = requests.clone();
+                axum::Router::new().fallback(move |body: Bytes| {
+                    let script = script.clone();
+                    let requests = requests.clone();
+                    async move {
+                        requests
+                            .lock()
+                            .await
+                            .push(serde_json::from_slice(&body).unwrap_or(Value::Null));
+                        let (status, body) = script
+                            .lock()
+                            .await
+                            .pop_front()
+                            .expect("upstream script exhausted");
+                        (
+                            StatusCode::from_u16(status).expect("status"),
+                            [(http::header::CONTENT_TYPE, "application/json")],
+                            body.to_string(),
+                        )
+                    }
+                })
+            };
+            Upstream {
+                base_url: serve_upstream(app).await,
+                requests,
+            }
+        }
+
+        fn provider(id: &str, upstream: &Upstream) -> Provider {
+            let mut provider = test_provider_with_type(None);
+            provider.id = id.to_string();
+            provider.name = format!("Provider {id}");
+            provider.settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": upstream.base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                }
+            });
+            provider
+        }
+
+        fn forwarder(max_attempts: usize, provider_at_start: &str) -> RequestForwarder {
+            // 真正发请求要用 HTTP 客户端；应用启动时装的 rustls 后端测试里没有（同 lib.rs）。
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let mut forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+            forwarder.max_attempts = max_attempts;
+            forwarder.current_provider_id_at_start = provider_at_start.to_string();
+            forwarder
+        }
+
+        async fn send(
+            forwarder: &RequestForwarder,
+            providers: Vec<Provider>,
+            body: Value,
+        ) -> Result<ForwardResult, ForwardError> {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                http::header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            );
+            forwarder
+                .forward_with_retry(
+                    &AppType::Claude,
+                    http::Method::POST,
+                    "/v1/messages",
+                    body,
+                    headers,
+                    Extensions::new(),
+                    providers,
+                )
+                .await
+        }
+
+        fn ok() -> (u16, Value) {
+            (
+                200,
+                json!({
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "claude-sonnet-4-5",
+                    "content": [{ "type": "text", "text": "ok" }],
+                    "stop_reason": "end_turn",
+                    "usage": { "input_tokens": 1, "output_tokens": 1 }
+                }),
+            )
+        }
+
+        fn error(status: u16, message: &str) -> (u16, Value) {
+            (
+                status,
+                json!({
+                    "type": "error",
+                    "error": { "type": "invalid_request_error", "message": message }
+                }),
+            )
+        }
+
+        const SIGNATURE_ERROR: &str =
+            "messages.1.content.0: Invalid `signature` in `thinking` block";
+        const BUDGET_ERROR: &str =
+            "thinking.budget_tokens: Input should be greater than or equal to 1024";
+
+        fn plain_body() -> Value {
+            json!({
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1000,
+                "messages": [{ "role": "user", "content": "hi" }]
+            })
+        }
+
+        fn body_with_thinking_signature() -> Value {
+            json!({
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1000,
+                "messages": [
+                    { "role": "user", "content": "hi" },
+                    { "role": "assistant", "content": [
+                        { "type": "thinking", "thinking": "t", "signature": "sig" },
+                        { "type": "text", "text": "a" }
+                    ]},
+                    { "role": "user", "content": "again" }
+                ]
+            })
+        }
+
+        fn body_with_thinking(thinking: Value) -> Value {
+            let mut body = plain_body();
+            body["thinking"] = thinking;
+            body
+        }
+
+        #[derive(Debug, PartialEq)]
+        struct Books {
+            total: u64,
+            success: u64,
+            failed: u64,
+            success_rate: f32,
+            failover_count: u64,
+            last_error: Option<String>,
+            /// 最后一次尝试的是哪家（`ProxyStatus.current_provider_id`）。
+            attempting: Option<String>,
+            /// 「正在使用」（`current_providers`），只在成功时写。
+            in_use: Option<String>,
+        }
+
+        async fn books(forwarder: &RequestForwarder) -> Books {
+            let status = forwarder.status.read().await;
+            Books {
+                total: status.total_requests,
+                success: status.success_requests,
+                failed: status.failed_requests,
+                success_rate: status.success_rate,
+                failover_count: status.failover_count,
+                last_error: status.last_error.clone(),
+                attempting: status.current_provider_id.clone(),
+                in_use: forwarder
+                    .current_providers
+                    .read()
+                    .await
+                    .get("claude")
+                    .map(|(id, _)| id.clone()),
+            }
+        }
+
+        /// 熔断器记下的 (总数, 失败数)；从没建过熔断器时为 `None`。成功是异步记的，等它落下。
+        async fn breaker(forwarder: &RequestForwarder, provider_id: &str) -> Option<(u32, u32)> {
+            for _ in 0..200 {
+                if let Some(stats) = forwarder
+                    .router
+                    .get_circuit_breaker_stats(provider_id, "claude")
+                    .await
+                {
+                    if stats.total_requests > 0 {
+                        return Some((stats.total_requests, stats.failed_requests));
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            forwarder
+                .router
+                .get_circuit_breaker_stats(provider_id, "claude")
+                .await
+                .map(|stats| (stats.total_requests, stats.failed_requests))
+        }
+
+        fn expect_err(result: Result<ForwardResult, ForwardError>) -> ForwardError {
+            match result {
+                Ok(_) => panic!("expected the request to fail"),
+                Err(err) => err,
+            }
+        }
+
+        #[tokio::test]
+        async fn success_on_the_first_provider() {
+            let up = upstream(vec![ok()]).await;
+            let fwd = forwarder(1, "p1");
+
+            let result = send(&fwd, vec![provider("p1", &up)], plain_body()).await;
+
+            assert_eq!(result.ok().map(|r| r.provider.id), Some("p1".into()));
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 1,
+                    failed: 0,
+                    success_rate: 100.0,
+                    failover_count: 0,
+                    last_error: None,
+                    attempting: Some("p1".into()),
+                    in_use: Some("p1".into()),
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, Some((1, 0)));
+        }
+
+        #[tokio::test]
+        async fn failover_to_the_second_provider_counts_a_switch() {
+            let up1 = upstream(vec![error(500, "boom")]).await;
+            let up2 = upstream(vec![ok()]).await;
+            let fwd = forwarder(2, "p1");
+
+            let result = send(
+                &fwd,
+                vec![provider("p1", &up1), provider("p2", &up2)],
+                plain_body(),
+            )
+            .await;
+
+            assert_eq!(result.ok().map(|r| r.provider.id), Some("p2".into()));
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 1,
+                    failed: 0,
+                    success_rate: 100.0,
+                    failover_count: 1,
+                    last_error: None,
+                    attempting: Some("p2".into()),
+                    in_use: Some("p2".into()),
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
+            assert_eq!(breaker(&fwd, "p2").await, Some((1, 0)));
+        }
+
+        #[tokio::test]
+        async fn non_retryable_error_is_neutral_for_the_breaker() {
+            let up = upstream(vec![error(400, "bad request")]).await;
+            let fwd = forwarder(1, "p1");
+
+            let err = expect_err(send(&fwd, vec![provider("p1", &up)], plain_body()).await);
+
+            assert_eq!(err.provider.map(|p| p.id), Some("p1".into()));
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 0,
+                    failed: 1,
+                    success_rate: 0.0,
+                    failover_count: 0,
+                    last_error: Some(err.error.to_string()),
+                    attempting: Some("p1".into()),
+                    in_use: None,
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, None);
+        }
+
+        #[tokio::test]
+        async fn every_provider_failing_records_each_failure() {
+            let up1 = upstream(vec![error(500, "boom")]).await;
+            let up2 = upstream(vec![error(503, "busy")]).await;
+            let fwd = forwarder(2, "p1");
+
+            let err = expect_err(
+                send(
+                    &fwd,
+                    vec![provider("p1", &up1), provider("p2", &up2)],
+                    plain_body(),
+                )
+                .await,
+            );
+
+            assert_eq!(err.provider.map(|p| p.id), Some("p2".into()));
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 0,
+                    failed: 1,
+                    success_rate: 0.0,
+                    failover_count: 0,
+                    last_error: Some("所有供应商都失败".into()),
+                    attempting: Some("p2".into()),
+                    in_use: None,
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
+            assert_eq!(breaker(&fwd, "p2").await, Some((1, 1)));
+        }
+
+        #[tokio::test]
+        async fn open_breakers_reject_every_provider_without_sending() {
+            let up1 = upstream(vec![]).await;
+            let up2 = upstream(vec![]).await;
+            let fwd = forwarder(2, "p1");
+            for id in ["p1", "p2"] {
+                for _ in 0..20 {
+                    let _ = fwd
+                        .router
+                        .record_result(id, "claude", false, false, Some("seed".into()))
+                        .await;
+                }
+            }
+
+            let err = expect_err(
+                send(
+                    &fwd,
+                    vec![provider("p1", &up1), provider("p2", &up2)],
+                    plain_body(),
+                )
+                .await,
+            );
+
+            assert!(matches!(err.error, ProxyError::NoAvailableProvider));
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 0,
+                    failed: 1,
+                    success_rate: 0.0,
+                    failover_count: 0,
+                    last_error: Some("所有供应商暂时不可用（熔断器限制）".into()),
+                    attempting: None,
+                    in_use: None,
+                }
+            );
+            assert!(up1.requests.lock().await.is_empty());
+            assert!(up2.requests.lock().await.is_empty());
+        }
+
+        #[tokio::test]
+        async fn signature_rectifier_retry_success() {
+            let up = upstream(vec![error(400, SIGNATURE_ERROR), ok()]).await;
+            let fwd = forwarder(1, "p1");
+
+            let result = send(
+                &fwd,
+                vec![provider("p1", &up)],
+                body_with_thinking_signature(),
+            )
+            .await;
+
+            assert!(result.is_ok());
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 1,
+                    failed: 0,
+                    success_rate: 100.0,
+                    failover_count: 0,
+                    last_error: None,
+                    attempting: Some("p1".into()),
+                    in_use: Some("p1".into()),
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, Some((1, 0)));
+            let requests = up.requests.lock().await;
+            assert_eq!(requests.len(), 2);
+            assert!(!requests[1].to_string().contains("\"signature\""));
+        }
+
+        #[tokio::test]
+        async fn signature_rectifier_retry_client_error_is_neutral() {
+            let up = upstream(vec![error(400, SIGNATURE_ERROR), error(400, "still bad")]).await;
+            let fwd = forwarder(1, "p1");
+
+            let err = expect_err(
+                send(
+                    &fwd,
+                    vec![provider("p1", &up)],
+                    body_with_thinking_signature(),
+                )
+                .await,
+            );
+
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 0,
+                    failed: 1,
+                    success_rate: 0.0,
+                    failover_count: 0,
+                    last_error: Some(err.error.to_string()),
+                    attempting: Some("p1".into()),
+                    in_use: None,
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, None);
+            assert_eq!(up.requests.lock().await.len(), 2);
+        }
+
+        #[tokio::test]
+        async fn signature_rectifier_retry_provider_error_counts_against_the_breaker() {
+            let up = upstream(vec![error(400, SIGNATURE_ERROR), error(502, "gateway")]).await;
+            let fwd = forwarder(1, "p1");
+
+            let err = expect_err(
+                send(
+                    &fwd,
+                    vec![provider("p1", &up)],
+                    body_with_thinking_signature(),
+                )
+                .await,
+            );
+
+            assert_eq!(err.provider.map(|p| p.id), Some("p1".into()));
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 0,
+                    failed: 1,
+                    success_rate: 0.0,
+                    failover_count: 0,
+                    last_error: Some("所有供应商都失败".into()),
+                    attempting: Some("p1".into()),
+                    in_use: None,
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
+            assert_eq!(up.requests.lock().await.len(), 2);
+        }
+
+        #[tokio::test]
+        async fn signature_error_without_anything_to_rectify_is_neutral() {
+            let up = upstream(vec![error(400, SIGNATURE_ERROR)]).await;
+            let fwd = forwarder(1, "p1");
+
+            let err = expect_err(send(&fwd, vec![provider("p1", &up)], plain_body()).await);
+
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 0,
+                    failed: 1,
+                    success_rate: 0.0,
+                    failover_count: 0,
+                    last_error: Some(err.error.to_string()),
+                    attempting: Some("p1".into()),
+                    in_use: None,
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, None);
+            assert_eq!(up.requests.lock().await.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn budget_rectifier_retry_success() {
+            let up = upstream(vec![error(400, BUDGET_ERROR), ok()]).await;
+            let fwd = forwarder(1, "p1");
+
+            let result = send(
+                &fwd,
+                vec![provider("p1", &up)],
+                body_with_thinking(json!({ "type": "enabled", "budget_tokens": 500 })),
+            )
+            .await;
+
+            assert!(result.is_ok());
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 1,
+                    failed: 0,
+                    success_rate: 100.0,
+                    failover_count: 0,
+                    last_error: None,
+                    attempting: Some("p1".into()),
+                    in_use: Some("p1".into()),
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, Some((1, 0)));
+            let requests = up.requests.lock().await;
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[1]["thinking"]["budget_tokens"], 32000);
+        }
+
+        #[tokio::test]
+        async fn budget_error_without_anything_to_rectify_is_neutral() {
+            let up = upstream(vec![error(400, BUDGET_ERROR)]).await;
+            let fwd = forwarder(1, "p1");
+
+            let err = expect_err(
+                send(
+                    &fwd,
+                    vec![provider("p1", &up)],
+                    body_with_thinking(json!({ "type": "adaptive" })),
+                )
+                .await,
+            );
+
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 0,
+                    failed: 1,
+                    success_rate: 0.0,
+                    failover_count: 0,
+                    last_error: Some(err.error.to_string()),
+                    attempting: Some("p1".into()),
+                    in_use: None,
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, None);
+            assert_eq!(up.requests.lock().await.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn media_retry_success_on_the_second_provider_counts_a_switch() {
+            let up1 = upstream(vec![error(500, "boom")]).await;
+            let up2 = upstream(vec![error(400, "Model only supports text input"), ok()]).await;
+            let fwd = forwarder(2, "p1");
+
+            let result = send(
+                &fwd,
+                vec![provider("p1", &up1), provider("p2", &up2)],
+                body_with_image("claude-sonnet-4-5"),
+            )
+            .await;
+
+            assert_eq!(result.ok().map(|r| r.provider.id), Some("p2".into()));
+            assert_eq!(
+                books(&fwd).await,
+                Books {
+                    total: 1,
+                    success: 1,
+                    failed: 0,
+                    success_rate: 100.0,
+                    failover_count: 1,
+                    last_error: None,
+                    attempting: Some("p2".into()),
+                    in_use: Some("p2".into()),
+                }
+            );
+            assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
+            assert_eq!(breaker(&fwd, "p2").await, Some((1, 0)));
+            let requests = up2.requests.lock().await;
+            assert_eq!(requests.len(), 2);
+            assert!(requests[1]
+                .to_string()
+                .contains(crate::proxy::media_sanitizer::UNSUPPORTED_IMAGE_MARKER));
+        }
+
+        // ---- Stack 模型：不读也不写任何路由状态 ----
+
+        fn untouched() -> Books {
+            Books {
+                total: 0,
+                success: 0,
+                failed: 0,
+                success_rate: 0.0,
+                failover_count: 0,
+                last_error: None,
+                attempting: None,
+                in_use: None,
+            }
+        }
+
+        /// 熔断器从没为这家建过记录（成功是异步记的，给它时间落下）。
+        async fn breaker_untouched(forwarder: &RequestForwarder, provider_id: &str) -> bool {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            forwarder
+                .router
+                .get_circuit_breaker_stats(provider_id, "claude")
+                .await
+                .is_none()
+        }
+
+        fn stack_forwarder() -> RequestForwarder {
+            // 请求开始时的「当前供应商」是别家：普通请求成功后会记一次故障转移并切路由。
+            forwarder(4, "route").stack_request(true)
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_leave_every_routing_state_alone() {
+            for script in [
+                vec![ok()],
+                vec![error(503, "overloaded")],
+                vec![error(400, "bad request")],
+            ] {
+                let status = script[0].0;
+                let up = upstream(script).await;
+                let fwd = stack_forwarder();
+
+                let result = send(&fwd, vec![provider("kimi", &up)], plain_body()).await;
+
+                assert_eq!(result.is_ok(), status == 200, "{status}");
+                if let Ok(result) = &result {
+                    assert!(result.connection_guard.is_none(), "no active connection");
+                }
+                assert_eq!(books(&fwd).await, untouched(), "{status}");
+                assert_eq!(fwd.status.read().await.active_connections, 0);
+                assert!(breaker_untouched(&fwd, "kimi").await, "{status}");
+                assert_eq!(up.requests.lock().await.len(), 1, "{status}");
+            }
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_keep_their_model() {
+            let up = upstream(vec![ok(), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-k2");
+            let mut body = plain_body();
+            body["model"] = json!("kimi-k3");
+
+            // 对照：普通请求按角色映射成行里配置的模型。
+            send(&forwarder(1, "kimi"), vec![kimi.clone()], body.clone())
+                .await
+                .map_err(|e| e.error)
+                .expect("routed");
+            send(&stack_forwarder(), vec![kimi], body)
+                .await
+                .map_err(|e| e.error)
+                .expect("stack mode");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests[0]["model"], "kimi-k2");
+            assert_eq!(requests[1]["model"], "kimi-k3");
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_stay_stacked_through_rectifier_retries() {
+            let up = upstream(vec![error(400, SIGNATURE_ERROR), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-k2");
+            let mut body = body_with_thinking_signature();
+            body["model"] = json!("kimi-k3");
+            let fwd = stack_forwarder();
+
+            send(&fwd, vec![kimi], body)
+                .await
+                .map_err(|e| e.error)
+                .expect("retried");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[1]["model"], "kimi-k3");
+            assert!(!requests[1].to_string().contains("\"signature\""));
+            assert_eq!(books(&fwd).await, untouched());
+            assert!(breaker_untouched(&fwd, "kimi").await);
+        }
     }
 }

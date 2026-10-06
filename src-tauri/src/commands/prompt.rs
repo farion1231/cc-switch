@@ -67,6 +67,24 @@ pub async fn get_current_prompt_file_content(app: String) -> Result<Option<Strin
     PromptService::get_current_file_content(app_type).map_err(|e| e.to_string())
 }
 
+/// 提示词目标文件的位置：`path` 是完整路径（复制用），`displayPath` 把主目录写成 `~`（显示用）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptFileLocation {
+    pub path: String,
+    pub display_path: String,
+}
+
+#[tauri::command]
+pub async fn get_prompt_file_location(app: String) -> Result<PromptFileLocation, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let path = crate::prompt_files::prompt_file_path(&app_type).map_err(|e| e.to_string())?;
+    Ok(PromptFileLocation {
+        path: path.to_string_lossy().to_string(),
+        display_path: crate::prompt_files::display_path(&path),
+    })
+}
+
 #[tauri::command]
 pub async fn get_pi_prompt_file(kind: PiPromptFileKind) -> Result<PiPromptFileSnapshot, String> {
     PiPromptFileService::read(kind).map_err(|error| error.to_string())
