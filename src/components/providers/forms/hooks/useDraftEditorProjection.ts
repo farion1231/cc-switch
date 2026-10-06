@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { providersApi, type AppId } from "@/lib/api";
 import { extractErrorMessage } from "@/utils/errorUtils";
 

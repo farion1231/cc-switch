@@ -4621,6 +4621,61 @@ mod tests {
     }
 
     #[test]
+    fn test_replayed_legacy_envelope_omits_output_only_fields() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+        // A pre-whitelist envelope keeps the backend output item verbatim,
+        // including the `status` field the official Codex backend started
+        // emitting on 2026-10-03 and rejects as an unknown input parameter.
+        let legacy = json!({
+            "id": "rs_legacy",
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "prior turn"}],
+            "encrypted_content": "opaque",
+            "status": "completed"
+        });
+        let signature = format!(
+            "ccswitch-openai-reasoning-v1:{}",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&legacy).unwrap())
+        );
+        let replay = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6",
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": [
+                        {"type": "thinking", "thinking": "prior turn", "signature": signature},
+                        {"type": "tool_use", "id": "call_9", "name": "lookup", "input": {}}
+                    ]},
+                    {"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": "call_9", "content": "ok"}
+                    ]}
+                ]
+            }),
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+        let reasoning_items: Vec<&Value> = replay["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("reasoning"))
+            .collect();
+        assert_eq!(reasoning_items.len(), 1);
+        assert_eq!(
+            reasoning_items[0],
+            &json!({
+                "id": "rs_legacy",
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "prior turn"}],
+                "encrypted_content": "opaque"
+            })
+        );
+    }
+
+    #[test]
     fn test_reasoning_only_assistant_turn_is_not_replayed() {
         let item = json!({
             "type": "reasoning",

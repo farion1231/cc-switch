@@ -71,6 +71,15 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
   return (PROXY_APP_IDS as string[]).includes(appId);
 }
 
+/** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack` 的镜像）。 */
+export type StackAppId = Extract<ProxyAppId, "claude" | "codex">;
+
+export const STACK_APP_IDS: StackAppId[] = ["claude", "codex"];
+
+export function isStackAppId(appId: string): appId is StackAppId {
+  return (STACK_APP_IDS as string[]).includes(appId);
+}
+
 export type AdditiveAppId = Extract<
   AppId,
   "opencode" | "openclaw" | "hermes" | "pi" | "mcode"
@@ -103,8 +112,8 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/** Pi has no native MCP registry; do not manufacture a disabled mirror. */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
+/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
+export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -112,6 +121,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  "pi",
   "mcode",
 ];
 

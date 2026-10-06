@@ -104,6 +104,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://88api.ai/sign-up?aff=HSGY"><img src="assets/partners/logos/88api-banner-en.jpg" alt="88API" width="150"></a></td>
+<td>88API Token アグリゲーションプラットフォームによる本プロジェクトへのご支援に感謝します！88API は香港企業が運営し、主に開発者・クリエイター・AI アプリユーザー向けに提供されているワンストップのマルチモデル API プラットフォームです。統一インターフェースからテキスト・画像・音声・動画モデルを利用でき、AI コーディング、スマート翻訳、コンテンツ制作、ナレーション、画像生成、動画生成などの一般的なワークフローをカバーします。CC Switch 上でそのままプロバイダーを追加して切り替えられます。主要な国際決済方法に対応し、請求書の発行も可能で、エンタープライズ級の安定したサービスを提供します。<a href="https://88api.ai/sign-up?aff=HSGY">こちらのリンク</a>から登録すると、専用の特典クレジットがもらえます！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://apikey.fan/register?aff=CCSwitch"><img src="assets/partners/logos/apikey_banner.png" alt="APIKEY.FUN" width="150"></a></td>
 <td>APIKEY.FUN のご支援に感謝します！APIKEY.FUN は、企業および個人開発者向けに安定・高効率・低コストな AI モデル API 接続サービスを提供する、プロフェッショナルなエンタープライズ級 AI リレープラットフォームです。Claude、OpenAI、Gemini などの主要人気モデルに対応し、料金は公式価格の 7% から利用できます。本プロジェクトの<a href="https://apikey.fan/register?aff=CCSwitch">専用リンク</a>から登録すると、最大で<strong>チャージ永久 5% オフ</strong>の特別優待も受けられます。</td>
 </tr>
@@ -188,11 +193,6 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 <tr>
 <td width="180"><a href="https://www.rightapi.ai/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
 <td>本プロジェクトへのご支援として、Right Code にご協賛いただき誠にありがとうございます。Right Code は、Claude Code、Codex、Gemini などのモデル向け中継サービスを安定して提供しており、従量課金と月額プランの 2 つの料金体系から選択できます。チャージ後に請求書の発行が可能で、法人・チームのお客様には専任担当による個別対応も行っています。さらに、CC Switch ユーザー向けの特別優待として、<a href="https://www.rightapi.ai/register?aff=CCSWITCH">こちらのリンク</a>から登録すると、チャージのたびに実際の支払額の 5% 相当の従量課金クレジットが付与されます。</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
-<td>ETok.ai のご支援に感謝します！ETok.ai はワンストップ AI プログラミングツールサービスプラットフォームの構築に取り組んでいます。Claude Code のプロフェッショナルプランと技術コミュニティサービスを提供し、Google Gemini や OpenAI Codex にも対応しています。丁寧に設計されたプランと専門的な技術コミュニティを通じて、開発者に安定したサービス保証と継続的な技術サポートを提供し、AI アシストプログラミングを真の生産性ツールにします。<a href="https://etok.ai">こちら</a>から登録してください！</td>
 </tr>
 
 <tr>

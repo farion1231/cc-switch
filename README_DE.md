@@ -104,6 +104,11 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
+<td width="180"><a href="https://88api.ai/sign-up?aff=HSGY"><img src="assets/partners/logos/88api-banner-en.jpg" alt="88API" width="150"></a></td>
+<td>Danke an die 88API Token-Aggregationsplattform für die Unterstützung dieses Projekts! 88API ist eine von einem Hongkonger Unternehmen betriebene All-in-one-Multi-Modell-API-Plattform, die sich vor allem an Entwickler, Kreative und Nutzer von KI-Anwendungen richtet. Über eine einheitliche Schnittstelle erhalten Sie Zugriff auf Text-, Bild-, Sprach- und Videomodelle – für gängige Workflows wie KI-Programmierung, intelligente Übersetzung, Content-Erstellung, Vertonung, Bild- und Videogenerierung. Der Anbieter lässt sich direkt in CC Switch hinzufügen und umschalten. 88API unterstützt die gängigen internationalen Zahlungsmethoden, kann Rechnungen ausstellen und bietet stabilen Service auf Enterprise-Niveau. Registrieren Sie sich über <a href="https://88api.ai/sign-up?aff=HSGY">diesen Link</a>, um exklusives Bonusguthaben zu erhalten!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://apikey.fan/register?aff=CCSwitch"><img src="assets/partners/logos/apikey_banner.png" alt="APIKEY.FUN" width="150"></a></td>
 <td>Danke an APIKEY.FUN für die Unterstützung dieses Projekts! APIKEY.FUN ist eine professionelle KI-Relay-Plattform auf Enterprise-Niveau, die Unternehmen und einzelnen Entwicklern stabilen, effizienten und kostengünstigen Zugriff auf KI-Modell-APIs bietet. Die Plattform unterstützt beliebte Mainstream-Modelle wie Claude, OpenAI und Gemini, mit Preisen ab 7 % der offiziellen Tarife. Wer sich über den <a href="https://apikey.fan/register?aff=CCSwitch">exklusiven Link</a> dieses Projekts registriert, kann ein exklusives Angebot von bis zu <strong>dauerhaft 5 % Rabatt auf Aufladungen</strong> erhalten.</td>
 </tr>
@@ -188,11 +193,6 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 <tr>
 <td width="180"><a href="https://www.rightapi.ai/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
 <td>Danke an Right Code für die Unterstützung dieses Projekts! Right Code stellt zuverlässig Routing-Dienste für Modelle wie Claude Code, Codex und Gemini bereit, wahlweise mit nutzungsbasierter Abrechnung oder monatlichem Abonnement. Rechnungen sind beim Aufladen verfügbar, und Unternehmens- sowie Teamkunden erhalten dedizierten Einzelsupport. Right Code bietet außerdem einen exklusiven Rabatt für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://www.rightapi.ai/register?aff=CCSWITCH">diesen Link</a> und erhalten Sie bei jeder Aufladung nutzungsbasiertes Guthaben in Höhe von 5 % des gezahlten Betrags.</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
-<td>Danke an ETok.ai für die Unterstützung dieses Projekts! ETok.ai widmet sich dem Aufbau einer Komplettlösung für KI-Programmierwerkzeuge. Wir bieten professionelle Claude-Code-Pakete und Dienste einer technischen Community, mit Unterstützung für Google Gemini und OpenAI Codex. Durch sorgfältig gestaltete Pläne und eine professionelle Tech-Community geben wir Entwicklern verlässliche Servicegarantien und kontinuierlichen technischen Support an die Hand und machen KI-gestützte Programmierung zu einem echten Produktivitätswerkzeug. Klicken Sie <a href="https://etok.ai">hier</a>, um sich zu registrieren!</td>
 </tr>
 
 <tr>

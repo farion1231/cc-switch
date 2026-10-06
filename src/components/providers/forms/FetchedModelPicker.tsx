@@ -32,7 +32,7 @@ export function FetchedModelPicker({
   );
 
   return (
-    <fieldset className="min-w-0 space-y-3 rounded-lg border border-border-default p-3">
+    <fieldset className="min-w-0 space-y-3 rounded-lg border border-border p-3">
       <legend className="px-1 text-sm font-medium">
         {t("providerForm.fetchedModelsTitle", {
           count: models.length,
@@ -57,7 +57,7 @@ export function FetchedModelPicker({
       <ScrollArea className="h-48" type="auto">
         <div className="space-y-1 pr-3">
           {visibleModels.length === 0 && (
-            <p className="py-4 text-center text-sm text-muted-foreground">
+            <p className="py-4 text-center text-sm text-fg-2">
               {t("providerForm.searchModelEmpty", {
                 defaultValue: "No matching models.",
               })}
@@ -68,7 +68,7 @@ export function FetchedModelPicker({
             return (
               <label
                 key={model.id}
-                className="flex items-center gap-2 rounded-md px-2 py-2 hover:bg-muted/50"
+                className="flex items-center gap-2 rounded-md px-2 py-2 hover:bg-subtle"
               >
                 <Checkbox
                   aria-label={model.id}
@@ -87,13 +87,13 @@ export function FetchedModelPicker({
                 <span className="min-w-0 flex-1 break-all text-sm">
                   {model.id}
                   {model.ownedBy && (
-                    <span className="block text-xs text-muted-foreground">
+                    <span className="block text-xs text-fg-2">
                       {model.ownedBy}
                     </span>
                   )}
                 </span>
                 {isConfigured && (
-                  <span className="shrink-0 text-xs text-muted-foreground">
+                  <span className="shrink-0 text-xs text-fg-2">
                     {t("providerForm.modelAlreadyAdded", {
                       defaultValue: "Already added",
                     })}
@@ -105,8 +105,11 @@ export function FetchedModelPicker({
         </div>
       </ScrollArea>
       <div className="flex justify-end">
+        {/* Neutral, not solid: the picker sits inside a provider form whose
+            only solid button is Save. */}
         <Button
           type="button"
+          variant="neutral"
           size="sm"
           disabled={selectedModels.length === 0}
           onClick={() => {

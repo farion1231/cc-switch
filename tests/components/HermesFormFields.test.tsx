@@ -1,9 +1,15 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import type { ComponentProps, PropsWithChildren } from "react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
+import { useState, type ComponentProps, type PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
 import { describe, expect, it, vi } from "vitest";
 import { HermesFormFields } from "@/components/providers/forms/HermesFormFields";
+import type { HermesModel } from "@/config/hermesProviderPresets";
 import { Form } from "@/components/ui/form";
+import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
+import { server } from "../msw/server";
 
 type HermesFormFieldsProps = ComponentProps<typeof HermesFormFields>;
 
@@ -45,11 +51,117 @@ const renderHermesForm = (overrides: Partial<HermesFormFieldsProps> = {}) => {
 };
 
 describe("HermesFormFields", () => {
+  it("fills the context length of a model picked from the fetched list", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    server.use(
+      http.post("http://tauri.local/fetch_models_for_config", () =>
+        HttpResponse.json([{ id: "model-x", ownedBy: "example" }]),
+      ),
+      http.get(MODELS_DEV_API_URL, () =>
+        HttpResponse.json({
+          example: {
+            api: "https://api.example.com/v1",
+            models: { "model-x": { limit: { context: 123456 } } },
+          },
+        }),
+      ),
+    );
+    const onModelsChange = vi.fn();
+    const { props } = renderHermesForm({ onModelsChange });
+
+    // 拉模型列表时就开始预取 models.dev，选中时一次提交就带上参数。
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await user.click(
+      (await screen.findAllByRole("button", { name: "Select model" }))[0],
+    );
+    await user.click(await screen.findByRole("option", { name: "model-x" }));
+
+    await waitFor(() =>
+      expect(onModelsChange).toHaveBeenLastCalledWith([
+        { ...props.models[0], id: "model-x", context_length: 123456 },
+        props.models[1],
+      ]),
+    );
+  });
+
+  it("fills the picked row even after rows above it were removed", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    let releaseModelsDev!: () => void;
+    const modelsDevReady = new Promise<void>((resolve) => {
+      releaseModelsDev = resolve;
+    });
+    server.use(
+      http.post("http://tauri.local/fetch_models_for_config", () =>
+        HttpResponse.json([{ id: "model-x", ownedBy: "example" }]),
+      ),
+      http.get(MODELS_DEV_API_URL, async () => {
+        await modelsDevReady;
+        return HttpResponse.json({
+          example: {
+            api: "https://api.example.com/v1",
+            models: { "model-x": { limit: { context: 123456 } } },
+          },
+        });
+      }),
+    );
+    const committed = vi.fn();
+    const Stateful = () => {
+      const [models, setModels] = useState<HermesModel[]>([
+        { id: "model-a", name: "Model A" },
+        { id: "model-b", name: "Model B" },
+      ]);
+      return (
+        <FormShell>
+          <HermesFormFields
+            baseUrl="https://api.example.com/v1"
+            onBaseUrlChange={vi.fn()}
+            apiKey="sk-test"
+            onApiKeyChange={vi.fn()}
+            category="custom"
+            shouldShowApiKeyLink={false}
+            websiteUrl=""
+            apiMode="chat_completions"
+            onApiModeChange={vi.fn()}
+            models={models}
+            onModelsChange={(next) => {
+              committed(next);
+              setModels(next);
+            }}
+            rateLimitDelay={0.5}
+            onRateLimitDelayChange={vi.fn()}
+          />
+        </FormShell>
+      );
+    };
+    render(<Stateful />);
+
+    // 给第二行选模型，models.dev 还没返回时删掉第一行，第二行挪到最上面。
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await user.click(
+      (await screen.findAllByRole("button", { name: "Select model" }))[1],
+    );
+    await user.click(await screen.findByRole("option", { name: "model-x" }));
+    await user.click(screen.getAllByRole("button", { name: "移除模型" })[0]);
+    releaseModelsDev();
+
+    await waitFor(() =>
+      expect(committed).toHaveBeenLastCalledWith([
+        { id: "model-x", name: "Model B", context_length: 123456 },
+      ]),
+    );
+  });
+
   it("uses the clean Pi-style model rows without role badges", () => {
     renderHermesForm();
 
     expect(screen.getByText("模型列表").closest("div.border-l")).toHaveClass(
-      "border-border-default",
+      "border-border",
       "pl-3",
     );
     expect(screen.queryByText("默认模型")).not.toBeInTheDocument();
@@ -75,7 +187,7 @@ describe("HermesFormFields", () => {
     expect(screen.getByText("上下文长度")).toHaveClass(
       "text-xs",
       "font-normal",
-      "text-muted-foreground",
+      "text-fg-2",
     );
     expect(contextLength.closest("div.border-l")).toHaveClass(
       "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]",
@@ -127,7 +239,7 @@ describe("HermesFormFields", () => {
       "leading-none",
     );
     expect(input.closest("div.border-l")).toHaveClass(
-      "border-border-default",
+      "border-border",
       "pl-3",
     );
     expect(

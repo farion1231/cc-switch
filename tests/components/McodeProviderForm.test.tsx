@@ -118,7 +118,7 @@ describe("McodeProviderForm", () => {
         onCancel={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Minimax MiniMax$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "MiniMax" }));
     fireEvent.change(screen.getByLabelText("API Key"), {
       target: { value: "test-key" },
     });
@@ -145,7 +145,7 @@ describe("McodeProviderForm", () => {
         onCancel={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Minimax MiniMax$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "MiniMax" }));
     fireEvent.change(screen.getByLabelText("API Key"), {
       target: { value: "test-key" },
     });
