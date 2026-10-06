@@ -53,6 +53,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use subtle::ConstantTimeEq;
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -417,7 +418,7 @@ fn validate_claude_desktop_gateway_auth(
         .or_else(|| value.strip_prefix("bearer "))
         .unwrap_or("")
         .trim();
-    if token != expected {
+    if !bool::from(token.as_bytes().ct_eq(expected.as_bytes())) {
         return Err(ProxyError::AuthError(
             "Claude Desktop gateway token 无效".to_string(),
         ));
@@ -3262,6 +3263,19 @@ mod tests {
         assert!(headers.get(header::CONNECTION).is_none());
         assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
         assert_eq!(headers["x-request-id"], "req_1");
+    }
+
+    #[test]
+    fn gateway_token_comparison_matches_only_equal_tokens() {
+        use subtle::ConstantTimeEq;
+
+        assert!(bool::from(
+            b"ccs-expected-token".ct_eq(b"ccs-expected-token")
+        ));
+        assert!(!bool::from(
+            b"ccs-expected-token".ct_eq(b"ccs-expected-tokex")
+        ));
+        assert!(!bool::from(b"ccs-expected-token".ct_eq(b"ccs-short")));
     }
 
     #[test]
