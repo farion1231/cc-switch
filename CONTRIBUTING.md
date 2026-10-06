@@ -226,8 +226,8 @@ By submitting a PR, you agree to the following:
 
 There are a great many relay and aggregator services, so to keep the preset list short enough for users to actually browse, we limit which services get a built-in preset:
 
-- **Accepted**: model vendors (e.g., DeepSeek, Moonshot AI, Zhipu AI) and cloud platforms that serve models under their own brand (e.g., Alibaba Cloud Bailian, Volcano Engine).
-- **Sponsors only**: relay and aggregator services that resell other vendors' models. They are included only as project sponsors; to become one, contact support@ccswitch.io.
+- **Accepted**: model vendors (e.g., DeepSeek, Moonshot AI, Zhipu AI), cloud platforms that serve models under their own brand (e.g., Alibaba Cloud Bailian, Volcano Engine), and a few large, well-established aggregator platforms (e.g., OpenRouter, SiliconFlow).
+- **Sponsors only**: other relay and aggregator services that resell other vendors' models. They are included only as project sponsors; to become one, contact support@ccswitch.io.
 - **Everything else** still works through **Custom Provider** — a service does not need a preset to be usable in CC Switch.
 
 PRs that add a relay or aggregator preset outside the sponsorship program will be closed. If you are unsure whether a service qualifies, open an issue before writing the PR.
@@ -481,8 +481,8 @@ chore(deps): update dependencies
 
 中转站和聚合平台数量非常多，为了让预设列表保持在用户翻得过来的长度，我们限制可以内置预设的服务范围：
 
-- **可以收录**：模型原厂（如 DeepSeek、月之暗面、智谱）和以自有品牌提供模型服务的云平台（如阿里云百炼、火山引擎）。
-- **仅限赞助商**：转售其他厂商模型的中转站、聚合平台，只作为项目赞助商收录；如需赞助，请联系 support@ccswitch.io。
+- **可以收录**：模型原厂（如 DeepSeek、月之暗面、智谱）、以自有品牌提供模型服务的云平台（如阿里云百炼、火山引擎），以及少数规模大、运营成熟的聚合平台（如 OpenRouter、硅基流动）。
+- **仅限赞助商**：其余转售其他厂商模型的中转站、聚合平台，只作为项目赞助商收录；如需赞助，请联系 support@ccswitch.io。
 - **其余服务**照样可以通过「**自定义供应商**」接入——没有预设也不影响在 CC Switch 里使用。
 
 赞助计划之外新增中转站或聚合平台预设的 PR 会被关闭。拿不准某个服务是否符合条件时，请先开 Issue 再写 PR。
