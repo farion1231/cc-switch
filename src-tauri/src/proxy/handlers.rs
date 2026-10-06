@@ -4162,7 +4162,8 @@ mod stack_tests {
         use tempfile::TempDir;
 
         struct Home {
-            dir: TempDir,
+            /// 只用来在 Drop 时删掉临时目录。
+            _dir: TempDir,
             saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
         }
         impl Home {
@@ -4177,7 +4178,7 @@ mod stack_tests {
                     })
                     .collect();
                 crate::settings::reload_settings().expect("reload settings");
-                Self { dir, saved }
+                Self { _dir: dir, saved }
             }
         }
         impl Drop for Home {
