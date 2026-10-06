@@ -15,7 +15,7 @@ import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { ProviderIcon } from "@/components/ProviderIcon";
+import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { HoverTip } from "@/components/ui/hover-tip";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
@@ -355,22 +355,18 @@ export function ProviderCard({
           <span className="w-4 shrink-0" />
         )}
 
-        <div
+        <ProviderIconBox
+          icon={resolveProviderIcon(appId, provider.icon, provider.iconColor)}
+          name={provider.name}
+          color={provider.iconColor}
           className={cn(
             // 底色固定为白，图标颜色也要固定：单色（currentColor）图标和首字母
             // fallback 不能继承深色模式下的浅色文字
-            "flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-border bg-white text-neutral-900",
+            "bg-white text-neutral-900",
             presentation.dim && "opacity-60",
           )}
-        >
-          <ProviderIcon
-            icon={resolveProviderIcon(appId, provider.icon, provider.iconColor)}
-            name={provider.name}
-            color={provider.iconColor}
-            size={20}
-            fallbackClassName="bg-transparent text-neutral-600"
-          />
-        </div>
+          fallbackClassName="bg-transparent text-neutral-600"
+        />
 
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1.5">

@@ -421,6 +421,9 @@ pub struct AppSettings {
     /// User has confirmed the one-time "new layout" dialog shown to upgrading users
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_layout_notice_confirmed: Option<bool>,
+    /// Highest app version whose "what's new" summary the user has seen on this device
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whats_new_seen_version: Option<String>,
     /// User has confirmed the common config first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub common_config_confirmed: Option<bool>,
@@ -557,6 +560,7 @@ impl Default for AppSettings {
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             new_layout_notice_confirmed: None,
+            whats_new_seen_version: None,
             common_config_confirmed: None,
             language: None,
             visible_apps: None,

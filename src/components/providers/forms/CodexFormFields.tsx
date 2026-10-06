@@ -232,6 +232,39 @@ const CODEX_REASONING_LEVELS = [
   "ultra",
 ] as const;
 
+// Trigger label for the picked levels, kept narrow for the catalog cell. Each
+// run of three or more adjacent canonical levels collapses to "first → last"
+// ("none, low → max" when minimal is skipped); a range never spans a gap, so
+// it can't imply an unpicked level. Non-canonical order stays a plain list.
+export function formatReasoningLevelsLabel(levels: string[]): string {
+  const canonical = CODEX_REASONING_LEVELS as readonly string[];
+  const positions = levels.map((level) => canonical.indexOf(level));
+  const ordered = positions.every(
+    (position, index) =>
+      position >= 0 && (index === 0 || position > positions[index - 1]),
+  );
+  if (!ordered) return levels.join(", ");
+
+  const parts: string[] = [];
+  let runStart = 0;
+  for (let index = 1; index <= levels.length; index++) {
+    if (
+      index < levels.length &&
+      positions[index] === positions[index - 1] + 1
+    ) {
+      continue;
+    }
+    const run = levels.slice(runStart, index);
+    if (run.length >= 3) {
+      parts.push(`${run[0]} → ${run[run.length - 1]}`);
+    } else {
+      parts.push(...run);
+    }
+    runStart = index;
+  }
+  return parts.join(", ");
+}
+
 // Sentinel for the default-level Select: Radix Select forbids empty item
 // values, so "back to Auto" needs a non-empty value mapped to undefined.
 const AUTO_DEFAULT_REASONING_LEVEL = "__auto__";
@@ -270,28 +303,47 @@ function ReasoningLevelsEditor({
 
   const triggerLabel =
     selected.length > 0
-      ? selected.join(",")
+      ? formatReasoningLevelsLabel(selected)
       : t("codexConfig.reasoningLevelsNotSet", {
           defaultValue: "Not set",
         });
 
+  // The label may be a range or truncated, so hovering spells out every
+  // picked level plus the default one.
+  const triggerTip =
+    selected.length > 0 ? (
+      <>
+        <div>{selected.join(", ")}</div>
+        {defaultLevel && (
+          <div>
+            {t("codexConfig.defaultReasoningLevelTip", {
+              level: defaultLevel,
+              defaultValue: "Default level: {{level}}",
+            })}
+          </div>
+        )}
+      </>
+    ) : undefined;
+
   return (
     <Popover modal open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          role="combobox"
-          aria-expanded={open}
-          className="flex h-9 w-full items-center justify-between gap-1 rounded-md border border-border bg-surface px-3 py-1 text-sm shadow-sm focus:outline-none focus-visible:outline-none focus:border-border focus-visible:border-border focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <span
-            className={cn("truncate", selected.length === 0 && "text-fg-2")}
+      <HoverTip content={triggerTip}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            role="combobox"
+            aria-expanded={open}
+            className="flex h-9 w-full items-center justify-between gap-1 rounded-md border border-border bg-surface px-3 py-1 text-sm shadow-sm focus:outline-none focus-visible:outline-none focus:border-border focus-visible:border-border focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {triggerLabel}
-          </span>
-          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
-        </button>
-      </PopoverTrigger>
+            <span
+              className={cn("truncate", selected.length === 0 && "text-fg-2")}
+            >
+              {triggerLabel}
+            </span>
+            <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+          </button>
+        </PopoverTrigger>
+      </HoverTip>
       <PopoverContent
         side="bottom"
         align="start"
@@ -692,7 +744,7 @@ export function CodexFormFields({
     ? catalogRows.findIndex((row) => row.model.trim() === trimmedDefaultModel)
     : 0;
   // Stack 布局里默认模型那一行就代表 `model`：改它的名字、删掉它，`model` 当场跟着变，
-  // 两种布局共用这份状态，切到完整表单也看得到。没有这样的行时是 -1。
+  // 两种布局共用这份状态。没有这样的行时是 -1。
   const linkedDefaultIndex =
     variant === "stack" && trimmedDefaultModel ? stackDefaultIndex : -1;
 
@@ -1167,8 +1219,8 @@ export function CodexFormFields({
         className={cn(
           "hidden gap-2 px-1 text-xs font-medium text-fg-2 md:grid",
           withDefault
-            ? "grid-cols-[36px_1fr_1fr_140px_1fr_36px]"
-            : "grid-cols-[1fr_1fr_140px_1fr_36px]",
+            ? "grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]"
+            : "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]",
         )}
       >
         {withDefault && <span />}
@@ -1201,8 +1253,8 @@ export function CodexFormFields({
           className={cn(
             "grid grid-cols-1 gap-2",
             withDefault
-              ? "md:grid-cols-[36px_1fr_1fr_140px_1fr_36px]"
-              : "md:grid-cols-[1fr_1fr_140px_1fr_36px]",
+              ? "md:grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]"
+              : "md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]",
           )}
         >
           {withDefault && renderDefaultStar(index)}
@@ -1421,7 +1473,7 @@ export function CodexFormFields({
                 {renderCatalogActionButtons(
                   handleAddCatalogRow,
                   t("codexConfig.addCatalogModel", {
-                    defaultValue: "添加模型",
+                    defaultValue: "手动添加",
                   }),
                 )}
               </div>
@@ -1704,7 +1756,7 @@ export function CodexFormFields({
                     {renderCatalogActionButtons(
                       handleAddCatalogRow,
                       t("codexConfig.addCatalogModel", {
-                        defaultValue: "添加模型",
+                        defaultValue: "手动添加",
                       }),
                     )}
                   </div>
@@ -1716,6 +1768,15 @@ export function CodexFormFields({
                   </p>
                 </div>
 
+                {fetchedModels.length > 0 && (
+                  <FetchedModelPicker
+                    models={fetchedModels}
+                    configuredModelIds={catalogRows.map((row) =>
+                      row.model.trim(),
+                    )}
+                    onAdd={handleAddFetchedCatalogRows}
+                  />
+                )}
                 {catalogRows.length > 0 && renderCatalogRows(false)}
               </div>
             )}

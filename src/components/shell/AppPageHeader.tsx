@@ -49,7 +49,9 @@ export function AppPageHeader({
       {...DRAG_REGION_ATTR}
       style={DRAG_REGION_STYLE as React.CSSProperties}
     >
+      {/* Tauri 只认按下的元素自身带拖动属性：标题区、标题、占位条都要带，整条才能拖窗口 */}
       <div
+        {...DRAG_REGION_ATTR}
         className={cn(
           "flex min-w-0 items-center gap-2.5",
           truncateTitle ? "flex-1" : "shrink-0",
@@ -69,6 +71,7 @@ export function AppPageHeader({
           </span>
         )}
         <h1
+          {...DRAG_REGION_ATTR}
           className={cn(
             "m-0 whitespace-nowrap",
             variant === "app" ? "text-title" : "text-page",
@@ -88,7 +91,7 @@ export function AppPageHeader({
           </div>
         )}
       </div>
-      {!truncateTitle && <div className="flex-1" />}
+      {!truncateTitle && <div {...DRAG_REGION_ATTR} className="flex-1" />}
       {actions && (
         <div
           className="flex min-w-0 shrink items-center justify-end gap-2"

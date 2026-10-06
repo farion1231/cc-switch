@@ -96,7 +96,6 @@ describe("PromptFormPanel", () => {
   });
 
   it("names the overwritten file on the save button of the enabled prompt", () => {
-    const onDelete = vi.fn();
     render(
       <PromptFormPanel
         appId="hermes"
@@ -104,17 +103,16 @@ describe("PromptFormPanel", () => {
         initialData={active}
         onSave={vi.fn()}
         onClose={vi.fn()}
-        onDelete={onDelete}
       />,
     );
 
     expect(
       screen.getByRole("button", { name: "prompts.saveAndOverwrite:SOUL.md" }),
     ).toBeInTheDocument();
-    const del = screen.getByRole("button", { name: "common.delete" });
-    expect(del).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(del);
-    expect(onDelete).not.toHaveBeenCalled();
+    // 删除只在列表里，编辑页底栏只有取消和保存
+    expect(
+      screen.queryByRole("button", { name: "common.delete" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps Pi content as typed and writes AGENTS.md for the enabled prompt", async () => {

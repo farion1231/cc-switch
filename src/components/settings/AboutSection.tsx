@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Download,
   ExternalLink,
@@ -7,6 +7,7 @@ import {
   Info,
   Loader2,
   RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
@@ -15,6 +16,8 @@ import { getVersion } from "@tauri-apps/api/app";
 import { settingsApi } from "@/lib/api";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { Badge } from "@/components/ui/badge";
+import { WhatsNewDialog } from "@/components/WhatsNewDialog";
+import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
 import appIcon from "@/assets/icons/app-icon.png";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
@@ -38,6 +41,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     () => appVersionCache === null,
   );
   const [isDownloading, setIsDownloading] = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const recentEntries = useMemo(
+    () => (version ? entriesUpTo(WHATS_NEW_ENTRIES, version) : []),
+    [version],
+  );
 
   const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
     useUpdate();
@@ -249,6 +257,17 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           <ExternalLink className="h-3.5 w-3.5" />
           {t("settings.releaseNotes")}
         </Button>
+        {recentEntries.length > 0 && (
+          <Button
+            type="button"
+            variant="neutral"
+            size="compact"
+            onClick={() => setWhatsNewOpen(true)}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            {t("whatsNew.recentTitle")}
+          </Button>
+        )}
         <a
           href="https://github.com/farion1231/cc-switch"
           onClick={(event) => {
@@ -260,6 +279,12 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           {t("settings.starPrompt")}
         </a>
       </div>
+
+      <WhatsNewDialog
+        open={whatsNewOpen}
+        onClose={() => setWhatsNewOpen(false)}
+        entries={recentEntries}
+      />
     </div>
   );
 }

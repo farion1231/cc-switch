@@ -134,9 +134,10 @@ function EnterBody({
               })
             : t("mode.dialog.stackNoteEmpty"),
           t("mode.dialog.stackNoteNoFailover"),
-          app === "codex"
-            ? t("mode.dialog.stackNoteRestartCodex", { app: appName })
-            : t("mode.dialog.stackNoteRestart", { app: appName }),
+          // Claude Code 运行中就会读到改过的 settings.json，不用重启。
+          ...(app === "codex"
+            ? [t("mode.dialog.stackNoteRestartCodex", { app: appName })]
+            : []),
         ];
   if (active === "stack" && target === "route") {
     notes.push(t("mode.dialog.stackToRouteNote"));

@@ -200,22 +200,33 @@ fn claude_contract(
     (projection, contract)
 }
 
-/// Claude Code 的模型发现开关：打开后启动时向 `ANTHROPIC_BASE_URL/v1/models` 取模型列表，
-/// Stack 模型才会出现在 `/model` 里。独有字段：记进契约，退出代理时按记录删（同值才删），
-/// 用户自己设的全局值在直连切换时不受影响。
-const CLAUDE_GATEWAY_DISCOVERY_ENV: &str = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY";
 const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 
-/// 发布了 Stack 模型时：打开模型发现；`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改由 Stack 模型决定，取
-/// 非 1M 模型里最小的窗口（等于默认 200K 时不写）。四档别名也写成 Stack id，同样受 MAX 约束；
-/// 1M 的 Stack 模型不受 MAX 影响。没有发布 Stack 模型时契约和原来逐字节一致。
+/// `/model` 选择器的配置（顶层关键字段）。`replaceBuiltInOptions` 让选择器只剩 Default 和
+/// 这里列的行：内置的 Opus / Sonnet / Haiku 行都指向默认那家的模型，留着就是几行重复，
+/// 还会把那个模型自己的行去重吃掉。四档别名仍然要写，Default、`--model opus` 和子代理靠它们。
+const CLAUDE_MODEL_PICKER: &str = "modelPicker";
+
+/// 发布了 Stack 模型时：`/model` 换成 Stack 模型列表；`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改由
+/// Stack 模型决定，取非 1M 模型里最小的窗口（等于默认 200K 时不写）。四档别名也写成 Stack id，
+/// 同样受 MAX 约束；1M 的 Stack 模型不受 MAX 影响。没有发布 Stack 模型时契约和原来逐字节一致。
 fn with_stack_models(projection: &mut ClaudeProjection, stack: &[StackModel]) {
     if stack.is_empty() {
         return;
     }
-    projection.exclusive.insert(
-        CLAUDE_GATEWAY_DISCOVERY_ENV.to_string(),
-        Value::String("1".to_string()),
+    let options: Vec<Value> = stack
+        .iter()
+        .map(|model| {
+            json!({
+                "model": model.id,
+                "label": model.display_name,
+                "description": model.description,
+            })
+        })
+        .collect();
+    projection.top.insert(
+        CLAUDE_MODEL_PICKER.to_string(),
+        json!({ "replaceBuiltInOptions": true, "options": options }),
     );
     projection.exclusive.shift_remove(CLAUDE_MAX_CONTEXT_ENV);
     let smallest = stack
@@ -268,7 +279,8 @@ async fn write_proxy(
     next_stack: Option<StackState>,
 ) -> Result<(), String> {
     let (proxy_url, codex_base_url) = state.proxy_service.build_proxy_urls().await?;
-    let force = op_name == op::ATTACH;
+    // 改用 CC Switch 的目录时契约可能没变（指针只在 live 里），也要重写。
+    let force = op_name == op::ATTACH || op_name == op::CATALOG;
     let stack = match &next_stack {
         Some(next) => next.clone(),
         None => settled_stack(app)?,
@@ -1092,13 +1104,13 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
 }
 
 /// [`stack_views`] 再加上 Codex 客户端是不是还在用旧的模型列表（要读进程表，放到阻塞线程池
-/// 里）。路由那家自己管理目录、或者用户自己指定了目录时，Stack 模型本来就不发布或不生效，重启
-/// 也看不到，已经有 `notice` 说明，不再查。
+/// 里）。路由那家自己管理目录时，Stack 模型本来就不发布，重启也看不到，已经有 `notice` 说明，
+/// 不再查。
 pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<StackView, String> {
     let mut view = stack_views(state, app)?;
     if matches!(app, AppType::Codex)
         && view.active
-        && !matches!(view.notice, Some("routeOwnsCatalog" | "configOwnsCatalog"))
+        && view.notice != Some("routeOwnsCatalog")
         && codex_publishes_stack_models(state, &settled_stack(app)?)
     {
         view.stale_clients = codex_direct::off_runtime(|| {
@@ -1122,8 +1134,7 @@ fn codex_publishes_stack_models(state: &AppState, stack: &StackState) -> bool {
 }
 
 /// Codex 在 Stack 模式下有要发布的 Stack 模型，客户端却看不到或看不全：路由那家自己管理模型
-/// 目录文件（Stack 模型不发布）；`config.toml` 里用户自己指定了模型目录（生成的目录不生效）；
-/// 或者官方做默认、最近一次写目录时没拿到官方列表。
+/// 目录文件（Stack 模型不发布）；或者官方做默认、最近一次写目录时没拿到官方列表。
 fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static str> {
     let (_, route) = attached_route(state, &AppType::Codex).ok()??;
     let published =
@@ -1134,10 +1145,6 @@ fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static s
     if codex_direct::route_owns_catalog(&route) {
         return Some("routeOwnsCatalog");
     }
-    // 按客户端里实际生效的指针看：用户直接写进 config.toml 的指针写入时照留。
-    if crate::live::project::codex::live_catalog_is_foreign(&codex_direct::read_config_text()) {
-        return Some("configOwnsCatalog");
-    }
     if !codex_direct::is_official(&route) {
         return None;
     }
@@ -1146,6 +1153,31 @@ fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static s
         codex_official_models::NativeSource::Bundled => Some("officialModelsBundled"),
         codex_official_models::NativeSource::Unavailable => Some("officialModelsUnavailable"),
     }
+}
+
+/// Codex Stack 模式下聚合的模型被路由那家自己的模型目录挡住（`routeOwnsCatalog`，用户在提示
+/// 上点了才调）：去掉它行里指向别的文件的 `model_catalog_json`，按当前路由重写，改用 CC Switch
+/// 生成的目录。返回之后还剩的提示。
+///
+/// 先改行再写客户端：写失败时下一次重写按新的行投影，指针照样清掉。
+pub async fn adopt_codex_stack_catalog(state: &AppState) -> Result<Option<&'static str>, String> {
+    let app = AppType::Codex;
+    let _guard = lock_settled(state, &app).await.map_err(err)?;
+    let Some((mode, mut route)) = attached_route(state, &app)? else {
+        return Ok(None);
+    };
+    if let Some(settings) = codex_direct::settings_without_row_catalog(&route) {
+        state
+            .db
+            .update_provider_settings_config(app.as_str(), &route.id, &settings)
+            .map_err(err)?;
+        route.settings_config = settings;
+    }
+    let live_now = LiveNow::of(state, &app, &mode)?;
+    write_proxy(state, &app, op::CATALOG, &route, &live_now, mode, None).await?;
+    Ok(settled_stack(&app)
+        .ok()
+        .and_then(|stack| codex_stack_notice(state, &stack)))
 }
 
 /// 路由供应商的行或代理地址变了：按新契约重写客户端（契约没变就什么都不做）。调用方
@@ -3102,13 +3134,18 @@ command = "fs-server"
         exit(&state, &AppType::Codex).await.expect("exit");
         assert_eq!(pointer(), None, "{}", codex_text());
 
-        // 用户自己写进 live 的指针不认领、不删，也不被 CC Switch 的指针替换。
+        // 指针是关键字段：手写进 live 的值不保留，有目录时换成 CC Switch 的，没有就删。
         let with_user = format!("model_catalog_json = \"/work/mine.json\"\n{}", codex_text());
         fs::write(codex_config_path(), with_user).unwrap();
         ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
-        assert_eq!(pointer().as_deref(), Some("/work/mine.json"));
+        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        let with_user = codex_text().replace(
+            &format!("model_catalog_json = \"{ours}\""),
+            "model_catalog_json = \"/work/mine.json\"",
+        );
+        fs::write(codex_config_path(), with_user).unwrap();
         ProviderService::switch(&state, AppType::Codex, "c").expect("to c");
-        assert_eq!(pointer().as_deref(), Some("/work/mine.json"));
+        assert_eq!(pointer(), None, "{}", codex_text());
     }
 
     #[tokio::test]
@@ -4908,6 +4945,23 @@ model_provider = "c"
         state::stack(&DeviceStore::for_device(), "claude").unwrap()
     }
 
+    /// 用户自己可能打开的模型发现开关（聚合模式不再写它）。
+    const DISCOVERY_ENV: &str = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY";
+
+    /// `/model` 里列的 Stack 模型 id；没有 `modelPicker` 时为 `None`。
+    fn picker() -> Option<Vec<String>> {
+        let picker = settings().get(CLAUDE_MODEL_PICKER)?.clone();
+        assert_eq!(picker["replaceBuiltInOptions"], true, "{picker}");
+        Some(
+            picker["options"]
+                .as_array()
+                .expect("options")
+                .iter()
+                .map(|row| row["model"].as_str().expect("model").to_string())
+                .collect(),
+        )
+    }
+
     async fn set_member(state: &AppState, id: &str, enabled: bool) -> Vec<StackMemberView> {
         set_stack_member(state, &AppType::Claude, id, enabled)
             .await
@@ -4927,8 +4981,15 @@ model_provider = "c"
 
         // 进入 Stack 模式时默认那家（a）已经在名单里，照常发布；四档都指向它的第一个模型。
         assert_eq!(stack_state().members, vec!["a"]);
+        assert_eq!(
+            picker(),
+            Some(vec!["ccs-claude-a--claude-sonnet-4-6".to_string()])
+        );
+        let options = &settings()[CLAUDE_MODEL_PICKER]["options"][0];
+        assert_eq!(options["label"], "claude-sonnet-4-6（A）");
+        assert_eq!(options["description"], "claude-sonnet-4-6 · 200K");
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        assert!(env.get(DISCOVERY_ENV).is_none(), "{env}");
         for role in ["HAIKU", "SONNET", "OPUS", "FABLE"] {
             assert_eq!(
                 env[format!("ANTHROPIC_DEFAULT_{role}_MODEL")],
@@ -4947,8 +5008,14 @@ model_provider = "c"
         assert_eq!(views[0].model_ids, vec!["ccs-claude-a--claude-sonnet-4-6"]);
         assert_eq!(stack_state().key_of("kimi"), Some("kimi"));
         assert_eq!(views[1].model_ids, vec!["ccs-claude-kimi--kimi-k3"]);
+        assert_eq!(
+            picker(),
+            Some(vec![
+                "ccs-claude-a--claude-sonnet-4-6".to_string(),
+                "ccs-claude-kimi--kimi-k3".to_string(),
+            ])
+        );
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
         assert_eq!(
             env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
@@ -4963,8 +5030,14 @@ model_provider = "c"
         set_member(&state, "zhipu", true).await;
         assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
         set_member(&state, "kimi", false).await;
+        assert_eq!(
+            picker(),
+            Some(vec![
+                "ccs-claude-a--claude-sonnet-4-6".to_string(),
+                "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
+            ])
+        );
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
 
         // 只剩默认那家：客户端文件和契约回到刚进入时的样子，登记簿保留。
@@ -4988,16 +5061,38 @@ model_provider = "c"
     async fn a_users_own_model_discovery_switch_survives_switches_and_proxy_mode() {
         let _home = Home::new();
         let mut user: Value = serde_json::from_str(USER_SETTINGS).unwrap();
-        user["env"][CLAUDE_GATEWAY_DISCOVERY_ENV] = json!("1");
+        user["env"][DISCOVERY_ENV] = json!("1");
         seed_settings(&serde_json::to_string_pretty(&user).unwrap());
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
-        let discovery = || settings()["env"].get(CLAUDE_GATEWAY_DISCOVERY_ENV).cloned();
+        let discovery = || settings()["env"].get(DISCOVERY_ENV).cloned();
 
         ProviderService::switch(&state, AppType::Claude, "kimi").expect("direct kimi");
         assert_eq!(discovery(), Some(json!("1")));
         enter(&state, &AppType::Claude, false).await.expect("enter");
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_eq!(discovery(), Some(json!("1")), "no stacked models");
+    }
+
+    /// `modelPicker` 是关键字段：聚合模式下换成 Stack 模型列表，用户自己配的不保留；离开
+    /// 聚合模式（退出代理、直连切换）都清掉。
+    #[tokio::test]
+    #[serial]
+    async fn the_stack_model_picker_replaces_a_users_own_and_leaves_with_stack_mode() {
+        let _home = Home::new();
+        let mut user: Value = serde_json::from_str(USER_SETTINGS).unwrap();
+        user[CLAUDE_MODEL_PICKER] = json!({ "options": [{ "model": "mine" }] });
+        seed_settings(&serde_json::to_string_pretty(&user).unwrap());
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        assert_eq!(
+            picker(),
+            Some(vec!["ccs-claude-a--claude-sonnet-4-6".to_string()])
+        );
+
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert!(settings().get(CLAUDE_MODEL_PICKER).is_none());
+        assert_back_to_user_settings();
     }
 
     #[tokio::test]
@@ -5013,7 +5108,7 @@ model_provider = "c"
         assert!(stack_state().is_member("kimi"));
 
         enter(&state, &AppType::Claude, true).await.expect("enter");
-        assert_eq!(settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        assert!(picker().is_some());
         assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
 
         exit(&state, &AppType::Claude).await.expect("exit");
@@ -5046,8 +5141,8 @@ model_provider = "c"
 
         // 换默认到名单里的 kimi：四档跟着指向 kimi 的第一个模型，两家都照常发布。
         ProviderService::switch(&state, AppType::Claude, "kimi").expect("switch route");
+        assert!(picker().is_some());
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
         assert_eq!(
             env["ANTHROPIC_DEFAULT_OPUS_MODEL"],
@@ -5069,20 +5164,19 @@ model_provider = "c"
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         set_member(&state, "kimi", true).await;
-        let discovery = || settings()["env"].get(CLAUDE_GATEWAY_DISCOVERY_ENV).cloned();
 
         // 路由模式：名单在也不发布。
         enter(&state, &AppType::Claude, false)
             .await
             .expect("routing");
-        assert_eq!(discovery(), None);
+        assert_eq!(picker(), None);
         assert!(!stack_views(&state, &AppType::Claude).unwrap().active);
 
         // 已经在代理模式时换成 Stack 模式：默认那家加入名单，其余的发布。
         enter(&state, &AppType::Claude, true)
             .await
             .expect("stack mode");
-        assert_eq!(discovery(), Some(json!("1")));
+        assert!(picker().is_some());
         assert!(stack_views(&state, &AppType::Claude).unwrap().active);
         assert_eq!(stack_state().members, vec!["kimi", "a"]);
 
@@ -5090,7 +5184,7 @@ model_provider = "c"
         enter(&state, &AppType::Claude, false)
             .await
             .expect("routing again");
-        assert_eq!(discovery(), None);
+        assert_eq!(picker(), None);
         assert_eq!(stack_state().members, vec!["kimi", "a"]);
         assert!(!stack_state().enabled);
 
@@ -5100,7 +5194,7 @@ model_provider = "c"
         enter(&state, &AppType::Claude, true)
             .await
             .expect("stack mode again");
-        assert_eq!(discovery(), Some(json!("1")));
+        assert!(picker().is_some());
         assert_eq!(stack_state().members, vec!["kimi", "a"]);
     }
 
@@ -5209,8 +5303,8 @@ model_provider = "c"
         // 之后可以移除。四档指向新默认的第一个模型：1M 模型三档带标记，haiku 不带。
         ProviderService::switch(&state, AppType::Claude, "zhipu").expect("set default");
         assert_eq!(stack_state().members, vec!["a", "zhipu"]);
+        assert!(picker().is_some());
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(
             env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
             "ccs-claude-zhipu--glm-5.2[1M]"
@@ -5222,8 +5316,11 @@ model_provider = "c"
         let with_a = settings();
         set_member(&state, "a", false).await;
         assert_eq!(stack_state().members, vec!["zhipu"]);
+        assert_eq!(
+            picker(),
+            Some(vec!["ccs-claude-zhipu--glm-5.2[1M]".to_string()])
+        );
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(env, with_a["env"], "a is not the default any more");
     }
 
@@ -5477,11 +5574,7 @@ model_provider = "c"
             // 再发一次同样的目标值：先补完（或丢弃）上一次，再应用，结果都是新名单。
             set_member(&state, "kimi", true).await;
             assert!(stack_state().is_member("kimi"), "{point}");
-            assert_eq!(
-                settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV],
-                "1",
-                "{point}"
-            );
+            assert!(picker().is_some(), "{point}");
             assert!(state::pending(&DeviceStore::for_device(), "claude")
                 .unwrap()
                 .is_none());
@@ -5530,7 +5623,11 @@ model_provider = "c"
 
         ProviderService::delete(&state, AppType::Claude, "kimi").expect("delete kimi");
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1", "a still publishes");
+        assert_eq!(
+            picker(),
+            Some(vec!["ccs-claude-a--claude-sonnet-4-6".to_string()]),
+            "a still publishes"
+        );
         assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
         assert!(state
             .db
@@ -5609,7 +5706,7 @@ model_provider = "c"
         let env = settings()["env"].clone();
         assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-5");
         assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "claude-haiku-4-5");
-        assert!(env.get(CLAUDE_GATEWAY_DISCOVERY_ENV).is_none(), "{env}");
+        assert_eq!(picker(), None);
     }
 
     fn codex_native(id: &str, url: &str, extra: &str, catalog: Option<Value>) -> Provider {
@@ -5891,35 +5988,167 @@ model_provider = "c"
     }
 
     /// 用户直接在 config.toml 里指定的模型目录：写入时照留，生成的目录不生效，同样要提示。
+    /// 手写进 config.toml 的指针挡不住聚合：进代理时按关键字段清掉，加进 Stack 后换上合并目录。
     #[tokio::test]
     #[serial]
-    async fn codex_a_users_own_catalog_pointer_reports_stack_models_unseen() {
+    async fn codex_a_hand_written_catalog_pointer_gives_way_to_the_stack_catalog() {
         let _home = Home::new();
         seed_codex("model_catalog_json = \"/work/global-models.json\"\n", None);
         let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
+        assert!(
+            codex_doc().get("model_catalog_json").is_none(),
+            "{}",
+            codex_text()
+        );
 
         let notice = set_stack_member(&state, &AppType::Codex, "deepseek", true)
             .await
             .expect("stack");
-        assert_eq!(notice, Some("configOwnsCatalog"));
-        assert_eq!(
-            codex_doc()["model_catalog_json"].as_str(),
-            Some("/work/global-models.json")
-        );
-
-        // 用户删掉自己的指针，下一次写入换上 CC Switch 的目录，不再提示。
-        let without =
-            codex_text().replace("model_catalog_json = \"/work/global-models.json\"\n", "");
-        fs::write(codex_config_path(), without).unwrap();
-        let notice = set_stack_member(&state, &AppType::Codex, "zhipu", true)
-            .await
-            .expect("stack zhipu");
         assert_eq!(notice, None);
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
             Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
         );
+    }
+
+    /// 提示上的「改用 CC Switch 的模型目录」：去掉路由那家行里的指针，契约带进 live 的那份
+    /// 跟着删掉，换上合并目录，不再提示。行里其余内容原样。
+    #[tokio::test]
+    #[serial]
+    async fn codex_adopting_the_catalog_drops_the_route_rows_own_pointer() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let [_, deepseek, zhipu] = codex_stack_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "model_catalog_json = \"/opt/team/models.json\"\nmodel_verbosity = \"high\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some("/opt/team/models.json")
+        );
+
+        let notice = adopt_codex_stack_catalog(&state).await.expect("adopt");
+        assert_eq!(notice, None);
+        let row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let row_config = row.settings_config["config"].as_str().unwrap();
+        assert!(
+            !row_config.contains("model_catalog_json") && row_config.contains("model_verbosity"),
+            "{row_config}"
+        );
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+        let slugs: Vec<String> = codex_catalog()["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["slug"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            slugs.contains(&"ccs-deepseek/deepseek-v4-pro".to_string()),
+            "{slugs:?}"
+        );
+        assert_eq!(stack_views(&state, &AppType::Codex).unwrap().notice, None);
+    }
+
+    /// 编辑器里的模型目录指针归这张卡：live 里手写的不显示、不收进行，保存当前卡时清掉；用户在
+    /// 编辑器里写的外来指针存进行、随卡写入；指向 CC Switch 目录的指针不存（由写入方决定）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_catalog_pointer_belongs_to_the_card() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(
+            &format!("model_catalog_json = \"/work/mine.json\"\n{CODEX_USER_LIVE}"),
+            None,
+        );
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let open = |id: &str| {
+            let row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            let view =
+                ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+                    .expect("view");
+            (row, view.settings)
+        };
+        let save = |mut row: Provider, edited: Value, base: Value| {
+            row.settings_config = edited;
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                None,
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+        };
+        let row_config = |id: &str| {
+            state
+                .db
+                .get_provider_by_id(id, "codex")
+                .unwrap()
+                .unwrap()
+                .settings_config["config"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let with_pointer = |base: &Value, pointer: &str| {
+            let mut edited = base.clone();
+            edited["config"] = json!(format!(
+                "model_catalog_json = {pointer:?}\n{}",
+                base["config"].as_str().unwrap()
+            ));
+            edited
+        };
+        let pointer = || {
+            codex_doc()
+                .get("model_catalog_json")
+                .and_then(|value| value.as_str().map(str::to_string))
+        };
+
+        let (row, base) = open("a");
+        assert!(
+            !base["config"]
+                .as_str()
+                .unwrap()
+                .contains("model_catalog_json"),
+            "{base}"
+        );
+        save(row, base.clone(), base).expect("save as is");
+        assert!(!row_config("a").contains("model_catalog_json"));
+        assert_eq!(pointer(), None, "{}", codex_text());
+
+        // 手写 CC Switch 自己的目录：a 没有模型映射，不生成目录，行里不存、live 里也不写。
+        let ours = crate::codex_config::get_codex_model_catalog_path()
+            .display()
+            .to_string();
+        let (row, base) = open("a");
+        save(row, with_pointer(&base, &ours), base).expect("save ours");
+        assert!(!row_config("a").contains("model_catalog_json"));
+        assert_eq!(pointer(), None, "{}", codex_text());
+
+        let (row, base) = open("b");
+        save(row, with_pointer(&base, "/work/b.json"), base).expect("save b pointer");
+        assert!(
+            row_config("b").contains("model_catalog_json = \"/work/b.json\""),
+            "{}",
+            row_config("b")
+        );
+        ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
+        assert_eq!(pointer().as_deref(), Some("/work/b.json"));
+        ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
+        assert_eq!(pointer(), None, "{}", codex_text());
     }
 
     /// 普通保存入口（不带编辑器底）改了 Stack 里那家的模型目录：合并目录跟着重算。
