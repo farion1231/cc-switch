@@ -2028,6 +2028,7 @@
     "noData": "暫無資料",
     "unknownProvider": "未知供應商",
     "sessionProvider": {
+      "short": "工作階段日誌",
       "label": "{{app}} · 工作階段日誌",
       "hint": "未開啟路由時從用戶端的工作階段日誌讀取，無法區分是哪家供應商"
     },

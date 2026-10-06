@@ -114,7 +114,7 @@ function useDetailSections(request: RequestLog) {
     {
       key: "provider",
       label: t("usage.provider"),
-      value: getUsageProviderLabel(request.providerName, t).label,
+      value: getUsageProviderLabel(request.providerName, t).shortLabel,
     },
     {
       key: "providerId",
@@ -357,7 +357,7 @@ export function RequestDetailPanel({
     ? [
         new Date(request.createdAt * 1000).toLocaleString(),
         appDisplayName(request.appType),
-        getUsageProviderLabel(request.providerName, t).label,
+        getUsageProviderLabel(request.providerName, t).shortLabel,
       ].join(" · ")
     : undefined;
 

@@ -2027,6 +2027,7 @@
     "noData": "No data",
     "unknownProvider": "Unknown Provider",
     "sessionProvider": {
+      "short": "Session logs",
       "label": "{{app}} · Session logs",
       "hint": "Read from the client's session logs while routing is off, so the provider can't be told apart"
     },

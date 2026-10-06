@@ -12,6 +12,7 @@ describe("getUsageProviderLabel", () => {
   it("translates session-log placeholder names with the full app name", () => {
     expect(getUsageProviderLabel("Claude (Session)", t)).toEqual({
       label: "usage.sessionProvider.label:Claude Code",
+      shortLabel: "usage.sessionProvider.short",
       hint: "usage.sessionProvider.hint",
     });
     expect(getUsageProviderLabel("Gemini (Session)", t).label).toBe(
@@ -22,6 +23,7 @@ describe("getUsageProviderLabel", () => {
   it("keeps real provider names as-is", () => {
     expect(getUsageProviderLabel("DeepSeek", t)).toEqual({
       label: "DeepSeek",
+      shortLabel: "DeepSeek",
     });
   });
 
