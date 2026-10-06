@@ -62,6 +62,11 @@ pub struct Contract {
     pub version: u32,
     /// 契约内容的摘要：切换路由时摘要相同，客户端文件就不用动。
     pub key: String,
+    /// 代理契约写进客户端 `config.toml` 的模型（Codex）。原生 Responses 直通只把请求里
+    /// 的这个模型换成当前路由行的上游模型——故障转移后客户端还在发它（#7547）；用户显式
+    /// 选的其它模型不动。其它应用和直连契约不填（`None`＝不做替换）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// 契约写进客户端的独有字段。退出代理时按它删除（值相同才删）：路由供应商的行之后可能
     /// 被编辑过，不能到时再按行重新计算。
     #[serde(default, skip_serializing_if = "Map::is_empty")]

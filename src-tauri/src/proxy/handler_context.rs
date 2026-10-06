@@ -58,8 +58,7 @@ pub struct RequestContext {
     pub tag: &'static str,
     /// 应用类型字符串（如 "claude"、"codex"、"gemini"）
     pub app_type_str: &'static str,
-    /// 应用类型（预留，目前通过 app_type_str 使用）
-    #[allow(dead_code)]
+    /// 应用类型（原生 Responses 直通的模型替换按它读 Codex 的代理契约）
     pub app_type: AppType,
     /// Session ID（从客户端请求提取或新生成）
     pub session_id: String,
@@ -239,6 +238,18 @@ impl RequestContext {
         self
     }
 
+    /// Codex 代理契约写进客户端 `config.toml` 的模型（#7547）：原生 Responses 直通只把
+    /// 请求里的这个模型换成当前路由行的上游模型（故障转移后客户端还在发它）。Stack 请求
+    /// 和其它应用没有这个替换，不读模式状态。
+    fn codex_contract_model(&self) -> Option<String> {
+        if self.is_stack || !matches!(self.app_type, AppType::Codex) {
+            return None;
+        }
+        crate::mode::current::mode_state(&self.app_type)
+            .contract
+            .and_then(|contract| contract.model)
+    }
+
     /// 创建 RequestForwarder
     ///
     /// 使用共享的 ProviderRouter，确保熔断器状态跨请求保持
@@ -291,6 +302,7 @@ impl RequestContext {
             max_retries,
         )
         .stack_request(self.is_stack)
+        .contract_model(self.codex_contract_model())
     }
 
     /// 获取 Provider 列表（用于故障转移）

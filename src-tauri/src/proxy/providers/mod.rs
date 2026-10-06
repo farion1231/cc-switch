@@ -61,7 +61,8 @@ pub use claude::{
 };
 pub use codex::CodexAdapter;
 pub use codex::{
-    apply_codex_chat_upstream_model, apply_codex_upstream_model, codex_provider_upstream_model,
+    apply_codex_chat_upstream_model, apply_codex_native_responses_upstream_model,
+    apply_codex_upstream_model, codex_provider_upstream_model,
     codex_stack_upstream_rejects_web_search, inject_codex_chat_prompt_cache_key,
     is_codex_official_provider, is_codex_responses_endpoint,
     provider_needs_responses_late_arguments_repair, provider_needs_responses_namespace_flatten,

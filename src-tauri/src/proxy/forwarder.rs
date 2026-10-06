@@ -372,6 +372,10 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+    /// Codex 代理契约写进客户端 `config.toml` 的模型（#7547）：挂在结构体上，故障转移
+    /// 换了路由行、整流器重试再次调用 `forward()` 时，客户端发来的模型名不变，比对基准
+    /// 也不该变。`None`＝没有记录（直连、其它应用、旧版状态），原生直通不做模型替换。
+    contract_model: Option<String>,
 }
 
 impl RequestForwarder {
@@ -487,12 +491,20 @@ impl RequestForwarder {
             ),
             max_attempts,
             stack_request: false,
+            contract_model: None,
         }
     }
 
     /// 标记为 Stack 模型的请求。
     pub fn stack_request(mut self, stack_request: bool) -> Self {
         self.stack_request = stack_request;
+        self
+    }
+
+    /// 记录 Codex 代理契约写进客户端 `config.toml` 的模型（#7547）：原生 Responses 直通
+    /// 只替换请求里的这个模型（故障转移后客户端还在发它），其余模型原样透传。
+    pub fn contract_model(mut self, contract_model: Option<String>) -> Self {
+        self.contract_model = contract_model;
         self
     }
 
@@ -1463,22 +1475,23 @@ impl RequestForwarder {
         if matches!(app_type, AppType::GrokBuild) {
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
         } else if matches!(app_type, AppType::Codex)
+            && super::providers::is_codex_responses_endpoint(endpoint)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && !codex_official_auth_passthrough
             && !self.keeps_resolved_model()
-            && mapped_body
-                .get("model")
-                .and_then(|model| model.as_str())
-                .is_some_and(|model| !model.trim().is_empty())
         {
-            // Native Responses passthrough gets the same upstream-model
-            // substitution as the Chat/Anthropic bridges below. The request
-            // body carries whichever model Codex was configured with, so on
-            // failover the id belongs to the previous provider and a native
-            // gateway rejects it as unknown (#7547). Models listed in the
-            // provider's catalog keep the requested id.
-            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            // Native Responses passthrough substitutes only the model the proxy
+            // contract wrote into config.toml (#7547): after a failover the
+            // client keeps sending the previous provider's id and the new
+            // gateway rejects it. Everything else — an explicit model pick, a
+            // model listed in this provider's catalog, or a non-Responses
+            // endpoint such as /images/generations — goes through unchanged.
+            super::providers::apply_codex_native_responses_upstream_model(
+                provider,
+                self.contract_model.as_deref(),
+                &mut mapped_body,
+            );
         }
 
         if is_copilot_claude_body {
@@ -4568,6 +4581,7 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+            contract_model: None,
         }
     }
 
@@ -7410,8 +7424,9 @@ mod tests {
             assert_eq!(upstream.seen.lock().await.len(), 1);
         }
 
-        /// 故障转移到原生 Responses 的备用供应商：请求体还带着上一家的模型 id，原生网关
-        /// 不认识。换成这家的上游模型——和 Chat/Anthropic 桥在转换前做的是同一件事。
+        /// 故障转移到原生 Responses 的备用供应商：请求体还带着上一家的模型 id（契约写进
+        /// `config.toml` 的那个），原生网关不认识。换成这家的上游模型；第一跳（契约属于
+        /// 它）收到的还是原模型名，字节不变。
         #[tokio::test]
         async fn native_responses_failover_substitutes_the_backup_provider_model() {
             let primary = scripted_upstream(vec![(
@@ -7420,7 +7435,7 @@ mod tests {
             )])
             .await;
             let backup = scripted_upstream(vec![response_ok()]).await;
-            let mut forwarder = forwarder(false);
+            let mut forwarder = forwarder(false).contract_model(Some("row-model".to_string()));
             forwarder.max_attempts = 2;
 
             let result = forwarder
@@ -7439,19 +7454,86 @@ mod tests {
                 .await;
 
             assert!(result.is_ok());
+            let primary_seen = primary.seen.lock().await;
+            assert_eq!(primary_seen.len(), 1);
+            assert_eq!(primary_seen[0].body["model"], "row-model");
+            drop(primary_seen);
             let seen = backup.seen.lock().await;
             assert_eq!(seen.len(), 1);
             assert_eq!(seen[0].body["model"], "backup-model");
         }
 
-        /// 目录里列出的模型是用户在这家的目录里挑的：原样透传，不换成行里的默认模型。
+        /// 用户在 Codex 里显式选的模型（≠ 契约写进 `config.toml` 的模型）：不换。单供应商、
+        /// 没开故障转移也一样——显式选择被静默改写等于换模型付费。
+        #[tokio::test]
+        async fn native_responses_explicit_picks_are_not_rewritten() {
+            let upstream = scripted_upstream(vec![response_ok()]).await;
+            let provider = native_provider(&upstream, "p-native", "gpt-5.5", &[]);
+
+            let seen = send(
+                &forwarder(false).contract_model(Some("gpt-5.5".to_string())),
+                &upstream,
+                provider,
+                "/responses",
+                body("gpt-5.4-mini", json!([])),
+            )
+            .await;
+
+            assert_eq!(seen.body["model"], "gpt-5.4-mini");
+        }
+
+        /// 行在契约之后被编辑（客户端文件还写着旧模型）：请求带着契约模型时照样换成行里
+        /// 的新模型——替换不止救故障转移，也跟进行内改配置。
+        #[tokio::test]
+        async fn native_responses_contract_model_follows_the_edited_row_model() {
+            let upstream = scripted_upstream(vec![response_ok()]).await;
+            let provider = native_provider(&upstream, "p-native", "row-model", &[]);
+
+            let seen = send(
+                &forwarder(false).contract_model(Some("stale-model".to_string())),
+                &upstream,
+                provider,
+                "/responses",
+                body("stale-model", json!([])),
+            )
+            .await;
+
+            assert_eq!(seen.body["model"], "row-model");
+        }
+
+        /// Images 走同一条转发路径但不是 Responses 请求：`gpt-image-1` 不在任何目录里，
+        /// 也不能被换成行里的文本模型（带不带查询串都一样）。
+        #[tokio::test]
+        async fn native_responses_image_endpoints_keep_the_requested_model() {
+            let upstream = scripted_upstream(vec![response_ok(), response_ok()]).await;
+            let provider = native_provider(&upstream, "p-native", "gpt-5.5", &[]);
+            let forwarder = forwarder(false).contract_model(Some("gpt-5.5".to_string()));
+
+            for endpoint in [
+                "/images/generations",
+                "/images/edits?client_version=0.159.0",
+            ] {
+                let seen = send(
+                    &forwarder,
+                    &upstream,
+                    provider.clone(),
+                    endpoint,
+                    body("gpt-image-1", json!([])),
+                )
+                .await;
+                assert_eq!(seen.body["model"], "gpt-image-1", "{endpoint}");
+            }
+        }
+
+        /// 目录里列出的模型是用户在这家的目录里挑的：就算它恰好就是契约写进 `config.toml`
+        /// 的模型，也原样透传，不换成行里的默认模型。
         #[tokio::test]
         async fn native_responses_catalog_models_keep_the_requested_id() {
             let upstream = scripted_upstream(vec![response_ok()]).await;
             let provider = native_provider(&upstream, "p-native", "backup-model", &["listed"]);
 
             let seen = send(
-                &forwarder(false),
+                &forwarder(false).contract_model(Some("listed".to_string())),
                 &upstream,
                 provider,
                 "/responses",

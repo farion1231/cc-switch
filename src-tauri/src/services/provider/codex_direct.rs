@@ -853,9 +853,21 @@ fn contract_of(
         &serde_json::to_vec(&parts).expect("contract parts serialize"),
     ))
     .expect("digest");
+    // 代理契约记录写进 `config.toml` 的 `model`：直通路径的模型替换只认它（#7547）。
+    // 摘要已经含 `top` 里的 model，这里单独存一份裸串给转发时比对；直连契约不经过
+    // 转发，不记。
+    let contract_model = match target {
+        Target::Proxy { .. } => config
+            .top
+            .iter()
+            .find(|(field, _)| field == "model")
+            .and_then(|(_, value)| value.as_str().map(str::to_string)),
+        Target::Direct(_) => None,
+    };
     Contract {
         version: CONTRACT_VERSION,
         key,
+        model: contract_model,
         exclusive: config
             .exclusive
             .iter()
