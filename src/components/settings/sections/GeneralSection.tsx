@@ -177,6 +177,17 @@ export function GeneralSection({
               void onAutoSave({ minimizeToTrayOnClose: value })
             }
           />
+          <SettingsSwitchRow
+            label={t("settings.enableFloatingUsage")}
+            help={{
+              title: t("settings.enableFloatingUsage"),
+              body: t("settings.enableFloatingUsageDescription"),
+            }}
+            checked={!!settings.enableFloatingUsage}
+            onCheckedChange={(value) =>
+              void onAutoSave({ enableFloatingUsage: value })
+            }
+          />
           {isLinux() && (
             <SettingsSwitchRow
               label={t("settings.useAppWindowControls")}
