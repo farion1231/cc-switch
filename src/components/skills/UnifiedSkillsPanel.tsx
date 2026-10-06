@@ -1,5 +1,12 @@
 import { createPortal } from "react-dom";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { useTranslation } from "react-i18next";
 import {
@@ -76,6 +83,10 @@ import { describeRepoFailures } from "./repoFailures";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
 
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
+
+/** 已安装矩阵的列头高度（h-11）和每行高度（h-14）：虚拟化按这两个数算 */
+const MATRIX_HEADER_HEIGHT = 44;
+const MATRIX_ROW_HEIGHT = 56;
 
 type SkillsView = "installed" | "discover";
 type StatusFilter = "all" | "updates" | "none" | `app:${AppId}`;
@@ -341,6 +352,19 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     updatesMap,
   ]);
 
+  // 列表虚拟化：只渲染可视区与前后各几行（每行固定 56），Skill 装到几十上百个时
+  // 少挂一大半行。写操作只认 installedSkills / filteredSkills、不认 DOM，
+  // 所以列头批量、全选都不受影响。列头常驻最上面，scrollMargin 按它的高度算。
+  const matrixScrollRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: filteredSkills.length,
+    getScrollElement: () => matrixScrollRef.current,
+    estimateSize: () => MATRIX_ROW_HEIGHT,
+    getItemKey: (index) => filteredSkills[index]?.id ?? index,
+    scrollMargin: MATRIX_HEADER_HEIGHT,
+    overscan: 8,
+  });
+
   // 「可更新」筛选下把最后一个也更新完：回到全部，免得停在空表上
   const nApplicableUpdates = applicableSkillUpdates.length;
   const prevUpdatesRef = useRef(nApplicableUpdates);
@@ -370,13 +394,40 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     if (next.size !== selected.size) setSelected(next);
   }, [installedSkills, selected]);
 
-  // 从「发现」跳回来时定位到那一行
+  // 「发现」跳回来要定位、但那一行还没挂载出来的 id
+  const pendingHighlightRef = useRef<string | null>(null);
   useEffect(() => {
     if (!highlightId || view !== "installed") return;
     const row = document.getElementById(`sk-row-${highlightId}`);
-    row?.scrollIntoView?.({ block: "center" });
-    row?.focus?.({ preventScroll: true });
+    if (row) {
+      row.scrollIntoView?.({ block: "center" });
+      row?.focus?.({ preventScroll: true });
+      return;
+    }
+    // 虚拟化下可视区外的行不在 DOM 里：先把容器滚到那一行，行挂出来再由下面的
+    // layoutEffect 补焦点。filteredSkills 是跳转那一刻的（showInstalled 已把筛选
+    // 清空），所以依赖仍只列 highlightId / view，不跟随后面筛选变化抢焦点。
+    const container = matrixScrollRef.current;
+    if (!container) return;
+    const index = filteredSkills.findIndex((skill) => skill.id === highlightId);
+    if (index < 0) return;
+    pendingHighlightRef.current = highlightId;
+    // 不用 rowVirtualizer.scrollToIndex：段刚从 display:none 里出来时它还量着 0 高度，
+    // 那时 getMaxScrollOffset() 是 0，算出来的目标偏移也是 0，等于没滚。滚到第 index 行
+    // 正让它贴住常驻列头（scrollMargin 就是列头那 44px），超没超出可滚范围由浏览器夹。
+    container.scrollTop = index * MATRIX_ROW_HEIGHT;
   }, [highlightId, view]);
+
+  // 上面那次滚动（或「发现」段回来时重新量出高度）让目标行挂上之后，把焦点补上
+  useLayoutEffect(() => {
+    const id = pendingHighlightRef.current;
+    if (!id) return;
+    const row = document.getElementById(`sk-row-${id}`);
+    if (!row) return;
+    pendingHighlightRef.current = null;
+    row.scrollIntoView?.({ block: "center" });
+    row?.focus?.({ preventScroll: true });
+  });
 
   // 在「发现」段按 Escape 回到「已安装」
   useEffect(() => {
@@ -1133,6 +1184,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       filteredSkills.length > 0 && nVisibleSelected === filteredSkills.length;
     return (
       <div
+        ref={matrixScrollRef}
         data-testid="skills-matrix"
         className="min-h-0 overflow-auto scroll-stable rounded-panel border border-border bg-surface"
       >
@@ -1384,57 +1436,64 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
             ) : (
               <ul
                 aria-label={t("skillsPage.listLabel")}
-                className="m-0 list-none p-0"
+                className="relative m-0 list-none p-0"
+                style={{ height: rowVirtualizer.getTotalSize() }}
               >
-                {filteredSkills.map((skill, index) => (
-                  <InstalledRow
-                    key={skill.id}
-                    skill={skill}
-                    first={index === 0}
-                    appIds={appIds}
-                    checked={selected.has(skill.id)}
-                    hasUpdate={Boolean(updatesMap[skill.id])}
-                    isUpdating={
-                      updateSkillMutation.isPending &&
-                      updateSkillMutation.variables === skill.id
-                    }
-                    highlighted={highlightId === skill.id}
-                    onHighlightDone={() => setHighlightId(null)}
-                    fails={fails}
-                    disabled={controlsDisabled}
-                    sourceText={
-                      skill.repoOwner && skill.repoName
-                        ? `${skill.repoOwner}/${skill.repoName}`
-                        : t("skillsPage.source.local")
-                    }
-                    onPick={(checked) =>
-                      setSelected((prev) => {
-                        const next = new Set(prev);
-                        if (checked) next.add(skill.id);
-                        else next.delete(skill.id);
-                        return next;
-                      })
-                    }
-                    onCell={(app) => {
-                      const failure = fails[failKey(skill.id, app)];
-                      void writeOne(
-                        skill.id,
-                        app,
-                        failure ? failure.desired : !skill.apps[app],
-                      );
-                    }}
-                    onOpenSource={() => void openDocs(skill)}
-                    onFixSync={() => setStorageOpen(true)}
-                    onUpdate={() => void updateIds([skill.id])}
-                    onOpenDocs={() => void openDocs(skill)}
-                    onCopyName={() => void copyName(skill)}
-                    onOpenDir={() => void openDirectory(skill)}
-                    onUninstall={() => {
-                      if (writeLockRef.current || interactionBlocked) return;
-                      setConfirm({ kind: "uninstall", ids: [skill.id] });
-                    }}
-                  />
-                ))}
+                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const skill = filteredSkills[virtualRow.index];
+                  return (
+                    <InstalledRow
+                      key={virtualRow.key}
+                      skill={skill}
+                      first={virtualRow.index === 0}
+                      posInSet={virtualRow.index + 1}
+                      setSize={filteredSkills.length}
+                      translateY={virtualRow.start - MATRIX_HEADER_HEIGHT}
+                      appIds={appIds}
+                      checked={selected.has(skill.id)}
+                      hasUpdate={Boolean(updatesMap[skill.id])}
+                      isUpdating={
+                        updateSkillMutation.isPending &&
+                        updateSkillMutation.variables === skill.id
+                      }
+                      highlighted={highlightId === skill.id}
+                      onHighlightDone={() => setHighlightId(null)}
+                      fails={fails}
+                      disabled={controlsDisabled}
+                      sourceText={
+                        skill.repoOwner && skill.repoName
+                          ? `${skill.repoOwner}/${skill.repoName}`
+                          : t("skillsPage.source.local")
+                      }
+                      onPick={(checked) =>
+                        setSelected((prev) => {
+                          const next = new Set(prev);
+                          if (checked) next.add(skill.id);
+                          else next.delete(skill.id);
+                          return next;
+                        })
+                      }
+                      onCell={(app) => {
+                        const failure = fails[failKey(skill.id, app)];
+                        void writeOne(
+                          skill.id,
+                          app,
+                          failure ? failure.desired : !skill.apps[app],
+                        );
+                      }}
+                      onOpenSource={() => void openDocs(skill)}
+                      onFixSync={() => setStorageOpen(true)}
+                      onUpdate={() => void updateIds([skill.id])}
+                      onOpenDocs={() => void openDocs(skill)}
+                      onCopyName={() => void copyName(skill)}
+                      onOpenDir={() => void openDirectory(skill)}
+                      onUninstall={() => {
+                        if (writeLockRef.current || interactionBlocked) return;
+                        setConfirm({ kind: "uninstall", ids: [skill.id] });
+                      }}
+                    />
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -1776,6 +1835,11 @@ UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 interface InstalledRowProps {
   skill: InstalledSkill;
   first: boolean;
+  /** 第几行 / 一共几行：虚拟化下只有一部分行在 DOM 里，读屏要靠 aria-* 报总数 */
+  posInSet: number;
+  setSize: number;
+  /** 虚拟化算出来的行位移（px），由 ul（position: relative）接住 */
+  translateY: number;
   appIds: AppId[];
   checked: boolean;
   hasUpdate: boolean;
@@ -1800,6 +1864,9 @@ interface InstalledRowProps {
 function InstalledRow({
   skill,
   first,
+  posInSet,
+  setSize,
+  translateY,
   appIds,
   checked,
   hasUpdate,
@@ -1830,8 +1897,10 @@ function InstalledRow({
     <li
       id={`sk-row-${skill.id}`}
       tabIndex={-1}
+      aria-setsize={setSize}
+      aria-posinset={posInSet}
       className={cn(
-        "group relative flex h-14 items-center px-2 outline-none transition-colors duration-150 hover:bg-subtle",
+        "group absolute inset-x-0 top-0 flex h-14 items-center px-2 outline-none transition-colors duration-150 hover:bg-subtle",
         !first && "border-t border-border",
         // 黄色垫在内容下面的一层，靠它的透明度闪
         highlighted &&
@@ -1842,6 +1911,7 @@ function InstalledRow({
           onHighlightDone();
         }
       }}
+      style={{ transform: `translateY(${translateY}px)` }}
     >
       <span className="flex w-6 shrink-0 justify-center">
         <input

@@ -7,8 +7,10 @@ import en from "@/i18n/locales/en.json";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { settingsApi, skillsApi } from "@/lib/api";
 import type {
+  DiscoverableSkill,
   InstalledSkill,
   SkillBackupEntry,
+  SkillRepo,
   SkillRepoFailure,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
@@ -33,6 +35,9 @@ const m = vi.hoisted(() => ({
   backups: [] as SkillBackupEntry[],
   updates: [] as SkillUpdateInfo[],
   repoFailures: [] as SkillRepoFailure[],
+  /** 「已安装 · N 个应用 ›」那一行来自「发现」段：要能跳过已安装的虚拟列表就得有它 */
+  discoverable: [] as DiscoverableSkill[],
+  repos: [] as SkillRepo[],
   checking: false,
   visibleApps: ["claude", "codex", "pi"] as string[],
 }));
@@ -49,6 +54,62 @@ vi.mock("sonner", () => ({
 vi.mock("@/components/mcp/useVisibleAppIds", () => ({
   useVisibleAppIds: (ids: string[]) =>
     ids.filter((id) => m.visibleApps.includes(id)),
+}));
+
+// jsdom 没有布局，虚拟列表量不出可视高度：这里照 640px 高的视口自己算一遍可见窗口，
+// 只有这一窗口（连 overscan）的行会挂载，而且窗口跟着容器 scrollTop 走——
+// 真浏览器里滚动事件会触发这次重算。视口模型放在 hoisted 里，mock 与用例共用一份，
+// 别在两处各写一遍公式。
+const virtualWindow = vi.hoisted(() => {
+  const viewportHeight = 640;
+  return {
+    viewportHeight,
+    /** 一次挂多少行（可见区 + overscan，且不超过总行数） */
+    mountedRowCount: (count: number, rowHeight: number, overscan: number) =>
+      Math.min(count, Math.ceil(viewportHeight / rowHeight) + overscan),
+  };
+});
+
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({
+    count,
+    getScrollElement,
+    estimateSize,
+    getItemKey,
+    scrollMargin,
+    overscan = 1,
+  }: {
+    count: number;
+    getScrollElement: () => { scrollTop: number } | null;
+    estimateSize: (index: number) => number;
+    getItemKey: (index: number) => string | number;
+    scrollMargin: number;
+    overscan?: number;
+  }) => {
+    const rowHeight = estimateSize(0);
+    return {
+      getTotalSize: () => count * rowHeight,
+      getVirtualItems: () => {
+        const first = Math.min(
+          count,
+          Math.floor((getScrollElement()?.scrollTop ?? 0) / rowHeight),
+        );
+        return Array.from(
+          {
+            length: Math.min(
+              count - first,
+              virtualWindow.mountedRowCount(count, rowHeight, overscan),
+            ),
+          },
+          (_, index) => ({
+            index: first + index,
+            key: getItemKey(first + index),
+            start: scrollMargin + (first + index) * rowHeight,
+          }),
+        );
+      },
+    };
+  },
 }));
 
 vi.mock("@/components/skills/SkillsStorageSheet", () => ({
@@ -111,10 +172,13 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: m.updateSkill,
     isPending: false,
   }),
-  useDiscoverableSkills: () => ({ data: [], refetch: vi.fn() }),
+  useDiscoverableSkills: () => ({
+    data: m.discoverable,
+    refetch: vi.fn(),
+  }),
   useRefreshDiscoverableSkills: () => vi.fn(),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
-  useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
+  useSkillRepos: () => ({ data: m.repos, isLoading: false, refetch: vi.fn() }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),
@@ -152,6 +216,25 @@ const makeSkill = (overrides: Overrides = {}): InstalledSkill => {
   };
 };
 
+/** 虚拟化测试用的长列表：目录各不相同，「发现」段才能按目录对上具体哪一行 */
+const manySkills = (count: number) =>
+  Array.from({ length: count }, (_, index) =>
+    makeSkill({
+      id: `s-${index}`,
+      name: `Skill ${index}`,
+      directory: `skill-${index}`,
+    }),
+  );
+
+// 「和组件里 useVirtualizer 的 overscan 一致」——overscan 8、视口 640、行高 56：
+// 这三个数任何一个变了，上面的窗口断言都会红，正好逼着同步改
+const OVERSCAN = 8;
+/** 组件里每行 h-14 = MATRIX_ROW_HEIGHT */
+const ROW_HEIGHT = 56;
+/** mock 假定的视口下一次会挂出来的行数 */
+const windowRowCount = (count: number) =>
+  virtualWindow.mountedRowCount(count, ROW_HEIGHT, OVERSCAN);
+
 const renderPanel = (
   props: React.ComponentProps<typeof UnifiedSkillsPanel> = {},
 ) => render(<UnifiedSkillsPanel {...props} />);
@@ -170,6 +253,8 @@ describe("UnifiedSkillsPanel", () => {
     m.backups = [];
     m.updates = [];
     m.repoFailures = [];
+    m.discoverable = [];
+    m.repos = [];
     m.checking = false;
     m.visibleApps = ["claude", "codex", "pi"];
     m.scanUnmanaged.mockReset().mockResolvedValue({
@@ -613,6 +698,122 @@ describe("UnifiedSkillsPanel", () => {
     );
     await waitFor(() => expect(m.updateSkill).toHaveBeenCalledTimes(1));
     expect(m.updateSkill).toHaveBeenCalledWith("b");
+  });
+
+  it("only mounts the visible window of installed Skills", () => {
+    m.installed = manySkills(200);
+    renderPanel();
+    const rows = screen.getAllByRole("listitem");
+    // 期望值来自 mock 的 640px 视口模型，不是 @tanstack/react-virtual 的行为
+    // （jsdom 没有布局，真库在这里一行都不挂）：这条锁的是「组件确实只挂了窗口内的行」，
+    // 虚拟化被删掉、estimateSize 变了、overscan 掉了，这里都会红。
+    expect(rows.length).toBe(windowRowCount(200));
+    expect(rows.length).toBeLessThan(200);
+    // 挂出来的是开头那一窗，不是随便哪几行
+    expect(rows[0]).toHaveAttribute("id", "sk-row-s-0");
+    expect(rows[rows.length - 1]).toHaveAttribute("id", "sk-row-s-19");
+    // 第一行得正好贴在常驻列头下面：scrollMargin 和 MATRIX_HEADER_HEIGHT 对不上时这里红
+    expect(rows[0].style.transform).toBe("translateY(0px)");
+    expect(rows[1].style.transform).toBe("translateY(56px)");
+  });
+
+  it("sizes the scroll area for every Skill, not just the mounted window", () => {
+    m.installed = manySkills(200);
+    renderPanel();
+    const list = screen
+      .getAllByRole("listitem")[0]
+      .closest("ul") as HTMLElement;
+    // getTotalSize() 得是全部 200 行高：estimateSize 或行高常量对不上时这里红
+    expect(list.style.height).toBe(`${200 * ROW_HEIGHT}px`);
+  });
+
+  it("mounts the head of the filtered list and keeps rows keyed by Skill id", async () => {
+    m.installed = manySkills(200);
+    renderPanel();
+    const firstRow = screen.getAllByRole("listitem")[0];
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "skills.installedSearchAriaLabel" }),
+      "Skill 1",
+    );
+    const rows = screen.getAllByRole("listitem");
+    // 「Skill 1」命中 Skill 1 / 10-19 / 100-199 共 111 行，挂出来的是按原顺序的开头两行：
+    // 拿错下标进 filteredSkills、或 key 用 index 而不是 skill.id 时这里对不上
+    expect(rows[0]).toHaveAttribute("id", "sk-row-s-1");
+    expect(rows[0]).toHaveAttribute("aria-posinset", "1");
+    expect(rows[1]).toHaveAttribute("id", "sk-row-s-10");
+    expect(rows[0]).toHaveAttribute("aria-setsize", "111");
+    expect(rows.length).toBe(windowRowCount(111));
+    // key 换成 index 时 React 会复用同一个 DOM 节点盯另一行：内容是新的，节点是旧的
+    expect(rows[0]).not.toBe(firstRow);
+  });
+
+  it("keeps the full row count readable for screen readers", () => {
+    m.installed = manySkills(200);
+    renderPanel();
+    const rows = screen.getAllByRole("listitem");
+    // 和 SkillsPage 的发现列表一个写法：挂出来的是个位数行，也得说「第 n / 共 200」
+    expect(rows[0]).toHaveAttribute("aria-posinset", "1");
+    expect(rows[0]).toHaveAttribute("aria-setsize", "200");
+    expect(rows[1]).toHaveAttribute("aria-posinset", "2");
+    expect(rows[rows.length - 1]).toHaveAttribute(
+      "aria-posinset",
+      String(rows.length),
+    );
+  });
+
+  it("selects every listed Skill from the header checkbox when only a window is mounted", async () => {
+    m.installed = manySkills(200);
+    renderPanel();
+    const all = screen.getByRole("checkbox", {
+      name: "skillsPage.selectAllAria",
+    }) as HTMLInputElement;
+    expect(all.indeterminate).toBe(false);
+
+    // 勾选认的是 filteredSkills 不是 DOM，所以窗口外的行也照勾
+    await userEvent.click(all);
+    expect(all.checked).toBe(true);
+    expect(screen.getByText("skillsPage.bulk.selected")).toBeInTheDocument();
+    for (const pick of screen.getAllByRole("checkbox", {
+      name: "skillsPage.selectAria",
+    })) {
+      expect(pick).toBeChecked();
+    }
+  });
+
+  it("centers a Discover jump on a Skill that is outside the visible window", async () => {
+    m.installed = manySkills(200);
+    m.repos = [{ owner: "owner", name: "repo", branch: "main", enabled: true }];
+    m.discoverable = [
+      {
+        key: "owner/repo:skill-150",
+        name: "Skill 150",
+        description: "Alpha description",
+        directory: "skill-150",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+      },
+    ];
+    renderPanel({ initialView: "discover" });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.discover.installedAria" }),
+    );
+    const matrix = screen.getByTestId("skills-matrix");
+    // s-150 在窗口外：先把容器滚到那一行（jsdom 没有布局，scrollTop 原样记着）
+    expect(matrix.scrollTop).toBe(150 * ROW_HEIGHT);
+    expect(document.getElementById("sk-row-s-150")).toBeNull();
+
+    // jsdom 不发 scroll 事件也没有 ResizeObserver，这一下只是要一次重渲染：
+    // 重渲染时 mock 才读得到新的 scrollTop，把目标那一窗挂出来
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "skillsPage.selectAllAria" }),
+    );
+    const target = document.getElementById("sk-row-s-150") as HTMLElement;
+    expect(target).toHaveTextContent("Skill 150");
+    expect(target).toHaveAttribute("aria-posinset", "151");
+    expect(target).toHaveAttribute("aria-setsize", "200");
+    expect(target).toBe(document.activeElement);
   });
 
   it("switches Installed / Discover with page tabs", async () => {
