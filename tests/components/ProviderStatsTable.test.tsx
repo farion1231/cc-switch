@@ -35,7 +35,13 @@ vi.mock("@/lib/query/proxy", () => ({
   useProxyStatusQuery: () => useProxyStatusQueryMock(),
 }));
 
-const stat = (overrides: Partial<ProviderStats>): ProviderStats => ({
+// 组件无条件从 useProxyStatusQuery 取在飞条数，所以每个用例都得有一个返回值；
+// 只关心成功率/速度的用例不设置它，默认当作「代理状态还没加载」。
+beforeEach(() => {
+  useProxyStatusQueryMock.mockReturnValue({ data: undefined });
+});
+
+const stat = (overrides: Partial<ProviderStats> = {}): ProviderStats => ({
   providerId: "p1",
   appType: "claude",
   providerName: "Provider One",
@@ -48,7 +54,7 @@ const stat = (overrides: Partial<ProviderStats>): ProviderStats => ({
 });
 
 /** 在飞列在成本之后、成功率/速度之前，所以是第 5 个单元格（下标 4）。 */
-const inFlightCell = (row: HTMLElement | null | undefined) =>
+const inFlightCell = (row: HTMLTableRowElement | null | undefined) =>
   row?.cells[4]?.textContent;
 
 describe("ProviderStatsTable", () => {
@@ -189,7 +195,9 @@ describe("ProviderStatsTable in-flight column", () => {
 
     const cell = screen.getByText("Provider One").closest("tr")?.cells[4];
     // The pulsing live marker carries the "in progress right now" tooltip.
-    expect(cell?.querySelector('span[title="usage.inFlightHint"]')).toBeTruthy();
+    expect(
+      cell?.querySelector('span[title="usage.inFlightHint"]'),
+    ).toBeTruthy();
   });
 
   it("greys out the cell when the provider has no in-flight entry", () => {

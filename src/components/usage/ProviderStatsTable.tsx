@@ -115,7 +115,9 @@ export function ProviderStatsTable({
                   {t("usage.noData")}
                   {inFlightInScope > 0 ? (
                     <p className="mt-1 text-caption">
-                      {t("usage.inFlightNoRowsYet", { streams: inFlightInScope })}
+                      {t("usage.inFlightNoRowsYet", {
+                        streams: inFlightInScope,
+                      })}
                     </p>
                   ) : null}
                 </td>
