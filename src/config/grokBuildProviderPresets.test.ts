@@ -53,7 +53,9 @@ describe("grokBuildProviderPresets", () => {
     for (const preset of grokBuildProviderPresets) {
       const model = extractCodexModelName(preset.config);
       expect(
-        model === GROK_BUILD_DEFAULT_MODEL || model === "x-ai/grok-4.5",
+        model === GROK_BUILD_DEFAULT_MODEL ||
+          model === "x-ai/grok-4.5" ||
+          (preset.name === "Ace Data Cloud" && model === "grok-4.7"),
         `${preset.name}: ${model}`,
       ).toBe(true);
     }

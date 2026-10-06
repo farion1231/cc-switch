@@ -1739,6 +1739,27 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "cherryin",
   },
   {
+    name: "Ace Data Cloud",
+    websiteUrl: "https://platform.acedata.cloud",
+    apiKeyUrl: "https://platform.acedata.cloud/console/credentials",
+    providerKey: "cc-switch-acedatacloud",
+    settingsConfig: {
+      name: "Ace Data Cloud",
+      baseUrl: "https://api.acedata.cloud/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-5.5", {
+          id: "gpt-5.5",
+          input: ["text"],
+          maxTokens: 8192,
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "acedatacloud",
+  },
+  {
     name: "OpenRouter",
     providerKey: "cc-switch-open-router",
     websiteUrl: "https://openrouter.ai",

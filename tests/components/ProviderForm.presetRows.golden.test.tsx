@@ -125,6 +125,7 @@ interface GoldenCase {
 }
 
 const CLAUDE_CASES: GoldenCase[] = [
+  { preset: "Ace Data Cloud", fillApiKey: true },
   { preset: "Claude Official", fillApiKey: false },
   { preset: "RelaxyCode", fillApiKey: true },
   {
@@ -138,6 +139,7 @@ const CLAUDE_CASES: GoldenCase[] = [
 ];
 
 const CODEX_CASES: GoldenCase[] = [
+  { preset: "Ace Data Cloud", fillApiKey: true },
   { preset: "OpenAI Official", fillApiKey: false },
   { preset: "xAI (Grok)", fillApiKey: true },
   { preset: "Nvidia", fillApiKey: true },

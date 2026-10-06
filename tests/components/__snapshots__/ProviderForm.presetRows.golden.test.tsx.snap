@@ -33,6 +33,34 @@ exports[`ProviderForm 预设新增行金标 > claude > AWS Bedrock (API Key) 1`]
 }
 `;
 
+exports[`ProviderForm 预设新增行金标 > claude > Ace Data Cloud 1`] = `
+{
+  "apiKeyLocations": [
+    "settingsConfig.env.ANTHROPIC_AUTH_TOKEN",
+  ],
+  "row": {
+    "icon": "acedatacloud",
+    "iconColor": "",
+    "meta": {
+      "apiFormat": "anthropic",
+      "endpointAutoSelect": true,
+    },
+    "name": "Ace Data Cloud",
+    "notes": "",
+    "presetCategory": "aggregator",
+    "presetId": "claude-<index>",
+    "settingsConfig": {
+      "env": {
+        "ANTHROPIC_AUTH_TOKEN": "sk-golden-test",
+        "ANTHROPIC_BASE_URL": "https://api.acedata.cloud",
+        "ANTHROPIC_MODEL": "claude-sonnet-4-6",
+      },
+    },
+    "websiteUrl": "https://platform.acedata.cloud",
+  },
+}
+`;
+
 exports[`ProviderForm 预设新增行金标 > claude > Claude Official 1`] = `
 {
   "apiKeyLocations": [],
@@ -169,6 +197,42 @@ exports[`ProviderForm 预设新增行金标 > claude > RelaxyCode 1`] = `
       },
     },
     "websiteUrl": "https://www.relaxycode.com",
+  },
+}
+`;
+
+exports[`ProviderForm 预设新增行金标 > codex > Ace Data Cloud 1`] = `
+{
+  "apiKeyLocations": [
+    "settingsConfig.auth.OPENAI_API_KEY",
+  ],
+  "row": {
+    "icon": "acedatacloud",
+    "iconColor": "",
+    "meta": {
+      "apiFormat": "openai_responses",
+      "endpointAutoSelect": true,
+    },
+    "name": "Ace Data Cloud",
+    "notes": "",
+    "presetCategory": "aggregator",
+    "presetId": "codex-<index>",
+    "settingsConfig": {
+      "auth": {
+        "OPENAI_API_KEY": "sk-golden-test",
+      },
+      "config": "model_provider = "custom"
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "Ace Data Cloud"
+base_url = "https://api.acedata.cloud/v1"
+wire_api = "responses"
+requires_openai_auth = true",
+    },
+    "websiteUrl": "https://platform.acedata.cloud",
   },
 }
 `;

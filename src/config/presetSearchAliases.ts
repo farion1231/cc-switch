@@ -3,6 +3,7 @@
  * 不参与显示。新增预设时，名字里搜不到的常用叫法加在这里。
  */
 export const PRESET_SEARCH_ALIASES: Record<string, string> = {
+  "Ace Data Cloud": "acedatacloud",
   "AWS Bedrock (AKSK)": "amazon 亚马逊",
   "AWS Bedrock (API Key)": "amazon 亚马逊",
   "Baidu Qianfan Coding Plan": "百度 千帆 文心",
