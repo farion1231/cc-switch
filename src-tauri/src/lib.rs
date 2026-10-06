@@ -1775,7 +1775,8 @@ pub fn run() {
                     api.prevent_exit();
                     return;
                 }
-                // code 为 RESTART_EXIT_CODE：app.restart() / 自更新 relaunch 发起的重启。
+                // code 为 RESTART_EXIT_CODE：app.restart() 发起的重启（本应用自己的重启
+                // 都走 restart_process，不经过这里，此分支只兜底）。
                 // 这条路径上 prevent_exit() 会被 Tauri 忽略，事件循环必定退出，随后由
                 // Tauri 在 RunEvent::Exit 后用新二进制 re-exec（macOS 会按更新后的
                 // Info.plist 解析可执行名）。
@@ -2217,8 +2218,9 @@ enum ExitRequestAction {
     /// `code` 为 `None`：运行时自动触发（如隐藏窗口的 WebView 被回收导致无存活
     /// 窗口），阻止退出、保持托盘后台运行。
     StayInTray,
-    /// `code` 为 `RESTART_EXIT_CODE`：`app.restart()` / 自更新 relaunch 发起的
-    /// 重启，不拦截、不做自定义清理，交还 Tauri 默认 re-exec 流程。
+    /// `code` 为 `RESTART_EXIT_CODE`：`app.restart()` 发起的重启（本应用自己的
+    /// 重启都走 `restart_process`，这里只兜底），不拦截、不做自定义清理，交还
+    /// Tauri 默认 re-exec 流程。
     DeferToTauriRestart,
     /// 其它 `Some(_)`：用户主动退出（托盘「退出」等），执行完整异步清理后结束进程。
     CleanupAndExit,
@@ -2265,7 +2267,7 @@ pub fn destroy_single_instance_lock(app_handle: &tauri::AppHandle) {
 
 /// 清理托盘图标、释放 single-instance 锁后重启当前应用。
 ///
-/// 直接走 `tauri::process::restart`（spawn 新进程 + `exit(0)`），不经过事件
+/// 直接 spawn 新进程 + `exit(0)`（macOS 经 `open -n`，见 `relaunch_macos_bundle`），不经过事件
 /// 循环退出，因此 Tauri 内部的 `cleanup_before_exit` 和各插件的
 /// `RunEvent::Exit` 钩子都不会执行。需要的清理由调用方与本函数显式补偿：
 /// 窗口状态、代理/Live 恢复（调用方）；托盘图标、single-instance 锁（本函数）。
@@ -2276,7 +2278,42 @@ pub fn destroy_single_instance_lock(app_handle: &tauri::AppHandle) {
 pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
     remove_tray_icon_before_exit(app_handle);
     destroy_single_instance_lock(app_handle);
-    tauri::process::restart(&app_handle.env());
+    let env = app_handle.env();
+    #[cfg(target_os = "macos")]
+    relaunch_macos_bundle(&env);
+    tauri::process::restart(&env);
+}
+
+/// macOS 经 LaunchServices（`open -n`）启动新实例，成功即退出；失败时返回，
+/// 由调用方回落到 `tauri::process::restart`。
+///
+/// `tauri::process::restart` 直接 spawn 可执行文件。macOS 14 起应用激活是协作式的：
+/// 新进程的 `activateIgnoringOtherApps` 会被系统拒绝，窗口留在其它应用后面。
+/// 由当前前台应用请求 LaunchServices 启动，新实例才能拿到前台。
+#[cfg(target_os = "macos")]
+fn relaunch_macos_bundle(env: &tauri::Env) {
+    let Ok(binary) = tauri::process::current_binary(env) else {
+        return;
+    };
+    // <Name>.app/Contents/MacOS/<binary>
+    let Some(bundle) = binary
+        .ancestors()
+        .nth(3)
+        .filter(|p| p.extension().is_some_and(|ext| ext == "app"))
+    else {
+        return;
+    };
+    let mut command = std::process::Command::new("/usr/bin/open");
+    command.arg("-n").arg(bundle);
+    let args: Vec<_> = env.args_os.iter().skip(1).collect();
+    if !args.is_empty() {
+        command.arg("--args").args(args);
+    }
+    match command.status() {
+        Ok(status) if status.success() => std::process::exit(0),
+        Ok(status) => log::warn!("open -n 重启失败（{status}），回落直接启动"),
+        Err(err) => log::warn!("open -n 重启失败（{err}），回落直接启动"),
+    }
 }
 
 #[cfg(test)]
