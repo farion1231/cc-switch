@@ -525,6 +525,80 @@
       "deleteConfirmTitle": "バックアップの削除を確認",
       "deleteConfirmMessage": "このバックアップは完全に削除されます。この操作は取り消せません。"
     },
+    "backupStorage": {
+      "title": "その他のバックアップ",
+      "total": "合計 {{size}}",
+      "itemCount": "{{count}} 件",
+      "reveal": "ファイルマネージャーで表示",
+      "delete": "削除",
+      "deleting": "削除中...",
+      "managedAbove": "上のリストで管理",
+      "legacy": "旧バージョン",
+      "loadFailed": "バックアップ使用量の読み込みに失敗しました",
+      "revealFailed": "フォルダを開けませんでした",
+      "deleteConfirmTitle": "「{{name}}」を削除しますか？",
+      "deleteConfirmMessage": "{{path}} 内の {{size}} のバックアップを完全に削除します。元に戻せません。",
+      "deleteSuccess": "削除しました（{{size}} 解放）",
+      "deleteFailed": "削除に失敗しました",
+      "items": {
+        "database": {
+          "name": "データベースのバックアップ",
+          "hint": "自動・手動で作成したデータベースのスナップショット。"
+        },
+        "skills": {
+          "name": "Skill アンインストール時のバックアップ",
+          "hint": "Skill をアンインストールする前のコピーで、Skills ページから復元できます。削除すると、それらの Skill は復元できなくなります。"
+        },
+        "codexHistoryUnify": {
+          "name": "Codex セッション統合の移行バックアップ",
+          "hint": "「Codex のセッション履歴を統合」で既存セッションを移行したときのコピー。このスイッチをオフにする際の「バックアップから復元」はこれに依存します。削除すると、移行した公式セッションを元のグループに戻せなくなります。"
+        },
+        "codexHistoryUnifyRestore": {
+          "name": "Codex セッション統合の復元バックアップ",
+          "hint": "「バックアップから復元」を実行する前のコピー。CC Switch が再び読み込むことはありません。"
+        },
+        "codexHistoryProviderMigration": {
+          "name": "Codex セッショングループ移行バックアップ",
+          "hint": "サードパーティのセッショングループを移行する前のコピー。CC Switch が再び読み込むことはありません。"
+        },
+        "liveFirstWrite": {
+          "name": "設定ファイル初回書き込みバックアップ",
+          "hint": "CC Switch が各クライアントの設定ファイルを初めて書き換える前の元ファイル。削除すると元のファイルは取り戻せません。次回の書き込み時にその時点のファイルが改めてバックアップされます。"
+        },
+        "hermes": {
+          "name": "Hermes 設定のバックアップ",
+          "hint": "Hermes の設定を保存する前のコピー。「バックアップ保持数」に従って自動で整理されます。"
+        },
+        "openclaw": {
+          "name": "OpenClaw 設定のバックアップ",
+          "hint": "OpenClaw の設定を保存する前のコピー。「バックアップ保持数」に従って自動で整理されます。"
+        },
+        "proxyLiveBackup": {
+          "name": "旧ルーティング引き継ぎバックアップ",
+          "hint": "アップグレード時に旧ルーティング引き継ぎバックアップから移した設定のコピー。CC Switch が再び読み込むことはありません。"
+        },
+        "envVars": {
+          "name": "環境変数クリーンアップのバックアップ",
+          "hint": "競合する環境変数を削除する前に記録した元の値。削除すると元の値を確認できなくなります。"
+        },
+        "legacyConfigBackups": {
+          "name": "旧 config.json のバックアップ",
+          "hint": "旧バージョンが残したファイル。現在のバージョンは読み込みません。"
+        },
+        "legacyConfigArchive": {
+          "name": "旧 config.json のアーカイブ",
+          "hint": "データベース移行前の旧設定ファイル。現在のバージョンは読み込みません。"
+        },
+        "legacyDbUpgrade": {
+          "name": "旧データベースアップグレードのバックアップ",
+          "hint": "旧バージョンがデータベースをアップグレードした際のコピー。現在のバージョンは読み込みません。"
+        },
+        "legacyToolSearch": {
+          "name": "旧 Tool Search パッチのバックアップ",
+          "hint": "削除済みの Tool Search パッチ機能が残したファイル。現在のバージョンは読み込みません。"
+        }
+      }
+    },
     "webdavSync": {
       "title": "WebDAV クラウド同期",
       "description": "WebDAV を使ってデバイス間でデータベースとスキル設定を同期します。",

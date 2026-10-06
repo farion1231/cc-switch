@@ -525,6 +525,80 @@
       "deleteConfirmTitle": "Confirm Delete",
       "deleteConfirmMessage": "This backup will be permanently deleted. This action cannot be undone."
     },
+    "backupStorage": {
+      "title": "Other Backups",
+      "total": "{{size}} total",
+      "itemCount": "Items: {{count}}",
+      "reveal": "Show in file manager",
+      "delete": "Delete",
+      "deleting": "Deleting...",
+      "managedAbove": "Managed in the list above",
+      "legacy": "Legacy",
+      "loadFailed": "Failed to read backup usage",
+      "revealFailed": "Failed to open folder",
+      "deleteConfirmTitle": "Delete \"{{name}}\"?",
+      "deleteConfirmMessage": "{{size}} of backups in {{path}} will be permanently deleted. This cannot be undone.",
+      "deleteSuccess": "Deleted, freed {{size}}",
+      "deleteFailed": "Delete failed",
+      "items": {
+        "database": {
+          "name": "Database backups",
+          "hint": "Automatic and manual database snapshots."
+        },
+        "skills": {
+          "name": "Skill uninstall backups",
+          "hint": "Copies kept when uninstalling skills, restorable from the Skills page. After deleting, those uninstalled skills can no longer be restored."
+        },
+        "codexHistoryUnify": {
+          "name": "Codex session unify migration backups",
+          "hint": "Session copies kept when \"Unify Codex session history\" migrated existing sessions. \"Restore backup\" when turning that switch off depends on them; after deleting, migrated official sessions can no longer be moved back to their original group."
+        },
+        "codexHistoryUnifyRestore": {
+          "name": "Codex session unify restore backups",
+          "hint": "Session copies kept before \"Restore backup\" ran. CC Switch never reads them again."
+        },
+        "codexHistoryProviderMigration": {
+          "name": "Codex session group migration backups",
+          "hint": "Copies kept before third-party session groups were migrated. CC Switch never reads them again."
+        },
+        "liveFirstWrite": {
+          "name": "Config first-write backups",
+          "hint": "Original client config files from before CC Switch first rewrote them. After deleting, those originals are gone; the next write backs up the file as it is then."
+        },
+        "hermes": {
+          "name": "Hermes config backups",
+          "hint": "Copies kept before saving Hermes config, pruned by Backup Retention."
+        },
+        "openclaw": {
+          "name": "OpenClaw config backups",
+          "hint": "Copies kept before saving OpenClaw config, pruned by Backup Retention."
+        },
+        "proxyLiveBackup": {
+          "name": "Legacy routing takeover backups",
+          "hint": "Config copies moved out of the old routing takeover backups during upgrade. CC Switch never reads them again."
+        },
+        "envVars": {
+          "name": "Environment variable cleanup backups",
+          "hint": "Original values recorded before conflicting environment variables were removed. After deleting, those values can no longer be looked up."
+        },
+        "legacyConfigBackups": {
+          "name": "Legacy config.json backups",
+          "hint": "Left by older versions; the current version no longer reads them."
+        },
+        "legacyConfigArchive": {
+          "name": "Legacy config.json archive",
+          "hint": "The old config file from before the database migration; the current version no longer reads it."
+        },
+        "legacyDbUpgrade": {
+          "name": "Legacy database upgrade backups",
+          "hint": "Copies made by older versions when upgrading the database; the current version no longer reads them."
+        },
+        "legacyToolSearch": {
+          "name": "Legacy Tool Search patch backups",
+          "hint": "Left by the removed Tool Search patch feature; the current version no longer reads them."
+        }
+      }
+    },
     "webdavSync": {
       "title": "WebDAV Cloud Sync",
       "description": "Sync database and skill configurations across devices via WebDAV.",

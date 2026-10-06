@@ -525,6 +525,80 @@
       "deleteConfirmTitle": "確認刪除備份",
       "deleteConfirmMessage": "此備份將被永久刪除，此操作無法復原。"
     },
+    "backupStorage": {
+      "title": "其他備份",
+      "total": "合計 {{size}}",
+      "itemCount": "{{count}} 項",
+      "reveal": "在檔案管理員中顯示",
+      "delete": "刪除",
+      "deleting": "刪除中...",
+      "managedAbove": "在上方清單中管理",
+      "legacy": "舊版遺留",
+      "loadFailed": "讀取備份佔用失敗",
+      "revealFailed": "開啟資料夾失敗",
+      "deleteConfirmTitle": "刪除「{{name}}」？",
+      "deleteConfirmMessage": "將永久刪除 {{path}} 中的 {{size}} 備份，此操作無法復原。",
+      "deleteSuccess": "已刪除，釋放 {{size}}",
+      "deleteFailed": "刪除失敗",
+      "items": {
+        "database": {
+          "name": "資料庫備份",
+          "hint": "自動備份與手動備份的資料庫快照。"
+        },
+        "skills": {
+          "name": "Skill 解除安裝備份",
+          "hint": "解除安裝 Skill 前留下的副本，可在 Skills 頁還原。刪除後這些已解除安裝的 Skill 無法再還原。"
+        },
+        "codexHistoryUnify": {
+          "name": "Codex 工作階段統一遷移備份",
+          "hint": "開啟「統一 Codex 工作階段歷史」並遷入既有工作階段時留下的副本。關閉該開關時的「還原備份」依賴它，刪除後無法再把遷移過的官方工作階段還原回原分組。"
+        },
+        "codexHistoryUnifyRestore": {
+          "name": "Codex 工作階段統一還原備份",
+          "hint": "執行「還原備份」前留下的工作階段副本，CC Switch 不會再讀取。"
+        },
+        "codexHistoryProviderMigration": {
+          "name": "Codex 工作階段分組遷移備份",
+          "hint": "第三方工作階段分組遷移前留下的副本，CC Switch 不會再讀取。"
+        },
+        "liveFirstWrite": {
+          "name": "設定檔首次寫入備份",
+          "hint": "CC Switch 第一次改寫各用戶端設定檔前的原始檔案。刪除後無法再找回改寫前的原檔，下次寫入時會重新備份當時的檔案。"
+        },
+        "hermes": {
+          "name": "Hermes 設定備份",
+          "hint": "儲存 Hermes 設定前的副本，依「備份保留數量」自動清理。"
+        },
+        "openclaw": {
+          "name": "OpenClaw 設定備份",
+          "hint": "儲存 OpenClaw 設定前的副本，依「備份保留數量」自動清理。"
+        },
+        "proxyLiveBackup": {
+          "name": "舊版路由接管備份",
+          "hint": "升級時從舊版路由接管備份轉存出的設定副本，CC Switch 不會再讀取。"
+        },
+        "envVars": {
+          "name": "環境變數清理備份",
+          "hint": "清理衝突環境變數前記錄的原值。刪除後無法再查到被清理變數的原值。"
+        },
+        "legacyConfigBackups": {
+          "name": "舊版 config.json 備份",
+          "hint": "舊版本留下的檔案，目前版本不會再讀取。"
+        },
+        "legacyConfigArchive": {
+          "name": "舊版 config.json 封存",
+          "hint": "遷移到資料庫前的舊設定檔，目前版本不會再讀取。"
+        },
+        "legacyDbUpgrade": {
+          "name": "舊版資料庫升級備份",
+          "hint": "舊版本升級資料庫時留下的副本，目前版本不會再讀取。"
+        },
+        "legacyToolSearch": {
+          "name": "舊版 Tool Search 修補備份",
+          "hint": "已移除的 Tool Search 修補功能留下的檔案，目前版本不會再讀取。"
+        }
+      }
+    },
     "webdavSync": {
       "title": "WebDAV 雲端同步",
       "description": "透過 WebDAV 在多裝置間同步資料庫和技能設定。",

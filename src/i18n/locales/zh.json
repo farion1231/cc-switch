@@ -525,6 +525,80 @@
       "deleteConfirmTitle": "确认删除备份",
       "deleteConfirmMessage": "此备份将被永久删除，此操作无法撤消。"
     },
+    "backupStorage": {
+      "title": "其他备份",
+      "total": "合计 {{size}}",
+      "itemCount": "{{count}} 项",
+      "reveal": "在文件管理器中显示",
+      "delete": "删除",
+      "deleting": "删除中...",
+      "managedAbove": "在上方列表中管理",
+      "legacy": "旧版遗留",
+      "loadFailed": "读取备份占用失败",
+      "revealFailed": "打开文件夹失败",
+      "deleteConfirmTitle": "删除「{{name}}」？",
+      "deleteConfirmMessage": "将永久删除 {{path}} 中的 {{size}} 备份，此操作无法撤消。",
+      "deleteSuccess": "已删除，释放 {{size}}",
+      "deleteFailed": "删除失败",
+      "items": {
+        "database": {
+          "name": "数据库备份",
+          "hint": "自动备份与手动备份的数据库快照。"
+        },
+        "skills": {
+          "name": "Skill 卸载备份",
+          "hint": "卸载 Skill 前留的副本，可在 Skills 页恢复。删除后这些已卸载的 Skill 无法再恢复。"
+        },
+        "codexHistoryUnify": {
+          "name": "Codex 会话统一迁移备份",
+          "hint": "开启「统一 Codex 会话历史」并迁入既有会话时留的会话副本。关闭该开关时的「恢复备份」依赖它，删除后无法再把迁移过的官方会话还原回原分组。"
+        },
+        "codexHistoryUnifyRestore": {
+          "name": "Codex 会话统一还原备份",
+          "hint": "执行「恢复备份」前留的会话副本，CC Switch 不会再读取。"
+        },
+        "codexHistoryProviderMigration": {
+          "name": "Codex 会话分组迁移备份",
+          "hint": "第三方会话分组迁移前留的副本，CC Switch 不会再读取。"
+        },
+        "liveFirstWrite": {
+          "name": "配置文件首次写入备份",
+          "hint": "CC Switch 第一次改写各客户端配置文件前的原始文件。删除后无法再找回改写前的原文件，下次写入时会重新备份当时的文件。"
+        },
+        "hermes": {
+          "name": "Hermes 配置备份",
+          "hint": "保存 Hermes 配置前的副本，按「备份保留数量」自动裁剪。"
+        },
+        "openclaw": {
+          "name": "OpenClaw 配置备份",
+          "hint": "保存 OpenClaw 配置前的副本，按「备份保留数量」自动裁剪。"
+        },
+        "proxyLiveBackup": {
+          "name": "旧版路由接管备份",
+          "hint": "升级时从旧版路由接管备份转存出的配置副本，CC Switch 不会再读取。"
+        },
+        "envVars": {
+          "name": "环境变量清理备份",
+          "hint": "清理冲突环境变量前记录的原值。删除后无法再查到被清理变量的原值。"
+        },
+        "legacyConfigBackups": {
+          "name": "旧版 config.json 备份",
+          "hint": "旧版本留下的文件，当前版本不会再读取。"
+        },
+        "legacyConfigArchive": {
+          "name": "旧版 config.json 归档",
+          "hint": "迁移到数据库前的旧配置文件，当前版本不会再读取。"
+        },
+        "legacyDbUpgrade": {
+          "name": "旧版数据库升级备份",
+          "hint": "旧版本升级数据库时留的副本，当前版本不会再读取。"
+        },
+        "legacyToolSearch": {
+          "name": "旧版 Tool Search 补丁备份",
+          "hint": "已移除的 Tool Search 补丁功能留下的文件，当前版本不会再读取。"
+        }
+      }
+    },
     "webdavSync": {
       "title": "WebDAV 云同步",
       "description": "通过 WebDAV 在多设备间同步数据库和技能配置。",
