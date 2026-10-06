@@ -358,6 +358,44 @@ fn pi_toggle_without_pi_dir_skips_the_file() {
     assert!(!dir.exists());
 }
 
+/// 审查 #7888：Pi 没装时两个请求并发勾选 dev-tools 和 dev_tools，最多只能成功一个。
+/// 重名检查要和提交在同一把写锁里读数据库，锁外读的快照会让两个都通过
+#[test]
+fn pi_concurrent_toggles_of_colliding_names_enable_at_most_one() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    for round in 0..20 {
+        for (id, enable) in [("dev-tools", "toggle"), ("dev_tools", "upsert")] {
+            let server: McpServer = serde_json::from_value(json!({
+                "id": id, "name": id, "server": {"type":"stdio","command": enable}, "apps": {}
+            }))
+            .unwrap();
+            state.db.save_mcp_server(&server).unwrap();
+        }
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                barrier.wait();
+                let _ = McpService::toggle_app(&state, "dev-tools", AppType::Pi, true);
+            });
+            scope.spawn(|| {
+                let mut server = state.db.get_all_mcp_servers().unwrap()["dev_tools"].clone();
+                server.apps.pi = true;
+                barrier.wait();
+                let _ = McpService::upsert_server(&state, server);
+            });
+        });
+        let servers = state.db.get_all_mcp_servers().unwrap();
+        let enabled = ["dev-tools", "dev_tools"]
+            .iter()
+            .filter(|id| servers[**id].apps.pi)
+            .count();
+        assert_eq!(enabled, 1, "round {round}");
+    }
+    assert!(!ensure_test_home().join(".pi").exists());
+}
+
 #[test]
 fn import_default_config_claude_persists_provider() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());

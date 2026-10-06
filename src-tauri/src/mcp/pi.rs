@@ -10,6 +10,7 @@
 
 use crate::app_config::{McpApps, McpServer};
 use crate::config::atomic_write_private;
+use crate::database::Database;
 use crate::error::AppError;
 use crate::store::AppState;
 use serde_json::{json, Value};
@@ -112,7 +113,7 @@ fn check_name_collision<'a>(
 
 /// 在 Pi 上启用前对照数据库里已勾选 Pi 的服务器查重名。
 /// Pi 没装时没有文件可对照，不查的话两个只差 - 和 _ 的服务器都能勾上，装上 Pi 后每次同步都报错
-pub(crate) fn check_enabled_name_collision(
+fn check_enabled_name_collision(
     id: &str,
     servers: &indexmap::IndexMap<String, McpServer>,
 ) -> Result<(), AppError> {
@@ -184,8 +185,11 @@ pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), A
     Ok(())
 }
 
-/// 先写 Pi 的 `mcp.json` 再提交数据库；数据库失败就把文件恢复原样
+/// 先写 Pi 的 `mcp.json` 再提交数据库；数据库失败就把文件恢复原样。
+/// 启用时在同一把写锁里重新读数据库查重名：锁外读的快照挡不住两个并发请求分别勾上
+/// dev-tools 和 dev_tools（Pi 没装时没有文件可对照）
 pub(crate) fn sync_and_commit<T>(
+    db: &Database,
     id: &str,
     change: PiChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
@@ -193,6 +197,9 @@ pub(crate) fn sync_and_commit<T>(
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
+    if let PiChange::Enable(_) = change {
+        check_enabled_name_collision(id, &db.get_all_mcp_servers()?)?;
+    }
     let Some(path) = installed_config_path()? else {
         validate_change(id, change)?;
         return commit();
@@ -247,6 +254,10 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
 /// 从 Pi 的 `mcp.json` 导入。Pi 自己的字段（`timeout`、`exposure` 等）留在连接定义里原样保存；
 /// `enabled: false` 的条目导入后不勾选 Pi。和已有服务器连接方式不同的同名条目跳过并报告。
 pub fn import(state: &AppState) -> Result<usize, AppError> {
+    // 和勾选共用写锁：重名检查读到的数据库在导入写完前不会被并发勾选改掉
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
     let document = read(&config_path()?)?;
     let mut existing = state.db.get_all_mcp_servers()?;
     let before = existing.clone();

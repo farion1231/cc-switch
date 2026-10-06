@@ -28,19 +28,18 @@ impl McpService {
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
         // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）
-        let existing = state.db.get_all_mcp_servers()?;
-        let prev_apps = existing
+        let prev_apps = state
+            .db
+            .get_all_mcp_servers()?
             .get(&server.id)
             .map(|s| s.apps.clone())
             .unwrap_or_default();
-        if server.apps.pi {
-            mcp::pi::check_enabled_name_collision(&server.id, &existing)?;
-        }
 
         // MCode / Pi 的文件和数据库一起提交：任一步失败都恢复原样
         let save_with_pi = || {
             if server.apps.pi || prev_apps.pi {
                 mcp::pi::sync_and_commit(
+                    &state.db,
                     &server.id,
                     mcp::pi::PiChange::from_enabled(server.apps.pi.then_some(&server.server)),
                     || state.db.save_mcp_server(&server),
@@ -92,7 +91,7 @@ impl McpService {
         if let Some(server) = server {
             let delete_with_pi = || {
                 if server.apps.pi {
-                    mcp::pi::sync_and_commit(id, mcp::pi::PiChange::Remove, || {
+                    mcp::pi::sync_and_commit(&state.db, id, mcp::pi::PiChange::Remove, || {
                         state.db.delete_mcp_server(id)
                     })
                 } else {
@@ -127,11 +126,7 @@ impl McpService {
         enabled: bool,
     ) -> Result<(), AppError> {
         if matches!(app, AppType::Mcode | AppType::Pi) {
-            let servers = state.db.get_all_mcp_servers()?;
-            if let Some(server) = servers.get(server_id) {
-                if app == AppType::Pi && enabled {
-                    mcp::pi::check_enabled_name_collision(server_id, &servers)?;
-                }
+            if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
                 let spec = enabled.then_some(&server.server);
                 let commit = || {
                     state
@@ -142,6 +137,7 @@ impl McpService {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
                 } else {
                     mcp::pi::sync_and_commit(
+                        &state.db,
                         server_id,
                         mcp::pi::PiChange::from_enabled(spec),
                         commit,
