@@ -2552,7 +2552,8 @@ async fn responses_sse_stream_to_anthropic_message(
 /// 非流响应。仅在 Codex OAuth 把 `stream:false` 强制升级为 SSE 的场景下调用。
 ///
 /// 复用 `proxy::sse` 的 `take_sse_block`/`strip_sse_field`：`take_sse_block` 同时支持
-/// `\n\n` 与 `\r\n\r\n` 两种分隔符，`strip_sse_field` 兼容带/不带空格的字段写法。
+/// `\n\n`、`\r\n\r\n`、`\n\r\n` 和 `\r\n\n` 四种分隔符；
+/// `strip_sse_field` 兼容带/不带空格的字段写法。
 fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     let mut buffer = body.trim_start_matches('\u{feff}').to_string();
     let mut completed_response: Option<Value> = None;
@@ -3898,8 +3899,8 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 
     #[test]
     fn responses_sse_to_response_value_handles_crlf_delimiters() {
-        // 真实 HTTP SSE 按规范使用 \r\n\r\n 分隔事件；take_sse_block 必须同时处理两种分隔符，
-        // 否则此路径在任何标准上游（含 Codex OAuth HTTPS 后端）下都会 TransformError。
+        // take_sse_block 支持 LF/CRLF 任意组合形成的四种事件分隔符；
+        // 此处覆盖 \r\n\r\n，避免 CRLF 上游响应触发 TransformError。
         let sse = "event: response.output_item.done\r\n\
 data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\r\n\
 \r\n\
