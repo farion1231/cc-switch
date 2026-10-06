@@ -1288,6 +1288,24 @@ pub async fn adopt_codex_stack_catalog(state: &AppState) -> Result<Option<&'stat
         .and_then(|stack| codex_stack_notice(state, &stack)))
 }
 
+/// 「经典子 agent」开关（`codex_stack_classic_subagents`）变了：Codex 在 Stack 模式下按新的
+/// 合并目录重写客户端（契约里有目录，没变就什么都不做）。不在 Stack 模式时目录里没有这个开关
+/// 管的行，等进 Stack 时自然按开关写。
+pub async fn resync_codex_stack_catalog(state: &AppState) -> Result<(), String> {
+    let app = AppType::Codex;
+    let _guard = lock_settled(state, &app).await.map_err(err)?;
+    if !settled_stack(&app)?.enabled {
+        return Ok(());
+    }
+    let Some((mode, route)) = attached_route(state, &app)? else {
+        return Ok(());
+    };
+    let live_now = LiveNow::of(state, &app, &mode)?;
+    write_proxy(state, &app, op::APPLY, &route, &live_now, mode, None)
+        .await
+        .map(|_| ())
+}
+
 /// 路由供应商的行或代理地址变了：按新契约重写客户端（契约没变就什么都不做）。调用方
 /// 持有切换锁。
 pub async fn resync_route_locked(state: &AppState, app: &AppType) -> Result<(), String> {
@@ -5943,6 +5961,66 @@ model_provider = "c"
         assert!(!state
             .proxy_service
             .live_has_proxy_placeholder(&AppType::Codex));
+    }
+
+    fn set_classic_subagents(enabled: bool) {
+        crate::settings::update_settings(crate::settings::AppSettings {
+            codex_stack_classic_subagents: enabled,
+            ..crate::settings::get_settings()
+        })
+        .unwrap();
+    }
+
+    fn catalog_agent_versions() -> Vec<Value> {
+        codex_catalog()["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|model| model["multi_agent_version"].clone())
+            .collect()
+    }
+
+    /// 「经典子 agent」开关：Stack 模式下立刻按开关重写合并目录，关掉后回到原来的目录；
+    /// 不在 Stack 模式时什么都不写。
+    #[tokio::test]
+    #[serial]
+    async fn classic_subagents_toggle_rewrites_the_stack_catalog() {
+        let _home = Home::new();
+        seed_codex("approval_policy = \"on-request\"\n", None);
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
+
+        // 还没进 Stack：开关只存设置，不碰客户端文件。
+        set_classic_subagents(true);
+        let before = codex_text();
+        resync_codex_stack_catalog(&state).await.expect("no-op");
+        assert_eq!(codex_text(), before);
+        set_classic_subagents(false);
+
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        let native_catalog = codex_catalog();
+        let native_contract = mode(&AppType::Codex).contract.unwrap();
+        assert!(catalog_agent_versions().iter().all(|v| v != "v1"));
+
+        set_classic_subagents(true);
+        resync_codex_stack_catalog(&state).await.expect("classic");
+        assert_eq!(catalog_agent_versions(), vec![json!("v1"), json!("v1")]);
+        assert_ne!(mode(&AppType::Codex).contract.unwrap(), native_contract);
+
+        // 之后增删 Stack 模型照样按开关写。
+        set_codex_member(&state, "zhipu", true).await;
+        assert_eq!(
+            catalog_agent_versions(),
+            vec![json!("v1"), json!("v1"), json!("v1")]
+        );
+        set_codex_member(&state, "zhipu", false).await;
+
+        set_classic_subagents(false);
+        resync_codex_stack_catalog(&state).await.expect("native");
+        assert_eq!(codex_catalog(), native_catalog);
+        assert_eq!(mode(&AppType::Codex).contract.unwrap(), native_contract);
+
+        exit(&state, &AppType::Codex).await.expect("exit");
     }
 
     /// 路由那家自己管理模型目录文件：Stack 模型发布不了，名单照存，结果带提示而不是静默成功。

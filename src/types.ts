@@ -410,6 +410,9 @@ export interface Settings {
   unifyCodexSessionHistory?: boolean;
   // User opted in (enable dialog checkbox) to migrate existing official sessions
   unifyCodexMigrateExisting?: boolean;
+  // Codex aggregation: every catalog row uses the classic (v1) sub-agent tools,
+  // so a sub-agent on another provider can read its task (off by default)
+  codexStackClassicSubagents?: boolean;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice

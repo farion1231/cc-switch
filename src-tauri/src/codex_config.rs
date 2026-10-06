@@ -905,6 +905,24 @@ pub fn read_codex_config_text() -> Result<String, AppError> {
     }
 }
 
+/// `config.toml` 是不是用 `[features] multi_agent_v2` 强制了新版子 agent 工具：写成 `true`，
+/// 或写成带 `enabled = true` 的表（codex-rs `features` 的 `FeatureToml`）。Codex 先看它再看
+/// 模型目录，打开了它，目录里写的 [`CODEX_CLASSIC_SUBAGENTS`] 就不生效。解析不了时按没有。
+pub(crate) fn codex_config_forces_multi_agent_v2(text: &str) -> bool {
+    let Ok(doc) = text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let Some(item) = doc
+        .get("features")
+        .and_then(|features| features.get("multi_agent_v2"))
+    else {
+        return false;
+    };
+    item.as_bool()
+        .or_else(|| item.get("enabled").and_then(toml_edit::Item::as_bool))
+        .unwrap_or(false)
+}
+
 /// 对非空的 TOML 文本进行语法校验
 pub fn validate_config_toml(text: &str) -> Result<(), AppError> {
     if text.trim().is_empty() {
@@ -2406,9 +2424,12 @@ const CODEX_STACK_COMP_HASH: &str = "cc-switch";
 ///
 /// 窗口类全局键（`model_context_window`、`model_auto_compact_token_limit`）这时不写进
 /// `config.toml`（Codex 会拿它覆盖所有行），改由各家写进自己的行，见 [`sink_row_windows`]。
+///
+/// `classic_subagents`：每一行都改用经典子 agent 工具，见 [`CODEX_CLASSIC_SUBAGENTS`]。
 pub(crate) fn plan_codex_stack_catalog(
     route: CodexStackRoute<'_>,
     stack: &[CodexStackCatalogMember<'_>],
+    classic_subagents: bool,
 ) -> Result<Value, AppError> {
     let mut entries = match route {
         CodexStackRoute::ThirdParty(row) => codex_stack_third_party_rows(&row)?,
@@ -2478,10 +2499,23 @@ pub(crate) fn plan_codex_stack_catalog(
     for (index, entry) in entries.iter_mut().enumerate() {
         if let Some(obj) = entry.as_object_mut() {
             obj.insert("priority".to_string(), json!(index + 1));
+            if classic_subagents {
+                obj.insert(
+                    "multi_agent_version".to_string(),
+                    json!(CODEX_CLASSIC_SUBAGENTS),
+                );
+            }
         }
     }
     Ok(json!({ "models": entries }))
 }
+
+/// Codex 按目录行的 `multi_agent_version` 决定子 agent 用哪套工具（codex-rs
+/// `session/turn_context.rs`）。新版（`"v2"`）把派给子 agent 的任务交给主 agent 那家后端加密，
+/// 子 agent 换到别家就解不开；经典（`"v1"`）的任务是明文。聚合模式下主、子 agent 可以是不同
+/// 的供应商，用户打开设置后每一行都写经典（包括官方行：官方签发的密文第三方同样解不开）。
+/// `config.toml` 里 `[features] multi_agent_v2 = true` 比目录优先，这时写了也不生效。
+const CODEX_CLASSIC_SUBAGENTS: &str = "v1";
 
 /// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值）。
 fn codex_stack_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>, AppError> {
@@ -5013,6 +5047,7 @@ wire_api = "responses"
                         profile: CodexCatalogToolProfile::ProxyChat,
                     },
                 }],
+                false,
             )
             .unwrap()["models"]
                 .as_array()
@@ -5190,6 +5225,7 @@ wire_api = "responses"
                     profile: CodexCatalogToolProfile::NativeResponses,
                 },
             }],
+            false,
         )
         .unwrap();
         let models = catalog["models"].as_array().unwrap();
@@ -5212,6 +5248,75 @@ wire_api = "responses"
         assert_eq!(models[2]["visibility"], "hide", "native visibility stays");
         assert!(models[0].get("auto_compact_token_limit").is_none());
         assert_eq!(models[3]["comp_hash"], "cc-switch");
+    }
+
+    /// 打开「经典子 agent」后每一行都写 v1（官方行、Stack 行都写）；关着时官方行保持原值，
+    /// Stack 行沿用模板的值。
+    #[test]
+    fn multi_agent_v2_override_is_read_in_both_shapes() {
+        assert!(codex_config_forces_multi_agent_v2(
+            "[features]\nmulti_agent_v2 = true\n"
+        ));
+        assert!(codex_config_forces_multi_agent_v2(
+            "[features.multi_agent_v2]\nenabled = true\nmax_threads = 4\n"
+        ));
+        assert!(codex_config_forces_multi_agent_v2(
+            "features = { multi_agent_v2 = { enabled = true } }\n"
+        ));
+        for text in [
+            "",
+            "[features]\nmulti_agent_v2 = false\n",
+            "[features.multi_agent_v2]\nmax_threads = 4\n",
+            "[features]\nmulti_agent = true\n",
+            "not toml = [",
+        ] {
+            assert!(!codex_config_forces_multi_agent_v2(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn classic_subagents_stamp_every_stacked_catalog_row() {
+        let plan = |classic: bool| {
+            let native = normalize_codex_native_rows(vec![
+                native_row(
+                    "gpt-6-sol",
+                    json!({ "base_instructions": "x", "multi_agent_version": "v2" }),
+                ),
+                native_row("gpt-5.5", json!({ "base_instructions": "x" })),
+            ])
+            .unwrap();
+            let stacked_settings = json!({});
+            plan_codex_stack_catalog(
+                CodexStackRoute::Official {
+                    native,
+                    config_text: "",
+                },
+                &[CodexStackCatalogMember {
+                    key: "ds",
+                    provider_name: "DS",
+                    row: CodexCatalogRow {
+                        settings: &stacked_settings,
+                        config_text: "model = \"deepseek-v4-pro\"\n",
+                        profile: CodexCatalogToolProfile::NativeResponses,
+                    },
+                }],
+                classic,
+            )
+            .unwrap()
+        };
+
+        let classic = plan(true);
+        let models = classic["models"].as_array().unwrap();
+        assert_eq!(models.len(), 3);
+        for model in models {
+            assert_eq!(model["multi_agent_version"], "v1", "{}", model["slug"]);
+        }
+
+        let native = plan(false);
+        let models = native["models"].as_array().unwrap();
+        assert_eq!(models[0]["slug"], "gpt-6-sol");
+        assert_eq!(models[0]["multi_agent_version"], "v2");
+        assert!(models[1].get("multi_agent_version").is_none());
     }
 
     #[test]
@@ -5261,6 +5366,7 @@ wire_api = "responses"
                     profile,
                 },
             }],
+            false,
         )
         .unwrap();
         let models = stacked["models"].as_array().unwrap();
@@ -5291,6 +5397,7 @@ wire_api = "responses"
                     profile: CodexCatalogToolProfile::Anthropic,
                 },
             }],
+            false,
         )
         .expect("catalog");
         let models = catalog["models"].as_array().unwrap();
