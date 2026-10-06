@@ -4407,6 +4407,7 @@
       "showAll": "Show all Skills"
     },
     "selectAria": "Select {{name}}",
+    "selectAllAria": "Select all shown",
     "rowFail": "Enabling in {{app}} failed: {{error}}",
     "fixSync": "Change sync method",
     "rowMoreAria": "More actions for {{name}}",
