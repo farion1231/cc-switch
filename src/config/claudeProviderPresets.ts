@@ -2019,6 +2019,22 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#FF9900",
   },
   {
+    name: "Ace Data Cloud",
+    websiteUrl: "https://platform.acedata.cloud",
+    apiKeyUrl: "https://platform.acedata.cloud/console/credentials",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.acedata.cloud",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-4-6",
+      },
+    },
+    apiFormat: "anthropic",
+    endpointCandidates: ["https://api.acedata.cloud"],
+    category: "aggregator",
+    icon: "acedatacloud",
+  },
+  {
     name: "JieKou AI",
     websiteUrl: "https://jiekou.ai/#model-library",
     apiKeyUrl: "https://jiekou.ai/settings/key-management",

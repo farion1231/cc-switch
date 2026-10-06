@@ -610,6 +610,21 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "pipellm",
   },
   {
+    name: "Ace Data Cloud",
+    websiteUrl: "https://platform.acedata.cloud",
+    apiKeyUrl: "https://platform.acedata.cloud/console/credentials",
+    auth: grokAuth(),
+    config: grokPresetConfig(
+      "Ace Data Cloud",
+      "https://api.acedata.cloud/v1",
+      "grok-4.7",
+    ),
+    apiFormat: "openai_responses",
+    endpointCandidates: ["https://api.acedata.cloud/v1"],
+    category: "aggregator",
+    icon: "acedatacloud",
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",

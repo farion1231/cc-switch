@@ -17,6 +17,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["9527code", "9527", "codes", "aggregator", "relay", "gateway"],
     defaultColor: "currentColor",
   },
+  acedatacloud: {
+    name: "acedatacloud",
+    displayName: "Ace Data Cloud",
+    category: "ai-provider",
+    keywords: ["acedatacloud", "ace data cloud", "aggregator"],
+    defaultColor: "currentColor",
+  },
   a6api: {
     name: "a6api",
     displayName: "A6API",

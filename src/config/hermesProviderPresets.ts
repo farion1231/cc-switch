@@ -2436,6 +2436,23 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Ace Data Cloud",
+    websiteUrl: "https://platform.acedata.cloud",
+    apiKeyUrl: "https://platform.acedata.cloud/console/credentials",
+    settingsConfig: {
+      name: "acedatacloud",
+      base_url: "https://api.acedata.cloud/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-4.1", name: "GPT-4.1", context_length: 128000 }],
+    },
+    suggestedDefaults: {
+      model: { default: "gpt-4.1", provider: "acedatacloud" },
+    },
+    category: "aggregator",
+    icon: "acedatacloud",
+  },
+  {
     name: "JieKou AI",
     websiteUrl: "https://jiekou.ai/#model-library",
     apiKeyUrl: "https://jiekou.ai/settings/key-management",

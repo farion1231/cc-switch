@@ -1685,6 +1685,24 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "Ace Data Cloud",
+    websiteUrl: "https://platform.acedata.cloud",
+    apiKeyUrl: "https://platform.acedata.cloud/console/credentials",
+    baseUrl: "https://api.acedata.cloud",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: "claude-sonnet-4-6",
+        upstreamModel: "claude-sonnet-4-6",
+        supports1m: false,
+      },
+    ],
+    endpointCandidates: ["https://api.acedata.cloud"],
+    category: "aggregator",
+    icon: "acedatacloud",
+  },
+  {
     name: "JieKou AI",
     websiteUrl: "https://jiekou.ai/#model-library",
     apiKeyUrl: "https://jiekou.ai/settings/key-management",

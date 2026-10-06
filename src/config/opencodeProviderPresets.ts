@@ -3411,6 +3411,28 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isCustomTemplate: true,
   },
   {
+    name: "Ace Data Cloud",
+    websiteUrl: "https://platform.acedata.cloud",
+    apiKeyUrl: "https://platform.acedata.cloud/console/credentials",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Ace Data Cloud",
+      options: {
+        baseURL: "https://api.acedata.cloud/v1",
+        apiKey: "",
+      },
+      models: {
+        "gpt-4.1": {
+          name: "GPT-4.1",
+          limit: { context: 128000, output: 8192 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "acedatacloud",
+  },
+  {
     name: "JieKou AI",
     websiteUrl: "https://jiekou.ai/#model-library",
     apiKeyUrl: "https://jiekou.ai/settings/key-management",

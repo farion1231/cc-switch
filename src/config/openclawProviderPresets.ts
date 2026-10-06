@@ -4606,6 +4606,34 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     iconColor: "#FF9900",
   },
   {
+    name: "Ace Data Cloud",
+    websiteUrl: "https://platform.acedata.cloud",
+    apiKeyUrl: "https://platform.acedata.cloud/console/credentials",
+    settingsConfig: {
+      baseUrl: "https://api.acedata.cloud/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-4.1",
+          name: "GPT-4.1",
+          reasoning: false,
+          input: ["text"],
+          contextWindow: 128000,
+          maxTokens: 8192,
+        },
+      ],
+    },
+    suggestedDefaults: {
+      model: { primary: "acedatacloud/gpt-4.1" },
+      modelCatalog: {
+        "acedatacloud/gpt-4.1": { alias: "GPT-4.1" },
+      },
+    },
+    category: "aggregator",
+    icon: "acedatacloud",
+  },
+  {
     name: "JieKou AI",
     websiteUrl: "https://jiekou.ai/#model-library",
     apiKeyUrl: "https://jiekou.ai/settings/key-management",
