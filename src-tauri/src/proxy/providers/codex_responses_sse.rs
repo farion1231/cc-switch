@@ -53,8 +53,12 @@ where
 }
 
 /// Grok Build / Codex 的 Responses 错误解析器要求 error 对象带 `code` 字段，
-/// 缺失会报 "missing field `code`"。上游错误只带 type 时按此映射补全。
-pub(crate) fn error_code_for_type(error_type: Option<&str>) -> String {
+/// 缺失会报 "missing field `code`"。上游自带 code 时原样保留（与非流式
+/// 转换一致），只在上游缺失时按 type 映射补全。
+pub(crate) fn error_code_for(error_type: Option<&str>, upstream_code: Option<&str>) -> String {
+    if let Some(code) = upstream_code.filter(|code| !code.is_empty()) {
+        return code.to_string();
+    }
     match error_type {
         Some("rate_limit_error") => "rate_limit_exceeded".to_string(),
         Some(other) => other.to_string(),
