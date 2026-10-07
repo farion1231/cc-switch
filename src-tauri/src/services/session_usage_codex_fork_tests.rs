@@ -116,9 +116,9 @@ fn assert_usage(
     let models = db.get_model_stats(None, None, Some("codex"), None, None)?;
     if requests > 0 {
         assert_eq!(models.len(), 1);
-        // ModelStats.total_tokens has the existing fresh-input + output
-        // contract; UsageSummary.real_total_tokens additionally includes cache.
-        assert_eq!(models[0].total_tokens, input - cached + output);
+        // ModelStats.total_tokens and UsageSummary.real_total_tokens both
+        // include cached input; Codex's input already includes cache reads.
+        assert_eq!(models[0].total_tokens, input + output);
         assert_eq!(
             Decimal::from_str(&models[0].total_cost).unwrap(),
             expected_cost

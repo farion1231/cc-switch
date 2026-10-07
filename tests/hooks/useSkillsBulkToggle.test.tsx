@@ -10,7 +10,10 @@ import {
   useUninstallSkill,
   useUpdateSkill,
 } from "@/hooks/useSkills";
-import type { SkillBackupEntry, SkillUpdateInfo } from "@/lib/api/skills";
+import type {
+  SkillBackupEntry,
+  SkillUpdateCheckResult,
+} from "@/lib/api/skills";
 
 const toggleAppMock = vi.hoisted(() => vi.fn());
 const restoreBackupMock = vi.hoisted(() => vi.fn());
@@ -206,13 +209,16 @@ describe("Skills management mutation hooks", () => {
     const queryClient = new QueryClient({
       defaultOptions: { mutations: { retry: false } },
     });
-    queryClient.setQueryData<SkillUpdateInfo[]>(
-      ["skills", "updates"],
-      [
+    const failures = [
+      { owner: "o", name: "r", branch: "main", error: "network down" },
+    ];
+    queryClient.setQueryData<SkillUpdateCheckResult>(["skills", "updates"], {
+      updates: [
         { id: "alpha", name: "Alpha", remoteHash: "alpha-remote" },
         { id: "beta", name: "Beta", remoteHash: "beta-remote" },
       ],
-    );
+      failures,
+    });
     const { result } = renderHook(() => useUninstallSkill(), {
       wrapper: createWrapper(queryClient),
     });
@@ -222,8 +228,11 @@ describe("Skills management mutation hooks", () => {
     });
 
     expect(
-      queryClient.getQueryData<SkillUpdateInfo[]>(["skills", "updates"]),
-    ).toEqual([{ id: "beta", name: "Beta", remoteHash: "beta-remote" }]);
+      queryClient.getQueryData<SkillUpdateCheckResult>(["skills", "updates"]),
+    ).toEqual({
+      updates: [{ id: "beta", name: "Beta", remoteHash: "beta-remote" }],
+      failures,
+    });
   });
 
   it("keeps a rejected uninstall pending until backups and unmanaged Skills refresh", async () => {

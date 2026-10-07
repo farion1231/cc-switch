@@ -1,16 +1,16 @@
 # Pi 模型能力与思考档位需求
 
 > 状态：已实现并完成验收  
-> 原则：预设完整可靠，自定义配置不猜测；运行时不依赖外部模型目录。
+> 原则：预设完整可靠，自定义配置只采用能确认来源的值；外部目录不可用时不影响使用。
 
 ## 1. 当前版本边界
 
 模型能力分为两条互不混用的路径：
 
 - Pi 供应商预设由 CC Switch 维护完整模型配置，选择后可以直接保存。
-- 自定义供应商和“获取模型列表”只帮助填写模型 ID，不自动推断模型能力。
+- 自定义供应商从“获取模型列表”选中模型时，按 [Pi 前端设计指南 4.5](./pi-frontend-uiux-guidelines-zh.md) 的规则从同地址预设和 models.dev 补全 `reasoning`、`input`、`contextWindow`、`maxTokens`，并在协议允许时补 `thinkingLevelMap`（规则见第 4 节）。
 
-当前版本不建设面向自定义供应商的运行时模型数据库，也不从 Pi、models.dev、oh-my-pi 或其他服务下载数据。外部资料只用于开发时人工核对预设。
+预设里的思考映射仍只在开发时人工核对后写入。
 
 这项功能不修改数据库 Schema，不参与显式供应商同步，也不管理 Pi 的默认供应商、默认模型、`auth.json`、路由、故障转移或插件。
 
@@ -72,7 +72,7 @@ type PiThinkingLevelMap = Partial<Record<PiThinkingLevel, string | null>>;
 - 尚无可靠专用映射的组合使用 `{}`，明确交给 Pi 原生行为。
 - Anthropic 自适应思考等需要额外 Pi 原生兼容字段的预设，应同时写入必要的 `compat`，不能只让界面显示档位。
 
-映射只服务预设构建。自定义供应商即使输入相同模型 ID，也不会自动套用预设映射。
+预设映射只在请求地址和协议都与预设相同时套用到自定义模型，并连同它依赖的 compat 一起补上（缺的才补；与用户已写的值冲突则不套用）。`openai-completions` 还要核对补完 compat 后的实际思考行为与预设一致，避免预设依赖 Pi 默认探测、用户又改了 compat 的情况。模型级 `baseUrl` 优先于供应商地址。其他供应商即使输入相同模型 ID，也不会套用预设映射。
 
 ## 4. 自定义模型
 
@@ -80,13 +80,14 @@ type PiThinkingLevelMap = Partial<Record<PiThinkingLevel, string | null>>;
 
 - 模型 ID 写入表单。
 - 显示名称在仍为空时同步为模型 ID，用户可以修改。
-- `reasoning`、`input`、`contextWindow`、`maxTokens` 和 `thinkingLevelMap` 不从本地目录或网络自动填写。
-- 上下文长度和最大输出 Token 必须填写正数后才能保存。
-- “支持扩展思考”和“支持图片输入”由用户明确选择；默认分别为关闭和仅文本。
+- 手动输入的模型 ID 不补全任何能力。从上游模型列表选中时，按设计指南 4.5 补全 `reasoning`、`input`、`contextWindow`、`maxTokens`，只补空字段、只往“支持”方向补，并提示用户核对。
+- 选中的模型还没有 `thinkingLevelMap` 且支持扩展思考时补映射：同地址、同协议预设的映射优先，并补上它依赖的 compat；否则只在 Pi 会把档位原样作为 `reasoning_effort` 发出时（`openai-responses`，或探测为 OpenAI 思考格式且支持 `reasoning_effort` 的 `openai-completions`），按 Pi 官方 `getEffortThinkingLevelMap` 的规则，用 models.dev 的 effort 档位生成（先找按地址认出的供应商，认不出时取原厂条目）。DeepSeek、z.ai、OpenRouter、Moonshot 等有自己思考格式的地址，以及 Anthropic 等协议不生成。
+- 上下文长度和最大输出 Token 必须是正数才能保存。
+- “支持扩展思考”和“支持图片输入”默认分别为关闭和仅文本，用户可以随时修改。
 - 开启扩展思考后才显示思考档位编辑器。
 - 未填写 `thinkingLevelMap` 时由 Pi 使用原生默认档位；用户仍可在表单或配置 JSON 中写入字符串、`null`、稀疏映射或 `{}`。
 
-界面不显示“自动值”“已覆盖自动值”或“恢复自动值”，因为自定义模型不存在后台推断值。
+界面不显示“自动值”“已覆盖自动值”或“恢复自动值”：补进来的值与手填值没有区别，不保留来源状态。
 
 ## 5. 配置 JSON 与旧配置
 
@@ -104,7 +105,7 @@ type PiThinkingLevelMap = Partial<Record<PiThinkingLevel, string | null>>;
 - 每个预设模型都有完整的名称、思考能力、输入类型、上下文长度和最大输出 Token。
 - 每个推理预设模型都显式拥有合法 `thinkingLevelMap`。
 - 所有 GPT-5.6 Sol 预设均使用 `272000` 上下文。
-- 选择自定义或拉取到的已知模型 ID 时不会自动注入能力或思考映射。
+- 手动输入模型 ID 不补全能力；从上游列表选中时只补空字段，已有思考映射不改，只在上述协议下按 Pi 官方规则生成映射，查不到时保持默认值。
 - 自定义模型缺少名称、上下文长度或最大输出 Token 时不能保存，并聚焦错误字段。
 - JSON 往返不丢未知字段或改变思考映射语义。
 

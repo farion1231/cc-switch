@@ -115,18 +115,34 @@ export interface ProviderStats {
   providerId: string;
   providerName: string;
   requestCount: number;
+  /** 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径 */
   totalTokens: number;
   totalCost: string;
   successRate: number;
   avgLatencyMs: number;
+  /** 速度分子：有首字、输出 ≥ 100 token 的明细请求的输出之和（日汇总不计） */
+  speedOutputTokens?: number;
+  /** 速度分母：同一批请求的（耗时 − 首字）之和，毫秒 */
+  speedGenerationMs?: number;
+  /** 估算速度分子：会话日志导入、有估算耗时、输出 ≥ 200 token 的请求的输出之和 */
+  estSpeedOutputTokens?: number;
+  /** 估算速度分母：同一批请求的估算耗时（含首字等待）之和，毫秒 */
+  estSpeedDurationMs?: number;
 }
 
 export interface ModelStats {
   model: string;
   requestCount: number;
+  /** 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径 */
   totalTokens: number;
   totalCost: string;
   avgCostPerRequest: string;
+  successRate: number;
+  /** 速度分子分母，口径同 ProviderStats 的四个速度字段 */
+  speedOutputTokens?: number;
+  speedGenerationMs?: number;
+  estSpeedOutputTokens?: number;
+  estSpeedDurationMs?: number;
 }
 
 export interface LogFilters {
@@ -162,7 +178,14 @@ export interface ProviderLimitStatus {
   monthlyExceeded: boolean;
 }
 
-export type UsageRangePreset = "today" | "1d" | "7d" | "14d" | "30d" | "custom";
+export type UsageRangePreset =
+  | "today"
+  | "1d"
+  | "7d"
+  | "14d"
+  | "30d"
+  | "all"
+  | "custom";
 
 export interface UsageRangeSelection {
   preset: UsageRangePreset;
