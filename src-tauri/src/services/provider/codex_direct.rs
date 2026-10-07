@@ -487,7 +487,7 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
 
 /// `auth.json` 的去向（拥有所有权的版本，[`run`] 里转成 `codex_login::AuthTarget`）。
 #[derive(Debug, Clone)]
-enum AuthGoal {
+pub(crate) enum AuthGoal {
     ThirdParty,
     /// 代理的第三方路由，或者没有直连供应商：不动原生登录，只清托管账号的登录。
     KeepNative,
@@ -506,11 +506,11 @@ fn row_auth(provider: &Provider) -> Value {
 
 /// 在内存里算好的一次 Codex 写入。
 pub(crate) struct Planned {
-    config: CodexConfigPatch,
+    pub(crate) config: CodexConfigPatch,
     /// 第三方路由表的凭据来源：写入时按盘上有没有登录定 `requires_openai_auth`。
-    stamp: Option<RouteAuth>,
-    catalog: Option<Vec<u8>>,
-    auth: AuthGoal,
+    pub(crate) stamp: Option<RouteAuth>,
+    pub(crate) catalog: Option<Vec<u8>>,
+    pub(crate) auth: AuthGoal,
     /// 切走的是没绑托管账号的官方卡：它行里的 `auth`。
     leaving_official: Option<Value>,
     retired_keys: Vec<String>,

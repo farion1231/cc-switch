@@ -26,6 +26,7 @@ import {
   formatOutputTokensPerSecond,
   getLocaleFromLanguage,
   getResolvedLang,
+  isSessionLogRequest,
   parseFiniteNumber,
 } from "./format";
 import { appDisplayName } from "./RequestLogTable";
@@ -94,7 +95,7 @@ function useDetailSections(request: RequestLog) {
   const isCacheInclusive = request.inputTokens !== freshInput;
   const unpriced = isUnpricedUsage(request);
   const multiplier = parseFiniteNumber(request.costMultiplier);
-  const isProxy = !request.dataSource || request.dataSource === "proxy";
+  const isProxy = !isSessionLogRequest(request);
   const tps = formatOutputTokensPerSecond(request);
   const estimatedTps = formatEstimatedTokensPerSecond(request);
   const latency = parseFiniteNumber(request.latencyMs);

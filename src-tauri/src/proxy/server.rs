@@ -296,6 +296,11 @@ impl ProxyServer {
         );
     }
 
+    /// Router sharing this server's state, for the remote gateway listener.
+    pub(crate) fn router(&self) -> Router {
+        self.build_router()
+    }
+
     fn build_router(&self) -> Router {
         Router::new()
             // 健康检查

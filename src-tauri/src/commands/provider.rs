@@ -8,7 +8,10 @@ use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider};
 use crate::services::provider::{EditorSave, EditorView};
 use crate::services::{
-    EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
+    EndpointLatency, ProviderService, ProviderSortUpdate, RemoteApplyResult,
+    RemoteGatewayApplyResult, RemoteGatewayOverview, RemoteGatewayService, RemoteGatewayState,
+    RemoteImportResult, RemoteProviderService, RemoteProviderState, RemoteRestartResult,
+    SpeedtestService, SshConnectionTarget, SshHostEntry, SwitchResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -189,6 +192,177 @@ pub async fn switch_provider(
         }
     }
     Ok(result)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_ssh_config_hosts() -> Result<Vec<SshHostEntry>, String> {
+    tauri::async_runtime::spawn_blocking(RemoteProviderService::list_ssh_hosts)
+        .await
+        .map_err(|e| format!("读取 SSH Host 失败: {e}"))?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn apply_provider_to_remote(
+    app_handle: tauri::AppHandle,
+    app: String,
+    id: String,
+    target: SshConnectionTarget,
+    force_overwrite: Option<bool>,
+) -> Result<RemoteApplyResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "应用状态不可用".to_string())?;
+        RemoteProviderService::apply_provider_to_remote(
+            state.inner(),
+            app_type,
+            &id,
+            &target,
+            force_overwrite.unwrap_or(false),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("远端切换失败: {e}"))?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn inspect_remote_provider(
+    app_handle: tauri::AppHandle,
+    app: String,
+    target: SshConnectionTarget,
+) -> Result<RemoteProviderState, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "应用状态不可用".to_string())?;
+        RemoteProviderService::inspect_remote_provider(state.inner(), app_type, &target)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("读取远端配置失败: {e}"))?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn import_remote_provider(
+    app_handle: tauri::AppHandle,
+    app: String,
+    target: SshConnectionTarget,
+) -> Result<RemoteImportResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "应用状态不可用".to_string())?;
+        RemoteProviderService::import_remote_provider(state.inner(), app_type, &target)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("下载远端配置失败: {e}"))?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn restart_remote_app_processes(
+    app: String,
+    target: SshConnectionTarget,
+) -> Result<RemoteRestartResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        RemoteProviderService::restart_remote_app_processes(app_type, &target)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("重启远端进程失败: {e}"))?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_remote_gateway_overview(
+    state: State<'_, AppState>,
+) -> Result<RemoteGatewayOverview, String> {
+    RemoteGatewayService::overview(state.inner())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_remote_gateway_state(
+    state: State<'_, AppState>,
+    app: String,
+    target: SshConnectionTarget,
+) -> Result<RemoteGatewayState, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    RemoteGatewayService::state(state.inner(), app_type, &target)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn enable_remote_gateway(
+    state: State<'_, AppState>,
+    app: String,
+    target: SshConnectionTarget,
+    provider_id: Option<String>,
+    remote_port: Option<u16>,
+) -> Result<RemoteGatewayApplyResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    RemoteGatewayService::enable(state.inner(), app_type, &target, provider_id, remote_port)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn set_remote_gateway_provider(
+    state: State<'_, AppState>,
+    app: String,
+    target: SshConnectionTarget,
+    provider_id: Option<String>,
+) -> Result<RemoteGatewayApplyResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    RemoteGatewayService::set_provider(state.inner(), app_type, &target, provider_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Leaves gateway mode by writing `id` to the remote as a direct config first,
+/// so the remote CLI never points at a tunnel that is going away.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn disable_remote_gateway(
+    state: State<'_, AppState>,
+    app: String,
+    id: String,
+    target: SshConnectionTarget,
+) -> Result<RemoteApplyResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let result = {
+        let state = state.inner().clone();
+        let app_type = app_type.clone();
+        let target = target.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            RemoteProviderService::apply_provider_to_remote(&state, app_type, &id, &target, true)
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("远端切换失败: {e}"))??
+    };
+    RemoteGatewayService::disable(state.inner(), app_type, &target)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(result)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn reconnect_remote_gateway(
+    state: State<'_, AppState>,
+    app: String,
+    target: SshConnectionTarget,
+) -> Result<RemoteGatewayState, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    RemoteGatewayService::reconnect(state.inner(), app_type, &target)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {

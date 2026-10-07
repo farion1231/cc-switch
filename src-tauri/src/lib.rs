@@ -1259,6 +1259,8 @@ pub fn run() {
                     state.inner().clone(),
                 );
 
+                crate::services::RemoteGatewayService::resume_all(&state).await;
+
                 // Periodic backup check (on startup)
                 if let Err(e) = state.db.periodic_backup_if_needed() {
                     log::warn!("Periodic backup failed on startup: {e}");
@@ -1400,6 +1402,17 @@ pub fn run() {
             commands::delete_provider,
             commands::remove_provider_from_live_config,
             commands::switch_provider,
+            commands::get_ssh_config_hosts,
+            commands::apply_provider_to_remote,
+            commands::inspect_remote_provider,
+            commands::import_remote_provider,
+            commands::restart_remote_app_processes,
+            commands::get_remote_gateway_overview,
+            commands::get_remote_gateway_state,
+            commands::enable_remote_gateway,
+            commands::set_remote_gateway_provider,
+            commands::disable_remote_gateway,
+            commands::reconnect_remote_gateway,
             commands::import_default_config,
             commands::get_claude_desktop_status,
             commands::get_claude_desktop_default_routes,
@@ -1940,6 +1953,8 @@ pub fn run() {
 /// 把接上代理的客户端都指回直连（模式和代理路由保留，下次启动再接上），再停止代理。
 /// 客户端不能一直指着代理：开机自启默认关闭，CC Switch 一关客户端就连不上了。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
+    crate::services::RemoteGatewayService::shutdown_all().await;
+
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         crate::mode::controller::detach_all(state.inner()).await;
         log::info!("退出清理完成：客户端已指回直连，代理已停止");

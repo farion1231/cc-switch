@@ -299,6 +299,26 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // SSH hosts that reach the local proxy through a reverse
+        // tunnel, and which provider each app on that host is routed to.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS remote_gateways (
+                host_key TEXT PRIMARY KEY,
+                target_json TEXT NOT NULL,
+                remote_port INTEGER NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS remote_gateway_routes (
+                host_key TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                provider_id TEXT,
+                PRIMARY KEY (host_key, app_type)
+            );",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 18. Session Log Sync 表 (会话日志同步状态)
         //
         // last_byte_offset：Claude 路径的字节游标（seek 增量读）；NULL 表示

@@ -127,6 +127,9 @@ impl<'a> UsageLogger<'a> {
                 INPUT_TOKEN_SEMANTICS_FRESH
             };
         let semantic = UsageSemantic::from_log(log, input_token_semantics);
+        let log_data_source =
+            crate::proxy::remote_gateway::session_source(log.session_id.as_deref())
+                .unwrap_or_else(|| "proxy".to_string());
         let existing = Self::load_existing_semantic(&conn, &log.request_id)?;
 
         let (request_id, replace_session_log, collision) = match existing {
@@ -137,7 +140,7 @@ impl<'a> UsageLogger<'a> {
                 (log.request_id.clone(), true, false)
             }
             Some((data_source, existing_semantic))
-                if data_source.as_deref().unwrap_or("proxy") == "proxy"
+                if data_source.as_deref().unwrap_or("proxy") == log_data_source
                     && existing_semantic == semantic =>
             {
                 return Ok(());
@@ -147,7 +150,7 @@ impl<'a> UsageLogger<'a> {
                 if let Some((data_source, existing_semantic)) =
                     Self::load_existing_semantic(&conn, &fallback)?
                 {
-                    if data_source.as_deref().unwrap_or("proxy") == "proxy"
+                    if data_source.as_deref().unwrap_or("proxy") == log_data_source
                         && existing_semantic == semantic
                     {
                         return Ok(());
@@ -172,8 +175,8 @@ impl<'a> UsageLogger<'a> {
                 input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
-                provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+                provider_type, is_streaming, cost_multiplier, created_at, data_source
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)"
         );
         let affected_rows = conn
             .execute(
@@ -204,6 +207,7 @@ impl<'a> UsageLogger<'a> {
                     log.is_streaming as i64,
                     log.cost_multiplier,
                     created_at,
+                    log_data_source,
                 ],
             )
             .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;

@@ -167,6 +167,7 @@ fn speed_estimate_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
     format!(
         "{alias}.first_token_ms IS NULL AND {data_source} <> 'proxy' \
+         AND {data_source} NOT LIKE 'remote:%' \
          AND {alias}.output_tokens >= {SPEED_ESTIMATE_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS}"
     )
@@ -4785,6 +4786,8 @@ mod tests {
             insert("no-timing", 3_000, 0, "session_log")?;
             // 不计：耗时不到 1 秒
             insert("too-fast", 800, 900, "session_log")?;
+            // A gateway logs measured proxy latency, never an imported estimate.
+            insert("remote-gateway", 1_000, 5_000, "remote:config:host")?;
         }
 
         let stats = db.get_provider_stats(None, None, None, None, None)?;

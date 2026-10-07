@@ -49,6 +49,16 @@ const renderWith = (request: RequestLog) => {
 };
 
 describe("RequestDetailPanel", () => {
+  it("shows remote gateway timing and HTTP status as a routed request", () => {
+    renderWith(log({ dataSource: "remote:config:host" }));
+    expect(screen.getByText("usage.detail.sourceProxy")).toBeInTheDocument();
+    expect(
+      screen.queryByText("usage.detail.sourceSession"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("3.2s")).toBeInTheDocument();
+    expect(screen.getByText("usage.speedValue:65")).toBeInTheDocument();
+  });
+
   it("shows speed, first token and duration for routed requests", () => {
     renderWith(log({}));
 

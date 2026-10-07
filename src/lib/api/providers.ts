@@ -25,6 +25,112 @@ export interface OpenTerminalOptions {
   cwd?: string;
 }
 
+export interface SshHostEntry {
+  alias: string;
+  hostName?: string;
+  user?: string;
+  port?: string;
+  source?: string;
+}
+
+export type SshConnectionTarget =
+  | {
+      type: "config";
+      alias: string;
+    }
+  | {
+      type: "manual";
+      host: string;
+      user?: string;
+      port?: number;
+      password?: string;
+    };
+
+export interface RemoteApplyResult {
+  hostAlias: string;
+  app: AppId;
+  providerId: string;
+  writtenFiles: string[];
+  removedFiles: string[];
+  remoteState: RemoteProviderState;
+  overwroteExistingConfig: boolean;
+  warnings: string[];
+}
+
+export interface RemoteConfigFile {
+  path: string;
+  exists: boolean;
+  bytes: number;
+}
+
+export interface RemoteProviderState {
+  hostAlias: string;
+  app: AppId;
+  provider?: Provider | null;
+  matchedProviderId?: string | null;
+  files: RemoteConfigFile[];
+  hasExistingConfig: boolean;
+  hasUnmanagedConfig: boolean;
+  overwriteWarning?: string | null;
+  warnings: string[];
+  viaGateway?: boolean;
+}
+
+export type RemoteTunnelState = "idle" | "connecting" | "connected" | "error";
+
+export interface RemoteGatewayState {
+  hostKey: string;
+  app: AppId;
+  enabled: boolean;
+  /** null follows the local current provider */
+  providerId?: string | null;
+  remotePort?: number | null;
+  tunnel: { state: RemoteTunnelState; message?: string | null };
+  proxyRunning: boolean;
+}
+
+export interface RemoteGatewayHost {
+  hostKey: string;
+  target: SshConnectionTarget;
+  remotePort: number;
+  tunnel: RemoteGatewayState["tunnel"];
+  routes: {
+    app: AppId;
+    /** null follows the local current provider */
+    providerId?: string | null;
+    providerName?: string | null;
+  }[];
+}
+
+export interface RemoteGatewayOverview {
+  proxyRunning: boolean;
+  hosts: RemoteGatewayHost[];
+}
+
+export interface RemoteGatewayApplyResult {
+  state: RemoteGatewayState;
+  remoteState?: RemoteProviderState | null;
+  writtenFiles: string[];
+}
+
+export interface RemoteImportResult {
+  hostAlias: string;
+  app: AppId;
+  provider: Provider;
+}
+
+export interface RemoteProcessInfo {
+  pid: number;
+  command: string;
+}
+
+export interface RemoteRestartResult {
+  hostAlias: string;
+  app: AppId;
+  stopped: RemoteProcessInfo[];
+  forceKilled: number[];
+}
+
 export interface ClaudeDesktopStatus {
   supported: boolean;
   configured: boolean;
@@ -135,6 +241,100 @@ export const providersApi = {
 
   async switch(id: string, appId: AppId): Promise<SwitchResult> {
     return await invoke("switch_provider", { id, app: appId });
+  },
+
+  async getSshHosts(): Promise<SshHostEntry[]> {
+    return await invoke("get_ssh_config_hosts");
+  },
+
+  async applyToRemote(
+    id: string,
+    appId: AppId,
+    target: SshConnectionTarget,
+    forceOverwrite = false,
+  ): Promise<RemoteApplyResult> {
+    return await invoke("apply_provider_to_remote", {
+      id,
+      app: appId,
+      target,
+      forceOverwrite,
+    });
+  },
+
+  async inspectRemote(
+    appId: AppId,
+    target: SshConnectionTarget,
+  ): Promise<RemoteProviderState> {
+    return await invoke("inspect_remote_provider", { app: appId, target });
+  },
+
+  async importRemote(
+    appId: AppId,
+    target: SshConnectionTarget,
+  ): Promise<RemoteImportResult> {
+    return await invoke("import_remote_provider", { app: appId, target });
+  },
+
+  async restartRemoteProcesses(
+    appId: AppId,
+    target: SshConnectionTarget,
+  ): Promise<RemoteRestartResult> {
+    return await invoke("restart_remote_app_processes", {
+      app: appId,
+      target,
+    });
+  },
+
+  async getRemoteGatewayOverview(): Promise<RemoteGatewayOverview> {
+    return await invoke("get_remote_gateway_overview");
+  },
+
+  async getRemoteGatewayState(
+    appId: AppId,
+    target: SshConnectionTarget,
+  ): Promise<RemoteGatewayState> {
+    return await invoke("get_remote_gateway_state", { app: appId, target });
+  },
+
+  async enableRemoteGateway(
+    appId: AppId,
+    target: SshConnectionTarget,
+    providerId: string | null,
+    remotePort?: number,
+  ): Promise<RemoteGatewayApplyResult> {
+    return await invoke("enable_remote_gateway", {
+      app: appId,
+      target,
+      providerId,
+      remotePort,
+    });
+  },
+
+  async setRemoteGatewayProvider(
+    appId: AppId,
+    target: SshConnectionTarget,
+    providerId: string | null,
+  ): Promise<RemoteGatewayApplyResult> {
+    return await invoke("set_remote_gateway_provider", {
+      app: appId,
+      target,
+      providerId,
+    });
+  },
+
+  async disableRemoteGateway(
+    id: string,
+    appId: AppId,
+    target: SshConnectionTarget,
+  ): Promise<RemoteApplyResult> {
+    return await invoke("disable_remote_gateway", { id, app: appId, target });
+  },
+
+  async reconnectRemoteGateway(
+    appId: AppId,
+    target: SshConnectionTarget,
+  ): Promise<RemoteGatewayState> {
+    return await invoke("reconnect_remote_gateway", { app: appId, target });
   },
 
   async importDefault(appId: AppId): Promise<boolean> {

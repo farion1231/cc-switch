@@ -97,7 +97,8 @@ export function isSessionLogRequest(log: { dataSource?: unknown }): boolean {
   return (
     typeof log.dataSource === "string" &&
     log.dataSource !== "" &&
-    log.dataSource !== "proxy"
+    log.dataSource !== "proxy" &&
+    !log.dataSource.startsWith("remote:")
   );
 }
 

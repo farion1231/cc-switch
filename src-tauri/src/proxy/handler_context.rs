@@ -124,6 +124,20 @@ impl RequestContext {
             session_result.client_provided
         );
 
+        let remote_origin = super::remote_gateway::current_origin();
+        let pinned_provider = match &remote_origin {
+            Some(origin) => {
+                super::remote_gateway::remember_session_source(
+                    &session_id,
+                    super::remote_gateway::data_source_for_host(&origin.host_key),
+                );
+                super::remote_gateway::pinned_provider(&state.db, origin, app_type_str)
+                    .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
+            }
+            None => None,
+        };
+        // A remote host's explicit route wins over locally published Stack models.
+        // resolve_stack_target rejects prefixed models for pinned hosts before rewriting.
         let is_stack = stack.is_some();
         let (provider, providers, current_provider_id, request_model) = match stack {
             Some(target) => {
@@ -150,7 +164,7 @@ impl RequestContext {
                 let current_provider = crate::mode::current::provider_in_use(&state.db, &app_type)
                     .ok()
                     .flatten();
-                let current_provider_id = current_provider
+                let mut current_provider_id = current_provider
                     .as_ref()
                     .map(|provider| provider.id.clone())
                     .unwrap_or_default();
@@ -166,7 +180,11 @@ impl RequestContext {
                 // 队列留着，回到路由模式恢复。故障转移本来就关着时不用读模式。
                 let stack_mode = app_config.auto_failover_enabled
                     && crate::mode::stack::stack_mode_now(&app_type);
-                let providers = if stack_mode {
+                let providers = if let Some(pinned) = pinned_provider {
+                    app_config.auto_failover_enabled = false;
+                    current_provider_id = pinned.id.clone();
+                    vec![pinned]
+                } else if stack_mode {
                     app_config.auto_failover_enabled = false;
                     vec![current_provider.ok_or(ProxyError::NoProvidersConfigured)?]
                 } else {
@@ -203,6 +221,13 @@ impl RequestContext {
                 (provider, providers, current_provider_id, request_model)
             }
         };
+
+        if remote_origin.is_some() && !super::remote_gateway::provider_usable_remotely(&provider) {
+            return Err(ProxyError::AuthError(format!(
+                "供应商 {} 依赖本机官方登录，不能通过远端网关使用",
+                provider.name
+            )));
+        }
 
         Ok(Self {
             start_time,

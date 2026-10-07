@@ -427,6 +427,10 @@ export const handlers = [
     success([]),
   ),
   http.post(`${TAURI_ENDPOINT}/take_tray_navigation`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/get_remote_gateway_overview`, () =>
+    success({ proxyRunning: false, hosts: [] }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_ssh_config_hosts`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/tray_app_page_seen`, () => success(null)),
   http.post(`${TAURI_ENDPOINT}/get_available_providers_for_failover`, () =>
     success([]),

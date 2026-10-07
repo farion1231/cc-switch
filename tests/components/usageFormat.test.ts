@@ -15,6 +15,24 @@ import {
 } from "@/components/usage/format";
 
 describe("usage format helpers", () => {
+  it("keeps remote gateway requests out of session speed estimates", () => {
+    expect(
+      getEstimatedTokensPerSecond({
+        dataSource: "remote:config:host",
+        outputTokens: 500,
+        latencyMs: 5000,
+      }),
+    ).toBeNull();
+    expect(
+      getOutputTokensPerSecond({
+        dataSource: "remote:config:host",
+        outputTokens: 500,
+        latencyMs: 5000,
+        firstTokenMs: 1000,
+      }),
+    ).toBe(125);
+  });
+
   it("formats Traditional Chinese token units with Traditional characters", () => {
     expect(formatTokensShort(12_345, "zh-TW")).toBe("1.2 萬");
     expect(formatTokensShort(123_456_789, "zh-Hant", 2)).toBe("1.23 億");

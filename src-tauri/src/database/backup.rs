@@ -91,6 +91,8 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "remote_gateways",
+    "remote_gateway_routes",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -102,6 +104,8 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "remote_gateways",
+    "remote_gateway_routes",
 ];
 
 /// A database backup entry for the UI
@@ -2147,6 +2151,44 @@ mod tests {
             cursor,
             ("/local/sessions/manual-backup.jsonl".into(), 11, 22, 33,)
         );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn sync_preserves_remote_gateway_tokens_and_routes() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let local = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local.conn);
+            conn.execute_batch(
+                "INSERT INTO remote_gateways VALUES ('local-host', '{}', 23456, 'local-secret', 1);
+                 INSERT INTO remote_gateway_routes VALUES ('local-host', 'codex', 1, 'local-provider');",
+            )?;
+        }
+        let exported = local.export_sql_string_for_sync()?;
+        assert!(!exported.contains("local-secret"));
+        assert!(!exported.contains("local-host"));
+        // Import from an older database without gateway tables: the tunnel
+        // identity on this device survives.
+        let remote = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote.conn);
+            conn.execute_batch("DROP TABLE remote_gateway_routes; DROP TABLE remote_gateways;")?;
+        }
+        local.import_sql_string_for_sync(&remote.export_sql_string_for_sync()?)?;
+        let conn = crate::database::lock_conn!(local.conn);
+        let token: String = conn.query_row(
+            "SELECT token FROM remote_gateways WHERE host_key = 'local-host'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(token, "local-secret");
+        let route: (i64, String) = conn.query_row(
+            "SELECT enabled, provider_id FROM remote_gateway_routes WHERE host_key = 'local-host' AND app_type = 'codex'",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(route, (1, "local-provider".to_string()));
         Ok(())
     }
 

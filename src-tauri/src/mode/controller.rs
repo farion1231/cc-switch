@@ -819,10 +819,11 @@ fn write_direct_for_exit(
     )
 }
 
-/// 没有应用在代理模式、Claude Desktop 也没在用模型映射时，停掉代理服务。
+/// 没有本地应用、Claude Desktop 或远端网关使用代理时，停掉代理服务。
 async fn stop_server_if_unused(state: &AppState) {
     if current::proxy_flags(PROXY_APPS).contains(&true)
         || crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
+        || crate::proxy::remote_gateway::has_enabled_routes(&state.db).unwrap_or(true)
     {
         return;
     }
@@ -5453,6 +5454,37 @@ model_provider = "c"
         assert!(!current::is_proxy(&AppType::Claude));
         assert_back_to_user_settings();
         assert_eq!(stack_state().members, vec!["kimi", "a"], "the list stays");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn remote_gateway_keeps_server_when_local_app_leaves_routing() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        {
+            let conn = state.db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO remote_gateway_routes VALUES ('remote-test-host', 'claude', 1, 'a')",
+                [],
+            )
+            .unwrap();
+        }
+        enter(&state, &AppType::Claude, false).await.unwrap();
+        exit(&state, &AppType::Claude).await.unwrap();
+        assert!(state.proxy_service.is_running().await);
+        {
+            let conn = state.db.conn.lock().unwrap();
+            conn.execute("UPDATE remote_gateway_routes SET enabled = 0", [])
+                .unwrap();
+        }
+        stop_server_if_unused(&state).await;
+        assert!(!state.proxy_service.is_running().await);
     }
 
     #[tokio::test]

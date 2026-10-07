@@ -1747,6 +1747,17 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Remote clients retain the model last pushed over SSH. Refresh it when
+        // routing changes, while preserving a model explicitly resolved by Stack.
+        if matches!(app_type, AppType::Codex)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && !self.keeps_resolved_model()
+            && super::remote_gateway::current_origin().is_some()
+        {
+            super::providers::apply_codex_upstream_model(provider, &mut request_body);
+        }
+
         // Codex 远程压缩，以及同一线程里别家回合留下的状态（见 `codex_compaction`）。
         // Chat / Anthropic 转换在转换器里处理；这里管原样转发的两种上游：官方清掉
         // CC Switch 产出、官方一定会拒的条目，原生 Responses 第三方把压缩触发和

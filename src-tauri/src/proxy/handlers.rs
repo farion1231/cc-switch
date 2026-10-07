@@ -189,6 +189,22 @@ fn resolve_stack_target(
     if matches!(stack::decode(app_type, model), Decoded::Plain) {
         return Ok(None);
     }
+    if let Some(origin) = super::remote_gateway::current_origin() {
+        let pinned = super::remote_gateway::pinned_provider(&state.db, &origin, app_type.as_str())
+            .map_err(|error| {
+                Box::new(ProxyError::DatabaseError(error.to_string()).into_response())
+            })?;
+        if pinned.is_some() {
+            let message = "远端已固定供应商，不能使用本地聚合模型；请改为跟随本地或选择普通模型";
+            return Err(Box::new(
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(stack_miss_body(app_type, message)),
+                )
+                    .into_response(),
+            ));
+        }
+    }
     let model = model.to_string();
     let resolved = stack::resolve(
         &state.db,

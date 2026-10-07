@@ -592,6 +592,14 @@ impl ProxyService {
         self.server.read().await.is_some()
     }
 
+    pub(crate) async fn running_router(&self) -> Option<axum::Router> {
+        self.server
+            .read()
+            .await
+            .as_ref()
+            .map(|server| server.router())
+    }
+
     /// 同 [`Self::is_running`]，但不等锁：托盘菜单这种同步路径用。正在启动 / 停止、拿不到锁时
     /// 为 `None`（按「不知道」处理，不报问题）。
     pub fn running_now(&self) -> Option<bool> {

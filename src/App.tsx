@@ -10,7 +10,13 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, KeyRound, MoreHorizontal, Plus } from "lucide-react";
+import {
+  ExternalLink,
+  KeyRound,
+  MoreHorizontal,
+  Plus,
+  Server,
+} from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
@@ -33,6 +39,9 @@ import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
+import { RemoteProviderPage } from "@/components/remote/RemoteProviderPage";
+import { RemoteGatewayIndicator } from "@/components/remote/RemoteGatewayIndicator";
+import type { SshConnectionTarget } from "@/lib/api/providers";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
@@ -154,6 +163,11 @@ function App() {
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
   const sharedFeatureApp = sharedFeatureAppOf(activeApp);
   const [currentView, setCurrentView] = useState<View>(readStoredView);
+  const [remoteFocus, setRemoteFocus] = useState<{
+    target: SshConnectionTarget;
+    nonce: number;
+  } | null>(null);
+  const hasRemoteSupport = appPageBelongsTo("remote", activeApp);
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection>("general");
   // 进设置前停留的页面：设置目录里的「← 返回」回到这里
@@ -1132,13 +1146,15 @@ function App() {
   );
 
   const appPageName =
-    currentView === "workspace"
-      ? t("appPage.workspace")
-      : currentView === "openclawConfig"
-        ? t("appPage.openclawConfig")
-        : currentView === "hermesMemory"
-          ? t("appPage.memory")
-          : t("appPage.providers");
+    currentView === "remote"
+      ? t("remote.title")
+      : currentView === "workspace"
+        ? t("appPage.workspace")
+        : currentView === "openclawConfig"
+          ? t("appPage.openclawConfig")
+          : currentView === "hermesMemory"
+            ? t("appPage.memory")
+            : t("appPage.providers");
 
   const renderAppPageHeader = () => (
     <AppPageHeader
@@ -1152,6 +1168,30 @@ function App() {
       }
       actions={
         <>
+          <RemoteGatewayIndicator
+            onManage={(host, app) => {
+              setActiveApp(app);
+              setRemoteFocus({ target: host.target, nonce: Date.now() });
+              setCurrentView("remote");
+            }}
+          />
+          {hasRemoteSupport && (
+            <Button
+              variant="quiet"
+              size="regular"
+              onClick={() =>
+                setCurrentView(
+                  currentView === "remote" ? "providers" : "remote",
+                )
+              }
+              title={t("remote.manage")}
+              aria-label={t("remote.manage")}
+              aria-pressed={currentView === "remote"}
+            >
+              <Server className="h-4 w-4" />
+              {t("remote.title")}
+            </Button>
+          )}
           {currentView === "providers" &&
             activeApp !== "mcode" &&
             (settingsData?.showProfileSwitcher ?? true) && (
@@ -1324,6 +1364,22 @@ function App() {
   const renderAppPage = () => {
     const body = (() => {
       switch (currentView) {
+        case "remote":
+          return (
+            <div
+              id="main-content"
+              className="min-h-0 flex-1 overflow-y-auto scroll-stable px-6 pb-10 pt-4"
+            >
+              <RemoteProviderPage
+                key={activeApp}
+                appId={activeApp}
+                providers={providers}
+                currentProviderId={currentProviderId}
+                isLoading={isLoading}
+                focusTarget={remoteFocus}
+              />
+            </div>
+          );
         case "workspace":
           return <WorkspaceFilesPanel />;
         case "openclawConfig":
