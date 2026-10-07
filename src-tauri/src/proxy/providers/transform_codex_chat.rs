@@ -4793,7 +4793,9 @@ mod tests {
         assert_eq!(result["input_tokens"], 10);
         assert_eq!(result["output_tokens"], 5);
         assert_eq!(result["input_tokens_details"]["cached_tokens"], 0);
-        assert!(result["input_tokens_details"].get("cache_write_tokens").is_none());
+        assert!(result["input_tokens_details"]
+            .get("cache_write_tokens")
+            .is_none());
     }
 
     #[test]

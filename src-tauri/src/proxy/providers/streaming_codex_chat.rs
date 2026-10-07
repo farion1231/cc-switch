@@ -956,7 +956,11 @@ mod tests {
         let events = parse_sse_events(&output);
         let seqs: Vec<u64> = events
             .iter()
-            .map(|e| e["sequence_number"].as_u64().expect("event missing sequence_number"))
+            .map(|e| {
+                e["sequence_number"]
+                    .as_u64()
+                    .expect("event missing sequence_number")
+            })
             .collect();
         let expected: Vec<u64> = (0..events.len() as u64).collect();
         assert_eq!(seqs, expected);

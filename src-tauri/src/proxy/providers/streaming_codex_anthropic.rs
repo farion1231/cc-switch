@@ -855,8 +855,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted =
-            create_responses_sse_stream_from_anthropic_with_context(upstream, context);
+        let converted = create_responses_sse_stream_from_anthropic_with_context(upstream, context);
         let converted = sse::stamp_sequence_numbers(converted);
         converted
             .collect::<Vec<_>>()
