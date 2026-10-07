@@ -14,6 +14,7 @@
 //! `output_item_added` / `output_item_done` helpers.
 
 use bytes::Bytes;
+use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 
 /// Serialize one Responses SSE event with the standard `event:`/`data:` framing.
@@ -24,11 +25,48 @@ pub(crate) fn sse_event(event: &str, data: Value) -> Bytes {
     ))
 }
 
+/// 用单调递增的 `sequence_number` 给转换器产出的每个 SSE 事件盖章的通用流适配器。
+///
+/// 盖在 handlers 的 Responses SSE 出口上（Chat / Anthropic 两条转换路径共用），
+/// 以后新增转换路径同样套一层即可，不会漏盖序号。
+pub(crate) fn stamp_sequence_numbers<S, E>(
+    stream: S,
+) -> impl Stream<Item = Result<Bytes, E>> + Send + 'static
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: Send + 'static,
+{
+    async_stream::stream! {
+        let mut stream = std::pin::pin!(stream);
+        let mut sequence_number: u64 = 0;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(event) => {
+                    let stamped = inject_sequence_number(&event, sequence_number);
+                    sequence_number += 1;
+                    yield Ok(stamped);
+                }
+                Err(error) => yield Err(error),
+            }
+        }
+    }
+}
+
+/// Grok Build / Codex 的 Responses 错误解析器要求 error 对象带 `code` 字段，
+/// 缺失会报 "missing field `code`"。上游错误只带 type 时按此映射补全。
+pub(crate) fn error_code_for_type(error_type: Option<&str>) -> String {
+    match error_type {
+        Some("rate_limit_error") => "rate_limit_exceeded".to_string(),
+        Some(other) => other.to_string(),
+        None => "proxy_error".to_string(),
+    }
+}
+
 /// 给已序列化的 SSE 事件注入顶层 `sequence_number`。
 ///
 /// Grok Build / Codex 的新版 Responses 解析器要求每个事件都带一个单调递增的
-/// `sequence_number`（与 `type` 平级）。事件由上层状态机用计数器统一盖章，
-/// 解析失败（如 `[DONE]`）时原样返回。
+/// `sequence_number`（与 `type` 平级）。序号由 [`stamp_sequence_numbers`]
+/// 统一分配，解析失败（如 `[DONE]`）时原样返回。
 pub(crate) fn inject_sequence_number(event: &Bytes, sequence_number: u64) -> Bytes {
     let text = String::from_utf8_lossy(event);
     let mut lines = text.splitn(3, '\n');

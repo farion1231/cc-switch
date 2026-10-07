@@ -56,8 +56,6 @@ struct ChatToResponsesState {
     response_id: String,
     model: String,
     created_at: u64,
-    /// Responses SSE 顶层事件的递增序号（Grok Build / Codex 严格解析要求）。
-    sequence_number: u64,
     next_output_index: u32,
     text: TextItemState,
     reasoning: ReasoningItemState,
@@ -80,7 +78,6 @@ impl Default for ChatToResponsesState {
             response_id: "resp_ccswitch".to_string(),
             model: String::new(),
             created_at: 0,
-            sequence_number: 0,
             next_output_index: 0,
             text: TextItemState::default(),
             reasoning: ReasoningItemState::default(),
@@ -102,13 +99,6 @@ impl ChatToResponsesState {
             tool_context,
             ..Self::default()
         }
-    }
-
-    /// 为单个 SSE 事件注入顶层 sequence_number 并递增计数器。
-    fn stamp(&mut self, event: Bytes) -> Bytes {
-        let stamped = sse::inject_sequence_number(&event, self.sequence_number);
-        self.sequence_number += 1;
-        stamped
     }
 
     fn handle_chat_chunk(&mut self, chunk: &Value) -> Vec<Bytes> {
@@ -728,11 +718,7 @@ impl ChatToResponsesState {
         let error_type = error_type.filter(|value| !value.is_empty());
         // Grok Build / Codex 的 Responses 错误解析器要求 error 对象必须带
         // code 字段，缺失会报 "missing field `code`"。
-        let code = match error_type.as_deref() {
-            Some("rate_limit_error") => "rate_limit_exceeded".to_string(),
-            Some(other) => other.to_string(),
-            None => "proxy_error".to_string(),
-        };
+        let code = sse::error_code_for_type(error_type.as_deref());
         let mut error = json!({ "message": message, "code": code });
         if let Some(error_type) = error_type {
             error["type"] = json!(error_type);
@@ -799,7 +785,7 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                         let data = data_parts.join("\n");
                         if data.trim() == "[DONE]" {
                             for event in state.finalize() {
-                                yield Ok(state.stamp(event));
+                                yield Ok(event);
                             }
                             continue;
                         }
@@ -811,14 +797,13 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
 
                         if event_name.as_deref() == Some("error") || chunk.get("error").is_some() {
                             let (message, error_type) = extract_chat_sse_error(&chunk);
-                            let event = state.failed_event(message, error_type);
-                            yield Ok(state.stamp(event));
+                            yield Ok(state.failed_event(message, error_type));
                             stream_failed = true;
                             break;
                         }
 
                         for event in state.handle_chat_chunk(&chunk) {
-                            yield Ok(state.stamp(event));
+                            yield Ok(event);
                         }
                     }
 
@@ -827,11 +812,10 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                     }
                 }
                 Err(e) => {
-                    let event = state.failed_event(
+                    yield Ok(state.failed_event(
                         format!("Stream error: {e}"),
                         Some("stream_error".to_string()),
-                    );
-                    yield Ok(state.stamp(event));
+                    ));
                     stream_failed = true;
                     break;
                 }
@@ -841,19 +825,18 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
         if !stream_failed {
             if state.completed || state.finish_reason.is_some() {
                 for event in state.finalize() {
-                    yield Ok(state.stamp(event));
+                    yield Ok(event);
                 }
             } else if state.has_substantive_output() {
                 state.finish_reason = Some("length".to_string());
                 for event in state.finalize() {
-                    yield Ok(state.stamp(event));
+                    yield Ok(event);
                 }
             } else {
-                let event = state.failed_event(
+                yield Ok(state.failed_event(
                     "Upstream Chat Completions stream ended before sending finish_reason".to_string(),
                     Some("stream_truncated".to_string()),
-                );
-                yield Ok(state.stamp(event));
+                ));
             }
         }
     }
@@ -897,6 +880,8 @@ mod tests {
             .collect();
         let upstream = stream::iter(chunks);
         let converted = create_responses_sse_stream_from_chat_with_context(upstream, tool_context);
+        // 与 handlers 的 Chat 出口一致：转换器之上再套序号盖章，测试路径贴近生产。
+        let converted = sse::stamp_sequence_numbers(converted);
         let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
         String::from_utf8(bytes.concat()).unwrap()
     }
@@ -1643,7 +1628,7 @@ mod tests {
         .await;
         assert!(empty.contains("event: response.failed"));
         assert!(empty.contains("compaction_summary_empty"));
-        assert!(!output.contains("event: response.completed"));
+        assert!(!empty.contains("event: response.completed"));
     }
 
     #[tokio::test]
