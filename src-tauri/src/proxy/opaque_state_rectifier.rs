@@ -6,6 +6,9 @@
 //! 上游签发的密文看不出来源，只能等上游明确说"验不了"之后，去掉请求里的推理条目和加密
 //! 片段，对同一家重发一次（先例：thinking 签名整流器）。
 //!
+//! 推理条目也可能不带密文、直接把思考原文放在 `content` 里（MiniMax），OpenAI 系上游同样不收，
+//! 按同一套规则去掉推理条目重发。
+//!
 //! 主要认上游自证的错误（错误码或固定措辞，取自 opencodex 的实测）。唯一的例外是 Codex 的
 //! 原生 Responses 第三方：它们对不认识的压缩条目怎么报错没法枚举，请求里带着看不出来源的
 //! 压缩条目时，400 / 422 也重试一次，只换掉压缩条目。
@@ -13,7 +16,7 @@
 use super::error::ProxyError;
 use super::providers::codex_compaction::{
     compaction_item_replay_text, is_compaction_item, is_unrecognized_compaction_item,
-    user_message_item,
+    strip_mismatched_item_id, user_message_item,
 };
 use super::types::RectifierConfig;
 use serde_json::{json, Value};
@@ -28,7 +31,8 @@ const ENCRYPTED_PART_PLACEHOLDER: &str = "[encrypted content omitted]";
 /// 上游拒绝了请求里的密文，重试前要去掉哪些状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpaqueStateRejection {
-    /// 去掉推理条目，函数输出、agent_message 里的加密片段换成占位文字。
+    /// 清掉别家回合留下的状态：去掉推理条目，函数输出、agent_message 里的加密片段换成
+    /// 占位文字，前缀和条目类型对不上的 id 去掉。
     pub reasoning: bool,
     /// 压缩条目换成文字（没有载荷的标记直接去掉）。压缩条目是整段早期对话的唯一载体：
     /// - 官方：只有错误明确点名压缩时才换。第三方回合的压缩由 CC Switch 包装、发送前已经
@@ -48,6 +52,8 @@ pub struct OpaqueStateRectifyResult {
     pub replaced_compaction_items: usize,
     /// 换成占位文字的加密片段数量
     pub replaced_encrypted_parts: usize,
+    /// 去掉的别家格式条目 id 数量
+    pub removed_foreign_ids: usize,
 }
 
 /// 上游是不是因为验不了请求里的密文而拒绝。受整流器总开关管辖。
@@ -74,6 +80,10 @@ pub fn detect_opaque_state_rejection(
                 is_encrypted_function_output_rejection(body, &messages)
                     || payload.as_ref().is_some_and(is_coded_rejection)
                     || messages.iter().any(|message| is_rejection_message(message))
+                    || (messages
+                        .iter()
+                        .any(|message| is_content_array_rejection(message))
+                        && carries_plaintext_reasoning(request))
             }
             // 函数输出里的加密片段解不开时 ChatGPT 后端回 502，只认这一种。
             502 => is_encrypted_function_output_rejection(body, &messages),
@@ -147,15 +157,43 @@ fn is_rejection_message(message: &str) -> bool {
         // 推理密文由别的身份签发："reasoning `encrypted_content` was not issued to this caller"
         || (message.contains("was not issued to this caller")
             && (message.contains("encrypted_content") || message.contains("reasoning")))
+        // 别家条目 id 的格式不对："Invalid 'input[19].id': '…_msg_35'. Expected an ID that begins with 'msg'."
+        || (message.contains("Invalid 'input[") && message.contains("Expected an ID that begins with"))
         // store:false 下按 id 回查推理条目：
         // "Item with id 'rs_…' not found. Items are not persisted when `store` is set to false. ..."
         || (message.contains("not found") && message.contains("Items are not persisted when"))
+}
+
+/// OpenAI 不收带内容的推理条目："Invalid 'input[N].content': array too long. Expected an array
+/// with maximum length 0, ..."（错误码 `array_above_max_length`）。
+fn is_content_array_rejection(message: &str) -> bool {
+    message.contains("Invalid 'input[")
+        && message.contains(".content': array too long")
+        && message.contains("maximum length 0")
+}
+
+/// 请求里有把思考原文放在 `content` 里的推理条目（MiniMax 原生 Responses 这样签发）。
+fn carries_plaintext_reasoning(request: &Value) -> bool {
+    request
+        .get("input")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("reasoning")
+                    && item
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .is_some_and(|content| !content.is_empty())
+            })
+        })
 }
 
 /// 去掉请求里上游可能验不了的状态（按 `rejection` 的两个开关）：
 /// - 推理条目整条去掉。它们只携带密文（或一个要回查的 id），被拒时分不清哪条是别家的；
 ///   去掉后同一段历史每次整流结果相同，重试之间的缓存前缀也稳定。
 /// - 函数输出、agent_message 里的加密片段换成占位文字。
+/// - 消息、函数调用的 id 不是 OpenAI 格式的（别家签发的）去掉，和推理条目同一个开关：两者都
+///   来自别家回合，被拒时一次处理掉，一次重试就够。
 /// - 压缩条目换成文字（CC Switch 的摘要解回正文，别家的换成一句说明），没有载荷的
 ///   标记直接去掉。
 ///
@@ -196,6 +234,10 @@ pub fn rectify_opaque_state(
             }
             _ => {}
         }
+        // 别家签发的 id（MiniMax 的 `<hex>_msg_N`、`<hex>_fc_N`）不合 OpenAI 的前缀校验
+        if rejection.reasoning && strip_mismatched_item_id(&mut item, &item_type) {
+            result.removed_foreign_ids += 1;
+        }
         rectified.push(item);
     }
     *items = rectified;
@@ -203,6 +245,7 @@ pub fn rectify_opaque_state(
     result.applied = result.removed_reasoning_items
         + result.replaced_compaction_items
         + result.replaced_encrypted_parts
+        + result.removed_foreign_ids
         > 0;
     result
 }
@@ -314,6 +357,78 @@ mod tests {
             body: Some(ENCRYPTED_FUNCTION_OUTPUT_REJECTION.to_string()),
         };
         assert!(detect(&function_output).is_some());
+    }
+
+    /// MiniMax 的推理条目把思考原文放在 `content` 里，OpenAI 系上游不收（实测：packycode 转
+    /// gpt-6-astra，2026-10-03）。只有请求里真带着这种条目才认，同一句话碰上别的 content 不算。
+    #[test]
+    fn detects_plaintext_reasoning_content_rejection() {
+        let rejection = upstream(
+            400,
+            json!({ "error": { "type": "packy_invalid_request_error", "code": "invalid_request_error", "param": "",
+                               "message": "[ArrayParam] [input[2].content] [array_above_max_length] Invalid 'input[2].content': array too long. Expected an array with maximum length 0, but got an array with length 1 instead. (request id: 01M40DR9R08MZWH7F7XEF2PWHY)" } }),
+        );
+        let plaintext = json!({ "input": [
+            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+            { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "ok" }] },
+            { "type": "reasoning", "id": "070fee_rs", "summary": [],
+              "content": [{ "type": "reasoning_text", "text": "thinking" }] }
+        ] });
+        assert_eq!(
+            detect_with(&rejection, &plaintext, OFFICIAL),
+            Some(REASONING_ONLY)
+        );
+        assert_eq!(
+            detect_with(&rejection, &plaintext, THIRD_PARTY),
+            Some(ALL_STATE)
+        );
+
+        let encrypted_only = json!({ "input": [
+            { "type": "reasoning", "id": "rs_1", "summary": [], "content": null, "encrypted_content": "gAAAA" },
+            { "type": "reasoning", "id": "rs_2", "summary": [], "content": [] }
+        ] });
+        assert_eq!(detect_with(&rejection, &encrypted_only, THIRD_PARTY), None);
+
+        let foreign_id = upstream(
+            400,
+            json!({ "error": { "code": "invalid_request_error",
+                               "message": "[ApiIdParam] [input[19].id] [invalid_id_prefix] Invalid 'input[19].id': '070ff2d8f785aadf67bc4cd4c344154b_msg_35'. Expected an ID that begins with 'msg'." } }),
+        );
+        assert_eq!(detect(&foreign_id), Some(REASONING_ONLY));
+    }
+
+    /// 一次重试要同时清掉 MiniMax 回合留下的两样东西：带原文的推理条目、非 OpenAI 格式的 id。
+    #[test]
+    fn rectify_clears_minimax_turns_in_one_pass() {
+        let mut body = json!({ "input": [
+            { "type": "message", "id": "msg_01a1", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+            { "type": "reasoning", "id": "070ff2_rs_1", "summary": [],
+              "content": [{ "type": "reasoning_text", "text": "thinking" }] },
+            { "type": "function_call", "id": "070ff2_fc_2", "call_id": "call_9", "name": "exec_command", "arguments": "{}" },
+            { "type": "function_call_output", "id": "fco_01a1", "call_id": "call_9", "output": "ok" },
+            { "type": "message", "id": "070ff2_msg_3", "role": "assistant", "content": [{ "type": "output_text", "text": "done" }] },
+            { "type": "function_call", "id": "fc_grok_0", "call_id": "call_1", "name": "exec_command", "arguments": "{}" }
+        ] });
+        let result = rectify_opaque_state(&mut body, REASONING_ONLY);
+        assert!(result.applied);
+        assert_eq!(result.removed_reasoning_items, 1);
+        assert_eq!(result.removed_foreign_ids, 2);
+
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 5);
+        assert_eq!(input[0]["id"], "msg_01a1");
+        assert!(input[1].get("id").is_none());
+        assert_eq!(input[1]["call_id"], "call_9");
+        assert_eq!(input[2]["id"], "fco_01a1");
+        assert!(input[3].get("id").is_none());
+        assert_eq!(input[4]["id"], "fc_grok_0");
+
+        // 只换压缩条目的重试不碰 id。
+        let mut body = json!({ "input": [
+            { "type": "message", "id": "070ff2_msg_3", "role": "assistant", "content": [] }
+        ] });
+        assert!(!rectify_opaque_state(&mut body, COMPACTION_ONLY).applied);
+        assert_eq!(body["input"][0]["id"], "070ff2_msg_3");
     }
 
     #[test]

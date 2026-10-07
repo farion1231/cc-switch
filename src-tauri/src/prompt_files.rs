@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::app_config::AppType;
 use crate::codex_config::get_codex_auth_path;
@@ -53,6 +53,19 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
     Ok(base_dir.join(filename))
 }
 
+/// 把用户主目录前缀换成 `~`，给界面显示用（复制路径仍用完整路径）。
+pub fn display_path(path: &Path) -> String {
+    display_path_with_home(path, &crate::config::get_home_dir())
+}
+
+fn display_path_with_home(path: &Path, home: &Path) -> String {
+    match path.strip_prefix(home) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
 fn get_base_dir_with_fallback(
     primary_path: PathBuf,
     fallback_dir: &str,
@@ -80,6 +93,26 @@ mod tests {
         assert!(validate_prompt_content(&AppType::Mcode, &"a".repeat(32769)).is_err());
         assert!(validate_prompt_content(&AppType::Mcode, &"中".repeat(10923)).is_err());
         assert!(validate_prompt_content(&AppType::OpenCode, &"中".repeat(10923)).is_ok());
+    }
+
+    #[test]
+    fn display_path_shortens_the_home_prefix_only() {
+        let home = Path::new("/Users/me");
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(
+            display_path_with_home(&home.join(".hermes").join("SOUL.md"), home),
+            format!("~{sep}.hermes{sep}SOUL.md")
+        );
+        assert_eq!(display_path_with_home(home, home), "~");
+        assert_eq!(
+            display_path_with_home(Path::new("/opt/hermes/SOUL.md"), home),
+            "/opt/hermes/SOUL.md"
+        );
+        // 只认整段目录前缀，不把 /Users/meow 当成 /Users/me 下面
+        assert_eq!(
+            display_path_with_home(Path::new("/Users/meow/SOUL.md"), home),
+            "/Users/meow/SOUL.md"
+        );
     }
 
     #[test]

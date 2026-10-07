@@ -1,9 +1,20 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Label } from "@/components/ui/label";
+import { HelpTip } from "@/components/ui/help-tip";
 import JsonEditor from "@/components/JsonEditor";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
+import { CLAUDE_AUTO_MODE_SERVER_ENV } from "@/utils/claudeEditorOverlay";
 import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
+
+/** 编辑框上方的快捷开关，顺序即显示顺序；文案在 `claudeConfig.<key>` 和 `claudeConfig.<key>Help`。 */
+const QUICK_TOGGLES = [
+  "hideAttribution",
+  "enableToolSearch",
+  "disableAutoUpgrade",
+  "disableArtifact",
+  "disableAutoModeServer",
+] as const;
 
 interface CommonConfigEditorProps {
   value: string;
@@ -81,34 +92,32 @@ export function CommonConfigEditor({
           config?.attribution?.commit === "" &&
           config?.attribution?.pr === "" &&
           config?.attribution?.sessionUrl === false,
-        teammates:
-          config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === "1" ||
-          config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 1,
         enableToolSearch:
           config?.env?.ENABLE_TOOL_SEARCH === "true" ||
           config?.env?.ENABLE_TOOL_SEARCH === "1",
-        effortMax: config?.env?.CLAUDE_CODE_EFFORT_LEVEL === "max",
         disableAutoUpgrade:
           config?.env?.DISABLE_AUTOUPDATER === "1" ||
           config?.env?.DISABLE_AUTOUPDATER === 1,
         disableArtifact:
           config?.env?.CLAUDE_CODE_DISABLE_ARTIFACT === "1" ||
           config?.env?.CLAUDE_CODE_DISABLE_ARTIFACT === 1,
+        disableAutoModeServer:
+          config?.env?.[CLAUDE_AUTO_MODE_SERVER_ENV] === "0" ||
+          config?.env?.[CLAUDE_AUTO_MODE_SERVER_ENV] === 0,
       };
     } catch {
       return {
         hideAttribution: false,
-        teammates: false,
         enableToolSearch: false,
-        effortMax: false,
         disableAutoUpgrade: false,
         disableArtifact: false,
+        disableAutoModeServer: false,
       };
     }
   }, [localValue]);
 
   const handleToggle = useCallback(
-    (toggleKey: string, checked: boolean) => {
+    (toggleKey: (typeof QUICK_TOGGLES)[number], checked: boolean) => {
       try {
         const config = JSON.parse(localValue || "{}");
 
@@ -120,30 +129,12 @@ export function CommonConfigEditor({
               delete config.attribution;
             }
             break;
-          case "teammates":
-            if (!config.env) config.env = {};
-            if (checked) {
-              config.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
-            } else {
-              delete config.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
-              if (Object.keys(config.env).length === 0) delete config.env;
-            }
-            break;
           case "enableToolSearch":
             if (!config.env) config.env = {};
             if (checked) {
               config.env.ENABLE_TOOL_SEARCH = "true";
             } else {
               delete config.env.ENABLE_TOOL_SEARCH;
-              if (Object.keys(config.env).length === 0) delete config.env;
-            }
-            break;
-          case "effortMax":
-            if (!config.env) config.env = {};
-            if (checked) {
-              config.env.CLAUDE_CODE_EFFORT_LEVEL = "max";
-            } else {
-              delete config.env.CLAUDE_CODE_EFFORT_LEVEL;
               if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
@@ -165,6 +156,15 @@ export function CommonConfigEditor({
               config.env.CLAUDE_CODE_DISABLE_ARTIFACT = "1";
             } else {
               delete config.env.CLAUDE_CODE_DISABLE_ARTIFACT;
+              if (Object.keys(config.env).length === 0) delete config.env;
+            }
+            break;
+          case "disableAutoModeServer":
+            if (!config.env) config.env = {};
+            if (checked) {
+              config.env[CLAUDE_AUTO_MODE_SERVER_ENV] = "0";
+            } else {
+              delete config.env[CLAUDE_AUTO_MODE_SERVER_ENV];
               if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
@@ -207,69 +207,29 @@ export function CommonConfigEditor({
   return (
     <div className="space-y-2">
       <Label htmlFor="settingsConfig">{t("provider.configJson")}</Label>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-fg-2">
         {t("claudeConfig.keyFieldsHint", {
           defaultValue:
             "地址、Key、模型、上下文窗口和兼容开关随供应商切换；其余字段是 Claude Code 全局设置，保存后对所有供应商生效。",
         })}
       </p>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.hideAttribution}
-            onChange={(e) => handleToggle("hideAttribution", e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          <span>{t("claudeConfig.hideAttribution")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.teammates}
-            onChange={(e) => handleToggle("teammates", e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          <span>{t("claudeConfig.enableTeammates")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.enableToolSearch}
-            onChange={(e) => handleToggle("enableToolSearch", e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          <span>{t("claudeConfig.enableToolSearch")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.effortMax}
-            onChange={(e) => handleToggle("effortMax", e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          <span>{t("claudeConfig.effortMax")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.disableAutoUpgrade}
-            onChange={(e) =>
-              handleToggle("disableAutoUpgrade", e.target.checked)
-            }
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          <span>{t("claudeConfig.disableAutoUpgrade")}</span>
-        </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.disableArtifact}
-            onChange={(e) => handleToggle("disableArtifact", e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          <span>{t("claudeConfig.disableArtifact")}</span>
-        </label>
+        {QUICK_TOGGLES.map((key) => (
+          <span key={key} className="inline-flex items-center gap-1">
+            <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={toggleStates[key]}
+                onChange={(e) => handleToggle(key, e.target.checked)}
+                className="ui-checkbox"
+              />
+              <span>{t(`claudeConfig.${key}`)}</span>
+            </label>
+            <HelpTip title={t(`claudeConfig.${key}`)}>
+              {t(`claudeConfig.${key}Help`)}
+            </HelpTip>
+          </span>
+        ))}
       </div>
       <JsonEditor
         value={localValue}

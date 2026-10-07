@@ -2437,9 +2437,13 @@ pub(crate) fn plan_codex_stack_catalog(
                     member.provider_name
                 )),
             );
+            let window = obj
+                .get("context_window")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
             obj.insert(
                 "description".to_string(),
-                json!(crate::mode::stack::routed_description(member.provider_name)),
+                json!(crate::mode::stack::model_description(&model, window)),
             );
             // 第三方不支持 Responses Lite 协议。
             if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
@@ -5151,6 +5155,7 @@ wire_api = "responses"
         let stacked = &models[1];
         assert_eq!(stacked["slug"], "ccs-anth/claude-opus-5");
         assert_eq!(stacked["display_name"], "claude-opus-5（Anth）");
+        assert_eq!(stacked["description"], "claude-opus-5 · 400K");
         assert_eq!(stacked["shell_type"], "shell_command");
         assert!(stacked.get("apply_patch_tool_type").is_none());
         assert_eq!(stacked["context_window"], 400000);
@@ -5471,10 +5476,22 @@ model_catalog_json = "cc-switch-model-catalog.json"
         let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
 "#;
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
-        assert_eq!(
-            result, None,
-            "symlink escaping the config dir must be rejected after canonicalization"
-        );
+        let via_link = base_dir
+            .join("link")
+            .join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        if via_link.exists() {
+            assert_eq!(
+                result, None,
+                "symlink escaping the config dir must be rejected after canonicalization"
+            );
+        } else {
+            // 链接穿不过去（Windows 访问 \\wsl.localhost 时不跟随远程符号链接）：
+            // 解析会原样返回词法路径，但经它读不到任何东西，同样不会越界。
+            assert!(
+                result.as_deref().is_none_or(|path| fs::read(path).is_err()),
+                "an untraversable symlink must not lead to the outside file"
+            );
+        }
     }
 
     #[test]

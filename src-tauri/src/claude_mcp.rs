@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{atomic_write, get_claude_mcp_path};
+use crate::config::{atomic_write, get_claude_mcp_path, is_wsl_path};
 use crate::error::AppError;
 
 /// 需要在 Windows 上用 cmd /c 包装的命令
@@ -63,30 +63,6 @@ fn wrap_command_for_windows(obj: &mut Map<String, Value>) {
 #[cfg(not(windows))]
 fn wrap_command_for_windows(_obj: &mut Map<String, Value>) {
     // 非 Windows 平台不做任何处理
-}
-
-/// 检测路径是否为 WSL 网络路径（如 \\wsl$\Ubuntu\... 或 \\wsl.localhost\Ubuntu\...）
-/// WSL 环境运行的是 Linux，不需要 cmd /c 包装
-/// 注意：仅检测直接 UNC 路径，映射磁盘符（如 Z: -> \\wsl$\...）无法检测
-#[cfg(windows)]
-fn is_wsl_path(path: &Path) -> bool {
-    use std::path::{Component, Prefix};
-    if let Some(Component::Prefix(prefix)) = path.components().next() {
-        match prefix.kind() {
-            Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) => {
-                let s = server.to_string_lossy();
-                s.eq_ignore_ascii_case("wsl$") || s.eq_ignore_ascii_case("wsl.localhost")
-            }
-            _ => false,
-        }
-    } else {
-        false
-    }
-}
-
-#[cfg(not(windows))]
-fn is_wsl_path(_path: &Path) -> bool {
-    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
