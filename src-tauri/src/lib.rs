@@ -38,6 +38,8 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+#[cfg(target_os = "windows")]
+mod windows_fix;
 
 mod tray;
 mod usage_events;
@@ -516,6 +518,11 @@ pub fn run() {
 
             #[cfg(target_os = "windows")]
             set_windows_app_user_model_id(app.handle());
+
+            // 存量任务栏固定项可能还指向已被卸载的 Installer 图标缓存
+            // （上游 issue #5949）。异步做一次性自愈，不阻塞启动。
+            #[cfg(target_os = "windows")]
+            windows_fix::repair_stale_taskbar_pin_icons();
 
             // 注册 Updater 插件（桌面端）；放在 logger 之后，确保失败可诊断。
             #[cfg(desktop)]
