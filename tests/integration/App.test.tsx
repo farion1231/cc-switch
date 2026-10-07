@@ -439,10 +439,10 @@ describe("App integration with MSW", () => {
     renderApp(App);
 
     await waitFor(() =>
-      expect(screen.getByTestId("app-switcher")).toHaveTextContent("codex"),
+      expect(sidebarApp("Codex")).toHaveAttribute("aria-current", "page"),
     );
 
-    fireEvent.click(screen.getByText("switch-openclaw"));
+    fireEvent.click(sidebarApp("OpenClaw"));
 
     await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
     expect(localStorage.getItem("cc-switch-last-app")).toBe("openclaw");
@@ -468,7 +468,7 @@ describe("App integration with MSW", () => {
     renderApp(App);
 
     await waitFor(() =>
-      expect(screen.getByTestId("app-switcher")).toHaveTextContent("codex"),
+      expect(sidebarApp("Codex")).toHaveAttribute("aria-current", "page"),
     );
     await delay(100);
     expect(getSettings().lastActiveApp).toBe("codex");
@@ -476,6 +476,7 @@ describe("App integration with MSW", () => {
   });
 
   it("keeps a user selection made before settings finish loading", async () => {
+    setSettings({ lastActiveApp: "codex" });
     const staleSettings = getSettings();
     server.use(
       http.post("http://tauri.local/get_settings", async () => {
@@ -486,14 +487,53 @@ describe("App integration with MSW", () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    fireEvent.click(await screen.findByText("switch-openclaw"));
+    fireEvent.click(sidebarApp("OpenClaw"));
 
     await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
     await delay(100);
-    expect(screen.getByTestId("app-switcher")).toHaveTextContent("openclaw");
+    expect(sidebarApp("OpenClaw")).toHaveAttribute("aria-current", "page");
     expect(getSettings().lastActiveApp).toBe("openclaw");
     expect(localStorage.getItem("cc-switch-last-app")).toBe("openclaw");
   });
+
+  it.each([
+    ["edit", "edit-provider-dialog"],
+    ["delete", "confirm-dialog"],
+  ])(
+    "keeps the app context of an early %s operation",
+    async (action, dialog) => {
+      setSettings({ lastActiveApp: "codex" });
+      const staleSettings = getSettings();
+      let releaseSettings!: () => void;
+      const settingsGate = new Promise<void>((resolve) => {
+        releaseSettings = resolve;
+      });
+      server.use(
+        http.post("http://tauri.local/get_settings", async () => {
+          await settingsGate;
+          return HttpResponse.json(staleSettings);
+        }),
+      );
+      const { default: App } = await import("@/App");
+      renderApp(App);
+      try {
+        await waitFor(() =>
+          expect(screen.getByTestId("provider-list").textContent).toContain(
+            "claude-1",
+          ),
+        );
+        fireEvent.click(
+          screen.getByRole("button", { name: action, hidden: true }),
+        );
+        expect(screen.getByTestId(dialog)).toBeInTheDocument();
+      } finally {
+        releaseSettings();
+      }
+      await waitFor(() => expect(getSettings().lastActiveApp).toBe("claude"));
+      expect(sidebarApp("Claude Code")).toHaveAttribute("aria-current", "page");
+      expect(screen.getByTestId(dialog)).toBeInTheDocument();
+    },
+  );
 
   it("falls back and persists when the last active app is hidden", async () => {
     setSettings({
@@ -515,7 +555,7 @@ describe("App integration with MSW", () => {
     renderApp(App);
 
     await waitFor(() => expect(getSettings().lastActiveApp).toBe("claude"));
-    expect(screen.getByTestId("app-switcher")).toHaveTextContent("claude");
+    expect(sidebarApp("Claude Code")).toHaveAttribute("aria-current", "page");
   });
 
   it("serializes rapid switches so the latest selection wins", async () => {
@@ -534,32 +574,81 @@ describe("App integration with MSW", () => {
     );
     const { default: App } = await import("@/App");
     renderApp(App);
-    await screen.findByTestId("app-switcher");
+    await waitFor(() =>
+      expect(sidebarApp("Claude Code")).toHaveAttribute("aria-current", "page"),
+    );
 
-    fireEvent.click(screen.getByText("switch-codex"));
-    fireEvent.click(screen.getByText("switch-openclaw"));
+    fireEvent.click(sidebarApp("Codex"));
+    fireEvent.click(sidebarApp("OpenClaw"));
 
     await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
     await delay(100);
     expect(getSettings().lastActiveApp).toBe("openclaw");
   });
 
-  it("keeps a selection whose backend write failed and retries it on restart", async () => {
+  it("restores a selection while its backend write is still pending", async () => {
     setSettings({ lastActiveApp: "claude" });
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
     server.use(
-      http.post("http://tauri.local/set_last_active_app", () =>
-        HttpResponse.json(
-          { error: "settings file is locked" },
-          { status: 500 },
-        ),
+      http.post(
+        "http://tauri.local/set_last_active_app",
+        async ({ request }) => {
+          const { app } = (await request.json()) as { app: "codex" };
+          await writeGate;
+          setSettings({ lastActiveApp: app });
+          return HttpResponse.json(true);
+        },
       ),
     );
     const { default: App } = await import("@/App");
     const firstLaunch = renderApp(App);
-    await screen.findByTestId("app-switcher");
+    await waitFor(() =>
+      expect(sidebarApp("Claude Code")).toHaveAttribute("aria-current", "page"),
+    );
+    fireEvent.click(sidebarApp("Codex"));
+    try {
+      expect(localStorage.getItem("cc-switch-last-app-pending")).toBe("codex");
+      firstLaunch.unmount();
+      renderApp(App);
+      await waitFor(() =>
+        expect(sidebarApp("Codex")).toHaveAttribute("aria-current", "page"),
+      );
+      await delay(100);
+      expect(getSettings().lastActiveApp).toBe("claude");
+      expect(sidebarApp("Codex")).toHaveAttribute("aria-current", "page");
+    } finally {
+      releaseWrite();
+    }
+    await waitFor(() =>
+      expect(localStorage.getItem("cc-switch-last-app-pending")).toBeNull(),
+    );
+    expect(getSettings().lastActiveApp).toBe("codex");
+  });
 
-    fireEvent.click(screen.getByText("switch-openclaw"));
+  it("keeps a selection whose backend write failed and retries it on restart", async () => {
+    setSettings({ lastActiveApp: "claude" });
+    let failedWrites = 0;
+    server.use(
+      http.post("http://tauri.local/set_last_active_app", () => {
+        failedWrites += 1;
+        return HttpResponse.json(
+          { error: "settings file is locked" },
+          { status: 500 },
+        );
+      }),
+    );
+    const { default: App } = await import("@/App");
+    const firstLaunch = renderApp(App);
+    await waitFor(() =>
+      expect(sidebarApp("Claude Code")).toHaveAttribute("aria-current", "page"),
+    );
 
+    fireEvent.click(sidebarApp("OpenClaw"));
+
+    await waitFor(() => expect(failedWrites).toBe(1));
     await waitFor(() =>
       expect(localStorage.getItem("cc-switch-last-app-pending")).toBe(
         "openclaw",
@@ -573,7 +662,7 @@ describe("App integration with MSW", () => {
     renderApp(App);
 
     await waitFor(() =>
-      expect(screen.getByTestId("app-switcher")).toHaveTextContent("openclaw"),
+      expect(sidebarApp("OpenClaw")).toHaveAttribute("aria-current", "page"),
     );
     await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
     await waitFor(() =>

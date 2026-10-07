@@ -140,8 +140,7 @@ interface SyncStatusUpdatedPayload {
 type OpenClawConfigTab = "env" | "tools" | "agents";
 
 const STORAGE_KEY = APP_STORAGE_KEY;
-// 后端写入失败时在此记下待同步的选择。settings 里的值此时已知是旧的，
-// 下次启动必须以本地值为准，否则一次写入失败就会永久丢掉用户的选择。
+// 后端写入完成前记下待同步的选择，确保退出或写入失败后仍能恢复它。
 const PENDING_STORAGE_KEY = "cc-switch-last-app-pending";
 
 const readStoredApp = (key: string): AppId | null => {
@@ -169,18 +168,19 @@ const setPendingApp = (app: AppId | null) => {
 };
 
 let activeAppPersistence: Promise<unknown> = Promise.resolve();
-let lastRequestedActiveApp: AppId | null = null;
+let activeAppPersistenceRequest = 0;
 
 const persistLastActiveApp = (app: AppId) => {
-  lastRequestedActiveApp = app;
+  const request = ++activeAppPersistenceRequest;
+  setPendingApp(app);
   activeAppPersistence = activeAppPersistence
     .then(() => settingsApi.setLastActiveApp(app))
     .then(() => {
       // 只有在没有更晚的选择时才清标记，避免旧请求清掉新请求留下的待同步值。
-      if (lastRequestedActiveApp === app) setPendingApp(null);
+      if (activeAppPersistenceRequest === request) setPendingApp(null);
     })
     .catch((error) => {
-      if (lastRequestedActiveApp === app) setPendingApp(app);
+      if (activeAppPersistenceRequest === request) setPendingApp(app);
       console.warn("Failed to persist active app in settings", error);
     });
 };
@@ -206,6 +206,15 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
+  const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    provider: Provider;
+    action: "remove" | "delete";
+  } | null>(null);
+  const hasProviderOperation = Boolean(
+    isAddOpen || editingProvider || usageProvider || confirmAction,
+  );
   // 供应商页顶部正在看的那格（直连 / 路由 / 聚合），由 SwitchModePanel 报上来。打开新增、
   // 编辑时记下当时那格，表单按它选布局：在聚合那格打开就是聚合的简化表单。
   const [providerModeView, setProviderModeView] = useState<{
@@ -275,7 +284,9 @@ function App() {
     if (!settingsData || restoredPersistedApp.current) return;
     restoredPersistedApp.current = true;
 
-    if (userSelectedApp.current) {
+    // 设置加载前已打开的表单/确认框属于当前应用，不可被迟到的恢复跨应用重定向。
+    if (userSelectedApp.current || hasProviderOperation) {
+      if (!userSelectedApp.current) handleAppSwitch(activeApp);
       queryClient.setQueryData<AppSettings>(["settings"], (current) =>
         current ? { ...current, lastActiveApp: activeApp } : current,
       );
@@ -303,6 +314,8 @@ function App() {
   }, [
     activeApp,
     firstVisibleApp,
+    handleAppSwitch,
+    hasProviderOperation,
     queryClient,
     setActiveAppLocally,
     settingsData,
@@ -310,7 +323,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!hasRestoredActiveApp) return;
+    if (!hasRestoredActiveApp || hasProviderOperation) return;
     if (!visibleApps[activeApp]) {
       handleAppSwitch(firstVisibleApp);
     }
@@ -319,6 +332,7 @@ function App() {
     activeApp,
     firstVisibleApp,
     handleAppSwitch,
+    hasProviderOperation,
     hasRestoredActiveApp,
   ]);
 
@@ -365,12 +379,6 @@ function App() {
     }
   }, [activeApp, currentView]);
 
-  const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
-  const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{
-    provider: Provider;
-    action: "remove" | "delete";
-  } | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
 
