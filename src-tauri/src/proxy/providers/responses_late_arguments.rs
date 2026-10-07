@@ -839,13 +839,15 @@ mod tests {
 
     /// 第三条铁律真正测得动的样子：一个字段都没改就**不许**重新序列化。上面几条字节断言用的是 `sse()`
     /// 夹具，它产出的本来就是紧凑 JSON，即便实现无条件重序列化也照样绿；这里手写带空格的原文，
-    /// 一旦走了重序列化空格就被吃掉。多写一行 `id:` 同理——出口只重建 `event` 与 `data`。
+    /// 一旦走了重序列化空格就被吃掉。`id:` 行是第二个证人：出口只重建 `event` 与 `data`，
+    /// 重序列化会把它整个丢掉。
     #[test]
     fn does_not_reserialize_a_block_it_did_not_change() {
         let blocks = [
             r#"event: response.output_item.added
 data: {"type": "response.output_item.added", "item": {"type": "function_call", "id": "x_fc_0", "name": "shell", "call_id": "call_9", "arguments": "{}"}}"#,
-            r#"event: response.output_item.done
+            r#"id: 3
+event: response.output_item.done
 data: {"type": "response.output_item.done", "item": {"type": "function_call", "id": "x_fc_0", "name": "shell", "call_id": "call_9", "arguments": "{}"}}"#,
             r#"event: response.output_text.delta
 data: {"type": "response.output_text.delta", "item_id": "m1", "delta": "hi"}"#,
