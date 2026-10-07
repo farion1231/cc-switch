@@ -71,11 +71,15 @@
     "configLabel": "Claude Code 配置 (JSON) *",
     "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",
     "hideAttribution": "隐藏 AI 署名",
-    "enableTeammates": "Teammates 模式",
+    "hideAttributionHelp": "Claude Code 生成的提交和 PR 不再带 Co-Authored-By 署名和会话链接。全局设置，对所有供应商生效。",
     "enableToolSearch": "启用 Tool Search",
-    "effortMax": "最大强度思考",
+    "enableToolSearchHelp": "MCP 工具多时按需加载工具定义，节省上下文。第三方地址默认关闭，上游支持 tool_reference 才能开。随供应商切换。",
     "disableAutoUpgrade": "禁用自动升级",
+    "disableAutoUpgradeHelp": "Claude Code 保持当前版本，不再自动更新，需要时手动运行 claude update。全局设置。",
     "disableArtifact": "禁用 Artifact 工具",
+    "disableArtifactHelp": "不把 Artifact 工具发给模型。部分第三方网关会因它的 schema 对每个请求报 400。随供应商切换。",
+    "disableAutoModeServer": "关闭 auto mode 服务端检查",
+    "disableAutoModeServerHelp": "网关不支持服务端检查，auto mode 每个会话会先停下提示一次「不符合条件」，回车后改用本机检查。勾选后直接用本机检查，不再提示。官方端点不要勾选。",
     "keyFieldsHint": "地址、Key、模型、上下文窗口和兼容开关随供应商切换；其余字段是 Claude Code 全局设置，保存后对所有供应商生效。",
     "inactiveFieldsHint": "这个供应商还保存着 {{count}} 个不随切换生效的字段。点击可加入上方的全局设置，保存后写入配置文件；供应商里保存的原值不会删除。",
     "addToGlobalSettings": "加入全局设置"
@@ -525,6 +529,80 @@
       "deleteConfirmTitle": "确认删除备份",
       "deleteConfirmMessage": "此备份将被永久删除，此操作无法撤消。"
     },
+    "backupStorage": {
+      "title": "其他备份",
+      "total": "合计 {{size}}",
+      "itemCount": "{{count}} 项",
+      "reveal": "在文件管理器中显示",
+      "delete": "删除",
+      "deleting": "删除中...",
+      "managedAbove": "在上方列表中管理",
+      "legacy": "旧版遗留",
+      "loadFailed": "读取备份占用失败",
+      "revealFailed": "打开文件夹失败",
+      "deleteConfirmTitle": "删除「{{name}}」？",
+      "deleteConfirmMessage": "将永久删除 {{path}} 中的 {{size}} 备份，此操作无法撤消。",
+      "deleteSuccess": "已删除，释放 {{size}}",
+      "deleteFailed": "删除失败",
+      "items": {
+        "database": {
+          "name": "数据库备份",
+          "hint": "自动备份与手动备份的数据库快照。"
+        },
+        "skills": {
+          "name": "Skill 卸载备份",
+          "hint": "卸载 Skill 前留的副本，可在 Skills 页恢复。删除后这些已卸载的 Skill 无法再恢复。"
+        },
+        "codexHistoryUnify": {
+          "name": "Codex 会话统一迁移备份",
+          "hint": "开启「统一 Codex 会话历史」并迁入既有会话时留的会话副本。关闭该开关时的「恢复备份」依赖它，删除后无法再把迁移过的官方会话还原回原分组。"
+        },
+        "codexHistoryUnifyRestore": {
+          "name": "Codex 会话统一还原备份",
+          "hint": "执行「恢复备份」前留的会话副本，CC Switch 不会再读取。"
+        },
+        "codexHistoryProviderMigration": {
+          "name": "Codex 会话分组迁移备份",
+          "hint": "第三方会话分组迁移前留的副本，CC Switch 不会再读取。"
+        },
+        "liveFirstWrite": {
+          "name": "配置文件首次写入备份",
+          "hint": "CC Switch 第一次改写各客户端配置文件前的原始文件。删除后无法再找回改写前的原文件，下次写入时会重新备份当时的文件。"
+        },
+        "hermes": {
+          "name": "Hermes 配置备份",
+          "hint": "保存 Hermes 配置前的副本，按「备份保留数量」自动裁剪。"
+        },
+        "openclaw": {
+          "name": "OpenClaw 配置备份",
+          "hint": "保存 OpenClaw 配置前的副本，按「备份保留数量」自动裁剪。"
+        },
+        "proxyLiveBackup": {
+          "name": "旧版路由接管备份",
+          "hint": "升级时从旧版路由接管备份转存出的配置副本，CC Switch 不会再读取。"
+        },
+        "envVars": {
+          "name": "环境变量清理备份",
+          "hint": "清理冲突环境变量前记录的原值。删除后无法再查到被清理变量的原值。"
+        },
+        "legacyConfigBackups": {
+          "name": "旧版 config.json 备份",
+          "hint": "旧版本留下的文件，当前版本不会再读取。"
+        },
+        "legacyConfigArchive": {
+          "name": "旧版 config.json 归档",
+          "hint": "迁移到数据库前的旧配置文件，当前版本不会再读取。"
+        },
+        "legacyDbUpgrade": {
+          "name": "旧版数据库升级备份",
+          "hint": "旧版本升级数据库时留的副本，当前版本不会再读取。"
+        },
+        "legacyToolSearch": {
+          "name": "旧版 Tool Search 补丁备份",
+          "hint": "已移除的 Tool Search 补丁功能留下的文件，当前版本不会再读取。"
+        }
+      }
+    },
     "webdavSync": {
       "title": "WebDAV 云同步",
       "description": "通过 WebDAV 在多设备间同步数据库和技能配置。",
@@ -827,6 +905,7 @@
     "officialWebsite": "官方网站",
     "github": "GitHub",
     "starPrompt": "如果 CC Switch 帮到了你，请在 GitHub 点个 Star，这对我们意义重大",
+    "starOnGithub": "去点 Star",
     "manualInstallCommands": "手动安装命令",
     "oneClickInstallHint": "安装或升级 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
     "localEnvCheck": "本地环境检查",
@@ -2034,6 +2113,11 @@
     "responseModel": "返回模型",
     "noData": "暂无数据",
     "unknownProvider": "未知供应商",
+    "sessionProvider": {
+      "short": "会话日志",
+      "label": "{{app}} · 会话日志",
+      "hint": "没开路由时从客户端的会话日志读取，分不出具体是哪家供应商"
+    },
     "stream": "流",
     "nonStream": "非流",
     "source": "来源",
@@ -4161,6 +4245,12 @@
       "times": "{{count}} 次",
       "inTime": "{{time}}后",
       "showAll": "查看 {{count}} 次重置各自的到期时间"
+    },
+    "credits": {
+      "label": "Credits",
+      "text": "Credits 约 {{usd}}",
+      "usd": "约 {{usd}}",
+      "detail": "Credits 余额 {{balance}} · 按 API 价折算约 {{usd}} · 额度用完后才扣"
     }
   },
   "appMatrix": {
@@ -4404,6 +4494,7 @@
       "showAll": "显示全部 Skill"
     },
     "selectAria": "选择 {{name}}",
+    "selectAllAria": "全选当前列表",
     "rowFail": "在 {{app}} 启用失败：{{error}}",
     "fixSync": "改同步方式",
     "rowMoreAria": "{{name}} 的更多操作",

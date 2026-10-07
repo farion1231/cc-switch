@@ -5,6 +5,96 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.4] - 2026-10-07
+
+The first stable release of 4.0. On top of 4.0.3, macOS restarts after an in-app update or a config-directory change bring the new window to the front, new installs hide the project switcher until it is turned on in Settings, the request log's speed column stays visible in a narrow window, and the About card's star prompt gets its own dismissible strip. See the 4.0.0 to 4.0.3 sections below for everything else in 4.0.
+
+**Stats**: 5 commits | 12 files changed | +136 insertions | -39 deletions
+
+### Changed
+
+- **Project Switcher Hidden by Default**: The switcher showed on the providers page header and in the tray for every new install, though most users never create a project. `show_profile_switcher` now defaults to false (plain `#[serde(default)]`, `AppSettings::default()` sets false), and the frontend fallbacks in `App.tsx` and `GeneralSection` are `?? false` so the header does not flash the switcher before settings load. Existing users keep their behavior: the field has been persisted to `settings.json` since v3.17.0.
+- **Star Prompt on the About Card**: The prompt sat at the end of the link row and wrapped onto a line of its own like a stray caption. It now lives in a tinted strip at the bottom of the card with a slowly spinning star (stopped under `prefers-reduced-motion`) and a "Star on GitHub" button; the separate GitHub button is dropped while the strip shows. A close button dismisses it per device (`localStorage`), and the plain GitHub button returns to the link row.
+
+### Fixed
+
+- **macOS Window Stayed Behind Other Apps After a Restart**: `tauri::process::restart` spawns the binary directly, and since macOS 14 app activation is cooperative, so the new process's activation request was denied after an in-app update or a config-dir restart. `restart_process` now launches the bundle with `open -n` on macOS, letting the still-frontmost old instance hand activation over, and falls back to `tauri::process::restart` if that fails. `restart_app` uses `restart_process` instead of `app.restart()` so both paths behave the same. The update from an older version still restarts through that version's code, so the fix shows from the next update on.
+- **Request Log Speed Column Pushed Out of View**: At the minimum window width with the sidebar expanded, the table area is 644 px but the table had `min-w-[700px]`, so the speed column sat in a horizontal scroll whose scrollbar was usually off-screen. The minimum is now 620 px, matching the provider, model and pricing tables; the provider and model columns already truncate.
+
+### Internal
+
+- **Hermes Scan-Limit Test Batched in One Transaction**: `first_user_messages_is_scoped_to_listed_sessions` inserted 1002 rows in separate autocommits, which took 150-180 s on the Windows runner and intermittently hit nextest's 180 s timeout. The fixture inserts now run in a single transaction.
+
+### Upgrade notes
+
+- **No database schema change** (still 20).
+- **This is the first stable 4.0 release**, so 3.x installs update to it through the in-app updater. The full 4.0 notes for 3.x users are in `docs/release-notes/v4.0.4-*.md`.
+
+## [4.0.3] - 2026-10-06
+
+Fixes and smaller additions on top of 4.0.2. Claude Code mapped to GPT or Grok no longer reasons at full strength with thinking turned off, and `low` effort no longer returns 400 on pro models. Claude Code behind a gateway can skip the auto mode server check with a new quick toggle (on by default for new third-party providers), and every quick toggle now explains itself. Skills imported with several apps ticked actually reach those apps, OpenCode Go works from Claude Desktop, and mixed LF / CRLF SSE streams no longer lose tool calls. MCP and prompt editors open as full pages that ask before discarding unsaved changes; Backup & Restore shows every backup location under `~/.cc-switch` with its size; ChatGPT subscriptions show their Codex Credits balance; the usage tables count cache tokens and the model tab gains success rate and speed. OpenCode 2.0 native providers round-trip through the JSON editor, and OpenCode Zen and MoArk join the presets.
+
+**Stats**: 29 commits | 116 files changed | +6,232 insertions | -773 deletions
+
+### Added
+
+- **Auto Mode Server-Check Quick Toggle for Claude Code** (refs #7538): Claude Code 2.1.281 added a server-side auto mode classifier that only official endpoints can serve, so every session through a gateway stopped once on a "not eligible" notice before falling back to the local check.
+  - The Claude provider editor gets a "Disable auto mode server check" toggle that writes `CLAUDE_CODE_AUTO_MODE_SERVER=0`; its hint says official endpoints should leave it unchecked.
+  - New Claude providers get the key by default unless the preset is official or a cloud provider, or already sets it; the custom provider's default form goes through the same overlay.
+  - The key itself is now a Claude provider-exclusive env field (#7893 by SailingLoong, fixes #7891): written on switch-in and removed on switch-out only when the value is unchanged, so a value set globally by hand is left alone. Before this, the key stayed in the provider row and never reached `settings.json`. The frontend preset-scan mirror (`tests/config/claudeKeyFields.json`) is updated in lockstep.
+- **A Help Tip on Every Claude Quick Toggle**: Each toggle above the Claude config editor gets the standard "?" tip with one sentence on what it does, why you would want it, and whether it is global or follows the provider. The toggles render from one list (copy under `claudeConfig.<key>` / `claudeConfig.<key>Help`), and the help button sits outside the `<label>` so opening a tip never flips the checkbox.
+- **Full-Page MCP and Prompt Editors With an Unsaved-Changes Guard** (#7842 by Owlbay): MCP, prompt and Pi native prompt editors open as non-modal full pages inside the content area, so the sidebar and the window drag region stay usable; provider editors drop the 1008 px cap and follow the window width.
+  - Full-page editors register unsaved changes (input, change, and clicks on checkbox / switch / radio / option / `aria-pressed` controls; display-only toggles opt out with `data-unsaved-ignore`). Leaving through the sidebar, ⌘, or the tray asks before discarding; back, cancel and Escape still close directly, and saves keep navigation locked via mutation keys.
+  - Long page titles truncate, the whole page header is a drag region, and the unused editor delete buttons are removed.
+- **"Other Backups" in Backup & Restore**: Only database snapshots were listed, while other backups grew unseen under `~/.cc-switch`; Codex session-history migration copies alone can reach several GB.
+  - A collapsible section below the database list shows each location (skill uninstall backups, Codex unify / restore / provider-migration backups, config first-write backups, Hermes and OpenClaw config backups, environment-variable cleanup records, the migrated legacy routing takeover backups, and files left by older versions) with its path, size and item count, plus reveal-in-file-manager and delete-whole-category actions. Database snapshots are only summarized there and stay managed per file above.
+  - The confirmation explains what each delete loses, e.g. deleting the Codex unify migration backups removes "Restore backup" when turning that switch off.
+  - The frontend passes category ids only; paths are computed by the backend from each writer's own location, deletes never follow symlinks, and Codex migration and skill backups are deleted under their migration / skills-state locks so a running migration or uninstall cannot lose its directory mid-write.
+- **Codex Credits Balance for ChatGPT Subscriptions**: `wham/usage` already returns `credits` (`{has_credits, unlimited, balance}`); it is now parsed into `SubscriptionQuota.credits_balance` with no extra request, and a zero, unlimited, missing or malformed balance is left out without failing the quota.
+  - Credits are metered at API prices (the official rate card equals the API dollar price × 25 for every model), so one credit is $0.04, kept in a single constant.
+  - The expanded view and auth center show a "Credits" row (count, then "about $2500"). The provider card shows the balance in dollars only once a tier is used up, since credits are spent only then; the card's reset drop-down lists it below the expiries, and a single saved reset can drop down when there is a balance.
+- **OpenCode 2.0 Native Providers Round-Trip** (#7579 by DEAN-Cherry, co-authored by Jason; refs #7382): OpenCode 2.0 accepts native `providers` next to the legacy `provider` map; CC Switch only read `provider`, so native providers were invisible and writes landed in the map OpenCode ignored.
+  - Both containers are read. For the same ID a valid native declaration wins regardless of key order; an invalid one does not shadow a valid legacy entry and is left untouched, matching OpenCode's normalizer (schema as of v2.0.12). Unknown extension fields are kept.
+  - `meta.opencodeConfigFormat` records the source format, so `{}` and models-only built-in overrides stay native across database round-trips and re-enabling.
+  - Native providers are written under `providers` through the comment-preserving JSONC editor; legacy writes shadowed by a valid native declaration are rejected, and removing a provider deletes the ID from both containers. Native JSON is validated before saving, with the first invalid field named.
+  - Native providers are edited in the JSON editor, legacy ones keep the structured form; new native IDs need a package and at least one model. Common config extraction also skips native `settings.apiKey` / `baseURL`.
+- **Model Stats Show Success Rate and Speed**: The model tab gains the success-rate and speed columns the provider tab has (rollup rows count toward the success rate but not speed, as they have no per-request timing). Both tables render them from shared `statsColumns`; the cost header reads "Cost" and the average cost per request moves into the cost cell's hover title.
+- **Select All in the Installed Skills List** (#7887 by Allen Xu): The header checkbox acts on the rows the current search and filters show: checked when all are selected, indeterminate when some are; selections outside the current filter are left alone.
+- **Switch and Mode Logging** (#7882 by Allen Xu, fixes #7881): `[SWITCH]` lines record every provider switch (direct or proxy route, from → to) and how it ended (done, done with warnings, refused by the official-provider rule, failed); `[MODE]` lines record entering / attaching, exiting / detaching and route changes with whether the client config was rewritten. The mode dialogs log what the user picked. TOML parse diagnostics have their quoted source lines stripped before logging, since that line can hold a credential.
+- **New Provider Presets**: OpenCode Zen for Claude Code and Codex, merged with OpenCode Go into one "OpenCode" family row (closes #6016); MoArk for Claude Code, Codex, Pi, OpenCode and OpenClaw (#7580 by lcgash).
+
+### Fixed
+
+- **Claude Effort Mapped to GPT / Grok Ignored Thinking-Off and Model Floors**: Converting to OpenAI Chat / Responses forwarded the effort verbatim, and Claude Code keeps sending `output_config.effort: "high"` with thinking off (Workflow subagents send `thinking: disabled` plus an effort), so mapped upstreams still reasoned at full strength.
+  - The effort is clamped to `low` when thinking is absent or disabled (`none` / `minimal` are not accepted by every whitelisted model).
+  - It is then clamped to the tiers the target model accepts: `gpt-5-pro` takes only `high`, and `gpt-5.2/5.4/5.5-pro` take medium / high / xhigh, so `low` is raised to `medium`. An explicit `/effort low` or a small thinking budget sent to a pro model used to return 400.
+  - The 5.x Claude models (Fable, Mythos, Opus, Sonnet) keep adaptive thinking on when `thinking` is omitted, and Claude Code omits it for Fable and Opus 5.5 because they cannot turn it off. The forwarder now makes `thinking: adaptive` explicit from the client's model before the Chat / Responses transform, so that default survives mapping; Messages passthrough is unchanged. Opus 5 / 5.5 are added to `adaptive_thinking_is_default`.
+- **Imported Skills Never Reached the Other Ticked Apps**: Importing a skill found in one app while ticking others only stored the enabled flags, so the UI showed it enabled while those apps' skill directories stayed empty until a later re-sync. The import now projects the skill into each ticked app that lacks it, leaves existing copies alone, and does not record the flag for an app whose deploy failed; failures are listed in the import error next to skipped MiniMax Code entries.
+- **OpenCode Go Rejected Claude Desktop With `400 MissingSessionID`** (#7773 by Chris-Xie369, fixes #7289 and #7409): For upstreams on `opencode.ai`, the proxy now sends `x-opencode-session` when the client did not, using the most stable identity available: a native client session header, the client-provided session id, a fingerprint of the conversation (system prompt plus first user message, with `cache_control` stripped so it stays stable across turns), then the generated id. A request with no User-Agent gets `cc-switch/<version>`; a client's own UA and a configured custom UA are never replaced, and user header overrides still win.
+- **Mixed LF / CRLF SSE Delimiters Dropped Events** (#7853 by Harly, fixes #7852): When a data line and the blank line after it used different line endings, the block was either never split (`\n\r\n`) or kept a trailing CR (`\r\n\n`), so OpenAI Chat tool calls failed to reach Claude Code. `take_sse_block` now also matches `\r\n\n` and `\n\r\n` and takes the earliest delimiter, so no trailing CR leaks into the block; the test splits the input at every byte, including inside CRLF.
+- **Provider and Model Stats Left Out Cache Tokens**: The tables summed only fresh input + output while the cards and trend chart show real totals, so with a high cache hit rate the rows added up to a fraction of the headline. Both the detail and rollup branches of `get_provider_stats` / `get_model_stats` now use `real_total_tokens_sql`.
+- **Session-Log Usage Showed Hardcoded English Names**: Usage imported from session logs was labelled "Claude (Session)" and the like in every locale. It now reads "<app> · Session logs" in all four locales with a hover hint on why the provider cannot be told apart, and just "Session logs" in the request log and request detail, where the app is already shown. The backend placeholders stay unchanged because the provider filter matches on them.
+- **Usage-Stat Writes Blocked Tokio Workers** (#7822 by ggbdpq, fixes #7818): All three proxy usage-log paths took the database's blocking mutex on a tokio worker, so a slow disk stalled the runtime and queued concurrent requests. The writes (and the pricing-source read under the same mutex) now run in `spawn_blocking`; callers still await, so failure handling and write order are unchanged. Records are still dropped with a warning on write failure, a product decision left open in #7818.
+- **Usage Page Jitter in WebKit** (#7901 by Allen Xu): The scrollbar gutter is reserved with `overflow-y: scroll`, since WKWebView ignores `scrollbar-gutter: stable` with custom `::-webkit-scrollbar` styles, so switching tabs no longer changes the content width and re-picks the chart's x-axis ticks. `SegmentThumb` slides with `left` / `top` instead of `transform`, which stops the icons above it jittering by half a pixel.
+- **Hermes and OpenClaw MiMo Presets Defaulted to a Text-Only Model** (#7890 by Owlbay): MiMo-V2.5-Pro is text-only, so the pay-as-you-go and Token Plan presets now default to `mimo-v2.6-pro` like the Claude, Claude Desktop and Codex ones, with V2.6 listed first in Hermes.
+- **OpenCode Go "Get API Key" Links Showed a Referral Warning**: OpenCode ended its referral program on 2026-09-28 and any `/go` page opened with `?ref=` now warns about it, so the five OpenCode Go presets link to the plain `/go` page.
+
+### Changed
+
+- **Two Claude Quick Toggles Removed**: "Teammates" (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) now only gates tmux / iTerm2 split-pane teammates and structured shutdown / plan-approval messages, since every Claude Code session already has an implicit team; "Max effort" (`CLAUDE_CODE_EFFORT_LEVEL=max`) pinned every session to the most expensive effort and made `/effort` a no-op, while Claude Code keeps max session-only on purpose. Configs that already carry either variable keep it untouched; `/effort max` still works per session.
+
+### Internal
+
+- **Contributing Guide**: Documents which services get a built-in preset: model vendors, cloud platforms and large established aggregators (OpenRouter, SiliconFlow) serving models under their own brand; other relay and aggregator services are included only as project sponsors.
+- **Test Home Wins Over the Legacy HOME Fallback** (#7812 by minc_nice_100): On Windows, `get_app_config_dir()` fell back to `HOME/.cc-switch` when the default location had no database, so with `HOME` at the real user directory (e.g. Git Bash) tests wrote fixtures into the developer's real database. The fallback is skipped whenever `CC_SWITCH_TEST_HOME` is set, which is now read with `var_os`; a Windows-only regression test covers it.
+- **User Manual**: The Claude quick toggles table gains the auto mode server-check row and drops the two removed toggles.
+
+### Upgrade notes
+
+- **No database schema change** (still 20).
+- **Preset changes only affect newly added providers**: existing MiMo providers in Hermes / OpenClaw keep their model, existing OpenCode Go providers keep their old "Get API Key" link, and existing Claude providers do not gain `CLAUDE_CODE_AUTO_MODE_SERVER` — tick the new toggle to add it.
+- **4.0 preview builds do not update themselves to 4.0.3.** The in-app updater only follows stable releases; download 4.0.3 from its release page.
+
 ## [4.0.2] - 2026-10-06
 
 Fixes on top of the 4.0 previews: Claude Code on a ChatGPT account (through the Codex OAuth bridge) no longer breaks with a 400 on its next reply, a `model_catalog_json` left in Codex's `config.toml` no longer hides model mapping or aggregated models, and the time MCP preset starts again. In Claude Code's Aggregation mode, `/model` lists just the aggregated models instead of opening with four identical rows, and a running Claude Code picks up aggregation changes without a restart. MCP servers can now be synced to Pi 1.0, which moves the database schema to 20. After an update, a short dialog now lists what changed in the versions in between. The provider form follows the tab it was opened from, the full Codex form gets the fetched-model picker in its model mapping table, and provider icons with their own background fill the icon box.

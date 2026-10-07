@@ -23,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { Checkbox } from "@/components/ui/checkbox";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { SkillsIcon } from "@/components/BrandIcons";
@@ -1094,6 +1095,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
 
     const selectionActive = selected.size > 0;
+    const nVisibleSelected = filteredSkills.filter((skill) =>
+      selected.has(skill.id),
+    ).length;
+    const allVisibleSelected =
+      filteredSkills.length > 0 && nVisibleSelected === filteredSkills.length;
     return (
       <div
         data-testid="skills-matrix"
@@ -1102,7 +1108,31 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         <MatrixColumnHighlight>
           <div className="min-w-[600px]">
             <div className="sticky top-0 z-10 flex h-11 items-center border-b border-border bg-subtle px-2">
-              <div className="flex min-w-0 flex-1 items-center gap-0.5 ps-[22px]">
+              <span className="flex w-6 shrink-0 justify-center">
+                <Checkbox
+                  aria-label={t("skillsPage.selectAllAria")}
+                  disabled={filteredSkills.length === 0}
+                  checked={
+                    allVisibleSelected
+                      ? true
+                      : nVisibleSelected > 0
+                        ? "indeterminate"
+                        : false
+                  }
+                  onCheckedChange={() =>
+                    // 只管当前筛选出来的这些行；半选时点一下补齐
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      for (const skill of filteredSkills) {
+                        if (allVisibleSelected) next.delete(skill.id);
+                        else next.add(skill.id);
+                      }
+                      return next;
+                    })
+                  }
+                />
+              </span>
+              <div className="-ms-0.5 flex min-w-0 flex-1 items-center gap-0.5">
                 {selectionActive ? (
                   <>
                     <span className="shrink-0 whitespace-nowrap pe-1.5 ps-2.5 text-body font-medium tabular-nums">

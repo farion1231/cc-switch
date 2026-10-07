@@ -395,7 +395,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub enable_failover_toggle: bool,
     /// Whether to show the project profile switcher on the main page header
-    #[serde(default = "default_show_profile_switcher")]
+    #[serde(default)]
     pub show_profile_switcher: bool,
     /// Check installed CLI tools for new versions at startup (off by default:
     /// many users do not want to chase every release).
@@ -530,10 +530,6 @@ fn default_minimize_to_tray_on_close() -> bool {
     true
 }
 
-fn default_show_profile_switcher() -> bool {
-    true
-}
-
 fn default_session_auto_sync_enabled() -> bool {
     true
 }
@@ -560,7 +556,7 @@ impl Default for AppSettings {
             session_auto_sync_enabled: true,
             session_content_search_enabled: true,
             enable_failover_toggle: false,
-            show_profile_switcher: true,
+            show_profile_switcher: false,
             check_tool_updates_on_startup: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,

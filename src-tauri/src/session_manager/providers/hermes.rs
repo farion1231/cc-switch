@@ -1195,6 +1195,9 @@ mod tests {
         }
         let dir = tempdir().expect("tempdir");
         let (_path, conn) = hermes_db(dir.path());
+        // 一千多行逐条自动提交在 Windows runner 上每次都要刷盘，要跑 150s 以上，
+        // 会撞 nextest 的 180s 上限；包进一个事务只刷一次
+        conn.execute_batch("BEGIN;").unwrap();
         for i in 0..=SQLITE_SCAN_LIMIT {
             let id = format!("s{i}");
             conn.execute(
@@ -1204,6 +1207,7 @@ mod tests {
             .unwrap();
             insert_message(&conn, &id, "user", "hello", 1.0);
         }
+        conn.execute_batch("COMMIT;").unwrap();
 
         let found = first_user_messages(&conn);
         assert_eq!(found.len(), SQLITE_SCAN_LIMIT);

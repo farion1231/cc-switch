@@ -1074,8 +1074,10 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "OpenCode Go",
+    family: "opencode",
+    planKey: "coding",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     // Go 网关 /v1/messages 只认 x-api-key（Bearer 被静默忽略），
     // 必须用 ANTHROPIC_API_KEY，不能换回 ANTHROPIC_AUTH_TOKEN。
@@ -1094,6 +1096,31 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "third_party",
     endpointCandidates: ["https://opencode.ai/zen/go"],
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
+    // Zen 按量网关：Claude 模型原生走 /v1/messages，直连不需要路由。
+    // 和 Go 一样只认 x-api-key（Bearer 报 Missing API key）。
+    // 免费模型只能在 OpenCode 里用（外部调用 403 FreeTierError），默认不用。
+    name: "OpenCode Zen",
+    family: "opencode",
+    planKey: "payg",
+    websiteUrl: "https://opencode.ai/zen",
+    apiKeyUrl: "https://opencode.ai/auth",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://opencode.ai/zen"],
     icon: "opencode",
     iconColor: "#211E1E",
   },
@@ -2074,5 +2101,24 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.commandcode.ai/provider"],
     modelsUrl: "https://api.commandcode.ai/provider/v1/models",
     icon: "commandcode",
+  },
+  {
+    name: "模力方舟",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    settingsConfig: {
+      env: {
+        // 官方文档（CC Switch 快速配置）指定 Claude Code 走 Anthropic 原生入口
+        ANTHROPIC_BASE_URL: "https://moark.com/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash-0731",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://moark.com/anthropic"],
+    icon: "moark",
   },
 ];

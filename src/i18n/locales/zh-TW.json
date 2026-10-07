@@ -71,11 +71,15 @@
     "configLabel": "Claude Code 設定 (JSON) *",
     "fullSettingsHint": "完整的 Claude Code settings.json 設定內容",
     "hideAttribution": "隱藏 AI 署名",
-    "enableTeammates": "Teammates 模式",
+    "hideAttributionHelp": "Claude Code 產生的提交和 PR 不再帶 Co-Authored-By 署名和工作階段連結。全域設定，對所有供應商生效。",
     "enableToolSearch": "啟用 Tool Search",
-    "effortMax": "最大強度思考",
+    "enableToolSearchHelp": "MCP 工具多時按需載入工具定義，節省上下文。第三方位址預設關閉，上游支援 tool_reference 才能開。隨供應商切換。",
     "disableAutoUpgrade": "停用自動升級",
+    "disableAutoUpgradeHelp": "Claude Code 維持目前版本，不再自動更新，需要時手動執行 claude update。全域設定。",
     "disableArtifact": "停用 Artifact 工具",
+    "disableArtifactHelp": "不把 Artifact 工具送給模型。部分第三方閘道會因它的 schema 對每個請求回報 400。隨供應商切換。",
+    "disableAutoModeServer": "停用 auto mode 伺服器端檢查",
+    "disableAutoModeServerHelp": "閘道不支援伺服器端檢查，auto mode 每個工作階段會先停下提示一次「不符合條件」，按 Enter 後改用本機檢查。勾選後直接用本機檢查，不再提示。官方端點不要勾選。",
     "keyFieldsHint": "位址、Key、模型、上下文視窗和相容開關隨供應商切換；其餘欄位是 Claude Code 全域設定，儲存後對所有供應商生效。",
     "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的欄位。點擊可加入上方的全域設定，儲存後寫入設定檔；供應商裡保存的原值不會刪除。",
     "addToGlobalSettings": "加入全域設定"
@@ -525,6 +529,80 @@
       "deleteConfirmTitle": "確認刪除備份",
       "deleteConfirmMessage": "此備份將被永久刪除，此操作無法復原。"
     },
+    "backupStorage": {
+      "title": "其他備份",
+      "total": "合計 {{size}}",
+      "itemCount": "{{count}} 項",
+      "reveal": "在檔案管理員中顯示",
+      "delete": "刪除",
+      "deleting": "刪除中...",
+      "managedAbove": "在上方清單中管理",
+      "legacy": "舊版遺留",
+      "loadFailed": "讀取備份佔用失敗",
+      "revealFailed": "開啟資料夾失敗",
+      "deleteConfirmTitle": "刪除「{{name}}」？",
+      "deleteConfirmMessage": "將永久刪除 {{path}} 中的 {{size}} 備份，此操作無法復原。",
+      "deleteSuccess": "已刪除，釋放 {{size}}",
+      "deleteFailed": "刪除失敗",
+      "items": {
+        "database": {
+          "name": "資料庫備份",
+          "hint": "自動備份與手動備份的資料庫快照。"
+        },
+        "skills": {
+          "name": "Skill 解除安裝備份",
+          "hint": "解除安裝 Skill 前留下的副本，可在 Skills 頁還原。刪除後這些已解除安裝的 Skill 無法再還原。"
+        },
+        "codexHistoryUnify": {
+          "name": "Codex 工作階段統一遷移備份",
+          "hint": "開啟「統一 Codex 工作階段歷史」並遷入既有工作階段時留下的副本。關閉該開關時的「還原備份」依賴它，刪除後無法再把遷移過的官方工作階段還原回原分組。"
+        },
+        "codexHistoryUnifyRestore": {
+          "name": "Codex 工作階段統一還原備份",
+          "hint": "執行「還原備份」前留下的工作階段副本，CC Switch 不會再讀取。"
+        },
+        "codexHistoryProviderMigration": {
+          "name": "Codex 工作階段分組遷移備份",
+          "hint": "第三方工作階段分組遷移前留下的副本，CC Switch 不會再讀取。"
+        },
+        "liveFirstWrite": {
+          "name": "設定檔首次寫入備份",
+          "hint": "CC Switch 第一次改寫各用戶端設定檔前的原始檔案。刪除後無法再找回改寫前的原檔，下次寫入時會重新備份當時的檔案。"
+        },
+        "hermes": {
+          "name": "Hermes 設定備份",
+          "hint": "儲存 Hermes 設定前的副本，依「備份保留數量」自動清理。"
+        },
+        "openclaw": {
+          "name": "OpenClaw 設定備份",
+          "hint": "儲存 OpenClaw 設定前的副本，依「備份保留數量」自動清理。"
+        },
+        "proxyLiveBackup": {
+          "name": "舊版路由接管備份",
+          "hint": "升級時從舊版路由接管備份轉存出的設定副本，CC Switch 不會再讀取。"
+        },
+        "envVars": {
+          "name": "環境變數清理備份",
+          "hint": "清理衝突環境變數前記錄的原值。刪除後無法再查到被清理變數的原值。"
+        },
+        "legacyConfigBackups": {
+          "name": "舊版 config.json 備份",
+          "hint": "舊版本留下的檔案，目前版本不會再讀取。"
+        },
+        "legacyConfigArchive": {
+          "name": "舊版 config.json 封存",
+          "hint": "遷移到資料庫前的舊設定檔，目前版本不會再讀取。"
+        },
+        "legacyDbUpgrade": {
+          "name": "舊版資料庫升級備份",
+          "hint": "舊版本升級資料庫時留下的副本，目前版本不會再讀取。"
+        },
+        "legacyToolSearch": {
+          "name": "舊版 Tool Search 修補備份",
+          "hint": "已移除的 Tool Search 修補功能留下的檔案，目前版本不會再讀取。"
+        }
+      }
+    },
     "webdavSync": {
       "title": "WebDAV 雲端同步",
       "description": "透過 WebDAV 在多裝置間同步資料庫和技能設定。",
@@ -827,6 +905,7 @@
     "officialWebsite": "官方網站",
     "github": "GitHub",
     "starPrompt": "如果 CC Switch 幫到了你，請在 GitHub 點個 Star，這對我們意義重大",
+    "starOnGithub": "去點 Star",
     "manualInstallCommands": "手動安裝指令",
     "oneClickInstall": "一鍵安裝",
     "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
@@ -2035,6 +2114,11 @@
     "responseModel": "回傳模型",
     "noData": "暫無資料",
     "unknownProvider": "未知供應商",
+    "sessionProvider": {
+      "short": "工作階段日誌",
+      "label": "{{app}} · 工作階段日誌",
+      "hint": "未開啟路由時從用戶端的工作階段日誌讀取，無法區分是哪家供應商"
+    },
     "stream": "串流",
     "nonStream": "非串流",
     "source": "來源",
@@ -4162,6 +4246,12 @@
       "times": "{{count}} 次",
       "inTime": "{{time}}後",
       "showAll": "查看 {{count}} 次重設各自的到期時間"
+    },
+    "credits": {
+      "label": "Credits",
+      "text": "Credits 約 {{usd}}",
+      "usd": "約 {{usd}}",
+      "detail": "Credits 餘額 {{balance}} · 按 API 價折算約 {{usd}} · 額度用完後才扣"
     }
   },
   "appMatrix": {
@@ -4405,6 +4495,7 @@
       "showAll": "顯示全部 Skill"
     },
     "selectAria": "選擇 {{name}}",
+    "selectAllAria": "全選目前清單",
     "rowFail": "在 {{app}} 啟用失敗：{{error}}",
     "fixSync": "改同步方式",
     "rowMoreAria": "{{name}} 的更多操作",
