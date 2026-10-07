@@ -802,32 +802,38 @@ pub fn get_settings_for_frontend() -> AppSettings {
     settings
 }
 
-pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
-    new_settings.normalize_paths();
-    save_settings_file(&new_settings)?;
+pub fn update_settings(new_settings: AppSettings) -> Result<(), AppError> {
+    update_settings_with(|_| Ok(new_settings)).map(|_| ())
+}
 
+/// 在同一写锁内读取、合并、落盘及更新缓存，返回实际保存前后的快照。
+/// updater 只能使用传入的当前设置，不能重入设置读写函数。
+pub(crate) fn update_settings_with<F>(updater: F) -> Result<(AppSettings, AppSettings), AppError>
+where
+    F: FnOnce(&AppSettings) -> Result<AppSettings, AppError>,
+{
     let mut guard = settings_store().write().unwrap_or_else(|e| {
         log::warn!("设置锁已毒化，使用恢复值: {e}");
         e.into_inner()
     });
-    *guard = new_settings;
-    Ok(())
+    let previous = guard.clone();
+    let mut next = updater(&guard)?;
+    next.normalize_paths();
+    save_settings_file(&next)?;
+    *guard = next.clone();
+    Ok((previous, next))
 }
 
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
 where
     F: FnOnce(&mut AppSettings),
 {
-    let mut guard = settings_store().write().unwrap_or_else(|e| {
-        log::warn!("设置锁已毒化，使用恢复值: {e}");
-        e.into_inner()
-    });
-    let mut next = guard.clone();
-    mutator(&mut next);
-    next.normalize_paths();
-    save_settings_file(&next)?;
-    *guard = next;
-    Ok(())
+    update_settings_with(|current| {
+        let mut next = current.clone();
+        mutator(&mut next);
+        Ok(next)
+    })
+    .map(|_| ())
 }
 
 pub fn is_codex_third_party_history_provider_bucket_migrated() -> bool {
@@ -1239,9 +1245,92 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    pub(crate) struct TestSettingsGuard {
+        previous_home: Option<std::ffi::OsString>,
+        previous_settings: AppSettings,
+        home: tempfile::TempDir,
+    }
+
+    impl TestSettingsGuard {
+        pub(crate) fn new() -> Self {
+            let guard = Self {
+                previous_home: std::env::var_os("CC_SWITCH_TEST_HOME"),
+                previous_settings: get_settings(),
+                home: tempfile::tempdir().expect("temporary settings home"),
+            };
+            std::env::set_var("CC_SWITCH_TEST_HOME", guard.home.path());
+            update_settings(AppSettings::default()).expect("initialize isolated settings");
+            guard
+        }
+
+        pub(crate) fn persisted(&self) -> AppSettings {
+            let json = fs::read_to_string(self.home.path().join(".cc-switch/settings.json"))
+                .expect("read isolated settings");
+            serde_json::from_str(&json).expect("parse persisted settings")
+        }
+    }
+
+    impl Drop for TestSettingsGuard {
+        fn drop(&mut self) {
+            let mut settings = settings_store().write().unwrap_or_else(|e| e.into_inner());
+            *settings = self.previous_settings.clone();
+            match self.previous_home.take() {
+                Some(home) => std::env::set_var("CC_SWITCH_TEST_HOME", home),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    #[serial_test::serial]
+    fn settings_update_keeps_the_write_lock_until_persistence_and_cache_replacement() {
+        use std::sync::{mpsc, Barrier};
+        use std::time::Duration;
+
+        let guard = test_support::TestSettingsGuard::new();
+        let (snapshot_read, snapshot_ready) = mpsc::channel();
+        let (release_save, resume_save) = mpsc::channel();
+        let setter_started = Barrier::new(2);
+
+        std::thread::scope(|scope| {
+            let full_save = scope.spawn(move || {
+                update_settings_with(|current| {
+                    let mut next = current.clone();
+                    snapshot_read.send(()).unwrap();
+                    resume_save.recv_timeout(Duration::from_secs(10)).unwrap();
+                    next.language = Some("zh".into());
+                    Ok(next)
+                })
+                .expect("persist full save");
+            });
+            snapshot_ready
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            // 在已读快照、尚未落盘的边界验证锁，专用 setter 此时不能插入写入。
+            assert!(settings_store().try_write().is_err());
+            let timeout_save = scope.spawn(|| {
+                setter_started.wait();
+                set_skill_download_timeout_seconds(900).expect("persist dedicated timeout");
+            });
+            setter_started.wait();
+            release_save.send(()).unwrap();
+            full_save.join().unwrap();
+            timeout_save.join().unwrap();
+        });
+
+        assert_eq!(get_settings().skill_download_timeout_seconds, 900);
+        assert_eq!(guard.persisted().skill_download_timeout_seconds, 900);
+        assert_eq!(guard.persisted().language.as_deref(), Some("zh"));
+    }
 
     #[test]
     fn legacy_settings_default_download_timeout_and_preserve_custom_value() {
