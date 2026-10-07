@@ -13,12 +13,14 @@
 //!   同一请求 `stream: false` 时三个字段全对，且失效按时间窗整段出现 ⇒ 是上游侧抖动，
 //!   只能无条件防御，不能按厂商名开关。
 //!
-//! 这里只动响应：`output_item.added` 原样放行，顺带按条目记下 `name` / `call_id`；参数为空的
-//! 那两个结束事件先扣住，等之后第一个不是参数增量的事件到来时，用累积的增量（或
-//! `response.completed` 里的同 id 条目）补上参数再发。所有放行走同一个出口，出口顺手把身份
-//! 回填到 `output_item.done`、`function_call_arguments.done` 的 `name`，以及
-//! `response.completed` 的 `response.output[]`。三条铁律：已有非空值一律不覆盖；没有依据就不改，
-//! 绝不凭空造值；真的改过字段才重新序列化，否则原样发出上游字节。顺序正常的流原样放行。
+//! 这里只动响应：`output_item.added` 顺带按条目记下 `name` / `call_id`；参数为空的那两个结束事件
+//! 先扣住，等之后第一个不是参数增量的事件到来时，用累积的增量（或 `response.completed` 里的同 id
+//! 条目）补上参数再发。除参数增量以外的放行走同一个出口，出口顺手回填身份：`output_item.done` 的
+//! `item`、`function_call_arguments.done` 的顶层 `name`、`response.completed` 的 `response.output[]`。
+//! 三处只有第一处是 Codex 的定单点（它把整个 `item` 反序列化成一次调用，报错文本拼的是 `name`），
+//! 后两处是保持一致性的防御：Codex 解析 `response.completed` 时不吃 `output`，两类参数事件则被它
+//! 一并归入未处理事件。三条铁律：已有非空值一律不覆盖；没有依据就不改，绝不凭空造值；真的改过字段
+//! 才重新序列化，否则原样发出上游字节。顺序正常的流原样放行。
 //! 请求一个字节不改。
 
 use std::collections::HashMap;
@@ -165,7 +167,7 @@ impl Block {
 /// 一个函数调用条目的身份，从 `output_item.added` 记下，用来回填结束事件里丢掉的同名字段。
 /// 只覆盖 `function_call`：`custom_tool_call` / `tool_search_call` 按规范同样带 `call_id`，
 /// 但 #7671 的证据只到 `function_call`，等实测到再一起纳进来。
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct FunctionCallIdentity {
     name: String,
     call_id: String,
@@ -175,7 +177,8 @@ struct FunctionCallIdentity {
 struct Repair {
     /// 每个条目累积的参数增量。
     arguments: HashMap<String, String>,
-    /// 每个条目在 `output_item.added` 里报出的身份。
+    /// 每个条目在 `output_item.added` 里报出的身份，键是条目的 `id`。回填全靠结束事件里的 `id`
+    /// （参数事件是顶层 `item_id`）与它相等：上游把 `id` 也吐空就整块不动，这是铁律二。
     identity: HashMap<String, FunctionCallIdentity>,
     /// 扣住的结束事件，保持原来的顺序。
     held: Vec<(String, Block)>,
@@ -186,9 +189,16 @@ impl Repair {
         let block = Block::parse(raw);
         let mut out = Vec::new();
 
-        // 身份要在分流之前记：`added` 一定排在带它的结束事件前面，记下就照原样放行。
-        if let Some((item_id, identity)) = block.function_call_identity() {
-            self.identity.entry(item_id).or_insert(identity);
+        // 身份要在分流之前记：`added` 一般排在带它的结束事件前面，万一后到，扣住的那条放行时
+        // 也已经能从这张表里补上。逐字段合并——整条先到先得会被先到那条的半空身份永久挡掉。
+        if let Some((item_id, incoming)) = block.function_call_identity() {
+            let record = self.identity.entry(item_id).or_default();
+            if record.name.is_empty() {
+                record.name = incoming.name;
+            }
+            if record.call_id.is_empty() {
+                record.call_id = incoming.call_id;
+            }
         }
 
         if let Some((item_id, delta)) = block.arguments_delta() {
@@ -241,7 +251,9 @@ impl Repair {
         block.into_bytes()
     }
 
-    /// 把记下的身份补进事件里空缺的 `name` / `call_id`。
+    /// 把记下的身份补进事件里空缺的 `name` / `call_id`。递归遍历整棵事件树，所以
+    /// `response.incomplete` / `response.failed` 里的 `output[]` 也一并覆盖；参数兜底正相反，
+    /// 只认 `response.completed`，那两类事件的空参数不补。
     fn fill_identities(&self, block: &mut Block) {
         if self.identity.is_empty() {
             return;
@@ -633,7 +645,8 @@ mod tests {
         assert_eq!(events[3]["item"]["arguments"], "{\"command\":\"ls\"}");
     }
 
-    /// 身份要补进 `response.completed` 的 `response.output[]`，那是 Codex 收单时最后读的一份。
+    /// 身份也要补进 `response.completed` 的 `response.output[]`：Codex 解析这个事件时并不吃
+    /// `output`（只取 id / usage / end_turn），所以这条是保持一致性的防御，不是止血路径。
     #[test]
     fn carries_identity_into_response_completed_output() {
         let events = run(vec![
@@ -797,5 +810,53 @@ mod tests {
         assert_eq!(events[3]["item"]["id"], "a");
         assert_eq!(events[3]["item"]["name"], "shell");
         assert_eq!(events[3]["item"]["call_id"], "call_a");
+    }
+
+    /// 同一个条目重复 `added`：先到那条只报了 `call_id`，后到那条才带上 `name`。逐字段合并才不会被
+    /// 先到的半空身份永久挡掉——整条先到先得的话 `name` 永远补不上，照旧是 `unsupported call: `。
+    #[test]
+    fn merges_identity_field_by_field_across_repeated_added_events() {
+        let item = |name: &str, call_id: &str| {
+            json!({ "type": "function_call", "id": "x_fc_0", "call_id": call_id,
+                    "name": name, "arguments": "{}" })
+        };
+        let events = run(vec![
+            json!({ "type": "response.output_item.added", "item": item("", "call_9") }),
+            json!({ "type": "response.output_item.added", "item": item("shell", "call_9") }),
+            json!({ "type": "response.output_item.done", "item": item("", "") }),
+        ]);
+        assert_eq!(
+            types(&events),
+            vec![
+                "response.output_item.added",
+                "response.output_item.added",
+                "response.output_item.done",
+            ]
+        );
+        assert_eq!(events[2]["item"]["name"], "shell");
+        assert_eq!(events[2]["item"]["call_id"], "call_9");
+    }
+
+    /// 第三条铁律真正测得动的样子：一个字段都没改就**不许**重新序列化。上面几条字节断言用的是 `sse()`
+    /// 夹具，它产出的本来就是紧凑 JSON，即便实现无条件重序列化也照样绿；这里手写带空格的原文，
+    /// 一旦走了重序列化空格就被吃掉。多写一行 `id:` 同理——出口只重建 `event` 与 `data`。
+    #[test]
+    fn does_not_reserialize_a_block_it_did_not_change() {
+        let blocks = [
+            r#"event: response.output_item.added
+data: {"type": "response.output_item.added", "item": {"type": "function_call", "id": "x_fc_0", "name": "shell", "call_id": "call_9", "arguments": "{}"}}"#,
+            r#"event: response.output_item.done
+data: {"type": "response.output_item.done", "item": {"type": "function_call", "id": "x_fc_0", "name": "shell", "call_id": "call_9", "arguments": "{}"}}"#,
+            r#"event: response.output_text.delta
+data: {"type": "response.output_text.delta", "item_id": "m1", "delta": "hi"}"#,
+            r#"event: response.completed
+data: {"type": "response.completed", "response": {"output": [{"type": "function_call", "id": "x_fc_0", "name": "shell", "call_id": "call_9", "arguments": "{}"}]}}"#,
+        ];
+        let mut repair = Repair::default();
+        for raw in blocks {
+            let out = repair.push(raw);
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0], Bytes::from(format!("{raw}\n\n")));
+        }
     }
 }
