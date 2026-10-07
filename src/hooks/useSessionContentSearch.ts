@@ -28,8 +28,14 @@ interface UseSessionContentSearchOptions {
   query: string;
   /** 「搜索消息正文」开关 */
   enabled: boolean;
-  /** 当前会话列表；列表变了（首次加载、刷新）就同步一次索引 */
+  /** 当前会话列表（为空时不同步） */
   sessions: SessionMeta[];
+  /**
+   * 列表最近一次成功读取的时间（useQuery 的 dataUpdatedAt）。每次读取成功都同步一次索引：
+   * 正文变了而元数据没变时（如 Grok Build 一轮进行中只追加 chat_history），列表数组的引用
+   * 会被结构共享保留，不能拿它当正文变化的信号
+   */
+  listUpdatedAt: number;
   /** 只要这些应用的命中 */
   providerIds: string[];
 }
@@ -50,6 +56,7 @@ export function useSessionContentSearch({
   query,
   enabled,
   sessions,
+  listUpdatedAt,
   providerIds,
 }: UseSessionContentSearchOptions): UseSessionContentSearchResult {
   const queryClient = useQueryClient();
@@ -99,9 +106,10 @@ export function useSessionContentSearch({
     };
   }, [enabled, queryClient]);
 
-  // 会话列表加载或刷新后同步索引；后端只处理有变化的会话，已在跑时只排一次重跑
+  // 会话列表每次读取成功后同步索引；后端只处理有变化的会话，已在跑时只排一次重跑
+  const hasSessions = sessions.length > 0;
   useEffect(() => {
-    if (!enabled || sessions.length === 0) return;
+    if (!enabled || !hasSessions) return;
     let cancelled = false;
     sessionsApi
       .syncContentIndex()
@@ -112,7 +120,7 @@ export function useSessionContentSearch({
     return () => {
       cancelled = true;
     };
-  }, [enabled, sessions]);
+  }, [enabled, hasSessions, listUpdatedAt]);
 
   const providerKey = useMemo(() => [...providerIds].sort(), [providerIds]);
 

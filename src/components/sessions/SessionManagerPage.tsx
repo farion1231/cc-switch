@@ -149,7 +149,7 @@ export function SessionManagerPage({
 }: SessionManagerPageProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data, isLoading, refetch } = useSessionsQuery();
+  const { data, dataUpdatedAt, isLoading, refetch } = useSessionsQuery();
   const sessions = useMemo(() => data ?? [], [data]);
   const { data: settings } = useSettingsQuery();
   const { updateSettings, autoSaveSettings } = useSettings();
@@ -261,6 +261,7 @@ export function SessionManagerPage({
     query,
     enabled: contentSearchEnabled,
     sessions,
+    listUpdatedAt: dataUpdatedAt,
     providerIds: contentProviderIds,
   });
   const contentHitOf = useCallback(

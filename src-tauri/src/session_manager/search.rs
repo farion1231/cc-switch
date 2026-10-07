@@ -402,27 +402,61 @@ impl SessionIndex {
             return Ok(Vec::new());
         }
 
+        let sources: HashMap<i64, (String, String)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, provider_id, source_path FROM indexed_sources")?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, (row.get(1)?, row.get(2)?))))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        // 应用过滤要在截断（MAX_HIT_ROWS）之前生效，否则其他应用的大量命中会把选中应用挤掉
+        let allowed: Option<Vec<i64>> = providers.map(|set| {
+            sources
+                .iter()
+                .filter(|(_, (provider_id, _))| set.contains(provider_id))
+                .map(|(id, _)| *id)
+                .collect()
+        });
+        if allowed.as_ref().is_some_and(Vec::is_empty) {
+            return Ok(Vec::new());
+        }
+        // 传给 SQL 的源 id 列表（JSON 数组）；None 表示不过滤
+        let allowed_json = allowed
+            .as_ref()
+            .map(|ids| serde_json::to_string(ids).unwrap_or_else(|_| "[]".into()));
+        let source_filter =
+            format!("(?3 IS NULL OR (rowid >> {ROW_SHIFT}) IN (SELECT value FROM json_each(?3)))");
+
         let rowids: Vec<i64> = if query.chars().count() >= MIN_MATCH_CHARS {
-            let mut stmt = self.conn.prepare(
-                "SELECT rowid FROM message_text WHERE message_text MATCH ?1
-                 ORDER BY rank LIMIT ?2",
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT rowid FROM message_text WHERE message_text MATCH ?1 AND {source_filter}
+                 ORDER BY rank LIMIT ?2"
+            ))?;
+            let rows = stmt.query_map(
+                params![match_expression(query), MAX_HIT_ROWS, allowed_json],
+                |row| row.get(0),
             )?;
-            let rows = stmt.query_map(params![match_expression(query), MAX_HIT_ROWS], |row| {
-                row.get(0)
-            })?;
             rows.collect::<rusqlite::Result<_>>()?
         } else if has_non_ascii_case(query) {
             // 不足 3 个字符且含 É 之类的字母：LIKE 会漏掉大小写不同的写法，在 Rust 里逐行折叠比较
             let needle = fold_str(query);
+            let allowed: Option<HashSet<i64>> = allowed.map(|ids| ids.into_iter().collect());
             let mut stmt = self
                 .conn
                 .prepare("SELECT rowid, text FROM message_text ORDER BY rowid DESC")?;
             let mut rows = stmt.query([])?;
             let mut found = Vec::new();
             while let Some(row) = rows.next()? {
+                let rowid: i64 = row.get(0)?;
+                if allowed
+                    .as_ref()
+                    .is_some_and(|ids| !ids.contains(&(rowid >> ROW_SHIFT)))
+                {
+                    continue;
+                }
                 let text: String = row.get(1)?;
                 if fold_str(&text).contains(&needle) {
-                    found.push(row.get(0)?);
+                    found.push(rowid);
                     if found.len() as i64 >= MAX_HIT_ROWS {
                         break;
                     }
@@ -431,35 +465,26 @@ impl SessionIndex {
             found
         } else {
             // 不足 3 个字符：trigram 用不上，LIKE 扫描（ASCII 与中日文等无大小写的字符都正确）
-            let mut stmt = self.conn.prepare(
-                "SELECT rowid FROM message_text WHERE text LIKE ?1 ESCAPE '\\'
-                 ORDER BY rowid DESC LIMIT ?2",
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT rowid FROM message_text WHERE text LIKE ?1 ESCAPE '\\' AND {source_filter}
+                 ORDER BY rowid DESC LIMIT ?2"
+            ))?;
+            let rows = stmt.query_map(
+                params![like_pattern(query), MAX_HIT_ROWS, allowed_json],
+                |row| row.get(0),
             )?;
-            let rows =
-                stmt.query_map(params![like_pattern(query), MAX_HIT_ROWS], |row| row.get(0))?;
             rows.collect::<rusqlite::Result<_>>()?
         };
         if rowids.is_empty() {
             return Ok(Vec::new());
         }
 
-        let sources: HashMap<i64, (String, String)> = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT id, provider_id, source_path FROM indexed_sources")?;
-            let rows = stmt.query_map([], |row| Ok((row.get(0)?, (row.get(1)?, row.get(2)?))))?;
-            rows.collect::<rusqlite::Result<_>>()?
-        };
-
         // 按会话聚合：保留最先出现（最相关）的几行，累计命中条数
         let mut order: Vec<i64> = Vec::new();
         let mut best: HashMap<i64, (Vec<i64>, usize)> = HashMap::new();
         for rowid in rowids {
             let source_id = rowid >> ROW_SHIFT;
-            let Some((provider_id, _)) = sources.get(&source_id) else {
-                continue;
-            };
-            if providers.is_some_and(|set| !set.contains(provider_id)) {
+            if !sources.contains_key(&source_id) {
                 continue;
             }
             let (top, count) = best.entry(source_id).or_insert_with(|| {
@@ -533,20 +558,32 @@ pub fn status() -> IndexStatus {
 
 /// 打开（必要时创建）索引后执行 `f`；功能关闭时不碰磁盘
 fn with_index<T>(f: impl FnOnce(&mut SessionIndex) -> rusqlite::Result<T>) -> Result<T, String> {
-    if !enabled() {
+    with_index_in(&INDEX, &index_path(), enabled, f)
+}
+
+/// [`with_index`] 的实现，索引槽、路径、开关可替换（测试用）。
+///
+/// 开关必须在持有锁之后检查：关闭功能时 [`clear`] 在同一把锁里删除索引文件，
+/// 锁外检查的话，已经通过检查、正在等锁的后台写入会在清理之后把文件重新建出来
+fn with_index_in<T>(
+    slot: &Mutex<Option<SessionIndex>>,
+    path: &Path,
+    is_enabled: impl Fn() -> bool,
+    f: impl FnOnce(&mut SessionIndex) -> rusqlite::Result<T>,
+) -> Result<T, String> {
+    let mut guard = lock(slot);
+    if !is_enabled() {
         return Err("Session content search is disabled".to_string());
     }
-    let mut guard = lock(&INDEX);
     if guard.is_none() {
-        let path = index_path();
         if let Some(dir) = path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        let index = SessionIndex::open(&path).or_else(|first| {
+        let index = SessionIndex::open(path).or_else(|first| {
             // 索引只是缓存：打不开（损坏、格式不认识）就删掉重建
             log::warn!("会话正文索引无法打开，重建: {first}");
-            remove_index_files(&path);
-            SessionIndex::open(&path)
+            remove_index_files(path);
+            SessionIndex::open(path)
         });
         *guard = Some(index.map_err(|e| format!("Failed to open session index: {e}"))?);
     }
@@ -911,6 +948,72 @@ mod tests {
         let hits = index.search("deploy", None, 10).unwrap();
         assert_eq!(hits[0].match_count, 5);
         assert_eq!(hits[0].snippets.len(), MAX_SNIPPETS_PER_SESSION);
+    }
+
+    #[test]
+    fn provider_filter_applies_before_the_hit_row_cap() {
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        // 先插入选中应用的唯一命中，再让其他应用占满候选上限（LIKE 路径按 rowid 倒序）
+        index
+            .replace_source(
+                "codex",
+                "/codex.jsonl",
+                fp(1),
+                &rows(&["needle xy Éclair target"]),
+            )
+            .unwrap();
+        let noise: Vec<(usize, String)> = (0..MAX_HIT_ROWS as usize + 5)
+            .map(|i| (i, "needle xy Éclair".to_string()))
+            .collect();
+        index
+            .replace_source("claude", "/claude.jsonl", fp(1), &noise)
+            .unwrap();
+
+        let only_codex: HashSet<String> = ["codex".to_string()].into_iter().collect();
+        for query in ["needle", "xy", "éc"] {
+            let hits = index.search(query, Some(&only_codex), 10).unwrap();
+            assert_eq!(hits.len(), 1, "query {query}");
+            assert_eq!(hits[0].provider_id, "codex", "query {query}");
+        }
+        let nobody: HashSet<String> = ["gemini".to_string()].into_iter().collect();
+        assert!(index
+            .search("needle", Some(&nobody), 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn disabling_while_a_writer_waits_for_the_lock_keeps_the_index_deleted() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        let slot: Arc<Mutex<Option<SessionIndex>>> = Arc::new(Mutex::new(None));
+        let enabled = Arc::new(AtomicBool::new(true));
+
+        // 模拟 clear：持锁期间关闭开关、删文件；写入线程此时已经在等锁
+        let guard = lock(&slot);
+        let writer = {
+            let slot = Arc::clone(&slot);
+            let enabled = Arc::clone(&enabled);
+            let path = path.clone();
+            std::thread::spawn(move || {
+                with_index_in(
+                    &slot,
+                    &path,
+                    || enabled.load(Ordering::SeqCst),
+                    |index| index.replace_source("codex", "/a.jsonl", fp(1), &rows(&["secret"])),
+                )
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        enabled.store(false, Ordering::SeqCst);
+        remove_index_files(&path);
+        drop(guard);
+
+        assert!(writer.join().unwrap().is_err());
+        assert!(!path.exists());
     }
 
     #[test]

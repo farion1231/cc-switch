@@ -358,6 +358,23 @@ describe("SessionManagerPage", () => {
     searchSpy.mockRestore();
   });
 
+  it("syncs the text index again when an unchanged list is refreshed", async () => {
+    const sync = vi.spyOn(sessionsApi, "syncContentIndex");
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+    await waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
+
+    // 列表内容不变（正文可能变了）：刷新后仍要再同步一次
+    await userEvent.click(
+      screen.getByRole("button", { name: "会话的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "刷新列表" }),
+    );
+    await waitFor(() => expect(sync).toHaveBeenCalledTimes(2));
+    sync.mockRestore();
+  });
+
   it("leaves message text out when content search is turned off", async () => {
     setSettings({ sessionContentSearchEnabled: false });
     renderPage("codex");
