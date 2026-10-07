@@ -938,6 +938,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn response_created_event_carries_input_tokens_details_even_when_empty() {
+        // 回归保护：首个 response.created 事件的空 usage 也必须带
+        // input_tokens_details，否则 Grok Build 在流首帧就解析失败。
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+        ])
+        .await;
+
+        let events = parse_sse_events(&output);
+        let created = events
+            .iter()
+            .find(|e| e["type"] == "response.created")
+            .expect("response.created event missing");
+        assert_eq!(
+            created["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            0
+        );
+    }
+
+    #[tokio::test]
     async fn events_carry_monotonic_sequence_number() {
         // 回归保护：Grok Build 新版解析器要求每个 SSE 事件带顶层
         // sequence_number，且从 0 开始连续递增。
