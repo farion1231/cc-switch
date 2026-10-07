@@ -10,7 +10,7 @@
 use super::{
     content_encoding::{decompress_body, get_content_encoding, is_supported_content_encoding},
     error_mapper::{get_error_message, map_proxy_error_to_status},
-    forwarder::ActiveConnectionGuard,
+    forwarder::{ActiveConnectionGuard, CodexUpstreamFormat},
     handler_config::{
         claude_stream_usage_event_filter, codex_stream_usage_event_filter, CLAUDE_PARSER_CONFIG,
         CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
@@ -1082,7 +1082,7 @@ async fn handle_responses_for_app(
     ctx.provider = result.provider;
     let response = result.response;
 
-    if codex_response_transform(codex_upstream_format) == CodexResponseTransform::Anthropic {
+    if codex_upstream_format == Some(CodexUpstreamFormat::Anthropic) {
         return handle_codex_anthropic_to_responses_transform(
             response,
             &ctx,
@@ -1094,7 +1094,7 @@ async fn handle_responses_for_app(
         .await;
     }
 
-    if codex_response_transform(codex_upstream_format) == CodexResponseTransform::ChatCompletions {
+    if codex_upstream_format == Some(CodexUpstreamFormat::ChatCompletions) {
         return handle_codex_chat_to_responses_transform(
             response,
             &ctx,
@@ -1411,7 +1411,7 @@ async fn handle_responses_compact_for_app(
     ctx.provider = result.provider;
     let response = result.response;
 
-    if codex_response_transform(codex_upstream_format) == CodexResponseTransform::Anthropic {
+    if codex_upstream_format == Some(CodexUpstreamFormat::Anthropic) {
         return handle_codex_anthropic_to_responses_transform(
             response,
             &ctx,
@@ -1423,7 +1423,7 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    if codex_response_transform(codex_upstream_format) == CodexResponseTransform::ChatCompletions {
+    if codex_upstream_format == Some(CodexUpstreamFormat::ChatCompletions) {
         return handle_codex_chat_to_responses_transform(
             response,
             &ctx,
@@ -1660,27 +1660,6 @@ async fn handle_codex_xai_native_responses_rewrite(
             log::error!("[{}] 构建 namespace 还原响应失败: {e}", ctx.tag);
             ProxyError::Internal(format!("Failed to build response: {e}"))
         })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CodexResponseTransform {
-    Passthrough,
-    ChatCompletions,
-    Anthropic,
-}
-
-fn codex_response_transform(
-    upstream_format: Option<super::forwarder::CodexUpstreamFormat>,
-) -> CodexResponseTransform {
-    match upstream_format {
-        Some(super::forwarder::CodexUpstreamFormat::ChatCompletions) => {
-            CodexResponseTransform::ChatCompletions
-        }
-        Some(super::forwarder::CodexUpstreamFormat::Anthropic) => CodexResponseTransform::Anthropic,
-        Some(super::forwarder::CodexUpstreamFormat::NativeResponses) | None => {
-            CodexResponseTransform::Passthrough
-        }
-    }
 }
 
 async fn handle_codex_chat_to_responses_transform(
@@ -3251,12 +3230,11 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_proxy_error_json, codex_response_transform,
-        responses_sse_stream_to_anthropic_message, responses_sse_to_response_value,
-        rewritten_sse_response_builder, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error, CodexResponseTransform,
+        codex_proxy_error_json, responses_sse_stream_to_anthropic_message,
+        responses_sse_to_response_value, rewritten_sse_response_builder,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
-    use crate::proxy::{forwarder::CodexUpstreamFormat, ProxyError};
+    use crate::proxy::ProxyError;
     use bytes::Bytes;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -3286,22 +3264,6 @@ mod tests {
         assert!(headers.get(header::CONNECTION).is_none());
         assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
         assert_eq!(headers["x-request-id"], "req_1");
-    }
-
-    #[test]
-    fn codex_response_dispatch_uses_forwarded_upstream_format() {
-        assert_eq!(
-            codex_response_transform(Some(CodexUpstreamFormat::ChatCompletions)),
-            CodexResponseTransform::ChatCompletions
-        );
-        assert_eq!(
-            codex_response_transform(Some(CodexUpstreamFormat::NativeResponses)),
-            CodexResponseTransform::Passthrough
-        );
-        assert_eq!(
-            codex_response_transform(Some(CodexUpstreamFormat::Anthropic)),
-            CodexResponseTransform::Anthropic
-        );
     }
 
     #[test]

@@ -1257,7 +1257,6 @@ wire_api = "responses"
     fn copilot_catalog_profile_survives_live_projection_and_format_overrides() {
         use crate::codex_config::{codex_disables_web_search, CodexCatalogToolProfile};
         use crate::live::project::codex::{CodexProjection, RowInput};
-        use crate::provider::CodexCopilotApiFormat;
 
         for base_url in ["https://api.githubcopilot.com", "http://localhost:15721/v1"] {
             let mut provider = create_copilot_provider();
@@ -1288,13 +1287,13 @@ wire_api = "responses"
             ] {
                 for transport in [
                     None,
-                    Some(CodexCopilotApiFormat::Auto),
-                    Some(CodexCopilotApiFormat::OpenaiResponses),
-                    Some(CodexCopilotApiFormat::OpenaiChat),
+                    Some("auto"),
+                    Some("openai_responses"),
+                    Some("openai_chat"),
                 ] {
                     let meta = provider.meta.as_mut().unwrap();
                     meta.api_format = api_format.map(str::to_string);
-                    meta.codex_copilot_api_format = transport;
+                    meta.codex_copilot_api_format = transport.map(str::to_string);
                     let profile = resolve_codex_catalog_tool_profile(&provider);
                     assert_eq!(profile, CodexCatalogToolProfile::Copilot);
                     assert!(codex_disables_web_search(

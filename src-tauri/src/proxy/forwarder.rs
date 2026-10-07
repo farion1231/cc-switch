@@ -611,12 +611,12 @@ impl RequestForwarder {
         provider: &Provider,
         app_type_str: &str,
         used_half_open_permit: bool,
-        (response, claude_api_format, outbound_model, codex_upstream_format): (
+        (response, claude_api_format, outbound_model): (
             ProxyResponse,
             Option<String>,
             Option<String>,
-            Option<CodexUpstreamFormat>,
         ),
+        codex_upstream_format: Option<CodexUpstreamFormat>,
     ) -> ForwardResult {
         let result = ForwardResult {
             response,
@@ -888,7 +888,13 @@ impl RequestForwarder {
             {
                 Ok(forwarded) => {
                     return Ok(self
-                        .finish_success(provider, app_type_str, used_half_open_permit, forwarded)
+                        .finish_success(
+                            provider,
+                            app_type_str,
+                            used_half_open_permit,
+                            forwarded,
+                            attempted_codex_upstream_format,
+                        )
                         .await);
                 }
                 Err(mut e) => {
@@ -950,6 +956,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
+                                            media_retry_codex_upstream_format,
                                         )
                                         .await);
                                 }
@@ -1021,6 +1028,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
+                                            opaque_retry_codex_upstream_format,
                                         )
                                         .await);
                                 }
@@ -1101,6 +1109,7 @@ impl RequestForwarder {
                                                 app_type_str,
                                                 used_half_open_permit,
                                                 forwarded,
+                                                signature_retry_codex_upstream_format,
                                             )
                                             .await);
                                     }
@@ -1199,6 +1208,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
+                                            budget_retry_codex_upstream_format,
                                         )
                                         .await);
                                 }
@@ -1311,9 +1321,10 @@ impl RequestForwarder {
 
     /// 转发单个请求（使用适配器）
     ///
-    /// 成功时返回
-    /// `(response, claude_api_format, outbound_model, codex_upstream_format)`，其中
+    /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
     /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
+    /// `codex_upstream_format_out` 记下这次实际选中的 Codex 上游格式：成功时交给
+    /// `finish_success`，失败时给整流判断用（Copilot 按模型逐次选协议，不能从静态配置推）。
     #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
@@ -1326,15 +1337,7 @@ impl RequestForwarder {
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
         codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
-    ) -> Result<
-        (
-            ProxyResponse,
-            Option<String>,
-            Option<String>,
-            Option<CodexUpstreamFormat>,
-        ),
-        ProxyError,
-    > {
+    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
         *codex_upstream_format_out = None;
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
@@ -1596,11 +1599,7 @@ impl RequestForwarder {
         // that the model advertises. Messages is intentionally not supported
         // on the Codex bridge. Only auto mode may fall back from Responses to Chat.
         if is_copilot_codex_responses {
-            let api_format = provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.codex_copilot_api_format)
-                .unwrap_or_default();
+            let api_format = CodexCopilotApiFormat::from_meta(provider.meta.as_ref());
             let resolved = self
                 .resolve_codex_copilot_model(provider, &mapped_body, api_format)
                 .await?;
@@ -2768,12 +2767,7 @@ impl RequestForwarder {
                     response = self.validate_responses_stream_start(response).await?;
                 }
             }
-            Ok((
-                response,
-                resolved_claude_api_format,
-                outbound_model,
-                codex_upstream_format,
-            ))
+            Ok((response, resolved_claude_api_format, outbound_model))
         } else {
             let status_code = status.as_u16();
             // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
@@ -4584,7 +4578,8 @@ mod tests {
                     &provider,
                     "codex",
                     false,
-                    (response, None, Some("resolved-model".to_string()), format),
+                    (response, None, Some("resolved-model".to_string())),
+                    format,
                 )
                 .await;
 
@@ -6319,7 +6314,7 @@ mod tests {
             ),
         ] {
             let meta: ProviderMeta = serde_json::from_value(metadata.clone()).unwrap();
-            let api_format = meta.codex_copilot_api_format.unwrap_or_default();
+            let api_format = CodexCopilotApiFormat::from_meta(Some(&meta));
             let models = [CopilotModel {
                 id: "gpt-5.6".to_string(),
                 name: "GPT-5.6".to_string(),

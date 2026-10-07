@@ -413,6 +413,19 @@ pub enum CodexCopilotApiFormat {
     OpenaiChat,
 }
 
+impl CodexCopilotApiFormat {
+    /// Read the stored selection. The meta field stays a plain string so a value
+    /// written by a newer version survives sync round-trips here instead of
+    /// failing the whole `ProviderMeta` parse; unknown values fall back to auto.
+    pub fn from_meta(meta: Option<&ProviderMeta>) -> Self {
+        match meta.and_then(|meta| meta.codex_copilot_api_format.as_deref()) {
+            Some("openai_responses") => Self::OpenaiResponses,
+            Some("openai_chat") => Self::OpenaiChat,
+            _ => Self::Auto,
+        }
+    }
+}
+
 /// Codex Responses -> Chat Completions 的 reasoning 能力描述。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct CodexChatReasoningConfig {
@@ -516,7 +529,7 @@ pub struct ProviderMeta {
         rename = "codexCopilotApiFormat",
         skip_serializing_if = "Option::is_none"
     )]
-    pub codex_copilot_api_format: Option<CodexCopilotApiFormat>,
+    pub codex_copilot_api_format: Option<String>,
     /// 通用认证绑定（provider_config / managed_account）
     ///
     /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。
@@ -1171,7 +1184,7 @@ mod tests {
                 "codexCopilotApiFormat": wire
             });
             let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
-            assert_eq!(meta.codex_copilot_api_format, Some(expected));
+            assert_eq!(CodexCopilotApiFormat::from_meta(Some(&meta)), expected);
             assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
             assert_eq!(serde_json::to_value(meta).unwrap(), value);
         }
@@ -1187,20 +1200,34 @@ mod tests {
             let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
             assert_eq!(meta.codex_copilot_api_format, None);
             assert_eq!(
-                meta.codex_copilot_api_format.unwrap_or_default(),
+                CodexCopilotApiFormat::from_meta(Some(&meta)),
                 CodexCopilotApiFormat::Auto
             );
             assert_eq!(serde_json::to_value(meta).unwrap(), value);
         }
+        assert_eq!(
+            CodexCopilotApiFormat::from_meta(None),
+            CodexCopilotApiFormat::Auto
+        );
     }
 
+    /// A value from a newer version must not fail the whole meta parse (the DAO
+    /// would fall back to an empty meta and drop the account binding); it is read
+    /// as auto and written back unchanged.
     #[test]
-    fn codex_copilot_api_format_rejects_unknown_values() {
-        for value in ["anthropic", "messages", "openai", "unknown", ""] {
-            assert!(serde_json::from_value::<ProviderMeta>(json!({
-                "codexCopilotApiFormat": value
-            }))
-            .is_err());
+    fn codex_copilot_api_format_keeps_unknown_values_without_losing_meta() {
+        for wire in ["anthropic", "messages", "openai", "unknown", ""] {
+            let value = json!({
+                "providerType": "github_copilot",
+                "codexCopilotApiFormat": wire
+            });
+            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(meta.provider_type.as_deref(), Some("github_copilot"));
+            assert_eq!(
+                CodexCopilotApiFormat::from_meta(Some(&meta)),
+                CodexCopilotApiFormat::Auto
+            );
+            assert_eq!(serde_json::to_value(meta).unwrap(), value);
         }
     }
 
