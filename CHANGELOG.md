@@ -5,6 +5,31 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.4] - 2026-10-07
+
+The first stable release of 4.0. On top of 4.0.3, macOS restarts after an in-app update or a config-directory change bring the new window to the front, new installs hide the project switcher until it is turned on in Settings, the request log's speed column stays visible in a narrow window, and the About card's star prompt gets its own dismissible strip. See the 4.0.0 to 4.0.3 sections below for everything else in 4.0.
+
+**Stats**: 5 commits | 12 files changed | +136 insertions | -39 deletions
+
+### Changed
+
+- **Project Switcher Hidden by Default**: The switcher showed on the providers page header and in the tray for every new install, though most users never create a project. `show_profile_switcher` now defaults to false (plain `#[serde(default)]`, `AppSettings::default()` sets false), and the frontend fallbacks in `App.tsx` and `GeneralSection` are `?? false` so the header does not flash the switcher before settings load. Existing users keep their behavior: the field has been persisted to `settings.json` since v3.17.0.
+- **Star Prompt on the About Card**: The prompt sat at the end of the link row and wrapped onto a line of its own like a stray caption. It now lives in a tinted strip at the bottom of the card with a slowly spinning star (stopped under `prefers-reduced-motion`) and a "Star on GitHub" button; the separate GitHub button is dropped while the strip shows. A close button dismisses it per device (`localStorage`), and the plain GitHub button returns to the link row.
+
+### Fixed
+
+- **macOS Window Stayed Behind Other Apps After a Restart**: `tauri::process::restart` spawns the binary directly, and since macOS 14 app activation is cooperative, so the new process's activation request was denied after an in-app update or a config-dir restart. `restart_process` now launches the bundle with `open -n` on macOS, letting the still-frontmost old instance hand activation over, and falls back to `tauri::process::restart` if that fails. `restart_app` uses `restart_process` instead of `app.restart()` so both paths behave the same. The update from an older version still restarts through that version's code, so the fix shows from the next update on.
+- **Request Log Speed Column Pushed Out of View**: At the minimum window width with the sidebar expanded, the table area is 644 px but the table had `min-w-[700px]`, so the speed column sat in a horizontal scroll whose scrollbar was usually off-screen. The minimum is now 620 px, matching the provider, model and pricing tables; the provider and model columns already truncate.
+
+### Internal
+
+- **Hermes Scan-Limit Test Batched in One Transaction**: `first_user_messages_is_scoped_to_listed_sessions` inserted 1002 rows in separate autocommits, which took 150-180 s on the Windows runner and intermittently hit nextest's 180 s timeout. The fixture inserts now run in a single transaction.
+
+### Upgrade notes
+
+- **No database schema change** (still 20).
+- **This is the first stable 4.0 release**, so 3.x installs update to it through the in-app updater. The full 4.0 notes for 3.x users are in `docs/release-notes/v4.0.4-*.md`.
+
 ## [4.0.3] - 2026-10-06
 
 Fixes and smaller additions on top of 4.0.2. Claude Code mapped to GPT or Grok no longer reasons at full strength with thinking turned off, and `low` effort no longer returns 400 on pro models. Claude Code behind a gateway can skip the auto mode server check with a new quick toggle (on by default for new third-party providers), and every quick toggle now explains itself. Skills imported with several apps ticked actually reach those apps, OpenCode Go works from Claude Desktop, and mixed LF / CRLF SSE streams no longer lose tool calls. MCP and prompt editors open as full pages that ask before discarding unsaved changes; Backup & Restore shows every backup location under `~/.cc-switch` with its size; ChatGPT subscriptions show their Codex Credits balance; the usage tables count cache tokens and the model tab gains success rate and speed. OpenCode 2.0 native providers round-trip through the JSON editor, and OpenCode Zen and MoArk join the presets.
