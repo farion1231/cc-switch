@@ -147,6 +147,12 @@ pub async fn update_proxy_config_for_app(
     let db = &state.db;
     let app_type = config.app_type.clone();
     require_proxy_app(&app_type)?;
+    if !crate::proxy::types::is_valid_load_balance_mode(&config.load_balance_mode) {
+        return Err(format!(
+            "无效的负载均衡模式: {}（合法值: off | session）",
+            config.load_balance_mode
+        ));
+    }
     let circuit_config = CircuitBreakerConfig::from(&config);
 
     db.update_proxy_config_for_app(config)

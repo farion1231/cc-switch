@@ -18,6 +18,7 @@ mod handlers;
 pub mod http_client;
 pub mod hyper_client;
 pub(crate) mod json_canonical;
+pub mod load_balance;
 pub mod log_codes;
 pub mod media_sanitizer;
 pub mod model_mapper;
@@ -28,6 +29,8 @@ pub(crate) mod server;
 pub mod session;
 pub(crate) mod sse;
 pub(crate) mod switch_lock;
+#[cfg(test)]
+mod tests_load_balance;
 pub mod thinking_budget_rectifier;
 pub mod thinking_optimizer;
 pub mod thinking_rectifier;
@@ -42,6 +45,8 @@ pub use circuit_breaker::{
 };
 #[allow(unused_imports)]
 pub use error::ProxyError;
+#[allow(unused_imports)]
+pub use load_balance::SessionLoadBalancer;
 #[allow(unused_imports)]
 pub use provider_router::ProviderRouter;
 #[allow(unused_imports)]

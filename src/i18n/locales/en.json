@@ -1485,7 +1485,37 @@
     "testFailed": "Speed test failed: {{error}}",
     "empty": "No endpoints"
   },
+  "codingPlanPresets": {
+    "placeholder": "Plan preset (quick fill)",
+    "kimiTier1": "Kimi Tier 1",
+    "kimiTier2": "Kimi Tier 2",
+    "kimiTier3": "Kimi Tier 3",
+    "kimiTier4": "Kimi Tier 4",
+    "kimiMax": "Kimi Max",
+    "glmMax": "GLM Coding Max",
+    "mimo": "MiMo",
+    "sources": {
+      "userSpecified": "User-specified (2026-10-07)",
+      "kimiMax": "User-specified 8 (2026-10-07); official pricing page lists Max=4 — user value takes precedence",
+      "glmConsole": "Console-verified (2026-10-07): glm-5.3=30, glm-5.3-flash=50",
+      "mimoUnspecified": "No official figure; left unlimited. Runtime adapts via 429/403 cooldown"
+    }
+  },
   "providerAdvanced": {
+    "loadBalance": {
+      "title": "Concurrency limit",
+      "enable": "Enable",
+      "hint": "With session-sticky load balancing, new sessions prefer accounts below the limit; 0 or empty = unlimited. Sticky sessions are never limited.",
+      "preset": "Plan preset",
+      "presetHint": "Select to fill in; see each tier's source note. Editable afterwards",
+      "maxConcurrent": "Account default concurrency",
+      "maxConcurrentHint": "0 or empty = unlimited",
+      "byModel": "Per-model overrides",
+      "byModelHint": "Set a separate limit for specific outbound models (upstream name after model mapping); takes precedence over the account default",
+      "model": "Model name",
+      "limit": "Limit",
+      "addOverride": "Add model override"
+    },
     "pricingConfig": "Pricing Config",
     "useCustomPricing": "Use separate config",
     "pricingConfigDesc": "Configure separate pricing parameters for this provider. Uses global defaults when disabled.",
@@ -2914,6 +2944,12 @@
       "reorderSuccess": "Queue order updated",
       "reorderFailed": "Failed to update order",
       "toggleFailed": "Failed to update status"
+    },
+    "loadBalance": {
+      "modeLabel": "Load balancing mode",
+      "off": "Off (primary/backup)",
+      "session": "Session-sticky round robin",
+      "hint": "Same session stays on one account; new sessions are spread across the failover queue. Requires auto failover with multiple accounts in the queue."
     },
     "autoFailover": {
       "info": "When the failover queue has multiple providers, the system will try them in priority order when requests fail. When a provider reaches the consecutive failure threshold, the circuit breaker will open and skip it temporarily.",

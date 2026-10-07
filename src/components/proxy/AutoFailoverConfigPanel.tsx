@@ -3,10 +3,20 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Save, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
 import { useAppProxyConfig, useUpdateAppProxyConfig } from "@/lib/query/proxy";
+
+/** 负载均衡模式取值（与后端 is_valid_load_balance_mode 对齐） */
+type LoadBalanceMode = "off" | "session";
 
 export interface AutoFailoverConfigPanelProps {
   appType: string;
@@ -24,6 +34,7 @@ export function AutoFailoverConfigPanel({
   // 使用字符串状态以支持完全清空数字输入框
   const [formData, setFormData] = useState({
     autoFailoverEnabled: false,
+    loadBalanceMode: "off" as LoadBalanceMode,
     maxRetries: "3",
     streamingFirstByteTimeout: "60",
     streamingIdleTimeout: "120",
@@ -39,6 +50,8 @@ export function AutoFailoverConfigPanel({
     if (config) {
       setFormData({
         autoFailoverEnabled: config.autoFailoverEnabled,
+        loadBalanceMode:
+          config.loadBalanceMode === "session" ? "session" : "off",
         maxRetries: String(config.maxRetries),
         streamingFirstByteTimeout: String(config.streamingFirstByteTimeout),
         streamingIdleTimeout: String(config.streamingIdleTimeout),
@@ -163,6 +176,7 @@ export function AutoFailoverConfigPanel({
         appType,
         enabled: config.enabled,
         autoFailoverEnabled: formData.autoFailoverEnabled,
+        loadBalanceMode: formData.loadBalanceMode,
         maxRetries: raw.maxRetries,
         streamingFirstByteTimeout: raw.streamingFirstByteTimeout,
         streamingIdleTimeout: raw.streamingIdleTimeout,
@@ -188,6 +202,8 @@ export function AutoFailoverConfigPanel({
     if (config) {
       setFormData({
         autoFailoverEnabled: config.autoFailoverEnabled,
+        loadBalanceMode:
+          config.loadBalanceMode === "session" ? "session" : "off",
         maxRetries: String(config.maxRetries),
         streamingFirstByteTimeout: String(config.streamingFirstByteTimeout),
         streamingIdleTimeout: String(config.streamingIdleTimeout),
@@ -259,6 +275,37 @@ export function AutoFailoverConfigPanel({
                   "proxy.autoFailover.maxRetriesHint",
                   "请求失败时的重试次数（0-10）",
                 )}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor={`loadBalanceMode-${appType}`}>
+                {t("proxy.loadBalance.modeLabel", "负载均衡模式")}
+              </Label>
+              <Select
+                value={formData.loadBalanceMode}
+                onValueChange={(value) =>
+                  setFormData({
+                    ...formData,
+                    loadBalanceMode: value as LoadBalanceMode,
+                  })
+                }
+                disabled={isDisabled}
+              >
+                <SelectTrigger id={`loadBalanceMode-${appType}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">
+                    {t("proxy.loadBalance.off", "关闭（主备）")}
+                  </SelectItem>
+                  <SelectItem value="session">
+                    {t("proxy.loadBalance.session", "会话粘性轮询")}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {t("proxy.loadBalance.hint")}
               </p>
             </div>
 

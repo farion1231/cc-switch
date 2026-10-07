@@ -7,6 +7,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::load_balance::SessionLoadBalancer;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -26,6 +27,8 @@ pub struct ProviderRouter {
     db: Arc<Database>,
     /// 熔断器管理器 - key 格式: "app_type:provider_id"
     circuit_breakers: Arc<RwLock<HashMap<String, Arc<CircuitBreaker>>>>,
+    /// 会话粘性负载均衡状态（粘性表/游标/在途计数/冷却）
+    load_balancer: Arc<SessionLoadBalancer>,
 }
 
 impl ProviderRouter {
@@ -34,7 +37,14 @@ impl ProviderRouter {
         Self {
             db,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            load_balancer: Arc::new(SessionLoadBalancer::new()),
         }
+    }
+
+    /// 供 forwarder 记录重映射/冷却/在途（内部挂点用）
+    #[cfg_attr(not(test), allow(dead_code))] // 测试与后续状态 UI 使用；lib 内经包装方法调用
+    pub fn load_balancer(&self) -> &SessionLoadBalancer {
+        &self.load_balancer
     }
 
     /// 选择可用的供应商（支持故障转移）
@@ -43,9 +53,6 @@ impl ProviderRouter {
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
-        let mut result = Vec::new();
-        let mut total_providers = 0usize;
-        let mut circuit_open_count = 0usize;
         let current_id = AppType::from_str(app_type)
             .ok()
             .and_then(|app_enum| {
@@ -77,56 +84,209 @@ impl ProviderRouter {
             // A selected Codex Official account is an explicit account choice.
             // Keep it as a single route even if an old failover setting remains
             // enabled; retrying would reuse its inbound token for another card.
-            total_providers = 1;
-            result.push(current_provider.expect("checked above"));
-        } else if auto_failover_enabled {
-            // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
-            let all_providers = self.db.get_all_providers(app_type)?;
-
-            // 使用 DAO 返回的排序结果，确保和前端展示一致
-            let ordered_ids: Vec<String> = self
-                .db
-                .get_failover_queue(app_type)?
-                .into_iter()
-                .map(|item| item.provider_id)
-                .collect();
-
-            for provider_id in ordered_ids {
-                let Some(provider) = all_providers.get(&provider_id).cloned() else {
-                    continue;
-                };
-                if !provider_supports_failover(app_type, &provider) {
-                    continue;
-                }
-                total_providers += 1;
-
-                let circuit_key = format!("{app_type}:{}", provider.id);
-                let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
-
-                if breaker.is_available().await {
-                    result.push(provider);
-                } else {
-                    circuit_open_count += 1;
-                }
-            }
-        } else {
-            // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
-            if let Some(current) = current_provider {
-                total_providers = 1;
-                result.push(current);
-            }
+            return Ok(vec![current_provider.expect("checked above")]);
         }
 
+        if !auto_failover_enabled {
+            // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
+            if let Some(current) = current_provider {
+                return Ok(vec![current]);
+            }
+            log::warn!("[{app_type}] [FO-005] 未配置供应商");
+            return Err(AppError::NoProvidersConfigured);
+        }
+
+        // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
+        let (result, total_providers, circuit_open_count) =
+            self.circuit_filtered_queue(app_type).await?;
         if result.is_empty() {
             if total_providers > 0 && circuit_open_count == total_providers {
                 log::warn!("[{app_type}] [FO-004] 所有供应商均已熔断");
                 return Err(AppError::AllProvidersCircuitOpen);
+            }
+            log::warn!("[{app_type}] [FO-005] 未配置供应商");
+            return Err(AppError::NoProvidersConfigured);
+        }
+        Ok(result)
+    }
+
+    /// 故障转移队列 -> 熔断过滤后的候选池（返回 (池, 总数, 熔断数)）。
+    ///
+    /// `select_providers` 与 `select_providers_for_session` 共用，保证
+    /// 两者的池构造语义（队列顺序 + provider_supports_failover + 熔断过滤）一致。
+    async fn circuit_filtered_queue(
+        &self,
+        app_type: &str,
+    ) -> Result<(Vec<Provider>, usize, usize), AppError> {
+        let all_providers = self.db.get_all_providers(app_type)?;
+
+        // 使用 DAO 返回的排序结果，确保和前端展示一致
+        let ordered_ids: Vec<String> = self
+            .db
+            .get_failover_queue(app_type)?
+            .into_iter()
+            .map(|item| item.provider_id)
+            .collect();
+
+        let mut result = Vec::new();
+        let mut total_providers = 0usize;
+        let mut circuit_open_count = 0usize;
+        for provider_id in ordered_ids {
+            let Some(provider) = all_providers.get(&provider_id).cloned() else {
+                continue;
+            };
+            if !provider_supports_failover(app_type, &provider) {
+                continue;
+            }
+            total_providers += 1;
+
+            let circuit_key = format!("{app_type}:{}", provider.id);
+            let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+
+            if breaker.is_available().await {
+                result.push(provider);
             } else {
-                log::warn!("[{app_type}] [FO-005] 未配置供应商");
-                return Err(AppError::NoProvidersConfigured);
+                circuit_open_count += 1;
+            }
+        }
+        Ok((result, total_providers, circuit_open_count))
+    }
+
+    /// failover 成功后的会话重映射（forwarder wrapper 调用）
+    pub(crate) fn remap_session(
+        &self,
+        app_type: &str,
+        session_id: &str,
+        client_provided: bool,
+        new_provider_id: &str,
+    ) {
+        if !client_provided {
+            return; // Generated 会话不写粘性表（设计决策 3）
+        }
+        self.load_balancer
+            .remap_sticky(app_type, session_id, new_provider_id);
+    }
+
+    /// 为指定供应商获取在途计数句柄（forwarder 每 attempt 调用）
+    pub(crate) fn acquire_for_provider(
+        &self,
+        _app_type: &str,
+        provider: &Provider,
+        body: &serde_json::Value,
+    ) -> crate::proxy::load_balance::InFlightHandle {
+        let request_model = body
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        let outbound_model =
+            crate::proxy::load_balance::resolve_outbound_model(provider, request_model);
+        self.load_balancer
+            .acquire_in_flight(&provider.id, &outbound_model)
+    }
+
+    /// forwarder 挂点：限流冷却记录（429/403）
+    pub(crate) fn record_lb_rate_limit(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        retry_after_secs: Option<u64>,
+    ) {
+        self.load_balancer
+            .record_rate_limit(app_type, provider_id, retry_after_secs);
+    }
+
+    /// forwarder 挂点：成功服务，清冷却 + 重置退避
+    pub(crate) fn record_lb_success(&self, app_type: &str, provider_id: &str) {
+        self.load_balancer.record_success(app_type, provider_id);
+    }
+
+    /// 会话感知选号：load_balance_mode = off 时与 select_providers 完全一致；
+    /// session 模式下粘性命中优先，新会话按"冷却过滤 + 轮询游标 + 饱和跳过"选号并写粘性表。
+    ///
+    /// 返回 [选中账号] + 其余候选（按队列序），forwarder 顺序尝试语义不变，
+    /// 请求内 failover 自动保留。
+    ///
+    /// 注意：Gemini 的模型名在选号时刻尚未从 URI 解析（`with_model_from_uri`
+    /// 在 ctx 创建之后），模型级并发覆盖对 Gemini 不生效，账号默认上限仍生效。
+    pub async fn select_providers_for_session(
+        &self,
+        app_type: &str,
+        session_id: &str,
+        session_client_provided: bool,
+        request_model: &str,
+    ) -> Result<Vec<Provider>, AppError> {
+        let config = match self.db.get_proxy_config_for_app(app_type).await {
+            Ok(config) => config,
+            Err(e) => {
+                // 与 select_providers 的容错语义对齐：读不到配置按关闭处理
+                log::error!("[{app_type}] 读取 proxy_config 失败: {e}，负载均衡不生效");
+                return self.select_providers(app_type).await;
+            }
+        };
+        if config.load_balance_mode != "session" || !config.auto_failover_enabled {
+            // off 模式 / 故障转移关闭（池只有当前供应商，粘性无意义）
+            return self.select_providers(app_type).await;
+        }
+
+        let (pool, total_providers, circuit_open_count) =
+            self.circuit_filtered_queue(app_type).await?;
+        if pool.is_empty() {
+            if total_providers > 0 && circuit_open_count == total_providers {
+                return Err(AppError::AllProvidersCircuitOpen);
+            }
+            return Err(AppError::NoProvidersConfigured);
+        }
+        if pool.len() == 1 {
+            // 单账号池：无需粘性，避免污染粘性表
+            return Ok(pool);
+        }
+
+        // 1) 粘性命中且账号仍在池内 → 沿用（不查并发上限，设计决策 4）
+        let mut stale_hit = false;
+        if session_client_provided {
+            if let Some(hit) = self.load_balancer.lookup_sticky(app_type, session_id) {
+                if let Some(idx) = pool.iter().position(|p| p.id == hit) {
+                    let mut result = vec![pool[idx].clone()];
+                    result.extend(
+                        pool.iter()
+                            .enumerate()
+                            .filter(|(i, _)| *i != idx)
+                            .map(|(_, p)| p.clone()),
+                    );
+                    return Ok(result);
+                }
+                // 粘性账号被熔断/移出队列 → 按新会话重选（设计 5.1），映射需改写
+                stale_hit = true;
             }
         }
 
+        // 2) 新会话：冷却过滤 + 游标 + 饱和跳过 + 全饱和最少在途（设计 4.1.b）；
+        //    Generated 会话按在途最少选号、不写粘性表（设计 4.1.d）
+        let idx = if session_client_provided {
+            let idx = self
+                .load_balancer
+                .select_new_session(app_type, &pool, request_model);
+            if stale_hit {
+                // 旧映射指向已出池账号：无条件改写（insert 的先到者优先会拒绝覆盖）
+                self.load_balancer
+                    .remap_sticky(app_type, session_id, &pool[idx].id);
+            } else {
+                // 并发抢建：后到者采纳先到者（设计 4.1.c）
+                self.load_balancer
+                    .insert_sticky(app_type, session_id, &pool[idx].id);
+            }
+            idx
+        } else {
+            self.load_balancer
+                .select_least_in_flight(app_type, &pool, request_model)
+        };
+        let mut result = vec![pool[idx].clone()];
+        result.extend(
+            pool.iter()
+                .enumerate()
+                .filter(|(i, _)| *i != idx)
+                .map(|(_, p)| p.clone()),
+        );
         Ok(result)
     }
 
@@ -371,6 +531,25 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    async fn remap_session_updates_sticky_mapping() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_two_providers_with_mode(&db, "session").await;
+        let router = ProviderRouter::new(db);
+        router.load_balancer().insert_sticky("claude", "s1", "a");
+        // Generated 会话不写表
+        router.remap_session("claude", "gen", false, "b");
+        assert_eq!(router.load_balancer().lookup_sticky("claude", "gen"), None);
+        // 真实会话重映射生效
+        router.remap_session("claude", "s1", true, "b");
+        assert_eq!(
+            router.load_balancer().lookup_sticky("claude", "s1"),
+            Some("b".to_string())
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn test_provider_router_creation() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
@@ -378,6 +557,152 @@ mod tests {
 
         let breaker = router.get_or_create_circuit_breaker("claude:test").await;
         assert!(breaker.allow_request().await.allowed);
+    }
+
+    // ==================== 会话粘性负载均衡 ====================
+
+    async fn seed_two_providers_with_mode(db: &Arc<Database>, mode: &str) {
+        let mut a = Provider::with_id("a".to_string(), "A".to_string(), json!({}), None);
+        a.sort_index = Some(1);
+        let mut b = Provider::with_id("b".to_string(), "B".to_string(), json!({}), None);
+        b.sort_index = Some(2);
+        db.save_provider("claude", &a).unwrap();
+        db.save_provider("claude", &b).unwrap();
+        db.add_to_failover_queue("claude", "a").unwrap();
+        db.add_to_failover_queue("claude", "b").unwrap();
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        config.load_balance_mode = mode.to_string();
+        db.update_proxy_config_for_app(config).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn session_mode_off_behaves_identically_to_select_providers() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_two_providers_with_mode(&db, "off").await;
+        let router = ProviderRouter::new(db);
+        let via_session = router
+            .select_providers_for_session("claude", "s1", true, "unknown")
+            .await
+            .unwrap();
+        let plain = router.select_providers("claude").await.unwrap();
+        assert_eq!(
+            via_session
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            plain.iter().map(|p| p.id.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn session_mode_round_robins_new_sessions_and_writes_sticky() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_two_providers_with_mode(&db, "session").await;
+        let router = ProviderRouter::new(db);
+
+        let first = router
+            .select_providers_for_session("claude", "s1", true, "unknown")
+            .await
+            .unwrap();
+        // 返回 [选中] + 其余队列（forwarder 零改动，failover 语义保留）
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0].id, "a");
+        assert_eq!(first[1].id, "b");
+        assert_eq!(
+            router.load_balancer().lookup_sticky("claude", "s1"),
+            Some("a".to_string())
+        );
+
+        let second = router
+            .select_providers_for_session("claude", "s2", true, "unknown")
+            .await
+            .unwrap();
+        assert_eq!(second[0].id, "b"); // 游标推进到 b
+        assert_eq!(second[1].id, "a");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sticky_hit_returns_provider_first_without_cursor_advance() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_two_providers_with_mode(&db, "session").await;
+        let router = ProviderRouter::new(db);
+        router.load_balancer().insert_sticky("claude", "s1", "b");
+        let result = router
+            .select_providers_for_session("claude", "s1", true, "unknown")
+            .await
+            .unwrap();
+        assert_eq!(result[0].id, "b");
+        assert_eq!(result[1].id, "a");
+        // 粘性命中不动游标：下一个新会话仍从 a 开始
+        let next = router
+            .select_providers_for_session("claude", "s2", true, "unknown")
+            .await
+            .unwrap();
+        assert_eq!(next[0].id, "a");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn generated_session_round_robins_without_sticky_write() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_two_providers_with_mode(&db, "session").await;
+        let router = ProviderRouter::new(db);
+        router
+            .select_providers_for_session("claude", "gen", false, "unknown")
+            .await
+            .unwrap();
+        assert_eq!(router.load_balancer().lookup_sticky("claude", "gen"), None);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sticky_provider_dropped_from_pool_falls_back_to_new_selection() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_two_providers_with_mode(&db, "session").await;
+        let router = ProviderRouter::new(db);
+        router
+            .load_balancer()
+            .insert_sticky("claude", "s1", "ghost");
+        let result = router
+            .select_providers_for_session("claude", "s1", true, "unknown")
+            .await
+            .unwrap();
+        // ghost 不在池内（熔断/移出队列）→ 按新会话重选并改写粘性
+        assert_eq!(result[0].id, "a");
+        assert_eq!(
+            router.load_balancer().lookup_sticky("claude", "s1"),
+            Some("a".to_string())
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn session_mode_with_failover_disabled_falls_back_to_current_only() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        seed_two_providers_with_mode(&db, "session").await;
+        db.set_current_provider("claude", "a").unwrap();
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = false;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db);
+        let result = router
+            .select_providers_for_session("claude", "s1", true, "unknown")
+            .await
+            .unwrap();
+        // 故障转移关闭 → 池只有当前供应商，粘性无意义
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "a");
     }
 
     #[tokio::test]

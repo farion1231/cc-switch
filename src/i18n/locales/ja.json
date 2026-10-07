@@ -1485,7 +1485,37 @@
     "testFailed": "速度テストに失敗しました: {{error}}",
     "empty": "エンドポイントがありません"
   },
+  "codingPlanPresets": {
+    "placeholder": "プランプリセット（ワンクリック入力）",
+    "kimiTier1": "Kimi Tier 1",
+    "kimiTier2": "Kimi Tier 2",
+    "kimiTier3": "Kimi Tier 3",
+    "kimiTier4": "Kimi Tier 4",
+    "kimiMax": "Kimi Max",
+    "glmMax": "GLM Coding Max",
+    "mimo": "MiMo",
+    "sources": {
+      "userSpecified": "ユーザー指定（2026-10-07）",
+      "kimiMax": "ユーザー指定 8（2026-10-07）。公式料金ページは Max=4 表記 — ユーザー指定を優先",
+      "glmConsole": "コンソール実測（2026-10-07）：glm-5.3=30、glm-5.3-flash=50",
+      "mimoUnspecified": "公式数値なし・無制限。実行時は 429/403 クールダウンで適応"
+    }
+  },
   "providerAdvanced": {
+    "loadBalance": {
+      "title": "同時実行上限",
+      "enable": "有効化",
+      "hint": "セッション粘着負荷分散が有効な場合、新規セッションは上限未満のアカウントへ優先割り当て。0 または空欄 = 無制限。粘着セッションは上限の対象外です。",
+      "preset": "プランプリセット",
+      "presetHint": "選択で自動入力。各 Tier の出典注記を参照。後から変更可能",
+      "maxConcurrent": "アカウント既定の同時実行上限",
+      "maxConcurrentHint": "0 または空欄 = 無制限",
+      "byModel": "モデル別上書き",
+      "byModelHint": "特定の送信モデル（モデルマッピング後の上流名）に個別上限を設定。アカウント既定より優先",
+      "model": "モデル名",
+      "limit": "上限",
+      "addOverride": "モデル上書きを追加"
+    },
     "pricingConfig": "課金設定",
     "useCustomPricing": "個別設定を使用",
     "pricingConfigDesc": "このプロバイダーに個別の課金パラメータを設定します。無効の場合はグローバル設定を使用します。",
@@ -2914,6 +2944,12 @@
       "reorderSuccess": "キュー順序を更新しました",
       "reorderFailed": "順序の更新に失敗しました",
       "toggleFailed": "状態の更新に失敗しました"
+    },
+    "loadBalance": {
+      "modeLabel": "負荷分散モード",
+      "off": "オフ（プライマリ/バックアップ）",
+      "session": "セッション粘着ラウンドロビン",
+      "hint": "同一セッションは同じアカウントに固定し、新規セッションをフェイルオーバーキューのアカウントへラウンドロビン分散。自動フェイルオーバーとキュー内の複数アカウントが必要です。"
     },
     "autoFailover": {
       "info": "フェイルオーバーキューに複数のプロバイダーが設定されている場合、リクエストが失敗すると優先度順に試行します。プロバイダーが連続失敗のしきい値に達すると、サーキットブレーカーが開き、一時的にスキップされます。",

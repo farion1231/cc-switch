@@ -1486,7 +1486,37 @@
     "testFailed": "測速失敗：{{error}}",
     "empty": "暫無端點"
   },
+  "codingPlanPresets": {
+    "placeholder": "套餐預設（一鍵填充）",
+    "kimiTier1": "Kimi 第 1 檔",
+    "kimiTier2": "Kimi 第 2 檔",
+    "kimiTier3": "Kimi 第 3 檔",
+    "kimiTier4": "Kimi 第 4 檔",
+    "kimiMax": "Kimi Max",
+    "glmMax": "GLM Coding Max",
+    "mimo": "MiMo",
+    "sources": {
+      "userSpecified": "使用者指定（2026-10-07）",
+      "kimiMax": "使用者指定 8（2026-10-07）；官網定價頁口徑 Max=4，以使用者指定為準",
+      "glmConsole": "控制台實測（2026-10-07）：glm-5.3=30，glm-5.3-flash=50",
+      "mimoUnspecified": "官網無公開數字，留空不限；運行時按 429/403 冷卻自適應"
+    }
+  },
   "providerAdvanced": {
+    "loadBalance": {
+      "title": "並發上限",
+      "enable": "啟用",
+      "hint": "會話粘性負載均衡生效時，新會話優先分配到未達上限的帳號；0 或留空 = 不限。粘性命中的會話不受上限約束。",
+      "preset": "套餐預設",
+      "presetHint": "選中即填充，來源見各檔位說明，可手改",
+      "maxConcurrent": "帳號預設並發上限",
+      "maxConcurrentHint": "0 或留空 = 不限",
+      "byModel": "按模型覆蓋",
+      "byModelHint": "針對指定出站模型名單獨設限，優先於帳號預設值（模型映射後的上游真名）",
+      "model": "模型名",
+      "limit": "上限",
+      "addOverride": "新增模型覆蓋"
+    },
     "pricingConfig": "計費設定",
     "useCustomPricing": "使用獨立設定",
     "pricingConfigDesc": "為此供應商設定獨立的計費參數，不啟用時使用全域預設設定。",
@@ -2915,6 +2945,12 @@
       "reorderSuccess": "佇列順序已更新",
       "reorderFailed": "更新順序失敗",
       "toggleFailed": "狀態更新失敗"
+    },
+    "loadBalance": {
+      "modeLabel": "負載均衡模式",
+      "off": "關閉（主備）",
+      "session": "會話粘性輪詢",
+      "hint": "同一會話固定走同一帳號，新會話在故障轉移佇列的帳號間輪詢分攤並發。需開啟自動故障轉移且佇列中有多個帳號。"
     },
     "autoFailover": {
       "info": "當故障轉移佇列中設定了多個供應商時，系統會在請求失敗時按優先順序依次嘗試。當某個供應商連續失敗達到閾值時，斷路器會打開並在一段時間內跳過該供應商。",

@@ -224,7 +224,7 @@ impl Database {
                 "SELECT app_type, enabled, auto_failover_enabled,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                        circuit_error_rate_threshold, circuit_min_requests
+                        circuit_error_rate_threshold, circuit_min_requests, load_balance_mode
                  FROM proxy_config WHERE app_type = ?1",
                 [app_type],
                 |row| {
@@ -241,6 +241,7 @@ impl Database {
                         circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
                         circuit_error_rate_threshold: row.get(10)?,
                         circuit_min_requests: row.get::<_, i32>(11)? as u32,
+                        load_balance_mode: row.get(12)?,
                     })
                 },
             )
@@ -265,6 +266,7 @@ impl Database {
                     circuit_timeout_seconds: 60,
                     circuit_error_rate_threshold: 0.6,
                     circuit_min_requests: 10,
+                    load_balance_mode: "off".to_string(),
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -291,6 +293,7 @@ impl Database {
                 circuit_timeout_seconds = ?10,
                 circuit_error_rate_threshold = ?11,
                 circuit_min_requests = ?12,
+                load_balance_mode = ?13,
                 updated_at = datetime('now')
              WHERE app_type = ?1",
             rusqlite::params![
@@ -306,6 +309,7 @@ impl Database {
                 config.circuit_timeout_seconds as i32,
                 config.circuit_error_rate_threshold,
                 config.circuit_min_requests as i32,
+                config.load_balance_mode,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -906,6 +910,22 @@ impl Database {
 mod tests {
     use crate::database::Database;
     use crate::error::AppError;
+
+    #[tokio::test]
+    async fn load_balance_mode_roundtrip_and_default() {
+        let db = Database::memory().unwrap();
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        assert_eq!(config.load_balance_mode, "off", "新库默认应为 off");
+        config.load_balance_mode = "session".to_string();
+        db.update_proxy_config_for_app(config).await.unwrap();
+        assert_eq!(
+            db.get_proxy_config_for_app("claude")
+                .await
+                .unwrap()
+                .load_balance_mode,
+            "session"
+        );
+    }
 
     #[tokio::test]
     async fn test_default_cost_multiplier_round_trip() -> Result<(), AppError> {
