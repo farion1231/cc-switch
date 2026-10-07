@@ -193,6 +193,11 @@ export interface ProviderMeta {
   costMultiplier?: string;
   // 供应商计费模式来源
   pricingModelSource?: string;
+  // 并发上限（代理会话粘性负载均衡）：账号默认 + 按模型覆盖，0/缺省 = 不限
+  loadBalance?: {
+    maxConcurrentRequests?: number;
+    maxConcurrentByModel?: Record<string, number>;
+  };
   // API 格式（Claude / Codex 供应商使用）
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换

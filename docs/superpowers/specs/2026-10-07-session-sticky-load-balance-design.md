@@ -293,3 +293,32 @@
   - 阶段 1（方案 A 范围）：load_balance_mode 字段 + 粘性表 + 路由接入 + 重映射。
   - 阶段 2（B 增量）：InFlightGuard + 两级并发上限 + 429/403 冷却 + 预设表与 UI。
   - 每阶段测试绿后各提交一次 commit（Conventional Commits）。
+## 8. 本地 fork 校验与实现偏差（2026-10-08 实施时确认）
+
+第 2 节锚点逐点复核结论与落地偏差：
+
+1. `proxy_config` 是**列式表**而非 key-value（4.3"无 schema 迁移"不成立）：
+   `load_balance_mode TEXT NOT NULL DEFAULT 'off'` 走 v18→v19 版本化迁移
+   （`add_column_if_missing`，schema.rs 既有模式）。
+2. **会话提取已在选号之前**（handler_context.rs）：4.1"把会话提取挪到选号之前"
+   在 fork 已天然完成，免做。
+3. **`previous_response_id` 已被 fork 弃用为会话身份**（session.rs 有注释与测试）：
+   无头 Codex 会话按 Generated 处理（不写粘性表），与决策 3 一致，免做。
+4. **并发上限存 `provider.meta.loadBalance`** 而非 settings JSON：`costMultiplier`
+   先例（前端表单 ↔ meta ↔ 后端读取），且 meta 承诺不写入 CLI live 配置。
+5. **Generated/Extracted 落地形式**：`SessionIdResult.client_provided`
+   （false ⇔ Generated），无独立枚举。
+6. Retry-After 落地：`ProxyError::UpstreamError` 新增 `retry_after_secs` 字段
+   （仅解析秒格式，HTTP-date 回退退避阶梯；防御性封顶 10m）。
+7. 已知取舍：Gemini 选号时刻模型名未定（`with_model_from_uri` 在 ctx 之后），
+   模型级覆盖对 Gemini 不生效，账号默认上限生效；整流器重试子路径不重复记冷却
+   （主失败路径已覆盖同一账号）。
+
+实现文件：`proxy/load_balance.rs`（粘性表/在途/冷却/InFlightHandle）、
+`proxy/provider_router.rs`（`select_providers_for_session`）、
+`proxy/forwarder.rs`（wrapper 重映射 + 迭代内在途 + Retryable 冷却挂点）、
+`proxy/tests_load_balance.rs`（双 mock 上游四场景）、
+`database/schema.rs` + `dao/proxy.rs`（v19 迁移）、`provider.rs`
+（`ProviderLoadBalance`）、前端 `codingPlanPresets.ts` + 
+`AutoFailoverConfigPanel`（模式下拉）+ `ProviderAdvancedConfig`（并发区），
+i18n 四语言同步。
