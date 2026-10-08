@@ -1314,6 +1314,8 @@ fn codex_catalog_model_entry(
     let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
     let context_window = spec.context_window.unwrap_or(default_context_window);
     entry_obj.insert("slug".to_string(), json!(spec.model));
+    // Explicitly configured models must be listed even when the cached template is hidden.
+    entry_obj.insert("visibility".to_string(), json!("list"));
     entry_obj.insert("display_name".to_string(), json!(display_name));
     entry_obj.insert("description".to_string(), json!(display_name));
     entry_obj.insert("context_window".to_string(), json!(context_window));
@@ -3685,6 +3687,30 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
+    fn provider_catalog_models_do_not_inherit_hidden_template_visibility() {
+        let template = json!({ "slug": "gpt-5.5", "visibility": "hide" });
+        let settings = json!({
+            "modelCatalog": { "models": [
+                { "model": "glm-5.3-flash" },
+                { "model": "glm-5.3" }
+            ] }
+        });
+        let specs = codex_catalog_model_specs(&settings);
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models.len(), 2);
+        for model in models {
+            assert_eq!(model["visibility"], "list");
+        }
+        assert_eq!(template["visibility"], "hide");
+    }
+
+    #[test]
     fn codex_model_catalog_uses_provider_models_and_context() {
         let template = json!({
             "slug": "gpt-5.5",
@@ -5108,7 +5134,7 @@ wire_api = "responses"
             ),
             native_row(
                 "gpt-5.5",
-                json!({ "priority": 12, "base_instructions": "x" }),
+                json!({ "priority": 12, "base_instructions": "x", "visibility": "hide" }),
             ),
             native_row(
                 "gpt-6-astra",
@@ -5150,6 +5176,7 @@ wire_api = "responses"
             "official Lite rows keep Lite"
         );
         assert_eq!(models[1]["comp_hash"], "3000");
+        assert_eq!(models[2]["visibility"], "hide", "native visibility stays");
         assert!(models[0].get("auto_compact_token_limit").is_none());
         assert_eq!(models[3]["comp_hash"], "cc-switch");
     }
