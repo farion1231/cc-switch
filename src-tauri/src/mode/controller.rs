@@ -5864,6 +5864,58 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
+    async fn codex_native_route_respects_remote_compaction_toggle() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let mut relay = codex_native(
+            "relay",
+            "https://relay.example/v1",
+            "",
+            Some(json!({ "models": [{ "model": "gpt-relay" }] })),
+        );
+        relay.meta.as_mut().unwrap().codex_official_compatible = Some(true);
+        let state = state_with(AppType::Codex, &[relay.clone()], "relay").await;
+        enter(&state, &AppType::Codex, false).await.unwrap();
+        let provider_name = || {
+            let doc = codex_doc();
+            let id = doc["model_provider"].as_str().unwrap();
+            doc["model_providers"][id]["name"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_ne!(
+            provider_name(),
+            "OpenAI",
+            "declaring native compatibility must not enable remote compaction"
+        );
+        let catalog = codex_catalog();
+        for enabled in [true, false, true] {
+            let mut config = relay.settings_config["config"]
+                .as_str()
+                .unwrap()
+                .parse::<toml_edit::DocumentMut>()
+                .unwrap();
+            config["model_providers"]["relay"]["name"] =
+                toml_edit::value(if enabled { "OpenAI" } else { "relay" });
+            relay.settings_config["config"] = json!(config.to_string());
+            ProviderService::update(&state, AppType::Codex, None, relay.clone()).unwrap();
+            assert_eq!(provider_name() == "OpenAI", enabled);
+            assert_eq!(
+                codex_catalog(),
+                catalog,
+                "the remote-compaction preference does not change model capabilities"
+            );
+            assert_eq!(
+                crate::proxy::providers::resolve_codex_catalog_tool_profile(&relay),
+                crate::codex_config::CodexCatalogToolProfile::OfficialResponses
+            );
+        }
+        state.proxy_service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn codex_native_relay_compaction_keeps_the_upstream_ciphertext() {
         let _home = Home::new();
         seed_codex("[features]\nmemories = true\n", None);
@@ -5900,6 +5952,13 @@ model_provider = "c"
         let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let mut relay = codex_native("relay", &format!("http://{address}/v1"), "", None);
         relay.meta.as_mut().unwrap().codex_official_compatible = Some(true);
+        let mut config = relay.settings_config["config"]
+            .as_str()
+            .unwrap()
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+        config["model_providers"]["relay"]["name"] = toml_edit::value("OpenAI");
+        relay.settings_config["config"] = json!(config.to_string());
         let generic = codex_native("generic", "https://generic.example/v1", "", None);
         let state = state_with(AppType::Codex, &[relay, generic], "relay").await;
         for stack in [false, true] {
@@ -5976,6 +6035,39 @@ model_provider = "c"
         assert_eq!(provider_name(), "OpenAI");
         set_codex_member(&state, "native", false).await;
         assert_ne!(provider_name(), "OpenAI");
+        state.proxy_service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_unpublished_native_member_keeps_the_route_compaction_setting() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let generic = codex_native(
+            "generic",
+            "https://generic.example/v1",
+            "model_catalog_json = \"/opt/team/models.json\"\n",
+            None,
+        );
+        let mut native = codex_native("native", "https://native.example/v1", "", None);
+        native.meta.as_mut().unwrap().codex_official_compatible = Some(true);
+        let state = state_with(AppType::Codex, &[generic, native], "generic").await;
+        enter(&state, &AppType::Codex, true).await.unwrap();
+        let before = codex_text();
+        let notice = set_stack_member(&state, &AppType::Codex, "native", true)
+            .await
+            .unwrap();
+        assert_eq!(notice, Some("routeOwnsCatalog"));
+        assert!(stack_state_of(&AppType::Codex).is_member("native"));
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some("/opt/team/models.json")
+        );
+        assert_eq!(
+            codex_text(),
+            before,
+            "an unpublished native member must not change the client's compaction capability"
+        );
         state.proxy_service.stop().await.unwrap();
     }
 

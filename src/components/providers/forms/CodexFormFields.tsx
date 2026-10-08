@@ -1638,7 +1638,7 @@ export function CodexFormFields({
             >
               {t("codexConfig.officialCompatibleHint", {
                 defaultValue:
-                  "仅适用于支持 OpenAI 原生远程压缩的 Responses 服务。匹配官方 GPT 模型时保留 Fast 选项与压缩兼容性；实际优先档及跨账号压缩兼容性由上游决定。",
+                  "仅适用于支持 OpenAI 原生远程压缩的 Responses 服务。匹配官方 GPT 模型时保留 Fast 选项与压缩兼容性；路由模式下仍由“启用远程压缩”控制是否使用远程压缩。实际优先档及跨账号压缩兼容性由上游决定。",
               })}
             </p>
           </div>
