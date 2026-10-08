@@ -5,11 +5,14 @@
 //! ## 数据流
 //! ```text
 //! ~/.local/share/opencode/opencode.db
-//!   → session 表获取所有会话
-//!   → message 表获取 assistant 消息
+//!   → session / session_v2 表获取所有会话（按存储布局选择）
+//!   → message / session_message 表获取 assistant 消息
 //!   → 解析 data JSON 提取 tokens/cost/model
 //!   → proxy_request_logs 表
 //! ```
+//!
+//! OpenCode V2 把会话数据迁移到 `session_v2` / `session_message` 并冻结 V1
+//! 表，因此检测到 V2 表时优先读取 V2；未迁移的库继续走 V1 布局。
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
@@ -39,6 +42,36 @@ struct OpenCodeMessageData {
 struct OpenCodeMessageQueryResult {
     messages: Vec<(String, OpenCodeMessageData)>,
     has_incomplete_usage: bool,
+}
+
+/// OpenCode 数据库的存储布局。
+///
+/// V1 使用 `session` / `message` 表；V2（OpenCode 2.x）把会话数据迁移到
+/// `session_v2` / `session_message` 并停止写入 V1 表。迁移后 V1 表仍然存在
+/// 但内容冻结，因此检测到 V2 表时必须优先读取 V2。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenCodeSchema {
+    V1,
+    V2,
+}
+
+/// 探测数据库使用的存储布局：`session_v2` 与 `session_message` 同时存在
+/// 视为 V2，否则回退 V1。
+fn detect_schema(conn: &rusqlite::Connection) -> Result<OpenCodeSchema, AppError> {
+    if sqlite_table_exists(conn, "session_v2")? && sqlite_table_exists(conn, "session_message")? {
+        Ok(OpenCodeSchema::V2)
+    } else {
+        Ok(OpenCodeSchema::V1)
+    }
+}
+
+fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool, AppError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get(0),
+    )
+    .map_err(|error| AppError::Database(format!("查询表 {table} 失败: {error}")))
 }
 
 /// 同步 OpenCode 使用数据
@@ -101,8 +134,10 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     };
     let mut has_sync_errors = false;
 
+    let schema = detect_schema(&opencode_conn)?;
+
     // 查询所有会话
-    let sessions = query_sessions(&opencode_conn)?;
+    let sessions = query_sessions(&opencode_conn, schema)?;
 
     for (session_id, time_updated) in &sessions {
         // 检查会话是否需要重新同步
@@ -116,7 +151,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
         // 查询该会话的所有 assistant 消息
         let mut session_has_incomplete_usage = false;
-        match query_assistant_messages(&opencode_conn, session_id) {
+        match query_assistant_messages(&opencode_conn, schema, session_id) {
             Ok(query_result) => {
                 session_has_incomplete_usage = query_result.has_incomplete_usage;
                 for (message_id, msg_data) in &query_result.messages {
@@ -179,16 +214,28 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 }
 
 /// 查询所有会话的 (id, sync_watermark)
-fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, AppError> {
+fn query_sessions(
+    conn: &rusqlite::Connection,
+    schema: OpenCodeSchema,
+) -> Result<Vec<(String, i64)>, AppError> {
+    let sessions_table = match schema {
+        OpenCodeSchema::V1 => "session",
+        OpenCodeSchema::V2 => "session_v2",
+    };
+    let messages_table = match schema {
+        OpenCodeSchema::V1 => "message",
+        OpenCodeSchema::V2 => "session_message",
+    };
+    let sql = format!(
+        "SELECT s.id,
+                MAX(s.time_updated, COALESCE(MAX(m.time_updated), s.time_updated)) AS sync_watermark
+         FROM {sessions_table} s
+         LEFT JOIN {messages_table} m ON m.session_id = s.id
+         GROUP BY s.id
+         ORDER BY sync_watermark"
+    );
     let mut stmt = conn
-        .prepare(
-            "SELECT s.id,
-                    MAX(s.time_updated, COALESCE(MAX(m.time_updated), s.time_updated)) AS sync_watermark
-             FROM session s
-             LEFT JOIN message m ON m.session_id = s.id
-             GROUP BY s.id
-             ORDER BY sync_watermark",
-        )
+        .prepare(&sql)
         .map_err(|e| AppError::Database(format!("准备会话查询失败: {e}")))?;
 
     let rows = stmt
@@ -205,34 +252,56 @@ fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, App
     Ok(sessions)
 }
 
-/// 查询某会话的已完成 assistant 消息，并标记是否还有未完成 usage 消息。
+/// 查询某会话的已完成计费消息（V1: assistant，V2: assistant + compaction），
+/// 并标记是否还有未完成 usage 消息。
 fn query_assistant_messages(
     conn: &rusqlite::Connection,
+    schema: OpenCodeSchema,
     session_id: &str,
 ) -> Result<OpenCodeMessageQueryResult, AppError> {
+    // V2 的消息类型记录在 `type` 列上，上下文压缩请求的用量写在
+    // type='compaction' 行（V1 中压缩摘要是 assistant 消息，无需特判）；
+    // V1 需要按 data.role 过滤。
+    let sql = match schema {
+        OpenCodeSchema::V1 => {
+            "SELECT id, data, NULL FROM message WHERE session_id = ?1 ORDER BY time_created"
+        }
+        OpenCodeSchema::V2 => {
+            "SELECT id, data, type FROM session_message \
+             WHERE session_id = ?1 AND type IN ('assistant', 'compaction') \
+             ORDER BY time_created"
+        }
+    };
     let mut stmt = conn
-        .prepare("SELECT id, data FROM message WHERE session_id = ?1 ORDER BY time_created")
+        .prepare(sql)
         .map_err(|e| AppError::Database(format!("准备消息查询失败: {e}")))?;
 
     let rows = stmt
         .query_map([session_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })
         .map_err(|e| AppError::Database(format!("查询消息失败: {e}")))?;
 
     let mut messages = Vec::new();
     let mut has_incomplete_usage = false;
     for row in rows {
-        let (message_id, data_json) =
+        let (message_id, data_json, message_type) =
             row.map_err(|e| AppError::Database(format!("读取消息行失败: {e}")))?;
 
-        // 只处理 assistant 消息
+        // V2 的 assistant 消息没有 role 字段（由 `type` 列标识），
+        // V1 消息仍按 data.role 过滤。
         let value: serde_json::Value = match serde_json::from_str(&data_json) {
             Ok(v) => v,
             Err(_) => continue,
         };
 
-        if value.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+        if schema == OpenCodeSchema::V1
+            && value.get("role").and_then(|r| r.as_str()) != Some("assistant")
+        {
             continue;
         }
 
@@ -241,8 +310,18 @@ fn query_assistant_messages(
             continue;
         }
 
-        // 跳过未完成的消息：进行中只有半截 token，且因 INSERT OR IGNORE 无法回填
-        if value.get("time").and_then(|t| t.get("completed")).is_none() {
+        // 跳过未完成的消息：进行中只有半截 token，且因 INSERT OR IGNORE 无法回填。
+        // assistant 用 time.completed 判终态；V2 compaction 用 status 终态
+        // （completed/failed），没有 time.completed 字段。
+        let is_completed = if message_type.as_deref() == Some("compaction") {
+            matches!(
+                value.get("status").and_then(|s| s.as_str()),
+                Some("completed") | Some("failed")
+            )
+        } else {
+            value.get("time").and_then(|t| t.get("completed")).is_some()
+        };
+        if !is_completed {
             has_incomplete_usage = true;
             continue;
         }
@@ -291,9 +370,16 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
 
     let cost = value.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
+    // V1 把模型 ID 放在 `modelID` 字符串里；V2 的 `model` 是
+    // `{ id, providerID, variant }` 对象（也兼容纯字符串形态）。
     let model_id = value
         .get("modelID")
         .and_then(|v| v.as_str())
+        .or_else(|| match value.get("model") {
+            Some(serde_json::Value::String(model)) => Some(model.as_str()),
+            Some(model) => model.get("id").and_then(|v| v.as_str()),
+            None => None,
+        })
         .unwrap_or("unknown")
         .to_string();
 
@@ -551,7 +637,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = query_assistant_messages(&conn, "s1").unwrap();
+        let result = query_assistant_messages(&conn, OpenCodeSchema::V1, "s1").unwrap();
         // 只返回已完成（带 time.completed）的消息，半截的被跳过
         assert_eq!(result.messages.len(), 1);
         assert_eq!(result.messages[0].0, "done");
@@ -575,7 +661,196 @@ mod tests {
         )
         .unwrap();
 
-        let sessions = query_sessions(&conn).unwrap();
+        let sessions = query_sessions(&conn, OpenCodeSchema::V1).unwrap();
         assert_eq!(sessions, vec![("s1".to_string(), 200)]);
+    }
+
+    #[test]
+    fn test_detect_schema_prefers_v2_when_present() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE session (id TEXT); CREATE TABLE message (id TEXT);")
+            .unwrap();
+        assert_eq!(detect_schema(&conn).unwrap(), OpenCodeSchema::V1);
+
+        conn.execute_batch(
+            "CREATE TABLE session_v2 (id TEXT); CREATE TABLE session_message (id TEXT);",
+        )
+        .unwrap();
+        assert_eq!(detect_schema(&conn).unwrap(), OpenCodeSchema::V2);
+    }
+
+    #[test]
+    fn test_parse_message_data_v2_model_object() {
+        // V2 的 assistant 消息没有 role 字段，model 是对象
+        let json: serde_json::Value = serde_json::json!({
+            "agent": "build",
+            "cost": 0.00143667,
+            "tokens": {
+                "input": 1373,
+                "output": 96,
+                "reasoning": 0,
+                "cache": { "read": 391040, "write": 0 }
+            },
+            "model": { "id": "deepseek-v4.1-flash", "providerID": "opencode-go", "variant": "max" },
+            "time": {
+                "created": 1789945285532i64,
+                "streamed": 1789945288379i64,
+                "completed": 1789945288526i64
+            }
+        });
+        let data = parse_message_data(&json).unwrap();
+        assert_eq!(data.model_id, "deepseek-v4.1-flash");
+        assert_eq!(data.input_tokens, 1373);
+        assert_eq!(data.cache_read_tokens, 391040);
+        assert_eq!(data.timestamp_ms, 1789945285532);
+    }
+
+    #[test]
+    fn test_parse_message_data_v2_model_string() {
+        // 兼容 model 为纯字符串的形态
+        let json: serde_json::Value = serde_json::json!({
+            "tokens": { "input": 10, "output": 1 },
+            "model": "some-model"
+        });
+        let data = parse_message_data(&json).unwrap();
+        assert_eq!(data.model_id, "some-model");
+    }
+
+    #[test]
+    fn test_query_sessions_v2_uses_message_update_watermark() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_v2 (id TEXT, time_updated INTEGER);
+             CREATE TABLE session_message (
+                 id TEXT,
+                 session_id TEXT,
+                 type TEXT,
+                 time_created INTEGER,
+                 time_updated INTEGER,
+                 data TEXT
+             );
+             INSERT INTO session_v2 VALUES ('s1', 100);
+             INSERT INTO session_message VALUES ('m1', 's1', 'assistant', 90, 200, '{}');",
+        )
+        .unwrap();
+
+        let sessions = query_sessions(&conn, OpenCodeSchema::V2).unwrap();
+        assert_eq!(sessions, vec![("s1".to_string(), 200)]);
+    }
+
+    #[test]
+    fn test_query_assistant_messages_v2_filters_by_type() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_message (
+                 id TEXT,
+                 session_id TEXT,
+                 type TEXT,
+                 time_created INTEGER,
+                 data TEXT
+             );",
+        )
+        .unwrap();
+
+        let done = serde_json::json!({
+            "tokens": { "input": 1000, "output": 200 },
+            "model": { "id": "m" },
+            "time": { "created": 1, "completed": 2 }
+        })
+        .to_string();
+        let in_progress = serde_json::json!({
+            "tokens": { "input": 500, "output": 0 },
+            "model": { "id": "m" },
+            "time": { "created": 3 }
+        })
+        .to_string();
+        let user = serde_json::json!({
+            "tokens": { "input": 1, "output": 0 }
+        })
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO session_message VALUES ('done', 's1', 'assistant', 1, ?1),
+                                                ('wip', 's1', 'assistant', 2, ?2),
+                                                ('u1', 's1', 'user', 3, ?3)",
+            rusqlite::params![done, in_progress, user],
+        )
+        .unwrap();
+
+        let result = query_assistant_messages(&conn, OpenCodeSchema::V2, "s1").unwrap();
+        // 只返回已完成（带 time.completed）的 assistant 消息；user 行被 type 过滤
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].0, "done");
+        assert!(result.has_incomplete_usage);
+    }
+
+    #[test]
+    fn test_query_assistant_messages_v2_includes_completed_compaction() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_message (
+                 id TEXT,
+                 session_id TEXT,
+                 type TEXT,
+                 time_created INTEGER,
+                 data TEXT
+             );",
+        )
+        .unwrap();
+
+        // V2 compaction：终态由 status 表示，没有 time.completed
+        let compaction_done = serde_json::json!({
+            "status": "completed",
+            "tokens": { "input": 741, "output": 2604 },
+            "cost": 0.004736382,
+            "model": { "id": "deepseek-v4.1-flash" },
+            "time": { "created": 10 }
+        })
+        .to_string();
+        let compaction_wip = serde_json::json!({
+            "status": "pending",
+            "tokens": { "input": 100, "output": 0 },
+            "model": { "id": "deepseek-v4.1-flash" },
+            "time": { "created": 11 }
+        })
+        .to_string();
+        // 失败的压缩请求同样产生了计费用量，也要导入
+        let compaction_failed = serde_json::json!({
+            "status": "failed",
+            "tokens": { "input": 300, "output": 0 },
+            "cost": 0.001,
+            "model": { "id": "deepseek-v4.1-flash" },
+            "time": { "created": 12 }
+        })
+        .to_string();
+        let assistant = serde_json::json!({
+            "tokens": { "input": 1000, "output": 200 },
+            "model": { "id": "m" },
+            "time": { "created": 13, "completed": 14 }
+        })
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO session_message VALUES ('c1', 's1', 'compaction', 1, ?1),
+                                                ('c2', 's1', 'compaction', 2, ?2),
+                                                ('c3', 's1', 'compaction', 3, ?3),
+                                                ('a1', 's1', 'assistant', 4, ?4)",
+            rusqlite::params![
+                compaction_done,
+                compaction_wip,
+                compaction_failed,
+                assistant
+            ],
+        )
+        .unwrap();
+
+        let result = query_assistant_messages(&conn, OpenCodeSchema::V2, "s1").unwrap();
+        // compaction(completed/failed) 与 assistant 都要采到；pending 的压缩被跳过
+        let ids: Vec<&str> = result.messages.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, vec!["c1", "c3", "a1"]);
+        assert_eq!(result.messages[0].1.input_tokens, 741);
+        assert_eq!(result.messages[0].1.model_id, "deepseek-v4.1-flash");
+        assert_eq!(result.messages[1].1.input_tokens, 300);
+        assert!(result.has_incomplete_usage);
     }
 }

@@ -197,7 +197,7 @@ fn make_forwarder(
         Arc::new(RwLock::new(HashMap::new())),
         Arc::new(GeminiShadowStore::new()),
         Arc::new(CodexChatHistoryStore::default()),
-        Arc::new(FailoverSwitchManager::new(db)),
+        Arc::new(FailoverSwitchManager::new()),
         None,
         "a".to_string(),
         session_id.to_string(),

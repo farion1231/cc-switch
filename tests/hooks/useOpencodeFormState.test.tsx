@@ -27,6 +27,21 @@ const renderOpencodeFormState = (
 };
 
 describe("useOpencodeFormState", () => {
+  it("edits an existing built-in override without inventing a package or models", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      name: "OpenCode Go",
+      options: { apiKey: "test-key" },
+    });
+
+    expect(result.current.opencodeNpm).toBe("");
+    expect(result.current.opencodeModels).toEqual({});
+    act(() => result.current.handleOpencodeApiKeyChange("edited-test-key"));
+    expect(JSON.parse(getSettingsConfig())).toEqual({
+      name: "OpenCode Go",
+      options: { apiKey: "edited-test-key" },
+    });
+  });
+
   it("hydrates provider headers from options", () => {
     const { result } = renderOpencodeFormState({
       npm: "@ai-sdk/openai-compatible",

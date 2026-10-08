@@ -31,57 +31,19 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogDescription: ({ children }: any) => <div>{children}</div>,
 }));
 
-const TabsContext = React.createContext<{
-  value: string;
-  onValueChange?: (value: string) => void;
-}>({
-  value: "general",
-});
-
-vi.mock("@/components/ui/tabs", () => {
-  return {
-    Tabs: ({ value, onValueChange, children }: any) => (
-      <TabsContext.Provider value={{ value, onValueChange }}>
-        {children}
-      </TabsContext.Provider>
-    ),
-    TabsList: ({ children }: any) => <div>{children}</div>,
-    TabsTrigger: ({ value, children }: any) => {
-      const ctx = React.useContext(TabsContext);
-      return (
-        <button type="button" onClick={() => ctx.onValueChange?.(value)}>
-          {children}
-        </button>
-      );
-    },
-    TabsContent: ({ value, children }: any) => {
-      const ctx = React.useContext(TabsContext);
-      return ctx.value === value ? (
-        <div data-testid={`tab-${value}`}>{children}</div>
-      ) : null;
-    },
-  };
-});
-
-vi.mock("@/components/settings/LanguageSettings", () => ({
-  LanguageSettings: ({ value, onChange }: any) => (
-    <div>
-      <span>language:{value}</span>
-      <button onClick={() => onChange("en")}>change-language</button>
-    </div>
-  ),
+vi.mock("@/components/theme-provider", () => ({
+  useTheme: () => ({ theme: "system", setTheme: vi.fn() }),
 }));
 
-vi.mock("@/components/settings/ThemeSettings", () => ({
-  ThemeSettings: () => <div data-testid="theme-settings">theme</div>,
+// 「数据」一节的其他卡片有自己的接口，这里只测目录和导入导出
+vi.mock("@/components/settings/BackupListSection", () => ({
+  BackupListSection: () => <div>backup-list-section</div>,
 }));
-
-vi.mock("@/components/settings/WindowSettings", () => ({
-  WindowSettings: ({ onChange }: any) => (
-    <button onClick={() => onChange({ minimizeToTrayOnClose: false })}>
-      window-settings
-    </button>
-  ),
+vi.mock("@/components/settings/WebdavSyncSection", () => ({
+  WebdavSyncSection: () => <div>webdav-sync-section</div>,
+}));
+vi.mock("@/components/settings/LogConfigPanel", () => ({
+  LogConfigPanel: () => <div>log-config-panel</div>,
 }));
 
 vi.mock("@/components/settings/DirectorySettings", async () => {
@@ -127,7 +89,12 @@ const renderDialog = (
   return render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
-        <SettingsPage open onOpenChange={() => {}} {...props} />
+        <SettingsPage
+          section="data"
+          onOpenApps={() => {}}
+          onOpenApp={() => {}}
+          {...props}
+        />
       </Suspense>
     </QueryClientProvider>,
   );
@@ -147,11 +114,6 @@ describe("SettingsPage integration", () => {
   it("loads default settings from MSW", async () => {
     renderDialog();
 
-    await waitFor(() =>
-      expect(screen.getByText("language:zh")).toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
     const appInput = await screen.findByPlaceholderText(
       "settings.browsePlaceholderApp",
     );
@@ -162,13 +124,7 @@ describe("SettingsPage integration", () => {
     const onImportSuccess = vi.fn();
     renderDialog({ onImportSuccess });
 
-    await waitFor(() =>
-      expect(screen.getByText("language:zh")).toBeInTheDocument(),
-    );
-
-    fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("settings.advanced.data.title"));
-    fireEvent.click(screen.getByText("settings.selectConfigFile"));
+    fireEvent.click(await screen.findByText("settings.selectConfigFile"));
     await waitFor(() =>
       expect(screen.getByTestId("selected-file").textContent).toContain(
         "/mock/import-settings.json",
@@ -186,12 +142,6 @@ describe("SettingsPage integration", () => {
   it("saves settings and handles restart prompt", async () => {
     renderDialog();
 
-    await waitFor(() =>
-      expect(screen.getByText("language:zh")).toBeInTheDocument(),
-    );
-
-    fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
     const appInput = await screen.findByPlaceholderText(
       "settings.browsePlaceholderApp",
     );
@@ -210,31 +160,29 @@ describe("SettingsPage integration", () => {
     expect(getAppConfigDirOverride()).toBe("/custom/app");
   });
 
-  it("allows browsing and resetting directories", async () => {
+  it("allows browsing and resetting the data directory", async () => {
     renderDialog();
-
-    await waitFor(() =>
-      expect(screen.getByText("language:zh")).toBeInTheDocument(),
-    );
-
-    fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
-
-    const browseButtons = screen.getAllByTitle("settings.browseDirectory");
-    const resetButtons = screen.getAllByTitle("settings.resetDefault");
 
     const appInput = (await screen.findByPlaceholderText(
       "settings.browsePlaceholderApp",
     )) as HTMLInputElement;
     expect(appInput.value).toBe("/home/mock/.cc-switch");
 
-    fireEvent.click(browseButtons[0]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.browseDirectory" }),
+    );
     await waitFor(() =>
       expect(appInput.value).toBe("/home/mock/.cc-switch/picked"),
     );
 
-    fireEvent.click(resetButtons[0]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.resetDefault" }),
+    );
     await waitFor(() => expect(appInput.value).toBe("/home/mock/.cc-switch"));
+  });
+
+  it("allows browsing and resetting an app's config directory", async () => {
+    renderDialog({ section: "appConfig" });
 
     const claudeInput = (await screen.findByPlaceholderText(
       "settings.browsePlaceholderClaude",
@@ -242,23 +190,25 @@ describe("SettingsPage integration", () => {
     fireEvent.change(claudeInput, { target: { value: "/custom/claude" } });
     await waitFor(() => expect(claudeInput.value).toBe("/custom/claude"));
 
-    fireEvent.click(browseButtons[1]);
+    const browseButtons = screen.getAllByRole("button", {
+      name: "settings.browseDirectory",
+    });
+    const resetButtons = screen.getAllByRole("button", {
+      name: "settings.resetDefault",
+    });
+    fireEvent.click(browseButtons[0]);
     await waitFor(() =>
       expect(claudeInput.value).toBe("/custom/claude/picked"),
     );
 
-    fireEvent.click(resetButtons[1]);
+    fireEvent.click(resetButtons[0]);
     await waitFor(() => expect(claudeInput.value).toBe("/home/mock/.claude"));
   });
 
   it("notifies when export fails", async () => {
     renderDialog();
 
-    await waitFor(() =>
-      expect(screen.getByText("language:zh")).toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByText("settings.tabAdvanced"));
-    fireEvent.click(screen.getByText("settings.advanced.data.title"));
+    await screen.findByText("settings.exportConfig");
 
     server.use(
       http.post("http://tauri.local/save_file_dialog", () =>

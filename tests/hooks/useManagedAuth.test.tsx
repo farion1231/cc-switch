@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useManagedAuth } from "@/components/providers/forms/hooks/useManagedAuth";
+import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
 
 const apiMocks = vi.hoisted(() => ({
   authGetStatus: vi.fn(),
@@ -119,6 +120,30 @@ describe("useManagedAuth", () => {
       "codex_oauth",
       undefined,
       "acct-1",
+    );
+  });
+
+  it("localizes a duplicate Codex account error", async () => {
+    apiMocks.authStartLogin.mockResolvedValue({
+      provider: "codex_oauth",
+      device_code: "device-1",
+      user_code: "ABCD-EFGH",
+      verification_uri: "https://example.com/device",
+      expires_in: 600,
+      interval: 5,
+    });
+    apiMocks.authPollForAccount.mockRejectedValue(
+      new Error(CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR),
+    );
+    const { result } = renderHook(() => useManagedAuth("codex_oauth"), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => result.current.addAccount());
+
+    await waitFor(() => expect(result.current.pollingState).toBe("error"));
+    expect(result.current.error).toBe(
+      "该 ChatGPT 账号已添加，请直接使用现有账号。",
     );
   });
 

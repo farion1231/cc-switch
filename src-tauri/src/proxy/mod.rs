@@ -22,6 +22,7 @@ pub mod load_balance;
 pub mod log_codes;
 pub mod media_sanitizer;
 pub mod model_mapper;
+pub mod opaque_state_rectifier;
 pub mod provider_router;
 pub mod providers;
 pub mod response_processor;

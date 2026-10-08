@@ -7,6 +7,8 @@ import React, {
 } from "react";
 import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
+import type { ProviderEditorInactiveField } from "@/lib/api/providers";
+import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
 import {
   extractCodexTopLevelInt,
   isCodexRemoteCompactionEnabled,
@@ -14,6 +16,8 @@ import {
   setCodexRemoteCompaction,
   setCodexTopLevelInt,
 } from "@/utils/providerConfigUtils";
+import { fieldClass } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 interface CodexAuthSectionProps {
   value: string;
@@ -62,7 +66,7 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
     <div className="space-y-2">
       <label
         htmlFor="codexAuth"
-        className="block text-sm font-medium text-foreground"
+        className="block text-sm font-medium text-fg-1"
       >
         {t("codexConfig.authJson")}
       </label>
@@ -77,12 +81,10 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
         language="json"
       />
 
-      {error && (
-        <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
-      )}
+      {error && <p className="text-xs text-danger-text">{error}</p>}
 
       {!error && (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t(
             isProxyTakeover
               ? "codexConfig.authJsonStorageHint"
@@ -99,12 +101,10 @@ interface CodexConfigSectionProps {
   onChange: (value: string) => void;
   providerName?: string;
   showRemoteCompaction?: boolean;
-  useCommonConfig: boolean;
-  onCommonConfigToggle: (checked: boolean) => void;
-  onEditCommonConfig: () => void;
-  commonConfigError?: string;
   configError?: string;
   isProxyTakeover?: boolean;
+  /** 行里保存着、但不随切换生效的全局设置（值是可以照抄的 TOML）。 */
+  inactiveFields?: ProviderEditorInactiveField[];
 }
 
 /**
@@ -115,12 +115,9 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   onChange,
   providerName,
   showRemoteCompaction = true,
-  useCommonConfig,
-  onCommonConfigToggle,
-  onEditCommonConfig,
-  commonConfigError,
   configError,
   isProxyTakeover = false,
+  inactiveFields = [],
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -249,7 +246,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <label
           htmlFor="codexConfig"
-          className="block text-sm font-medium text-foreground"
+          className="block text-sm font-medium text-fg-1"
         >
           {t("codexConfig.configToml")}
         </label>
@@ -257,58 +254,39 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
           {showRemoteCompaction && (
             <label
-              className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
+              className="inline-flex cursor-pointer items-center gap-2 text-sm text-fg-2"
               title={t("codexConfig.remoteCompactionHint")}
             >
               <input
                 type="checkbox"
                 checked={remoteCompactionEnabled}
                 onChange={(e) => handleRemoteCompactionToggle(e.target.checked)}
-                className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+                className="ui-checkbox"
               />
               {t("codexConfig.enableRemoteCompaction")}
             </label>
           )}
-
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={useCommonConfig}
-              onChange={(e) => onCommonConfigToggle(e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            {t("codexConfig.writeCommonConfig")}
-          </label>
         </div>
       </div>
 
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={onEditCommonConfig}
-          className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
-        >
-          {t("codexConfig.editCommonConfig")}
-        </button>
-      </div>
-
-      {commonConfigError && (
-        <p className="text-xs text-red-500 dark:text-red-400 text-right">
-          {commonConfigError}
-        </p>
-      )}
+      <p className="text-xs text-fg-2">
+        {t("codexConfig.keyFieldsHint", {
+          defaultValue:
+            "地址、Key、模型、推理档位、上下文窗口和兼容开关随供应商切换；其余是 Codex 全局设置，保存后对所有供应商生效。",
+        })}
+      </p>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
           <input
             type="checkbox"
             checked={toggleStates.contextWindow1M}
             onChange={(e) => handleContextWindowToggle(e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("codexConfig.contextWindow1M")}</span>
         </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+        <label className="inline-flex items-center gap-2 text-sm text-fg-2">
           <span>{t("codexConfig.autoCompactLimit")}:</span>
           <input
             type="text"
@@ -318,7 +296,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
             defaultValue={toggleStates.compactLimit}
             disabled={!toggleStates.contextWindow1M}
             onChange={(e) => handleCompactLimitChange(e.target.value)}
-            className="w-28 h-7 px-2 text-sm rounded border border-border bg-background text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+            className={cn(fieldClass, "h-7 w-28 px-2")}
           />
         </label>
       </div>
@@ -333,12 +311,25 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         language="javascript"
       />
 
-      {configError && (
-        <p className="text-xs text-red-500 dark:text-red-400">{configError}</p>
-      )}
+      <InactiveFieldsPanel
+        fields={inactiveFields}
+        hint={t("codexConfig.inactiveFieldsHint", {
+          count: inactiveFields.length,
+          defaultValue:
+            "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击复制它的 TOML，按需粘贴到上方；供应商里保存的原值不会删除。",
+        })}
+        action={{
+          kind: "copy",
+          copiedText: t("codexConfig.inactiveFieldCopied", {
+            defaultValue: "已复制",
+          }),
+        }}
+      />
+
+      {configError && <p className="text-xs text-danger-text">{configError}</p>}
 
       {!configError && (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t(
             isProxyTakeover
               ? "codexConfig.configTomlStorageHint"

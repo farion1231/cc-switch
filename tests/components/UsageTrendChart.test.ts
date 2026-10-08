@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildUsageTrendChartData,
+  createUsageTrendTokenTickFormatter,
+  formatUsageTrendTokenTickLabel,
   formatUsageTrendTickLabel,
 } from "@/components/usage/UsageTrendChart";
 
@@ -113,5 +115,41 @@ describe("formatUsageTrendTickLabel", () => {
     expect(formatUsageTrendTickLabel(last.xKey, points)).not.toBe(
       points[0].label,
     );
+  });
+});
+
+describe("formatUsageTrendTokenTickLabel", () => {
+  it("uses localized compact units for large token axis ticks", () => {
+    const zhFormatter = createUsageTrendTokenTickFormatter("zh-CN");
+    const zhTwFormatter = createUsageTrendTokenTickFormatter("zh-TW");
+    const enFormatter = createUsageTrendTokenTickFormatter("en-US");
+
+    expect(formatUsageTrendTokenTickLabel(600_000_000, zhFormatter)).toBe(
+      "6亿",
+    );
+    expect(formatUsageTrendTokenTickLabel(1_950_000_000, zhFormatter)).toBe(
+      "19.5亿",
+    );
+    expect(formatUsageTrendTokenTickLabel(65_000_000, zhTwFormatter)).toBe(
+      "6500萬",
+    );
+    expect(formatUsageTrendTokenTickLabel(600_000_000, enFormatter)).toBe(
+      "600M",
+    );
+  });
+
+  it("keeps zero and small-thousand token ticks readable", () => {
+    expect(
+      formatUsageTrendTokenTickLabel(
+        0,
+        createUsageTrendTokenTickFormatter("zh-CN"),
+      ),
+    ).toBe("0");
+    expect(
+      formatUsageTrendTokenTickLabel(
+        1500,
+        createUsageTrendTokenTickFormatter("en-US"),
+      ),
+    ).toBe("1.5K");
   });
 });

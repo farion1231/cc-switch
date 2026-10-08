@@ -11,7 +11,7 @@ body:
       options:
         - label: |
             I have read the [FAQ](https://github.com/farion1231/cc-switch#faq) section in README.
-            我已阅读 README 中的[常见问题](https://github.com/farion1231/cc-switch#常见问题)。
+            我已阅读 README 中的[常见问题](https://github.com/farion1231/cc-switch/blob/main/README_ZH.md#常见问题)。
           required: true
         - label: |
             I have searched for [existing issues](https://github.com/farion1231/cc-switch/issues), including closed ones.

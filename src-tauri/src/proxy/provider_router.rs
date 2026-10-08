@@ -53,20 +53,24 @@ impl ProviderRouter {
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
-        let current_id = AppType::from_str(app_type)
-            .ok()
-            .and_then(|app_enum| {
-                crate::settings::get_effective_current_provider(&self.db, &app_enum)
-                    .ok()
-                    .flatten()
-            })
-            .or_else(|| self.db.get_current_provider(app_type).ok().flatten());
-        let current_provider = current_id
-            .as_deref()
-            .map(|id| self.db.get_provider_by_id(id, app_type))
-            .transpose()?
-            .flatten();
+        // 代理模式下路由到代理路由那家，和直连指针无关。
+        let current_provider = AppType::from_str(app_type).ok().and_then(|app_enum| {
+            crate::mode::current::provider_in_use(&self.db, &app_enum)
+                .ok()
+                .flatten()
+        });
+        self.select_providers_with_current(app_type, current_provider)
+            .await
+    }
 
+    /// 同 [`Self::select_providers`]，正在用的那家由调用方给出：处理请求时上下文已经读过
+    /// 一次（要读 `live-state.json` 和这一行），不用每个请求再读一遍，两处用的也一定是
+    /// 同一家。
+    pub async fn select_providers_with_current(
+        &self,
+        app_type: &str,
+        current_provider: Option<Provider>,
+    ) -> Result<Vec<Provider>, AppError> {
         // 检查该应用的自动故障转移开关是否开启（从 proxy_config 表读取）
         let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
             Ok(config) => config.auto_failover_enabled,
@@ -208,9 +212,36 @@ impl ProviderRouter {
     ///
     /// 注意：Gemini 的模型名在选号时刻尚未从 URI 解析（`with_model_from_uri`
     /// 在 ctx 创建之后），模型级并发覆盖对 Gemini 不生效，账号默认上限仍生效。
+    #[cfg_attr(not(test), allow(dead_code))] // 测试与后续状态 UI 使用；生产走 _with_current 变体
     pub async fn select_providers_for_session(
         &self,
         app_type: &str,
+        session_id: &str,
+        session_client_provided: bool,
+        request_model: &str,
+    ) -> Result<Vec<Provider>, AppError> {
+        let current_provider = AppType::from_str(app_type).ok().and_then(|app_enum| {
+            crate::mode::current::provider_in_use(&self.db, &app_enum)
+                .ok()
+                .flatten()
+        });
+        self.select_providers_for_session_with_current(
+            app_type,
+            current_provider,
+            session_id,
+            session_client_provided,
+            request_model,
+        )
+        .await
+    }
+
+    /// 同 [`Self::select_providers_for_session`]，正在用的那家由调用方给出
+    /// （与 [`Self::select_providers_with_current`] 同一理由：上下文已读过一次，
+    /// 两处用同一家、也省一次读）。
+    pub async fn select_providers_for_session_with_current(
+        &self,
+        app_type: &str,
+        current_provider: Option<Provider>,
         session_id: &str,
         session_client_provided: bool,
         request_model: &str,
@@ -220,12 +251,16 @@ impl ProviderRouter {
             Err(e) => {
                 // 与 select_providers 的容错语义对齐：读不到配置按关闭处理
                 log::error!("[{app_type}] 读取 proxy_config 失败: {e}，负载均衡不生效");
-                return self.select_providers(app_type).await;
+                return self
+                    .select_providers_with_current(app_type, current_provider)
+                    .await;
             }
         };
         if config.load_balance_mode != "session" || !config.auto_failover_enabled {
             // off 模式 / 故障转移关闭（池只有当前供应商，粘性无意义）
-            return self.select_providers(app_type).await;
+            return self
+                .select_providers_with_current(app_type, current_provider)
+                .await;
         }
 
         let (pool, total_providers, circuit_open_count) =
