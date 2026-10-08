@@ -1,12 +1,6 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClientProvider, focusManager } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { toast } from "sonner";
@@ -153,54 +147,6 @@ describe("SwitchModePanel — Stack mode", () => {
       { appType: "claude", providerId: "kimi", enabled: false },
       { appType: "claude", providerId: "other", enabled: true },
     ]);
-  });
-
-  it("reminds to restart Claude Code when Stack models change outside add / remove", async () => {
-    mockMode("stack", "route");
-    let members = [
-      { providerId: "route", modelIds: ["m-route-1"], route: true },
-      { providerId: "kimi", modelIds: ["m-kimi"], route: false },
-    ];
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
-        HttpResponse.json({ active: true, members }),
-      ),
-      http.post(`${TAURI_ENDPOINT}/set_proxy_stack_member`, () =>
-        HttpResponse.json(null),
-      ),
-    );
-
-    renderPanel("claude", { route: provider("route"), kimi: provider("kimi") });
-
-    // 移出名单：保存成功的提示已经说了要重启，不再提示
-    const remove = await screen.findByTestId("remove-kimi");
-    members = [members[0]];
-    fireEvent.click(remove);
-    await screen.findByTestId("add-kimi");
-    expect(toast.info).not.toHaveBeenCalled();
-
-    // 别处改了默认那家的模型：回到窗口时重查，提示重启
-    members = [
-      {
-        providerId: "route",
-        modelIds: ["m-route-1", "m-route-2"],
-        route: true,
-      },
-    ];
-    try {
-      act(() => {
-        focusManager.setFocused(false);
-        focusManager.setFocused(true);
-      });
-      await waitFor(() =>
-        expect(toast.info).toHaveBeenCalledWith(
-          "provider.stackModelsChanged",
-          expect.anything(),
-        ),
-      );
-    } finally {
-      focusManager.setFocused(undefined);
-    }
   });
 
   it("warns about Codex clients on an old model list only in Stack mode", async () => {

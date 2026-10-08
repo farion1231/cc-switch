@@ -616,8 +616,7 @@ pub struct StackView {
     pub active: bool,
     pub members: Vec<StackMemberView>,
     /// Codex Stack 模型客户端看不到或看不全：`routeOwnsCatalog` 路由那家自己管理模型目录
-    /// 文件，Stack 模型不发布；`configOwnsCatalog` 用户在 `config.toml` 里指定了自己的模型
-    /// 目录，生成的目录不生效；官方做路由时官方模型列表暂未取到：`officialModelsBundled`
+    /// 文件，Stack 模型不发布；官方做路由时官方模型列表暂未取到：`officialModelsBundled`
     /// 暂用 Codex 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` Stack 模型
     /// 暂不可用。
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -8,10 +8,13 @@ pub(crate) fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str>
 pub(crate) fn take_sse_block(buffer: &mut String) -> Option<String> {
     let mut best: Option<(usize, usize)> = None;
 
-    for (delimiter, len) in [("\r\n\r\n", 4usize), ("\n\n", 2usize)] {
+    // The data line and the following blank line can use different line endings.
+    // Include both mixed forms and prefer the earliest match so no trailing CR
+    // becomes part of the returned block.
+    for delimiter in ["\r\n\r\n", "\r\n\n", "\n\r\n", "\n\n"] {
         if let Some(pos) = buffer.find(delimiter) {
             if best.is_none_or(|(best_pos, _)| pos < best_pos) {
-                best = Some((pos, len));
+                best = Some((pos, delimiter.len()));
             }
         }
     }
@@ -130,6 +133,37 @@ mod tests {
             Some("data: {\"ok\":true}".to_string())
         );
         assert_eq!(buffer, "rest");
+    }
+
+    #[test]
+    fn take_sse_block_handles_mixed_line_endings_across_chunks() {
+        for delimiter in ["\n\n", "\r\n\r\n", "\n\r\n", "\r\n\n"] {
+            let first = "event: message\r\ndata: first";
+            let input = format!("{first}{delimiter}data: second\n\npartial");
+
+            // Exercise every possible transport split, including inside CRLF.
+            for split in 0..=input.len() {
+                let mut buffer = String::new();
+                let mut blocks = Vec::new();
+                for chunk in [&input[..split], &input[split..]] {
+                    buffer.push_str(chunk);
+                    while let Some(block) = take_sse_block(&mut buffer) {
+                        blocks.push(block);
+                    }
+                }
+                assert_eq!(
+                    blocks,
+                    [first, "data: second"],
+                    "{delimiter:?}, split {split}"
+                );
+                assert_eq!(buffer, "partial");
+            }
+
+            // A complete mixed delimiter must dispatch without another event.
+            let mut buffer = format!("{first}{delimiter}");
+            assert_eq!(take_sse_block(&mut buffer).as_deref(), Some(first));
+            assert!(buffer.is_empty());
+        }
     }
 
     // ------------------------------------------------------------------

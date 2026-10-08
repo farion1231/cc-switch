@@ -36,8 +36,8 @@ use crate::live::patch::toml::{value_text, TomlDocPatch, TomlSteps};
 use crate::live::patch::{Guarded, LivePatch, WholeFile};
 use crate::live::project::codex::{
     official_mirror_table, proxy_route_table, requires_openai_auth, row_catalog_pointer,
-    CodexConfigPatch, CodexProjection, KnownTable, Route, RouteAuth, RouteWrite, RowInput,
-    ROUTE_ID, WEB_SEARCH_DISABLED,
+    without_row_catalog, CodexConfigPatch, CodexProjection, KnownTable, Route, RouteAuth,
+    RouteWrite, RowInput, ROUTE_ID, WEB_SEARCH_DISABLED,
 };
 use crate::mode::contract::CONTRACT_VERSION;
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
@@ -387,15 +387,11 @@ fn exclusive_of(provider: &Provider, projection: &CodexProjection) -> Vec<(Strin
     exclusive
 }
 
-/// live 现在对应的那一家带进来的独有字段和行里指定的模型目录指针：切走时值还相同就删。
+/// live 现在对应的那一家带进来的独有字段：切走时值还相同就删。
 pub(crate) fn outgoing_exclusive(owner: &Owner<'_>) -> Vec<(String, TomlValue)> {
     match owner {
         Owner::Provider(provider) => match project(provider) {
-            Ok(projection) => {
-                let mut fields = exclusive_of(provider, &projection);
-                fields.extend(row_catalog_pointer(&projection.top).cloned());
-                fields
-            }
+            Ok(projection) => exclusive_of(provider, &projection),
             Err(err) => {
                 log::warn!(
                     "无法投影 Codex 供应商 {} 的独有字段，切走时不清理它们: {err}",
@@ -702,6 +698,16 @@ pub(crate) fn route_owns_catalog(route: &Provider) -> bool {
     project(route).is_ok_and(|projection| row_catalog_pointer(&projection.top).is_some())
 }
 
+/// 去掉路由那家行里自己指定的模型目录指针之后的 `settings_config`；行里没有时为 `None`。
+pub(crate) fn settings_without_row_catalog(route: &Provider) -> Option<Value> {
+    let text = without_row_catalog(route.settings_config.get("config")?.as_str()?)?;
+    let mut settings = route.settings_config.clone();
+    settings
+        .as_object_mut()?
+        .insert("config".to_string(), Value::String(text));
+    Some(settings)
+}
+
 /// 发布了 Stack 模型时不写进 `config.toml` 的全局键：Codex 拿它们覆盖目录里的每一行。
 const STACK_SUNK_WINDOW_KEYS: &[&str] = &["model_context_window", "model_auto_compact_token_limit"];
 
@@ -853,7 +859,6 @@ fn contract_of(
         exclusive: config
             .exclusive
             .iter()
-            .chain(row_catalog_pointer(&config.top))
             .map(|(key, value)| (key.clone(), Value::String(value_text(value))))
             .collect(),
     }

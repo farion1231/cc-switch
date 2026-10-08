@@ -16,7 +16,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 应用内更新摘要（src/whats-new/<版本>.json，见同目录 README）随安装包发出。漏写的话
+  # 升级到这一版的用户什么也看不到；结构写坏的话弹窗渲染出错，整个应用落进错误页。
+  # 放在最前面查，不白跑编译。推 tag 和 push main 同时发生，不能指望 CI 先跑完单测，
+  # 所以这里自己跑一遍检查所有随包摘要的那份单测。
+  whats-new-check:
+    name: Check in-app what's new summaries
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # 手动干跑可以在任意分支上跑，那时这一版的摘要可能还没写，只在推 tag 时要求存在
+      - name: Require this version's summary
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          file="src/whats-new/${TAG#v}.json"
+          if [ ! -f "$file" ]; then
+            echo "::error file=$file::Missing $file. Write the in-app summary for $TAG (see src/whats-new/README.md); use \"items\": [] to skip the popup."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          corepack enable
+          corepack install
+          pnpm --version
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate all summaries
+        run: pnpm vitest run tests/config/whatsNewEntries.test.ts
+
   release:
+    needs: whats-new-check
     runs-on: ${{ matrix.os }}
     environment: release
     strategy:
@@ -250,19 +305,33 @@ jobs:
           cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
           cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig"
           echo "AppImage copied: $NEW_APPIMAGE"
-          # 额外上传 .deb（用于手动安装，不参与 Updater）
+          # 额外上传 .deb（用于 Debian/Ubuntu 自动更新）
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
           if [ -n "$DEB" ]; then
-            cp "$DEB" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.deb"
-            echo "Deb package copied: CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+            NEW_DEB="CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+            cp "$DEB" "release-assets/$NEW_DEB"
+            if [ -f "$DEB.sig" ]; then
+              cp "$DEB.sig" "release-assets/$NEW_DEB.sig"
+            else
+              echo ".sig for deb not found" >&2
+              exit 1
+            fi
+            echo "Deb package copied: $NEW_DEB"
           else
             echo "No .deb found (optional)"
           fi
-          # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等，不参与 Updater）
+          # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等自动更新）
           RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
           if [ -n "$RPM" ]; then
-            cp "$RPM" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
-            echo "RPM package copied: CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+            NEW_RPM="CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+            cp "$RPM" "release-assets/$NEW_RPM"
+            if [ -f "$RPM.sig" ]; then
+              cp "$RPM.sig" "release-assets/$NEW_RPM.sig"
+            else
+              echo ".sig for RPM not found" >&2
+              exit 1
+            fi
+            echo "RPM package copied: $NEW_RPM"
           else
             echo "No .rpm found (optional)"
           fi
@@ -297,6 +366,7 @@ jobs:
   # 编译不需要任何 secret；挂 release environment 只是为了和其它平台在开头一起批准一次。
   macos-binary:
     name: Build macOS binary (${{ matrix.target }})
+    needs: whats-new-check
     runs-on: macos-14
     environment: release
     strategy:
@@ -759,6 +829,10 @@ jobs:
           win_arm64_url=""; win_arm64_sig=""
           linux_x64_url=""; linux_x64_sig=""
           linux_arm64_url=""; linux_arm64_sig=""
+          linux_x64_deb_url=""; linux_x64_deb_sig=""
+          linux_arm64_deb_url=""; linux_arm64_deb_sig=""
+          linux_x64_rpm_url=""; linux_x64_rpm_sig=""
+          linux_arm64_rpm_url=""; linux_arm64_rpm_sig=""
           shopt -s nullglob
           for sig in release-assets/*.sig; do
             base=${sig%.sig}
@@ -777,6 +851,14 @@ jobs:
                 linux_arm64_url="$url"; linux_arm64_sig="$sig_content";;
               *-Linux-x86_64.AppImage|*-Linux-x86_64.appimage)
                 linux_x64_url="$url"; linux_x64_sig="$sig_content";;
+              *-Linux-arm64.deb)
+                linux_arm64_deb_url="$url"; linux_arm64_deb_sig="$sig_content";;
+              *-Linux-x86_64.deb)
+                linux_x64_deb_url="$url"; linux_x64_deb_sig="$sig_content";;
+              *-Linux-arm64.rpm)
+                linux_arm64_rpm_url="$url"; linux_arm64_rpm_sig="$sig_content";;
+              *-Linux-x86_64.rpm)
+                linux_x64_rpm_url="$url"; linux_x64_rpm_sig="$sig_content";;
             esac
           done
           # 缺任一平台都不能发：缺的那批用户会静默收不到更新
@@ -825,6 +907,26 @@ jobs:
             if [ -n "$linux_arm64_url" ] && [ -n "$linux_arm64_sig" ]; then
               [ $first -eq 0 ] && echo ','
               echo "    \"linux-aarch64\": {\"signature\": \"$linux_arm64_sig\", \"url\": \"$linux_arm64_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_x64_deb_url" ] && [ -n "$linux_x64_deb_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-x86_64-deb\": {\"signature\": \"$linux_x64_deb_sig\", \"url\": \"$linux_x64_deb_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_arm64_deb_url" ] && [ -n "$linux_arm64_deb_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-aarch64-deb\": {\"signature\": \"$linux_arm64_deb_sig\", \"url\": \"$linux_arm64_deb_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_x64_rpm_url" ] && [ -n "$linux_x64_rpm_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-x86_64-rpm\": {\"signature\": \"$linux_x64_rpm_sig\", \"url\": \"$linux_x64_rpm_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_arm64_rpm_url" ] && [ -n "$linux_arm64_rpm_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-aarch64-rpm\": {\"signature\": \"$linux_arm64_rpm_sig\", \"url\": \"$linux_arm64_rpm_url\"}"
               first=0
             fi
             echo '  }'

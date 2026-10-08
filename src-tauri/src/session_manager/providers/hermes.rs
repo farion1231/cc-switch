@@ -1194,19 +1194,20 @@ mod tests {
             return;
         }
         let dir = tempdir().expect("tempdir");
-        let (_path, mut conn) = hermes_db(dir.path());
-        // Batch fixture writes to avoid a disk sync per insert on Windows CI.
-        let tx = conn.transaction().expect("begin fixture transaction");
+        let (_path, conn) = hermes_db(dir.path());
+        // 一千多行逐条自动提交在 Windows runner 上每次都要刷盘，要跑 150s 以上，
+        // 会撞 nextest 的 180s 上限；包进一个事务只刷一次
+        conn.execute_batch("BEGIN;").unwrap();
         for i in 0..=SQLITE_SCAN_LIMIT {
             let id = format!("s{i}");
-            tx.execute(
+            conn.execute(
                 "INSERT INTO sessions (id, started_at) VALUES (?1, 1.0)",
                 [&id],
             )
             .unwrap();
-            insert_message(&tx, &id, "user", "hello", 1.0);
+            insert_message(&conn, &id, "user", "hello", 1.0);
         }
-        tx.commit().expect("commit fixture transaction");
+        conn.execute_batch("COMMIT;").unwrap();
 
         let found = first_user_messages(&conn);
         assert_eq!(found.len(), SQLITE_SCAN_LIMIT);

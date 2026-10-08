@@ -17,9 +17,13 @@ export function useAllMcpServers() {
 /**
  * 添加或更新 MCP 服务器
  */
+/** 编辑页保存用的 mutation key：页面据此在保存进行中锁住导航 */
+export const MCP_UPSERT_MUTATION_KEY = ["mcp", "upsert"] as const;
+
 export function useUpsertMcpServer() {
   const queryClient = useQueryClient();
   return useMutation({
+    mutationKey: MCP_UPSERT_MUTATION_KEY,
     mutationFn: (server: McpServer) => mcpApi.upsertUnifiedServer(server),
     // The database is updated before live configs are synchronized, so an
     // error can still leave a persisted change that the list must reflect.

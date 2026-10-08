@@ -61,8 +61,12 @@ describe("NewLayoutDialog", () => {
         screen.queryByText("newLayoutNotice.title"),
       ).not.toBeInTheDocument(),
     );
+    // 这个弹窗介绍的就是新版本，更新摘要一并记成已看，不会接着再弹一个
     expect(mocks.save).toHaveBeenCalledWith(
-      expect.objectContaining({ newLayoutNoticeConfirmed: true }),
+      expect.objectContaining({
+        newLayoutNoticeConfirmed: true,
+        whatsNewSeenVersion: "4.0.0",
+      }),
     );
   });
 

@@ -741,7 +741,7 @@ export function OpenCodeFormFields({
               className="h-7 gap-1"
             >
               <Plus className="h-3.5 w-3.5" />
-              {t("opencode.addModel", { defaultValue: "Add" })}
+              {t("opencode.addModel", { defaultValue: "Add manually" })}
             </Button>
           </div>
         </div>

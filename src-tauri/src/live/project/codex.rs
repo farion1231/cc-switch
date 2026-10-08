@@ -30,7 +30,7 @@ pub const CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 pub use super::claude::PROXY_TOKEN_PLACEHOLDER;
 /// `web_search` 的禁用值。
 pub const WEB_SEARCH_DISABLED: &str = "disabled";
-const MODEL_CATALOG_JSON: &str = "model_catalog_json";
+pub const MODEL_CATALOG_JSON: &str = "model_catalog_json";
 
 /// Codex 内置的 provider id（大小写敏感，和上游一致：`OpenAI` 是合法的自定义 id）。
 const BUILT_IN_IDS: &[&str] = &[
@@ -156,15 +156,7 @@ impl CodexProjection {
             .collect();
         // 行里自己指定的模型目录（用户管理的文件）照写；指向 CC Switch 自己目录的不算，
         // 那个指针由写入方按有没有生成目录决定。
-        if let Some(pointer) =
-            doc.get(MODEL_CATALOG_JSON)
-                .and_then(Item::as_value)
-                .filter(|value| {
-                    value
-                        .as_str()
-                        .is_some_and(|path| !is_cc_switch_catalog(path))
-                })
-        {
+        if let Some(pointer) = foreign_catalog(&doc) {
             top.push((MODEL_CATALOG_JSON.to_string(), undecorated(pointer.clone())));
         }
         let nested = floor::CODEX_FLOOR_NESTED
@@ -528,10 +520,10 @@ pub struct CodexConfigPatch {
     pub nested: Vec<(Vec<String>, TomlValue)>,
     /// 独有字段的目标值（含 `web_search`）。
     pub exclusive: Vec<(String, TomlValue)>,
-    /// 上一家带进来的独有字段和它行里指定的模型目录指针：live 里的值还相同才删。
+    /// 上一家带进来的独有字段：live 里的值还相同才删。
     pub outgoing: Vec<(String, TomlValue)>,
     pub route: RouteWrite,
-    /// 指向 CC Switch 生成的模型目录（用户自己的指针不认领、不删除）。
+    /// 生成了模型目录：行里没有自己的指针时，`model_catalog_json` 写成 CC Switch 的目录。
     pub catalog: bool,
     /// 旧版按别的 id 写进去的表，能证明是 CC Switch 写的就删掉（里面可能有真实 Key）。
     pub retired: Vec<KnownTable>,
@@ -562,15 +554,24 @@ fn is_cc_switch_catalog(value: &str) -> bool {
     Path::new(value).file_name().and_then(|name| name.to_str()) == Some(CATALOG_FILENAME)
 }
 
-/// live 的 `model_catalog_json` 指向别的目录（路由那家的行指定的，或用户自己写的）：
-/// 写入时照留（见 [`CodexConfigPatch::apply_to`] 第 5 步），Codex 只读那个文件，
-/// CC Switch 生成的目录不生效。
-pub fn live_catalog_is_foreign(config_text: &str) -> bool {
-    config_text.parse::<DocumentMut>().ok().is_some_and(|doc| {
-        doc.get(MODEL_CATALOG_JSON)
-            .and_then(Item::as_str)
-            .is_some_and(|path| !is_cc_switch_catalog(path))
-    })
+/// 去掉行里自己指定的模型目录指针（[`row_catalog_pointer`]），其余内容原样；行里没有时为
+/// `None`。
+pub fn without_row_catalog(config_text: &str) -> Option<String> {
+    let mut doc = config_text.parse::<DocumentMut>().ok()?;
+    foreign_catalog(&doc)?;
+    doc.remove(MODEL_CATALOG_JSON);
+    Some(doc.to_string())
+}
+
+/// 顶层指向别的目录（不是 CC Switch 生成的那个）的 `model_catalog_json`。
+pub fn foreign_catalog(doc: &DocumentMut) -> Option<&TomlValue> {
+    doc.get(MODEL_CATALOG_JSON)
+        .and_then(Item::as_value)
+        .filter(|value| {
+            value
+                .as_str()
+                .is_some_and(|path| !is_cc_switch_catalog(path))
+        })
 }
 
 /// live 的 `model_catalog_json` 指向 CC Switch 生成的目录：新启动的 Codex 读的是它。
@@ -582,9 +583,8 @@ pub fn live_catalog_is_ours(config_text: &str) -> bool {
     })
 }
 
-/// 行里自己指定的模型目录指针（投影的 `top` 只收不是 CC Switch 的指针）。它和独有字段
-/// 一样跟着这一家走：切走时 live 里的值还相同就删（见 [`CodexConfigPatch::outgoing`]），
-/// 否则第 1 步会把它当成用户的指针留下，之后每一家都用它的模型目录。
+/// 行里自己指定的模型目录指针（投影的 `top` 只收不是 CC Switch 的指针）。它和别的关键
+/// 字段一样只属于这一家：切到别家时第 1 步清掉。
 pub fn row_catalog_pointer(top: &[(String, TomlValue)]) -> Option<&(String, TomlValue)> {
     top.iter().find(|(key, _)| key == MODEL_CATALOG_JSON)
 }
@@ -606,8 +606,8 @@ impl CodexConfigPatch {
             .collect();
         let root = doc.as_table_mut();
 
-        // 1. 清空顶层关键字段。目标里也有的（含选路要写的）留给后面原位改值；模型目录
-        //    指针只认自己的，上一家行里指定的指针在第 3 步按值删。
+        // 1. 清空顶层关键字段。目标里也有的（含选路要写的）留给后面原位改值。模型目录指针
+        //    同样不论原来指向哪里：要写 CC Switch 的目录时留给第 5 步原位改值，否则删掉。
         let doomed: Vec<String> = root
             .iter()
             .map(|(key, _)| key.to_string())
@@ -618,14 +618,8 @@ impl CodexConfigPatch {
             })
             .collect();
         for key in doomed {
-            if key == MODEL_CATALOG_JSON {
-                let ours = root
-                    .get(MODEL_CATALOG_JSON)
-                    .and_then(Item::as_str)
-                    .is_some_and(is_cc_switch_catalog);
-                if !ours || self.catalog {
-                    continue;
-                }
+            if key == MODEL_CATALOG_JSON && self.catalog {
+                continue;
             }
             root.remove(&key);
         }
@@ -651,9 +645,11 @@ impl CodexConfigPatch {
             }
         }
 
-        // 3. 上一家带进来的独有字段和模型目录指针：值还相同才删。
+        // 3. 上一家带进来的独有字段：值还相同才删。关键字段第 1 步已经清过（旧版契约里记着的
+        //    模型目录指针也在这里跳过）。
         for (key, value) in &self.outgoing {
-            if target_top.contains(&key.as_str()) {
+            if target_top.contains(&key.as_str()) || floor::CODEX_FLOOR_TOP.contains(&key.as_str())
+            {
                 continue;
             }
             let matches = root
@@ -689,13 +685,7 @@ impl CodexConfigPatch {
         }
         let row_pointer = self.top.iter().any(|(key, _)| key == MODEL_CATALOG_JSON);
         if self.catalog && !row_pointer {
-            let user_pointer = root
-                .get(MODEL_CATALOG_JSON)
-                .and_then(Item::as_str)
-                .is_some_and(|value| !is_cc_switch_catalog(value));
-            if !user_pointer {
-                put_value(root, MODEL_CATALOG_JSON, &TomlValue::from(CATALOG_FILENAME));
-            }
+            put_value(root, MODEL_CATALOG_JSON, &TomlValue::from(CATALOG_FILENAME));
         }
 
         check_effective_route(doc, selector)

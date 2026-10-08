@@ -100,6 +100,7 @@ describe("UsageDashboard (smoke)", () => {
         totalTokens: 5_700_000,
         totalCost: "11.2",
         avgCostPerRequest: "0.0114",
+        successRate: 100,
       },
     ]);
     usageApiMock.getRequestLogs.mockResolvedValue({

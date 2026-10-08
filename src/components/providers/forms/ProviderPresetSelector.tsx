@@ -6,7 +6,7 @@ import { Search, SlidersHorizontal, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
-import { ProviderIcon } from "@/components/ProviderIcon";
+import { ProviderIconBox } from "@/components/ProviderIconBox";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
@@ -213,20 +213,21 @@ export function ProviderPresetSelector({
 
 function PresetIconBox({ preset }: { preset?: AnyPreset }) {
   const { t } = useTranslation();
+  if (preset?.icon) {
+    return (
+      <ProviderIconBox
+        icon={preset.icon}
+        name={preset.name}
+        color={preset.iconColor}
+        className="bg-surface"
+        iconClassName="shrink-0 text-fg-1"
+      />
+    );
+  }
   let inner: React.ReactNode;
   if (!preset) {
     inner = (
       <SlidersHorizontal className="h-4 w-4 text-fg-2" strokeWidth={1.5} />
-    );
-  } else if (preset.icon) {
-    inner = (
-      <ProviderIcon
-        icon={preset.icon}
-        name={preset.name}
-        color={preset.iconColor}
-        size={18}
-        className="shrink-0 text-fg-1"
-      />
     );
   } else if (preset.theme?.icon === "claude") {
     inner = <ClaudeIcon size={16} />;
@@ -732,17 +733,12 @@ function PresetPicker({
                 <PresetRow
                   key={`universal-${preset.providerType}`}
                   icon={
-                    <span
-                      aria-hidden="true"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-border bg-surface"
-                    >
-                      <ProviderIcon
-                        icon={preset.icon}
-                        name={preset.name}
-                        size={18}
-                        className="shrink-0 text-fg-1"
-                      />
-                    </span>
+                    <ProviderIconBox
+                      icon={preset.icon}
+                      name={preset.name}
+                      className="bg-surface"
+                      iconClassName="shrink-0 text-fg-1"
+                    />
                   }
                   name={preset.name}
                   detail={t("providerPreset.universalDetail")}

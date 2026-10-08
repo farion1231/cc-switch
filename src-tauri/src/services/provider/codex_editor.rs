@@ -30,7 +30,7 @@ use crate::live::project::codex::{
 };
 use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
-use crate::provider::Provider;
+use crate::provider::{Provider, ProviderMeta};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::store::AppState;
 
@@ -105,6 +105,7 @@ pub fn view(
     state: &AppState,
     settings_config: &Value,
     category: Option<&str>,
+    meta: Option<&ProviderMeta>,
 ) -> Result<EditorView, AppError> {
     let path = get_codex_config_path();
     let pre = read_current(&path)?;
@@ -113,6 +114,7 @@ pub fn view(
     let mut provider =
         Provider::with_id(String::new(), String::new(), settings_config.clone(), None);
     provider.category = category.map(str::to_string);
+    provider.meta = meta.cloned();
     let live_owner = LiveOwner::read(state)?;
     let planned = plan_for_view(&state.db, &live_owner.owner(), &provider)?;
     planned.config().apply_to(&path, &mut doc)?;

@@ -163,14 +163,14 @@ export function ClaudeStackModelsField({
               className="h-7 gap-1"
             >
               <Plus className="h-3.5 w-3.5" />
-              {t("providerForm.addStackModel", { defaultValue: "添加模型" })}
+              {t("providerForm.addStackModel", { defaultValue: "手动添加" })}
             </Button>
           </div>
         </div>
         <p className="text-xs leading-relaxed text-fg-2">
           {t("providerForm.stackModelsHint", {
             defaultValue:
-              "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。修改后需要重启 Claude Code。",
+              "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。",
           })}
         </p>
       </div>

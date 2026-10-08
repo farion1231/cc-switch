@@ -162,6 +162,7 @@ pub(crate) fn codex_model_rejects_web_search(model: &str) -> bool {
         .iter()
         .any(|prefix| model.starts_with(prefix))
 }
+
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 const CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME: &str = "codex_managed_oauth_live_auth.json";
 
@@ -227,13 +228,17 @@ impl CodexLiveStateSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexCatalogToolProfile {
     ProxyChat,
+    /// Copilot selects Responses or Chat per model, but both paths run through
+    /// the local proxy. Keep proxy-compatible tools while disabling Codex's
+    /// hosted web-search endpoint, which Copilot does not expose.
+    Copilot,
     NativeResponses,
     /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
     /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
     /// tools — the Responses→Anthropic transform keeps only `function` tools.
     /// Additionally the Codex `web_search` hosted tool is unusable on this path
     /// (the transform drops it), so it is always disabled — see
-    /// `prepare_codex_config_text_with_model_catalog`.
+    /// `codex_disables_web_search`.
     Anthropic,
 }
 
@@ -1331,7 +1336,10 @@ fn codex_catalog_model_entry(
         )),
     );
 
-    if profile != CodexCatalogToolProfile::ProxyChat {
+    if !matches!(
+        profile,
+        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot
+    ) {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
         // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
         // emit a custom/freeform tool, and rely on shell_type="shell_command" for
@@ -1364,12 +1372,21 @@ fn codex_catalog_model_entry(
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
     }
+    if profile == CodexCatalogToolProfile::Copilot {
+        entry_obj.insert(
+            "supports_parallel_tool_calls".to_string(),
+            json!(spec.supports_parallel_tool_calls.unwrap_or(false)),
+        );
+    }
 
-    if profile == CodexCatalogToolProfile::ProxyChat {
+    if matches!(
+        profile,
+        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot
+    ) {
         // Codex's `original` image detail (full-resolution) is rejected by
         // strict Chat gateways with `400 invalid_request_error`, param
-        // `messages.N.content`. Never advertise the capability on the
-        // ProxyChat contract so Codex keeps to auto/high.
+        // `messages.N.content`. Copilot can also select Chat per model, so
+        // neither proxy profile may advertise it; Codex keeps to auto/high.
         entry_obj.insert("supports_image_detail_original".to_string(), json!(false));
     }
 
@@ -1394,8 +1411,8 @@ struct CodexCatalogModelSpec {
     /// `model_context_window` (or 128k) — except official vendor catalog
     /// entries, which keep the vendor's declared window.
     context_window: Option<u64>,
-    /// Per-row override for the native template's `supports_parallel_tool_calls`
-    /// (e.g. MiniMax=true, MiMo=false). Only consulted for `NativeResponses`.
+    /// Per-row override for `supports_parallel_tool_calls` on native and
+    /// Anthropic profiles, and Copilot's conservative false default.
     supports_parallel_tool_calls: Option<bool>,
     /// Hidden per-row capability declaration from built-in provider metadata.
     /// When omitted, all catalog profiles consult the shared text-only model
@@ -2247,19 +2264,22 @@ fn codex_catalog_from_specs_for_row(
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
 
     // Native providers use the bundled clean template (no freeform apply_patch,
-    // no cache dependency); proxy-chat providers keep cloning Codex's gpt-5.5
-    // entry so the proxy can rewrite custom<->function tools as before.
+    // no cache dependency); ProxyChat and Copilot keep cloning Codex's gpt-5.5
+    // entry so their proxy paths retain custom<->function tool support.
     let template = match profile {
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
             load_codex_native_responses_template()
         }
-        CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
+        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot => {
+            load_codex_model_catalog_template()?
+        }
     };
     // 命中 OpenAI 官方条目的行照搬官方（写了目录之后 Codex 只认文件里的条目，通用模板
     // 会顶掉 GPT 自己的提示词），其余行照旧按模板生成。Responses→Anthropic 的转换会丢掉
-    // 官方条目里的 custom 工具，这条路不照搬。
+    // 官方条目里的 custom 工具，这条路不照搬。Copilot 仍按自身的目录配置生成，
+    // 保留账号模型的上下文窗口和并行工具能力，而不是套用官方 GPT 的能力。
     let official = match profile {
-        CodexCatalogToolProfile::Anthropic => Vec::new(),
+        CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => Vec::new(),
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::ProxyChat => {
             codex_openai_official_models()
         }
@@ -2289,7 +2309,8 @@ pub(crate) struct CodexCatalogPlan {
     pub catalog: Option<Value>,
 }
 
-/// 要不要关掉 web_search：Responses→Anthropic 的转换会丢掉这个内置工具，一律关；原生
+/// 要不要关掉 web_search：Responses→Anthropic 的转换会丢掉这个内置工具，Copilot 也不
+/// 提供这个托管工具，两者一律关；原生
 /// Responses 网关按拒收名单判定（MiMo、LongCat、MiniMax 等按域名或模型品牌，Qwen3-Coder
 /// 按模型）；其余保持 Codex 的默认。只在有模型目录时才看名单。
 pub(crate) fn codex_disables_web_search(
@@ -2298,7 +2319,7 @@ pub(crate) fn codex_disables_web_search(
     profile: CodexCatalogToolProfile,
 ) -> bool {
     match profile {
-        CodexCatalogToolProfile::Anthropic => true,
+        CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => true,
         CodexCatalogToolProfile::NativeResponses => {
             !codex_catalog_model_specs(settings).is_empty()
                 && codex_native_gateway_rejects_web_search(config_text)
@@ -2520,7 +2541,7 @@ fn sink_row_windows(entry: &mut Value, windows: &RowWindows, third_party: bool) 
     }
 }
 
-/// Reverse of `prepare_codex_config_text_with_model_catalog`: read the
+/// Reverse of `plan_codex_model_catalog`: read the
 /// cc-switch–maintained catalog file referenced by `~/.codex/config.toml` and
 /// convert it back into the simplified shape the frontend table uses:
 /// `{ "models": [{ "model", "displayName"?, "contextWindow"?, hidden overrides... }, ...] }`.
@@ -4151,6 +4172,7 @@ experimental_bearer_token = "stale-table-key"
 
         for profile in [
             CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::Copilot,
             CodexCatalogToolProfile::NativeResponses,
             CodexCatalogToolProfile::Anthropic,
         ] {
@@ -4413,6 +4435,7 @@ wire_api = "responses"
 
         for profile in [
             CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::Copilot,
             CodexCatalogToolProfile::Anthropic,
         ] {
             assert!(
@@ -4444,9 +4467,7 @@ wire_api = "responses"
     }
 
     #[test]
-    fn proxy_chat_profile_still_keeps_apply_patch() {
-        // Regression guard for Mode A: the proxy-chat profile must keep the
-        // freeform apply_patch tool (the proxy rewrites custom<->function).
+    fn proxy_catalog_profiles_keep_apply_patch_and_disable_original_image_detail() {
         let template = load_codex_native_responses_template();
         let specs = vec![CodexCatalogModelSpec {
             model: "x".to_string(),
@@ -4458,24 +4479,86 @@ wire_api = "responses"
             reasoning_levels: None,
             default_reasoning_level: None,
         }];
-        // Using a gpt-5.5-shaped template under ProxyChat must NOT strip
-        // apply_patch_tool_type. (The native template lacks it, so synthesize
-        // one with the field present to prove ProxyChat leaves it intact.)
         let mut proxy_template = template.clone();
         proxy_template["apply_patch_tool_type"] = json!("freeform");
-        let catalog = codex_model_catalog_from_specs(
-            &specs,
-            &proxy_template,
+        proxy_template["supports_image_detail_original"] = json!(true);
+        for profile in [
             CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::Copilot,
+        ] {
+            let catalog = codex_model_catalog_from_specs(&specs, &proxy_template, profile, 128_000);
+            assert_eq!(
+                catalog["models"][0]["apply_patch_tool_type"],
+                json!("freeform")
+            );
+            assert_eq!(
+                catalog["models"][0]["supports_image_detail_original"],
+                json!(false)
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_web_search_policy_keeps_copilot_and_anthropic_disabled_without_models() {
+        let config = "model = \"MiniMax-M3\"\n";
+        for (settings, has_catalog) in [
+            (json!({}), false),
+            (
+                json!({"modelCatalog": {"models": [{"model": "MiniMax-M3"}]}}),
+                true,
+            ),
+        ] {
+            for (profile, disabled) in [
+                (CodexCatalogToolProfile::Copilot, true),
+                (CodexCatalogToolProfile::Anthropic, true),
+                (CodexCatalogToolProfile::ProxyChat, false),
+                (CodexCatalogToolProfile::NativeResponses, has_catalog),
+            ] {
+                assert_eq!(
+                    codex_disables_web_search(&settings, config, profile),
+                    disabled,
+                    "{profile:?}, catalog={has_catalog}"
+                );
+                if !has_catalog {
+                    assert!(plan_codex_model_catalog(&settings, config, profile)
+                        .unwrap()
+                        .catalog
+                        .is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn copilot_catalog_preserves_context_and_explicit_parallel_capabilities() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "claude-sonnet-5", "contextWindow": 400000 },
+                    { "model": "parallel-model", "supportsParallelToolCalls": true },
+                    { "model": "serial-model", "supports_parallel_tool_calls": false }
+                ]
+            }
+        });
+        let template = load_codex_model_template_static().unwrap();
+        assert_eq!(template["supports_parallel_tool_calls"], json!(true));
+        let catalog = codex_model_catalog_from_specs(
+            &codex_catalog_model_specs(&settings),
+            &template,
+            CodexCatalogToolProfile::Copilot,
             128_000,
         );
-        assert_eq!(
-            catalog["models"][0]
-                .get("apply_patch_tool_type")
-                .and_then(|v| v.as_str()),
-            Some("freeform"),
-            "ProxyChat must preserve apply_patch_tool_type (no native stripping)"
-        );
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0]["context_window"], json!(400000));
+        assert_eq!(models[0]["max_context_window"], json!(400000));
+        for (entry, parallel) in models.iter().zip([false, true, false]) {
+            assert_eq!(entry["supports_parallel_tool_calls"], json!(parallel));
+            assert!(entry["base_instructions"].is_string());
+            for key in CODEX_CATALOG_PARSER_REQUIRED_FIELDS {
+                assert!(entry.get(*key).is_some(), "{key} is required by Codex");
+            }
+        }
     }
 
     #[test]
@@ -5469,9 +5552,15 @@ model_catalog_json = "cc-switch-model-catalog.json"
         fs::write(&escaped_file, r#"{"models":[]}"#).expect("write escaped catalog");
 
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside_dir, base_dir.join("link")).expect("symlink");
+        let linked = std::os::unix::fs::symlink(&outside_dir, base_dir.join("link"));
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link")).expect("symlink");
+        let linked = std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link"));
+        if let Err(err) = linked {
+            // Windows 在 \\wsl.localhost 上建不了符号链接（Incorrect function），夹具无从构造
+            assert!(crate::config::is_wsl_path(temp.path()), "symlink: {err}");
+            eprintln!("cannot create symlinks on WSL share ({err}); skipping");
+            return;
+        }
 
         let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
 "#;

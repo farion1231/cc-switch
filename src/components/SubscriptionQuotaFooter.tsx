@@ -6,6 +6,8 @@ import { useSubscriptionQuota } from "@/lib/query/subscription";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
 import {
+  creditsBreakdownItem,
+  creditsLine,
   failedLines,
   resetCreditsLine,
   tierLine,
@@ -85,7 +87,11 @@ export function tierLines(
     });
 }
 
-/** 一份查询成功的订阅额度要画的行：各档，再加存下的重置次数（只有 ChatGPT 订阅有） */
+/**
+ * 一份查询成功的订阅额度要画的行：各档，再加存下的重置次数和 Credits 余额（只有 ChatGPT 订阅有）。
+ * Credits 要等额度用完才扣，卡片上平时不占位置（点开重置次数能看到），有一档用完才露出来，并排在重置次数前面：
+ * 卡片合并行放不下时按剩余挑段，两者都没有比例、谁在前留谁（见 pickLines）
+ */
 export function quotaRows(
   t: TFunction,
   quota: SubscriptionQuota,
@@ -93,12 +99,29 @@ export function quotaRows(
   { inline = false }: { inline?: boolean } = {},
 ): { label: string; line: QuotaLine }[] {
   const rows = tierLines(t, quota.tiers || [], { inline });
-  // 一档都没有时额度整块不显示，重置次数也不单独出来
+  // 一档都没有时额度整块不显示，重置次数、余额也不单独出来
   if (rows.length === 0) return rows;
-  const resets = resetCreditsLine(t, quota.resetCredits, { locale });
-  return resets
-    ? [...rows, { label: t("quota.resetCredits.label"), line: resets }]
-    : rows;
+  const balance = creditsLine(t, quota.creditsBalance, { locale });
+  // 卡片上点开重置次数时附带余额（展开时余额自己有一行，不重复）
+  const resets = resetCreditsLine(t, quota.resetCredits, {
+    locale,
+    footer: inline && balance ? [creditsBreakdownItem(t, balance)] : undefined,
+  });
+  const credits =
+    inline && !rows.some((row) => row.line.left <= 0) ? null : balance;
+  const resetsRow = resets && {
+    label: t("quota.resetCredits.label"),
+    line: resets,
+  };
+  const creditsRow = credits && {
+    label: t("quota.credits.label"),
+    line: credits,
+  };
+  const extras = inline ? [creditsRow, resetsRow] : [resetsRow, creditsRow];
+  return [
+    ...rows,
+    ...extras.filter((row): row is NonNullable<typeof row> => Boolean(row)),
+  ];
 }
 
 /** 额度没查到的原因：登录过期 / 令牌待刷新写固定文案，其余写后端给的错误 */

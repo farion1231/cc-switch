@@ -177,6 +177,15 @@ pub async fn set_proxy_stack_member(
     result
 }
 
+/// Codex 聚合的模型被别的模型目录挡住时，改用 CC Switch 生成的目录（去掉指向别的文件的
+/// `model_catalog_json`）。返回之后还剩的提示。
+#[tauri::command]
+pub async fn adopt_codex_stack_catalog(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<&'static str>, String> {
+    crate::mode::controller::adopt_codex_stack_catalog(state.inner()).await
+}
+
 /// 获取代理服务器状态
 #[tauri::command]
 pub async fn get_proxy_status(state: tauri::State<'_, AppState>) -> Result<ProxyStatus, String> {

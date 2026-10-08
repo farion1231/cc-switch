@@ -670,14 +670,6 @@ async fn log_usage_internal(
 ) {
     use super::usage::logger::UsageLogger;
 
-    let logger = UsageLogger::new(&state.db);
-    let pricing_model_source = logger.resolve_pricing_model_source(app_type).await;
-    let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
-        outbound_model
-    } else {
-        model
-    };
-
     let dedup_scope = super::usage::parser::dedup_scope_for_app(app_type, provider_id);
     let request_id = usage.dedup_request_id(dedup_scope);
 
@@ -690,21 +682,47 @@ async fn log_usage_internal(
         usage.cache_creation_tokens
     );
 
-    if let Err(e) = logger.log_with_calculation(
-        request_id,
-        provider_id.to_string(),
-        app_type.to_string(),
-        model.to_string(),
-        request_model.to_string(),
-        pricing_model.to_string(),
-        usage,
-        latency_ms,
-        first_token_ms,
-        status_code,
-        session_id,
-        None, // provider_type
-        is_streaming,
-    ) {
+    // #7818：使用量写入要拿 Database 的单把 std::sync::Mutex<Connection> 并做
+    // 磁盘 IO，同步执行会卡住 tokio worker，移到阻塞线程池执行。计费模式
+    // 读取走同一把锁，一并移入。
+    let db = state.db.clone();
+    let provider_id = provider_id.to_string();
+    let app_type = app_type.to_string();
+    let model = model.to_string();
+    let request_model = request_model.to_string();
+    let outbound_model = outbound_model.to_string();
+    let write = tokio::task::spawn_blocking(move || {
+        let logger = UsageLogger::new(&db);
+        // 计费模式读取的 DAO 是伪 async（无真实挂起点、直接取阻塞锁），
+        // 在阻塞线程上 block_on 不会停转运行时
+        let pricing_model_source = tokio::runtime::Handle::current()
+            .block_on(logger.resolve_pricing_model_source(&app_type));
+        let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
+            outbound_model
+        } else {
+            model.clone()
+        };
+        logger.log_with_calculation(
+            request_id,
+            provider_id,
+            app_type,
+            model,
+            request_model,
+            pricing_model,
+            usage,
+            latency_ms,
+            first_token_ms,
+            status_code,
+            session_id,
+            None, // provider_type
+            is_streaming,
+        )
+    });
+    if let Err(e) = write.await.unwrap_or_else(|e| {
+        Err(crate::error::AppError::Database(format!(
+            "usage 记录任务失败: {e}"
+        )))
+    }) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }
 }
@@ -1363,6 +1381,86 @@ mod tests {
         let source = logger.resolve_pricing_model_source("claude-desktop").await;
 
         assert_eq!(source, "request");
+        Ok(())
+    }
+
+    // #7818 回归闸门：使用量写入必须离开异步执行器线程。
+    // Database 全局只有单把 std::sync::Mutex<Connection>，先让专用线程占住
+    // 这把锁模拟慢盘/竞争。修复前，log_usage_internal 会在当前 tokio worker
+    // 上同步等锁，单线程（current_thread）运行时被整个卡死，下方的心跳
+    // sleep 只能在锁释放（约 500ms）后才会醒来；修复后写入走阻塞线程池，
+    // sleep 照常在 100ms 触发。
+    #[tokio::test]
+    async fn log_usage_write_does_not_block_the_async_runtime() -> Result<(), AppError> {
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let db = Arc::new(Database::memory()?);
+        let app_type = "claude";
+
+        db.set_pricing_model_source(app_type, "response").await?;
+        seed_pricing(&db)?;
+        insert_provider(&db, "provider-busy", app_type, ProviderMeta::default())?;
+
+        let state = build_state(db.clone());
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            model: None,
+            message_id: None,
+        };
+
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let blocker_db = db.clone();
+        let blocker = thread::spawn(move || {
+            let _guard = blocker_db.conn.lock().expect("占锁失败");
+            locked_tx.send(()).expect("通知占锁失败");
+            // 无论被测代码走哪条路径都定时释放，测试不会挂死
+            thread::sleep(Duration::from_millis(500));
+        });
+        locked_rx.recv().expect("接收占锁通知失败");
+
+        let writer = tokio::spawn(async move {
+            log_usage_internal(
+                &state,
+                "provider-busy",
+                app_type,
+                "resp-model",
+                "req-model",
+                "req-model",
+                usage,
+                10,
+                None,
+                false,
+                200,
+                None,
+            )
+            .await;
+        });
+
+        let start = Instant::now();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let heartbeat = start.elapsed();
+        blocker.join().expect("占锁线程 panic");
+        writer.await.expect("使用量写入任务 panic");
+
+        assert!(
+            heartbeat < Duration::from_millis(300),
+            "使用量写入阻塞了异步执行器 {heartbeat:?}（应移到阻塞线程池执行）"
+        );
+
+        // 锁释放后记录最终仍要落库
+        let conn = crate::database::lock_conn!(db.conn);
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE provider_id = ?1",
+                ["provider-busy"],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        assert_eq!(count, 1);
         Ok(())
     }
 }

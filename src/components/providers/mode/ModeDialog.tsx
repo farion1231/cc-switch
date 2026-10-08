@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { logFrontendInfo } from "@/lib/frontendLogger";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
 
 /** 路由模式改写的客户端文件（确认框里写明，用默认位置）。 */
@@ -33,6 +34,20 @@ const CLIENT_FILE: Partial<Record<AppId, string>> = {
 export type ModeDialogState =
   | { kind: "enter"; target: Exclude<AppMode, "direct"> }
   | { kind: "needsRoute"; providerId: string; reason: string };
+
+const MODE_LABEL: Record<Exclude<AppMode, "direct">, string> = {
+  route: "路由",
+  stack: "聚合",
+};
+
+/** 框里的选择写进日志：取消、仍然直连切换、进入模式在日志里分得清。 */
+function logDialog(app: AppId, state: ModeDialogState, choice: string) {
+  const subject =
+    state.kind === "enter"
+      ? `进入${MODE_LABEL[state.target]}模式确认框`
+      : `「${state.providerId} 需要路由」确认框`;
+  logFrontendInfo(`[MODE] ${app} ${subject}：${choice}`);
+}
 
 interface ModeDialogProps {
   app: AppId;
@@ -57,18 +72,28 @@ interface ModeDialogProps {
  * 卡片上不再有「从这家开始」的按钮）。
  */
 export function ModeDialog(props: ModeDialogProps) {
-  const { state, onClose } = props;
+  const { app, state, onClose } = props;
+
+  useEffect(() => {
+    if (state) logDialog(app, state, "弹出");
+  }, [app, state]);
+
+  const cancel = () => {
+    if (state) logDialog(app, state, "取消");
+    onClose();
+  };
+
   return (
-    <Dialog open={state !== null} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={state !== null} onOpenChange={(open) => !open && cancel()}>
       {state && (
         <DialogContent
           zIndex="alert"
           className="max-w-[480px] gap-0 rounded-dialog border-border bg-surface p-6 shadow-v7-lg sm:rounded-dialog"
         >
           {state.kind === "enter" ? (
-            <EnterBody {...props} state={state} />
+            <EnterBody {...props} state={state} onCancel={cancel} />
           ) : (
-            <NeedsRouteBody {...props} state={state} />
+            <NeedsRouteBody {...props} state={state} onCancel={cancel} />
           )}
         </DialogContent>
       )}
@@ -85,9 +110,11 @@ function EnterBody({
   defaultPick,
   stackMembers,
   onClose,
+  onCancel,
   onEnter,
 }: ModeDialogProps & {
   state: Extract<ModeDialogState, { kind: "enter" }>;
+  onCancel: () => void;
 }) {
   const { t } = useTranslation();
   const appName = APP_DISPLAY_NAME[app];
@@ -134,9 +161,10 @@ function EnterBody({
               })
             : t("mode.dialog.stackNoteEmpty"),
           t("mode.dialog.stackNoteNoFailover"),
-          app === "codex"
-            ? t("mode.dialog.stackNoteRestartCodex", { app: appName })
-            : t("mode.dialog.stackNoteRestart", { app: appName }),
+          // Claude Code 运行中就会读到改过的 settings.json，不用重启。
+          ...(app === "codex"
+            ? [t("mode.dialog.stackNoteRestartCodex", { app: appName })]
+            : []),
         ];
   if (active === "stack" && target === "route") {
     notes.push(t("mode.dialog.stackToRouteNote"));
@@ -144,6 +172,7 @@ function EnterBody({
 
   const confirm = async () => {
     if (!pick || busy) return;
+    logDialog(app, state, `确认，选 ${pick}`);
     setBusy(true);
     setError(null);
     try {
@@ -239,7 +268,7 @@ function EnterBody({
           size="regular"
           autoFocus
           disabled={busy}
-          onClick={onClose}
+          onClick={onCancel}
         >
           {t("common.cancel")}
         </Button>
@@ -264,10 +293,12 @@ function NeedsRouteBody({
   state,
   providers,
   onClose,
+  onCancel,
   onEnter,
   onSwitchDirect,
 }: ModeDialogProps & {
   state: Extract<ModeDialogState, { kind: "needsRoute" }>;
+  onCancel: () => void;
 }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
@@ -276,6 +307,7 @@ function NeedsRouteBody({
   const name = provider?.name ?? state.providerId;
 
   const route = async () => {
+    logDialog(app, state, "开始路由并使用");
     setBusy(true);
     setError(null);
     try {
@@ -316,7 +348,7 @@ function NeedsRouteBody({
           size="regular"
           autoFocus
           disabled={busy}
-          onClick={onClose}
+          onClick={onCancel}
         >
           {t("common.cancel")}
         </Button>
@@ -325,6 +357,7 @@ function NeedsRouteBody({
           size="regular"
           disabled={busy}
           onClick={() => {
+            logDialog(app, state, "仍然直连切换");
             onClose();
             onSwitchDirect(state.providerId);
           }}
