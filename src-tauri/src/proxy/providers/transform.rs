@@ -68,8 +68,10 @@ pub fn is_openai_o_series(model: &str) -> bool {
 /// - o-series: o1, o3, o4-mini, etc.
 /// - GPT-5+: gpt-5, gpt-5.1, gpt-5.4, gpt-5-codex, etc.
 /// - xAI Grok 4.5+ (`grok-4.x` with numeric minor version x ≥ 5,
-///   so future releases like grok-4.10 need no whitelist update); retain the
-///   previous `grok-build-*` family for saved providers.
+///   so future releases like grok-4.10 need no whitelist update) and
+///   grok-4.3 (low/medium/high only — `xhigh` is clamped down by
+///   `clamp_reasoning_effort`); retain the previous `grok-build-*` family
+///   for saved providers.
 pub fn supports_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_lowercase();
     is_openai_o_series(&normalized)
@@ -82,6 +84,7 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
             .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
             .and_then(|minor| minor.parse::<u32>().ok())
             .is_some_and(|minor| minor >= 5)
+        || is_grok_4_3_family(&normalized)
         || normalized.starts_with("grok-build-")
 }
 
@@ -95,6 +98,28 @@ fn supports_max_reasoning_effort(model: &str) -> bool {
         normalized.as_str(),
         "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna"
     )
+}
+
+/// Detect the grok-4.3 family: it accepts low/medium/high but not `xhigh`
+/// (per the xAI docs; grok-4.5+ accepts the full range including `xhigh`).
+fn is_grok_4_3_family(normalized: &str) -> bool {
+    normalized == "grok-4.3" || normalized.starts_with("grok-4.3-")
+}
+
+/// Clamp a resolved reasoning effort to what the target model accepts.
+///
+/// `xhigh` is only accepted by GPT-5+ and Grok 4.5+; the o-series (o1, o3,
+/// o4-mini) and grok-4.3 accept low/medium/high. Sending `xhigh` there is an
+/// invalid value, so downgrade to `high` — the closest supported intent,
+/// mirroring how grok-4.5 documents a silent xhigh→high fallback. All other
+/// efforts pass through unchanged.
+pub fn clamp_reasoning_effort<'a>(model: &str, effort: &'a str) -> &'a str {
+    let normalized = model.to_lowercase();
+    if effort == "xhigh" && (is_openai_o_series(&normalized) || is_grok_4_3_family(&normalized)) {
+        "high"
+    } else {
+        effort
+    }
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
@@ -300,7 +325,7 @@ pub fn anthropic_to_openai_with_reasoning_content(
     // Map Anthropic thinking → OpenAI reasoning_effort
     if supports_reasoning_effort(model) {
         if let Some(effort) = resolve_reasoning_effort(&body) {
-            result["reasoning_effort"] = json!(effort);
+            result["reasoning_effort"] = json!(clamp_reasoning_effort(model, effort));
         }
     }
 
@@ -1950,6 +1975,10 @@ mod tests {
         assert!(supports_reasoning_effort("grok-4.10"));
         assert!(supports_reasoning_effort("grok-4.10-build"));
         assert!(supports_reasoning_effort("GROK-4.10-BUILD"));
+        // grok-4.3 supports low/medium/high but not xhigh (clamped by
+        // clamp_reasoning_effort).
+        assert!(supports_reasoning_effort("grok-4.3"));
+        assert!(supports_reasoning_effort("grok-4.3-something"));
         assert!(!supports_reasoning_effort("grok-4."));
         assert!(!supports_reasoning_effort("grok-4.build"));
         assert!(!supports_reasoning_effort("grok-4.4"));
@@ -2017,6 +2046,32 @@ mod tests {
         // Claude Code's `/effort xhigh` sends output_config.effort="xhigh"
         let body = json!({"thinking": {"type": "adaptive"}, "output_config": {"effort": "xhigh"}});
         assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
+    }
+
+    // ── clamp_reasoning_effort unit tests ──
+
+    #[test]
+    fn test_clamp_reasoning_effort_xhigh_downgraded_for_o_series() {
+        assert_eq!(clamp_reasoning_effort("o3-mini", "xhigh"), "high");
+        assert_eq!(clamp_reasoning_effort("o1", "xhigh"), "high");
+        assert_eq!(clamp_reasoning_effort("O4-Mini", "xhigh"), "high");
+        // grok-4.3 accepts low/medium/high but not xhigh (per #7369's review).
+        assert_eq!(clamp_reasoning_effort("grok-4.3", "xhigh"), "high");
+        assert_eq!(
+            clamp_reasoning_effort("grok-4.3-something", "xhigh"),
+            "high"
+        );
+        assert_eq!(clamp_reasoning_effort("GROK-4.3", "xhigh"), "high");
+    }
+
+    #[test]
+    fn test_clamp_reasoning_effort_xhigh_passthrough_for_capable_models() {
+        assert_eq!(clamp_reasoning_effort("gpt-5.4", "xhigh"), "xhigh");
+        assert_eq!(clamp_reasoning_effort("grok-4.6", "xhigh"), "xhigh");
+        assert_eq!(clamp_reasoning_effort("grok-4.7", "xhigh"), "xhigh");
+        assert_eq!(clamp_reasoning_effort("o3-mini", "high"), "high");
+        assert_eq!(clamp_reasoning_effort("grok-4.3", "high"), "high");
+        assert_eq!(clamp_reasoning_effort("o3-mini", "low"), "low");
     }
 
     #[test]
@@ -2254,6 +2309,62 @@ mod tests {
 
         let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["reasoning_effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_reasoning_model_output_config_xhigh_clamped_for_o_series() {
+        // o-series accepts low/medium/high only; xhigh — from `/effort xhigh`,
+        // `max`, or `thinking: adaptive` — would be an invalid value.
+        let input = json!({
+            "model": "o3-mini",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn test_reasoning_model_thinking_adaptive_clamped_for_o_series() {
+        let input = json!({
+            "model": "o3-mini",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn test_reasoning_model_output_config_xhigh_clamped_for_grok_4_3() {
+        // grok-4.3 accepts low/medium/high but not xhigh (per #7369's
+        // review); low/medium/high pass through untouched.
+        let input = json!({
+            "model": "grok-4.3",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["reasoning_effort"], "high");
+
+        let input = json!({
+            "model": "grok-4.3",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["reasoning_effort"], "high");
     }
 
     #[test]

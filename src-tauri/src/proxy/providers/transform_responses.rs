@@ -1841,7 +1841,9 @@ pub fn anthropic_to_responses(
     if let Some(model_name) = body.get("model").and_then(|m| m.as_str()) {
         if super::transform::supports_reasoning_effort(model_name) {
             if let Some(effort) = super::transform::resolve_reasoning_effort(&body) {
-                result["reasoning"] = json!({ "effort": effort });
+                result["reasoning"] = json!({
+                    "effort": super::transform::clamp_reasoning_effort(model_name, effort)
+                });
             }
         }
     }
@@ -5035,6 +5037,36 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn test_responses_xhigh_clamped_to_high_for_o_series() {
+        // o-series accepts low/medium/high only; xhigh — from `/effort xhigh`,
+        // `max`, or `thinking: adaptive` — would be an invalid value.
+        let input = json!({
+            "model": "o3-mini",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn test_responses_xhigh_verbatim_for_capable_models() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
     }
 
     #[test]
