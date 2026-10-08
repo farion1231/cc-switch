@@ -946,7 +946,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
-                                        in_flight_handle.take(),
+                                            in_flight_handle.take(),
                                         )
                                         .await);
                                 }
@@ -1016,7 +1016,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
-                                        in_flight_handle.take(),
+                                            in_flight_handle.take(),
                                         )
                                         .await);
                                 }
@@ -1095,7 +1095,7 @@ impl RequestForwarder {
                                                 app_type_str,
                                                 used_half_open_permit,
                                                 forwarded,
-                                            in_flight_handle.take(),
+                                                in_flight_handle.take(),
                                             )
                                             .await);
                                     }
@@ -1192,7 +1192,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
-                                        in_flight_handle.take(),
+                                            in_flight_handle.take(),
                                         )
                                         .await);
                                 }
