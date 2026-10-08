@@ -8,6 +8,7 @@ import "./index.css";
 import i18n from "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AppearanceProvider } from "@/components/appearance-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { MotionConfig } from "framer-motion";
 import { queryClient } from "@/lib/query";
@@ -100,8 +101,10 @@ async function bootstrap() {
         <React.StrictMode>
           <FrontendErrorBoundary>
             <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
-              <DatabaseUpgrade payload={initError} />
-              <Toaster />
+              <AppearanceProvider>
+                <DatabaseUpgrade payload={initError} />
+                <Toaster />
+              </AppearanceProvider>
             </ThemeProvider>
           </FrontendErrorBoundary>
         </React.StrictMode>,
@@ -126,7 +129,8 @@ async function bootstrap() {
       <FrontendErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
-            <UpdateProvider>
+            <AppearanceProvider>
+              <UpdateProvider>
               {/* 系统开了「减少动态效果」时，framer-motion 的位移动画一律跳过 */}
               <MotionConfig reducedMotion="user">
                 {/* 全局悬停提示：移上去立即出现（HoverTip） */}
@@ -135,7 +139,8 @@ async function bootstrap() {
                 </TooltipProvider>
               </MotionConfig>
               <Toaster />
-            </UpdateProvider>
+              </UpdateProvider>
+            </AppearanceProvider>
           </ThemeProvider>
         </QueryClientProvider>
       </FrontendErrorBoundary>
