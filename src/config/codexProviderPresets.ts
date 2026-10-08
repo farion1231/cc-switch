@@ -163,6 +163,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     apiFormat: "openai_chat",
     providerType: "github_copilot",
     requiresOAuth: true,
+    // Image modalities come from live Copilot capabilities; otherwise infer them.
     modelCatalog: modelCatalog([
       {
         model: "gpt-6-astra",
@@ -170,7 +171,6 @@ export const codexProviderPresets: CodexProviderPreset[] = [
         contextWindow: 272000,
         reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
-        inputModalities: ["text"],
       },
       {
         model: "gpt-5.6-sol",
@@ -178,7 +178,6 @@ export const codexProviderPresets: CodexProviderPreset[] = [
         contextWindow: 272000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
-        inputModalities: ["text"],
       },
       {
         model: "gpt-5.6-terra",
@@ -186,7 +185,6 @@ export const codexProviderPresets: CodexProviderPreset[] = [
         contextWindow: 272000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
-        inputModalities: ["text"],
       },
       {
         model: "gpt-5.6-luna",
@@ -194,7 +192,6 @@ export const codexProviderPresets: CodexProviderPreset[] = [
         contextWindow: 200000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
-        inputModalities: ["text"],
       },
       {
         model: "gpt-5.5",
@@ -202,7 +199,6 @@ export const codexProviderPresets: CodexProviderPreset[] = [
         contextWindow: 272000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
         supportsParallelToolCalls: true,
-        inputModalities: ["text"],
       },
     ]),
     category: "third_party",
