@@ -1,40 +1,70 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Loader2,
-  LogOut,
-  Copy,
-  Check,
-  ExternalLink,
-  Plus,
-  X,
-  Sparkles,
-  User,
-} from "lucide-react";
+import { Loader2, Plus, AlertTriangle, RefreshCw } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
-import { copyText } from "@/lib/clipboard";
+import {
+  ManagedAccountRemoveDialog,
+  type ManagedAccountRemoveTarget,
+} from "./ManagedAccountRemoveDialog";
+import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
+import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
+import { cn } from "@/lib/utils";
+import {
+  ManagedAccountsGroup,
+  type GroupAccountRow,
+} from "@/components/settings/auth/ManagedAccountsGroup";
+import {
+  signedInDate,
+  withMonoToken,
+} from "@/components/settings/auth/accountDetails";
 
 interface CodexOAuthSectionProps {
   className?: string;
+  /** select 模式只展示账号选择和管理入口；manage 模式展示完整账号管理 */
+  mode?: "manage" | "select";
+  /** 是否展示每个账号的订阅额度 */
+  showAccountQuota?: boolean;
   /** 当前选中的 ChatGPT 账号 ID */
   selectedAccountId?: string | null;
   /** 账号选择回调 */
   onAccountSelect?: (accountId: string | null) => void;
+  /** 用户主动选择了登录方式；自动失效清理不会触发 */
+  onSelectionConfirmed?: () => void;
+  /** 已选账号自动失效；由父级清除与该选择关联的确认状态 */
+  onSelectionInvalidated?: () => void;
+  /** 打开账号管理入口 */
+  onManageAccounts?: () => void;
+  /** 账号选择字段标题；官方供应商可使用“登录方式” */
+  selectionLabel?: string;
+  /** 空选择项文案；默认表示使用托管认证的默认账号 */
+  noneOptionLabel?: string;
+  /** 空选择项的补充说明；仅由明确知道其含义的调用方提供 */
+  noneOptionDescription?: string;
+  /** 是否允许不绑定托管账号 */
+  allowUnboundSelection?: boolean;
+  /** 不绑定选项不依赖托管账号状态，可在状态加载失败时继续选择 */
+  allowUnboundSelectionWithoutStatus?: boolean;
+  /** 固定展示原生 Codex 当前登录，不允许改绑 */
+  nativeLoginOnly?: boolean;
+  /** 新建官方卡时不预选登录方式，要求用户明确选择 */
+  requireExplicitSelection?: boolean;
   /** 是否开启 Codex FAST mode */
   fastModeEnabled?: boolean;
   /** FAST mode 切换回调 */
   onFastModeChange?: (enabled: boolean) => void;
+  /** 授权中心里最后一组的「?」向上弹 */
+  helpSide?: "top" | "bottom";
 }
 
 /**
@@ -45,17 +75,31 @@ interface CodexOAuthSectionProps {
  */
 export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   className,
+  mode = "manage",
+  showAccountQuota = false,
   selectedAccountId,
   onAccountSelect,
+  onSelectionConfirmed,
+  onSelectionInvalidated,
+  onManageAccounts,
+  selectionLabel,
+  noneOptionLabel,
+  noneOptionDescription,
+  allowUnboundSelection = true,
+  allowUnboundSelectionWithoutStatus = false,
+  nativeLoginOnly = false,
+  requireExplicitSelection = false,
   fastModeEnabled = false,
   onFastModeChange,
+  helpSide,
 }) => {
-  const { t } = useTranslation();
-  const [copied, setCopied] = React.useState(false);
+  const { t, i18n } = useTranslation();
 
   const {
     accounts,
     defaultAccountId,
+    isStatusSuccess,
+    isStatusError,
     hasAnyAccount,
     pollingState,
     deviceCode,
@@ -65,288 +109,404 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     isRemovingAccount,
     isSettingDefaultAccount,
     addAccount,
+    reauthAccount,
+    retryAuth,
     removeAccount,
     setDefaultAccount,
     cancelAuth,
     logout,
+    refetchStatus,
   } = useCodexOauth();
-
-  const copyUserCode = async () => {
-    if (deviceCode?.user_code) {
-      await copyText(deviceCode.user_code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
+  const accountUsers = useManagedAccountUsers("codex_oauth", defaultAccountId);
+  const [removeTarget, setRemoveTarget] =
+    React.useState<ManagedAccountRemoveTarget | null>(null);
 
   const handleAccountSelect = (value: string) => {
+    if (value === "__manage_accounts__") {
+      onManageAccounts?.();
+      return;
+    }
+    onSelectionConfirmed?.();
     onAccountSelect?.(value === "none" ? null : value);
   };
 
-  const handleRemoveAccount = (accountId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    removeAccount(accountId);
-    if (selectedAccountId === accountId) {
+  React.useEffect(() => {
+    // Only clear a bound account when the status query has *successfully*
+    // loaded and the account is genuinely gone. On a failed/pending query
+    // `accounts` is an empty array, which must not silently unbind the
+    // provider's managed account (that would corrupt the saved config).
+    if (
+      mode !== "select" ||
+      !selectedAccountId ||
+      !onAccountSelect ||
+      !isStatusSuccess
+    ) {
+      return;
+    }
+
+    if (!accounts.some((account) => account.id === selectedAccountId)) {
+      onSelectionInvalidated?.();
+      onAccountSelect(null);
+    }
+  }, [
+    accounts,
+    isStatusSuccess,
+    mode,
+    onAccountSelect,
+    onSelectionInvalidated,
+    selectedAccountId,
+  ]);
+
+  const confirmRemove = () => {
+    const target = removeTarget;
+    setRemoveTarget(null);
+    if (!target) return;
+    if (target.kind === "all") {
+      logout();
+      return;
+    }
+    removeAccount(target.accountId);
+    if (selectedAccountId === target.accountId) {
+      onSelectionInvalidated?.();
       onAccountSelect?.(null);
     }
   };
 
-  return (
-    <div className={`space-y-4 ${className || ""}`}>
-      {/* 认证状态标题 */}
-      <div className="flex items-center justify-between">
-        <Label>{t("codexOauth.authStatus", "认证状态")}</Label>
-        <Badge
-          variant={hasAnyAccount ? "default" : "secondary"}
-          className={hasAnyAccount ? "bg-green-500 hover:bg-green-600" : ""}
-        >
-          {hasAnyAccount
-            ? t("codexOauth.accountCount", {
-                count: accounts.length,
-                defaultValue: `${accounts.length} 个账号`,
-              })
-            : t("codexOauth.notAuthenticated", "未认证")}
-        </Badge>
-      </div>
+  // 升级前登录的旧账号没有持久化 id_token，需重新登录补全
+  const selectedAccountNeedsReauth =
+    !!selectedAccountId &&
+    accounts.some(
+      (account) => account.id === selectedAccountId && account.reauth_required,
+    );
+  const selectedAccount = accounts.find(
+    (account) => account.id === selectedAccountId,
+  );
+  const accountChoicePlaceholder = t(
+    "codexOauth.officialAccountPlaceholder",
+    "请选择登录方式",
+  );
+  const accountSelectValue =
+    requireExplicitSelection && !selectedAccountId
+      ? "__official_account_required__"
+      : (selectedAccountId ??
+        (allowUnboundSelection ? "none" : "__managed_account_required__"));
+  const isAccountSelectionPlaceholder =
+    !selectedAccountId && (requireExplicitSelection || !allowUnboundSelection);
+  const accountSelectLabel = isAccountSelectionPlaceholder
+    ? accountChoicePlaceholder
+    : selectedAccount?.login ||
+      (selectedAccountId
+        ? isStatusError
+          ? t("codex.accountStatusUnavailable", "无法读取账号信息")
+          : isStatusSuccess
+            ? t("codex.boundAccountUnavailable", "绑定的账号不可用")
+            : t("codex.accountLoading", "正在加载账号…")
+        : undefined) ||
+      (allowUnboundSelection
+        ? (noneOptionLabel ?? t("codexOauth.useDefaultAccount", "使用默认账号"))
+        : t("codexOauth.selectAccountPlaceholder", "选择一个 ChatGPT 账号"));
 
-      {/* 账号选择器 */}
-      {hasAnyAccount && onAccountSelect && (
-        <div className="space-y-2">
-          <Label className="text-sm text-muted-foreground">
-            {t("codexOauth.selectAccount", "选择账号")}
-          </Label>
-          <Select
-            value={selectedAccountId || "none"}
-            onValueChange={handleAccountSelect}
+  const accountSelect = (isStatusSuccess ||
+    (allowUnboundSelection && allowUnboundSelectionWithoutStatus)) &&
+    onAccountSelect &&
+    (mode === "select" || hasAnyAccount || noneOptionLabel) && (
+      <div className="space-y-2.5">
+        <Label className="text-sm font-medium text-fg-1">
+          {selectionLabel ??
+            (mode === "select"
+              ? t("codexOauth.accountToUse", "使用的账号")
+              : t("codexOauth.selectAccount", "选择账号"))}
+        </Label>
+        <Select
+          value={accountSelectValue}
+          onValueChange={handleAccountSelect}
+          disabled={nativeLoginOnly}
+        >
+          <SelectTrigger
+            className="h-10 min-w-0 rounded-lg bg-surface px-3 shadow-sm"
+            aria-label={
+              selectionLabel ?? t("codexOauth.accountToUse", "使用的账号")
+            }
           >
-            <SelectTrigger>
-              <SelectValue
-                placeholder={t(
-                  "codexOauth.selectAccountPlaceholder",
-                  "选择一个 ChatGPT 账号",
-                )}
-              />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">
-                <span className="text-muted-foreground">
-                  {t("codexOauth.useDefaultAccount", "使用默认账号")}
-                </span>
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate text-left text-sm font-medium tracking-tight",
+                isAccountSelectionPlaceholder &&
+                  "font-normal tracking-normal text-fg-2",
+              )}
+              title={selectedAccount?.login}
+            >
+              <SelectValue>{accountSelectLabel}</SelectValue>
+            </span>
+          </SelectTrigger>
+          <SelectContent className="w-[var(--radix-select-trigger-width)] max-w-[var(--radix-select-content-available-width)]">
+            {requireExplicitSelection && !selectedAccountId && (
+              <SelectItem value="__official_account_required__" disabled>
+                <span className="text-fg-2">{accountChoicePlaceholder}</span>
               </SelectItem>
-              {accounts.map((account) => (
-                <SelectItem key={account.id} value={account.id}>
-                  <div className="flex items-center gap-2">
-                    <User className="h-4 w-4 text-muted-foreground" />
-                    <span>{account.login}</span>
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
-      {onFastModeChange && (
-        <div className="flex items-center justify-between rounded-md border bg-muted/30 p-3">
-          <div className="space-y-1 pr-4">
-            <Label className="text-sm font-medium">
-              {t("codexOauth.fastMode", "FAST mode")}
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              {t("codexOauth.fastModeDescription", {
-                defaultValue:
-                  'Send service_tier="priority" for lower latency. Turn it off if the ChatGPT Codex backend rejects the parameter.',
-              })}
-            </p>
-          </div>
-          <Switch
-            checked={fastModeEnabled}
-            onCheckedChange={onFastModeChange}
-            aria-label={t("codexOauth.fastMode", "FAST mode")}
-          />
-        </div>
-      )}
-
-      {/* 已登录账号列表 */}
-      {hasAnyAccount && (
-        <div className="space-y-2">
-          <Label className="text-sm text-muted-foreground">
-            {t("codexOauth.loggedInAccounts", "已登录账号")}
-          </Label>
-          <div className="space-y-1">
-            {accounts.map((account) => (
-              <div
-                key={account.id}
-                className="flex items-center justify-between p-2 rounded-md border bg-muted/30"
-              >
-                <div className="flex items-center gap-2">
-                  <User className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-sm font-medium">{account.login}</span>
-                  {defaultAccountId === account.id && (
-                    <Badge variant="secondary" className="text-xs">
-                      {t("codexOauth.defaultAccount", "默认")}
-                    </Badge>
-                  )}
-                  {selectedAccountId === account.id && (
-                    <Badge variant="outline" className="text-xs">
-                      {t("codexOauth.selected", "已选中")}
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  {defaultAccountId !== account.id && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-muted-foreground"
-                      onClick={() => setDefaultAccount(account.id)}
-                      disabled={isSettingDefaultAccount}
-                    >
-                      {t("codexOauth.setAsDefault", "设为默认")}
-                    </Button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-red-500"
-                    onClick={(e) => handleRemoveAccount(account.id, e)}
-                    disabled={isRemovingAccount}
-                    title={t("codexOauth.removeAccount", "移除账号")}
+            )}
+            {!allowUnboundSelection && !selectedAccountId && (
+              <SelectItem value="__managed_account_required__" disabled>
+                <span className="text-fg-2">{accountChoicePlaceholder}</span>
+              </SelectItem>
+            )}
+            {!nativeLoginOnly &&
+              accounts.map((account, index) => (
+                <React.Fragment key={account.id}>
+                  <SelectItem
+                    value={account.id}
+                    className="min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden"
                   >
-                    <X className="h-4 w-4" />
-                  </Button>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span aria-hidden className="h-4 w-4 shrink-0" />
+                      <span
+                        className="min-w-0 truncate text-sm font-medium leading-5"
+                        title={account.login}
+                      >
+                        {account.login}
+                      </span>
+                      {account.reauth_required && (
+                        <span className="ml-1 inline-flex shrink-0 items-center gap-1 text-xs text-warning-text">
+                          <AlertTriangle className="h-3 w-3" />
+                          {t("codexOauth.reauthBadge", "需要重新登录")}
+                        </span>
+                      )}
+                    </div>
+                  </SelectItem>
+                  {(index < accounts.length - 1 || onManageAccounts) && (
+                    <SelectSeparator
+                      data-account-divider="true"
+                      className="mx-2 my-0 bg-border/60"
+                    />
+                  )}
+                </React.Fragment>
+              ))}
+            {!nativeLoginOnly && onManageAccounts && (
+              <SelectItem value="__manage_accounts__" className="py-2 pl-6">
+                <div className="flex items-center gap-2">
+                  <Plus className="h-4 w-4 shrink-0 text-fg-2" />
+                  <span className="truncate text-sm font-medium leading-5">
+                    {t(
+                      "codexOauth.addOrManageAccounts",
+                      "添加或管理 ChatGPT 账号…",
+                    )}
+                  </span>
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 未认证 - 登录按钮 */}
-      {!hasAnyAccount && pollingState === "idle" && (
-        <Button
-          type="button"
-          onClick={addAccount}
-          className="w-full"
-          variant="outline"
-        >
-          <Sparkles className="mr-2 h-4 w-4" />
-          {t("codexOauth.loginWithChatGPT", "使用 ChatGPT 登录")}
-        </Button>
-      )}
-
-      {/* 已有账号 - 添加更多按钮 */}
-      {hasAnyAccount && pollingState === "idle" && (
-        <Button
-          type="button"
-          onClick={addAccount}
-          className="w-full"
-          variant="outline"
-          disabled={isAddingAccount}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          {t("codexOauth.addAnotherAccount", "添加其他账号")}
-        </Button>
-      )}
-
-      {/* 轮询中状态 */}
-      {isPolling && deviceCode && (
-        <div className="space-y-3 p-4 rounded-lg border border-border bg-muted/50">
-          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            {t("codexOauth.waitingForAuth", "等待授权中...")}
-          </div>
-
-          <div className="text-center">
-            <p className="text-xs text-muted-foreground mb-1">
-              {t("codexOauth.enterCode", "在浏览器中输入以下代码：")}
-            </p>
-            <div className="flex items-center justify-center gap-2">
-              <code className="text-2xl font-mono font-bold tracking-wider bg-background px-4 py-2 rounded border">
-                {deviceCode.user_code}
-              </code>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                onClick={copyUserCode}
-                title={t("codexOauth.copyCode", "复制代码")}
+              </SelectItem>
+            )}
+            {allowUnboundSelection &&
+              !nativeLoginOnly &&
+              (accounts.length > 0 || onManageAccounts) && (
+                <SelectSeparator className="my-1.5 bg-border" />
+              )}
+            {allowUnboundSelection && (
+              <SelectItem
+                value="none"
+                className="min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden"
               >
-                {copied ? (
-                  <Check className="h-4 w-4 text-green-500" />
-                ) : (
-                  <Copy className="h-4 w-4" />
-                )}
-              </Button>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span aria-hidden className="h-4 w-4 shrink-0" />
+                  <span className="shrink-0 text-sm font-medium leading-5">
+                    {noneOptionLabel ??
+                      t("codexOauth.useDefaultAccount", "使用默认账号")}
+                  </span>
+                  {noneOptionDescription && (
+                    <span className="min-w-0 truncate text-sm leading-5 text-fg-2">
+                      {noneOptionDescription}
+                    </span>
+                  )}
+                </div>
+              </SelectItem>
+            )}
+          </SelectContent>
+        </Select>
+      </div>
+    );
+
+  const statusErrorBanner = isStatusError && (
+    <div
+      role="alert"
+      className="flex items-center gap-2 rounded-md border border-transparent bg-danger-soft px-3 py-2 text-sm text-danger-text"
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      <span className="min-w-0 flex-1">
+        {t(
+          "codexOauth.statusLoadFailed",
+          "无法加载 ChatGPT 账号状态，请重试。",
+        )}
+      </span>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 shrink-0"
+        onClick={() => void refetchStatus()}
+      >
+        <RefreshCw className="mr-1 h-3.5 w-3.5" />
+        {t("codexOauth.retry", "重试")}
+      </Button>
+    </div>
+  );
+
+  if (mode === "select") {
+    return (
+      <div className={`space-y-4 ${className || ""}`}>
+        {statusErrorBanner}
+
+        {!isStatusSuccess && !isStatusError && (
+          <div className="flex items-center gap-2 text-sm text-fg-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {t("codexOauth.statusLoading", "正在加载...")}
+          </div>
+        )}
+
+        {/* 账号选择器 */}
+        {accountSelect}
+
+        {/* 所选账号需重新登录的内联提示 */}
+        {selectedAccountNeedsReauth && (
+          <div className="flex items-start gap-2 rounded-md border border-transparent bg-warning-soft px-3 py-2 text-xs text-warning-text">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning-text" />
+            <div className="flex-1 leading-relaxed">
+              {t(
+                "codexOauth.reauthSelectHint",
+                "该账号需重新登录以启用托管绑定。",
+              )}
+              {onManageAccounts && (
+                <button
+                  type="button"
+                  onClick={onManageAccounts}
+                  className="ml-1 font-medium underline underline-offset-2 hover:text-warning-text"
+                >
+                  {t("codexOauth.reauthNow", "立即重新登录")}
+                </button>
+              )}
             </div>
           </div>
+        )}
 
-          <div className="text-center">
-            <a
-              href={deviceCode.verification_uri}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-sm text-blue-500 hover:underline"
-            >
-              {deviceCode.verification_uri}
-              <ExternalLink className="h-3 w-3" />
-            </a>
+        {onFastModeChange && (
+          <div className="flex items-center justify-between rounded-md border bg-subtle p-3">
+            <div className="space-y-1 pr-4">
+              <Label className="text-sm font-medium">
+                {t("codexOauth.fastMode", "FAST mode")}
+              </Label>
+              <p className="text-xs text-fg-2">
+                {t("codexOauth.fastModeDescription", {
+                  defaultValue:
+                    'Send service_tier="priority" for lower latency. Turn it off if the ChatGPT Codex backend rejects the parameter.',
+                })}
+              </p>
+            </div>
+            <Switch
+              checked={fastModeEnabled}
+              onCheckedChange={onFastModeChange}
+              aria-label={t("codexOauth.fastMode", "FAST mode")}
+            />
           </div>
+        )}
+      </div>
+    );
+  }
 
-          <div className="text-center">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={cancelAuth}
-            >
-              {t("common.cancel", "取消")}
-            </Button>
-          </div>
-        </div>
-      )}
+  // ── 授权中心（manage） ──
 
-      {/* 错误状态 */}
-      {pollingState === "error" && error && (
-        <div className="space-y-2">
-          <p className="text-sm text-red-500">{error}</p>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              onClick={addAccount}
-              variant="outline"
-              size="sm"
-            >
-              {t("codexOauth.retry", "重试")}
-            </Button>
-            <Button
-              type="button"
-              onClick={cancelAuth}
-              variant="ghost"
-              size="sm"
-            >
-              {t("common.cancel", "取消")}
-            </Button>
-          </div>
-        </div>
-      )}
+  const rows: GroupAccountRow[] = accounts.map((account) => {
+    const date = signedInDate(account.authenticated_at, i18n.language);
+    const needsReauth = !!account.reauth_required;
+    return {
+      id: account.id,
+      login: account.login,
+      details: needsReauth
+        ? [
+            withMonoToken(
+              t("authCenter.codexReauthNote", {
+                defaultValue:
+                  "缺少登录凭据（id_token），不能用于 Codex 托管绑定",
+              }),
+              "id_token",
+            ),
+          ]
+        : date
+          ? [t("authCenter.signedInOn", { defaultValue: "{{date}}登录", date })]
+          : [],
+      isDefault: defaultAccountId === account.id,
+      needsReauth,
+      users: accountUsers([account.id]),
+      quota:
+        showAccountQuota && !needsReauth ? (
+          <CodexOauthAccountQuota
+            accountId={account.id}
+            login={account.login}
+          />
+        ) : undefined,
+    };
+  });
 
-      {/* 注销所有账号 */}
-      {hasAnyAccount && accounts.length > 1 && (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={logout}
-          className="w-full text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
-        >
-          <LogOut className="mr-2 h-4 w-4" />
-          {t("codexOauth.logoutAll", "注销所有账号")}
-        </Button>
-      )}
-    </div>
+  return (
+    <ManagedAccountsGroup
+      slug="chatgpt"
+      name="ChatGPT"
+      iconName="openai"
+      help={t("authCenter.group.chatgptHelp", {
+        defaultValue:
+          "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
+      })}
+      helpSide={helpSide}
+      accounts={rows}
+      status={isStatusError ? "error" : isStatusSuccess ? "ready" : "loading"}
+      statusErrorText={t("codexOauth.statusLoadFailed", {
+        defaultValue: "无法加载 ChatGPT 账号状态，请重试。",
+      })}
+      onRetryStatus={() => void refetchStatus()}
+      emptyText={t("authCenter.empty", {
+        defaultValue: "还没有登录 {{service}} 账号。",
+        service: "ChatGPT",
+      })}
+      loginLabel={t("codexOauth.loginWithChatGPT", "使用 ChatGPT 登录")}
+      onAdd={addAccount}
+      canReauth
+      onReauth={reauthAccount}
+      onSetDefault={setDefaultAccount}
+      settingDefault={isSettingDefaultAccount}
+      onRemove={(accountId, login) =>
+        setRemoveTarget({ kind: "one", accountId, login })
+      }
+      onRemoveAll={() =>
+        setRemoveTarget({
+          kind: "all",
+          accountIds: accounts.map((account) => account.id),
+        })
+      }
+      removing={isRemovingAccount}
+      login={{
+        starting: isAddingAccount && !isPolling,
+        polling: isPolling,
+        pollingState,
+        deviceCode,
+        error,
+        onCancel: cancelAuth,
+        onRetry: retryAuth,
+      }}
+    >
+      <ManagedAccountRemoveDialog
+        target={removeTarget}
+        serviceName="ChatGPT"
+        users={
+          removeTarget
+            ? accountUsers(
+                removeTarget.kind === "one"
+                  ? [removeTarget.accountId]
+                  : removeTarget.accountIds,
+              )
+            : []
+        }
+        othersRemain={accounts.length > 1}
+        pending={isRemovingAccount}
+        onConfirm={confirmRemove}
+        onCancel={() => setRemoveTarget(null)}
+      />
+    </ManagedAccountsGroup>
   );
 };
 

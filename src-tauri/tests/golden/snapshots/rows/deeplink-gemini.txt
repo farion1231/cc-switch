@@ -1,0 +1,13 @@
+id: relaygemini-<ts>
+name: Relay Gemini
+settings_config: {"env":{"GEMINI_API_KEY":"g-relay","GOOGLE_GEMINI_BASE_URL":"https://api.relay.example","GEMINI_MODEL":"gemini-2.5-pro"}}
+website_url: https://relay.example
+category: NULL
+sort_index: NULL
+notes: NULL
+icon: NULL
+icon_color: NULL
+meta: {"commonConfigEnabled":true}
+is_current: true
+in_failover_queue: false
+

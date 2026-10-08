@@ -1,0 +1,1144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>CC Switch 设计系统</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* ============================================================
+     CC Switch Design System — v7
+     令牌对齐 src/index.css（:root / .dark）与 tailwind.config.cjs。
+     主题色 #F97316 只覆盖 --action-* 与 --ring（index.css 注释约定的主题色槽位）。
+     ============================================================ */
+  :root {
+    /* 主题色（操作色）——实心按钮、开关的开、勾选框、焦点环、链接 */
+    --action-bg: #f97316;
+    --action-hover: #ea620a;
+    --action-fg: #ffffff;
+    --action-text: #c2410c;   /* 橙色当文字用（链接、选中文字）时用深一档，对白底 5.2:1 */
+    --action-soft: #fff1e6;
+    --ring: #f97316;
+
+    /* 中性面（v7 tokens） */
+    --bg-app: #ffffff;
+    --bg-sidebar: #f5f5f7;
+    --bg-subtle: #efeff2;
+    --bg-selected: #e4e4ea;
+    --bg-card: #ffffff;
+    --border: #e4e4e9;
+    --border-strong: #cfcfd6;
+    --text-1: #18181b;
+    --text-2: #52525b;
+    --text-3: #65656e;
+    --inverse-bg: #18181b;
+    --inverse-fg: #ffffff;
+    --overlay: rgba(9, 9, 11, .36);
+    --control-off: #888890;
+
+    /* 模式色：直连 / 路由 / 聚合 */
+    --direct-fill: #0a84ff; --direct-text: #0063c7; --direct-soft: #eaf3ff; --direct-solid: #0066cc; --direct-on: #ffffff;
+    --route-fill: #0d9488; --route-text: #06726b; --route-soft: #e7f6f4; --route-solid: #0f766e; --route-on: #ffffff;
+    --stack-fill: #7c3aed; --stack-text: #6d28d9; --stack-soft: #f2ecfe; --stack-solid: #6d28d9; --stack-on: #ffffff;
+
+    /* 语义色 */
+    --success: #16a34a; --success-text: #007634; --success-soft: #e8f7ee;
+    --warning: #d97706; --warning-text: #a64a00; --warning-soft: #fef3c7;
+    --danger: #dc2626;  --danger-text: #b91c1c;  --danger-soft: #fee2e2;
+    --chart-1: #0891b2; --chart-2: #db2777; --chart-grid: #ececf0;
+
+    --shadow-sm: 0 1px 2px rgba(16, 24, 40, .06);
+    --shadow-md: 0 4px 12px rgba(16, 24, 40, .08), 0 1px 3px rgba(16, 24, 40, .06);
+    --shadow-lg: 0 20px 40px rgba(16, 24, 40, .16), 0 4px 12px rgba(16, 24, 40, .08);
+
+    --r-control: 6px;
+    --r-panel: 10px;
+    --r-dialog: 14px;
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+      "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+
+    --dur: 150ms;
+    --ease: cubic-bezier(.4, 0, .2, 1);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --action-bg: #ea580c; --action-hover: #f06d1f; --action-fg: #ffffff; --action-text: #fb923c; --action-soft: rgba(249, 115, 21, 0.12); --ring: #d77a3c;
+      --bg-app: #1c1c1e; --bg-sidebar: #161618; --bg-subtle: #26262a; --bg-selected: #313136; --bg-card: #2e2e33;
+      --border: #3e3e45; --border-strong: #4a4a52;
+      --text-1: #f4f4f5; --text-2: #d0d0d8; --text-3: #b5b5bd;
+      --inverse-bg: #f4f4f5; --inverse-fg: #18181b; --overlay: rgba(0, 0, 0, .55); --control-off: #6f6f77;
+      --direct-fill: #4a8fd9; --direct-text: #8fb8e6; --direct-soft: rgba(74, 143, 217, 0.12); --direct-solid: #2f6db3; --direct-on: #ffffff;
+      --route-fill: #2a9d8f; --route-text: #7cc4ba; --route-soft: rgba(42, 157, 143, 0.12); --route-solid: #1f7d72; --route-on: #ffffff;
+      --stack-fill: #8b74d6; --stack-text: #b5a6e3; --stack-soft: rgba(139, 116, 214, 0.12); --stack-solid: #6a52bf; --stack-on: #ffffff;
+      --success: #4ade80; --success-text: #4ade80; --success-soft: #0f2b1a;
+      --warning: #fbbf24; --warning-text: #fcd34d; --warning-soft: #33260a;
+      --danger: #f87171;  --danger-text: #fca5a5;  --danger-soft: #3a1414;
+      --chart-1: #38bdf8; --chart-2: #f472b6; --chart-grid: #2c2c31;
+      --shadow-sm: 0 0 0 1px rgba(255, 255, 255, .08), 0 1px 2px rgba(0, 0, 0, .4);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, .45), 0 1px 3px rgba(0, 0, 0, .4);
+      --shadow-lg: 0 20px 40px rgba(0, 0, 0, .5), 0 4px 12px rgba(0, 0, 0, .4);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --action-bg: #ea580c; --action-hover: #f06d1f; --action-fg: #ffffff; --action-text: #fb923c; --action-soft: rgba(249, 115, 21, 0.12); --ring: #d77a3c;
+    --bg-app: #1c1c1e; --bg-sidebar: #161618; --bg-subtle: #26262a; --bg-selected: #313136; --bg-card: #2e2e33;
+    --border: #3e3e45; --border-strong: #4a4a52;
+    --text-1: #f4f4f5; --text-2: #d0d0d8; --text-3: #b5b5bd;
+    --inverse-bg: #f4f4f5; --inverse-fg: #18181b; --overlay: rgba(0, 0, 0, .55); --control-off: #6f6f77;
+    --direct-fill: #4a8fd9; --direct-text: #8fb8e6; --direct-soft: rgba(74, 143, 217, 0.12); --direct-solid: #2f6db3; --direct-on: #ffffff;
+    --route-fill: #2a9d8f; --route-text: #7cc4ba; --route-soft: rgba(42, 157, 143, 0.12); --route-solid: #1f7d72; --route-on: #ffffff;
+    --stack-fill: #8b74d6; --stack-text: #b5a6e3; --stack-soft: rgba(139, 116, 214, 0.12); --stack-solid: #6a52bf; --stack-on: #ffffff;
+    --success: #4ade80; --success-text: #4ade80; --success-soft: #0f2b1a;
+    --warning: #fbbf24; --warning-text: #fcd34d; --warning-soft: #33260a;
+    --danger: #f87171;  --danger-text: #fca5a5;  --danger-soft: #3a1414;
+    --chart-1: #38bdf8; --chart-2: #f472b6; --chart-grid: #2c2c31;
+    --shadow-sm: 0 0 0 1px rgba(255, 255, 255, .08), 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, .45), 0 1px 3px rgba(0, 0, 0, .4);
+    --shadow-lg: 0 20px 40px rgba(0, 0, 0, .5), 0 4px 12px rgba(0, 0, 0, .4);
+  }
+
+  * { box-sizing: border-box; }
+  html { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  body { margin: 0; background: var(--bg-app); color: var(--text-1); font-size: 13px; line-height: 20px; }
+  h1, h2, h3 { margin: 0; color: var(--text-1); text-wrap: balance; }
+  p { margin: 0; }
+  code, .mono { font-family: var(--font-mono); font-size: 12px; }
+  code { background: var(--bg-subtle); border-radius: 4px; padding: 1px 5px; color: var(--text-1); }
+  a { color: var(--action-text); text-decoration: none; }
+  a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  svg.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  svg.i.sm { width: 14px; height: 14px; }
+
+  /* ---------- 外壳：照 app 的侧栏 200 + 内容 ---------- */
+  .shell { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 100vh; }
+  .rail {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    background: var(--bg-sidebar); border-right: 1px solid var(--border);
+    padding: 18px 8px 24px; display: flex; flex-direction: column; gap: 1px;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; padding: 0 8px 4px; font-size: 15px; font-weight: 600; }
+  .brand .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--action-bg); color: var(--action-fg); display: grid; place-items: center; }
+  .rail .tag { padding: 0 8px 14px; font-size: 11px; color: var(--text-3); }
+  .rail .grp { padding: 14px 8px 4px; font-size: 11px; font-weight: 500; color: var(--text-3); }
+  .rail a {
+    display: flex; align-items: center; height: 28px; padding: 0 8px; border-radius: var(--r-control);
+    color: var(--text-2); font-size: 13px; transition: background-color var(--dur), color var(--dur);
+  }
+  .rail a:hover { background: var(--bg-subtle); color: var(--text-1); text-decoration: none; }
+  .rail a.on { background: var(--bg-selected); color: var(--text-1); font-weight: 500; }
+
+  .content { min-width: 0; padding: 0 48px 120px; }
+  .content > * { max-width: 1040px; }
+
+  .themetoggle {
+    position: fixed; top: 14px; right: 16px; z-index: 50;
+    display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; background: var(--bg-subtle);
+  }
+  .themetoggle button {
+    height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent;
+    color: var(--text-2); font: 500 12px var(--font-sans); cursor: pointer;
+  }
+  .themetoggle button.on { background: var(--bg-card); color: var(--text-1); box-shadow: var(--shadow-sm); }
+
+  .masthead { padding: 56px 0 36px; border-bottom: 1px solid var(--border); }
+  .eyebrow { font-size: 12px; font-weight: 500; color: var(--action-text); }
+  .masthead h1 { font-size: clamp(30px, 4.4vw, 44px); line-height: 1.1; letter-spacing: -.02em; margin: 12px 0 14px; font-weight: 700; }
+  .masthead p { max-width: 64ch; font-size: 15px; line-height: 24px; color: var(--text-2); }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+
+  section { padding: 48px 0; border-bottom: 1px solid var(--border); scroll-margin-top: 8px; }
+  .kicker { font-size: 12px; color: var(--text-3); margin-bottom: 6px; }
+  section h2 { font-size: 22px; line-height: 30px; font-weight: 600; letter-spacing: -.01em; }
+  .lede { max-width: 72ch; margin-top: 10px; font-size: 14px; line-height: 22px; color: var(--text-2); }
+  .lede strong { color: var(--text-1); }
+  h3.sub { font-size: 15px; line-height: 22px; font-weight: 600; margin: 32px 0 12px; }
+  .note { font-size: 12px; line-height: 18px; color: var(--text-2); margin-top: 10px; }
+
+  /* 展示框 */
+  .stage {
+    border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--bg-card);
+    padding: 22px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  }
+  .stage.col { flex-direction: column; align-items: stretch; }
+  .stage.app { background: var(--bg-app); }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .cap { font-size: 11px; line-height: 16px; color: var(--text-3); }
+  .spec { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+
+  /* ---------- 色板 ---------- */
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
+  .sw { border: 1px solid var(--border); border-radius: var(--r-panel); overflow: hidden; background: var(--bg-card); }
+  .sw .fill { height: 64px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-end; padding: 8px 10px; font-size: 12px; font-weight: 600; }
+  .sw .m { padding: 9px 10px 10px; }
+  .sw .name { font-weight: 600; font-size: 13px; }
+  .sw .val { font-family: var(--font-mono); font-size: 11px; color: var(--text-2); margin-top: 1px; }
+  .sw .role { font-size: 11px; color: var(--text-3); margin-top: 3px; line-height: 15px; }
+
+  .hero-swatch {
+    display: grid; grid-template-columns: 220px minmax(0, 1fr); border: 1px solid var(--border);
+    border-radius: var(--r-panel); overflow: hidden; background: var(--bg-card);
+  }
+  .hero-swatch .big { background: var(--action-bg); color: var(--action-fg); padding: 18px; display: flex; flex-direction: column; justify-content: space-between; min-height: 180px; }
+  .hero-swatch .big .hex { font: 600 26px var(--font-mono); letter-spacing: -.02em; }
+  .hero-swatch .scale { display: grid; grid-template-columns: repeat(5, 1fr); }
+  .hero-swatch .scale div { padding: 10px; display: flex; flex-direction: column; justify-content: flex-end; font-size: 11px; gap: 2px; min-height: 90px; }
+  .hero-swatch .uses { grid-column: 2; padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 10px 18px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-2); align-items: center; }
+
+  .modes3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .modecol { border: 1px solid var(--border); border-radius: var(--r-panel); overflow: hidden; background: var(--bg-card); }
+  .modecol .head { padding: 12px; display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .modecol .row { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-top: 1px solid var(--border); font-size: 12px; }
+  .modecol .row i { width: 18px; height: 18px; border-radius: 5px; border: 1px solid var(--border); }
+  .modecol .row span:last-child { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+
+  /* ---------- 字体 ---------- */
+  .typerow { display: grid; grid-template-columns: 110px 130px minmax(0, 1fr); align-items: baseline; gap: 16px; padding: 12px 0; border-top: 1px solid var(--border); }
+  .typerow:first-of-type { border-top: 0; }
+  .typerow .tk { font-family: var(--font-mono); font-size: 12px; color: var(--action-text); }
+  .typerow .sz { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+
+  /* ---------- 间距 / 圆角 / 阴影 ---------- */
+  .spacebar { display: flex; align-items: center; gap: 14px; padding: 5px 0; font-size: 12px; }
+  .spacebar .bar { height: 10px; background: var(--action-bg); border-radius: 2px; opacity: .85; }
+  .spacebar .k { width: 60px; font-family: var(--font-mono); color: var(--text-2); }
+  .radii { display: flex; flex-wrap: wrap; gap: 14px; }
+  .radius { width: 128px; height: 84px; border: 1.5px solid var(--border-strong); background: var(--bg-subtle); display: flex; flex-direction: column; justify-content: flex-end; padding: 8px 10px; font-size: 12px; }
+  .radius b { font-weight: 600; }
+  .radius span { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+  .elev { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; padding: 26px; background: var(--bg-subtle); border-radius: var(--r-panel); }
+  .elev div { background: var(--bg-card); border-radius: var(--r-panel); padding: 18px 14px; min-height: 96px; display: flex; flex-direction: column; justify-content: flex-end; font-size: 12px; }
+  .elev b { font-size: 13px; }
+
+  /* ========== 组件（照 src/components/ui 的 class 还原） ========== */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap;
+    height: 32px; padding: 0 14px; border-radius: var(--r-control); border: 1px solid transparent;
+    font: 500 13px/20px var(--font-sans); cursor: pointer; background: transparent; color: var(--text-1);
+    transition: background-color var(--dur), filter var(--dur), color var(--dur), scale var(--dur);
+  }
+  .btn:active { scale: .96; }
+  .btn.compact { height: 28px; padding: 0 12px; }
+  .btn.solid { background: var(--action-bg); color: var(--action-fg); font-weight: 600; }
+  .btn.solid:hover { background: var(--action-hover); }
+  .btn.neutral { border-color: var(--border-strong); background: var(--bg-card); }
+  .btn.neutral:hover { background: var(--bg-subtle); }
+  .btn.neutral[disabled] { border-color: var(--border); background: transparent; color: var(--text-3); cursor: not-allowed; scale: 1; }
+  .btn.quiet:hover { background: var(--bg-subtle); }
+  .btn.danger { background: var(--danger); color: #fff; }
+  .btn.danger:hover { filter: brightness(1.1); }
+  .btn.direct { background: var(--direct-solid); color: var(--direct-on); font-weight: 600; }
+  .btn.route { background: var(--route-solid); color: var(--route-on); font-weight: 600; }
+  .btn.stack { background: var(--stack-solid); color: var(--stack-on); font-weight: 600; }
+  .btn.direct:hover, .btn.route:hover, .btn.stack:hover { filter: brightness(1.1); }
+  .btn.icon { width: 28px; height: 28px; padding: 0; color: var(--text-2); }
+  .btn.icon:hover { background: var(--bg-subtle); color: var(--text-1); }
+  .btn.icon.lg { width: 32px; height: 32px; }
+
+  /* HoverTip：悬停立即出现的深色胶囊（src/components/ui/hover-tip.tsx） */
+  [data-tip] { position: relative; }
+  [data-tip]::after {
+    content: attr(data-tip); position: absolute; left: 50%; top: calc(100% + 6px); translate: -50% 0;
+    z-index: 30; pointer-events: none; white-space: nowrap;
+    padding: 6px 12px; border-radius: 9999px; background: var(--inverse-bg); color: var(--inverse-fg);
+    font: 500 12px/18px var(--font-sans); box-shadow: var(--shadow-md);
+    opacity: 0; transition: opacity 80ms;
+  }
+  [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; }
+  [data-tip-side="top"]::after { top: auto; bottom: calc(100% + 6px); }
+
+  /* 输入 */
+  .field { display: flex; flex-direction: column; gap: 6px; min-width: 220px; flex: 1; }
+  .field label { font-size: 12px; font-weight: 500; color: var(--text-1); }
+  .field .hint { font-size: 12px; color: var(--text-2); }
+  .field .err { font-size: 12px; color: var(--danger-text); }
+  .input {
+    height: 32px; width: 100%; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--r-control);
+    background: var(--bg-card); color: var(--text-1); font: 13px var(--font-sans); outline: none;
+    transition: border-color var(--dur), box-shadow var(--dur);
+  }
+  .input::placeholder { color: var(--text-3); }
+  .input:focus { border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent); }
+  .input.invalid { border-color: var(--danger); }
+  .input.mono { font-family: var(--font-mono); font-size: 12px; }
+  .inputwrap { position: relative; }
+  .inputwrap svg { position: absolute; left: 9px; top: 8px; color: var(--text-3); }
+  .inputwrap .input { padding-left: 30px; }
+
+  /* 开关 30×18 / 26×16 */
+  .switch {
+    position: relative; width: 30px; height: 18px; border-radius: 9999px; border: 0; padding: 0; cursor: pointer;
+    background: var(--control-off); transition: background-color var(--dur);
+  }
+  .switch::before { content: ""; position: absolute; inset: -5px -4px; }
+  .switch i { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: transform var(--dur), background-color var(--dur); }
+  .switch[aria-checked="true"] { background: var(--action-bg); }
+  .switch[aria-checked="true"] i { transform: translateX(12px); background: var(--action-fg); }
+  .switch.sm { width: 26px; height: 16px; }
+  .switch.sm i { width: 12px; height: 12px; }
+  .switch.sm[aria-checked="true"] i { transform: translateX(10px); }
+  .switch.neutral[aria-checked="true"] { background: var(--text-2); }
+  .switch.neutral[aria-checked="true"] i { background: var(--bg-card); }
+  .switch[disabled] { opacity: .45; cursor: not-allowed; }
+
+  .check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+  .check .box { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--border-strong); background: var(--bg-card); display: grid; place-items: center; color: transparent; }
+  .check.on .box { background: var(--action-bg); border-color: var(--action-bg); color: var(--action-fg); }
+  .check .box svg { width: 12px; height: 12px; stroke-width: 3; }
+  .radio .box { border-radius: 50%; }
+  .radio.on .box { background: var(--bg-card); border: 5px solid var(--action-bg); }
+
+  /* 分段控件 */
+  .seg { position: relative; display: inline-flex; align-items: stretch; height: 36px; padding: 3px; gap: 2px; border-radius: 10px; background: var(--bg-subtle); }
+  /* 选中块是单独一块滑块（sliding-indicator.tsx），切换时 200ms 滑过去 */
+  .seg .thumb { position: absolute; left: 0; top: 0; border-radius: 7px; background: var(--bg-card); box-shadow: var(--shadow-sm); pointer-events: none; }
+  .seg .thumb.anim { transition: transform 200ms var(--ease), width 200ms var(--ease); }
+  .seg.sm .thumb { border-radius: 5px; }
+  .seg button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; border: 0; border-radius: 7px;
+    position: relative; background: transparent; color: var(--text-2); font: 500 13px var(--font-sans); cursor: pointer;
+    transition: color var(--dur);
+  }
+  .seg button:hover { color: var(--text-1); }
+  .seg button[aria-pressed="true"] { color: var(--text-1); }
+  .seg.sm { height: 28px; border-radius: 8px; }
+  .seg.sm button { padding: 0 10px; border-radius: 5px; font-size: 12px; }
+  /* 模式 tab：图标 + 文字，最小宽 96，不挂提示 */
+  .seg.modes button { min-width: 96px; padding: 0 16px; }
+  .seg.modes button[aria-pressed="true"], .seg.modes button[class^="act-"] { font-weight: 600; }
+  .seg.modes button .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .seg.modes button.act-direct { color: var(--direct-text); } .seg.modes .act-direct .dot { background: var(--direct-fill); }
+  .seg.modes button.act-route { color: var(--route-text); }   .seg.modes .act-route .dot { background: var(--route-fill); }
+  .seg.modes button.act-stack { color: var(--stack-text); }   .seg.modes .act-stack .dot { background: var(--stack-fill); }
+
+  /* 下划线页签 */
+  .ptabs { display: flex; gap: 20px; border-bottom: 1px solid var(--border); position: relative; }
+  .ptabs button { height: 36px; border: 0; background: none; padding: 0; color: var(--text-2); font: 500 13px var(--font-sans); cursor: pointer; }
+  .ptabs button:hover { color: var(--text-1); }
+  .ptabs button.on { color: var(--text-1); font-weight: 600; }
+  .ptabs .ul { position: absolute; bottom: -1px; height: 2px; background: var(--text-1); border-radius: 2px; transition: transform 200ms var(--ease), width 200ms var(--ease); }
+
+  /* 徽章 / chip */
+  .chip { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 9999px; font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap; }
+  .chip.outline { border: 1px solid var(--border-strong); color: var(--text-2); }
+  .chip.direct { background: var(--direct-soft); color: var(--direct-text); }
+  .chip.route { background: var(--route-soft); color: var(--route-text); }
+  .chip.stack { background: var(--stack-soft); color: var(--stack-text); }
+  .chip.success { background: var(--success-soft); color: var(--success-text); }
+  .chip.warning { background: var(--warning-soft); color: var(--warning-text); }
+  .chip.danger { background: var(--danger-soft); color: var(--danger-text); }
+  .chip.action { background: var(--action-soft); color: var(--action-text); }
+  .chip .d { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  /* 供应商卡片 */
+  .pcard {
+    position: relative; display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 10px 12px 10px 8px;
+    border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--bg-card);
+    transition: border-color var(--dur), box-shadow var(--dur), background-color var(--dur);
+  }
+  .pcard:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+  .pcard.t-direct { border-color: var(--direct-fill); background: var(--direct-soft); box-shadow: none; }
+  .pcard.t-route { border-color: var(--route-fill); background: var(--route-soft); box-shadow: none; }
+  .pcard.t-stack { border-color: var(--stack-fill); background: var(--stack-soft); box-shadow: none; }
+  .pcard .grip { width: 16px; color: var(--text-3); opacity: 0; transition: opacity var(--dur); }
+  .pcard:hover .grip { opacity: 1; }
+  .pcard .logo { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: #171717; display: grid; place-items: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+  .pcard .body { min-width: 0; flex: 1; }
+  .pcard .name { display: flex; align-items: center; gap: 6px; font-weight: 500; font-size: 14px; }
+  .pcard .sub { margin-top: 2px; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pcard .acts { display: flex; align-items: center; gap: 2px; opacity: 0; transition: opacity var(--dur); }
+  .pcard:hover .acts, .pcard:focus-within .acts { opacity: 1; }
+
+  /* 通知条 */
+  .notice { display: flex; align-items: flex-start; gap: 10px; border-radius: var(--r-panel); padding: 10px 14px 10px 19px; font-size: 13px; }
+  .notice svg { margin-top: 2px; }
+  .notice.one { align-items: center; min-height: 44px; }
+  .notice.one > svg { margin-top: 0; }
+  .notice .nclose { width: 24px; height: 24px; margin-right: -4px; color: var(--text-2); }
+  .notice .t2 { margin-top: 2px; font-size: 12px; color: var(--text-2); }
+  .notice .grow { flex: 1; min-width: 0; }
+  .notice.neutral { background: var(--bg-subtle); } .notice.neutral svg { color: var(--text-2); }
+  .notice.warning { background: var(--warning-soft); } .notice.warning svg { color: var(--warning-text); }
+  .notice.danger { background: var(--danger-soft); } .notice.danger svg { color: var(--danger-text); }
+  .notice.route { background: var(--route-soft); } .notice.route svg { color: var(--route-text); }
+  .notice.stack { background: var(--stack-soft); } .notice.stack svg { color: var(--stack-text); }
+
+  /* 说明卡 HelpTip */
+  .helptip { position: relative; display: inline-flex; }
+  .helptip > button { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-3); display: grid; place-items: center; cursor: pointer; }
+  .helptip > button:hover { background: var(--bg-subtle); color: var(--text-1); }
+  .helptip .card {
+    position: absolute; top: calc(100% + 6px); left: -8px; z-index: 30; width: max-content; max-width: 300px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); box-shadow: var(--shadow-md);
+    padding: 9px 12px 10px; font-size: 12px; line-height: 18px; color: var(--text-1);
+    opacity: 0; visibility: hidden; transition: opacity 120ms, visibility 0s 200ms;
+  }
+  .helptip .card b { display: block; margin-bottom: 2px; font-weight: 600; }
+  .helptip:hover .card { opacity: 1; visibility: visible; transition: opacity 120ms 300ms, visibility 0s 300ms; }
+
+  /* 菜单 / 对话框 / toast */
+  .menu { width: 200px; padding: 4px; border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--bg-card); box-shadow: var(--shadow-md); }
+  .menu .it { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: var(--r-control); font-size: 13px; color: var(--text-1); cursor: pointer; }
+  .menu .it svg { color: var(--text-2); }
+  .menu .it:hover { background: var(--bg-subtle); }
+  .menu .it.danger, .menu .it.danger svg { color: var(--danger-text); }
+  .menu .sep { height: 1px; margin: 4px -4px; background: var(--border); }
+  .menu .kbd { margin-left: auto; font-size: 11px; color: var(--text-3); }
+
+  .dialog-demo { position: relative; height: 290px; border-radius: var(--r-panel); overflow: hidden; background: var(--bg-sidebar); border: 1px solid var(--border); }
+  .dialog-demo .ov { position: absolute; inset: 0; background: var(--overlay); }
+  .dialog {
+    position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(400px, 90%);
+    border: 1px solid var(--border); border-radius: var(--r-dialog); background: var(--bg-card); box-shadow: var(--shadow-lg); padding: 20px;
+  }
+  .dialog h4 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
+  .dialog p { margin-top: 6px; color: var(--text-2); font-size: 13px; }
+  .dialog .ft { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+  /* Toast（sonner.tsx，unstyled 自己画）：白卡片 + 状态色图标，关闭按钮压在右上角 */
+  .toast { position: relative; display: flex; align-items: center; gap: 10px; width: 340px; max-width: 100%; padding: 10px 14px 10px 12px; border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--bg-card); color: var(--text-1); box-shadow: var(--shadow-lg); font-size: 13px; font-weight: 500; }
+  .toast > svg { color: var(--success); }
+  .toast.err > svg { color: var(--danger); }
+  .toast .grow { flex: 1; }
+  .toast .tclose { position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border); padding: 0; display: grid; place-items: center; background: var(--bg-card); color: var(--text-2); box-shadow: var(--shadow-sm); cursor: pointer; }
+  .toast .tclose:hover { color: var(--text-1); }
+  .toast .tclose svg { width: 12px; height: 12px; stroke-width: 2.25; }
+  .toast .tact { height: 24px; border: 0; border-radius: var(--r-control); background: none; color: var(--action-text); font: 500 12px var(--font-sans); cursor: pointer; padding: 0 8px; }
+  .toast .tact:hover { background: var(--bg-subtle); }
+  #toaster { position: fixed; bottom: 18px; left: 50%; translate: -50% 0; z-index: 60; display: flex; flex-direction: column; gap: 8px; }
+  #toaster .toast { animation: tin 200ms var(--ease); }
+  @keyframes tin { from { opacity: 0; transform: translateY(8px); } }
+
+  /* app 局部复原：模式行 */
+  .moderow { display: flex; align-items: center; gap: 16px; padding: 12px 0 4px; flex-wrap: wrap; }
+  .moderow .status { flex: 1; min-width: 0; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .moderow label { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
+
+  /* 侧栏复原 */
+  .side-demo { width: 200px; background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: var(--r-panel); padding: 8px 0; }
+  .side-demo .row { display: flex; align-items: center; gap: 8px; height: 28px; margin: 0 8px; padding: 0 8px; border-radius: var(--r-control); font-size: 13px; color: var(--text-2); }
+  .side-demo .row.on { background: var(--bg-selected); color: var(--text-1); font-weight: 500; }
+  .side-demo .row .g { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-size: 10px; font-weight: 700; color: #fff; }
+  .side-demo .row .lab { margin-left: auto; font-size: 11px; font-weight: 500; }
+  .side-demo .gh { padding: 10px 16px 4px; font-size: 11px; color: var(--text-3); }
+
+  /* 数据 */
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .stat { border: 1px solid var(--border); border-radius: var(--r-panel); padding: 12px 14px; background: var(--bg-card); }
+  .stat .k { font-size: 12px; color: var(--text-2); }
+  .stat .v { font-size: 24px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .stat .d { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .quota { height: 6px; border-radius: 9999px; background: var(--bg-subtle); overflow: hidden; }
+  .quota i { display: block; height: 100%; border-radius: inherit; }
+  table.log { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.log th { text-align: left; font-weight: 500; color: var(--text-2); padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.log td { padding: 9px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.log tr:hover td { background: var(--bg-subtle); }
+  table.log .num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 11.5px; }
+
+  /* 规约 */
+  .rules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .rule { border: 1px solid var(--border); border-radius: var(--r-panel); padding: 16px; background: var(--bg-card); }
+  .rule h4 { margin: 0 0 6px; font-size: 14px; }
+  .rule p { color: var(--text-2); }
+  .dd { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .dd .c { border-radius: var(--r-panel); padding: 14px 16px; border: 1px solid var(--border); background: var(--bg-card); }
+  .dd .c .lbl { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12px; margin-bottom: 6px; }
+  .dd .do .lbl { color: var(--success-text); }
+  .dd .dont .lbl { color: var(--danger-text); }
+  .dd .do { border-top: 3px solid var(--success); }
+  .dd .dont { border-top: 3px solid var(--danger); }
+
+  @media (max-width: 860px) {
+    .shell { grid-template-columns: 1fr; }
+    .rail { display: none; }
+    .content { padding: 0 16px 80px; }
+    .grid2, .grid3, .rules, .dd, .modes3, .elev { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .hero-swatch { grid-template-columns: 1fr; }
+    .hero-swatch .uses { grid-column: 1; }
+    .typerow { grid-template-columns: 1fr; gap: 2px; }
+    .stage { overflow-x: auto; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 图标：lucide（与 app 同源） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="plug" viewBox="0 0 24 24"><path d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></symbol>
+  <symbol id="route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></symbol>
+  <symbol id="layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+  <symbol id="shuffle" viewBox="0 0 24 24"><path d="m18 14 4 4-4 4M18 2l4 4-4 4M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22M2 6h1.9c1.5 0 2.9.9 3.6 2.2M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8"/></symbol>
+  <symbol id="settings2" viewBox="0 0 24 24"><path d="M20 7h-9M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></symbol>
+  <symbol id="plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+  <symbol id="pencil" viewBox="0 0 24 24"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/></symbol>
+  <symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+  <symbol id="trash" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2"/></symbol>
+  <symbol id="more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+  <symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+  <symbol id="alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01"/></symbol>
+  <symbol id="circle-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
+  <symbol id="help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="grip" viewBox="0 0 24 24"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></symbol>
+  <symbol id="chev-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5"/></symbol>
+  <symbol id="external" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+  <symbol id="play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9V3z"/></symbol>
+  <symbol id="swap" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></symbol>
+  <symbol id="list-plus" viewBox="0 0 24 24"><path d="M11 12H3M16 6H3M16 18H3M18 9v6M21 12h-6"/></symbol>
+  <symbol id="arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 19V5"/></symbol>
+  <symbol id="arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></symbol>
+  <symbol id="chart" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16M18 17V9M13 17V5M8 17v-3"/></symbol>
+</svg>
+
+<div class="themetoggle" role="group" aria-label="主题">
+  <button id="t-light" onclick="setTheme('light')">浅色</button>
+  <button id="t-dark" onclick="setTheme('dark')">深色</button>
+  <button id="t-system" class="on" onclick="setTheme('system')">跟随系统</button>
+</div>
+
+<div class="shell">
+  <aside class="rail">
+    <div class="brand"><span class="logo"><svg class="i sm"><use href="#shuffle"/></svg></span>CC Switch</div>
+    <div class="tag">Design System · v7</div>
+    <span class="grp">基础</span>
+    <a href="#color">色彩</a>
+    <a href="#type">字体</a>
+    <a href="#space">间距 · 圆角</a>
+    <a href="#elevation">层级 · 阴影</a>
+    <a href="#motion">动效</a>
+    <span class="grp">组件</span>
+    <a href="#buttons">按钮</a>
+    <a href="#hovertip">图标按钮 · HoverTip</a>
+    <a href="#inputs">输入</a>
+    <a href="#controls">开关 · 勾选</a>
+    <a href="#segmented">分段控件 · 页签</a>
+    <a href="#chips">徽章</a>
+    <a href="#cards">供应商卡片</a>
+    <a href="#notices">通知条 · 说明卡</a>
+    <a href="#overlays">菜单 · 对话框 · Toast</a>
+    <a href="#data">数据展示</a>
+    <span class="grp">CC Switch</span>
+    <a href="#modes">连接模式</a>
+    <a href="#sidebar">侧栏</a>
+    <span class="grp">规约</span>
+    <a href="#principles">交互原则</a>
+    <a href="#dodont">Do / Don't</a>
+  </aside>
+
+  <main class="content">
+    <header class="masthead">
+      <div class="eyebrow">Claude Code · Codex · Gemini 供应商切换器</div>
+      <h1>CC Switch 设计系统</h1>
+      <p>桌面端（Tauri + React）的视觉与交互规范。令牌直接取自 <code>src/index.css</code> 与 <code>tailwind.config.cjs</code>：
+        中性黑白骨架、主题色 <strong style="color:var(--action-text)">#F97316</strong> 只落在操作色上，
+        直连 / 路由 / 聚合三种模式各有一套颜色，13px 正文、6 / 10 / 14 三档圆角，明暗双主题一一对应。</p>
+      <div class="meta">
+        <span class="chip outline">Tauri 2 · React 18</span>
+        <span class="chip outline">Tailwind 3 · Radix · shadcn/ui</span>
+        <span class="chip outline">lucide 图标</span>
+        <span class="chip action"><span class="d"></span>主题色 #F97316</span>
+      </div>
+    </header>
+
+    <!-- ================= 色彩 ================= -->
+    <section id="color">
+      <div class="kicker">基础 / 01</div>
+      <h2>色彩</h2>
+      <p class="lede"><strong>骨架是中性灰，彩色只表达「能操作」和「是什么状态」。</strong>
+        主题色只有一个：橙 <code>#F97316</code>，它占的是 <code>--action-*</code> 和 <code>--ring</code> 这组槽位——
+        一个视图只有一个实心橙按钮。模式色、语义色各管各的，不和主题色混用。</p>
+
+      <h3 class="sub">主题色 · 操作色</h3>
+      <div class="hero-swatch">
+        <div class="big">
+          <span style="font-size:12px;font-weight:600">--action-bg</span>
+          <span class="hex">#F97316</span>
+        </div>
+        <div class="scale">
+          <div style="background:#fff1e6;color:#7c2d12"><b>50 · soft</b><span class="mono">#FFF1E6</span></div>
+          <div style="background:#fb923c;color:#431407"><b>400 · 深色文字</b><span class="mono">#FB923C</span></div>
+          <div style="background:#f97316;color:#fff"><b>500 · 主题色</b><span class="mono">#F97316</span></div>
+          <div style="background:#ea620a;color:#fff"><b>600 · hover</b><span class="mono">#EA620A</span></div>
+          <div style="background:#c2410c;color:#fff"><b>700 · 浅色文字</b><span class="mono">#C2410C</span></div>
+        </div>
+        <div class="uses">
+          <button class="btn solid compact">保存</button>
+          <button class="switch" role="switch" aria-checked="true" aria-label="示例开关"><i></i></button>
+          <span class="check on"><span class="box"><svg class="i"><use href="#check"/></svg></span>已勾选</span>
+          <a href="#color">文字链接</a>
+          <input class="input" style="width:150px" placeholder="聚焦看焦点环">
+        </div>
+      </div>
+      <p class="note">对比度：浅色主题实心按钮白字 2.8:1，按钮文字统一用 600 字重补偿；橙色当文字用时一律换 <code>--action-text</code>（浅 #C2410C 5.2:1 / 深 #FB923C 7.5:1）。深色主题实心按钮压暗为 <code>#EA580C</code> + 白字（3.6:1），焦点描边用更沉的 <code>#D77A3C</code>。</p>
+
+      <h3 class="sub">中性面与文字</h3>
+      <div class="swatches">
+        <div class="sw"><div class="fill" style="background:var(--bg-app)"></div><div class="m"><div class="name">bg-app</div><div class="val">#FFFFFF / #1C1C1E</div><div class="role">内容区底</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--bg-sidebar)"></div><div class="m"><div class="name">bg-sidebar</div><div class="val">#F5F5F7 / #161618</div><div class="role">侧栏</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--bg-subtle)"></div><div class="m"><div class="name">bg-subtle</div><div class="val">#EFEFF2 / #26262A</div><div class="role">hover、分段轨道、通知</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--bg-selected)"></div><div class="m"><div class="name">bg-selected</div><div class="val">#E4E4EA / #313136</div><div class="role">侧栏当前项</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--bg-card)"></div><div class="m"><div class="name">bg-card · surface</div><div class="val">#FFFFFF / #2E2E33</div><div class="role">卡片、弹层、输入</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--border-strong)"></div><div class="m"><div class="name">border-strong</div><div class="val">#CFCFD6 / #4A4A52</div><div class="role">描边按钮、hover 卡片</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--text-1);color:var(--bg-app)">Aa</div><div class="m"><div class="name">text-1 · fg-1</div><div class="val">#18181B / #F4F4F5</div><div class="role">标题、正文</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--text-2);color:var(--bg-app)">Aa</div><div class="m"><div class="name">text-2 · fg-2</div><div class="val">#52525B / #D0D0D8</div><div class="role">次要文字、图标</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--text-3);color:var(--bg-app)">Aa</div><div class="m"><div class="name">text-3 · fg-3</div><div class="val">#65656E / #B5B5BD</div><div class="role">占位、辅助说明</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--inverse-bg);color:var(--inverse-fg)">Tip</div><div class="m"><div class="name">inverse</div><div class="val">#18181B / #F4F4F5</div><div class="role">HoverTip 胶囊</div></div></div>
+      </div>
+
+      <h3 class="sub">模式色</h3>
+      <div class="modes3">
+        <div class="modecol">
+          <div class="head" style="color:var(--direct-text)"><svg class="i"><use href="#plug"/></svg>直连 direct</div>
+          <div class="row"><i style="background:var(--direct-fill)"></i>fill<span>#0A84FF</span></div>
+          <div class="row"><i style="background:var(--direct-text)"></i>text<span>#0063C7</span></div>
+          <div class="row"><i style="background:var(--direct-soft)"></i>soft<span>#EAF3FF</span></div>
+          <div class="row"><i style="background:var(--direct-solid)"></i>solid<span>#0066CC</span></div>
+        </div>
+        <div class="modecol">
+          <div class="head" style="color:var(--route-text)"><svg class="i"><use href="#route"/></svg>路由 route</div>
+          <div class="row"><i style="background:var(--route-fill)"></i>fill<span>#0D9488</span></div>
+          <div class="row"><i style="background:var(--route-text)"></i>text<span>#06726B</span></div>
+          <div class="row"><i style="background:var(--route-soft)"></i>soft<span>#E7F6F4</span></div>
+          <div class="row"><i style="background:var(--route-solid)"></i>solid<span>#0F766E</span></div>
+        </div>
+        <div class="modecol">
+          <div class="head" style="color:var(--stack-text)"><svg class="i"><use href="#layers"/></svg>聚合 stack</div>
+          <div class="row"><i style="background:var(--stack-fill)"></i>fill<span>#7C3AED</span></div>
+          <div class="row"><i style="background:var(--stack-text)"></i>text<span>#6D28D9</span></div>
+          <div class="row"><i style="background:var(--stack-soft)"></i>soft<span>#F2ECFE</span></div>
+          <div class="row"><i style="background:var(--stack-solid)"></i>solid<span>#6D28D9</span></div>
+        </div>
+      </div>
+      <p class="note">模式色只出现在：模式 tab、侧栏模式标签、当前生效的供应商卡片、模式切换的主按钮。其他地方不用。</p>
+
+      <h3 class="sub">语义色</h3>
+      <div class="swatches">
+        <div class="sw"><div class="fill" style="background:var(--success-soft);color:var(--success-text)">正常</div><div class="m"><div class="name">success</div><div class="val">#16A34A · text #007634</div><div class="role">健康、额度充足、已连接</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--warning-soft);color:var(--warning-text)">注意</div><div class="m"><div class="name">warning</div><div class="val">#D97706 · text #A64A00</div><div class="role">额度将尽、需重新登录</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--danger-soft);color:var(--danger-text)">失败</div><div class="m"><div class="name">danger</div><div class="val">#DC2626 · text #B91C1C</div><div class="role">请求失败、删除</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--chart-1)"></div><div class="m"><div class="name">chart-1</div><div class="val">#0891B2 / #38BDF8</div><div class="role">图表主序列</div></div></div>
+        <div class="sw"><div class="fill" style="background:linear-gradient(90deg,color-mix(in srgb,var(--chart-1) 32%,transparent) 0 25%,color-mix(in srgb,var(--chart-1) 62%,transparent) 25% 50%,var(--chart-1) 50% 75%,#0e7490 75%)"></div><div class="m"><div class="name">heat-1…4</div><div class="val">chart-1 32% / 62% / 100% · #0E7490</div><div class="role">热力图色阶（浅色）；深色为 chart-1 30/50/75/100%</div></div></div>
+        <div class="sw"><div class="fill" style="background:var(--chart-2)"></div><div class="m"><div class="name">chart-2</div><div class="val">#DB2777 / #F472B6</div><div class="role">图表对比序列</div></div></div>
+      </div>
+      <p class="note"><b>橙 vs 琥珀：</b>主题橙和 warning 琥珀色相接近。警告永远是「soft 底 + 三角图标 + 文字」，从不单独用一块橙/琥珀色表达状态；橙色只出现在能点的东西上。</p>
+    </section>
+
+    <!-- ================= 字体 ================= -->
+    <section id="type">
+      <div class="kicker">基础 / 02</div>
+      <h2>字体</h2>
+      <p class="lede">系统字体栈（SF Pro / 苹方 / Segoe UI / 微软雅黑），不加载网络字体。<strong>正文 13px</strong>，桌面工具的密度；
+        字号只用下面 8 个角色（<code>text-badge</code> … <code>text-metric</code>），数字列用等宽数字。</p>
+      <div class="stage col" style="gap:0">
+        <div class="typerow"><span class="tk">metric</span><span class="sz">24 / 32 · 600</span><span style="font-size:24px;line-height:32px;font-weight:600;font-variant-numeric:tabular-nums">$12.48 · 1,284,302</span></div>
+        <div class="typerow"><span class="tk">page</span><span class="sz">18 / 26 · 600</span><span style="font-size:18px;line-height:26px;font-weight:600">Claude Code</span></div>
+        <div class="typerow"><span class="tk">title</span><span class="sz">16 / 24 · 600</span><span style="font-size:16px;line-height:24px;font-weight:600">编辑供应商</span></div>
+        <div class="typerow"><span class="tk">section</span><span class="sz">15 / 22 · 600</span><span style="font-size:15px;line-height:22px;font-weight:600">路由设置</span></div>
+        <div class="typerow"><span class="tk">strong</span><span class="sz">14 / 20 · 500</span><span style="font-size:14px;font-weight:500">Anthropic 官方</span></div>
+        <div class="typerow"><span class="tk">body</span><span class="sz">13 / 20 · 400</span><span>切换后 Claude Code 下一次请求就走新的供应商，不用重启终端。</span></div>
+        <div class="typerow"><span class="tk">caption</span><span class="sz">12 / 18 · 400</span><span style="font-size:12px;line-height:18px;color:var(--text-2)">api.anthropic.com · 上次使用 3 分钟前</span></div>
+        <div class="typerow"><span class="tk">badge</span><span class="sz">11 / 16 · 500</span><span><span class="chip route">路由</span></span></div>
+        <div class="typerow"><span class="tk">mono</span><span class="sz">12 · ui-monospace</span><span class="mono">sk-ant-•••• · claude-sonnet-5-5 · 200 OK</span></div>
+      </div>
+    </section>
+
+    <!-- ================= 间距 / 圆角 ================= -->
+    <section id="space">
+      <div class="kicker">基础 / 03</div>
+      <h2>间距 · 圆角</h2>
+      <p class="lede">4px 基础刻度。页面左右留白 24px，卡片之间 8px，卡片内 12px。控件高度只有三档：<strong>28</strong>（卡片、对话框里）、<strong>32</strong>（页头、输入框）、<strong>36</strong>（分段控件、页签）。</p>
+      <div class="grid2">
+        <div class="stage col" style="gap:0">
+          <div class="spacebar"><span class="k">1 · 4</span><span class="bar" style="width:4px"></span>图标与文字</div>
+          <div class="spacebar"><span class="k">1.5 · 6</span><span class="bar" style="width:6px"></span>按钮内图标间距</div>
+          <div class="spacebar"><span class="k">2 · 8</span><span class="bar" style="width:8px"></span>卡片列表间距</div>
+          <div class="spacebar"><span class="k">3 · 12</span><span class="bar" style="width:12px"></span>卡片内边距</div>
+          <div class="spacebar"><span class="k">4 · 16</span><span class="bar" style="width:16px"></span>模式行元素间距</div>
+          <div class="spacebar"><span class="k">5 · 20</span><span class="bar" style="width:20px"></span>对话框内边距</div>
+          <div class="spacebar"><span class="k">6 · 24</span><span class="bar" style="width:24px"></span>页面左右留白</div>
+        </div>
+        <div class="stage">
+          <div class="radii">
+            <div class="radius" style="border-radius:6px"><b>control</b><span>6px · 按钮 / 输入 / 侧栏行</span></div>
+            <div class="radius" style="border-radius:10px"><b>panel</b><span>10px · 卡片 / 分段 / 通知</span></div>
+            <div class="radius" style="border-radius:14px"><b>dialog</b><span>14px · 对话框 / 命令面板</span></div>
+            <div class="radius" style="border-radius:9999px;width:200px;padding:8px 22px"><b>full</b><span>徽章 / 开关 / HoverTip</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="note">嵌套圆角：内圆角 = 外圆角 − 内衬。分段控件轨道 10、内衬 3 → 选中块 7。</p>
+    </section>
+
+    <!-- ================= 层级 ================= -->
+    <section id="elevation">
+      <div class="kicker">基础 / 04</div>
+      <h2>层级 · 阴影</h2>
+      <p class="lede">平面靠描边分层，阴影只给「浮起来」的东西。深色主题的 <code>shadow-sm</code> 带一圈 8% 白描边，代替看不见的投影。</p>
+      <div class="elev">
+        <div style="box-shadow:var(--shadow-sm)"><b>shadow-v7-sm</b><span class="cap">分段选中块 · 卡片 hover</span></div>
+        <div style="box-shadow:var(--shadow-md)"><b>shadow-v7-md</b><span class="cap">菜单 · 说明卡 · HoverTip · 拖拽中</span></div>
+        <div style="box-shadow:var(--shadow-lg)"><b>shadow-v7-lg</b><span class="cap">对话框 · 抽屉 · 命令面板</span></div>
+      </div>
+      <p class="note">z 轴：对话框 40 → 嵌套 50 → 确认 60 → 命令面板 80 → Tooltip 130 → 说明卡 120（与 Tooltip 互斥，不会同时出现）。</p>
+    </section>
+
+    <!-- ================= 动效 ================= -->
+    <section id="motion">
+      <div class="kicker">基础 / 05</div>
+      <h2>动效</h2>
+      <p class="lede">快、短、只改颜色和位置。默认 <strong>150ms</strong>；菜单 / 弹层 / 提示淡入 + 轻微放大（<code>tailwindcss-animate</code> 的 <code>animate-in fade-in-0 zoom-in-95</code>），关闭时反向；分段选中块、页签下划线 200ms 滑动；打开菜单的触发器按下<strong>不缩放</strong>；按下按钮缩到 <code>scale .96</code>；系统开了「减少动态效果」时 framer-motion 位移全部跳过；
+        切换明暗主题期间暂停所有过渡（<code>.theme-switching</code>），避免整页闪一下。</p>
+      <div class="stage">
+        <div class="spec"><button class="btn solid">按住看缩放</button><span class="cap">active · scale .96</span></div>
+        <div class="spec"><div class="pcard" style="width:220px"><span class="logo">A</span><div class="body"><div class="name">悬停卡片</div><div class="sub">描边 + 阴影 150ms</div></div></div><span class="cap">hover · border / shadow</span></div>
+        <div class="spec"><button class="switch" role="switch" aria-checked="false" aria-label="动效开关" onclick="toggleSwitch(this)"><i></i></button><span class="cap">开关 · 150ms</span></div>
+        <div class="spec"><button class="btn icon lg" data-tip="立即出现，80ms 淡入"><svg class="i"><use href="#info"/></svg></button><span class="cap">HoverTip · 0 延迟</span></div>
+      </div>
+    </section>
+
+    <!-- ================= 按钮 ================= -->
+    <section id="buttons">
+      <div class="kicker">组件 / 01 · src/components/ui/button.tsx</div>
+      <h2>按钮</h2>
+      <p class="lede"><strong>一个视图只有一个实心按钮。</strong>其余用描边 <code>neutral</code>（卡片上的「切换」「设为默认」）或透明 <code>quiet</code>（页头次要操作）。
+        模式色实心按钮只用于「切换到这个模式」。</p>
+      <div class="stage">
+        <div class="spec"><button class="btn solid"><svg class="i"><use href="#plus"/></svg>添加供应商</button><span class="cap">solid · 主题色</span></div>
+        <div class="spec"><button class="btn neutral">切换</button><span class="cap">neutral</span></div>
+        <div class="spec"><button class="btn quiet">更多<svg class="i sm"><use href="#chev-down"/></svg></button><span class="cap">quiet</span></div>
+        <div class="spec"><button class="btn danger">删除</button><span class="cap">destructive</span></div>
+        <div class="spec"><button class="btn neutral" disabled>已是默认</button><span class="cap">neutral · disabled</span></div>
+      </div>
+      <h3 class="sub">模式色按钮</h3>
+      <div class="stage">
+        <button class="btn direct"><svg class="i"><use href="#plug"/></svg>改为直连</button>
+        <button class="btn route"><svg class="i"><use href="#route"/></svg>改为路由</button>
+        <button class="btn stack"><svg class="i"><use href="#layers"/></svg>改为聚合</button>
+      </div>
+      <h3 class="sub">尺寸</h3>
+      <div class="stage">
+        <div class="spec"><button class="btn solid compact">保存</button><span class="cap">compact · 28 · 卡片 / 对话框</span></div>
+        <div class="spec"><button class="btn solid">保存</button><span class="cap">regular · 32 · 页头 / 模式切换</span></div>
+        <div class="spec"><button class="btn icon" data-tip="编辑"><svg class="i"><use href="#pencil"/></svg></button><span class="cap">icon-compact · 28 见方</span></div>
+      </div>
+    </section>
+
+    <!-- ================= HoverTip ================= -->
+    <section id="hovertip">
+      <div class="kicker">组件 / 02 · src/components/ui/hover-tip.tsx</div>
+      <h2>图标按钮 · HoverTip</h2>
+      <p class="lede"><strong>工具栏、卡片操作、模式行右侧一律用纯图标按钮</strong>，文字放进 HoverTip：鼠标移上去<strong>立即</strong>出现深色胶囊，说清楚这一下会做什么。
+        按钮本身仍要 <code>aria-label</code>。</p>
+      <div class="stage app" style="padding-bottom:48px">
+        <button class="btn icon" aria-label="编辑" data-tip="编辑供应商"><svg class="i"><use href="#pencil"/></svg></button>
+        <button class="btn icon" aria-label="复制" data-tip="复制为新供应商"><svg class="i"><use href="#copy"/></svg></button>
+        <button class="btn icon" aria-label="测速" data-tip="测试连接速度"><svg class="i"><use href="#play"/></svg></button>
+        <button class="btn icon" aria-label="用量" data-tip="查看用量"><svg class="i"><use href="#chart"/></svg></button>
+        <button class="btn icon" aria-label="官网" data-tip="打开官网"><svg class="i"><use href="#external"/></svg></button>
+        <button class="btn icon" aria-label="删除" data-tip="删除供应商"><svg class="i"><use href="#trash"/></svg></button>
+        <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
+        <button class="btn icon" aria-label="更多" data-tip="更多操作"><svg class="i"><use href="#more"/></svg></button>
+      </div>
+      <div class="grid2" style="margin-top:12px">
+        <div class="rule"><h4>规格</h4><p>胶囊圆角 · inverse 底 · 12px / 500 · 内边距 6×12 · 距触发元素 6px · shadow-md · 默认在下方，碰边自动翻转。延迟 0，相邻按钮之间移动不再等待。</p></div>
+        <div class="rule"><h4>写法</h4><p><code>&lt;HoverTip content="切换到路由"&gt;&lt;button aria-label="路由"…/&gt;&lt;/HoverTip&gt;</code>。内容写动作（动词开头）或「名字 + 状态」，一句话，不放链接和按钮。</p></div>
+      </div>
+      <p class="note">HoverTip 与 HelpTip 分工：HoverTip 只报「这个按钮是什么 / 做什么」；规则和术语解释放 HelpTip 的「?」说明卡（见通知条一节）。</p>
+    </section>
+
+    <!-- ================= 输入 ================= -->
+    <section id="inputs">
+      <div class="kicker">组件 / 03</div>
+      <h2>输入</h2>
+      <p class="lede">高 32、圆角 6、<code>border-strong</code> 描边；聚焦时描边和 3px 光晕换主题色。标签在上，说明在下，出错时说明换成红字，不弹 toast。密钥、URL、模型名用等宽。</p>
+      <div class="stage" style="align-items:flex-start">
+        <div class="field"><label>供应商名称</label><input class="input" value="Anthropic 官方"><span class="hint">只在 CC Switch 里显示</span></div>
+        <div class="field"><label>API Key</label><input class="input mono" value="sk-ant-api03-••••••••"><span class="hint">保存在本机配置文件里</span></div>
+        <div class="field"><label>请求地址</label><input class="input mono invalid" value="api.example.com/v1"><span class="err">要以 http:// 或 https:// 开头</span></div>
+      </div>
+      <div class="stage" style="margin-top:12px">
+        <div class="inputwrap" style="width:280px"><svg class="i"><use href="#search"/></svg><input class="input" placeholder="搜索供应商  ⌘K"></div>
+      </div>
+    </section>
+
+    <!-- ================= 开关 ================= -->
+    <section id="controls">
+      <div class="kicker">组件 / 04 · switch.tsx · checkbox.tsx</div>
+      <h2>开关 · 勾选</h2>
+      <p class="lede">开关轨道 30×18（表格里成排用 26×16），开 = 主题色、圆点反色；点击区域用伪元素扩到 38×28。成排、不该抢眼的开关用 <code>tone="neutral"</code>（开 = 深灰）。</p>
+      <div class="stage">
+        <div class="spec"><button class="switch" role="switch" aria-checked="true" aria-label="开" onclick="toggleSwitch(this)"><i></i></button><span class="cap">default · 开</span></div>
+        <div class="spec"><button class="switch" role="switch" aria-checked="false" aria-label="关" onclick="toggleSwitch(this)"><i></i></button><span class="cap">default · 关</span></div>
+        <div class="spec"><button class="switch sm" role="switch" aria-checked="true" aria-label="小" onclick="toggleSwitch(this)"><i></i></button><span class="cap">sm · 26×16</span></div>
+        <div class="spec"><button class="switch neutral" role="switch" aria-checked="true" aria-label="中性" onclick="toggleSwitch(this)"><i></i></button><span class="cap">tone=neutral</span></div>
+        <div class="spec"><button class="switch" role="switch" aria-checked="true" aria-label="禁用" disabled><i></i></button><span class="cap">disabled · 45%</span></div>
+      </div>
+      <div class="stage" style="margin-top:12px;gap:22px">
+        <span class="check on" onclick="this.classList.toggle('on')"><span class="box"><svg class="i"><use href="#check"/></svg></span>同步到 Claude Desktop</span>
+        <span class="check" onclick="this.classList.toggle('on')"><span class="box"><svg class="i"><use href="#check"/></svg></span>写入 settings.json</span>
+        <span class="check radio on"><span class="box"></span>按队列</span>
+        <span class="check radio"><span class="box"></span>按延迟</span>
+      </div>
+    </section>
+
+    <!-- ================= 分段 ================= -->
+    <section id="segmented">
+      <div class="kicker">组件 / 05 · segmented-control.tsx · page-tabs.tsx</div>
+      <h2>分段控件 · 页签</h2>
+      <p class="lede"><strong>分段控件</strong>是按钮组（<code>aria-pressed</code>），用在模式和页内筛选；<strong>下划线页签</strong>换整块内容。两者不混用。分段选中块是白底 + 小阴影，<em>不用</em>主题色。
+        <strong>切换有动画：</strong>选中块和页签下划线都是单独的一块，点哪项就 200ms 滑过去（<code>src/components/ui/sliding-indicator.tsx</code>）；页面刚打开时不播，系统开了「减少动态效果」时直接跳。</p>
+      <div class="stage">
+        <div class="spec">
+          <div class="seg" role="group" aria-label="时间范围">
+            <button aria-pressed="true">今天</button><button aria-pressed="false">7 天</button><button aria-pressed="false">30 天</button>
+          </div>
+          <span class="cap">md · 36</span>
+        </div>
+        <div class="spec">
+          <div class="seg sm" role="group" aria-label="视图">
+            <button aria-pressed="true">列表</button><button aria-pressed="false">图表</button>
+          </div>
+          <span class="cap">sm · 28</span>
+        </div>
+      </div>
+      <div class="stage col" style="margin-top:12px">
+        <div class="ptabs" role="tablist">
+          <button class="on">请求日志</button><button>供应商</button><button>模型</button><button>价格</button>
+          <span class="ul"></span>
+        </div>
+        <span class="cap">PageTabs · 36 高 · 下划线用 text-1，不用主题色</span>
+      </div>
+    </section>
+
+    <!-- ================= 徽章 ================= -->
+    <section id="chips">
+      <div class="kicker">组件 / 06</div>
+      <h2>徽章</h2>
+      <p class="lede">高 20、全圆角、11px / 500。用 soft 底 + text 色，不用实心彩色块。一张卡片上最多两个。</p>
+      <div class="stage">
+        <span class="chip outline">官方</span>
+        <span class="chip direct">直连</span>
+        <span class="chip route">路由 · 第 1 位</span>
+        <span class="chip stack">聚合</span>
+        <span class="chip success"><span class="d"></span>正常 · 312ms</span>
+        <span class="chip warning"><span class="d"></span>额度 8%</span>
+        <span class="chip danger"><span class="d"></span>连接失败</span>
+        <span class="chip action">新</span>
+      </div>
+    </section>
+
+    <!-- ================= 卡片 ================= -->
+    <section id="cards">
+      <div class="kicker">组件 / 07 · providers/ProviderCard.tsx</div>
+      <h2>供应商卡片</h2>
+      <p class="lede">最小高 58、圆角 10。普通卡片白底细描边，hover 描边加深 + 小阴影，拖拽手柄和右侧操作只在 hover / 聚焦时出现。右侧操作<strong>全部是图标按钮</strong>（主操作 → 排序 → 编辑 → ⋯），名字由 HoverTip 报；
+        有禁用原因时改挂说明卡报原因，不叠两层提示。状态（使用中 / 路由中）是文字不是按钮，照旧写字。
+        <strong>当前生效的那张</strong>用所在模式的 soft 底 + fill 描边。</p>
+      <div class="stage col app" style="gap:8px;padding-bottom:40px">
+        <div class="pcard t-route">
+          <span class="grip"><svg class="i"><use href="#grip"/></svg></span>
+          <span class="logo">A</span>
+          <div class="body">
+            <div class="name">Anthropic 官方 <span class="chip route">路由 · 第 1 位</span></div>
+            <div class="sub">api.anthropic.com · claude-sonnet-5-5</div>
+          </div>
+          <span class="chip success"><span class="d"></span>312ms</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;font-weight:500;padding:0 4px"><span style="width:6px;height:6px;border-radius:50%;background:var(--route-fill)"></span>路由中</span>
+          <div class="acts" style="opacity:1">
+            <button class="btn icon" aria-label="上移" data-tip="上移一位" disabled style="opacity:.45"><svg class="i"><use href="#arrow-up"/></svg></button>
+            <button class="btn icon" aria-label="下移" data-tip="下移一位"><svg class="i"><use href="#arrow-down"/></svg></button>
+            <button class="btn icon" aria-label="编辑" data-tip="编辑供应商"><svg class="i"><use href="#pencil"/></svg></button>
+            <button class="btn icon" aria-label="更多" data-tip="更多操作"><svg class="i"><use href="#more"/></svg></button>
+          </div>
+        </div>
+        <div class="pcard">
+          <span class="grip"><svg class="i"><use href="#grip"/></svg></span>
+          <span class="logo">O</span>
+          <div class="body">
+            <div class="name">OpenRouter</div>
+            <div class="sub">openrouter.ai/api · 上次使用 2 天前</div>
+          </div>
+          <div class="acts">
+            <button class="btn icon" aria-label="加入队列" data-tip="加入队列"><svg class="i"><use href="#list-plus"/></svg></button>
+            <button class="btn icon" aria-label="编辑" data-tip="编辑供应商"><svg class="i"><use href="#pencil"/></svg></button>
+            <button class="btn icon" aria-label="更多" data-tip="更多操作"><svg class="i"><use href="#more"/></svg></button>
+          </div>
+        </div>
+        <div class="pcard">
+          <span class="grip"><svg class="i"><use href="#grip"/></svg></span>
+          <span class="logo">K</span>
+          <div class="body">
+            <div class="name">Kimi</div>
+            <div class="sub"><span style="color:var(--warning-text)">⚠ 额度剩 8%</span> · api.moonshot.cn</div>
+          </div>
+          <div class="acts">
+            <button class="btn icon" aria-label="切换" data-tip="切换"><svg class="i"><use href="#swap"/></svg></button>
+            <button class="btn icon" aria-label="编辑" data-tip="编辑供应商"><svg class="i"><use href="#pencil"/></svg></button>
+            <button class="btn icon" aria-label="更多" data-tip="更多操作"><svg class="i"><use href="#more"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <h3 class="sub">主操作图标对照（ProviderCardActions.tsx · BUTTON_ICON）</h3>
+      <div class="stage" style="gap:18px;padding-bottom:44px">
+        <span class="spec"><button class="btn icon" data-tip="切换" aria-label="切换"><svg class="i"><use href="#swap"/></svg></button><span class="cap">切换</span></span>
+        <span class="spec"><button class="btn icon" data-tip="回到直连并使用" aria-label="回到直连并使用"><svg class="i"><use href="#plug"/></svg></button><span class="cap">回到直连并使用</span></span>
+        <span class="spec"><button class="btn icon" data-tip="路由到此" aria-label="路由到此"><svg class="i"><use href="#route"/></svg></button><span class="cap">路由到此</span></span>
+        <span class="spec"><button class="btn icon" data-tip="加入队列" aria-label="加入队列"><svg class="i"><use href="#list-plus"/></svg></button><span class="cap">加入 / 移出队列</span></span>
+        <span class="spec"><button class="btn icon" data-tip="添加" aria-label="添加"><svg class="i"><use href="#plus"/></svg></button><span class="cap">添加 / 移除</span></span>
+      </div>
+      <p class="note">设为默认 = 星标（OpenClaw 选默认模型）、启用 / 停用 = 电源；没对上的 key 回退为圆点图标，新加按钮时在 BUTTON_ICON 里补一条。</p>
+      <p class="note">聚合页的「设为默认」不占主操作位：行上只留名单的添加 / 移除，「设为默认」在 ⋯ 菜单最前面（<code>CardPresentation.menuItems</code>），点了之后的后果用警示色写在名字下面，不能点时列出来并写原因。</p>
+      <p class="note">供应商图标框固定白底深色图标，深色主题里也不反色——单色品牌图标继承浅色文字会看不见。</p>
+    </section>
+
+    <!-- ================= 通知 ================= -->
+    <section id="notices">
+      <div class="kicker">组件 / 08 · notice.tsx · help-tip.tsx</div>
+      <h2>通知条 · 说明卡</h2>
+      <p class="lede">通知条圆角 10、左侧 16px 图标、soft 底，<strong>不用左边框强调色</strong>。只有一行时图标、文字、按钮整行上下居中；有第二行时图标对齐第一行。应用页顶部的通知槽按严重程度从上到下排。</p>
+      <div class="stage col" style="gap:8px">
+        <div class="notice danger"><svg class="i"><use href="#circle-alert"/></svg><div class="grow"><div>路由服务没能启动</div><div class="t2">端口 15721 被占用。请求现在直连默认供应商。</div></div><button class="btn neutral compact">重试</button></div>
+        <div class="notice warning"><svg class="i"><use href="#alert"/></svg><div class="grow"><div>有 1 个账号需要重新登录</div><div class="t2">Codex · ChatGPT Plus 的令牌已过期</div></div><button class="btn neutral compact">去登录</button></div>
+        <div class="notice route"><svg class="i"><use href="#route"/></svg><div class="grow"><div>路由生效中 · 按队列</div><div class="t2">第 1 位不可用时自动换下一位</div></div></div>
+        <div class="notice neutral one"><svg class="i"><use href="#info"/></svg><div class="grow"><div>Claude Code 需要重开终端才能读到新的环境变量</div></div><button class="btn icon nclose" aria-label="关闭" data-tip="不再提示"><svg class="i"><use href="#x"/></svg></button></div>
+      </div>
+      <h3 class="sub">说明卡 HelpTip（「?」）</h3>
+      <div class="stage" style="padding-bottom:110px;align-items:flex-start">
+        <span style="display:inline-flex;align-items:center;gap:4px">故障转移
+          <span class="helptip"><button aria-label="什么是故障转移"><svg class="i sm"><use href="#help"/></svg></button>
+            <span class="card" role="tooltip"><b>什么是故障转移</b>当前供应商连续失败时，按队列自动换到下一家，恢复后再切回来。</span></span>
+        </span>
+        <span class="cap" style="margin-left:24px">悬停 300ms 打开 · 移开 200ms 关闭 · 点一下固定 · 只放规则和术语，不放按钮</span>
+      </div>
+    </section>
+
+    <!-- ================= 浮层 ================= -->
+    <section id="overlays">
+      <div class="kicker">组件 / 09</div>
+      <h2>菜单 · 对话框 · Toast</h2>
+      <div class="grid3" style="align-items:start">
+        <div class="stage" style="justify-content:center">
+          <div class="menu">
+            <div class="it"><svg class="i"><use href="#pencil"/></svg>编辑<span class="kbd">⌘E</span></div>
+            <div class="it"><svg class="i"><use href="#copy"/></svg>复制</div>
+            <div class="it"><svg class="i"><use href="#refresh"/></svg>刷新额度</div>
+            <div class="sep"></div>
+            <div class="it danger"><svg class="i"><use href="#trash"/></svg>删除</div>
+          </div>
+        </div>
+        <div class="dialog-demo" style="grid-column:span 2">
+          <div class="ov"></div>
+          <div class="dialog" role="dialog" aria-label="删除供应商">
+            <h4>删除「OpenRouter」？</h4>
+            <p>它在路由队列里的位置也会一起移除。这一步不能撤销。</p>
+            <div class="ft"><button class="btn neutral compact">取消</button><button class="btn danger compact">删除</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="stage" style="margin-top:12px;padding-top:30px">
+        <div class="toast"><svg class="i"><use href="#check-circle"/></svg><span class="grow">已回到直连：Codex 现在直接连接官方。重启 Codex 后生效。</span><button class="tclose" aria-label="关闭"><svg class="i"><use href="#x"/></svg></button></div>
+        <div class="toast err"><svg class="i"><use href="#circle-alert"/></svg><span class="grow">保存失败：配置文件被占用</span><button class="tact">重试</button><button class="tclose" aria-label="关闭"><svg class="i"><use href="#x"/></svg></button></div>
+        <button class="btn neutral" onclick="toast()">弹一个 toast</button>
+      </div>
+      <p class="note">Toast 是白卡片（深色主题为深灰）、底部居中、2 秒消失；状态只看图标颜色——成功<strong style="color:var(--success-text)">绿勾</strong>、失败红、警告琥珀、提示灰；带关闭按钮时一律在<strong>右上角</strong>（RTL 镜像到左上）。对话框圆角 14、遮罩 <code>--overlay</code>、shadow-lg。确认危险操作时，按钮写具体动作（「删除」），不写「确定」。会丢东西、要重启这类后果写在对话框或 toast 里，不进说明卡。</p>
+    </section>
+
+    <!-- ================= 数据 ================= -->
+    <section id="data">
+      <div class="kicker">组件 / 10 · usage/</div>
+      <h2>数据展示</h2>
+      <div class="stats">
+        <div class="stat"><div class="k">今日花费</div><div class="v">$12.48</div><div class="d">昨天 $9.10</div></div>
+        <div class="stat"><div class="k">请求数</div><div class="v">1,284</div><div class="d">失败 6</div></div>
+        <div class="stat"><div class="k">输入 tokens</div><div class="v">3.2M</div><div class="d">缓存命中 71%</div></div>
+        <div class="stat"><div class="k">Codex 额度</div><div class="v">62%</div><div class="quota" style="margin-top:8px"><i style="width:62%;background:var(--success)"></i></div></div>
+      </div>
+      <div class="stage col" style="margin-top:12px;padding:6px 6px 2px;overflow-x:auto">
+        <table class="log">
+          <thead><tr><th>时间</th><th>应用</th><th>供应商</th><th>模型</th><th>状态</th><th class="num">输入</th><th class="num">输出</th><th class="num">耗时</th><th class="num">花费</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">14:02:31</td><td>Claude Code</td><td>Anthropic 官方</td><td class="mono">claude-sonnet-5-5</td><td><span class="chip success">200</span></td><td class="num">18,204</td><td class="num">1,032</td><td class="num">4.1s</td><td class="num">$0.071</td></tr>
+            <tr><td class="mono">14:01:58</td><td>Codex</td><td>OpenRouter</td><td class="mono">gpt-5.1-codex</td><td><span class="chip success">200</span></td><td class="num">9,880</td><td class="num">412</td><td class="num">2.3s</td><td class="num">$0.018</td></tr>
+            <tr><td class="mono">14:01:12</td><td>Claude Code</td><td>Kimi</td><td class="mono">kimi-k3</td><td><span class="chip danger">429</span></td><td class="num">—</td><td class="num">—</td><td class="num">0.4s</td><td class="num">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">数字列右对齐、<code>tabular-nums</code>；状态码、模型名、时间用等宽；额度条 &gt;30% 绿、10–30% 琥珀、&lt;10% 红。</p>
+    </section>
+
+    <!-- ================= 模式 ================= -->
+    <section id="modes">
+      <div class="kicker">CC Switch / 01 · providers/mode/ModeTabs.tsx</div>
+      <h2>连接模式</h2>
+      <p class="lede">每个应用有三种连接方式：<strong style="color:var(--direct-text)">直连</strong>（直接写配置文件）、
+        <strong style="color:var(--route-text)">路由</strong>（本地代理按队列 / 故障转移）、<strong style="color:var(--stack-text)">聚合</strong>（多家模型合并）。
+        模式 tab 保留<strong>图标 + 文字</strong>、不挂提示；同一行右侧的故障转移、路由设置是纯图标 + HoverTip。</p>
+      <div class="stage col app" style="padding-bottom:56px">
+        <div class="moderow">
+          <div class="seg modes" role="group" aria-label="连接模式" id="modeSeg">
+            <button aria-pressed="false"><svg class="i sm"><use href="#plug"/></svg>直连</button>
+            <button aria-pressed="true" class="act-route"><svg class="i sm"><use href="#route"/></svg>路由<span class="dot" role="img" aria-label="生效中"></span></button>
+            <button aria-pressed="false"><svg class="i sm"><use href="#layers"/></svg>聚合</button>
+          </div>
+          <span class="helptip" style="margin-left:-8px"><button aria-label="三种模式的区别"><svg class="i sm"><use href="#help"/></svg></button>
+            <span class="card"><b>三种模式的区别</b>直连：直接写入应用配置。<br>路由：经本地代理转发，可故障转移。<br>聚合：把多家的模型合并给一个应用。</span></span>
+          <span class="status">路由生效中 · 按队列 · Anthropic 官方</span>
+          <label data-tip="故障转移"><svg class="i"><use href="#shuffle"/></svg><button class="switch" role="switch" aria-checked="true" aria-label="故障转移" onclick="toggleSwitch(this)"><i></i></button></label>
+          <button class="btn quiet icon lg" aria-label="路由设置" data-tip="路由设置"><svg class="i"><use href="#settings2"/></svg></button>
+        </div>
+      </div>
+      <div class="grid3" style="margin-top:12px">
+        <div class="rule"><h4>看 ≠ 生效</h4><p>白底凸起 = 正在看的那段；模式色文字 + 圆点 = 生效中的那段。两者可以不同。</p></div>
+        <div class="rule"><h4>切换要确认</h4><p>看另一个模式时，底部出现模式色实心按钮「改为路由」，点了才生效。</p></div>
+        <div class="rule"><h4>颜色只在这几处</h4><p>模式 tab、侧栏模式标签、当前卡片、切换按钮。别处出现模式名用中性文字。</p></div>
+      </div>
+    </section>
+
+    <!-- ================= 侧栏 ================= -->
+    <section id="sidebar">
+      <div class="kicker">CC Switch / 02 · shell/Sidebar.tsx</div>
+      <h2>侧栏</h2>
+      <p class="lede">宽 200（收起 72），<code>bg-sidebar</code> 底。行高 28、圆角 6，当前项 <code>bg-selected</code>。应用行右侧的小标签用模式 text 色写当前模式。</p>
+      <div class="stage app">
+        <div class="side-demo">
+          <div class="gh">应用</div>
+          <div class="row on"><span class="g" style="background:#d97757">C</span>Claude Code<span class="lab" style="color:var(--route-text)">路由</span></div>
+          <div class="row"><span class="g" style="background:#111">X</span>Codex<span class="lab" style="color:var(--direct-text)">直连</span></div>
+          <div class="row"><span class="g" style="background:#4285f4">G</span>Gemini<span class="lab" style="color:var(--stack-text)">聚合</span></div>
+          <div class="gh">工具</div>
+          <div class="row"><svg class="i"><use href="#chart"/></svg>用量统计<span class="lab" style="color:var(--text-3)">$12.48</span></div>
+          <div class="row"><svg class="i"><use href="#settings2"/></svg>设置</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 原则 ================= -->
+    <section id="principles">
+      <div class="kicker">规约 / 01</div>
+      <h2>交互原则</h2>
+      <div class="rules">
+        <div class="rule"><h4>一个主操作</h4><p>每个视图只有一个实心主题色按钮；卡片上一律描边或图标。</p></div>
+        <div class="rule"><h4>图标 + HoverTip</h4><p>重复出现的操作（编辑、复制、删除、设置、模式）只放图标，悬停立即显示操作内容，键盘聚焦同样显示。</p></div>
+        <div class="rule"><h4>状态写在原处</h4><p>额度、延迟、需要登录写在卡片副行；后果（丢失、需重启）写在按钮、确认框或 toast，不藏进说明卡。</p></div>
+        <div class="rule"><h4>明暗一致</h4><p>所有颜色走 token；浅色 / 深色两套值一一对应，切换时暂停过渡。</p></div>
+        <div class="rule"><h4>键盘可达</h4><p>焦点环 2px 主题色；⌘K 打开命令面板；Escape 关闭浮层；禁用按钮用 <code>aria-disabled</code> 保留悬停说明原因。</p></div>
+        <div class="rule"><h4>文案</h4><p>动词开头、说结果（「已切换到 X」），不写「操作成功」；按钮写具体动作，不写「确定」。</p></div>
+      </div>
+    </section>
+
+    <section id="dodont" style="border-bottom:0">
+      <div class="kicker">规约 / 02</div>
+      <h2>Do / Don't</h2>
+      <div class="dd">
+        <div class="c do"><div class="lbl"><svg class="i sm"><use href="#check"/></svg>Do</div><p>主题橙只放在能点的东西上：主按钮、开关、勾选、焦点、链接。</p></div>
+        <div class="c dont"><div class="lbl"><svg class="i sm"><use href="#x"/></svg>Don't</div><p>用橙色表达「注意 / 警告」状态，或给分段控件选中块、页签下划线上橙色。</p></div>
+        <div class="c do"><div class="lbl"><svg class="i sm"><use href="#check"/></svg>Do</div><p>卡片操作、工具栏用纯图标按钮，配 HoverTip + aria-label；模式 tab 这种「选哪一个」的控件保留文字。</p></div>
+        <div class="c dont"><div class="lbl"><svg class="i sm"><use href="#x"/></svg>Don't</div><p>图标按钮只靠 <code>title</code> 属性提示——要等一秒多才出现，样式也和系统不一致。</p></div>
+        <div class="c do"><div class="lbl"><svg class="i sm"><use href="#check"/></svg>Do</div><p>当前生效的供应商卡片用模式 soft 底 + fill 描边。</p></div>
+        <div class="c dont"><div class="lbl"><svg class="i sm"><use href="#x"/></svg>Don't</div><p>给当前卡片再加主题色描边或实心彩色块，和模式色打架。</p></div>
+        <div class="c do"><div class="lbl"><svg class="i sm"><use href="#check"/></svg>Do</div><p>数字列右对齐、等宽数字；模型名、状态码、密钥用 mono。</p></div>
+        <div class="c dont"><div class="lbl"><svg class="i sm"><use href="#x"/></svg>Don't</div><p>新增 token 以外的颜色或字号（<code>text-[15px]</code>、<code>#ff8800</code>）。</p></div>
+      </div>
+    </section>
+
+    <footer style="padding:36px 0;color:var(--text-3);font-size:12px">
+      CC Switch 设计系统 · 令牌源自 <code>src/index.css</code> / <code>tailwind.config.cjs</code> · 主题色 #F97316 覆盖 <code>--action-*</code> 与 <code>--ring</code>
+    </footer>
+  </main>
+</div>
+
+<div id="toaster" aria-live="polite"></div>
+
+<script>
+  function setTheme(mode) {
+    const root = document.documentElement;
+    if (mode === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', mode);
+    for (const m of ['light', 'dark', 'system']) {
+      document.getElementById('t-' + m).classList.toggle('on', m === mode);
+    }
+    try { localStorage.setItem('ccs-ds-theme', mode); } catch (e) {}
+  }
+  try { const saved = localStorage.getItem('ccs-ds-theme'); if (saved) setTheme(saved); } catch (e) {}
+
+  function toggleSwitch(el) {
+    el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+  }
+
+  // 分段控件：选中块滑到当前项（和 app 的 SegmentThumb 一样，首帧不播动画）
+  document.querySelectorAll('.seg').forEach((seg) => {
+    const thumb = document.createElement('span');
+    thumb.className = 'thumb';
+    thumb.setAttribute('aria-hidden', 'true');
+    seg.prepend(thumb);
+    const btns = seg.querySelectorAll('button');
+    const move = () => {
+      const b = seg.querySelector('button[aria-pressed="true"]');
+      if (!b) return;
+      thumb.style.width = b.offsetWidth + 'px';
+      thumb.style.height = b.offsetHeight + 'px';
+      thumb.style.transform = 'translate(' + b.offsetLeft + 'px,' + b.offsetTop + 'px)';
+    };
+    if (!seg.classList.contains('modes')) {
+      btns.forEach((b) => b.addEventListener('click', () => { btns.forEach((x) => x.setAttribute('aria-pressed', x === b)); move(); }));
+    } else {
+      btns.forEach((b) => b.addEventListener('click', () => requestAnimationFrame(move)));
+    }
+    move();
+    requestAnimationFrame(() => thumb.classList.add('anim'));
+    if (window.ResizeObserver) new ResizeObserver(move).observe(seg);
+  });
+
+  // 模式 tab：点 = 查看；生效的仍是路由
+  const modeSeg = document.getElementById('modeSeg');
+  modeSeg.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    modeSeg.querySelectorAll('button').forEach((x) => {
+      const on = x === b;
+      x.setAttribute('aria-pressed', on);
+      x.querySelector('svg').style.strokeWidth = on || x.classList.contains('act-route') ? 2 : '';
+      x.style.fontWeight = on || x.classList.contains('act-route') ? 600 : '';
+    });
+  }));
+
+  // 下划线页签
+  document.querySelectorAll('.ptabs').forEach((tabs) => {
+    const ul = tabs.querySelector('.ul');
+    const btns = tabs.querySelectorAll('button');
+    const move = (b) => { ul.style.width = b.offsetWidth + 'px'; ul.style.transform = 'translateX(' + b.offsetLeft + 'px)'; };
+    btns.forEach((b) => b.addEventListener('click', () => { btns.forEach((x) => x.classList.toggle('on', x === b)); move(b); }));
+    requestAnimationFrame(() => move(tabs.querySelector('.on')));
+  });
+
+  // 侧栏当前节
+  const links = [...document.querySelectorAll('.rail a')];
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (e.isIntersecting) links.forEach((a) => a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id));
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  document.querySelectorAll('section[id]').forEach((s) => io.observe(s));
+
+  function toast() {
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.innerHTML = '<svg class="i"><use href="#check-circle"/></svg><span class="grow">已切换到 OpenRouter</span><button class="tclose" aria-label="关闭"><svg class="i"><use href="#x"/></svg></button>';
+    t.querySelector('.tclose').onclick = () => t.remove();
+    document.getElementById('toaster').appendChild(t);
+    setTimeout(() => t.remove(), 2600);
+  }
+</script>
+</body>
+</html>

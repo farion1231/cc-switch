@@ -77,7 +77,7 @@ export function CustomUserAgentField({
         </DropdownMenu>
       </div>
       {valid ? (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t("providerForm.customUserAgentHint", {
             defaultValue:
               "仅在开启本地路由/代理接管后生效，会替换转发到供应商 API 请求中的 User-Agent。",

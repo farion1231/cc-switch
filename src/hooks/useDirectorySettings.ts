@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
-export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
+export type DirectoryAppId = Exclude<AppId, "claude-desktop" | "mcode">;
 type AppDirectoryKey =
   | "claude"
   | "codex"
@@ -14,6 +14,7 @@ type AppDirectoryKey =
   | "opencode"
   | "openclaw"
   | "hermes"
+  | "pi"
   | "kilo";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
@@ -26,6 +27,7 @@ export interface ResolvedDirectories {
   opencode: string;
   openclaw: string;
   hermes: string;
+  pi: string;
   kilo: string;
 }
 
@@ -41,6 +43,7 @@ const APP_DIRECTORY_META: Record<
   opencode: { key: "opencode", defaultFolder: ".config/opencode" },
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
+  pi: { key: "pi", defaultFolder: ".pi/agent" },
   kilo: { key: "kilo", defaultFolder: ".config/kilo" },
 };
 
@@ -55,6 +58,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   opencode: "opencodeConfigDir",
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
+  pi: "piConfigDir",
   kilo: "kiloConfigDir",
 };
 
@@ -102,6 +106,8 @@ export interface UseDirectorySettingsResult {
   resolvedDirs: ResolvedDirectories;
   isLoading: boolean;
   initialAppConfigDir?: string;
+  /** 保存成功后把已保存的数据目录换成刚存的值 */
+  commitAppConfigDir: (value: string | undefined) => void;
   updateDirectory: (app: DirectoryAppId, value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
   browseDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -142,6 +148,7 @@ export function useDirectorySettings({
     opencode: "",
     openclaw: "",
     hermes: "",
+    pi: "",
     kilo: "",
   });
   const [isLoading, setIsLoading] = useState(true);
@@ -155,9 +162,19 @@ export function useDirectorySettings({
     opencode: "",
     openclaw: "",
     hermes: "",
+    pi: "",
     kilo: "",
   });
+  // 已保存的数据目录（保存按钮和「需要重启」都和它比）。ref 给回调用，state 让比较它的
+  // 组件在保存后重渲染：保存成功要把它更新成刚存的值，否则保存按钮一直在、改回去存不了
   const initialAppConfigDirRef = useRef<string | undefined>(undefined);
+  const [initialAppConfigDir, setInitialAppConfigDir] = useState<
+    string | undefined
+  >(undefined);
+  const commitAppConfigDir = useCallback((value: string | undefined) => {
+    initialAppConfigDirRef.current = value;
+    setInitialAppConfigDir(value);
+  }, []);
 
   // 加载目录信息
   useEffect(() => {
@@ -175,6 +192,7 @@ export function useDirectorySettings({
           opencodeDir,
           openclawDir,
           hermesDir,
+          piDir,
           kiloDir,
           defaultAppConfig,
           defaultClaudeDir,
@@ -184,6 +202,7 @@ export function useDirectorySettings({
           defaultOpencodeDir,
           defaultOpenclawDir,
           defaultHermesDir,
+          defaultPiDir,
           defaultKiloDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
@@ -194,6 +213,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("opencode"),
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
+          settingsApi.getConfigDir("pi"),
           settingsApi.getConfigDir("kilo"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
@@ -203,6 +223,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("opencode"),
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
+          computeDefaultConfigDir("pi"),
           computeDefaultConfigDir("kilo"),
         ]);
 
@@ -219,11 +240,12 @@ export function useDirectorySettings({
           opencode: defaultOpencodeDir ?? "",
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
+          pi: defaultPiDir ?? "",
           kilo: defaultKiloDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
-        initialAppConfigDirRef.current = normalizedOverride;
+        commitAppConfigDir(normalizedOverride);
 
         setResolvedDirs({
           appConfig: normalizedOverride ?? defaultsRef.current.appConfig,
@@ -234,6 +256,7 @@ export function useDirectorySettings({
           opencode: opencodeDir || defaultsRef.current.opencode,
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
+          pi: piDir || defaultsRef.current.pi,
           kilo: kiloDir || defaultsRef.current.kilo,
         });
       } catch (error) {
@@ -377,6 +400,7 @@ export function useDirectorySettings({
         opencode: overrides?.opencode ?? defaultsRef.current.opencode,
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
+        pi: overrides?.pi ?? defaultsRef.current.pi,
         kilo: overrides?.kilo ?? defaultsRef.current.kilo,
       });
     },
@@ -387,7 +411,8 @@ export function useDirectorySettings({
     appConfigDir,
     resolvedDirs,
     isLoading,
-    initialAppConfigDir: initialAppConfigDirRef.current,
+    initialAppConfigDir,
+    commitAppConfigDir,
     updateDirectory,
     updateAppConfigDir,
     browseDirectory,

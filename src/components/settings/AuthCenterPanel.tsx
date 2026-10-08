@@ -1,94 +1,72 @@
-import { Github, ShieldCheck } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Badge } from "@/components/ui/badge";
-import { CodexIcon } from "@/components/BrandIcons";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
-import { ProviderIcon } from "@/components/ProviderIcon";
+import type { ManagedAuthProvider } from "@/lib/api";
 
-export function AuthCenterPanel() {
+interface AuthCenterPanelProps {
+  authScrollTarget?: ManagedAuthProvider | null;
+  /**
+   * 页头没有「?」说明时（供应商表单里打开的全屏「授权中心」）在最上面写一行说明；
+   * 侧栏「授权中心」页的页头已经有了，就不再显示。
+   */
+  showIntro?: boolean;
+}
+
+/**
+ * 授权中心（v7 Auth 画板）：GitHub Copilot、ChatGPT、xAI 三组账号，一组一张卡片。
+ * 侧栏的「授权中心」页和供应商表单里「管理账号」打开的全屏页共用。
+ */
+export function AuthCenterPanel({
+  authScrollTarget,
+  showIntro = true,
+}: AuthCenterPanelProps) {
   const { t } = useTranslation();
+  const copilotSectionRef = useRef<HTMLDivElement | null>(null);
+  const codexOauthSectionRef = useRef<HTMLDivElement | null>(null);
+  const xaiOauthSectionRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!authScrollTarget) return;
+
+    const sectionRef =
+      authScrollTarget === "github_copilot"
+        ? copilotSectionRef
+        : authScrollTarget === "codex_oauth"
+          ? codexOauthSectionRef
+          : xaiOauthSectionRef;
+
+    const frame = requestAnimationFrame(() => {
+      const prefersReducedMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+
+      sectionRef.current?.scrollIntoView({
+        behavior: prefersReducedMotion ? "auto" : "smooth",
+        block: "start",
+      });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [authScrollTarget]);
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-xl border border-border/60 bg-card/60 p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-primary" />
-              <h3 className="text-base font-semibold">
-                {t("settings.authCenter.title", {
-                  defaultValue: "OAuth 认证中心",
-                })}
-              </h3>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {t("settings.authCenter.description", {
-                defaultValue:
-                  "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
-              })}
-            </p>
-          </div>
-          <Badge variant="secondary">
-            {t("settings.authCenter.beta", { defaultValue: "Beta" })}
-          </Badge>
-        </div>
-      </section>
-
-      <section className="rounded-xl border border-border/60 bg-card/60 p-6">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
-            <Github className="h-5 w-5" />
-          </div>
-          <div>
-            <h4 className="font-medium">GitHub Copilot</h4>
-            <p className="text-sm text-muted-foreground">
-              {t("settings.authCenter.copilotDescription", {
-                defaultValue: "管理 GitHub Copilot 账号",
-              })}
-            </p>
-          </div>
-        </div>
-
+    <div className="flex flex-col gap-3">
+      {showIntro && (
+        <p className="m-0 max-w-[700px] text-caption text-fg-2">
+          {t("settings.authCenter.description")}
+        </p>
+      )}
+      <div ref={copilotSectionRef} className="scroll-mt-4">
         <CopilotAuthSection />
-      </section>
-
-      <section className="rounded-xl border border-border/60 bg-card/60 p-6">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
-            <CodexIcon size={20} />
-          </div>
-          <div>
-            <h4 className="font-medium">ChatGPT (Codex OAuth)</h4>
-            <p className="text-sm text-muted-foreground">
-              {t("settings.authCenter.codexOauthDescription", {
-                defaultValue: "管理 ChatGPT 账号",
-              })}
-            </p>
-          </div>
-        </div>
-
-        <CodexOAuthSection />
-      </section>
-
-      <section className="rounded-xl border border-border/60 bg-card/60 p-6">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
-            <ProviderIcon icon="xai" name="xAI" size={20} />
-          </div>
-          <div>
-            <h4 className="font-medium">xAI (Grok OAuth)</h4>
-            <p className="text-sm text-muted-foreground">
-              {t("settings.authCenter.xaiOauthDescription", {
-                defaultValue: "管理 xAI / Grok 账号",
-              })}
-            </p>
-          </div>
-        </div>
-
-        <XaiOAuthSection />
-      </section>
+      </div>
+      <div ref={codexOauthSectionRef} className="scroll-mt-4">
+        <CodexOAuthSection showAccountQuota />
+      </div>
+      <div ref={xaiOauthSectionRef} className="scroll-mt-4">
+        <XaiOAuthSection mode="manage" helpSide="top" />
+      </div>
     </div>
   );
 }

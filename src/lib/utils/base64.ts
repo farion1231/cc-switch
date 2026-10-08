@@ -13,6 +13,10 @@ function toStandardBase64Alphabet(value: string): string {
   return value.replace(/ /g, "+").replace(/-/g, "+").replace(/_/g, "/");
 }
 
+function trimOuterLineBreaks(value: string): string {
+  return value.replace(/^[\r\n]+|[\r\n]+$/g, "");
+}
+
 /**
  * Decode Base64 encoded UTF-8 string
  *
@@ -27,7 +31,10 @@ function toStandardBase64Alphabet(value: string): string {
  */
 export function decodeBase64Utf8(str: string): string {
   try {
-    let cleaned = toStandardBase64Alphabet(str.trim());
+    // Keep spaces intact until they are restored to `+`. Using `trim()` here
+    // would discard a URL-decoded `+` at either edge and diverge from the
+    // backend decoder, which trims only CR/LF characters.
+    let cleaned = toStandardBase64Alphabet(trimOuterLineBreaks(str));
 
     // Try to decode with standard Base64 first
     try {
@@ -48,7 +55,9 @@ export function decodeBase64Utf8(str: string): string {
     console.error("Base64 decode error:", e, "Input:", str);
     // Last resort fallback using deprecated but sometimes working method
     try {
-      return decodeURIComponent(escape(atob(toStandardBase64Alphabet(str))));
+      return decodeURIComponent(
+        escape(atob(toStandardBase64Alphabet(trimOuterLineBreaks(str)))),
+      );
     } catch {
       // If all else fails, return original string
       return str;

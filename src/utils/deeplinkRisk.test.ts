@@ -194,12 +194,19 @@ describe("decodeDeeplinkPayload", () => {
 describe("maskValue", () => {
   it("masks credential-shaped keys but keeps ordinary values readable", () => {
     expect(maskValue("ANTHROPIC_AUTH_TOKEN", "sk-ant-1234567890abcdef")).toBe(
-      "sk-ant-1************",
+      "sk-a************",
     );
     expect(maskValue("ANTHROPIC_BASE_URL", "https://example.com")).toBe(
       "https://example.com",
     );
-    // 短值不脱敏，否则连"是不是空的"都看不出来
-    expect(maskValue("API_KEY", "short")).toBe("short");
+    expect(maskValue("API_KEY", "short")).toBe("****");
+    expect(maskValue("Authorization", "Basic abcd")).not.toContain("abcd");
+    expect(maskValue("Cookie", "sid=1234")).toBe("****");
+    expect(maskValue("Credential", "credential-value")).not.toContain(
+      "credential-value",
+    );
+    expect(maskValue("auth", "short")).toBe("****");
+    expect(maskValue("bearer", "short")).toBe("****");
+    expect(maskValue("API_KEY", "")).toBe("");
   });
 });

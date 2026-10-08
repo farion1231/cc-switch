@@ -2,12 +2,14 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::{
-    atomic_write, delete_file, get_home_dir, read_json_file, sanitize_provider_name,
-    write_json_file, write_text_file,
+    atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
+    write_json_file_private, write_text_file_private,
 };
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use once_cell::sync::OnceCell;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::process::{Command, Stdio};
@@ -20,7 +22,6 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 /// cleaned up without mistaking a user's own local provider for takeover.
 pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
-const CODEX_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -65,7 +66,28 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
     "xiaomimimo.com", // Xiaomi MiMo (api.xiaomimimo.com, token-plan-cn.xiaomimimo.com)
     "longcat.chat",   // Meituan LongCat (api.longcat.chat)
     "minimax.io",     // MiniMax global (api.minimax.io)
-    "minimaxi.com",   // MiniMax CN (api.minimaxi.com)
+    "minimax.cn",     // MiniMax CN (current official endpoint)
+    "minimaxi.com",   // MiniMax CN (legacy endpoint)
+    // StepFun Responses API currently supports only `function` tools:
+    // platform.stepfun.com/docs/zh/api-reference/responses/responses-create
+    "stepfun.com",
+    "stepfun.ai",
+    // Conservative (unverified, not a confirmed reject): Baidu Qianfan's
+    // pay-as-you-go Responses guide documents only `function` / `mcp` tools
+    // (cloud.baidu.com/doc/qianfan-docs/s/4mi400l1m). Host-exact; Qianfan's
+    // Chat plans on the same domain are ProxyChat and never consult this list.
+    "qianfan.baidubce.com",
+    // Conservative (unverified): iFlytek Astron Coding Plan fronts third-party
+    // models behind one Responses gateway with no documented hosted-tool
+    // support (www.xfyun.cn/doc/spark/CodingPlan.html).
+    "xf-yun.com",
+    // Zhipu GLM CN / global (open.bigmodel.cn, api.z.ai): the native Responses
+    // gateway's tool-type enum is `function | web_search_preview |
+    // code_interpreter | mcp` (verbatim from the #6944 400 body) — Codex's
+    // `web_search` hosted tool is not in it. Matched on host labels (see
+    // `codex_url_host_matches_any`), so `xyz.ai` never collides with `z.ai`.
+    "bigmodel.cn",
+    "z.ai",
 ];
 
 /// Brand prefixes of models whose native gateways reject `web_search`, matched
@@ -73,7 +95,41 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
 /// `MiniMaxAI/MiniMax-M3` are caught. Exact brand names (not a fuzzy heuristic),
 /// so a supporting gateway is never wrongly matched.
 const CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES: &[&str] =
-    &["mimo", "longcat", "minimax", "qwen3-coder"];
+    &["mimo", "longcat", "minimax", "qwen3-coder", "glm"];
+
+/// Host component of a base URL (or a bare host), lowercased, without scheme,
+/// userinfo, port, path or query. Tolerates the loose forms users paste into
+/// the provider form (`example.com`, `https://user@Example.com:8443/v1`).
+pub(crate) fn codex_url_host(url_or_host: &str) -> String {
+    let trimmed = url_or_host.trim();
+    let rest = trimmed
+        .split_once("://")
+        .map_or(trimmed, |(_scheme, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if let Some(ipv6) = host_port.strip_prefix('[') {
+        ipv6.split(']').next().unwrap_or(ipv6)
+    } else {
+        host_port.split(':').next().unwrap_or(host_port)
+    };
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// Whether the URL's host IS one of `hosts` or a subdomain of it, matched on
+/// DNS label boundaries. Vendor host lists must go through this rather than a
+/// substring `contains`: a 4-char entry like `z.ai` would otherwise also match
+/// `api.xyz.ai` / `viz.ai` and silently push an unrelated provider onto a
+/// vendor-specific code path.
+pub(crate) fn codex_url_host_matches_any(url_or_host: &str, hosts: &[&str]) -> bool {
+    let host = codex_url_host(url_or_host);
+    if host.is_empty() {
+        return false;
+    }
+    hosts.iter().any(|candidate| {
+        let candidate = candidate.trim_start_matches('.').to_ascii_lowercase();
+        host == candidate || host.ends_with(&format!(".{candidate}"))
+    })
+}
 
 /// Top-level `model` id from a Codex `config.toml`.
 fn codex_top_level_model(config_text: &str) -> Option<String> {
@@ -88,31 +144,77 @@ fn codex_top_level_model(config_text: &str) -> Option<String> {
 /// `web_search` hosted tool — by `base_url` host OR by the active model's brand
 /// (so an aggregator fronting a reject vendor's model is caught too). Driven by
 /// the live `config.toml`, so it applies to existing providers without a re-save.
-fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
+pub(crate) fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
     if let Some(base_url) = extract_codex_base_url(config_text) {
-        let base_url = base_url.to_ascii_lowercase();
-        if CODEX_WEB_SEARCH_REJECT_HOSTS
-            .iter()
-            .any(|host| base_url.contains(host))
-        {
+        if codex_url_host_matches_any(&base_url, CODEX_WEB_SEARCH_REJECT_HOSTS) {
             return true;
         }
     }
-    if let Some(model) = codex_top_level_model(config_text) {
-        let model = model.to_ascii_lowercase();
-        // Strip any aggregator "vendor/" prefix, e.g. "MiniMaxAI/MiniMax-M3"
-        // or "qwen/qwen3-coder-plus".
-        let model = model.rsplit('/').next().unwrap_or(model.as_str());
-        if CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES
-            .iter()
-            .any(|prefix| model.starts_with(prefix))
-        {
-            return true;
-        }
-    }
-    false
+    codex_top_level_model(config_text).is_some_and(|model| codex_model_rejects_web_search(&model))
 }
+
+/// Whether `model`'s brand is on the reject list. Strips any aggregator
+/// "vendor/" prefix first, e.g. "MiniMaxAI/MiniMax-M3" or "qwen/qwen3-coder-plus".
+pub(crate) fn codex_model_rejects_web_search(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    let model = model.rsplit('/').next().unwrap_or(model.as_str());
+    CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES
+        .iter()
+        .any(|prefix| model.starts_with(prefix))
+}
+
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
+const CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME: &str = "codex_managed_oauth_live_auth.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CodexManagedOAuthLiveAuthMarker {
+    version: u32,
+    /// cc-switch 本地托管账号 ID，用于区分同一 ChatGPT workspace 下的登录。
+    account_id: String,
+    /// 原生 auth.json 的 `tokens.account_id`，即 ChatGPT workspace ID。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chatgpt_account_id: Option<String>,
+    /// id_token 中跨刷新稳定的用户身份，防止同 workspace 的原生登录串号。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user_identity: Option<String>,
+}
+
+pub(crate) struct CodexManagedLiveRefresh {
+    pub(crate) refresh_token: String,
+    pub(crate) id_token: Option<String>,
+    pub(crate) last_refresh_ms: Option<i64>,
+    pub(crate) chatgpt_account_id: String,
+}
+
+/// 测试用：Codex live 的四个文件（auth、config、模型目录、托管账号标记）的字节，用来断言
+/// 「被拒的操作没有改动任何文件」。
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexLiveStateSnapshot {
+    files: Vec<(PathBuf, Option<Vec<u8>>)>,
+}
+
+#[cfg(test)]
+impl CodexLiveStateSnapshot {
+    pub(crate) fn capture() -> Result<Self, AppError> {
+        let paths = [
+            get_codex_auth_path(),
+            get_codex_config_path(),
+            get_codex_model_catalog_path(),
+            get_codex_managed_oauth_live_auth_marker_path(),
+        ];
+        let mut files = Vec::with_capacity(paths.len());
+        for path in paths {
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => Some(bytes),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+                Err(err) => return Err(AppError::io(&path, err)),
+            };
+            files.push((path, bytes));
+        }
+        Ok(Self { files })
+    }
+}
 
 /// Which Codex tool surface the generated model catalog should target.
 ///
@@ -126,13 +228,17 @@ const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexCatalogToolProfile {
     ProxyChat,
+    /// Copilot selects Responses or Chat per model, but both paths run through
+    /// the local proxy. Keep proxy-compatible tools while disabling Codex's
+    /// hosted web-search endpoint, which Copilot does not expose.
+    Copilot,
     NativeResponses,
     /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
     /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
     /// tools — the Responses→Anthropic transform keeps only `function` tools.
     /// Additionally the Codex `web_search` hosted tool is unusable on this path
     /// (the transform drops it), so it is always disabled — see
-    /// `prepare_codex_config_text_with_model_catalog`.
+    /// `codex_disables_web_search`.
     Anthropic,
 }
 
@@ -155,15 +261,17 @@ impl CodexCatalogToolProfile {
 }
 
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
-/// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` and legacy
-/// removed provider aliases.
+/// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` (0.149:
+/// exactly these five; 0.148 is the same minus `amazon-bedrock-runtime`).
+/// `oss` / `ollama-chat` are NOT reserved on 0.148/0.149 — both load as
+/// ordinary custom tables — so listing them here would strand their bearer
+/// token in the ignored top level. Mirror: providerConfigUtils.ts.
 const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
     "amazon-bedrock",
+    "amazon-bedrock-runtime",
     "openai",
     "ollama",
     "lmstudio",
-    "oss",
-    "ollama-chat",
 ];
 
 /// 获取 Codex 配置目录路径
@@ -180,6 +288,554 @@ pub fn get_codex_auth_path() -> PathBuf {
     get_codex_config_dir().join("auth.json")
 }
 
+pub(crate) fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
+    crate::config::get_app_config_dir().join(CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME)
+}
+
+#[cfg(test)]
+pub(crate) fn codex_managed_oauth_live_auth_marker_exists() -> bool {
+    get_codex_managed_oauth_live_auth_marker_path().exists()
+}
+
+/// 从 live/备份的 Codex `auth` 中提取上游 ChatGPT workspace ID。
+///
+/// 仅接受 ChatGPT 登录形状（`auth_mode == "chatgpt"`、`OPENAI_API_KEY` 可清空）。
+/// 托管账号写入的完整 bundle 会额外带 `tokens.refresh_token` 与顶层 `last_refresh`，
+/// 这里一并容忍。Codex CLI 自刷新会轮换 access_token，因此短期 token 指纹不能
+/// 作为稳定的所有权谓词；cc-switch 的本地账号 ID 单独记录在 marker 中。
+fn extract_codex_managed_oauth_account_id(auth: &Value) -> Option<String> {
+    let auth_obj = auth.as_object()?;
+
+    if auth_obj.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "auth_mode" | "OPENAI_API_KEY" | "tokens" | "last_refresh"
+        )
+    }) {
+        return None;
+    }
+
+    if auth.get("auth_mode").and_then(|value| value.as_str()) != Some("chatgpt") {
+        return None;
+    }
+
+    let api_key_is_clearable = auth
+        .get("OPENAI_API_KEY")
+        .is_none_or(|value| value.is_null() || value.as_str() == Some("PROXY_MANAGED"));
+    if !api_key_is_clearable {
+        return None;
+    }
+
+    let tokens = auth.get("tokens").and_then(|value| value.as_object())?;
+
+    if tokens.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "access_token" | "account_id" | "id_token" | "refresh_token"
+        )
+    }) {
+        return None;
+    }
+
+    let account_id = tokens
+        .get("account_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?;
+    tokens
+        .get("access_token")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())?;
+
+    Some(account_id.to_string())
+}
+
+/// 从原生 auth.json 的 id_token 提取跨刷新稳定的用户身份。
+pub(crate) fn extract_codex_auth_user_identity(auth: &Value) -> Option<String> {
+    let id_token = auth.pointer("/tokens/id_token")?.as_str()?;
+    extract_codex_id_token_user_identity(id_token)
+}
+
+pub(crate) fn extract_codex_id_token_user_identity(id_token: &str) -> Option<String> {
+    extract_codex_id_token_subject(id_token).map(|subject| format!("sub:{subject}"))
+}
+
+pub(crate) fn extract_codex_id_token_subject(id_token: &str) -> Option<String> {
+    let mut segments = id_token.split('.');
+    let header = segments.next()?;
+    let payload = segments.next()?;
+    segments.next()?;
+    if segments.next().is_some() {
+        return None;
+    }
+
+    let header: Value = URL_SAFE_NO_PAD
+        .decode(header)
+        .ok()
+        .and_then(|decoded| serde_json::from_slice(&decoded).ok())?;
+    header
+        .get("alg")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    let claims: Value = URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()
+        .and_then(|decoded| serde_json::from_slice(&decoded).ok())?;
+    claims
+        .get("sub")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+pub(crate) fn test_codex_id_token(subject: &str) -> String {
+    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
+    let payload = URL_SAFE_NO_PAD.encode(json!({ "sub": subject }).to_string());
+    format!("{header}.{payload}.")
+}
+
+/// Build the native-shaped ChatGPT auth bundle shared by cc-switch and Codex CLI.
+pub fn codex_managed_oauth_auth_value(
+    account_id: &str,
+    access_token: &str,
+    id_token: Option<&str>,
+    refresh_token: &str,
+    last_refresh: &str,
+) -> Value {
+    let mut tokens = serde_json::Map::new();
+    if let Some(id_token) = id_token {
+        tokens.insert("id_token".to_string(), Value::String(id_token.to_string()));
+    }
+    tokens.insert(
+        "access_token".to_string(),
+        Value::String(access_token.to_string()),
+    );
+    tokens.insert(
+        "refresh_token".to_string(),
+        Value::String(refresh_token.to_string()),
+    );
+    tokens.insert(
+        "account_id".to_string(),
+        Value::String(account_id.to_string()),
+    );
+    json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": Value::Object(tokens),
+        "last_refresh": last_refresh,
+    })
+}
+
+/// 托管账号登录标记的内容（和 [`record_codex_managed_oauth_live_auth`] 写的一样），给切换
+/// 操作放进同一次提交用。`auth` 不是托管账号的登录形状时返回 `None`。
+pub(crate) fn codex_managed_oauth_marker_bytes(
+    auth: &Value,
+    managed_account_id: &str,
+) -> Result<Option<Vec<u8>>, AppError> {
+    let managed_account_id = managed_account_id.trim();
+    let Some(chatgpt_account_id) = extract_codex_managed_oauth_account_id(auth) else {
+        return Ok(None);
+    };
+    if managed_account_id.is_empty() {
+        return Ok(None);
+    }
+    let user_identity = extract_codex_auth_user_identity(auth).ok_or_else(|| {
+        AppError::Message(
+            "Codex 托管 OAuth auth.json 的 id_token 缺少稳定用户身份，无法安全记录账号所有权"
+                .to_string(),
+        )
+    })?;
+    let marker = CodexManagedOAuthLiveAuthMarker {
+        version: 3,
+        account_id: managed_account_id.to_string(),
+        chatgpt_account_id: Some(chatgpt_account_id),
+        user_identity: Some(user_identity),
+    };
+    serde_json::to_vec_pretty(&marker)
+        .map(Some)
+        .map_err(|e| AppError::Message(format!("序列化 Codex 托管账号标记失败: {e}")))
+}
+
+pub fn record_codex_managed_oauth_live_auth(
+    auth: &Value,
+    managed_account_id: &str,
+) -> Result<(), AppError> {
+    let managed_account_id = managed_account_id.trim();
+    let Some(chatgpt_account_id) = extract_codex_managed_oauth_account_id(auth) else {
+        return Ok(());
+    };
+    if managed_account_id.is_empty() {
+        return Ok(());
+    }
+    let user_identity = extract_codex_auth_user_identity(auth).ok_or_else(|| {
+        AppError::Message(
+            "Codex 托管 OAuth auth.json 的 id_token 缺少稳定用户身份，无法安全记录账号所有权"
+                .to_string(),
+        )
+    })?;
+
+    let marker = CodexManagedOAuthLiveAuthMarker {
+        version: 3,
+        account_id: managed_account_id.to_string(),
+        chatgpt_account_id: Some(chatgpt_account_id),
+        user_identity: Some(user_identity),
+    };
+    crate::config::write_json_file(&get_codex_managed_oauth_live_auth_marker_path(), &marker)
+}
+
+fn migrate_legacy_codex_managed_oauth_live_auth_marker(
+    auth: &Value,
+    managed_account_id: &str,
+    managed_id_token: Option<&str>,
+) -> Result<(), AppError> {
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    if !marker_path.exists() {
+        return Ok(());
+    }
+    let marker: CodexManagedOAuthLiveAuthMarker = read_json_file(&marker_path)?;
+    if !matches!(marker.version, 1 | 2) || marker.account_id != managed_account_id {
+        return Ok(());
+    }
+
+    let auth_account_id = extract_codex_managed_oauth_account_id(auth);
+    let auth_user_identity = extract_codex_auth_user_identity(auth);
+    let managed_user_identity = managed_id_token.and_then(extract_codex_id_token_user_identity);
+    if auth_account_id.as_deref() != Some(managed_account_id)
+        || auth_user_identity.as_deref() != managed_user_identity.as_deref()
+        || managed_user_identity.is_none()
+    {
+        return Err(AppError::Message(format!(
+            "旧版 Codex OAuth 账号 {managed_account_id} 无法通过稳定用户身份确认磁盘凭据所有权；为避免覆盖或串用 auth.json，本次操作已取消，请在认证中心重新登录该账号"
+        )));
+    }
+
+    record_codex_managed_oauth_live_auth(auth, managed_account_id)
+}
+
+/// Before removing a manager record, make any legacy live-auth ownership
+/// provable with the manager's persisted user identity. Failure is surfaced so
+/// callers keep the manager record and marker instead of orphaning auth.json.
+pub(crate) fn prepare_codex_live_auth_for_managed_account_removal(
+    managed_account_id: &str,
+    managed_id_token: Option<&str>,
+) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Ok(());
+    }
+    let auth: Value = read_json_file(&auth_path)?;
+    migrate_legacy_codex_managed_oauth_live_auth_marker(&auth, managed_account_id, managed_id_token)
+}
+
+pub fn codex_auth_matches_recorded_managed_oauth(
+    auth: &Value,
+    account_id: &str,
+) -> Result<bool, AppError> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return Ok(false);
+    }
+
+    let Some(auth_account_id) = extract_codex_managed_oauth_account_id(auth) else {
+        return Ok(false);
+    };
+    let auth_user_identity = extract_codex_auth_user_identity(auth);
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    // No marker is the normal state for a native ChatGPT login (no managed
+    // account ever wrote auth.json, or it was cleaned up when switching away);
+    // only a marker that exists but cannot be read is worth a warning.
+    if !marker_path.exists() {
+        return Ok(false);
+    }
+    let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
+        Ok(marker) => marker,
+        Err(err) => {
+            log::warn!(
+                "Failed to read Codex managed OAuth auth marker at {}: {err}",
+                marker_path.display()
+            );
+            return Ok(false);
+        }
+    };
+
+    // v1/v2 markers do not carry a stable user identity. Since multiple users
+    // can share one workspace, those markers cannot safely authorize adopting
+    // or deleting credentials. The next explicit activation replaces them
+    // with a v3 marker.
+    Ok(marker.account_id == account_id
+        && match marker.version {
+            3 => {
+                marker.chatgpt_account_id.as_deref() == Some(auth_account_id.as_str())
+                    && marker
+                        .user_identity
+                        .as_deref()
+                        .is_some_and(|identity| auth_user_identity.as_deref() == Some(identity))
+            }
+            _ => false,
+        })
+}
+
+/// Verify that a proxied Codex request still uses the exact live access token
+/// owned by the selected local account. Workspace IDs alone are not sufficient:
+/// different Team users can share one value.
+pub(crate) fn codex_live_auth_matches_managed_request(
+    account_id: &str,
+    request_access_token: &str,
+) -> Result<bool, AppError> {
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Ok(false);
+    }
+    let auth: Value = read_json_file(&auth_path)?;
+    if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
+        return Ok(false);
+    }
+    let live_access_token = auth
+        .pointer("/tokens/access_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty());
+    Ok(live_access_token == Some(request_access_token.trim()))
+}
+
+pub(crate) fn clear_codex_managed_oauth_live_auth_marker_for_account(
+    account_id: &str,
+) -> Result<(), AppError> {
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    if !marker_path.exists() {
+        return Ok(());
+    }
+    let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
+        Ok(marker) => marker,
+        Err(error) => {
+            log::warn!(
+                "Failed to read Codex managed OAuth auth marker at {} while cleaning account {}: {error}",
+                marker_path.display(),
+                account_id
+            );
+            // A malformed marker cannot establish ownership for any account
+            // and is unusable for rollback/synchronization; remove the stale
+            // bookkeeping file while leaving non-matching live auth untouched.
+            return delete_file(&marker_path);
+        }
+    };
+    if marker.account_id == account_id.trim() {
+        delete_file(&marker_path)?;
+    }
+    Ok(())
+}
+
+/// 切走托管 provider 或从认证中心删除账号时，清理其残留在
+/// `~/.codex/auth.json` 的 ChatGPT 登录。
+///
+/// 删除谓词同时校验 cc-switch marker 中的本地账号 ID 与原生 auth.json 中的
+/// workspace ID，不依赖会被 Codex CLI 自刷新破坏的 access-token 指纹。切换路径必须
+/// 先把盘上轮换后的 refresh token 采纳回 manager，再调用本函数。
+pub fn clear_codex_live_auth_for_managed_account(account_id: &str) -> Result<(), AppError> {
+    clear_codex_live_auth_for_managed_account_if_unchanged(account_id, None)
+}
+
+/// Verify that the outgoing account's live refresh generation has not changed
+/// since it was adopted into the OAuth manager.
+pub fn ensure_codex_live_auth_unchanged_for_managed_account(
+    account_id: &str,
+    expected_refresh_token: &str,
+) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Err(AppError::Message(format!(
+            "Codex CLI 账号 {account_id} 的 live auth 已在切换期间被移除，请重试"
+        )));
+    }
+    let auth: Value = read_json_file(&auth_path)?;
+    let current_refresh_token = auth
+        .pointer("/tokens/refresh_token")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id)
+        || current_refresh_token != Some(expected_refresh_token.trim())
+    {
+        return Err(AppError::Message(format!(
+            "Codex CLI 账号 {account_id} 的 live 凭据在切换期间已刷新；为避免覆盖新 refresh token，本次操作已取消，请重试"
+        )));
+    }
+    Ok(())
+}
+
+/// Content-based cleanup with an optional compare-before-delete guard.
+pub fn clear_codex_live_auth_for_managed_account_if_unchanged(
+    account_id: &str,
+    expected_refresh_token: Option<&str>,
+) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    let mut removed_matching_auth = false;
+    if auth_path.exists() {
+        let auth: Value = read_json_file(&auth_path)?;
+        if codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
+            if let Some(expected_refresh_token) = expected_refresh_token {
+                let current_refresh_token = auth
+                    .pointer("/tokens/refresh_token")
+                    .and_then(Value::as_str)
+                    .map(str::trim);
+                if current_refresh_token != Some(expected_refresh_token.trim()) {
+                    return Err(AppError::Message(format!(
+                        "Codex CLI 账号 {account_id} 的 live 凭据在切换期间已刷新；为避免删除新 refresh token，本次操作已取消，请重试"
+                    )));
+                }
+            }
+            delete_file(&auth_path)?;
+            removed_matching_auth = true;
+        }
+    }
+
+    if removed_matching_auth {
+        // Once the matching live file is gone, any marker is stale regardless
+        // of version or parseability.
+        delete_file(&get_codex_managed_oauth_live_auth_marker_path())?;
+    } else {
+        clear_codex_managed_oauth_live_auth_marker_for_account(account_id)?;
+    }
+    Ok(())
+}
+
+/// 判断给定的 Codex `auth` 是否属于指定的 cc-switch 本地托管账号。
+///
+/// 原生 `tokens.account_id` 是 workspace ID，可能被多个本地账号共享；因此必须同时
+/// 命中 cc-switch marker 中的本地账号 ID，不能只按 auth.json 内容判断。
+///
+/// 用于 Live 备份剥离：避免把托管账号的可刷新 token 持久化进备份配置。
+pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) -> bool {
+    codex_auth_matches_recorded_managed_oauth(auth, account_id).unwrap_or(false)
+}
+
+/// 读回 Codex CLI 当前 `~/.codex/auth.json` 中属于 `account_id` 的 refresh_token /
+/// id_token（仅当磁盘上的登录账号与之一致时）。
+///
+/// 用于切换回托管 provider 前，采纳 CLI 自行刷新时轮换出的最新 refresh_token，避免
+/// 用陈腐 token 覆盖 CLI 的有效登录（“裸跑 codex” 反复切换场景）。
+pub fn read_codex_live_auth_refresh_for_account(
+    account_id: &str,
+) -> Option<(String, Option<String>, Option<i64>)> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return None;
+    }
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return None;
+    }
+    let auth: Value = read_json_file(&auth_path).ok()?;
+    // 仅在磁盘上确是「该 account_id 的 ChatGPT 登录」时才采纳其 refresh_token，
+    // 避免从非 chatgpt/异常 auth 里误取 token。
+    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
+        return None;
+    }
+    let tokens = auth.get("tokens")?.as_object()?;
+    let refresh_token = tokens.get("refresh_token")?.as_str()?.trim().to_string();
+    if refresh_token.is_empty() {
+        return None;
+    }
+    let id_token = tokens
+        .get("id_token")
+        .and_then(|value| value.as_str())
+        .map(|token| token.to_string());
+    let last_refresh_ms = auth
+        .get("last_refresh")
+        .and_then(Value::as_str)
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.timestamp_millis());
+    Some((refresh_token, id_token, last_refresh_ms))
+}
+
+/// Read a managed live credential after safely upgrading a legacy marker.
+/// v1/v2 markers only identify a workspace, so the manager's persisted
+/// id_token must prove the live user's identity before the marker can become
+/// authoritative again.
+pub(crate) fn read_codex_live_auth_refresh_for_managed_account(
+    account_id: &str,
+    managed_id_token: Option<&str>,
+) -> Result<Option<CodexManagedLiveRefresh>, AppError> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return Ok(None);
+    }
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Ok(None);
+    }
+    let auth: Value = read_json_file(&auth_path)?;
+    migrate_legacy_codex_managed_oauth_live_auth_marker(&auth, account_id, managed_id_token)?;
+    if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
+        return Ok(None);
+    }
+    let Some((refresh_token, id_token, last_refresh_ms)) =
+        read_codex_live_auth_refresh_for_account(account_id)
+    else {
+        return Ok(None);
+    };
+    let chatgpt_account_id = extract_codex_managed_oauth_account_id(&auth)
+        .ok_or_else(|| AppError::Message("Codex live auth 缺少 workspace ID".to_string()))?;
+    Ok(Some(CodexManagedLiveRefresh {
+        refresh_token,
+        id_token,
+        last_refresh_ms,
+        chatgpt_account_id,
+    }))
+}
+
+/// Keep Codex CLI's live auth in the same refresh-token generation after the
+/// manager refreshes a managed account.
+///
+/// The write is compare-and-swap-like: immediately before replacing auth.json,
+/// it verifies that the file still contains the refresh token used for the
+/// network request. Codex CLI does not share cc-switch's process lock, so this
+/// is a best-effort guard that narrows (but cannot make atomic) the cross-process
+/// check-to-replace window.
+/// Ownership is local-account scoped through the marker, while auth.json keeps
+/// the upstream workspace ID required by Codex.
+pub fn sync_codex_managed_oauth_live_auth_after_refresh(
+    account_id: &str,
+    expected_refresh_token: &str,
+    refreshed_auth: &Value,
+) -> Result<bool, AppError> {
+    let account_id = account_id.trim();
+    let expected_refresh_token = expected_refresh_token.trim();
+    if account_id.is_empty() || expected_refresh_token.is_empty() {
+        return Ok(false);
+    }
+
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Ok(false);
+    }
+    let current_auth: Value = read_json_file(&auth_path)?;
+    if !codex_live_auth_is_managed_chatgpt_login(&current_auth, account_id) {
+        return Ok(false);
+    }
+    let current_refresh_token = current_auth
+        .pointer("/tokens/refresh_token")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    if current_refresh_token != Some(expected_refresh_token) {
+        return Ok(false);
+    }
+
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    let was_recorded_managed = marker_path.exists()
+        && codex_auth_matches_recorded_managed_oauth(&current_auth, account_id)?;
+
+    write_json_file_private(&auth_path, refreshed_auth)?;
+    if was_recorded_managed {
+        record_codex_managed_oauth_live_auth(refreshed_auth, account_id)?;
+    }
+    Ok(true)
+}
+
 /// 获取 Codex config.toml 路径
 pub fn get_codex_config_path() -> PathBuf {
     get_codex_config_dir().join("config.toml")
@@ -187,36 +843,6 @@ pub fn get_codex_config_path() -> PathBuf {
 
 pub fn get_codex_model_catalog_path() -> PathBuf {
     get_codex_config_dir().join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
-}
-
-/// 获取 Codex 供应商配置文件路径
-#[allow(dead_code)]
-pub fn get_codex_provider_paths(
-    provider_id: &str,
-    provider_name: Option<&str>,
-) -> (PathBuf, PathBuf) {
-    let base_name = provider_name
-        .map(sanitize_provider_name)
-        .unwrap_or_else(|| sanitize_provider_name(provider_id));
-
-    let auth_path = get_codex_config_dir().join(format!("auth-{base_name}.json"));
-    let config_path = get_codex_config_dir().join(format!("config-{base_name}.toml"));
-
-    (auth_path, config_path)
-}
-
-/// 删除 Codex 供应商配置文件
-#[allow(dead_code)]
-pub fn delete_codex_provider_config(
-    provider_id: &str,
-    provider_name: &str,
-) -> Result<(), AppError> {
-    let (auth_path, config_path) = get_codex_provider_paths(provider_id, Some(provider_name));
-
-    delete_file(&auth_path).ok();
-    delete_file(&config_path).ok();
-
-    Ok(())
 }
 
 /// 原子写 Codex 的 `auth.json` 与 `config.toml`，在第二步失败时回滚第一步
@@ -253,10 +879,10 @@ pub fn write_codex_live_atomic(
     }
 
     // 第一步：写 auth.json
-    write_json_file(&auth_path, auth)?;
+    write_json_file_private(&auth_path, auth)?;
 
     // 第二步：写 config.toml（失败则回滚 auth.json）
-    if let Err(e) = write_text_file(&config_path, &cfg_text) {
+    if let Err(e) = write_text_file_private(&config_path, &cfg_text) {
         // 回滚 auth.json
         if let Some(bytes) = old_auth {
             let _ = atomic_write(&auth_path, &bytes);
@@ -305,30 +931,12 @@ fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
 }
 
 pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
+    // Exact match, mirroring upstream: both the built-in provider lookup and
+    // validate_reserved_model_provider_ids are case-sensitive, so `OpenAI`
+    // etc. are legitimate custom ids whose tables must receive the token.
+    // Keep in sync with the frontend list in src/utils/providerConfigUtils.ts.
     let id = id.trim();
-    !id.is_empty()
-        && !CODEX_RESERVED_MODEL_PROVIDER_IDS
-            .iter()
-            .any(|reserved| reserved.eq_ignore_ascii_case(id))
-}
-
-/// Write only Codex `config.toml` for provider switching.
-///
-/// Codex login state lives in `auth.json`; provider routing, endpoint, model,
-/// and provider-scoped bearer tokens live in `config.toml`. Provider switches
-/// should not overwrite the user's ChatGPT login cache.
-pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(), AppError> {
-    let config_path = get_codex_config_path();
-    let cfg_text = match config_text_opt {
-        Some(config_text) => config_text.to_string(),
-        None => String::new(),
-    };
-
-    if !cfg_text.trim().is_empty() {
-        toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
-    }
-
-    write_text_file(&config_path, &cfg_text)
+    !id.is_empty() && !CODEX_RESERVED_MODEL_PROVIDER_IDS.contains(&id)
 }
 
 pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
@@ -397,41 +1005,187 @@ pub fn codex_auth_has_login_material(auth: &Value) -> bool {
     })
 }
 
-pub fn codex_auth_has_oauth_login_material(auth: &Value) -> bool {
+/// The auth mode Codex resolves for an `auth.json` payload
+/// (`AuthDotJson::resolved_mode`, `codex-rs/login/src/auth/manager.rs`,
+/// 0.153.2): an explicit `auth_mode` wins outright; otherwise presence
+/// decides in this order — `personal_access_token`, `bedrock_api_key`,
+/// `bedrock_access_keys`, `OPENAI_API_KEY` — and everything else is
+/// ChatGPT. Presence is `Option::is_some`, i.e. any non-null value, even an
+/// empty one; the material itself is checked afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexResolvedAuthMode {
+    ApiKey,
+    Chatgpt,
+    ChatgptAuthTokens,
+    Headers,
+    AgentIdentity,
+    PersonalAccessToken,
+    BedrockApiKey,
+    BedrockAccessKeys,
+    /// An `auth_mode` string Codex's serde rejects (`rename_all =
+    /// "lowercase"` plus explicit camelCase renames, exact match): the whole
+    /// file fails to load, which Codex reports as signed out.
+    Unrecognized,
+}
+
+fn codex_auth_resolved_mode(auth: &serde_json::Map<String, Value>) -> CodexResolvedAuthMode {
+    let present = |key: &str| auth.get(key).is_some_and(|value| !value.is_null());
+
+    // `auth_mode: null` deserializes to `None` (serde default) and falls
+    // through to the implicit precedence below.
+    if let Some(mode) = auth.get("auth_mode").filter(|value| !value.is_null()) {
+        return match mode.as_str() {
+            Some("apikey") => CodexResolvedAuthMode::ApiKey,
+            Some("chatgpt") => CodexResolvedAuthMode::Chatgpt,
+            Some("chatgptAuthTokens") => CodexResolvedAuthMode::ChatgptAuthTokens,
+            Some("headers") => CodexResolvedAuthMode::Headers,
+            Some("agentIdentity") => CodexResolvedAuthMode::AgentIdentity,
+            Some("personalAccessToken") => CodexResolvedAuthMode::PersonalAccessToken,
+            Some("bedrockApiKey") => CodexResolvedAuthMode::BedrockApiKey,
+            Some("bedrockAccessKeys") => CodexResolvedAuthMode::BedrockAccessKeys,
+            _ => CodexResolvedAuthMode::Unrecognized,
+        };
+    }
+    if present("personal_access_token") {
+        return CodexResolvedAuthMode::PersonalAccessToken;
+    }
+    if present("bedrock_api_key") {
+        return CodexResolvedAuthMode::BedrockApiKey;
+    }
+    if present("bedrock_access_keys") {
+        return CodexResolvedAuthMode::BedrockAccessKeys;
+    }
+    if present("OPENAI_API_KEY") {
+        return CodexResolvedAuthMode::ApiKey;
+    }
+    CodexResolvedAuthMode::Chatgpt
+}
+
+/// True when Codex would load `auth` as a signed-in OpenAI account for a
+/// `requires_openai_auth` provider — the state its login screen and
+/// `ConfiguredModelProvider::account_state` (0.149+) go by. The auth mode is
+/// resolved exactly as Codex does (`codex_auth_resolved_mode`) and only then
+/// is the matching credential checked, so a Bedrock credential outranks a
+/// stale `OPENAI_API_KEY` sitting next to it just as it does in Codex, where
+/// that probe returns `UnsupportedBedrockApiKeyAuth` and fails TUI startup.
+/// Modes Codex cannot load from storage (`headers`, unrecognized) are signed
+/// out. The credential must be non-blank (stricter than Codex's `is_some`,
+/// erring toward "signed out"); metadata such as `last_refresh` never counts.
+pub fn codex_auth_has_openai_account_material(auth: &Value) -> bool {
     let Some(obj) = auth.as_object() else {
         return false;
     };
 
-    obj.iter().any(|(key, value)| {
-        if key == "auth_mode" || key == "OPENAI_API_KEY" {
-            return false;
-        }
+    let value_present = |value: &Value| match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        _ => true,
+    };
+    let has = |key: &str| obj.get(key).is_some_and(value_present);
 
-        match value {
-            Value::Null => false,
-            Value::String(text) => !text.trim().is_empty(),
-            Value::Array(items) => !items.is_empty(),
-            Value::Object(map) => !map.is_empty(),
-            _ => true,
-        }
-    })
+    match codex_auth_resolved_mode(obj) {
+        CodexResolvedAuthMode::ApiKey => extract_codex_auth_api_key(auth).is_some(),
+        CodexResolvedAuthMode::PersonalAccessToken => has("personal_access_token"),
+        CodexResolvedAuthMode::AgentIdentity => has("agent_identity"),
+        CodexResolvedAuthMode::Chatgpt | CodexResolvedAuthMode::ChatgptAuthTokens => obj
+            .get("tokens")
+            .and_then(Value::as_object)
+            .is_some_and(|tokens| {
+                ["id_token", "access_token", "refresh_token"]
+                    .iter()
+                    .any(|key| tokens.get(*key).is_some_and(value_present))
+            }),
+        CodexResolvedAuthMode::Headers
+        | CodexResolvedAuthMode::BedrockApiKey
+        | CodexResolvedAuthMode::BedrockAccessKeys
+        | CodexResolvedAuthMode::Unrecognized => false,
+    }
 }
 
-pub fn should_restore_codex_provider_token_for_backfill(
-    category: Option<&str>,
-    template_settings: &Value,
-) -> bool {
-    if category == Some("official") {
-        return false;
-    }
+/// Where Codex keeps CLI auth, per the top-level `cli_auth_credentials_store`
+/// key (`codex-rs/config/src/types.rs`, serde lowercase; unset = `file`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodexAuthStoreMode {
+    /// `auth.json` is the only store — the file decides login state.
+    File,
+    /// Keyring only; `auth.json` is never read and is deleted after a save.
+    Keyring,
+    /// Keyring first, `auth.json` as fallback for both load and save.
+    Auto,
+    /// In-process only; nothing on disk is ever a login.
+    Ephemeral,
+    /// Unparsable config or a value Codex would reject.
+    Unknown,
+}
 
-    let Some(auth) = template_settings.get("auth") else {
-        return true;
+pub(crate) fn codex_config_auth_store_mode(config_text: &str) -> CodexAuthStoreMode {
+    if !config_text.contains("cli_auth_credentials_store") {
+        return CodexAuthStoreMode::File;
+    }
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return CodexAuthStoreMode::Unknown;
+    };
+    match doc
+        .get("cli_auth_credentials_store")
+        .and_then(|item| item.as_str())
+    {
+        None => CodexAuthStoreMode::File,
+        Some("file") => CodexAuthStoreMode::File,
+        Some("keyring") => CodexAuthStoreMode::Keyring,
+        Some("auto") => CodexAuthStoreMode::Auto,
+        Some("ephemeral") => CodexAuthStoreMode::Ephemeral,
+        Some(_) => CodexAuthStoreMode::Unknown,
+    }
+}
+
+/// True only when the auth carries material Codex itself authenticates with
+/// ahead of the API-key fallback: OAuth tokens or another first-class login
+/// carrier. Unlike `codex_auth_has_oauth_login_material`, pure metadata such
+/// as `last_refresh` or `tokens.account_id` does NOT count — metadata must not
+/// shield a stale third-party `OPENAI_API_KEY` from post-switch cleanup.
+pub fn codex_auth_has_credential_login_material(auth: &Value) -> bool {
+    let Some(obj) = auth.as_object() else {
+        return false;
     };
 
-    let has_provider_api_key = extract_codex_auth_api_key(auth).is_some();
-    let has_oauth_login = codex_auth_has_oauth_login_material(auth);
-    !has_oauth_login || has_provider_api_key
+    let value_present = |value: &Value| match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        _ => true,
+    };
+
+    if ["personal_access_token", "agent_identity", "bedrock_api_key"]
+        .iter()
+        .any(|key| obj.get(*key).is_some_and(value_present))
+    {
+        return true;
+    }
+
+    obj.get("tokens")
+        .and_then(Value::as_object)
+        .is_some_and(|tokens| {
+            ["id_token", "access_token", "refresh_token"]
+                .iter()
+                .any(|key| tokens.get(*key).is_some_and(value_present))
+        })
+}
+
+/// True when live `auth.json` is the shape a preserve-off third-party switch
+/// leaves behind: an `OPENAI_API_KEY` (possibly alongside metadata like
+/// `auth_mode` / `last_refresh`) with no real login credential next to it.
+pub fn codex_live_auth_is_stale_third_party_residue(live_auth: &Value) -> bool {
+    if codex_auth_has_credential_login_material(live_auth) {
+        return false;
+    }
+    live_auth
+        .get("OPENAI_API_KEY")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|key| !key.is_empty())
 }
 
 fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
@@ -461,22 +1215,109 @@ fn codex_catalog_input_modalities(
     modalities.iter().map(|item| (*item).to_string()).collect()
 }
 
+/// Canonical reasoning effort levels Codex understands, with the same
+/// descriptions the official gpt-5.5 template uses. `none` disables thinking.
+const CODEX_REASONING_LEVEL_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("none", "Disable Thinking"),
+    ("minimal", "Minimal reasoning"),
+    ("low", "Fast responses with lighter reasoning"),
+    (
+        "medium",
+        "Balances speed and reasoning depth for everyday tasks",
+    ),
+    ("high", "Greater reasoning depth for complex problems"),
+    ("xhigh", "Extra high reasoning depth for complex problems"),
+    ("max", "Maximum reasoning depth for the hardest problems"),
+    ("ultra", "Ultra reasoning depth"),
+];
+
+fn codex_reasoning_level_description(effort: &str) -> Option<&'static str> {
+    CODEX_REASONING_LEVEL_DESCRIPTIONS
+        .iter()
+        .find(|(candidate, _)| *candidate == effort)
+        .map(|(_, description)| *description)
+}
+
+/// User-declared levels reduced to the canonical efforts Codex understands,
+/// in canonical (lowest → highest) order regardless of declaration order.
+/// Unknown efforts are dropped so a typo can never produce an entry Codex
+/// would reject.
+fn codex_canonical_efforts(levels: &[String]) -> Vec<&str> {
+    CODEX_REASONING_LEVEL_DESCRIPTIONS
+        .iter()
+        .filter(|(effort, _)| levels.iter().any(|candidate| candidate == effort))
+        .map(|(effort, _)| *effort)
+        .collect()
+}
+
+/// Build a `supported_reasoning_levels` array from user-declared effort values.
+fn codex_supported_reasoning_levels(levels: &[String]) -> Value {
+    let entries: Vec<Value> = codex_canonical_efforts(levels)
+        .into_iter()
+        .map(|effort| {
+            let description = codex_reasoning_level_description(effort)
+                .expect("canonical effort always has a description");
+            json!({ "effort": effort, "description": description })
+        })
+        .collect();
+    json!(entries)
+}
+
+/// Apply a per-model reasoning-level override onto a catalog entry. Returns
+/// true when the override was applied (so callers can skip further work).
+/// `template_default` is the base entry's `default_reasoning_level` (from the
+/// profile template or an official vendor entry) used as the fallback when the
+/// user did not declare one explicitly.
+fn apply_codex_reasoning_level_override(
+    entry_obj: &mut serde_json::Map<String, Value>,
+    template_default: Option<&str>,
+    spec: &CodexCatalogModelSpec,
+) -> bool {
+    let Some(levels) = spec.reasoning_levels.as_deref() else {
+        return false;
+    };
+    let canonical = codex_canonical_efforts(levels);
+    if canonical.is_empty() {
+        return false;
+    }
+    let supported = codex_supported_reasoning_levels(levels);
+    entry_obj.insert("supported_reasoning_levels".to_string(), supported);
+
+    // Default: explicit user value wins; otherwise keep the base default when
+    // it is still supported; otherwise fall back to the highest supported
+    // level in canonical order. All candidates are validated against the
+    // canonical set so the default can never reference a dropped effort.
+    let default_level = spec
+        .default_reasoning_level
+        .as_deref()
+        .filter(|level| canonical.contains(level))
+        .or_else(|| template_default.filter(|level| canonical.contains(level)))
+        .or_else(|| canonical.last().copied());
+    if let Some(default_level) = default_level {
+        entry_obj.insert("default_reasoning_level".to_string(), json!(default_level));
+    }
+    true
+}
+
 fn codex_catalog_model_entry(
     template: &Value,
     spec: &CodexCatalogModelSpec,
     priority: usize,
     profile: CodexCatalogToolProfile,
+    default_context_window: u64,
 ) -> Value {
     let mut entry = template.clone();
     let Some(entry_obj) = entry.as_object_mut() else {
         return json!({});
     };
 
+    let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
+    let context_window = spec.context_window.unwrap_or(default_context_window);
     entry_obj.insert("slug".to_string(), json!(spec.model));
-    entry_obj.insert("display_name".to_string(), json!(spec.display_name));
-    entry_obj.insert("description".to_string(), json!(spec.display_name));
-    entry_obj.insert("context_window".to_string(), json!(spec.context_window));
-    entry_obj.insert("max_context_window".to_string(), json!(spec.context_window));
+    entry_obj.insert("display_name".to_string(), json!(display_name));
+    entry_obj.insert("description".to_string(), json!(display_name));
+    entry_obj.insert("context_window".to_string(), json!(context_window));
+    entry_obj.insert("max_context_window".to_string(), json!(context_window));
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -495,7 +1336,10 @@ fn codex_catalog_model_entry(
         )),
     );
 
-    if profile != CodexCatalogToolProfile::ProxyChat {
+    if !matches!(
+        profile,
+        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot
+    ) {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
         // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
         // emit a custom/freeform tool, and rely on shell_type="shell_command" for
@@ -528,17 +1372,47 @@ fn codex_catalog_model_entry(
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
     }
+    if profile == CodexCatalogToolProfile::Copilot {
+        entry_obj.insert(
+            "supports_parallel_tool_calls".to_string(),
+            json!(spec.supports_parallel_tool_calls.unwrap_or(false)),
+        );
+    }
+
+    if matches!(
+        profile,
+        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot
+    ) {
+        // Codex's `original` image detail (full-resolution) is rejected by
+        // strict Chat gateways with `400 invalid_request_error`, param
+        // `messages.N.content`. Copilot can also select Chat per model, so
+        // neither proxy profile may advertise it; Codex keeps to auto/high.
+        entry_obj.insert("supports_image_detail_original".to_string(), json!(false));
+    }
+
+    // Per-model reasoning levels override the template's conservative
+    // none/high default (e.g. a LiteLLM gateway serving a model that accepts
+    // low/medium/high/xhigh/max). Applies to every profile.
+    let template_default = template
+        .get("default_reasoning_level")
+        .and_then(|value| value.as_str());
+    apply_codex_reasoning_level_override(entry_obj, template_default, spec);
 
     entry
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct CodexCatalogModelSpec {
     model: String,
-    display_name: String,
-    context_window: u64,
-    /// Per-row override for the native template's `supports_parallel_tool_calls`
-    /// (e.g. MiniMax=true, MiMo=false). Only consulted for `NativeResponses`.
+    /// Explicit user value only. Entries fall back to the model id — except
+    /// official vendor catalog entries, which keep the vendor's display name.
+    display_name: Option<String>,
+    /// Explicit user value only. Entries fall back to the config's
+    /// `model_context_window` (or 128k) — except official vendor catalog
+    /// entries, which keep the vendor's declared window.
+    context_window: Option<u64>,
+    /// Per-row override for `supports_parallel_tool_calls` on native and
+    /// Anthropic profiles, and Copilot's conservative false default.
     supports_parallel_tool_calls: Option<bool>,
     /// Hidden per-row capability declaration from built-in provider metadata.
     /// When omitted, all catalog profiles consult the shared text-only model
@@ -550,9 +1424,20 @@ struct CodexCatalogModelSpec {
     /// back to the template default when absent. Only consulted for
     /// `NativeResponses`.
     base_instructions: Option<String>,
+    /// Per-row override for the generated catalog's `supported_reasoning_levels`
+    /// (e.g. ["none", "low", "medium", "high", "xhigh", "max"]). When omitted
+    /// the template's conservative default (none/high) is kept. Consulted for
+    /// every profile; the vendor-catalog path applies it on top of the
+    /// official entry.
+    reasoning_levels: Option<Vec<String>>,
+    /// Per-row override for the generated catalog's `default_reasoning_level`.
+    /// Only meaningful together with `reasoning_levels`; when absent the
+    /// template default is kept if it is still in the list, otherwise the last
+    /// (highest) declared level wins.
+    default_reasoning_level: Option<String>,
 }
 
-fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
+fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
     let Some(models) = settings
         .get("modelCatalog")
         .and_then(|catalog| catalog.get("models"))
@@ -561,8 +1446,6 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
         return Vec::new();
     };
 
-    let default_context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
     let mut seen = std::collections::HashSet::new();
     let mut specs = Vec::new();
 
@@ -586,13 +1469,12 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             .and_then(|value| value.as_str())
             .map(str::trim)
             .filter(|name| !name.is_empty())
-            .unwrap_or(model);
+            .map(str::to_string);
         let context_window = parse_codex_positive_u64(
             model_config
                 .get("contextWindow")
                 .or_else(|| model_config.get("context_window")),
-        )
-        .unwrap_or(default_context_window);
+        );
 
         let supports_parallel_tool_calls = model_config
             .get("supportsParallelToolCalls")
@@ -619,13 +1501,37 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             .filter(|text| !text.is_empty())
             .map(str::to_string);
 
+        let reasoning_levels = model_config
+            .get("reasoningLevels")
+            .or_else(|| model_config.get("reasoning_levels"))
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .map(str::trim)
+                    .filter(|level| !level.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|levels| !levels.is_empty());
+        let default_reasoning_level = model_config
+            .get("defaultReasoningLevel")
+            .or_else(|| model_config.get("default_reasoning_level"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|level| !level.is_empty())
+            .map(str::to_string);
+
         specs.push(CodexCatalogModelSpec {
             model: model.to_string(),
-            display_name: display_name.to_string(),
+            display_name,
             context_window,
             supports_parallel_tool_calls,
             input_modalities,
             base_instructions,
+            reasoning_levels,
+            default_reasoning_level,
         });
     }
 
@@ -835,6 +1741,23 @@ fn codex_bundled_models_command(candidate: &Path) -> Command {
 }
 
 fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
+    Ok(first_bundled_catalog(find_codex_model_template))
+}
+
+/// 本机 Codex 自带的完整模型列表（`codex debug models --bundled`）。和账号无关，版本和
+/// 那个二进制一致。不能用不带 `--bundled` 的版本：那会读到 CC Switch 自己写的目录。
+pub(crate) fn load_codex_bundled_models() -> Option<Vec<Value>> {
+    first_bundled_catalog(|catalog| {
+        catalog
+            .get("models")
+            .and_then(Value::as_array)
+            .filter(|models| !models.is_empty())
+            .cloned()
+    })
+}
+
+/// 依次跑各个候选的 `codex debug models --bundled`，返回第一份 `pick` 取得出东西的结果。
+fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
     for candidate in codex_cli_candidates() {
         let candidate_label = candidate.to_string_lossy();
         let output = match codex_bundled_models_command(&candidate).output() {
@@ -860,12 +1783,68 @@ fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
                 continue;
             }
         };
-        if let Some(template) = find_codex_model_template(&catalog) {
-            return Ok(Some(template));
+        if let Some(found) = pick(&catalog) {
+            return Some(found);
         }
     }
 
-    Ok(None)
+    None
+}
+
+/// 官方原生行：逐行补 Codex 解析器必需的字段（不覆盖已有值）、补旧的指令字段，再校验。
+/// 原生字段一律保留（不套 profile、`comp_hash` 和工具定义不动）。有一行不合格就整份作废
+/// （`None`），不只丢那一行：那样会悄悄少一个官方模型。
+pub(crate) fn normalize_codex_native_rows(rows: Vec<Value>) -> Option<Vec<Value>> {
+    if rows.is_empty() {
+        return None;
+    }
+    rows.into_iter()
+        .map(|mut row| {
+            fill_template_fields_from_static(&mut row);
+            backfill_codex_base_instructions(&mut row);
+            codex_native_row_is_valid(&row).then_some(row)
+        })
+        .collect()
+}
+
+/// Codex 的指令有新旧两种写法：新的 `model_messages.instructions_template`，旧的顶层
+/// `base_instructions`，有一个就能解析。新版 Codex 写缓存、服务端返回的都只有新的，
+/// 更早的 Codex 只认旧的。缺旧字段、有 template 时原样复制（空串也照抄），和 codex-rs
+/// 的序列化器一样；已有旧字段的不动，新版以 template 为准。
+fn backfill_codex_base_instructions(row: &mut Value) {
+    let Some(obj) = row.as_object_mut() else {
+        return;
+    };
+    if obj.get("base_instructions").is_some_and(Value::is_string) {
+        return;
+    }
+    if let Some(template) = obj
+        .get("model_messages")
+        .and_then(|messages| messages.get("instructions_template"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    {
+        obj.insert("base_instructions".to_string(), json!(template));
+    }
+}
+
+fn codex_native_row_is_valid(row: &Value) -> bool {
+    let Some(obj) = row.as_object() else {
+        return false;
+    };
+    let has_slug = obj
+        .get("slug")
+        .and_then(Value::as_str)
+        .is_some_and(|slug| !slug.trim().is_empty());
+    let has_required = CODEX_CATALOG_PARSER_REQUIRED_FIELDS
+        .iter()
+        .all(|key| obj.contains_key(*key));
+    let has_instructions = obj.get("base_instructions").is_some_and(Value::is_string)
+        || obj
+            .get("model_messages")
+            .and_then(|messages| messages.get("instructions_template"))
+            .is_some_and(Value::is_string);
+    has_slug && has_required && has_instructions
 }
 
 fn load_codex_model_template_static() -> Option<Value> {
@@ -891,12 +1870,155 @@ fn load_codex_native_responses_template() -> Value {
     serde_json::from_str(text).expect("bundled codex native responses template must be valid JSON")
 }
 
+/// Hosts whose native `/responses` gateway publishes an OFFICIAL Codex model
+/// catalog (models.json) that cc-switch mirrors verbatim. Matched against
+/// `base_url` ONLY — deliberately NOT by model brand, unlike
+/// `CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES`: the official entries GRANT
+/// capabilities (freeform `apply_patch`, vendor harness), and an aggregator
+/// merely hosting the same model may not honor them. The safe failure
+/// direction for aggregators is the neutral template (degraded but working);
+/// wrongly granting freeform apply_patch would reintroduce the custom-tool
+/// rejection bug.
+const CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS: &[&str] = &["deepseek.com"];
+
+/// Bundled copy of DeepSeek's official Codex models.json — the exact file
+/// their one-click integration script writes (api-docs.deepseek.com →
+/// quick_start/agent_integrations/codex): freeform apply_patch, GPT-5 harness
+/// base_instructions, low/high/max reasoning levels, web_search supported,
+/// 1m context. Declares `minimal_client_version` 0.144.0.
+fn load_codex_deepseek_official_catalog_models() -> Vec<Value> {
+    let text = include_str!("resources/codex_deepseek_catalog_template.json");
+    let catalog: Value =
+        serde_json::from_str(text).expect("bundled DeepSeek official catalog must be valid JSON");
+    catalog
+        .get("models")
+        .and_then(|models| models.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Official vendor catalog entries for the provider in `config_text`, if its
+/// gateway ships one. Only the `NativeResponses` profile qualifies: ProxyChat
+/// runs through cc-switch's converter (gpt-5.5 template contract) and the
+/// Anthropic transform drops custom tools, so both must keep their existing
+/// templates. Host-driven like the web_search blacklist, so existing providers
+/// pick it up on their next switch without a re-save.
+fn codex_official_vendor_catalog_models(
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Option<Vec<Value>> {
+    if profile != CodexCatalogToolProfile::NativeResponses {
+        return None;
+    }
+    let base_url = extract_codex_base_url(config_text)?.to_ascii_lowercase();
+    if CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS
+        .iter()
+        .any(|host| base_url.contains(host))
+    {
+        let models = load_codex_deepseek_official_catalog_models();
+        if !models.is_empty() {
+            return Some(models);
+        }
+    }
+    None
+}
+
+/// Build one catalog entry from an official vendor catalog: match the user's
+/// model id against the vendor entries by slug; an unknown id clones the
+/// vendor's first (flagship) entry so it keeps the gateway's capability
+/// profile without impersonating the flagship. The official entry is
+/// authoritative — no tool-profile stripping — but explicit per-row user
+/// overrides still win.
+fn codex_vendor_catalog_model_entry(
+    vendor_models: &[Value],
+    spec: &CodexCatalogModelSpec,
+    priority: usize,
+) -> Value {
+    let matched = vendor_models.iter().find(|entry| {
+        entry
+            .get("slug")
+            .and_then(|slug| slug.as_str())
+            .is_some_and(|slug| slug.eq_ignore_ascii_case(&spec.model))
+    });
+    let mut entry = match matched {
+        Some(found) => found.clone(),
+        None => vendor_models.first().cloned().unwrap_or_else(|| json!({})),
+    };
+    // Capture before the mutable borrow: the vendor entry's own default is the
+    // fallback when the user declares reasoning levels without a default.
+    let vendor_default = entry
+        .get("default_reasoning_level")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let Some(entry_obj) = entry.as_object_mut() else {
+        return json!({});
+    };
+
+    if matched.is_none() {
+        let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
+        entry_obj.insert("slug".to_string(), json!(spec.model));
+        entry_obj.insert("display_name".to_string(), json!(display_name));
+        entry_obj.insert("description".to_string(), json!(display_name));
+        entry_obj.insert("priority".to_string(), json!(1000 + priority));
+        // Unknown model: don't inherit the flagship entry's modalities —
+        // resolve from the registry/fail-open logic instead, so a vision
+        // variant (e.g. deepseek-v4-flash-vision-exp) is not declared
+        // text-only merely because the flagship is.
+        entry_obj.insert(
+            "input_modalities".to_string(),
+            json!(codex_catalog_input_modalities(
+                &spec.model,
+                spec.input_modalities.as_deref(),
+            )),
+        );
+    }
+
+    // Explicit user overrides win over the official entry; absent values keep
+    // the vendor's declarations (context window, modalities, harness, ...).
+    if let Some(display_name) = spec.display_name.as_deref() {
+        entry_obj.insert("display_name".to_string(), json!(display_name));
+    }
+    if let Some(context_window) = spec.context_window {
+        entry_obj.insert("context_window".to_string(), json!(context_window));
+        entry_obj.insert("max_context_window".to_string(), json!(context_window));
+    }
+    if let Some(parallel) = spec.supports_parallel_tool_calls {
+        entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
+    }
+    if let Some(modalities) = spec.input_modalities.as_deref() {
+        entry_obj.insert("input_modalities".to_string(), json!(modalities));
+    }
+    if let Some(base_instructions) = spec
+        .base_instructions
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        entry_obj.insert("base_instructions".to_string(), json!(base_instructions));
+    }
+
+    // Per-model reasoning levels win over the official vendor entry too.
+    // The vendor file is the base (its own levels stay when no override is
+    // declared); its default_reasoning_level is the fallback.
+    apply_codex_reasoning_level_override(entry_obj, vendor_default.as_deref(), spec);
+
+    // Defensive: if a future codex parser requires a field the vendor file
+    // predates, backfill only whitelisted parser-required keys.
+    fill_template_fields_from_static(&mut entry);
+    entry
+}
+
 /// Fields Codex's external-catalog parser REQUIRES (no serde default): when
 /// one is missing Codex rejects the whole catalog file at startup ("missing
 /// field ..."). `base_instructions` is the other known required field; the
 /// templates always carry it and `codex_catalog_model_entry` handles it.
 /// When Codex requires a new field, add it here AND to the static templates.
-const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &["supports_reasoning_summaries"];
+const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &[
+    "supports_reasoning_summaries",
+    // codex 0.148.0 rejects the catalog without it (#6661); a models_cache.json
+    // written by an older build can lack it.
+    "supports_parallel_tool_calls",
+];
 
 /// `models_cache.json` is shared by every Codex install on the machine (npm
 /// CLI, desktop-bundled binary, ...), and each version serializes its own
@@ -969,15 +2091,19 @@ fn load_codex_model_catalog_template() -> Result<Value, AppError> {
     load_codex_model_catalog_template_uncached()
 }
 
+#[cfg(test)]
 fn codex_model_catalog_from_specs(
     specs: &[CodexCatalogModelSpec],
     template: &Value,
     profile: CodexCatalogToolProfile,
+    default_context_window: u64,
 ) -> Value {
     let entries: Vec<Value> = specs
         .iter()
         .enumerate()
-        .map(|(index, spec)| codex_catalog_model_entry(template, spec, index, profile))
+        .map(|(index, spec)| {
+            codex_catalog_model_entry(template, spec, index, profile, default_context_window)
+        })
         .collect();
 
     json!({ "models": entries })
@@ -988,124 +2114,434 @@ fn codex_model_catalog_from_settings(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Option<Value>, AppError> {
-    let specs = codex_catalog_model_specs(settings, config_text);
+    let specs = codex_catalog_model_specs(settings);
     if specs.is_empty() {
         return Ok(None);
     }
+    codex_catalog_from_specs_for_row(&specs, config_text, profile).map(Some)
+}
+
+/// Codex 自带的 OpenAI 官方模型列表（`codex debug models --bundled`），给第三方的 GPT
+/// 行按模型名找官方条目用。只缓存成功读到的列表：Codex 升级后要重启 CC Switch 才换新。
+#[cfg(not(test))]
+static CODEX_OPENAI_OFFICIAL_MODELS_CACHE: OnceCell<Vec<Value>> = OnceCell::new();
+
+#[cfg(test)]
+thread_local! {
+    /// 测试里的官方列表（`None` 时只有编译期内置的 gpt-5.5），不跑本机的 `codex`。
+    static CODEX_OPENAI_OFFICIAL_MODELS_OVERRIDE: std::cell::RefCell<Option<Vec<Value>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 编译期内置的 gpt-5.5：本机没有可用的 `codex` 时唯一的官方条目。
+fn codex_static_official_models() -> Vec<Value> {
+    load_codex_model_template_static()
+        .and_then(|template| normalize_codex_native_rows(vec![template]))
+        .unwrap_or_default()
+}
+
+/// 和账号无关的 OpenAI 官方模型列表。不用 `models_cache.json`：它是哪个账号、哪个版本
+/// 写的证明不了（见 `codex_official_models`）。
+#[cfg(not(test))]
+fn codex_openai_official_models() -> Vec<Value> {
+    CODEX_OPENAI_OFFICIAL_MODELS_CACHE
+        .get_or_try_init(|| {
+            load_codex_bundled_models()
+                .and_then(normalize_codex_native_rows)
+                .ok_or(())
+        })
+        .cloned()
+        .unwrap_or_else(|_| codex_static_official_models())
+}
+
+#[cfg(test)]
+fn codex_openai_official_models() -> Vec<Value> {
+    CODEX_OPENAI_OFFICIAL_MODELS_OVERRIDE
+        .with(|rows| rows.borrow().clone())
+        .unwrap_or_else(codex_static_official_models)
+}
+
+/// 按 Codex 自己查模型信息的规则找官方条目（codex-rs `models-manager/src/manager.rs` 的
+/// `construct_model_info_from_candidates`）：先按最长前缀，没有再去掉一层命名空间
+/// （`openai/gpt-5.5`）重试；区分大小写。结果就是没有 CC Switch 的目录时 Codex 会用的那条。
+fn find_codex_official_model<'a>(model: &str, candidates: &'a [Value]) -> Option<&'a Value> {
+    fn longest_prefix<'a>(model: &str, candidates: &'a [Value]) -> Option<&'a Value> {
+        candidates
+            .iter()
+            .filter_map(|candidate| {
+                let slug = candidate.get("slug").and_then(Value::as_str)?;
+                (!slug.is_empty() && model.starts_with(slug)).then_some((slug.len(), candidate))
+            })
+            .max_by_key(|(len, _)| *len)
+            .map(|(_, candidate)| candidate)
+    }
+
+    longest_prefix(model, candidates).or_else(|| {
+        let (namespace, suffix) = model.split_once('/')?;
+        let simple_namespace = !namespace.is_empty()
+            && namespace
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if suffix.contains('/') || !simple_namespace {
+            return None;
+        }
+        longest_prefix(suffix, candidates)
+    })
+}
+
+/// 第三方供应商上命中官方的 GPT 行：官方条目整条照搬（提示词、工具、档位、窗口都以官方
+/// 为准，不接受行里的覆盖值；窗口不同时在 `config.toml` 里设 `model_context_window`），
+/// 只改掉属于官方账号或官方后端的字段。
+fn codex_official_model_entry(
+    official: &Value,
+    model: &str,
+    priority: usize,
+    profile: CodexCatalogToolProfile,
+) -> Value {
+    let mut entry = official.clone();
+    let Some(obj) = entry.as_object_mut() else {
+        return json!({});
+    };
+    // 前缀、命名空间命中的别名（`gpt-5.5-high`）不冒用官方的显示名。
+    if obj.get("slug").and_then(Value::as_str) != Some(model) {
+        obj.insert("display_name".to_string(), json!(model));
+    }
+    obj.insert("slug".to_string(), json!(model));
+    obj.insert("priority".to_string(), json!(1000 + priority));
+    // 官方隐藏的条目用户明确写了，也要出现在选择器里。
+    obj.insert("visibility".to_string(), json!("list"));
+    // 速度档、升级提示归官方账号。
+    obj.insert("service_tiers".to_string(), json!([]));
+    obj.insert("additional_speed_tiers".to_string(), json!([]));
+    obj.insert("availability_nux".to_string(), Value::Null);
+    obj.insert("upgrade".to_string(), Value::Null);
+    // 第三方不支持 Responses Lite 协议。
+    obj.insert("use_responses_lite".to_string(), Value::Bool(false));
+    if profile == CodexCatalogToolProfile::ProxyChat {
+        // 同 `codex_catalog_model_entry`：严格的 Chat 网关拒收 `original` 精度的图片。
+        obj.insert("supports_image_detail_original".to_string(), json!(false));
+    }
+    entry
+}
+
+/// 目录里的一行是不是按 `official` 原样镜像出来的：反向解析会保留的几项（显示名、窗口、
+/// 模态、并行工具调用）都和重新镜像的结果相同，只还原模型名才不丢东西。
+fn is_codex_official_mirror(entry: &Value, model: &str, official: &Value) -> bool {
+    let expected =
+        codex_official_model_entry(official, model, 0, CodexCatalogToolProfile::NativeResponses);
+    [
+        "display_name",
+        "context_window",
+        "input_modalities",
+        "supports_parallel_tool_calls",
+    ]
+    .iter()
+    .all(|key| entry.get(*key) == expected.get(*key))
+}
+
+/// The catalog for one provider's models: its official vendor catalog when the
+/// gateway ships one, otherwise the profile's template.
+fn codex_catalog_from_specs_for_row(
+    specs: &[CodexCatalogModelSpec],
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<Value, AppError> {
+    // Vendors that publish an OFFICIAL Codex models.json for their native
+    // `/responses` gateway get it mirrored verbatim instead of the neutral
+    // template: its freeform apply_patch, vendor harness base_instructions and
+    // reasoning levels are load-bearing (the harness tells the model to use
+    // apply_patch, so catalog and harness must stay consistent).
+    if let Some(vendor_models) = codex_official_vendor_catalog_models(config_text, profile) {
+        let entries: Vec<Value> = specs
+            .iter()
+            .enumerate()
+            .map(|(index, spec)| codex_vendor_catalog_model_entry(&vendor_models, spec, index))
+            .collect();
+        return Ok(json!({ "models": entries }));
+    }
+
+    let default_context_window =
+        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
 
     // Native providers use the bundled clean template (no freeform apply_patch,
-    // no cache dependency); proxy-chat providers keep cloning Codex's gpt-5.5
-    // entry so the proxy can rewrite custom<->function tools as before.
+    // no cache dependency); ProxyChat and Copilot keep cloning Codex's gpt-5.5
+    // entry so their proxy paths retain custom<->function tool support.
     let template = match profile {
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
             load_codex_native_responses_template()
         }
-        CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
+        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot => {
+            load_codex_model_catalog_template()?
+        }
     };
-    Ok(Some(codex_model_catalog_from_specs(
-        &specs, &template, profile,
-    )))
+    // 命中 OpenAI 官方条目的行照搬官方（写了目录之后 Codex 只认文件里的条目，通用模板
+    // 会顶掉 GPT 自己的提示词），其余行照旧按模板生成。Responses→Anthropic 的转换会丢掉
+    // 官方条目里的 custom 工具，这条路不照搬。Copilot 仍按自身的目录配置生成，
+    // 保留账号模型的上下文窗口和并行工具能力，而不是套用官方 GPT 的能力。
+    let official = match profile {
+        CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => Vec::new(),
+        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::ProxyChat => {
+            codex_openai_official_models()
+        }
+    };
+    let entries: Vec<Value> = specs
+        .iter()
+        .enumerate()
+        .map(
+            |(index, spec)| match find_codex_official_model(&spec.model, &official) {
+                Some(found) => codex_official_model_entry(found, &spec.model, index, profile),
+                None => codex_catalog_model_entry(
+                    &template,
+                    spec,
+                    index,
+                    profile,
+                    default_context_window,
+                ),
+            },
+        )
+        .collect();
+    Ok(json!({ "models": entries }))
 }
 
-fn set_codex_model_catalog_json_field(
-    config_text: &str,
-    catalog_path: Option<&Path>,
-) -> Result<String, AppError> {
-    let mut doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-
-    match catalog_path {
-        Some(_) => {
-            doc["model_catalog_json"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
-        }
-        None => {
-            let should_remove = doc
-                .get("model_catalog_json")
-                .and_then(|item| item.as_str())
-                .map(|path| {
-                    Path::new(path).file_name().and_then(|name| name.to_str())
-                        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
-                })
-                .unwrap_or(false);
-            if should_remove {
-                doc.as_table_mut().remove("model_catalog_json");
-            }
-        }
-    }
-
-    Ok(doc.to_string())
+/// 一个供应商的模型目录：没有配置模型时为 `None`，不生成、也不指向目录文件。
+/// `web_search` 由 [`codex_disables_web_search`] 另算（切走时要按上一家算，不必生成目录）。
+pub(crate) struct CodexCatalogPlan {
+    pub catalog: Option<Value>,
 }
 
-/// Pure toggle for the top-level `web_search` field that turns Codex's built-in
-/// web-search tool off. When `disable` is true we write `web_search = "disabled"`
-/// (the catalog's `supports_search_tool` does NOT gate this — the request-time
-/// tool comes from the config, defaulting on). When false we *remove* the field,
-/// but only when it carries cc-switch's own `"disabled"` sentinel, so switching
-/// back to a web-search-capable provider re-enables it without clobbering a
-/// user's manual setting.
-///
-/// The caller decides `disable` (see `codex_native_gateway_rejects_web_search`);
-/// lifecycle is bound to the cc-switch catalog pointer so the field is set/cleaned
-/// up wherever the native catalog is written/removed.
-fn set_codex_native_web_search_field(config_text: &str, disable: bool) -> Result<String, AppError> {
-    let mut doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-
-    if disable {
-        doc[CODEX_WEB_SEARCH_FIELD] = toml_edit::value(CODEX_WEB_SEARCH_DISABLED);
-    } else {
-        let owned = doc
-            .get(CODEX_WEB_SEARCH_FIELD)
-            .and_then(|item| item.as_str())
-            == Some(CODEX_WEB_SEARCH_DISABLED);
-        if owned {
-            doc.as_table_mut().remove(CODEX_WEB_SEARCH_FIELD);
-        }
-    }
-
-    Ok(doc.to_string())
-}
-
-/// Generate Codex `model_catalog_json` from provider settings and inject/remove
-/// the top-level TOML field that points Codex to the generated file.
-pub fn prepare_codex_config_text_with_model_catalog(
+/// 要不要关掉 web_search：Responses→Anthropic 的转换会丢掉这个内置工具，Copilot 也不
+/// 提供这个托管工具，两者一律关；原生
+/// Responses 网关按拒收名单判定（MiMo、LongCat、MiniMax 等按域名或模型品牌，Qwen3-Coder
+/// 按模型）；其余保持 Codex 的默认。只在有模型目录时才看名单。
+pub(crate) fn codex_disables_web_search(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
-) -> Result<String, AppError> {
-    let catalog_path = get_codex_model_catalog_path();
-
-    if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
-        let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
-        // Disable web_search only for native gateways on the reject blacklist
-        // (MiMo/LongCat/MiniMax by host or model brand; Qwen3-Coder by model).
-        // Everything else — relays, DouBao, web-search-capable Qwen models,
-        // unknown providers — keeps Codex's default.
-        let disable_web_search = match profile {
-            // The Responses→Anthropic transform silently drops the Codex web_search
-            // hosted tool, so always disable it here rather than present a dead tool.
-            CodexCatalogToolProfile::Anthropic => true,
-            CodexCatalogToolProfile::NativeResponses => {
-                codex_native_gateway_rejects_web_search(&config_text)
-            }
-            CodexCatalogToolProfile::ProxyChat => false,
-        };
-        let config_text = set_codex_native_web_search_field(&config_text, disable_web_search)?;
-        write_json_file(&catalog_path, &catalog)?;
-        Ok(config_text)
-    } else {
-        let config_text = set_codex_model_catalog_json_field(config_text, None)?;
-        // Even without a generated catalog, the Responses→Anthropic transform drops the
-        // Codex web_search hosted tool, so keep the invariant that an Anthropic provider
-        // never presents it as a dead tool.
-        let disable_web_search = profile == CodexCatalogToolProfile::Anthropic;
-        set_codex_native_web_search_field(&config_text, disable_web_search)
+) -> bool {
+    match profile {
+        CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => true,
+        CodexCatalogToolProfile::NativeResponses => {
+            !codex_catalog_model_specs(settings).is_empty()
+                && codex_native_gateway_rejects_web_search(config_text)
+        }
+        CodexCatalogToolProfile::ProxyChat => false,
     }
 }
 
-/// Reverse of `prepare_codex_config_text_with_model_catalog`: read the
+/// 在内存里算出模型目录，不写盘。`config_text` 是归一化后的配置（选路、路由表地址、
+/// 模型名、窗口），见 `CodexProjection::catalog_input_text`。
+pub(crate) fn plan_codex_model_catalog(
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<CodexCatalogPlan, AppError> {
+    Ok(CodexCatalogPlan {
+        catalog: codex_model_catalog_from_settings(settings, config_text, profile)?,
+    })
+}
+
+/// 一家第三方供应商发布的模型：行里的模型目录；没有配置目录时只有行的 `model`。
+fn codex_published_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
+    let specs = codex_catalog_model_specs(settings);
+    if !specs.is_empty() {
+        return specs;
+    }
+    codex_top_level_model(config_text)
+        .map(|model| {
+            vec![CodexCatalogModelSpec {
+                model,
+                ..CodexCatalogModelSpec::default()
+            }]
+        })
+        .unwrap_or_default()
+}
+
+/// Stack 模型用：一家第三方供应商发布的模型名（按目录顺序）。`config_text` 是行里的
+/// `config`（只读顶层 `model`）。
+pub(crate) fn codex_published_models(settings: &Value, config_text: &str) -> Vec<String> {
+    codex_published_specs(settings, config_text)
+        .into_iter()
+        .map(|spec| spec.model)
+        .collect()
+}
+
+/// 合并目录里的一家第三方供应商。
+pub(crate) struct CodexCatalogRow<'a> {
+    pub settings: &'a Value,
+    /// 这一家归一化后的配置（`CodexProjection::catalog_input_text`）：地址、模型名、窗口。
+    pub config_text: &'a str,
+    /// 这一家自己的工具 profile：各家的请求走各自的转换，目录要和转换对得上。
+    pub profile: CodexCatalogToolProfile,
+}
+
+/// 合并目录里的一家 Stack 供应商。
+pub(crate) struct CodexStackCatalogMember<'a> {
+    pub key: &'a str,
+    pub provider_name: &'a str,
+    pub row: CodexCatalogRow<'a>,
+}
+
+/// 合并目录里路由那家的行。
+pub(crate) enum CodexStackRoute<'a> {
+    /// 第三方路由：按它的行生成。
+    ThirdParty(CodexCatalogRow<'a>),
+    /// 官方路由：官方模型列表的原生行（已补齐、已校验），原样保留；`config_text` 是
+    /// 官方卡归一化后的配置，只取窗口键。
+    Official {
+        native: Vec<Value>,
+        config_text: &'a str,
+    },
+}
+
+/// 合并目录里 Stack 行统一的 `comp_hash`。Codex 在一个会话记下的值变了时会压缩一次；
+/// 模板带来的值会随来源漂移（DeepSeek 官方目录是 "3000"，从 Codex 缓存克隆的 gpt-5.5
+/// 跟着缓存变），固定值才稳定。路由那家的行不改：它的值要和名单为空时的目录一致，否则
+/// 加进第一家、移除最后一家都会让路由上的会话恢复时被压缩一次。
+const CODEX_STACK_COMP_HASH: &str = "cc-switch";
+
+/// Stack 名单非空时的模型目录：路由那家的行在前，各 Stack 供应商的行按名单顺序在后，
+/// `priority` 统一重新编号。
+///
+/// 窗口类全局键（`model_context_window`、`model_auto_compact_token_limit`）这时不写进
+/// `config.toml`（Codex 会拿它覆盖所有行），改由各家写进自己的行，见 [`sink_row_windows`]。
+pub(crate) fn plan_codex_stack_catalog(
+    route: CodexStackRoute<'_>,
+    stack: &[CodexStackCatalogMember<'_>],
+) -> Result<Value, AppError> {
+    let mut entries = match route {
+        CodexStackRoute::ThirdParty(row) => codex_stack_third_party_rows(&row)?,
+        CodexStackRoute::Official {
+            mut native,
+            config_text,
+        } => {
+            // 按官方的 priority 排好再重新编号，模型选择器里的顺序和默认模型都不变。
+            native.sort_by_key(|entry| {
+                entry
+                    .get("priority")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(i64::MAX)
+            });
+            let windows = RowWindows::of(config_text);
+            for entry in &mut native {
+                sink_row_windows(entry, &windows, false);
+            }
+            native
+        }
+    };
+    for member in stack {
+        for mut entry in codex_stack_third_party_rows(&member.row)? {
+            let Some(obj) = entry.as_object_mut() else {
+                continue;
+            };
+            obj.insert("comp_hash".to_string(), json!(CODEX_STACK_COMP_HASH));
+            let Some(model) = obj.get("slug").and_then(Value::as_str).map(str::to_string) else {
+                continue;
+            };
+            let display = obj
+                .get("display_name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| model.clone());
+            obj.insert(
+                "slug".to_string(),
+                json!(crate::mode::stack::encode(
+                    &crate::app_config::AppType::Codex,
+                    member.key,
+                    &model,
+                    false,
+                )),
+            );
+            obj.insert(
+                "display_name".to_string(),
+                json!(crate::mode::stack::display_name(
+                    &display,
+                    member.provider_name
+                )),
+            );
+            let window = obj
+                .get("context_window")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            obj.insert(
+                "description".to_string(),
+                json!(crate::mode::stack::model_description(&model, window)),
+            );
+            // 第三方不支持 Responses Lite 协议。
+            if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
+                obj.insert("use_responses_lite".to_string(), Value::Bool(false));
+            }
+            entries.push(entry);
+        }
+    }
+    for (index, entry) in entries.iter_mut().enumerate() {
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert("priority".to_string(), json!(index + 1));
+        }
+    }
+    Ok(json!({ "models": entries }))
+}
+
+/// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值）。
+fn codex_stack_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>, AppError> {
+    let specs = codex_published_specs(row.settings, row.config_text);
+    if specs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let catalog = codex_catalog_from_specs_for_row(&specs, row.config_text, row.profile)?;
+    let mut entries = match catalog {
+        Value::Object(mut obj) => match obj.remove("models") {
+            Some(Value::Array(entries)) => entries,
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    };
+    let windows = RowWindows::of(row.config_text);
+    for entry in &mut entries {
+        sink_row_windows(entry, &windows, true);
+    }
+    Ok(entries)
+}
+
+/// 一家行里配置的窗口类全局键（见 [`sink_row_windows`]）。
+struct RowWindows {
+    window: Option<u64>,
+    limit: Option<u64>,
+}
+
+impl RowWindows {
+    fn of(config_text: &str) -> Self {
+        Self {
+            window: extract_codex_top_level_u64(config_text, "model_context_window"),
+            limit: extract_codex_top_level_u64(config_text, "model_auto_compact_token_limit"),
+        }
+    }
+}
+
+/// 把一家行里的窗口类全局键写进它自己的行：`model_context_window` 写成行的窗口，
+/// `model_auto_compact_token_limit` 写成行的压缩点。第三方行没有压缩点时写窗口的 90%
+/// （Codex 自己的默认也是 90%，写出来是为了不受别的来源影响）；官方原生行只写行里
+/// 明确配置的值，其余保持原样。
+fn sink_row_windows(entry: &mut Value, windows: &RowWindows, third_party: bool) {
+    let Some(obj) = entry.as_object_mut() else {
+        return;
+    };
+    if let Some(window) = windows.window {
+        obj.insert("context_window".to_string(), json!(window));
+        obj.insert("max_context_window".to_string(), json!(window));
+    }
+    let limit = windows.limit.or_else(|| {
+        third_party
+            .then(|| obj.get("context_window").and_then(Value::as_u64))
+            .flatten()
+            .filter(|window| *window > 0)
+            .map(|window| window * 9 / 10)
+    });
+    if let Some(limit) = limit {
+        obj.insert("auto_compact_token_limit".to_string(), json!(limit));
+    }
+}
+
+/// Reverse of `plan_codex_model_catalog`: read the
 /// cc-switch–maintained catalog file referenced by `~/.codex/config.toml` and
 /// convert it back into the simplified shape the frontend table uses:
 /// `{ "models": [{ "model", "displayName"?, "contextWindow"?, hidden overrides... }, ...] }`.
@@ -1128,17 +2564,28 @@ pub fn prepare_codex_config_text_with_model_catalog(
 /// All failure modes (missing file, parse error, no `model_catalog_json`,
 /// entries without `slug`) collapse to `Ok(None)` so callers can treat this
 /// as best-effort enrichment without making `read_live_settings` brittle.
+/// 模型目录文件读取上限（32 MiB）。目录 JSON 正常只有几百 KiB；超过则视为异常，
+/// 避免指向外部大文件时耗尽内存。
+const MAX_CODEX_CATALOG_BYTES: u64 = 32 * 1024 * 1024;
+
 pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, AppError> {
     let config_text = read_codex_config_text()?;
-    let generated_path = get_codex_model_catalog_path();
-    let Some(catalog_path) = resolve_cc_switch_catalog_path(&config_text, &generated_path) else {
+    let config_dir = get_codex_config_dir();
+    let Some(catalog_path) = resolve_cc_switch_catalog_path(&config_text, &config_dir) else {
         return Ok(None);
     };
     if !catalog_path.exists() {
         return Ok(None);
     }
-    let Ok(catalog_text) = fs::read_to_string(&catalog_path) else {
-        return Ok(None);
+    let catalog_text = match read_limited_string(&catalog_path, MAX_CODEX_CATALOG_BYTES) {
+        Ok(text) => text,
+        Err(error) => {
+            log::warn!(
+                "拒绝读取越界或过大的 Codex 模型目录 {}: {error}",
+                catalog_path.display()
+            );
+            return Ok(None);
+        }
     };
     Ok(build_simplified_catalog_from_texts(
         &config_text,
@@ -1146,12 +2593,31 @@ pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, 
     ))
 }
 
+/// 安全地读取文件为字符串，并在超过字节上限时返回错误。
+pub(crate) fn read_limited_string(path: &Path, max_bytes: u64) -> Result<String, AppError> {
+    let metadata = fs::metadata(path).map_err(|error| AppError::io(path, error))?;
+    if metadata.len() > max_bytes {
+        return Err(AppError::Config(format!(
+            "文件 {} 超过大小上限 {} 字节",
+            path.display(),
+            max_bytes
+        )));
+    }
+    fs::read_to_string(path).map_err(|error| AppError::io(path, error))
+}
+
+/// Read the cc-switch Codex model catalog file with a size cap.
+pub(crate) fn read_codex_model_catalog_text(path: &Path) -> Result<String, AppError> {
+    read_limited_string(path, MAX_CODEX_CATALOG_BYTES)
+}
+
 /// Given `config.toml` text, resolve the on-disk path of the cc-switch–owned
 /// catalog file (returns `None` if `model_catalog_json` is absent or points at
-/// a file we don't own). Relative paths fall back to `generated_path`.
+/// a file we don't own). Relative paths are resolved under `base_dir`;
+/// absolute paths must still be inside `base_dir`.
 pub(crate) fn resolve_cc_switch_catalog_path(
     config_text: &str,
-    generated_path: &Path,
+    base_dir: &Path,
 ) -> Option<PathBuf> {
     if config_text.trim().is_empty() {
         return None;
@@ -1170,11 +2636,59 @@ pub(crate) fn resolve_cc_switch_catalog_path(
         return None;
     }
 
-    if referenced_path.is_absolute() {
-        Some(referenced_path.to_path_buf())
+    // 注意（有意的行为变更）：Windows 上 `/…` 形式的旧 WSL 风格 Linux 路径也会
+    // 被视为绝对路径，从而在下方的包含性校验中失败——此前这类路径会因无法匹配
+    // 生成文件名而回退为按文件名解析、碰巧能工作。可接受：下一次切换供应商时
+    // 写入侧会重新落一个裸文件名，配置自愈（见
+    // `set_catalog_json_none_removes_cc_switch_owned_by_filename` 的场景注释）。
+    let is_unix_absolute = catalog_path_str.starts_with('/');
+    let resolved = if referenced_path.is_absolute() || is_unix_absolute {
+        referenced_path.to_path_buf()
     } else {
-        Some(generated_path.to_path_buf())
+        base_dir.join(referenced_path)
+    };
+
+    if !path_is_within(base_dir, &resolved) {
+        log::warn!(
+            "Codex model_catalog_json 指向配置目录外: {}（允许目录: {}）",
+            resolved.display(),
+            base_dir.display()
+        );
+        return None;
     }
+
+    // 词法包含不等于运行时包含：配置目录内的符号链接（如 ~/.codex/link ->
+    // /etc）能让 `link/cc-switch-model-catalog.json` 通过上面的检查，读取却
+    // 落到目录外。文件存在时把真实路径 canonicalize 出来再校验一次，并把
+    // canonical 路径返回给调用方——后续读取不再经过 symlink 组件。
+    if resolved.exists() {
+        let canonical = match fs::canonicalize(&resolved) {
+            Ok(path) => path,
+            Err(error) => {
+                log::warn!(
+                    "Codex model_catalog_json canonicalize 失败: {}: {error}",
+                    resolved.display()
+                );
+                return None;
+            }
+        };
+        // base 同样 canonicalize，保证两侧前缀一致（Windows \\?\、
+        // macOS /tmp -> /private/tmp）；base 失败时退回词法 base——
+        // 词法 base 与 canonical 路径比较只会误拒（退化为不读），不会误放。
+        let canonical_base = fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+        if !path_is_within(&canonical_base, &canonical) {
+            log::warn!(
+                "Codex model_catalog_json 经符号链接解析到配置目录外: {} -> {}（允许目录: {}）",
+                resolved.display(),
+                canonical.display(),
+                canonical_base.display()
+            );
+            return None;
+        }
+        return Some(canonical);
+    }
+
+    Some(resolved)
 }
 
 /// Pure reverse-parsing core: convert Codex catalog JSON text back into the
@@ -1187,6 +2701,7 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     let default_context_window =
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
 
+    let mut official: Option<Vec<Value>> = None;
     let mut entries = Vec::with_capacity(models.len());
     for entry in models {
         let Some(model) = entry
@@ -1197,6 +2712,29 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         else {
             continue;
         };
+        // Stack 模型的行（保留前缀）不属于路由那家，不能进它的编辑表单、再被保存回库里。
+        if !matches!(
+            crate::mode::stack::decode(&crate::app_config::AppType::Codex, model),
+            crate::mode::stack::Decoded::Plain
+        ) {
+            continue;
+        }
+        // 照搬官方的行只还原模型名，不能把官方值当成用户填的存回库里。通用模板没有
+        // `model_messages`（走 Anthropic 的行不照搬）；旧版 ProxyChat 克隆的 gpt-5.5 模板
+        // 有，但带着用户填的显示名、窗口，下面逐项比对不上，照旧还原。
+        if entry
+            .get("model_messages")
+            .and_then(|messages| messages.get("instructions_template"))
+            .is_some()
+        {
+            let official = official.get_or_insert_with(codex_openai_official_models);
+            if find_codex_official_model(model, official)
+                .is_some_and(|found| is_codex_official_mirror(entry, model, found))
+            {
+                entries.push(json!({ "model": model }));
+                continue;
+            }
+        }
 
         let mut obj = serde_json::Map::new();
         obj.insert("model".to_string(), json!(model));
@@ -1248,56 +2786,6 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     Some(json!({ "models": entries }))
 }
 
-/// Decide the `config.toml` text to write during a takeover-off restore,
-/// projecting the model catalog **only when `settings` carries an inline
-/// `modelCatalog`**.
-///
-/// Restore feeds back a stored backup, and Codex backups come in two shapes that
-/// need opposite handling:
-///
-/// - **Snapshot backup** (`read_codex_live_settings`): `{ auth, config }` with no
-///   inline `modelCatalog`. Its `config.toml` text already carries whatever
-///   `model_catalog_json` pointer existed at backup time, and the generated
-///   catalog file on disk is untouched. Here we must keep the config **raw** —
-///   running catalog projection would see "no specs" and strip the live pointer.
-/// - **Provider-rebuilt backup** (`update_live_backup_from_provider`): the DB
-///   provider's settings, i.e. `{ auth, config (no pointer), modelCatalog
-///   (inline DB SSOT) }`. Here the pointer/catalog file must be (re)generated
-///   from the inline `modelCatalog`, or the mapping is lost on restore.
-///
-/// Gating on the presence of the inline `modelCatalog` key routes each shape
-/// correctly; an empty inline catalog still projects (and so correctly drops a
-/// now-stale pointer), while an absent key leaves the text untouched. This is
-/// **orthogonal to auth** — a provider-rebuilt backup can pair an inline
-/// `modelCatalog` with empty `auth.json` (the API key living in the config's
-/// `experimental_bearer_token`), so the caller must decide config projection
-/// independently of whether it writes or deletes `auth.json`.
-pub fn prepare_codex_live_config_text_with_optional_catalog(
-    settings: &Value,
-    config_text: &str,
-    profile: CodexCatalogToolProfile,
-) -> Result<String, AppError> {
-    if settings.get("modelCatalog").is_some() {
-        prepare_codex_config_text_with_model_catalog(settings, config_text, profile)
-    } else {
-        Ok(config_text.to_string())
-    }
-}
-
-pub fn write_codex_provider_live_with_catalog(
-    settings: &Value,
-    category: Option<&str>,
-    auth: &Value,
-    config_text: Option<&str>,
-    profile: CodexCatalogToolProfile,
-) -> Result<(), AppError> {
-    let prepared_config = config_text
-        .map(|text| prepare_codex_config_text_with_model_catalog(settings, text, profile))
-        .transpose()?;
-
-    write_codex_live_for_provider(category, auth, prepared_config.as_deref())
-}
-
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
 ///
 /// Mobile compat: third-party providers may store the API key inside
@@ -1316,11 +2804,13 @@ pub fn extract_codex_experimental_bearer_token(config_text: &str) -> Option<Stri
             .and_then(|item| item.as_str())
     };
     let token = match provider_id.as_deref() {
+        // `as_table_like` (not `as_table`): user configs may use inline tables
+        // (`model_providers = { foo = {...} }`), which `as_table` rejects.
         Some(id) if is_custom_codex_model_provider_id(id) => doc
             .get("model_providers")
-            .and_then(|item| item.as_table())
+            .and_then(|item| item.as_table_like())
             .and_then(|table| table.get(id))
-            .and_then(|item| item.as_table())
+            .and_then(|item| item.as_table_like())
             .and_then(|table| table.get("experimental_bearer_token"))
             .and_then(|item| item.as_str())
             .or_else(top_level_token),
@@ -1334,97 +2824,12 @@ pub fn extract_codex_experimental_bearer_token(config_text: &str) -> Option<Stri
         .map(str::to_string)
 }
 
-fn set_codex_experimental_bearer_token(config_text: &str, token: &str) -> Result<String, AppError> {
-    if config_text.trim().is_empty() {
-        return Err(AppError::localized(
-            "provider.codex.config.missing",
-            "Codex 第三方供应商缺少 config.toml 配置，无法写入 bearer token",
-            "Codex third-party provider is missing config.toml, cannot write bearer token",
-        ));
-    }
-
-    let mut doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-
-    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
-        doc["experimental_bearer_token"] = toml_edit::value(token);
-        return Ok(doc.to_string());
-    };
-
-    if !is_custom_codex_model_provider_id(&provider_id) {
-        // Reserved Codex provider IDs are owned by the CLI. Keep third-party
-        // bearer tokens at the top level so we do not shadow built-in tables.
-        doc["experimental_bearer_token"] = toml_edit::value(token);
-        return Ok(doc.to_string());
-    }
-
-    if let Some(model_providers) = doc
-        .get_mut("model_providers")
-        .and_then(|item| item.as_table_mut())
-    {
-        if let Some(provider_table) = model_providers
-            .get_mut(provider_id.as_str())
-            .and_then(|item| item.as_table_mut())
-        {
-            provider_table["experimental_bearer_token"] = toml_edit::value(token);
-            return Ok(doc.to_string());
-        }
-    }
-
-    doc["experimental_bearer_token"] = toml_edit::value(token);
-    Ok(doc.to_string())
-}
-
-pub fn remove_codex_experimental_bearer_token_if(
-    config_text: &str,
-    predicate: impl Fn(&str) -> bool,
-) -> Result<String, AppError> {
-    if config_text.trim().is_empty() || !config_text.contains("experimental_bearer_token") {
-        return Ok(config_text.to_string());
-    }
-
-    let mut doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-
-    if let Some(provider_id) = active_codex_model_provider_id(&doc) {
-        if let Some(provider_table) = doc
-            .get_mut("model_providers")
-            .and_then(|item| item.as_table_mut())
-            .and_then(|table| table.get_mut(provider_id.as_str()))
-            .and_then(|item| item.as_table_mut())
-        {
-            let should_remove = provider_table
-                .get("experimental_bearer_token")
-                .and_then(|item| item.as_str())
-                .map(str::trim)
-                .is_some_and(&predicate);
-            if should_remove {
-                provider_table.remove("experimental_bearer_token");
-            }
-        }
-    }
-
-    let should_remove_top_level = doc
-        .get("experimental_bearer_token")
-        .and_then(|item| item.as_str())
-        .map(str::trim)
-        .is_some_and(&predicate);
-    if should_remove_top_level {
-        doc.as_table_mut().remove("experimental_bearer_token");
-    }
-    Ok(doc.to_string())
-}
-
-fn remove_codex_experimental_bearer_token(config_text: &str) -> Result<String, AppError> {
-    remove_codex_experimental_bearer_token_if(config_text, |_| true)
-}
-
 /// Read the current Codex live settings as a `{ auth, config }` object.
 ///
 /// Missing `auth.json` collapses to `{}` so a config-only third-party install
-/// is still importable; both files empty is treated as "no live install".
+/// is still importable; both files missing is treated as "no live install".
+/// A `config.toml` that exists but is empty is a valid state — e.g. the
+/// official seed after stale-auth cleanup — and must stay readable.
 pub fn read_codex_live_settings() -> Result<Value, AppError> {
     let auth_path = get_codex_auth_path();
     let auth_present = auth_path.exists();
@@ -1434,7 +2839,7 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
         json!({})
     };
     let cfg_text = read_and_validate_codex_config_text()?;
-    if !auth_present && cfg_text.trim().is_empty() {
+    if !auth_present && !get_codex_config_path().exists() {
         return Err(AppError::localized(
             "codex.live.missing",
             "Codex 配置文件不存在",
@@ -1444,102 +2849,8 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "auth": auth, "config": cfg_text }))
 }
 
-/// `[model_providers.custom]` entry that makes an official (ChatGPT OAuth)
-/// provider behave like Codex's built-in `openai` entry while running under
-/// the shared custom id: `requires_openai_auth` routes auth to the ChatGPT
-/// login in `auth.json` (base_url then defaults to the official Codex
-/// backend), `name = "OpenAI"` keeps Codex's `is_openai()` feature gates
-/// (web search, remote compaction), and `supports_websockets` restores the
-/// built-in default that custom entries otherwise lose.
-fn codex_official_provider_table(
-    base_url: Option<&str>,
-    supports_websockets: bool,
-) -> toml_edit::Table {
-    let mut table = toml_edit::Table::new();
-    table["name"] = toml_edit::value("OpenAI");
-    table["requires_openai_auth"] = toml_edit::value(true);
-    table["supports_websockets"] = toml_edit::value(supports_websockets);
-    table["wire_api"] = toml_edit::value("responses");
-    if let Some(base_url) = base_url {
-        table["base_url"] = toml_edit::value(base_url.trim_end_matches('/'));
-    }
-    table
-}
-
-fn codex_unified_official_provider_table() -> toml_edit::Table {
-    codex_official_provider_table(None, true)
-}
-
-fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Table) {
-    for (_, item) in providers.iter_mut() {
-        if let Some(table) = item.as_table_mut() {
-            let should_remove = table
-                .get("experimental_bearer_token")
-                .and_then(|item| item.as_str())
-                == Some(CODEX_PROXY_AUTH_PLACEHOLDER);
-            if should_remove {
-                table.remove("experimental_bearer_token");
-            }
-        } else if let Some(table) = item.as_inline_table_mut() {
-            let should_remove = table
-                .get("experimental_bearer_token")
-                .and_then(|value| value.as_str())
-                == Some(CODEX_PROXY_AUTH_PLACEHOLDER);
-            if should_remove {
-                table.remove("experimental_bearer_token");
-            }
-        }
-    }
-}
-
-/// Project the built-in Codex official provider through the local proxy while
-/// keeping authentication owned by Codex itself.
-///
-/// The resulting custom provider explicitly opts into OpenAI authentication,
-/// so Codex forwards its existing ChatGPT login to the local `/responses`
-/// endpoint.  No API key or bearer placeholder is written to `auth.json`.
-pub fn apply_codex_official_proxy_route(
-    config_text: &str,
-    proxy_base_url: &str,
-) -> Result<String, AppError> {
-    let mut doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-
-    // A third-party takeover may have left the proxy placeholder in config.toml.
-    // The official route must use Codex's native OpenAI login instead.
-    doc.as_table_mut().remove("experimental_bearer_token");
-    doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID);
-
-    let mut providers = match doc.as_table_mut().remove("model_providers") {
-        Some(item) => item.into_table().map_err(|_| {
-            AppError::Message(
-                "Invalid Codex config.toml: model_providers must be a table".to_string(),
-            )
-        })?,
-        None => {
-            let mut table = toml_edit::Table::new();
-            table.set_implicit(true);
-            table
-        }
-    };
-
-    // Clean only CC Switch's placeholder from every stale provider table. Real
-    // user bearer tokens are preserved, as are all unrelated provider fields.
-    remove_codex_proxy_placeholders_from_providers(&mut providers);
-
-    // The local proxy currently exposes HTTP/SSE, not Codex websocket routes.
-    let table = codex_official_provider_table(Some(proxy_base_url), false);
-
-    providers.insert(
-        CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
-        toml_edit::Item::Table(table),
-    );
-    doc["model_providers"] = toml_edit::Item::Table(providers);
-    Ok(doc.to_string())
-}
-
-/// Whether a live Codex config is the official route projected by CC Switch.
+/// Whether a live Codex config is the official route projected by an older CC Switch
+/// (`model_provider = "cc-switch-official"`).
 pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
     if !config_text.contains(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
         return false;
@@ -1556,32 +2867,36 @@ pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
         == Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
 }
 
-/// Remove only the official takeover route owned by CC Switch. This is a
-/// last-resort crash cleanup when no live backup or provider SSOT is usable.
-pub fn remove_codex_official_proxy_route(config_text: &str) -> Result<String, AppError> {
-    let mut doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-    if doc.get("model_provider").and_then(|item| item.as_str())
-        != Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
-    {
-        return Ok(config_text.to_string());
+/// live 的 `config.toml` 是不是现在的代理官方路由（`is_proxy_url` 认本地代理给 Codex 的
+/// 地址）：没开统一会话历史时不选别的 provider、顶层 `openai_base_url` 改道到代理；开了
+/// 时选 custom，表是指向代理的官方镜像。两种都没有占位 Key，只能按地址认。
+pub fn codex_config_routes_official_to_proxy(
+    config_text: &str,
+    is_proxy_url: impl Fn(&str) -> bool,
+) -> bool {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let same_url = |item: Option<&toml_edit::Item>| {
+        item.and_then(|item| item.as_str())
+            .is_some_and(|url| is_proxy_url(url.trim().trim_end_matches('/')))
+    };
+    match doc.get("model_provider").and_then(|item| item.as_str()) {
+        None | Some("openai") => same_url(doc.get("openai_base_url")),
+        Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID) => doc
+            .get("model_providers")
+            .and_then(|item| item.as_table_like())
+            .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+            .and_then(|item| item.as_table_like())
+            .is_some_and(|table| {
+                table
+                    .get("requires_openai_auth")
+                    .and_then(|item| item.as_bool())
+                    == Some(true)
+                    && same_url(table.get("base_url"))
+            }),
+        Some(_) => false,
     }
-
-    doc.as_table_mut().remove("model_provider");
-    if let Some(item) = doc.as_table_mut().remove("model_providers") {
-        let mut providers = item.into_table().map_err(|_| {
-            AppError::Message(
-                "Invalid Codex config.toml: model_providers must be a table".to_string(),
-            )
-        })?;
-        providers.remove(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID);
-        remove_codex_proxy_placeholders_from_providers(&mut providers);
-        if !providers.is_empty() {
-            doc["model_providers"] = toml_edit::Item::Table(providers);
-        }
-    }
-    Ok(doc.to_string())
 }
 
 fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bool {
@@ -1596,55 +2911,6 @@ fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bo
             .and_then(|item| item.as_bool())
             == Some(true)
         && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
-}
-
-/// 统一 Codex 会话历史：把官方供应商的 live 配置改写为以共享的
-/// `custom` model_provider 标识运行（认证仍走 `auth.json` 的 ChatGPT 登录），
-/// 使开关开启后创建的官方会话与第三方会话共用同一个 resume 历史桶。
-///
-/// 两种情况拒绝注入、原样返回：
-/// - 配置已有显式 `model_provider`：用户手工指定的路由不被覆盖；
-/// - 配置已有形态不同的 `[model_providers.custom]` 表：设置 `model_provider`
-///   会激活这张我们不认识的表（可能带第三方 base_url/token，会把 ChatGPT
-///   OAuth 流量路由到错误后端），宁可让开关对该配置不生效。
-pub fn inject_codex_unified_session_bucket(config_text: &str) -> Result<String, AppError> {
-    let mut doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-
-    if doc.get("model_provider").is_some() {
-        return Ok(config_text.to_string());
-    }
-
-    let existing_custom_conflicts = doc
-        .get("model_providers")
-        .and_then(|item| item.as_table())
-        .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
-        .and_then(|item| item.as_table())
-        .is_some_and(|table| !table_matches_codex_unified_official_provider(table));
-    if existing_custom_conflicts {
-        log::warn!(
-            "官方 Codex 配置已存在自定义 [model_providers.custom]，跳过统一会话路由注入以避免激活未知路由"
-        );
-        return Ok(config_text.to_string());
-    }
-
-    doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
-
-    if doc.get("model_providers").is_none() {
-        let mut parent = toml_edit::Table::new();
-        parent.set_implicit(true);
-        doc["model_providers"] = toml_edit::Item::Table(parent);
-    }
-    if let Some(providers) = doc["model_providers"].as_table_mut() {
-        if !providers.contains_key(CC_SWITCH_CODEX_MODEL_PROVIDER_ID) {
-            providers.insert(
-                CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
-                toml_edit::Item::Table(codex_unified_official_provider_table()),
-            );
-        }
-    }
-    Ok(doc.to_string())
 }
 
 /// `inject_codex_unified_session_bucket` 的反向操作：从配置文本里剥掉注入的
@@ -1688,33 +2954,6 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
     Ok(doc.to_string())
 }
 
-/// 统一会话开关开启时，把官方供应商 `{ auth, config }` 设置对象中的
-/// config 文本注入共享 custom 路由；开关关闭或非官方供应商时不做改动。
-///
-/// 普通 live 写入（`write_codex_live_for_provider`）与代理接管备份
-/// （`update_live_backup_from_provider`）两条落盘路径共用：接管期间
-/// live 归代理所有，注入必须进备份，接管释放恢复的 live 才带统一路由。
-pub fn apply_codex_unified_session_bucket_to_settings(
-    category: Option<&str>,
-    settings: &mut Value,
-) -> Result<(), AppError> {
-    if category != Some("official") || !crate::settings::unify_codex_session_history() {
-        return Ok(());
-    }
-    let config_text = settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .to_string();
-    let injected = inject_codex_unified_session_bucket(&config_text)?;
-    if injected != config_text {
-        if let Some(obj) = settings.as_object_mut() {
-            obj.insert("config".to_string(), Value::String(injected));
-        }
-    }
-    Ok(())
-}
-
 /// Backfill helper: strip the unified-session injection from a live
 /// `{ auth, config }` settings object before it is stored back to the DB.
 pub fn strip_codex_unified_session_bucket_from_settings(
@@ -1736,299 +2975,183 @@ pub fn strip_codex_unified_session_bucket_from_settings(
     Ok(())
 }
 
-/// Backfill helper: strip `[mcp_servers]` from a live `{ auth, config }`
-/// settings object before it is stored back to the DB.
-///
-/// MCP 服务器的 SSOT 是 DB 的 mcp_servers 表，live `config.toml` 里的
-/// `[mcp_servers]` 只是每次写 live 之后由 MCP 同步重新投影的产物。若回填时
-/// 烙进供应商存储配置，已在应用里删除的服务器会随下次激活该供应商被写回
-/// live，而逐条 reconcile 只认识 DB 现存条目、永远清不掉这种孤儿。
-pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(), AppError> {
-    let Some(config_text) = settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-    else {
-        return Ok(());
-    };
-    if !config_text.contains("mcp") {
-        return Ok(());
-    }
-    let mut doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-    let mut changed = doc.as_table_mut().remove("mcp_servers").is_some();
-    // 历史错误格式 [mcp.servers] 一并清理（live 侧 MCP 同步也做同样迁移）
-    if let Some(mcp_tbl) = doc.get_mut("mcp").and_then(|item| item.as_table_like_mut()) {
-        if mcp_tbl.remove("servers").is_some() {
-            changed = true;
-        }
-        if mcp_tbl.is_empty() {
-            doc.as_table_mut().remove("mcp");
-        }
-    }
-    if changed {
-        if let Some(obj) = settings.as_object_mut() {
-            obj.insert("config".to_string(), Value::String(doc.to_string()));
-        }
-    }
-    Ok(())
-}
-
-/// Route a Codex live write between full auth+config or config-only.
-///
-/// Official providers with usable login material own `auth.json`. Third-party
-/// providers only touch `config.toml` when the compatibility setting is enabled
-/// so the user's ChatGPT login cache survives provider switches.
-///
-/// 统一会话开关开启时，官方配置在落盘前注入共享的 `custom` 路由
-/// （见 `inject_codex_unified_session_bucket`）。
-pub fn write_codex_live_for_provider(
-    category: Option<&str>,
-    auth: &Value,
-    config_text: Option<&str>,
-) -> Result<(), AppError> {
-    let unified_official_config =
-        if category == Some("official") && crate::settings::unify_codex_session_history() {
-            Some(inject_codex_unified_session_bucket(
-                config_text.unwrap_or(""),
-            )?)
-        } else {
-            None
-        };
-    let config_text = unified_official_config.as_deref().or(config_text);
-
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
-
-    if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
-    } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
-        write_codex_live_config_atomic(Some(&live_config))
-    }
-}
-
-/// Build the live Codex config for provider switching.
-///
-/// The stored provider keeps its API key in `auth.OPENAI_API_KEY`. Live Codex
-/// requests can use a provider-scoped `experimental_bearer_token`, so switching
-/// providers only needs to update `config.toml`; `auth.json` stays as the user's
-/// long-lived ChatGPT login cache.
-pub fn prepare_codex_provider_live_config(
-    auth: &Value,
-    config_text: &str,
-) -> Result<String, AppError> {
-    let token = extract_codex_auth_api_key(auth)
-        .or_else(|| extract_codex_experimental_bearer_token(config_text));
-
-    Ok(match token {
-        Some(token) => set_codex_experimental_bearer_token(config_text, &token)?,
-        None => config_text.to_string(),
-    })
-}
-
-/// During DB backfill, lift a live `experimental_bearer_token` back into
-/// `auth.OPENAI_API_KEY` so the stored provider keeps its canonical shape
-/// and generated live tokens don't leak into stored provider TOML.
-///
-/// Only intervenes when the live config actually carries a bearer token —
-/// otherwise the function is a no-op so the caller's normal backfill path
-/// (which keeps live `auth` as the authoritative source) is unaffected.
-pub fn restore_codex_provider_token_for_backfill(
-    settings: &mut Value,
-    template_settings: &Value,
-) -> Result<(), AppError> {
-    let Some(config_text) = settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-    else {
-        return Ok(());
-    };
-
-    let Some(token) = extract_codex_experimental_bearer_token(&config_text) else {
-        return Ok(());
-    };
-
-    let cleaned_config = remove_codex_experimental_bearer_token(&config_text)?;
-
-    if let Some(obj) = settings.as_object_mut() {
-        obj.insert("config".to_string(), Value::String(cleaned_config));
-
-        let mut auth = template_settings
-            .get("auth")
-            .filter(|value| value.is_object())
-            .cloned()
-            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-        if let Some(auth_obj) = auth.as_object_mut() {
-            auth_obj.insert("OPENAI_API_KEY".to_string(), Value::String(token));
-        }
-        obj.insert("auth".to_string(), auth);
-    }
-
-    Ok(())
-}
-
-pub fn restore_codex_settings_for_backfill(
-    settings: &mut Value,
-    template_settings: &Value,
-    restore_provider_token: bool,
-) -> Result<(), AppError> {
-    if restore_provider_token {
-        restore_codex_provider_token_for_backfill(settings, template_settings)?;
-    }
-    Ok(())
-}
-
-/// Update a field in Codex config.toml using toml_edit (syntax-preserving).
-///
-/// Supported fields:
-/// - `"base_url"`: writes to `[model_providers.<current>].base_url` if `model_provider` exists,
-///   otherwise falls back to top-level `base_url`.
-/// - `"wire_api"`: writes to `[model_providers.<current>].wire_api` if `model_provider` exists,
-///   otherwise falls back to top-level `wire_api`.
-/// - `"model"` / `"model_catalog_json"`: writes to top-level field.
-///
-/// Empty value removes the field.
-pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Result<String, String> {
-    let mut doc = toml_str
-        .parse::<DocumentMut>()
-        .map_err(|e| format!("TOML parse error: {e}"))?;
-
-    let trimmed = value.trim();
-
-    match field {
-        "base_url" | "wire_api" => {
-            let model_provider = doc
-                .get("model_provider")
-                .and_then(|item| item.as_str())
-                .map(str::to_string);
-
-            if let Some(provider_key) = model_provider {
-                // Ensure [model_providers] table exists
-                //
-                // 用 as_table_like_mut 而非 as_table_mut：用户把配置写成 inline table
-                // （`model_providers = { foo = {...} }`，TOML 合法）时 as_table_mut
-                // 返回 None，会一路掉进下面的顶层 fallback——用户改的 base_url 被写到
-                // 了错误层级且毫无提示。
-                if doc
-                    .get("model_providers")
-                    .is_none_or(|item| item.as_table_like().is_none())
-                {
-                    // 键存在但不是表（`model_providers = 42`）时，下面这行会把用户
-                    // 手写的值替换掉。旧代码在这种形状下会掉进顶层 fallback 而不动
-                    // 它，所以归一化必须留痕——与 mcp/codex.rs、mcp/grokbuild.rs、
-                    // opencode_config.rs 的同款处理保持一致。
-                    if doc
-                        .get("model_providers")
-                        .is_some_and(|item| !item.is_none())
-                    {
-                        log::warn!("config.toml 的 model_providers 不是表，已重置为空表");
-                    }
-                    doc["model_providers"] = toml_edit::table();
-                }
-
-                if let Some(model_providers) = doc
-                    .get_mut("model_providers")
-                    .and_then(toml_edit::Item::as_table_like_mut)
-                {
-                    // Ensure [model_providers.<provider_key>] table exists
-                    if !model_providers.contains_key(&provider_key) {
-                        model_providers.insert(&provider_key, toml_edit::table());
-                    }
-
-                    if let Some(provider_table) = model_providers
-                        .get_mut(&provider_key)
-                        .and_then(toml_edit::Item::as_table_like_mut)
-                    {
-                        if trimmed.is_empty() {
-                            provider_table.remove(field);
-                        } else {
-                            provider_table.insert(field, toml_edit::value(trimmed));
-                        }
-                        return Ok(doc.to_string());
-                    }
-                }
-
-                log::warn!(
-                    "config.toml 的 [model_providers.{provider_key}] 结构异常，{field} 改写为顶层字段"
-                );
-            }
-
-            // Fallback: no model_provider or structure mismatch → top-level field
-            if trimmed.is_empty() {
-                doc.as_table_mut().remove(field);
-            } else {
-                doc[field] = toml_edit::value(trimmed);
-            }
-        }
-        "model" | "model_catalog_json" => {
-            if trimmed.is_empty() {
-                doc.as_table_mut().remove(field);
-            } else {
-                doc[field] = toml_edit::value(trimmed);
-            }
-        }
-        _ => return Err(format!("unsupported field: {field}")),
-    }
-
-    Ok(doc.to_string())
-}
-
-/// Remove `base_url` from the active model_provider section only if it matches `predicate`.
-/// Also removes top-level `base_url` if it matches.
-/// Used by proxy cleanup to strip local proxy URLs without touching user-configured URLs.
-pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) -> bool) -> String {
-    let mut doc = match toml_str.parse::<DocumentMut>() {
-        Ok(doc) => doc,
-        Err(_) => return toml_str.to_string(),
-    };
-
-    let model_provider = doc
-        .get("model_provider")
-        .and_then(|item| item.as_str())
-        .map(str::to_string);
-
-    if let Some(provider_key) = model_provider {
-        if let Some(model_providers) = doc
-            .get_mut("model_providers")
-            .and_then(|v| v.as_table_mut())
-        {
-            if let Some(provider_table) = model_providers
-                .get_mut(provider_key.as_str())
-                .and_then(|v| v.as_table_mut())
-            {
-                let should_remove = provider_table
-                    .get("base_url")
-                    .and_then(|item| item.as_str())
-                    .map(&predicate)
-                    .unwrap_or(false);
-                if should_remove {
-                    provider_table.remove("base_url");
-                }
-            }
-        }
-    }
-
-    // Fallback: also clean up top-level base_url if it matches
-    let should_remove_root = doc
-        .get("base_url")
-        .and_then(|item| item.as_str())
-        .map(&predicate)
-        .unwrap_or(false);
-    if should_remove_root {
-        doc.as_table_mut().remove("base_url");
-    }
-
-    doc.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+    use std::ffi::OsString;
+
+    #[test]
+    fn official_proxy_route_is_recognized_by_its_address() {
+        let proxy = |url: &str| url == "http://127.0.0.1:15721/v1";
+        for (config, expected) in [
+            ("openai_base_url = \"http://127.0.0.1:15721/v1/\"\n", true),
+            ("model_provider = \"openai\"\nopenai_base_url = \"http://127.0.0.1:15721/v1\"\n", true),
+            ("model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n", true),
+            // 别的地址（比如其他工具改道到自己的本地服务）不算。
+            ("openai_base_url = \"http://127.0.0.1:10531/v1\"\n", false),
+            // 选了别的 provider，改道不生效。
+            ("model_provider = \"relay\"\nopenai_base_url = \"http://127.0.0.1:15721/v1\"\n", false),
+            // 官方直连的统一会话镜像表没有地址。
+            ("model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\n", false),
+            ("model = \"gpt-5.5\"\n", false),
+        ] {
+            assert_eq!(
+                codex_config_routes_official_to_proxy(config, proxy),
+                expected,
+                "{config}"
+            );
+        }
+    }
+
+    #[test]
+    fn codex_id_token_user_identity_requires_a_nonempty_subject() {
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
+        let subject_payload = URL_SAFE_NO_PAD.encode(json!({ "sub": "stable-user" }).to_string());
+        assert_eq!(
+            extract_codex_id_token_user_identity(&test_codex_id_token("stable-user")),
+            Some("sub:stable-user".to_string())
+        );
+        assert_eq!(extract_codex_id_token_user_identity("not-a-jwt"), None);
+        assert_eq!(
+            extract_codex_id_token_user_identity(&format!("{header}.{subject_payload}")),
+            None
+        );
+        assert_eq!(
+            extract_codex_id_token_user_identity(&format!("{header}.{subject_payload}..extra")),
+            None
+        );
+        assert_eq!(
+            extract_codex_id_token_user_identity(&format!("invalid.{subject_payload}.signature")),
+            None
+        );
+        assert_eq!(
+            extract_codex_id_token_user_identity(&test_codex_id_token("   ")),
+            None
+        );
+
+        let payload = URL_SAFE_NO_PAD.encode(json!({ "email": "user@example.test" }).to_string());
+        assert_eq!(
+            extract_codex_id_token_user_identity(&format!("{header}.{payload}.")),
+            None
+        );
+    }
+
+    struct CodexLiveTestHome {
+        _dir: tempfile::TempDir,
+        original_test_home: Option<OsString>,
+    }
+
+    impl CodexLiveTestHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create isolated Codex live test home");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings for isolated test home");
+
+            Self {
+                _dir: dir,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for CodexLiveTestHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct CodexLiveTestState {
+        auth_bytes: Vec<u8>,
+        auth_value: Value,
+        config_bytes: Vec<u8>,
+        config_value: toml::Value,
+        catalog_bytes: Vec<u8>,
+        catalog_value: Value,
+        marker_bytes: Vec<u8>,
+        marker_value: Value,
+    }
+
+    fn capture_codex_live_test_state() -> CodexLiveTestState {
+        let auth_bytes = fs::read(get_codex_auth_path()).expect("read live auth bytes");
+        let config_bytes = fs::read(get_codex_config_path()).expect("read live config bytes");
+        let catalog_bytes =
+            fs::read(get_codex_model_catalog_path()).expect("read live catalog bytes");
+        let marker_bytes = fs::read(get_codex_managed_oauth_live_auth_marker_path())
+            .expect("read managed auth marker bytes");
+
+        CodexLiveTestState {
+            auth_value: serde_json::from_slice(&auth_bytes).expect("parse live auth"),
+            config_value: toml::from_str(
+                std::str::from_utf8(&config_bytes).expect("live config must be UTF-8"),
+            )
+            .expect("parse live config"),
+            catalog_value: serde_json::from_slice(&catalog_bytes).expect("parse live catalog"),
+            marker_value: serde_json::from_slice(&marker_bytes).expect("parse managed auth marker"),
+            auth_bytes,
+            config_bytes,
+            catalog_bytes,
+            marker_bytes,
+        }
+    }
+
+    fn seed_rotated_managed_codex_live_state() -> CodexLiveTestState {
+        let id_token = test_codex_id_token("user-a");
+        let auth = codex_managed_oauth_auth_value(
+            "account-a",
+            "access-r1",
+            Some(&id_token),
+            "refresh-r1",
+            "2026-08-06T00:00:01Z",
+        );
+        crate::config::write_json_file(&get_codex_auth_path(), &auth).expect("seed live auth R1");
+        crate::config::write_text_file(
+            &get_codex_config_path(),
+            "# cas-guard-sentinel\nmodel = \"gpt-5.5\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n",
+        )
+        .expect("seed live config");
+        crate::config::write_json_file(
+            &get_codex_model_catalog_path(),
+            &json!({ "models": [{ "slug": "cas-guard-sentinel" }] }),
+        )
+        .expect("seed live catalog");
+        record_codex_managed_oauth_live_auth(&auth, "account-a").expect("seed managed auth marker");
+
+        capture_codex_live_test_state()
+    }
+
+    #[test]
+    #[serial]
+    fn ensure_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
+        let _home = CodexLiveTestHome::new();
+        let before = seed_rotated_managed_codex_live_state();
+
+        let result =
+            ensure_codex_live_auth_unchanged_for_managed_account("account-a", "refresh-r0");
+
+        assert!(result.is_err(), "R1 live auth must reject an expected R0");
+        assert_eq!(capture_codex_live_test_state(), before);
+    }
+
+    #[test]
+    #[serial]
+    fn clear_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
+        let _home = CodexLiveTestHome::new();
+        let before = seed_rotated_managed_codex_live_state();
+
+        let result =
+            clear_codex_live_auth_for_managed_account_if_unchanged("account-a", Some("refresh-r0"));
+
+        assert!(result.is_err(), "R1 live auth must reject an expected R0");
+        assert_eq!(capture_codex_live_test_state(), before);
+    }
 
     #[test]
     fn catalog_tool_profile_from_api_format() {
@@ -2051,167 +3174,6 @@ mod tests {
     }
 
     #[test]
-    fn unified_session_bucket_injects_for_empty_official_config() {
-        let injected = inject_codex_unified_session_bucket("").expect("inject");
-        let doc: toml::Table = toml::from_str(&injected).expect("parse injected config");
-
-        assert_eq!(
-            doc.get("model_provider").and_then(|v| v.as_str()),
-            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
-        );
-        let custom = doc["model_providers"][CC_SWITCH_CODEX_MODEL_PROVIDER_ID]
-            .as_table()
-            .expect("custom provider table");
-        assert_eq!(custom.get("name").and_then(|v| v.as_str()), Some("OpenAI"));
-        assert_eq!(
-            custom.get("requires_openai_auth").and_then(|v| v.as_bool()),
-            Some(true)
-        );
-        assert_eq!(
-            custom.get("supports_websockets").and_then(|v| v.as_bool()),
-            Some(true)
-        );
-        assert_eq!(
-            custom.get("wire_api").and_then(|v| v.as_str()),
-            Some("responses")
-        );
-    }
-
-    #[test]
-    fn official_proxy_route_uses_native_auth_and_local_responses_provider() {
-        let input = r#"model = "gpt-5.4"
-experimental_bearer_token = "PROXY_MANAGED"
-
-[mcp_servers.example]
-command = "example"
-"#;
-        let output = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1")
-            .expect("apply official proxy route");
-        let doc: toml::Value = toml::from_str(&output).expect("parse output");
-
-        assert_eq!(
-            doc.get("model_provider").and_then(toml::Value::as_str),
-            Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
-        );
-        assert!(doc.get("experimental_bearer_token").is_none());
-        assert!(
-            doc.get("mcp_servers").is_some(),
-            "unrelated config survives"
-        );
-
-        let provider = &doc["model_providers"][CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID];
-        assert_eq!(
-            provider.get("base_url").and_then(toml::Value::as_str),
-            Some("http://127.0.0.1:15721/v1")
-        );
-        assert_eq!(
-            provider
-                .get("requires_openai_auth")
-                .and_then(toml::Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(
-            provider
-                .get("supports_websockets")
-                .and_then(toml::Value::as_bool),
-            Some(false)
-        );
-        assert!(codex_config_has_official_proxy_route(&output));
-    }
-
-    #[test]
-    fn official_proxy_route_cleanup_only_removes_owned_provider() {
-        let projected =
-            apply_codex_official_proxy_route("model = \"gpt-5.4\"\n", "http://127.0.0.1:15721/v1")
-                .expect("project");
-        let cleaned = remove_codex_official_proxy_route(&projected).expect("clean");
-        let doc: toml::Value = toml::from_str(&cleaned).expect("parse cleaned");
-        assert!(doc.get("model_provider").is_none());
-        assert!(doc.get("model_providers").is_none());
-        assert_eq!(
-            doc.get("model").and_then(toml::Value::as_str),
-            Some("gpt-5.4")
-        );
-    }
-
-    #[test]
-    fn official_proxy_route_rejects_non_table_model_providers_without_panicking() {
-        for input in [
-            "model_providers = 3\n",
-            "[[model_providers]]\nname = \"broken\"\n",
-        ] {
-            let result = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1");
-            assert!(result.is_err());
-        }
-    }
-
-    #[test]
-    fn official_proxy_route_normalizes_inline_tables_and_cleans_stale_placeholder() {
-        let input = r#"model_provider = "rightcode"
-model_providers = { rightcode = { name = "RightCode", experimental_bearer_token = "PROXY_MANAGED" } }
-"#;
-        let projected = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1")
-            .expect("project inline provider table");
-        let projected_doc: toml::Value = toml::from_str(&projected).expect("parse projected");
-        assert!(projected_doc["model_providers"]["rightcode"]
-            .get("experimental_bearer_token")
-            .is_none());
-        assert!(projected_doc["model_providers"]
-            .get(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
-            .is_some());
-
-        let cleaned = remove_codex_official_proxy_route(&projected).expect("clean projected");
-        let cleaned_doc: toml::Value = toml::from_str(&cleaned).expect("parse cleaned");
-        assert!(cleaned_doc.get("model_provider").is_none());
-        assert!(cleaned_doc["model_providers"].get("rightcode").is_some());
-        assert!(cleaned_doc["model_providers"]
-            .get(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
-            .is_none());
-    }
-
-    #[test]
-    fn unified_session_bucket_preserves_other_keys_and_explicit_routing() {
-        let with_catalog = "model_catalog_json = \"cc-switch-model-catalog.json\"\n";
-        let injected = inject_codex_unified_session_bucket(with_catalog).expect("inject");
-        assert!(injected.contains("model_catalog_json"));
-        assert!(injected.contains("model_provider = \"custom\""));
-
-        // 用户显式指定过 model_provider 的官方配置不被覆盖
-        let explicit = "model_provider = \"openai_https\"\n";
-        let unchanged = inject_codex_unified_session_bucket(explicit).expect("inject");
-        assert_eq!(unchanged, explicit);
-    }
-
-    #[test]
-    fn unified_session_bucket_skips_conflicting_custom_table() {
-        // 残留的非注入形态 custom 表：设置 model_provider 会把官方流量
-        // 路由到表里的第三方端点，必须整体拒绝注入。
-        let stale = r#"[model_providers.custom]
-name = "Relay"
-base_url = "https://relay.example/v1"
-"#;
-        let unchanged = inject_codex_unified_session_bucket(stale).expect("inject");
-        assert_eq!(unchanged, stale);
-
-        // 已是注入形态的 custom 表（如重复注入）则照常补上 model_provider
-        let injected_once = inject_codex_unified_session_bucket("").expect("inject");
-        let reinjected = inject_codex_unified_session_bucket(&injected_once).expect("re-inject");
-        assert_eq!(reinjected, injected_once);
-    }
-
-    #[test]
-    fn unified_session_bucket_strip_round_trips_injection() {
-        let injected = inject_codex_unified_session_bucket("").expect("inject");
-        let stripped = strip_codex_unified_session_bucket(&injected).expect("strip");
-        assert_eq!(stripped.trim(), "");
-
-        let with_catalog = "model_catalog_json = \"cc-switch-model-catalog.json\"\n";
-        let injected = inject_codex_unified_session_bucket(with_catalog).expect("inject");
-        let stripped = strip_codex_unified_session_bucket(&injected).expect("strip");
-        assert_eq!(stripped, with_catalog);
-    }
-
-    #[test]
     fn unified_session_bucket_strip_keeps_third_party_custom_entry() {
         // 第三方模板同样用 custom 路由，但条目带 base_url 等差异字段，
         // 形态不等于注入产物，必须原样保留。
@@ -2225,59 +3187,6 @@ requires_openai_auth = true
 "#;
         let untouched = strip_codex_unified_session_bucket(third_party).expect("strip");
         assert_eq!(untouched, third_party);
-    }
-
-    #[test]
-    fn unified_session_bucket_strip_from_settings_only_touches_config() {
-        let injected = inject_codex_unified_session_bucket("").expect("inject");
-        let mut settings = json!({
-            "auth": { "tokens": { "access_token": "secret" } },
-            "config": injected,
-        });
-        strip_codex_unified_session_bucket_from_settings(&mut settings).expect("strip settings");
-        assert_eq!(
-            settings
-                .get("config")
-                .and_then(|v| v.as_str())
-                .map(str::trim),
-            Some("")
-        );
-        assert!(settings.pointer("/auth/tokens/access_token").is_some());
-    }
-
-    #[test]
-    fn strip_mcp_servers_from_settings_removes_table_and_legacy_form() {
-        let mut settings = json!({
-            "auth": { "OPENAI_API_KEY": "sk-test" },
-            "config": "# user comment\nmodel = \"gpt-5.5\"\n\n[mcp_servers.echo]\ntype = \"stdio\"\ncommand = \"echo\"\n\n[mcp.servers.legacy]\ncommand = \"noop\"\n",
-        });
-        strip_codex_mcp_servers_from_settings(&mut settings).expect("strip mcp");
-        let config = settings
-            .get("config")
-            .and_then(|v| v.as_str())
-            .expect("config text");
-        assert!(!config.contains("mcp_servers"), "got: {config}");
-        assert!(
-            !config.contains("[mcp"),
-            "legacy [mcp.servers] gone: {config}"
-        );
-        assert!(config.contains("# user comment"), "comments preserved");
-        assert!(config.contains("model = \"gpt-5.5\""));
-    }
-
-    #[test]
-    fn strip_mcp_servers_from_settings_is_noop_without_mcp() {
-        let original = "# comment\nmodel = \"gpt-5.5\"\n";
-        let mut settings = json!({
-            "auth": {},
-            "config": original,
-        });
-        strip_codex_mcp_servers_from_settings(&mut settings).expect("strip mcp");
-        assert_eq!(
-            settings.get("config").and_then(|v| v.as_str()),
-            Some(original),
-            "config text must be byte-identical when nothing is stripped"
-        );
     }
 
     #[test]
@@ -2325,36 +3234,293 @@ base_url = "https://single.example.com/v1"
     }
 
     #[test]
-    fn prepare_provider_live_config_rejects_key_without_config() {
-        let err = prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), "")
-            .expect_err("empty config with API key should not truncate live config");
-
+    #[serial]
+    fn managed_chatgpt_login_matches_local_marker_and_workspace() {
+        let _home = CodexLiveTestHome::new();
+        let shared_chatgpt_user_token = |subject: &str| {
+            let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
+            let payload = URL_SAFE_NO_PAD.encode(
+                json!({
+                    "sub": subject,
+                    "https://api.openai.com/auth": {
+                        "chatgpt_user_id": "shared-team-user-id"
+                    }
+                })
+                .to_string(),
+            );
+            format!("{header}.{payload}.")
+        };
+        // 原生 auth 保留 workspace ID；marker 用本地 ID 区分同 workspace 登录。
+        let full_bundle = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "id_token": shared_chatgpt_user_token("user-a"),
+                "access_token": "access",
+                "refresh_token": "refresh-secret",
+                "account_id": "workspace-shared"
+            },
+            "last_refresh": "2026-01-02T03:04:05.000000000Z"
+        });
+        record_codex_managed_oauth_live_auth(&full_bundle, "local-account-a")
+            .expect("record managed auth marker");
+        crate::config::write_json_file(&get_codex_auth_path(), &full_bundle)
+            .expect("write managed live auth");
         assert!(
-            err.to_string().contains("config.toml"),
-            "error should explain missing config.toml, got: {err}"
+            codex_live_auth_matches_managed_request("local-account-a", "access").unwrap(),
+            "the selected account's exact live bearer must match"
         );
+        assert!(
+            !codex_live_auth_matches_managed_request("local-account-a", "other-access").unwrap(),
+            "another user's bearer in the same workspace must not match"
+        );
+        let managed_id_token = full_bundle
+            .pointer("/tokens/id_token")
+            .and_then(Value::as_str)
+            .expect("managed id token");
+        assert!(
+            codex_live_auth_is_managed_chatgpt_login(&full_bundle, "local-account-a"),
+            "a full refreshable bundle for the managed account must be recognized"
+        );
+        assert!(
+            !codex_live_auth_is_managed_chatgpt_login(&full_bundle, "local-account-b"),
+            "another local login in the same workspace must not match"
+        );
+        let mut other_user = full_bundle.clone();
+        other_user["tokens"]["id_token"] = json!(shared_chatgpt_user_token("user-b"));
+        assert!(
+            !codex_live_auth_is_managed_chatgpt_login(&other_user, "local-account-a"),
+            "a native login for another user in the same workspace must not match"
+        );
+        crate::config::write_json_file(&get_codex_auth_path(), &other_user)
+            .expect("write other user's native login");
+        assert!(
+            read_codex_live_auth_refresh_for_account("local-account-a").is_none(),
+            "another user's refresh token must not be adopted"
+        );
+        clear_codex_live_auth_for_managed_account("local-account-a")
+            .expect("clear stale local ownership marker");
+        assert!(
+            get_codex_auth_path().exists(),
+            "removing local account A must not delete native account B"
+        );
+
+        crate::config::write_json_file(
+            &get_codex_managed_oauth_live_auth_marker_path(),
+            &json!({
+                "version": 2,
+                "account_id": "workspace-shared"
+            }),
+        )
+        .expect("write legacy managed auth marker");
+        assert!(
+            read_codex_live_auth_refresh_for_managed_account(
+                "workspace-shared",
+                Some(managed_id_token),
+            )
+            .is_err(),
+            "a legacy marker must not migrate across users in one workspace"
+        );
+        assert!(
+            !codex_live_auth_is_managed_chatgpt_login(&other_user, "workspace-shared"),
+            "a legacy marker without user identity must not establish ownership"
+        );
+        assert!(
+            read_codex_live_auth_refresh_for_account("workspace-shared").is_none(),
+            "a legacy marker must not authorize refresh-token adoption"
+        );
+        clear_codex_live_auth_for_managed_account("workspace-shared")
+            .expect("clear ambiguous legacy marker");
+        assert!(
+            get_codex_auth_path().exists(),
+            "clearing an ambiguous legacy marker must preserve native auth"
+        );
+
+        // 非 chatgpt 模式（API key）不应命中。
+        let api_key_auth = json!({ "OPENAI_API_KEY": "sk-live" });
+        assert!(!codex_live_auth_is_managed_chatgpt_login(
+            &api_key_auth,
+            "local-account-a"
+        ));
+    }
+
+    /// 原生 ChatGPT 登录没有 marker 是常态：不认所有权，也不算读取失败；marker 坏了同样
+    /// 不认。
+    #[test]
+    #[serial]
+    fn missing_or_malformed_marker_never_establishes_ownership() {
+        let _home = CodexLiveTestHome::new();
+        let id_token = test_codex_id_token("user-a");
+        let auth = codex_managed_oauth_auth_value(
+            "workspace-a",
+            "access",
+            Some(&id_token),
+            "refresh",
+            "2026-01-01T00:00:00Z",
+        );
+        crate::config::write_json_file(&get_codex_auth_path(), &auth).expect("write live auth");
+        let marker = get_codex_managed_oauth_live_auth_marker_path();
+
+        assert!(!marker.exists());
+        assert!(!codex_auth_matches_recorded_managed_oauth(&auth, "local-account-a").unwrap());
+        assert!(!codex_live_auth_matches_managed_request("local-account-a", "access").unwrap());
+
+        crate::config::write_text_file(&marker, "{not json").expect("write malformed marker");
+        assert!(!codex_auth_matches_recorded_managed_oauth(&auth, "local-account-a").unwrap());
     }
 
     #[test]
-    fn prepare_provider_live_config_uses_top_level_token_for_reserved_provider() {
-        let input = r#"model_provider = "openai"
-model = "gpt-5"
-"#;
-
-        let output =
-            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), input)
-                .expect("prepare live config");
-        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
-
-        assert_eq!(
-            parsed
-                .get("experimental_bearer_token")
-                .and_then(|v| v.as_str()),
-            Some("sk-test")
+    #[serial]
+    fn legacy_managed_marker_removal_requires_manager_identity() {
+        let _home = CodexLiveTestHome::new();
+        let id_token = test_codex_id_token("legacy-user");
+        let auth = codex_managed_oauth_auth_value(
+            "legacy-workspace",
+            "access",
+            Some(&id_token),
+            "refresh",
+            "2026-01-01T00:00:00Z",
         );
-        assert!(
-            parsed.get("model_providers").is_none(),
-            "reserved provider tables should not be synthesized"
+        crate::config::write_json_file(&get_codex_auth_path(), &auth)
+            .expect("write legacy live auth");
+        crate::config::write_json_file(
+            &get_codex_managed_oauth_live_auth_marker_path(),
+            &json!({
+                "version": 2,
+                "account_id": "legacy-workspace"
+            }),
+        )
+        .expect("write legacy marker");
+
+        let other_user = test_codex_id_token("other-user");
+        assert!(prepare_codex_live_auth_for_managed_account_removal(
+            "legacy-workspace",
+            Some(&other_user),
+        )
+        .is_err());
+        assert!(get_codex_auth_path().exists());
+        assert!(get_codex_managed_oauth_live_auth_marker_path().exists());
+
+        prepare_codex_live_auth_for_managed_account_removal("legacy-workspace", Some(&id_token))
+            .expect("prove and migrate legacy ownership");
+        clear_codex_live_auth_for_managed_account("legacy-workspace")
+            .expect("remove proven managed live auth");
+        assert!(!get_codex_auth_path().exists());
+        assert!(!get_codex_managed_oauth_live_auth_marker_path().exists());
+    }
+
+    #[test]
+    fn openai_account_material_mirrors_codex_account_probe() {
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "sk-test"
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "chatgpt",
+            "tokens": { "access_token": "acc" }
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "personal_access_token": "pat"
+        })));
+        // Bedrock credentials make account_state() fail on a
+        // requires_openai_auth provider, so they must not count as a login.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "bedrock_api_key": "bedrock"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "last_refresh": "2026-09-01T00:00:00Z",
+            "tokens": { "account_id": "acct" }
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "   "
+        })));
+
+        // Precedence mirrors AuthDotJson::resolved_mode: an implicit Bedrock
+        // credential outranks a leftover OPENAI_API_KEY, so the pair is still
+        // Bedrock and must not be promoted to an OpenAI login.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "sk-stale",
+            "bedrock_api_key": "bedrock"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "sk-stale",
+            "bedrock_access_keys": { "access_key_id": "a", "secret_access_key": "s" }
+        })));
+        // An explicit auth_mode wins outright, in both directions.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "bedrockApiKey",
+            "OPENAI_API_KEY": "sk-stale",
+            "bedrock_api_key": "bedrock"
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "sk-live",
+            "bedrock_api_key": "bedrock"
+        })));
+        // personal_access_token outranks the API key even when blank: Codex
+        // then attempts PAT auth with nothing and ends up signed out.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "personal_access_token": "",
+            "OPENAI_API_KEY": "sk-live"
+        })));
+        // agent_identity only counts under an explicit mode; implicitly the
+        // payload resolves to ChatGPT, which has no tokens here.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "agent_identity": "jwt"
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "agentIdentity",
+            "agent_identity": "jwt"
+        })));
+        // `auth_mode: null` is absent to serde; a string it rejects fails the
+        // whole load (exact-match, so casing matters); headers auth cannot be
+        // loaded from storage at all.
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": null,
+            "OPENAI_API_KEY": "sk-live"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "ApiKey",
+            "OPENAI_API_KEY": "sk-live"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "headers",
+            "OPENAI_API_KEY": "sk-live"
+        })));
+    }
+
+    #[test]
+    fn auth_store_mode_reads_top_level_cli_auth_credentials_store() {
+        assert_eq!(
+            codex_config_auth_store_mode("model = \"gpt-5\"\n"),
+            CodexAuthStoreMode::File
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"file\"\n"),
+            CodexAuthStoreMode::File
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"keyring\"\n"),
+            CodexAuthStoreMode::Keyring
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"auto\"\n"),
+            CodexAuthStoreMode::Auto
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"ephemeral\"\n"),
+            CodexAuthStoreMode::Ephemeral
+        );
+        // Codex's serde is lowercase-only; anything else fails its load.
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"Keyring\"\n"),
+            CodexAuthStoreMode::Unknown
+        );
+        // Only the top-level key counts.
+        assert_eq!(
+            codex_config_auth_store_mode(
+                "[model_providers.x]\ncli_auth_credentials_store = \"keyring\"\n"
+            ),
+            CodexAuthStoreMode::File
         );
     }
 
@@ -2374,419 +3540,62 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
-    fn should_not_restore_provider_token_for_oauth_only_template() {
-        let oauth_template = json!({
-            "auth": {
-                "auth_mode": "chatgpt",
-                "tokens": {
-                    "access_token": "oauth-access"
-                }
-            }
-        });
-        let api_key_template = json!({
-            "auth": {
-                "OPENAI_API_KEY": "sk-test"
-            }
-        });
+    fn credential_login_material_only_counts_real_credentials() {
+        assert!(codex_auth_has_credential_login_material(&json!({
+            "tokens": { "access_token": "t" }
+        })));
+        assert!(codex_auth_has_credential_login_material(&json!({
+            "tokens": { "refresh_token": "r" }
+        })));
+        assert!(codex_auth_has_credential_login_material(&json!({
+            "personal_access_token": "pat"
+        })));
 
-        assert!(
-            !should_restore_codex_provider_token_for_backfill(Some("custom"), &oauth_template),
-            "OAuth-only templates should not backfill bearer tokens into OPENAI_API_KEY"
-        );
-        assert!(
-            should_restore_codex_provider_token_for_backfill(Some("custom"), &api_key_template),
-            "custom API-key providers should still restore provider bearer tokens"
-        );
-        assert!(
-            !should_restore_codex_provider_token_for_backfill(Some("official"), &api_key_template),
-            "official providers should never restore third-party bearer tokens"
-        );
+        // API key and pure metadata are not credentials in this predicate's
+        // sense — they must not shield a stale key from cleanup.
+        assert!(!codex_auth_has_credential_login_material(&json!({
+            "OPENAI_API_KEY": "sk-x"
+        })));
+        assert!(!codex_auth_has_credential_login_material(&json!({
+            "OPENAI_API_KEY": "sk-x",
+            "last_refresh": "2026-01-01T00:00:00Z",
+            "tokens": { "account_id": "acct-meta-only" }
+        })));
+        assert!(!codex_auth_has_credential_login_material(&json!({})));
     }
 
     #[test]
-    fn prepare_provider_live_config_does_not_create_incomplete_provider_table() {
-        let input = r#"model_provider = "vendor_x"
-model = "gpt-5"
-"#;
+    fn stale_third_party_residue_detection() {
+        // Shapes a preserve-off third-party switch leaves behind: cleared.
+        assert!(codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": "sk-third-party"
+        })));
+        assert!(codex_live_auth_is_stale_third_party_residue(&json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "sk-third-party"
+        })));
+        assert!(codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": "sk-third-party",
+            "last_refresh": "2026-01-01T00:00:00Z",
+            "tokens": { "account_id": "acct-meta-only" }
+        })));
 
-        let output =
-            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), input)
-                .expect("prepare live config");
-        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        // Anything carrying a real credential must survive untouched.
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": "sk-x",
+            "tokens": { "access_token": "t" }
+        })));
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": { "access_token": "official-oauth-token" }
+        })));
 
-        assert_eq!(
-            parsed
-                .get("experimental_bearer_token")
-                .and_then(|v| v.as_str()),
-            Some("sk-test")
-        );
-        assert!(
-            parsed.get("model_providers").is_none(),
-            "missing provider tables should not be synthesized without endpoint fields"
-        );
-    }
-
-    #[test]
-    fn prepare_provider_live_config_preserves_custom_provider_id() {
-        let input = r#"model_provider = "vendor_alpha"
-model = "gpt-5.4"
-profile = "work"
-
-[model_providers.vendor_alpha]
-name = "Vendor Alpha"
-base_url = "https://alpha.example/v1"
-wire_api = "responses"
-
-[profiles.work]
-model_provider = "vendor_alpha"
-model = "gpt-5.4"
-"#;
-
-        let result =
-            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), input)
-                .expect("prepare live config");
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        assert_eq!(
-            parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("vendor_alpha")
-        );
-        assert!(
-            parsed
-                .get("model_providers")
-                .and_then(|v| v.get("custom"))
-                .is_none(),
-            "provider writes should not force custom provider ids"
-        );
-        assert_eq!(
-            parsed
-                .get("model_providers")
-                .and_then(|v| v.get("vendor_alpha"))
-                .and_then(|v| v.get("experimental_bearer_token"))
-                .and_then(|v| v.as_str()),
-            Some("sk-test")
-        );
-        assert_eq!(
-            parsed
-                .get("profiles")
-                .and_then(|v| v.get("work"))
-                .and_then(|v| v.get("model_provider"))
-                .and_then(|v| v.as_str()),
-            Some("vendor_alpha"),
-            "profile provider references should be preserved"
-        );
-    }
-
-    #[test]
-    fn backfill_preserves_live_model_provider_id() {
-        let mut live_settings = json!({
-            "auth": {},
-            "config": r#"model_provider = "vendor_beta"
-
-[model_providers.vendor_beta]
-name = "Vendor Beta"
-base_url = "https://beta.example/v1"
-wire_api = "responses"
-"#,
-        });
-        let template_settings = json!({
-            "auth": {},
-            "config": r#"model_provider = "custom"
-
-[model_providers.custom]
-name = "Custom"
-base_url = "https://custom.example/v1"
-wire_api = "responses"
-"#,
-        });
-
-        restore_codex_settings_for_backfill(&mut live_settings, &template_settings, false).unwrap();
-        let config = live_settings.get("config").and_then(Value::as_str).unwrap();
-        let parsed: toml::Value = toml::from_str(config).unwrap();
-
-        assert_eq!(
-            parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("vendor_beta")
-        );
-        assert!(
-            parsed
-                .get("model_providers")
-                .and_then(|v| v.get("vendor_beta"))
-                .is_some(),
-            "backfill should not rewrite user-selected provider tables"
-        );
-    }
-
-    #[test]
-    fn base_url_writes_into_correct_model_provider_section() {
-        let input = r#"model_provider = "any"
-model = "gpt-5.1-codex"
-
-[model_providers.any]
-name = "any"
-wire_api = "responses"
-"#;
-
-        let result = update_codex_toml_field(input, "base_url", "https://example.com/v1").unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        let base_url = parsed
-            .get("model_providers")
-            .and_then(|v| v.get("any"))
-            .and_then(|v| v.get("base_url"))
-            .and_then(|v| v.as_str())
-            .expect("base_url should be in model_providers.any");
-        assert_eq!(base_url, "https://example.com/v1");
-
-        // Should NOT have top-level base_url
-        assert!(parsed.get("base_url").is_none());
-
-        // wire_api preserved
-        let wire_api = parsed
-            .get("model_providers")
-            .and_then(|v| v.get("any"))
-            .and_then(|v| v.get("wire_api"))
-            .and_then(|v| v.as_str());
-        assert_eq!(wire_api, Some("responses"));
-    }
-
-    #[test]
-    fn wire_api_writes_into_correct_model_provider_section() {
-        let input = r#"model_provider = "chat_only"
-model = "gpt-5.1-codex"
-
-[model_providers.chat_only]
-name = "Chat Only"
-base_url = "https://example.com/v1"
-wire_api = "chat"
-"#;
-
-        let result = update_codex_toml_field(input, "wire_api", "responses").unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        let provider = parsed
-            .get("model_providers")
-            .and_then(|v| v.get("chat_only"))
-            .expect("model_providers.chat_only should exist");
-
-        assert_eq!(
-            provider.get("wire_api").and_then(|v| v.as_str()),
-            Some("responses")
-        );
-        assert_eq!(
-            provider.get("base_url").and_then(|v| v.as_str()),
-            Some("https://example.com/v1")
-        );
-        assert!(parsed.get("wire_api").is_none());
-    }
-
-    #[test]
-    fn base_url_creates_section_when_missing() {
-        let input = r#"model_provider = "custom"
-model = "gpt-4"
-"#;
-
-        let result = update_codex_toml_field(input, "base_url", "https://custom.api/v1").unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        let base_url = parsed
-            .get("model_providers")
-            .and_then(|v| v.get("custom"))
-            .and_then(|v| v.get("base_url"))
-            .and_then(|v| v.as_str())
-            .expect("should create section and set base_url");
-        assert_eq!(base_url, "https://custom.api/v1");
-    }
-
-    #[test]
-    fn base_url_falls_back_to_top_level_without_model_provider() {
-        let input = r#"model = "gpt-4"
-"#;
-
-        let result = update_codex_toml_field(input, "base_url", "https://fallback.api/v1").unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        let base_url = parsed
-            .get("base_url")
-            .and_then(|v| v.as_str())
-            .expect("should set top-level base_url");
-        assert_eq!(base_url, "https://fallback.api/v1");
-    }
-
-    #[test]
-    fn base_url_writes_into_inline_table_provider_section() {
-        // inline table 是合法 TOML，但 as_table_mut() 对它返回 None。旧代码会因此
-        // 掉进「写顶层字段」的 fallback：用户改的 base_url 落在错误层级，
-        // Codex 读不到，且界面毫无提示。
-        let input = r#"model_provider = "any"
-model_providers = { any = { name = "any", base_url = "https://old.api/v1", wire_api = "responses" } }
-"#;
-
-        let result = update_codex_toml_field(input, "base_url", "https://new.api/v1").unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        assert_eq!(
-            parsed["model_providers"]["any"]["base_url"].as_str(),
-            Some("https://new.api/v1"),
-            "must update the provider section, not a top-level field"
-        );
-        assert!(
-            parsed.get("base_url").is_none(),
-            "must not leak a top-level base_url fallback"
-        );
-        assert_eq!(
-            parsed["model_providers"]["any"]["wire_api"].as_str(),
-            Some("responses"),
-            "sibling fields must survive"
-        );
-    }
-
-    #[test]
-    fn clearing_base_url_removes_only_from_correct_section() {
-        let input = r#"model_provider = "any"
-
-[model_providers.any]
-name = "any"
-base_url = "https://old.api/v1"
-wire_api = "responses"
-
-[mcp_servers.context7]
-command = "npx"
-"#;
-
-        let result = update_codex_toml_field(input, "base_url", "").unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        // base_url removed from model_providers.any
-        let any_section = parsed
-            .get("model_providers")
-            .and_then(|v| v.get("any"))
-            .expect("model_providers.any should exist");
-        assert!(any_section.get("base_url").is_none());
-
-        // wire_api preserved
-        assert_eq!(
-            any_section.get("wire_api").and_then(|v| v.as_str()),
-            Some("responses")
-        );
-
-        // mcp_servers untouched
-        assert!(parsed.get("mcp_servers").is_some());
-    }
-
-    #[test]
-    fn model_field_operates_on_top_level() {
-        let input = r#"model_provider = "any"
-model = "gpt-4"
-
-[model_providers.any]
-name = "any"
-"#;
-
-        let result = update_codex_toml_field(input, "model", "gpt-5").unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-        assert_eq!(parsed.get("model").and_then(|v| v.as_str()), Some("gpt-5"));
-
-        // Clear model
-        let result2 = update_codex_toml_field(&result, "model", "").unwrap();
-        let parsed2: toml::Value = toml::from_str(&result2).unwrap();
-        assert!(parsed2.get("model").is_none());
-    }
-
-    #[test]
-    fn preserves_comments_and_whitespace() {
-        let input = r#"# My Codex config
-model_provider = "any"
-model = "gpt-4"
-
-# Provider section
-[model_providers.any]
-name = "any"
-base_url = "https://old.api/v1"
-"#;
-
-        let result = update_codex_toml_field(input, "base_url", "https://new.api/v1").unwrap();
-
-        // Comments should be preserved
-        assert!(result.contains("# My Codex config"));
-        assert!(result.contains("# Provider section"));
-    }
-
-    #[test]
-    fn does_not_misplace_when_profiles_section_follows() {
-        let input = r#"model_provider = "any"
-
-[model_providers.any]
-name = "any"
-base_url = "https://old.api/v1"
-
-[profiles.default]
-model = "gpt-4"
-"#;
-
-        let result = update_codex_toml_field(input, "base_url", "https://new.api/v1").unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        // base_url in correct section
-        let base_url = parsed
-            .get("model_providers")
-            .and_then(|v| v.get("any"))
-            .and_then(|v| v.get("base_url"))
-            .and_then(|v| v.as_str());
-        assert_eq!(base_url, Some("https://new.api/v1"));
-
-        // profiles section untouched
-        let profile_model = parsed
-            .get("profiles")
-            .and_then(|v| v.get("default"))
-            .and_then(|v| v.get("model"))
-            .and_then(|v| v.as_str());
-        assert_eq!(profile_model, Some("gpt-4"));
-    }
-
-    #[test]
-    fn remove_base_url_if_predicate() {
-        let input = r#"model_provider = "any"
-
-[model_providers.any]
-name = "any"
-base_url = "http://127.0.0.1:5000/v1"
-wire_api = "responses"
-"#;
-
-        let result =
-            remove_codex_toml_base_url_if(input, |url| url.starts_with("http://127.0.0.1"));
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        let any_section = parsed
-            .get("model_providers")
-            .and_then(|v| v.get("any"))
-            .unwrap();
-        assert!(any_section.get("base_url").is_none());
-        assert_eq!(
-            any_section.get("wire_api").and_then(|v| v.as_str()),
-            Some("responses")
-        );
-    }
-
-    #[test]
-    fn remove_base_url_if_keeps_non_matching() {
-        let input = r#"model_provider = "any"
-
-[model_providers.any]
-base_url = "https://production.api/v1"
-"#;
-
-        let result =
-            remove_codex_toml_base_url_if(input, |url| url.starts_with("http://127.0.0.1"));
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        let base_url = parsed
-            .get("model_providers")
-            .and_then(|v| v.get("any"))
-            .and_then(|v| v.get("base_url"))
-            .and_then(|v| v.as_str());
-        assert_eq!(base_url, Some("https://production.api/v1"));
+        // Nothing to clear.
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({})));
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": ""
+        })));
     }
 
     #[test]
@@ -2825,6 +3634,18 @@ base_url = "https://production.api/v1"
         assert!(template.get("supports_search_tool").is_none());
         assert!(template.get("supports_image_detail_original").is_none());
         assert!(template.get("web_search_tool_type").is_none());
+
+        // A cache template missing supports_parallel_tool_calls gets the
+        // static gpt-5.5 default backfilled (codex 0.148.0 rejects the
+        // catalog without it, #6661).
+        let mut stale = json!({ "slug": "gpt-5.5" });
+        fill_template_fields_from_static(&mut stale);
+        assert_eq!(
+            stale
+                .get("supports_parallel_tool_calls")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]
@@ -2835,17 +3656,29 @@ base_url = "https://production.api/v1"
         fill_template_fields_from_static(&mut template);
         let specs = vec![CodexCatalogModelSpec {
             model: "k3".to_string(),
-            display_name: "Kimi K3".to_string(),
-            context_window: 262_144,
+            display_name: Some("Kimi K3".to_string()),
+            context_window: Some(262_144),
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            reasoning_levels: None,
+            default_reasoning_level: None,
         }];
-        let catalog =
-            codex_model_catalog_from_specs(&specs, &template, CodexCatalogToolProfile::ProxyChat);
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
         assert_eq!(
             catalog["models"][0]
                 .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            catalog["models"][0]
+                .get("supports_parallel_tool_calls")
                 .and_then(Value::as_bool),
             Some(true)
         );
@@ -2898,9 +3731,13 @@ base_url = "https://production.api/v1"
                 ]
             }
         });
-        let specs = codex_catalog_model_specs(&settings, r#"model_context_window = 128000"#);
-        let catalog =
-            codex_model_catalog_from_specs(&specs, &template, CodexCatalogToolProfile::ProxyChat);
+        let specs = codex_catalog_model_specs(&settings);
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
         let models = catalog
             .get("models")
             .and_then(|value| value.as_array())
@@ -2949,6 +3786,256 @@ base_url = "https://production.api/v1"
                 .is_some_and(|value| value.is_null()),
             "generated third-party entries should not inherit GPT-5.5 launch messaging"
         );
+    }
+
+    #[test]
+    fn native_responses_catalog_honors_per_model_reasoning_levels() {
+        // The native template only declares none/high. A per-model
+        // reasoningLevels override must replace supported_reasoning_levels and
+        // pick a sensible default_reasoning_level.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "reasoningLevels": ["none", "low", "medium", "high", "xhigh", "max"],
+                        "defaultReasoningLevel": "xhigh"
+                    },
+                    {
+                        "model": "no-default-model",
+                        "reasoningLevels": ["low", "medium", "high"]
+                    },
+                    {
+                        "model": "template-default-model",
+                        "reasoningLevels": ["none", "high", "xhigh"]
+                    },
+                    {
+                        "model": "dirty-levels",
+                        "reasoningLevels": ["none", "bogus", "high", ""]
+                    },
+                    {
+                        "model": "unordered-model",
+                        "reasoningLevels": ["xhigh", "low", "bogus", "low"],
+                        "defaultReasoningLevel": "bogus"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let models = catalog["models"].as_array().expect("models array");
+        let efforts = |index: usize| -> Vec<String> {
+            models[index]["supported_reasoning_levels"]
+                .as_array()
+                .expect("supported_reasoning_levels array")
+                .iter()
+                .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+                .map(str::to_string)
+                .collect()
+        };
+
+        // Explicit default wins.
+        assert_eq!(
+            efforts(0),
+            vec!["none", "low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(
+            models[0]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("xhigh")
+        );
+
+        // No explicit default: falls back to the last (highest) declared level.
+        assert_eq!(efforts(1), vec!["low", "medium", "high"]);
+        assert_eq!(
+            models[1]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+
+        // Template default ("high") is kept when it is still in the list.
+        assert_eq!(efforts(2), vec!["none", "high", "xhigh"]);
+        assert_eq!(
+            models[2]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+
+        // Unknown / empty efforts are dropped; the default still resolves to
+        // a supported level (the template default, "high").
+        assert_eq!(efforts(3), vec!["none", "high"]);
+        assert_eq!(
+            models[3]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+
+        // Declaration order is normalized to canonical order, duplicates and
+        // an unknown explicit default are dropped, and the fallback picks the
+        // highest supported level in canonical order (not the last declared
+        // one, and never an unknown effort).
+        assert_eq!(efforts(4), vec!["low", "xhigh"]);
+        assert_eq!(
+            models[4]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
+    fn vendor_catalog_honors_per_model_reasoning_levels() {
+        // The DeepSeek official catalog declares low/high/max; a per-model
+        // override must win over the official entry.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "reasoningLevels": ["none", "low", "medium", "high", "xhigh", "max"],
+                        "defaultReasoningLevel": "xhigh"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let entry = &catalog["models"][0];
+        let efforts: Vec<&str> = entry["supported_reasoning_levels"]
+            .as_array()
+            .expect("supported_reasoning_levels array")
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(
+            efforts,
+            vec!["none", "low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(
+            entry
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
+    fn vendor_catalog_unknown_model_does_not_inherit_flagship_modalities() {
+        // A vision variant not in the official DeepSeek catalog must not
+        // inherit the flagship entry's text-only modalities; the registry /
+        // fail-open logic should resolve it as image-capable instead.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash-vision-exp",
+                        "displayName": "DeepSeek V4 Flash Vision Exp"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let modalities: Vec<&str> = catalog["models"][0]["input_modalities"]
+            .as_array()
+            .expect("input_modalities array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(
+            modalities,
+            vec!["text", "image"],
+            "unknown vision model must not inherit the flagship's text-only modalities"
+        );
+    }
+
+    #[test]
+    fn vendor_catalog_unknown_model_explicit_modalities_override() {
+        // An explicit user inputModalities declaration must win over the
+        // registry/fail-open resolution even for unmatched models.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash-vision-exp",
+                        "inputModalities": ["text"]
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let modalities: Vec<&str> = catalog["models"][0]["input_modalities"]
+            .as_array()
+            .expect("input_modalities array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(modalities, vec!["text"]);
+    }
+
+    #[test]
+    fn vendor_catalog_matched_model_keeps_vendor_modalities() {
+        // A model that IS in the official catalog must keep the vendor's
+        // declared modalities verbatim (deepseek-v4-pro is text-only there).
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-pro",
+                        "displayName": "DeepSeek V4 Pro"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let modalities: Vec<&str> = catalog["models"][0]["input_modalities"]
+            .as_array()
+            .expect("input_modalities array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(modalities, vec!["text"]);
     }
 
     #[test]
@@ -3033,52 +4120,63 @@ base_url = "https://production.api/v1"
         let specs = vec![
             CodexCatalogModelSpec {
                 model: "gpt-5.4".to_string(),
-                display_name: "GPT 5.4".to_string(),
-                context_window: 128_000,
+                display_name: Some("GPT 5.4".to_string()),
+                context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
-                model: "deepseek/deepseek-v4-pro".to_string(),
-                display_name: "DeepSeek V4 Pro".to_string(),
-                context_window: 128_000,
+                model: "qwen/qwen3-coder-plus".to_string(),
+                display_name: Some("Qwen3 Coder Plus".to_string()),
+                context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
                 model: "glm-5.2v".to_string(),
-                display_name: "GLM 5.2V".to_string(),
-                context_window: 128_000,
+                display_name: Some("GLM 5.2V".to_string()),
+                context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek-v4-flash".to_string(),
-                display_name: "Explicit Visual Override".to_string(),
-                context_window: 128_000,
+                display_name: Some("Explicit Visual Override".to_string()),
+                context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string(), "image".to_string()]),
                 base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
                 model: "custom-text-alias".to_string(),
-                display_name: "Explicit Text Override".to_string(),
-                context_window: 128_000,
+                display_name: Some("Explicit Text Override".to_string()),
+                context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string()]),
                 base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
             },
         ];
 
         for profile in [
             CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::Copilot,
             CodexCatalogToolProfile::NativeResponses,
             CodexCatalogToolProfile::Anthropic,
         ] {
-            let catalog = codex_model_catalog_from_specs(&specs, &template, profile);
+            let catalog = codex_model_catalog_from_specs(&specs, &template, profile, 128_000);
             let models = catalog["models"].as_array().expect("models array");
             let modalities = |slug: &str| {
                 models
@@ -3090,7 +4188,7 @@ base_url = "https://production.api/v1"
             };
 
             assert_eq!(modalities("gpt-5.4"), json!(["text", "image"]));
-            assert_eq!(modalities("deepseek/deepseek-v4-pro"), json!(["text"]));
+            assert_eq!(modalities("qwen/qwen3-coder-plus"), json!(["text"]));
             assert_eq!(modalities("glm-5.2v"), json!(["text", "image"]));
             assert_eq!(
                 modalities("deepseek-v4-flash"),
@@ -3129,155 +4227,338 @@ base_url = "https://production.api/v1"
         );
     }
 
+    const DEEPSEEK_NATIVE_CONFIG: &str = r#"model = "deepseek-v4-flash"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "deepseek"
+base_url = "https://api.deepseek.com"
+wire_api = "responses"
+"#;
+
     #[test]
-    fn proxy_chat_profile_still_keeps_apply_patch() {
-        // Regression guard for Mode A: the proxy-chat profile must keep the
-        // freeform apply_patch tool (the proxy rewrites custom<->function).
+    fn deepseek_host_native_catalog_mirrors_official_entries() {
+        // DeepSeek publishes an official Codex models.json (freeform
+        // apply_patch + GPT-5 harness + low/high/max reasoning levels). For a
+        // deepseek.com native provider the generated catalog must mirror it
+        // verbatim instead of the stripped neutral template — the harness
+        // tells the model to use apply_patch, so stripping the tool while
+        // keeping the harness would be self-inconsistent.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-flash", "displayName": "DeepSeek Flash" },
+                    { "model": "deepseek-v4-pro", "contextWindow": 500_000 }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let flash = &catalog["models"][0];
+        assert_eq!(
+            flash.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-flash")
+        );
+        assert_eq!(
+            flash.get("apply_patch_tool_type").and_then(|v| v.as_str()),
+            Some("freeform"),
+            "official DeepSeek entries keep the freeform apply_patch grant"
+        );
+        assert!(
+            flash
+                .get("base_instructions")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.starts_with("You are Codex, an agent based on GPT-5")),
+            "official GPT-5 harness must survive verbatim"
+        );
+        let efforts: Vec<&str> = flash["supported_reasoning_levels"]
+            .as_array()
+            .expect("official reasoning levels array")
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(efforts, vec!["low", "high", "max"]);
+        // DeepSeek has no tool_search support; `true` makes Codex defer MCP
+        // tools behind tool search, so none can ever be called (#6647).
+        assert_eq!(flash.get("supports_search_tool"), Some(&json!(false)));
+        assert_eq!(
+            flash.get("web_search_tool_type").and_then(|v| v.as_str()),
+            Some("text")
+        );
+        assert_eq!(
+            flash.get("supports_reasoning_summaries"),
+            Some(&json!(true))
+        );
+        // deepseek-flash accepts image input per the vendor's own catalog and
+        // vision guide (api-docs.deepseek.com/guides/vision); the legacy
+        // deepseek-v4-flash alias routes to it and must not be gated (#7283).
+        assert_eq!(
+            flash.get("input_modalities"),
+            Some(&json!(["text", "image"]))
+        );
+        assert!(
+            flash.get("model_messages").is_some(),
+            "official entries are mirrored verbatim, incl. model_messages"
+        );
+        // No explicit contextWindow on the row: the official 1m window must
+        // survive instead of being clobbered by the 128k default.
+        assert_eq!(
+            flash.get("context_window").and_then(|v| v.as_u64()),
+            Some(1_048_576)
+        );
+        // Explicit user display name still wins over the official one.
+        assert_eq!(
+            flash.get("display_name").and_then(|v| v.as_str()),
+            Some("DeepSeek Flash")
+        );
+
+        let pro = &catalog["models"][1];
+        assert_eq!(
+            pro.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-pro")
+        );
+        // Explicit user context window override wins…
+        assert_eq!(
+            pro.get("context_window").and_then(|v| v.as_u64()),
+            Some(500_000)
+        );
+        assert_eq!(
+            pro.get("max_context_window").and_then(|v| v.as_u64()),
+            Some(500_000)
+        );
+        // …while the untouched official display name is kept.
+        assert_eq!(
+            pro.get("display_name").and_then(|v| v.as_str()),
+            Some("DeepSeek-V4-Pro")
+        );
+    }
+
+    #[test]
+    fn deepseek_official_catalog_unknown_model_clones_flagship() {
+        // A user-added model id the official file doesn't know keeps the
+        // gateway's capability profile (clone of the flagship entry) without
+        // impersonating it: own slug/name, demoted priority, and the official
+        // context window rather than the 128k synthetic default.
+        let settings = json!({
+            "modelCatalog": { "models": [{ "model": "deepseek-v4-lite" }] }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-lite")
+        );
+        assert_eq!(
+            entry.get("display_name").and_then(|v| v.as_str()),
+            Some("deepseek-v4-lite")
+        );
+        assert!(
+            entry
+                .get("priority")
+                .and_then(|v| v.as_u64())
+                .is_some_and(|p| p >= 1000),
+            "clones must sort after official entries"
+        );
+        assert_eq!(
+            entry.get("apply_patch_tool_type").and_then(|v| v.as_str()),
+            Some("freeform")
+        );
+        assert_eq!(
+            entry.get("context_window").and_then(|v| v.as_u64()),
+            Some(1_048_576),
+            "absent contextWindow keeps the flagship's official window"
+        );
+        assert!(entry
+            .get("base_instructions")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.trim().is_empty()));
+    }
+
+    #[test]
+    fn deepseek_official_catalog_legacy_flash_alias_stays_image_capable() {
+        // The vendor's catalog now ships `deepseek-flash` only; the legacy
+        // `deepseek-v4-flash` id the preset defaulted to is still accepted by
+        // the API and routes to the same vision-capable Flash model, so it must
+        // clone the flagship and resolve image-capable instead of being gated
+        // text-only (#7283).
+        let settings = json!({
+            "modelCatalog": { "models": [{ "model": "deepseek-v4-flash" }] }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text", "image"])),
+            "the legacy alias routes to the vision-capable Flash model and must fail open"
+        );
+    }
+
+    #[test]
+    fn official_vendor_catalog_gated_by_native_profile_and_host() {
+        // The official mirror is a capability GRANT, so the gate must be
+        // narrow: native `/responses` profile AND the vendor's own host. Chat
+        // runs through the proxy converter (gpt-5.5 contract), the Anthropic
+        // transform drops custom tools, and aggregators hosting the same
+        // model may reject freeform tools — all of them keep their templates.
+        assert!(codex_official_vendor_catalog_models(
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses
+        )
+        .is_some_and(|models| !models.is_empty()));
+
+        for profile in [
+            CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::Copilot,
+            CodexCatalogToolProfile::Anthropic,
+        ] {
+            assert!(
+                codex_official_vendor_catalog_models(DEEPSEEK_NATIVE_CONFIG, profile).is_none(),
+                "only the NativeResponses profile may mirror the official catalog"
+            );
+        }
+
+        let minimax_config = r#"model = "MiniMax-M3"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "minimax"
+base_url = "https://api.minimaxi.com/v1"
+wire_api = "responses"
+"#;
+        assert!(
+            codex_official_vendor_catalog_models(
+                minimax_config,
+                CodexCatalogToolProfile::NativeResponses
+            )
+            .is_none(),
+            "non-DeepSeek native hosts keep the neutral template"
+        );
+        assert!(
+            codex_official_vendor_catalog_models("", CodexCatalogToolProfile::NativeResponses)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn proxy_catalog_profiles_keep_apply_patch_and_disable_original_image_detail() {
         let template = load_codex_native_responses_template();
         let specs = vec![CodexCatalogModelSpec {
             model: "x".to_string(),
-            display_name: "x".to_string(),
-            context_window: 128_000,
+            display_name: Some("x".to_string()),
+            context_window: Some(128_000),
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            reasoning_levels: None,
+            default_reasoning_level: None,
         }];
-        // Using a gpt-5.5-shaped template under ProxyChat must NOT strip
-        // apply_patch_tool_type. (The native template lacks it, so synthesize
-        // one with the field present to prove ProxyChat leaves it intact.)
         let mut proxy_template = template.clone();
         proxy_template["apply_patch_tool_type"] = json!("freeform");
+        proxy_template["supports_image_detail_original"] = json!(true);
+        for profile in [
+            CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::Copilot,
+        ] {
+            let catalog = codex_model_catalog_from_specs(&specs, &proxy_template, profile, 128_000);
+            assert_eq!(
+                catalog["models"][0]["apply_patch_tool_type"],
+                json!("freeform")
+            );
+            assert_eq!(
+                catalog["models"][0]["supports_image_detail_original"],
+                json!(false)
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_web_search_policy_keeps_copilot_and_anthropic_disabled_without_models() {
+        let config = "model = \"MiniMax-M3\"\n";
+        for (settings, has_catalog) in [
+            (json!({}), false),
+            (
+                json!({"modelCatalog": {"models": [{"model": "MiniMax-M3"}]}}),
+                true,
+            ),
+        ] {
+            for (profile, disabled) in [
+                (CodexCatalogToolProfile::Copilot, true),
+                (CodexCatalogToolProfile::Anthropic, true),
+                (CodexCatalogToolProfile::ProxyChat, false),
+                (CodexCatalogToolProfile::NativeResponses, has_catalog),
+            ] {
+                assert_eq!(
+                    codex_disables_web_search(&settings, config, profile),
+                    disabled,
+                    "{profile:?}, catalog={has_catalog}"
+                );
+                if !has_catalog {
+                    assert!(plan_codex_model_catalog(&settings, config, profile)
+                        .unwrap()
+                        .catalog
+                        .is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn copilot_catalog_preserves_context_and_explicit_parallel_capabilities() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "claude-sonnet-5", "contextWindow": 400000 },
+                    { "model": "parallel-model", "supportsParallelToolCalls": true },
+                    { "model": "serial-model", "supports_parallel_tool_calls": false }
+                ]
+            }
+        });
+        let template = load_codex_model_template_static().unwrap();
+        assert_eq!(template["supports_parallel_tool_calls"], json!(true));
         let catalog = codex_model_catalog_from_specs(
-            &specs,
-            &proxy_template,
-            CodexCatalogToolProfile::ProxyChat,
+            &codex_catalog_model_specs(&settings),
+            &template,
+            CodexCatalogToolProfile::Copilot,
+            128_000,
         );
-        assert_eq!(
-            catalog["models"][0]
-                .get("apply_patch_tool_type")
-                .and_then(|v| v.as_str()),
-            Some("freeform"),
-            "ProxyChat must preserve apply_patch_tool_type (no native stripping)"
-        );
-    }
-
-    #[test]
-    fn model_catalog_json_field_writes_relative_filename() {
-        let input = r#"model_provider = "any"
-
-[model_providers.any]
-name = "any"
-"#;
-        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
-
-        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-        assert_eq!(
-            parsed
-                .get("model_catalog_json")
-                .and_then(|value| value.as_str()),
-            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
-        );
-        assert!(
-            parsed
-                .get("model_providers")
-                .and_then(|value| value.get("any"))
-                .and_then(|value| value.get("model_catalog_json"))
-                .is_none(),
-            "model_catalog_json should stay top-level"
-        );
-    }
-
-    #[test]
-    fn native_web_search_field_disables_at_top_level() {
-        // Native `/responses` gateways reject the web_search tool, so the
-        // NativeResponses profile must write the top-level disable line even
-        // when sections are present (it must NOT land inside a section).
-        let input = r#"model_provider = "custom"
-
-[model_providers.custom]
-name = "xiaomi_mimo"
-"#;
-        let result = set_codex_native_web_search_field(input, true).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-        assert_eq!(
-            parsed.get("web_search").and_then(|value| value.as_str()),
-            Some("disabled")
-        );
-        assert!(
-            parsed
-                .get("model_providers")
-                .and_then(|value| value.get("custom"))
-                .and_then(|value| value.get("web_search"))
-                .is_none(),
-            "web_search should stay top-level"
-        );
-    }
-
-    #[test]
-    fn native_web_search_field_removes_own_sentinel_when_not_disabled() {
-        // Switching away from a native provider must re-enable web search by
-        // removing cc-switch's own "disabled" sentinel.
-        let input = r#"model = "gpt-5.5"
-web_search = "disabled"
-"#;
-        let result = set_codex_native_web_search_field(input, false).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-        assert!(
-            parsed.get("web_search").is_none(),
-            "cc-switch's disabled sentinel should be removed when not native"
-        );
-    }
-
-    #[test]
-    fn native_web_search_field_preserves_user_value() {
-        // A user's own web_search value must never be clobbered by cleanup,
-        // only cc-switch's "disabled" sentinel is owned/removable.
-        let input = r#"web_search = "enabled"
-"#;
-        let result = set_codex_native_web_search_field(input, false).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-        assert_eq!(
-            parsed.get("web_search").and_then(|value| value.as_str()),
-            Some("enabled"),
-            "a user-set web_search value must be preserved"
-        );
-    }
-
-    #[test]
-    fn anthropic_profile_disables_web_search_without_catalog() {
-        // Regression: even when no model catalog is generated (empty/absent
-        // modelCatalog), an Anthropic provider must still disable web_search — the
-        // Responses→Anthropic transform drops the hosted tool, so leaving it on
-        // exposes a dead tool. The None-catalog branch previously always left it on.
-        let config = "model = \"claude-sonnet-4-6\"\n";
-        let settings = serde_json::json!({});
-
-        let anthropic = prepare_codex_config_text_with_model_catalog(
-            &settings,
-            config,
-            CodexCatalogToolProfile::Anthropic,
-        )
-        .unwrap();
-        let parsed: toml::Value = toml::from_str(&anthropic).unwrap();
-        assert_eq!(
-            parsed.get("web_search").and_then(|v| v.as_str()),
-            Some("disabled"),
-            "Anthropic profile must disable web_search even with no catalog"
-        );
-
-        // ProxyChat on the same no-catalog path must NOT add a disable line.
-        let proxy = prepare_codex_config_text_with_model_catalog(
-            &settings,
-            config,
-            CodexCatalogToolProfile::ProxyChat,
-        )
-        .unwrap();
-        let parsed: toml::Value = toml::from_str(&proxy).unwrap();
-        assert!(
-            parsed.get("web_search").is_none(),
-            "ProxyChat profile must not disable web_search on the no-catalog path"
-        );
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0]["context_window"], json!(400000));
+        assert_eq!(models[0]["max_context_window"], json!(400000));
+        for (entry, parallel) in models.iter().zip([false, true, false]) {
+            assert_eq!(entry["supports_parallel_tool_calls"], json!(parallel));
+            assert!(entry["base_instructions"].is_string());
+            for key in CODEX_CATALOG_PARSER_REQUIRED_FIELDS {
+                assert!(entry.get(*key).is_some(), "{key} is required by Codex");
+            }
+        }
     }
 
     #[test]
@@ -3295,6 +4576,18 @@ web_search = "disabled"
             ("LongCat-2.0", "https://api.longcat.chat/openai/v1"),
             ("MiniMax-M3", "https://api.minimax.io/v1"),
             ("MiniMax-M3", "https://api.minimaxi.com/v1"),
+            // Use an alias to exercise host detection independently of the
+            // MiniMax model-prefix fallback.
+            ("custom-model", "https://api.minimax.cn/v1"),
+            ("step-4-flash", "https://api.stepfun.com/v1"),
+            ("step-4-flash", "https://api.stepfun.ai/v1"),
+            ("deepseek-v4-pro", "https://qianfan.baidubce.com/v2"),
+            (
+                "astron-code-latest",
+                "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1",
+            ),
+            ("glm-5.3", "https://open.bigmodel.cn/api/v1"),
+            ("glm-5.3", "https://api.z.ai/api/v1"),
         ] {
             assert!(
                 codex_native_gateway_rejects_web_search(&cfg(model, host)),
@@ -3308,6 +4601,7 @@ web_search = "disabled"
             ("MiniMax-M3", "https://api.siliconflow.cn/v1"),
             ("MiniMaxAI/MiniMax-M3", "https://api.siliconflow.cn/v1"),
             ("mimo-v2.5-pro", "https://some-aggregator.example/v1"),
+            ("zai-org/glm-5.3", "https://some-aggregator.example/v1"),
             (
                 "qwen/qwen3-coder-plus",
                 "https://some-aggregator.example/v1",
@@ -3341,6 +4635,13 @@ web_search = "disabled"
                 "https://ark.cn-beijing.volces.com/api/v3",
             ),
             ("Pro/moonshotai/Kimi-K2.6", "https://api.siliconflow.cn/v1"),
+            // Host-label matching: `z.ai` / `bigmodel.cn` must not swallow
+            // unrelated domains that merely contain them as a substring.
+            ("gpt-5.5", "https://api.xyz.ai/v1"),
+            ("gpt-5.5", "https://viz.ai/v1"),
+            ("gpt-5.5", "https://notbigmodel.cn/v1"),
+            ("gpt-5.5", "https://z.ai.example.com/v1"),
+            ("gpt-5.5", "https://api.stepfun.com.example.com/v1"),
         ] {
             assert!(
                 !codex_native_gateway_rejects_web_search(&cfg(model, host)),
@@ -3350,31 +4651,59 @@ web_search = "disabled"
     }
 
     #[test]
+    fn url_host_matcher_uses_label_boundaries() {
+        let hosts = &["z.ai", "bigmodel.cn"];
+        for url in [
+            "https://api.z.ai/api/v1",
+            "https://open.bigmodel.cn/api/v1",
+            "https://Open.BigModel.cn/api/coding/paas/v4",
+            "https://user:pw@api.z.ai:8443/api/v1?x=1#f",
+            "z.ai",
+            "api.z.ai.",
+        ] {
+            assert!(codex_url_host_matches_any(url, hosts), "{url}");
+        }
+        for url in [
+            "https://api.xyz.ai/v1",
+            "https://viz.ai/v1",
+            "https://z.ai.example.com/v1",
+            "https://notbigmodel.cn/v1",
+            "https://example.com/z.ai/v1",
+            "https://example.com/?next=https://api.z.ai",
+            "",
+        ] {
+            assert!(!codex_url_host_matches_any(url, hosts), "{url}");
+        }
+        assert_eq!(codex_url_host("https://[::1]:8080/v1"), "::1");
+        assert_eq!(codex_url_host("HTTP://Example.COM:80"), "example.com");
+    }
+
+    #[test]
     fn resolve_catalog_path_returns_none_when_config_missing_field() {
-        let generated = PathBuf::from("/tmp/.codex/cc-switch-model-catalog.json");
-        assert!(resolve_cc_switch_catalog_path("", &generated).is_none());
+        let base = PathBuf::from("/tmp/.codex");
+        assert!(resolve_cc_switch_catalog_path("", &base).is_none());
         assert!(
-            resolve_cc_switch_catalog_path("model = \"gpt-5\"", &generated).is_none(),
+            resolve_cc_switch_catalog_path("model = \"gpt-5\"", &base).is_none(),
             "no model_catalog_json field should yield None"
         );
     }
 
     #[test]
     fn resolve_catalog_path_accepts_cc_switch_owned_file() {
-        let generated = PathBuf::from("/tmp/.codex/cc-switch-model-catalog.json");
+        let base = PathBuf::from("/tmp/.codex");
         let config = r#"model_catalog_json = "/tmp/.codex/cc-switch-model-catalog.json"
 "#;
-        let resolved = resolve_cc_switch_catalog_path(config, &generated).expect("path resolves");
-        assert_eq!(resolved, generated);
+        let resolved = resolve_cc_switch_catalog_path(config, &base).expect("path resolves");
+        assert_eq!(resolved, base.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME));
     }
 
     #[test]
     fn resolve_catalog_path_rejects_user_owned_external_file() {
-        let generated = PathBuf::from("/tmp/.codex/cc-switch-model-catalog.json");
+        let base = PathBuf::from("/tmp/.codex");
         let config = r#"model_catalog_json = "/Users/me/.codex/my-handwritten-catalog.json"
 "#;
         assert!(
-            resolve_cc_switch_catalog_path(config, &generated).is_none(),
+            resolve_cc_switch_catalog_path(config, &base).is_none(),
             "external catalog files should be left alone"
         );
     }
@@ -3412,6 +4741,514 @@ web_search = "disabled"
             models[1].get("displayName").and_then(|v| v.as_str()),
             Some("DeepSeek Flash")
         );
+    }
+
+    /// 在官方列表换成 `rows` 的情况下跑 `f`（本线程）。
+    fn with_official_models<T>(rows: Vec<Value>, f: impl FnOnce() -> T) -> T {
+        CODEX_OPENAI_OFFICIAL_MODELS_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(rows));
+        let out = f();
+        CODEX_OPENAI_OFFICIAL_MODELS_OVERRIDE.with(|slot| *slot.borrow_mut() = None);
+        out
+    }
+
+    /// 官方 GPT 条目的形状：提示词在 `model_messages`，带 freeform 工具、Lite 协议、速度档。
+    fn official_gpt_row(slug: &str, prompt: &str) -> Value {
+        native_row(
+            slug,
+            json!({
+                "display_name": slug.to_uppercase(),
+                "model_messages": { "instructions_template": prompt },
+                "apply_patch_tool_type": "freeform",
+                "web_search_tool_type": "text_and_image",
+                "tool_mode": "code_mode_only",
+                "use_responses_lite": true,
+                "visibility": "hide",
+                "service_tiers": [{ "id": "priority", "name": "Fast" }],
+                "additional_speed_tiers": ["fast"],
+                "upgrade": { "model": "gpt-next" },
+                "context_window": 272_000,
+                "max_context_window": 872_000,
+                "supports_image_detail_original": true,
+                "supported_reasoning_levels": [
+                    { "effort": "low", "description": "l" },
+                    { "effort": "xhigh", "description": "x" }
+                ],
+                "default_reasoning_level": "low",
+            }),
+        )
+    }
+
+    fn official_gpt_rows() -> Vec<Value> {
+        normalize_codex_native_rows(vec![
+            official_gpt_row("gpt-6", "GPT-6 base prompt"),
+            official_gpt_row("gpt-6-sol", "GPT-6 Sol prompt"),
+            official_gpt_row("gpt-5.5", "GPT-5.5 prompt"),
+        ])
+        .unwrap()
+    }
+
+    fn catalog_for(models: Value, config: &str, profile: CodexCatalogToolProfile) -> Vec<Value> {
+        let settings = json!({ "modelCatalog": { "models": models } });
+        codex_model_catalog_from_settings(&settings, config, profile)
+            .unwrap()
+            .unwrap()["models"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn official_models_match_like_codex() {
+        let rows = official_gpt_rows();
+        let found = |model: &str| {
+            find_codex_official_model(model, &rows)
+                .and_then(|row| row["slug"].as_str())
+                .map(str::to_string)
+        };
+        // 最长前缀。
+        assert_eq!(found("gpt-6-sol").as_deref(), Some("gpt-6-sol"));
+        assert_eq!(found("gpt-6-sol-high").as_deref(), Some("gpt-6-sol"));
+        assert_eq!(found("gpt-6-luna").as_deref(), Some("gpt-6"));
+        // 去掉一层简单的命名空间。
+        assert_eq!(found("openai/gpt-5.5").as_deref(), Some("gpt-5.5"));
+        assert_eq!(found("my_relay-1/gpt-6-sol").as_deref(), Some("gpt-6-sol"));
+        assert_eq!(found("a/b/gpt-5.5"), None);
+        assert_eq!(found("bad ns/gpt-5.5"), None);
+        assert_eq!(found("/gpt-5.5"), None);
+        // 区分大小写，和 Codex 一样。
+        assert_eq!(found("GPT-5.5"), None);
+        assert_eq!(found("gpt-5"), None);
+        assert_eq!(found("glm-5"), None);
+    }
+
+    #[test]
+    fn native_gpt_rows_mirror_the_official_entry() {
+        let models = with_official_models(official_gpt_rows(), || {
+            catalog_for(
+                json!([
+                    // 行里的覆盖值对官方行不生效。
+                    { "model": "gpt-6-sol", "contextWindow": 128_000, "reasoningLevels": ["none"] },
+                    { "model": "glm-5" }
+                ]),
+                "",
+                CodexCatalogToolProfile::NativeResponses,
+            )
+        });
+
+        let gpt = &models[0];
+        assert_eq!(gpt["slug"], "gpt-6-sol");
+        assert_eq!(gpt["display_name"], "GPT-6-SOL");
+        assert_eq!(
+            gpt["model_messages"]["instructions_template"],
+            "GPT-6 Sol prompt"
+        );
+        assert_eq!(gpt["apply_patch_tool_type"], "freeform");
+        assert_eq!(gpt["web_search_tool_type"], "text_and_image");
+        assert_eq!(gpt["tool_mode"], "code_mode_only");
+        assert_eq!(gpt["context_window"], 272_000);
+        assert_eq!(gpt["max_context_window"], 872_000);
+        assert_eq!(gpt["default_reasoning_level"], "low");
+        assert_eq!(gpt["supported_reasoning_levels"][1]["effort"], "xhigh");
+        assert_eq!(gpt["supports_image_detail_original"], true);
+        // 官方账号、官方后端的字段改掉。
+        assert_eq!(gpt["use_responses_lite"], false);
+        assert_eq!(gpt["visibility"], "list");
+        assert_eq!(gpt["service_tiers"], json!([]));
+        assert_eq!(gpt["additional_speed_tiers"], json!([]));
+        assert_eq!(gpt["upgrade"], Value::Null);
+        assert_eq!(gpt["priority"], 1000);
+
+        // 没命中的行照旧：通用模板、去掉 custom 工具。
+        let glm = &models[1];
+        assert_eq!(glm["slug"], "glm-5");
+        assert_eq!(glm["priority"], 1001);
+        assert!(glm.get("model_messages").is_none());
+        assert!(glm.get("apply_patch_tool_type").is_none());
+        assert_eq!(glm["shell_type"], "shell_command");
+    }
+
+    #[test]
+    fn aliases_keep_their_own_name() {
+        let models = with_official_models(official_gpt_rows(), || {
+            catalog_for(
+                json!([{ "model": "openai/gpt-5.5" }, { "model": "gpt-6-sol-high" }]),
+                "",
+                CodexCatalogToolProfile::NativeResponses,
+            )
+        });
+        assert_eq!(models[0]["slug"], "openai/gpt-5.5");
+        assert_eq!(models[0]["display_name"], "openai/gpt-5.5");
+        assert_eq!(
+            models[0]["model_messages"]["instructions_template"],
+            "GPT-5.5 prompt"
+        );
+        assert_eq!(models[1]["slug"], "gpt-6-sol-high");
+        assert_eq!(models[1]["display_name"], "gpt-6-sol-high");
+        assert_eq!(
+            models[1]["model_messages"]["instructions_template"],
+            "GPT-6 Sol prompt"
+        );
+    }
+
+    #[test]
+    fn proxy_chat_gpt_rows_mirror_but_never_send_original_image_detail() {
+        let models = with_official_models(official_gpt_rows(), || {
+            catalog_for(
+                json!([{ "model": "gpt-6-sol" }]),
+                "",
+                CodexCatalogToolProfile::ProxyChat,
+            )
+        });
+        assert_eq!(
+            models[0]["model_messages"]["instructions_template"],
+            "GPT-6 Sol prompt"
+        );
+        assert_eq!(models[0]["apply_patch_tool_type"], "freeform");
+        assert_eq!(models[0]["use_responses_lite"], false);
+        assert_eq!(models[0]["supports_image_detail_original"], false);
+    }
+
+    #[test]
+    fn anthropic_and_deepseek_rows_do_not_mirror_openai() {
+        let (anthropic, deepseek) = with_official_models(official_gpt_rows(), || {
+            (
+                catalog_for(
+                    json!([{ "model": "gpt-6-sol" }]),
+                    "",
+                    CodexCatalogToolProfile::Anthropic,
+                ),
+                catalog_for(
+                    json!([{ "model": "gpt-6-sol" }]),
+                    DEEPSEEK_NATIVE_CONFIG,
+                    CodexCatalogToolProfile::NativeResponses,
+                ),
+            )
+        });
+        // Responses→Anthropic 的转换会丢掉 custom 工具：照旧用通用模板。
+        assert!(anthropic[0].get("model_messages").is_none());
+        assert!(anthropic[0].get("apply_patch_tool_type").is_none());
+        // DeepSeek 官方网关按它自己的目录。
+        assert_ne!(
+            deepseek[0]["model_messages"]["instructions_template"],
+            "GPT-6 Sol prompt"
+        );
+    }
+
+    #[test]
+    fn stacked_gpt_rows_mirror_under_their_prefixed_id() {
+        let models = with_official_models(official_gpt_rows(), || {
+            let route = json!({ "modelCatalog": { "models": [{ "model": "gpt-6-sol" }] } });
+            let member = json!({ "modelCatalog": { "models": [{ "model": "gpt-6-sol" }] } });
+            plan_codex_stack_catalog(
+                CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    settings: &route,
+                    config_text: "",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                }),
+                &[CodexStackCatalogMember {
+                    key: "relay",
+                    provider_name: "Relay",
+                    row: CodexCatalogRow {
+                        settings: &member,
+                        config_text: "",
+                        profile: CodexCatalogToolProfile::ProxyChat,
+                    },
+                }],
+            )
+            .unwrap()["models"]
+                .as_array()
+                .unwrap()
+                .clone()
+        });
+        // 两家都有 GPT-6 Sol：各一条，内容都是官方的。
+        assert_eq!(models[0]["slug"], "gpt-6-sol");
+        assert_eq!(models[1]["slug"], "ccs-relay/gpt-6-sol");
+        for model in &models {
+            assert_eq!(
+                model["model_messages"]["instructions_template"],
+                "GPT-6 Sol prompt"
+            );
+            assert_eq!(model["use_responses_lite"], false);
+        }
+        // 各家按自己的链路：走 Chat 的那家不发 original 精度的图片。
+        assert_eq!(models[0]["supports_image_detail_original"], true);
+        assert_eq!(models[1]["supports_image_detail_original"], false);
+    }
+
+    #[test]
+    fn mirrored_rows_round_trip_as_bare_models() {
+        let (catalog, simplified) = with_official_models(official_gpt_rows(), || {
+            let catalog = json!({
+                "models": catalog_for(
+                    json!([
+                        { "model": "gpt-6-sol" },
+                        { "model": "glm-5", "displayName": "GLM 5", "contextWindow": 200_000 }
+                    ]),
+                    "",
+                    CodexCatalogToolProfile::NativeResponses,
+                )
+            });
+            let simplified = build_simplified_catalog_from_texts("", &catalog.to_string());
+            (catalog, simplified)
+        });
+        // 官方的显示名、窗口、档位不能被当成用户填的存回去。
+        assert_eq!(catalog["models"][0]["display_name"], "GPT-6-SOL");
+        let rows = simplified.unwrap()["models"].as_array().unwrap().clone();
+        assert_eq!(rows[0], json!({ "model": "gpt-6-sol" }));
+        assert_eq!(rows[1]["model"], "glm-5");
+        assert_eq!(rows[1]["displayName"], "GLM 5");
+        assert_eq!(rows[1]["contextWindow"], 200_000);
+    }
+
+    #[test]
+    fn old_proxy_chat_clones_keep_their_user_values_on_round_trip() {
+        // 旧版 ProxyChat 克隆 gpt-5.5 模板（带 model_messages），再叠用户填的值。
+        let rows = official_gpt_rows();
+        let settings = json!({ "modelCatalog": { "models": [
+            { "model": "gpt-5.5", "displayName": "My GPT", "contextWindow": 200_000 },
+            { "model": "gpt-6-sol" }
+        ] } });
+        let old = codex_model_catalog_from_specs(
+            &codex_catalog_model_specs(&settings),
+            &rows[2],
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
+        let simplified = with_official_models(rows, || {
+            build_simplified_catalog_from_texts("", &old.to_string())
+        })
+        .unwrap();
+        let models = simplified["models"].as_array().unwrap();
+        assert_eq!(models[0]["displayName"], "My GPT");
+        assert_eq!(models[0]["contextWindow"], 200_000);
+        // 克隆 gpt-5.5 的 gpt-6-sol 行：显示名、窗口都不是官方的，照旧还原，不当成镜像。
+        assert_eq!(models[1]["model"], "gpt-6-sol");
+        assert_ne!(models[1], json!({ "model": "gpt-6-sol" }));
+    }
+
+    fn native_row(slug: &str, extra: Value) -> Value {
+        let mut row = json!({
+            "slug": slug,
+            "priority": 1,
+            "comp_hash": "3000",
+            "supports_reasoning_summaries": true,
+            "supports_parallel_tool_calls": false,
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            if value.is_null() {
+                row.as_object_mut().unwrap().remove(key);
+            } else {
+                row[key] = value.clone();
+            }
+        }
+        row
+    }
+
+    #[test]
+    fn native_rows_get_the_old_instructions_field_and_missing_required_fields() {
+        let rows = normalize_codex_native_rows(vec![
+            // 0.158 缓存的形状：只有新的指令字段。
+            native_row(
+                "gpt-6-sol",
+                json!({ "model_messages": { "instructions_template": "You are Codex." } }),
+            ),
+            // 空串也照抄。
+            native_row(
+                "gpt-6-luna",
+                json!({ "model_messages": { "instructions_template": "" } }),
+            ),
+            // 缺必填字段就补，已有值不覆盖。
+            native_row(
+                "gpt-5.5",
+                json!({
+                    "supports_parallel_tool_calls": null,
+                    "base_instructions": "old",
+                }),
+            ),
+            native_row(
+                "both",
+                json!({
+                    "base_instructions": "old",
+                    "model_messages": { "instructions_template": "new" },
+                }),
+            ),
+        ])
+        .expect("valid rows");
+        assert_eq!(rows[0]["base_instructions"], "You are Codex.");
+        assert_eq!(rows[0]["supports_parallel_tool_calls"], false);
+        assert_eq!(rows[0]["comp_hash"], "3000", "native fields stay");
+        assert_eq!(rows[1]["base_instructions"], "");
+        assert_eq!(rows[2]["base_instructions"], "old");
+        assert!(rows[2]["supports_parallel_tool_calls"].is_boolean());
+        assert_eq!(rows[3]["base_instructions"], "old");
+        assert_eq!(rows[3]["model_messages"]["instructions_template"], "new");
+    }
+
+    #[test]
+    fn one_bad_native_row_rejects_the_whole_source() {
+        let good = native_row("gpt-5.5", json!({ "base_instructions": "x" }));
+        for bad in [
+            native_row("no-instructions", json!({})),
+            native_row("", json!({ "base_instructions": "x" })),
+        ] {
+            assert!(
+                normalize_codex_native_rows(vec![good.clone(), bad.clone()]).is_none(),
+                "{bad}"
+            );
+        }
+        assert!(normalize_codex_native_rows(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn official_rows_stay_native_and_stacked_rows_follow() {
+        let native = normalize_codex_native_rows(vec![
+            native_row(
+                "gpt-6-sol",
+                json!({ "priority": 4, "base_instructions": "x", "use_responses_lite": true }),
+            ),
+            native_row(
+                "gpt-5.5",
+                json!({ "priority": 12, "base_instructions": "x" }),
+            ),
+            native_row(
+                "gpt-6-astra",
+                json!({ "priority": 1, "base_instructions": "x", "use_responses_lite": true }),
+            ),
+        ])
+        .unwrap();
+        let stacked_settings = json!({});
+        let catalog = plan_codex_stack_catalog(
+            CodexStackRoute::Official {
+                native,
+                config_text: "",
+            },
+            &[CodexStackCatalogMember {
+                key: "ds",
+                provider_name: "DS",
+                row: CodexCatalogRow {
+                    settings: &stacked_settings,
+                    config_text: "model = \"deepseek-v4-pro\"\n",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                },
+            }],
+        )
+        .unwrap();
+        let models = catalog["models"].as_array().unwrap();
+        let slugs: Vec<&str> = models.iter().map(|m| m["slug"].as_str().unwrap()).collect();
+        // 官方的顺序（按 priority）不变，Stack 的在后面。
+        assert_eq!(
+            slugs,
+            vec![
+                "gpt-6-astra",
+                "gpt-6-sol",
+                "gpt-5.5",
+                "ccs-ds/deepseek-v4-pro"
+            ]
+        );
+        assert_eq!(
+            models[1]["use_responses_lite"], true,
+            "official Lite rows keep Lite"
+        );
+        assert_eq!(models[1]["comp_hash"], "3000");
+        assert!(models[0].get("auto_compact_token_limit").is_none());
+        assert_eq!(models[3]["comp_hash"], "cc-switch");
+    }
+
+    #[test]
+    fn build_simplified_catalog_leaves_stack_models_out_of_the_route_row() {
+        let catalog = r#"{
+            "models": [
+                { "slug": "deepseek/deepseek-v4" },
+                { "slug": "ccs-kimi/kimi-k3" }
+            ]
+        }"#;
+        let result = build_simplified_catalog_from_texts("", catalog).expect("entries");
+        let models: Vec<&str> = result["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["model"].as_str().unwrap())
+            .collect();
+        // 路由那家自己的 `vendor/model` 名字不受影响。
+        assert_eq!(models, vec!["deepseek/deepseek-v4"]);
+    }
+
+    #[test]
+    fn the_route_rows_keep_the_comp_hash_they_have_without_stack_models() {
+        let route_settings =
+            json!({ "modelCatalog": { "models": [{ "model": "deepseek-v4-pro" }] } });
+        let route_text = "model_provider = \"deepseek\"\nmodel = \"deepseek-v4-pro\"\n\
+                          [model_providers.deepseek]\nbase_url = \"https://api.deepseek.com/v1\"\n";
+        let profile = CodexCatalogToolProfile::NativeResponses;
+        let plain = codex_model_catalog_from_settings(&route_settings, route_text, profile)
+            .unwrap()
+            .unwrap();
+        assert_eq!(plain["models"][0]["comp_hash"], "3000");
+
+        let stacked_settings = json!({});
+        let stacked = plan_codex_stack_catalog(
+            CodexStackRoute::ThirdParty(CodexCatalogRow {
+                settings: &route_settings,
+                config_text: route_text,
+                profile,
+            }),
+            &[CodexStackCatalogMember {
+                key: "ds",
+                provider_name: "DS",
+                row: CodexCatalogRow {
+                    settings: &stacked_settings,
+                    config_text: route_text,
+                    profile,
+                },
+            }],
+        )
+        .unwrap();
+        let models = stacked["models"].as_array().unwrap();
+        assert_eq!(models[0]["slug"], "deepseek-v4-pro");
+        assert_eq!(models[0]["comp_hash"], plain["models"][0]["comp_hash"]);
+        assert_eq!(models[1]["slug"], "ccs-ds/deepseek-v4-pro");
+        assert_eq!(models[1]["comp_hash"], "cc-switch");
+    }
+
+    #[test]
+    fn stacked_rows_keep_their_own_tool_profile_and_never_use_responses_lite() {
+        let route_settings = json!({ "modelCatalog": { "models": [{ "model": "route-model" }] } });
+        let route_text = "model = \"route-model\"\n";
+        let stacked_settings = json!({});
+        let stacked_text = "model = \"claude-opus-5\"\nmodel_context_window = 400000\n";
+        let catalog = plan_codex_stack_catalog(
+            CodexStackRoute::ThirdParty(CodexCatalogRow {
+                settings: &route_settings,
+                config_text: route_text,
+                profile: CodexCatalogToolProfile::NativeResponses,
+            }),
+            &[CodexStackCatalogMember {
+                key: "anth",
+                provider_name: "Anth",
+                row: CodexCatalogRow {
+                    settings: &stacked_settings,
+                    config_text: stacked_text,
+                    profile: CodexCatalogToolProfile::Anthropic,
+                },
+            }],
+        )
+        .expect("catalog");
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models.len(), 2);
+        let stacked = &models[1];
+        assert_eq!(stacked["slug"], "ccs-anth/claude-opus-5");
+        assert_eq!(stacked["display_name"], "claude-opus-5（Anth）");
+        assert_eq!(stacked["description"], "claude-opus-5 · 400K");
+        assert_eq!(stacked["shell_type"], "shell_command");
+        assert!(stacked.get("apply_patch_tool_type").is_none());
+        assert_eq!(stacked["context_window"], 400000);
+        assert_eq!(stacked["auto_compact_token_limit"], 360000);
+        assert_ne!(stacked["use_responses_lite"], json!(true));
+        let priorities: Vec<u64> = models
+            .iter()
+            .map(|entry| entry["priority"].as_u64().unwrap())
+            .collect();
+        assert_eq!(priorities, vec![1, 2]);
     }
 
     #[test]
@@ -3455,9 +5292,9 @@ web_search = "disabled"
         let catalog = r#"{
             "models": [
                 { "slug": "gpt-5.4", "input_modalities": ["text", "image"] },
-                { "slug": "deepseek-v4-pro", "input_modalities": ["text"] },
+                { "slug": "qwen3-coder-plus", "input_modalities": ["text"] },
                 { "slug": "gpt-text-override", "input_modalities": ["text"] },
-                { "slug": "deepseek-v4-flash", "input_modalities": ["text", "image"] }
+                { "slug": "glm-5.2", "input_modalities": ["text", "image"] }
             ]
         }"#;
 
@@ -3651,108 +5488,131 @@ web_search = "disabled"
     }
 
     #[test]
-    #[cfg(target_os = "windows")]
-    fn set_catalog_json_field_writes_filename_ignoring_unc_path() {
-        let input = r#"model_provider = "custom"
-model = "glm-5"
-"#;
-        // Simulate a WSL UNC path as cc-switch would see it on Windows;
-        // the function now writes just the relative filename.
-        let unc_path =
-            Path::new(r"\\wsl.localhost\Ubuntu\home\user\.codex\cc-switch-model-catalog.json");
-
-        let result = set_codex_model_catalog_json_field(input, Some(unc_path)).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        let written_path = parsed
-            .get("model_catalog_json")
-            .and_then(|v| v.as_str())
-            .expect("model_catalog_json should be set");
-        assert_eq!(
-            written_path, CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME,
-            "should write only the relative filename, not the UNC path"
-        );
-    }
-
-    #[test]
-    fn set_catalog_json_field_writes_filename_for_any_path() {
-        let input = r#"model_provider = "custom"
-model = "glm-5"
-"#;
-        let regular_path = Path::new("/home/user/.codex/cc-switch-model-catalog.json");
-
-        let result = set_codex_model_catalog_json_field(input, Some(regular_path)).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        assert_eq!(
-            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
-            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME),
-            "should write only the relative filename, not the full path"
-        );
-    }
-
-    #[test]
-    fn set_catalog_json_none_removes_cc_switch_owned_by_filename() {
-        // After the WSL fix, TOML may contain a Linux-style path.
-        // The None arm must still remove it (file_name match catches any format).
-        let input = r#"model_catalog_json = "/home/user/.codex/cc-switch-model-catalog.json"
-"#;
-        let result = set_codex_model_catalog_json_field(input, None).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-        assert!(
-            parsed.get("model_catalog_json").is_none(),
-            "None arm should remove cc-switch-owned field regardless of path format"
-        );
-    }
-
-    #[test]
-    fn set_catalog_json_none_preserves_user_owned_catalog() {
-        let input = r#"model_catalog_json = "/Users/me/.codex/my-custom-catalog.json"
-"#;
-        let result = set_codex_model_catalog_json_field(input, None).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-        assert_eq!(
-            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
-            Some("/Users/me/.codex/my-custom-catalog.json"),
-            "None arm should NOT remove user-owned catalog"
-        );
-    }
-
-    #[test]
     fn resolve_catalog_finds_relative_filename() {
         let config_text = r#"model_provider = "custom"
 model_catalog_json = "cc-switch-model-catalog.json"
 "#;
-        let generated_path = PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json");
-        let result = resolve_cc_switch_catalog_path(config_text, &generated_path);
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         assert_eq!(
             result,
-            Some(generated_path),
-            "relative filename should resolve to generated_path for file I/O"
+            Some(base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)),
+            "relative filename should resolve under base_dir for file I/O"
         );
     }
 
     #[test]
-    fn resolve_catalog_ignores_user_owned_relative() {
-        let config_text = r#"model_catalog_json = "my-custom-catalog.json"
+    fn resolve_catalog_rejects_absolute_path_outside_config_dir() {
+        let config_text = r#"model_catalog_json = "/tmp/secret/cc-switch-model-catalog.json"
 "#;
-        let generated_path = PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json");
-        let result = resolve_cc_switch_catalog_path(config_text, &generated_path);
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         assert_eq!(
             result, None,
-            "user-owned catalog should not be claimed by cc-switch"
+            "absolute path outside ~/.codex must not be accepted"
         );
     }
 
     #[test]
-    fn set_catalog_json_none_removes_relative_path() {
-        let input = r#"model_catalog_json = "cc-switch-model-catalog.json"
+    fn resolve_catalog_accepts_absolute_path_inside_config_dir() {
+        let config_text = r#"model_catalog_json = "/home/user/.codex/cc-switch-model-catalog.json"
 "#;
-        let result = set_codex_model_catalog_json_field(input, None).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        assert_eq!(
+            result,
+            Some(base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)),
+            "absolute path inside ~/.codex should be accepted"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_rejects_traversal_to_parent_directory() {
+        let config_text = r#"model_catalog_json = "../cc-switch-model-catalog.json"
+"#;
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        assert_eq!(
+            result, None,
+            "relative traversal outside ~/.codex must not be accepted"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_rejects_symlink_escaping_config_dir() {
+        // 词法包含可被符号链接绕过：~/.codex/link -> 外部目录，
+        // "link/cc-switch-model-catalog.json" 词法上在 base 内，真实读取却落到
+        // base 外。canonicalize 之后的二次校验必须拒绝。
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base_dir = temp.path().join("codex");
+        let outside_dir = temp.path().join("outside");
+        fs::create_dir_all(&base_dir).expect("create base");
+        fs::create_dir_all(&outside_dir).expect("create outside");
+        let escaped_file = outside_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        fs::write(&escaped_file, r#"{"models":[]}"#).expect("write escaped catalog");
+
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside_dir, base_dir.join("link"));
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link"));
+        if let Err(err) = linked {
+            // Windows 在 \\wsl.localhost 上建不了符号链接（Incorrect function），夹具无从构造
+            assert!(crate::config::is_wsl_path(temp.path()), "symlink: {err}");
+            eprintln!("cannot create symlinks on WSL share ({err}); skipping");
+            return;
+        }
+
+        let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
+"#;
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        let via_link = base_dir
+            .join("link")
+            .join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        if via_link.exists() {
+            assert_eq!(
+                result, None,
+                "symlink escaping the config dir must be rejected after canonicalization"
+            );
+        } else {
+            // 链接穿不过去（Windows 访问 \\wsl.localhost 时不跟随远程符号链接）：
+            // 解析会原样返回词法路径，但经它读不到任何东西，同样不会越界。
+            assert!(
+                result.as_deref().is_none_or(|path| fs::read(path).is_err()),
+                "an untraversable symlink must not lead to the outside file"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_catalog_accepts_real_file_inside_config_dir() {
+        // 存在于 base 内的真实文件：canonical 校验通过后仍应接受
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base_dir = temp.path().join("codex");
+        fs::create_dir_all(&base_dir).expect("create base");
+        let catalog_file = base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        fs::write(&catalog_file, r#"{"models":[]}"#).expect("write catalog");
+
+        let config_text = r#"model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        let resolved = result.expect("real file inside config dir should be accepted");
+        assert_eq!(
+            resolved.file_name().and_then(|n| n.to_str()),
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+    }
+
+    #[test]
+    fn read_limited_string_rejects_oversized_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("huge.json");
+        let file = std::fs::File::create(&path).expect("create");
+        file.set_len(MAX_CODEX_CATALOG_BYTES + 1).expect("set_len");
+
+        let result = read_limited_string(&path, MAX_CODEX_CATALOG_BYTES);
         assert!(
-            parsed.get("model_catalog_json").is_none(),
-            "None arm should remove relative cc-switch-owned field"
+            result.is_err(),
+            "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
         );
     }
 }

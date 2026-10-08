@@ -88,6 +88,8 @@ pub fn import_from_kilo(config: &mut MultiAppConfig) -> Result<usize, AppError> 
                         grokbuild: false,
                         opencode: false,
                         hermes: false,
+                        mcode: false,
+                        pi: false,
                         kilo: true,
                     },
                     description: None,

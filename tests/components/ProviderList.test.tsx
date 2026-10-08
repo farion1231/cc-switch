@@ -1,13 +1,35 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ReactElement } from "react";
+import { http, HttpResponse } from "msw";
 import type { Provider } from "@/types";
-import { ProviderList } from "@/components/providers/ProviderList";
+import {
+  ProviderList,
+  type SwitchModeProps,
+} from "@/components/providers/ProviderList";
+import { server } from "../msw/server";
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+const TAURI_ENDPOINT = "http://tauri.local";
 
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+/** 某张卡片最近一次渲染拿到的 props。 */
+const lastProps = (id: string) =>
+  providerCardRenderSpy.mock.calls
+    .map((call) => call[0])
+    .filter((props) => props.provider.id === id)
+    .at(-1);
 
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
@@ -16,23 +38,25 @@ vi.mock("@/hooks/useDragSort", () => ({
 vi.mock("@/components/providers/ProviderCard", () => ({
   ProviderCard: (props: any) => {
     providerCardRenderSpy(props);
-    const {
-      provider,
-      onSwitch,
-      onEdit,
-      onDelete,
-      onDuplicate,
-      onConfigureUsage,
-    } = props;
+    const { provider, presentation, onEdit, onDelete, onDuplicate } = props;
 
     return (
       <div data-testid={`provider-card-${provider.id}`}>
-        <button
-          data-testid={`switch-${provider.id}`}
-          onClick={() => onSwitch(provider)}
-        >
-          switch
-        </button>
+        {presentation.status && (
+          <span data-testid={`status-${provider.id}`}>
+            {presentation.status.label}
+          </span>
+        )}
+        {presentation.buttons.map((button: any) => (
+          <button
+            key={button.key}
+            data-testid={`${button.key}-${provider.id}`}
+            disabled={Boolean(button.disabledReason)}
+            onClick={button.onClick}
+          >
+            {button.label}
+          </button>
+        ))}
         <button
           data-testid={`edit-${provider.id}`}
           onClick={() => onEdit(provider)}
@@ -46,20 +70,11 @@ vi.mock("@/components/providers/ProviderCard", () => ({
           duplicate
         </button>
         <button
-          data-testid={`usage-${provider.id}`}
-          onClick={() => onConfigureUsage(provider)}
-        >
-          usage
-        </button>
-        <button
           data-testid={`delete-${provider.id}`}
           onClick={() => onDelete(provider)}
         >
           delete
         </button>
-        <span data-testid={`is-current-${provider.id}`}>
-          {props.isCurrent ? "current" : "inactive"}
-        </span>
         <span data-testid={`drag-attr-${provider.id}`}>
           {props.dragHandleProps?.attributes?.["data-dnd-id"] ?? "none"}
         </span>
@@ -87,14 +102,6 @@ vi.mock("@/hooks/useStreamCheck", () => ({
     checkProvider: vi.fn(),
     isChecking: () => false,
   }),
-}));
-
-vi.mock("@/lib/query/failover", () => ({
-  useAutoFailoverEnabled: () => ({ data: false }),
-  useFailoverQueue: () => ({ data: [] }),
-  useAddToFailoverQueue: () => ({ mutate: vi.fn() }),
-  useRemoveFromFailoverQueue: () => ({ mutate: vi.fn() }),
-  useReorderFailoverQueue: () => ({ mutate: vi.fn() }),
 }));
 
 function createProvider(overrides: Partial<Provider> = {}): Provider {
@@ -142,67 +149,90 @@ beforeEach(() => {
 });
 
 describe("ProviderList Component", () => {
+  const baseProps = {
+    currentProviderId: "",
+    onSwitch: vi.fn(),
+    onEdit: vi.fn(),
+    onDelete: vi.fn(),
+    onDuplicate: vi.fn(),
+    onOpenWebsite: vi.fn(),
+  };
+
+  function switchMode(
+    overrides: Partial<SwitchModeProps> = {},
+  ): SwitchModeProps {
+    return {
+      active: "direct",
+      view: "direct",
+      directId: null,
+      routeId: null,
+      failoverOn: false,
+      queue: [],
+      stackMembers: new Map(),
+      routingReason: () => "",
+      serviceRunning: false,
+      actions: {
+        switchDirect: vi.fn(),
+        needsRouteDialog: vi.fn(),
+        exitAndUse: vi.fn(),
+        routeTo: vi.fn(),
+        queueAdd: vi.fn(),
+        queueRemove: vi.fn(),
+        queueMove: vi.fn(),
+        stackAdd: vi.fn(),
+        stackRemove: vi.fn(),
+        stackSetDefault: vi.fn(),
+      },
+      ...overrides,
+    };
+  }
+
   it("should render skeleton placeholders when loading", () => {
     const { container } = renderWithQueryClient(
-      <ProviderList
-        providers={{}}
-        currentProviderId=""
-        appId="claude"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-        isLoading
-      />,
+      <ProviderList {...baseProps} providers={{}} appId="claude" isLoading />,
     );
 
-    const placeholders = container.querySelectorAll(
-      ".border-dashed.border-muted-foreground\\/40",
-    );
-    expect(placeholders).toHaveLength(3);
+    expect(container.querySelectorAll(".border-dashed")).toHaveLength(3);
   });
 
   it("should show empty state and trigger create callback when no providers exist", () => {
     const handleCreate = vi.fn();
-    useDragSortMock.mockReturnValueOnce({
-      sortedProviders: [],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
 
     renderWithQueryClient(
       <ProviderList
+        {...baseProps}
         providers={{}}
-        currentProviderId=""
         appId="claude"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
         onCreate={handleCreate}
       />,
     );
 
+    expect(
+      screen.getByRole("heading", { name: "provider.noProviders" }),
+    ).toBeInTheDocument();
+    // 页头已经有实心的「添加供应商」，空状态里的两个按钮都是描边
+    const importButton = screen.getByRole("button", {
+      name: "provider.importCurrent",
+    });
     const addButton = screen.getByRole("button", {
       name: "provider.addProvider",
     });
-    fireEvent.click(addButton);
+    for (const button of [importButton, addButton]) {
+      expect(button.className).toContain("border-border-strong");
+      expect(button.className).not.toContain("bg-action");
+    }
 
+    fireEvent.click(addButton);
     expect(handleCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("should render in order returned by useDragSort and pass through action callbacks", () => {
+  it("renders in the order returned by useDragSort and wires the mode actions", () => {
     const providerA = createProvider({ id: "a", name: "A" });
     const providerB = createProvider({ id: "b", name: "B" });
-
-    const handleSwitch = vi.fn();
     const handleEdit = vi.fn();
     const handleDelete = vi.fn();
     const handleDuplicate = vi.fn();
-    const handleUsage = vi.fn();
-    const handleOpenWebsite = vi.fn();
+    const mode = switchMode({ directId: "b" });
 
     useDragSortMock.mockReturnValue({
       sortedProviders: [providerB, providerA],
@@ -212,56 +242,104 @@ describe("ProviderList Component", () => {
 
     renderWithQueryClient(
       <ProviderList
+        {...baseProps}
         providers={{ a: providerA, b: providerB }}
         currentProviderId="b"
         appId="claude"
-        onSwitch={handleSwitch}
         onEdit={handleEdit}
         onDelete={handleDelete}
         onDuplicate={handleDuplicate}
-        onConfigureUsage={handleUsage}
-        onOpenWebsite={handleOpenWebsite}
+        switchMode={mode}
       />,
     );
 
-    // Verify sort order
     expect(providerCardRenderSpy).toHaveBeenCalledTimes(2);
     expect(providerCardRenderSpy.mock.calls[0][0].provider.id).toBe("b");
     expect(providerCardRenderSpy.mock.calls[1][0].provider.id).toBe("a");
+    expect(lastProps("b")?.isCurrent).toBe(true);
+    expect(screen.getByTestId("drag-attr-b")).toHaveTextContent("b");
+    expect(screen.getByTestId("drag-attr-a")).toHaveTextContent("a");
 
-    // Verify current provider marker
-    expect(providerCardRenderSpy.mock.calls[0][0].isCurrent).toBe(true);
+    // 直连那家显示「使用中」，其余是「切换」
+    expect(screen.getByTestId("status-b")).toHaveTextContent(
+      "providerCard.status.inUse",
+    );
+    fireEvent.click(screen.getByTestId("switch-a"));
+    expect(mode.actions.switchDirect).toHaveBeenCalledWith(providerA);
 
-    // Drag attributes from useSortable
-    expect(
-      providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
-      ],
-    ).toBe("b");
-    expect(
-      providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
-      ],
-    ).toBe("a");
-
-    // Trigger action buttons
-    fireEvent.click(screen.getByTestId("switch-b"));
     fireEvent.click(screen.getByTestId("edit-b"));
     fireEvent.click(screen.getByTestId("duplicate-b"));
-    fireEvent.click(screen.getByTestId("usage-b"));
     fireEvent.click(screen.getByTestId("delete-a"));
-
-    expect(handleSwitch).toHaveBeenCalledWith(providerB);
     expect(handleEdit).toHaveBeenCalledWith(providerB);
     expect(handleDuplicate).toHaveBeenCalledWith(providerB);
-    expect(handleUsage).toHaveBeenCalledWith(providerB);
     expect(handleDelete).toHaveBeenCalledWith(providerA);
-
-    // Verify useDragSort call parameters
     expect(useDragSortMock).toHaveBeenCalledWith(
       { a: providerA, b: providerB },
       "claude",
     );
+  });
+
+  it("shows queue sections while failover is on", () => {
+    const providerA = createProvider({ id: "a", name: "A" });
+    const providerB = createProvider({ id: "b", name: "B" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerA, providerB],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ a: providerA, b: providerB }}
+        appId="claude"
+        switchMode={switchMode({
+          active: "route",
+          view: "route",
+          routeId: "b",
+          failoverOn: true,
+          queue: ["b"],
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "providerCard.section.queue" }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("queueRemove-b")).toBeInTheDocument();
+    expect(screen.getByTestId("queueAdd-a")).toBeInTheDocument();
+  });
+
+  it("uses the additive layout for apps that keep several providers", async () => {
+    const providerA = createProvider({ id: "a", name: "A" });
+    const live = createProvider({ id: "live", name: "Live" });
+    const onSwitch = vi.fn();
+    const onRemoveFromConfig = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerA, live],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_opencode_live_provider_ids`, () =>
+        HttpResponse.json(["live"]),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ a: providerA, live }}
+        appId="opencode"
+        onSwitch={onSwitch}
+        onRemoveFromConfig={onRemoveFromConfig}
+      />,
+    );
+
+    fireEvent.click(await screen.findByTestId("remove-live"));
+    expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
+    fireEvent.click(screen.getByTestId("add-a"));
+    expect(onSwitch).toHaveBeenCalledWith(providerA);
   });
 
   it("filters providers with the search input", () => {
@@ -304,6 +382,292 @@ describe("ProviderList Component", () => {
     expect(screen.queryByTestId("provider-card-beta")).not.toBeInTheDocument();
     expect(
       screen.getByText("No providers match your search."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not manufacture a Pi selection summary card", async () => {
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: [],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="pi"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("pi.empty.title")).toBeInTheDocument();
+    expect(providerCardRenderSpy).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "provider.addProvider" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not expose proxy or failover actions on Pi provider cards", async () => {
+    const currentProvider = createProvider({
+      id: "current-pi",
+      name: "Current Pi",
+    });
+    const inactiveProvider = createProvider({
+      id: "inactive-pi",
+      name: "Inactive Pi",
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [currentProvider, inactiveProvider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: ["current-pi", "inactive-pi"],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{
+          [currentProvider.id]: currentProvider,
+          [inactiveProvider.id]: inactiveProvider,
+        }}
+        currentProviderId="current-pi"
+        appId="pi"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const currentCards = providerCardRenderSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.provider.id === "current-pi");
+      const inactiveCards = providerCardRenderSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.provider.id === "inactive-pi");
+      expect(currentCards).not.toHaveLength(0);
+      expect(inactiveCards).not.toHaveLength(0);
+      // Pi 只有启用 / 停用，没有路由、队列、健康状态
+      for (const props of [currentCards.at(-1), inactiveCards.at(-1)]) {
+        expect(props.isCurrent).toBe(false);
+        expect(props.isInConfig).toBe(true);
+        expect(props.presentation.showHealth).toBeFalsy();
+        expect(props.presentation.move).toBeUndefined();
+        expect(
+          props.presentation.buttons.map((button: any) => button.key),
+        ).toEqual(["remove"]);
+      }
+    });
+  });
+
+  it("derives Pi membership only from the native provider ID list", async () => {
+    const provider = createProvider({
+      id: "drifted-pi",
+      name: "Saved Pi",
+      settingsConfig: { models: [{ id: "saved-model" }] },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: ["drifted-pi"],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="pi"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const latestCardProps = providerCardRenderSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.provider.id === provider.id)
+        .at(-1);
+      expect(latestCardProps).toMatchObject({
+        isCurrent: false,
+        isInConfig: true,
+      });
+      expect(latestCardProps.presentation.deleteDisabledReason).toBeUndefined();
+    });
+  });
+
+  it("sets an inactive Pi provider through the ordinary provider action", async () => {
+    const provider = createProvider({
+      id: "inactive-pi",
+      name: "Inactive Pi",
+      settingsConfig: {
+        models: [
+          { id: "model-a", name: "Model A" },
+          { id: "model-b", name: "Model B" },
+        ],
+      },
+    });
+    const onSwitch = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: ["other-pi"],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="pi"
+        onSwitch={onSwitch}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    // 读到 Pi 当前配置之前不能改
+    const enable = await screen.findByTestId("add-inactive-pi");
+    await waitFor(() => expect(enable).toBeEnabled());
+    fireEvent.click(enable);
+    expect(onSwitch).toHaveBeenCalledWith(provider);
+  });
+
+  it("does not use legacy metadata when Pi's authoritative state is unavailable", async () => {
+    const provider = createProvider({
+      id: "legacy-pi",
+      name: "Legacy Pi",
+      meta: { liveConfigManaged: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json("current state unavailable", { status: 500 }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="pi"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("无法读取 Pi 当前配置");
+    await waitFor(() => {
+      const latestCardProps = providerCardRenderSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.provider.id === provider.id)
+        .at(-1);
+      expect(latestCardProps).toMatchObject({
+        isCurrent: false,
+        isInConfig: false,
+      });
+      expect(latestCardProps.presentation.deleteDisabledReason).toBe(
+        "pi.current.stateUnavailableHint",
+      );
+    });
+  });
+
+  it("keeps Pi provider creation on the page-level add action", async () => {
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: [],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="pi"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("pi.empty.title");
+    expect(
+      screen.queryByRole("button", { name: "provider.importCurrent" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "provider.addProvider" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not tell MiniMax Code users to click a missing import button", async () => {
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="mcode"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("mcode.empty.title");
+    expect(screen.getByText("mcode.empty.description")).toBeInTheDocument();
+    expect(
+      screen.queryByText("provider.noProvidersDescription"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "provider.importCurrent" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "provider.addProvider" }),
     ).toBeInTheDocument();
   });
 });

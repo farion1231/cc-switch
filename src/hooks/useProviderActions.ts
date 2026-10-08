@@ -1,8 +1,14 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
-import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
+import {
+  piApi,
+  providersApi,
+  settingsApi,
+  openclawApi,
+  type AppId,
+} from "@/lib/api";
 import type {
   Provider,
   UsageScript,
@@ -10,6 +16,7 @@ import type {
   OpenClawDefaultModel,
 } from "@/types";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
+import type { ProviderEditorSave } from "@/lib/api/providers";
 import { injectCodingPlanUsageScript } from "@/config/codingPlanProviders";
 import {
   useAddProviderMutation,
@@ -20,16 +27,9 @@ import {
 import { usageKeys } from "@/lib/query/usage";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
-import {
-  extractCodexWireApi,
-  isCodexAnthropicWireApi,
-  isCodexChatWireApi,
-} from "@/utils/providerConfigUtils";
-import {
-  providerNeedsRouting,
-  supportsOfficialProxyTakeover,
-} from "@/utils/providerCapabilities";
-import { isOAuthProviderType } from "@/config/constants";
+import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
+import { getRoutingReason } from "@/utils/routingReason";
+import { logFrontendInfo } from "@/lib/frontendLogger";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -37,7 +37,6 @@ import { isOAuthProviderType } from "@/config/constants";
  */
 export function useProviderActions(
   activeApp: AppId,
-  isProxyRunning?: boolean,
   isProxyTakeover?: boolean,
 ) {
   const { t } = useTranslation();
@@ -83,8 +82,8 @@ export function useProviderActions(
         suggestedDefaults?: OpenClawSuggestedDefaults;
         addToLive?: boolean;
         ensureClaudeDesktopOfficialSeed?: boolean;
-        ensureCodexOfficialSeed?: boolean;
         ensureGrokBuildOfficialSeed?: boolean;
+        editorSave?: ProviderEditorSave;
       },
     ) => {
       const enhanced = injectCodingPlanUsageScript(activeApp, provider);
@@ -141,8 +140,16 @@ export function useProviderActions(
 
   // 更新供应商
   const updateProvider = useCallback(
-    async (provider: Provider, originalId?: string) => {
-      await updateProviderMutation.mutateAsync({ provider, originalId });
+    async (
+      provider: Provider,
+      originalId?: string,
+      editorSave?: ProviderEditorSave,
+    ) => {
+      await updateProviderMutation.mutateAsync({
+        provider,
+        originalId,
+        editorSave,
+      });
 
       // 更新托盘菜单（失败不影响主操作）
       try {
@@ -159,103 +166,22 @@ export function useProviderActions(
 
   // 切换供应商
   const switchProvider = useCallback(
-    async (provider: Provider) => {
-      const isCopilotProvider =
-        activeApp === "claude" &&
-        provider.meta?.providerType === "github_copilot";
-      const isCodexChatFormat =
-        (activeApp === "codex" || activeApp === "grokbuild") &&
-        (provider.meta?.apiFormat === "openai_chat" ||
-          (typeof (provider.settingsConfig as Record<string, any>)?.config ===
-            "string" &&
-            isCodexChatWireApi(
-              extractCodexWireApi(
-                (provider.settingsConfig as Record<string, any>).config,
-              ),
-            )));
-      const isCodexAnthropicFormat =
-        (activeApp === "codex" || activeApp === "grokbuild") &&
-        (provider.meta?.apiFormat === "anthropic" ||
-          (typeof (provider.settingsConfig as Record<string, any>)?.config ===
-            "string" &&
-            isCodexAnthropicWireApi(
-              extractCodexWireApi(
-                (provider.settingsConfig as Record<string, any>).config,
-              ),
-            )));
-
-      // Claude Desktop 的路由开关就是代理进程本身；其余应用还必须开启当前
-      // 应用的 takeover。不能只看全局进程，否则其它应用已接管时会漏判；也
-      // 不能只看 takeover，否则 Desktop 在路由已运行时会持续误报。
+    async (provider: Provider, options?: { acknowledgedRouting?: boolean }) => {
+      // Claude Desktop 切到模型映射卡时，后端会自动拉起路由服务，不用提醒；
+      // 其余应用必须开启当前应用的 takeover（只看全局进程会漏判别的应用已接管的情况）。
+      // 确认框 F 里选了「仍然直连切换」的不再重复提醒。
       const routingReady =
-        activeApp === "claude-desktop"
-          ? isProxyRunning === true
-          : isProxyTakeover === true;
-
-      // Determine why this provider requires the proxy.
-      let proxyRequiredReason: string | null = null;
-      if (!routingReady && providerNeedsRouting(activeApp, provider)) {
-        if (isCopilotProvider) {
-          proxyRequiredReason = t("notifications.proxyReasonCopilot", {
-            defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
-          });
-        } else if (isOAuthProviderType(provider.meta?.providerType)) {
-          // 托管 OAuth（codex_oauth / xai_oauth 等）：凭据由本地代理注入，
-          // 是否需路由由 providerType 权威决定，不看 apiFormat（后端亦无视，
-          // 见 forwarder.rs）——避免 codex_oauth 被改成 anthropic / 旧数据缺省
-          // apiFormat 时漏判。Claude 下的 Copilot 保留上面的专属文案。
-          proxyRequiredReason = t("notifications.proxyReasonManagedOAuth", {
-            defaultValue: "使用托管 OAuth 登录（令牌由本地路由注入）",
-          });
-        } else if (
-          provider.meta?.apiFormat === "openai_chat" &&
-          activeApp === "claude"
-        ) {
-          proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
-            defaultValue: "使用 OpenAI Chat 接口格式",
-          });
-        } else if (
-          provider.meta?.apiFormat === "openai_responses" &&
-          activeApp === "claude"
-        ) {
-          proxyRequiredReason = t("notifications.proxyReasonOpenAIResponses", {
-            defaultValue: "使用 OpenAI Responses 接口格式",
-          });
-        } else if (isCodexChatFormat) {
-          proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
-            defaultValue: "使用 OpenAI Chat 接口格式",
-          });
-        } else if (isCodexAnthropicFormat) {
-          proxyRequiredReason = t(
-            "notifications.proxyReasonAnthropicMessages",
-            {
-              defaultValue: "使用 Anthropic Messages 接口格式",
-            },
-          );
-        } else if (
-          activeApp === "claude-desktop" &&
-          provider.meta?.claudeDesktopMode === "proxy"
-        ) {
-          proxyRequiredReason = t("notifications.proxyReasonClaudeDesktop", {
-            defaultValue: "使用 Claude Desktop 本地路由模式",
-          });
-        } else if (
-          provider.meta?.isFullUrl &&
-          (activeApp === "claude" ||
-            activeApp === "codex" ||
-            activeApp === "grokbuild")
-        ) {
-          proxyRequiredReason = t("notifications.proxyReasonFullUrl", {
-            defaultValue: "开启了完整 URL 连接模式",
-          });
-        } else {
-          proxyRequiredReason = t("notifications.proxyReasonRoutingRequired", {
-            defaultValue: "需要本地路由处理请求",
-          });
-        }
-      }
+        activeApp === "claude-desktop" ||
+        isProxyTakeover === true ||
+        options?.acknowledgedRouting === true;
+      const proxyRequiredReason = routingReady
+        ? null
+        : getRoutingReason(activeApp, provider, t);
 
       if (proxyRequiredReason) {
+        logFrontendInfo(
+          `[SWITCH] ${activeApp} 直连切到 ${provider.id}，提示需要路由：${proxyRequiredReason}`,
+        );
         toast.warning(
           t("notifications.proxyRequiredForSwitch", {
             reason: proxyRequiredReason,
@@ -265,8 +191,8 @@ export function useProviderActions(
         );
       }
 
-      // The built-in Codex official provider can reuse Codex's native ChatGPT
-      // login through local routing. Other official providers remain blocked.
+      // Codex official account cards can reuse the active native ChatGPT login
+      // through local routing. Other apps' official providers remain blocked.
       const officialSupportsTakeover = supportsOfficialProxyTakeover(
         activeApp,
         provider,
@@ -276,6 +202,9 @@ export function useProviderActions(
         provider.category === "official" &&
         !officialSupportsTakeover
       ) {
+        logFrontendInfo(
+          `[SWITCH] ${activeApp} 拒绝切到 ${provider.id}：路由模式下不能切到官方供应商`,
+        );
         toast.error(
           t("notifications.officialBlockedByProxy", {
             defaultValue:
@@ -290,15 +219,34 @@ export function useProviderActions(
         const result = await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
 
-        // Show backfill warning if present
+        // Surface switch warnings by code — a generic "backfill failed"
+        // message for an auth-cleanup warning would point the user at the
+        // wrong problem entirely.
         if (result?.warnings?.length) {
-          toast.warning(
-            t("notifications.backfillWarning", {
-              defaultValue:
-                "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
-            }),
-            { duration: 5000 },
+          const authCleanupFailed = result.warnings.some((warning) =>
+            warning.startsWith("codex_auth_cleanup_failed"),
           );
+          const hasOtherWarnings = result.warnings.some(
+            (warning) => !warning.startsWith("codex_auth_cleanup_failed"),
+          );
+          if (authCleanupFailed) {
+            toast.warning(
+              t("notifications.codexAuthCleanupFailed", {
+                defaultValue:
+                  "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
+              }),
+              { duration: 6000 },
+            );
+          }
+          if (hasOtherWarnings) {
+            toast.warning(
+              t("notifications.backfillWarning", {
+                defaultValue:
+                  "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
+              }),
+              { duration: 5000 },
+            );
+          }
         }
 
         // 若已弹过 proxyRequired 警告则不再弹 success
@@ -308,6 +256,9 @@ export function useProviderActions(
           if (activeApp === "codex") {
             messageKey = "notifications.codexRestartRequired";
             defaultMessage = "切换成功，请重启客户端以生效";
+          } else if (activeApp === "gemini") {
+            messageKey = "notifications.geminiRestartRequired";
+            defaultMessage = "切换成功，请重启 Gemini CLI 以生效";
           } else if (activeApp === "grokbuild") {
             messageKey = "notifications.grokBuildRestartRequired";
             defaultMessage = "切换成功，请重启 Grok Build 以生效";
@@ -323,6 +274,7 @@ export function useProviderActions(
           } else if (
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
+            activeApp === "mcode" ||
             activeApp === "kilo"
           ) {
             messageKey = "notifications.addToConfigSuccess";
@@ -336,14 +288,7 @@ export function useProviderActions(
         // 错误提示由 mutation 处理
       }
     },
-    [
-      switchProviderMutation,
-      syncClaudePlugin,
-      activeApp,
-      isProxyRunning,
-      isProxyTakeover,
-      t,
-    ],
+    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyTakeover, t],
   );
 
   // 删除供应商
@@ -366,7 +311,11 @@ export function useProviderActions(
           },
         };
 
-        await providersApi.update(updatedProvider, activeApp);
+        if (activeApp === "pi") {
+          await piApi.updateProviderUsageScript(provider.id, script);
+        } else {
+          await providersApi.update(updatedProvider, activeApp);
+        }
         await queryClient.invalidateQueries({
           queryKey: ["providers", activeApp],
         });
@@ -398,7 +347,7 @@ export function useProviderActions(
 
   // Set provider as default model (OpenClaw only)
   const setAsDefaultModel = useCallback(
-    async (provider: Provider) => {
+    async (provider: Provider, modelId?: string) => {
       const config = provider.settingsConfig as OpenClawProviderConfig;
       if (!config.models || config.models.length === 0) {
         toast.error(
@@ -409,12 +358,31 @@ export function useProviderActions(
         return;
       }
 
-      const model: OpenClawDefaultModel = {
-        primary: `${provider.id}/${config.models[0].id}`,
-        fallbacks: config.models.slice(1).map((m) => `${provider.id}/${m.id}`),
-      };
+      const selectedModel = modelId
+        ? config.models.find((model) => model.id === modelId)
+        : config.models[0];
+      if (!selectedModel) {
+        toast.error(
+          t("notifications.openclawModelNotFound", {
+            defaultValue: "所选模型已不存在，请刷新后重试",
+          }),
+        );
+        return;
+      }
 
       try {
+        const primary = `${provider.id}/${selectedModel.id}`;
+        const existingDefault = await openclawApi.getDefaultModel();
+        const model: OpenClawDefaultModel = {
+          ...(existingDefault ?? {}),
+          primary,
+        };
+        if (existingDefault?.fallbacks) {
+          model.fallbacks = existingDefault.fallbacks.filter(
+            (fallback) => fallback !== primary,
+          );
+        }
+
         await openclawApi.setDefaultModel(model);
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.defaultModel,

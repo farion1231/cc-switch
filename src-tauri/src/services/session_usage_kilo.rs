@@ -9,7 +9,7 @@ use crate::kilo_config::get_kilo_db_path;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    load_sync_cursors, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
@@ -56,7 +56,12 @@ pub fn sync_kilo_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         file_modified = file_modified.max(metadata_modified_nanos(&wal_meta));
     }
 
-    let (last_modified, _last_offset) = get_sync_state(db, &db_path_str)?;
+    // 游标预取失败必须中止本轮（不能当空表全量重导，见 load_sync_cursors 文档）
+    let cursors = load_sync_cursors(db)?;
+    let last_modified = cursors
+        .get(&db_path_str)
+        .map(|c| c.last_modified)
+        .unwrap_or(0);
 
     if file_modified <= last_modified {
         return Ok(SessionSyncResult {
@@ -85,7 +90,7 @@ pub fn sync_kilo_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
 
     for (session_id, time_updated) in &sessions {
         let sync_key = format!("{db_path_str}:{session_id}");
-        let (sess_last_modified, _) = get_sync_state(db, &sync_key)?;
+        let sess_last_modified = cursors.get(&sync_key).map(|c| c.last_modified).unwrap_or(0);
         if *time_updated <= sess_last_modified {
             continue;
         }

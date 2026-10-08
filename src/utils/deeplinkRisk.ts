@@ -7,6 +7,34 @@
 
 export type RiskKind = "envHijack" | "privateEndpoint" | "shellCommand";
 
+const SENSITIVE_CONFIG_KEY_MARKERS = [
+  "TOKEN",
+  "KEY",
+  "SECRET",
+  "PASSWORD",
+  "AUTHORIZATION",
+  "COOKIE",
+  "CREDENTIAL",
+];
+const SENSITIVE_CONFIG_KEY_NAMES = new Set(["AUTH", "BEARER"]);
+
+export function isSensitiveConfigKey(key: string): boolean {
+  const normalizedKey = key.toUpperCase();
+  return (
+    SENSITIVE_CONFIG_KEY_NAMES.has(normalizedKey) ||
+    SENSITIVE_CONFIG_KEY_MARKERS.some((marker) =>
+      normalizedKey.includes(marker),
+    )
+  );
+}
+
+export function maskSensitiveValue(value: string): string {
+  if (value.length === 0) return value;
+  return value.length > 8
+    ? `${value.substring(0, 4)}${"*".repeat(12)}`
+    : "****";
+}
+
 /**
  * 能改变子进程加载行为的环境变量。
  *
@@ -199,12 +227,7 @@ export function classifyCommand(
  * 为了两处共用同一套规则——各写一份迟早会漂移成两种脱敏口径。
  */
 export function maskValue(key: string, value: string): string {
-  const sensitiveKeys = ["TOKEN", "KEY", "SECRET", "PASSWORD"];
-  const isSensitive = sensitiveKeys.some((k) => key.toUpperCase().includes(k));
-  if (isSensitive && value.length > 8) {
-    return `${value.substring(0, 8)}${"*".repeat(12)}`;
-  }
-  return value;
+  return isSensitiveConfigKey(key) ? maskSensitiveValue(value) : value;
 }
 
 /** 风险种类 → i18n key。 */

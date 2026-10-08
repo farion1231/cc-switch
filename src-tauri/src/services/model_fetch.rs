@@ -4,9 +4,10 @@
 //! 主要面向第三方聚合站（硅基流动、OpenRouter 等），以及把 Anthropic
 //! 协议挂在兼容子路径上的官方供应商（DeepSeek、Kimi、智谱 GLM 等）。
 
-use reqwest::header::{HeaderValue, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, USER_AGENT};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// 获取到的模型信息
@@ -17,10 +18,18 @@ pub struct FetchedModel {
     pub owned_by: Option<String>,
 }
 
-/// OpenAI 兼容的 /v1/models 响应格式
+/// 模型列表响应的兼容格式。
+///
+/// OpenAI 兼容接口和 Anthropic 接口使用 `data` 字段；Codex 远端模型目录
+/// （`{base}/models`，智谱 /api/v1 即此格式）使用 `models[].slug`。
+///
+/// `models` 收成 `Value` 而非强类型：部分供应商会在 `data` 旁附带任意形状的
+/// `models`，而 serde 反序列化的是整个结构体，强类型字段一旦对不上就会连带
+/// `data` 一起解析失败（#7593）。
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Option<Vec<ModelEntry>>,
+    models: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,7 +38,27 @@ struct ModelEntry {
     owned_by: Option<String>,
 }
 
+/// `models[]` 条目对应的模型 id：`slug` 优先，回退 OpenAI 风格的 `id`；
+/// 非数组、非对象、非字符串或空串一律跳过，绝不报错。
+fn catalog_model_ids(models: Option<serde_json::Value>) -> Vec<String> {
+    let Some(serde_json::Value::Array(entries)) = models else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|m| {
+            ["slug", "id"]
+                .iter()
+                .find_map(|k| m.get(k)?.as_str().filter(|s| !s.is_empty()))
+        })
+        .map(str::to_string)
+        .collect()
+}
+
 const FETCH_TIMEOUT_SECS: u64 = 15;
+const MAX_REQUEST_HEADERS: usize = 64;
+const MAX_HEADER_NAME_BYTES: usize = 256;
+const MAX_HEADER_VALUE_BYTES: usize = 16 * 1024;
 
 /// 404/405 响应体截断长度：避免把几十 KB HTML 404 页整页保留到错误串里。
 const ERROR_BODY_MAX_CHARS: usize = 512;
@@ -57,30 +86,28 @@ pub async fn fetch_models(
     is_full_url: bool,
     models_url_override: Option<&str>,
     user_agent: Option<HeaderValue>,
+    api_format: Option<&str>,
+    request_headers: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<FetchedModel>, String> {
-    if api_key.is_empty() {
-        return Err("API Key is required to fetch models".to_string());
-    }
-
     let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
+    let headers =
+        build_model_fetch_headers(api_key, api_format, user_agent.as_ref(), request_headers)?;
     let client = crate::proxy::http_client::get();
     let mut last_err: Option<String> = None;
-    let log_secrets = vec![api_key.to_string()];
+    let mut known_secrets = vec![api_key.to_string()];
+    if let Some(request_headers) = request_headers {
+        known_secrets.extend(request_headers.values().cloned());
+    }
 
     for url in &candidates {
         log::debug!(
             "[ModelFetch] Trying endpoint: {}",
-            crate::url_for_log_with_secrets(url, &log_secrets)
+            crate::url_for_log_with_secrets(url, &known_secrets)
         );
-        let mut request = client
+        let request = client
             .get(url)
-            .header("Authorization", format!("Bearer {api_key}"))
+            .headers(headers.clone())
             .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
-        // 自定义 User-Agent：部分 /models 端点同样有 UA 白名单（如 Kimi Coding Plan），
-        // 与转发 / 检测路径共用同一 UA，避免"代理可用但取模型失败"。
-        if let Some(ua) = &user_agent {
-            request = request.header(USER_AGENT, ua.clone());
-        }
         let response = match request.send().await {
             Ok(r) => r,
             Err(e) => {
@@ -96,27 +123,37 @@ pub async fn fetch_models(
                 .await
                 .map_err(|e| format!("Failed to parse response: {e}"))?;
 
-            let mut models: Vec<FetchedModel> = resp
-                .data
-                .unwrap_or_default()
-                .into_iter()
-                .map(|m| FetchedModel {
-                    id: m.id,
-                    owned_by: m.owned_by,
-                })
-                .collect();
+            let mut models: Vec<FetchedModel> = if let Some(data) = resp.data {
+                data.into_iter()
+                    .map(|m| FetchedModel {
+                        id: m.id,
+                        owned_by: m.owned_by,
+                    })
+                    .collect()
+            } else {
+                catalog_model_ids(resp.models)
+                    .into_iter()
+                    .map(|id| FetchedModel { id, owned_by: None })
+                    .collect()
+            };
 
             models.sort_by(|a, b| a.id.cmp(&b.id));
             return Ok(models);
         }
 
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
-            let body = truncate_body(response.text().await.unwrap_or_default());
+            let body = redact_model_fetch_error_body(
+                response.text().await.unwrap_or_default(),
+                &known_secrets,
+            );
             last_err = Some(format!("HTTP {status}: {body}"));
             continue;
         }
 
-        let body = truncate_body(response.text().await.unwrap_or_default());
+        let body = redact_model_fetch_error_body(
+            response.text().await.unwrap_or_default(),
+            &known_secrets,
+        );
         return Err(format!("HTTP {status}: {body}"));
     }
 
@@ -124,6 +161,72 @@ pub async fn fetch_models(
         "All candidates failed: {}",
         last_err.unwrap_or_else(|| "no candidates".to_string())
     ))
+}
+
+fn redact_model_fetch_error_body(body: String, known_secrets: &[String]) -> String {
+    truncate_body(crate::redact_known_secrets_strict(&body, known_secrets))
+}
+
+fn build_model_fetch_headers(
+    api_key: &str,
+    api_format: Option<&str>,
+    user_agent: Option<&HeaderValue>,
+    request_headers: Option<&BTreeMap<String, String>>,
+) -> Result<HeaderMap, String> {
+    let custom_count = request_headers.map_or(0, BTreeMap::len);
+    if api_key.is_empty() && custom_count == 0 {
+        return Err("API Key or request headers are required to fetch models".to_string());
+    }
+    if custom_count > MAX_REQUEST_HEADERS {
+        return Err(format!(
+            "Too many model-fetch request headers (maximum {MAX_REQUEST_HEADERS})"
+        ));
+    }
+
+    let mut headers = HeaderMap::new();
+    if !api_key.is_empty() {
+        let (name, value) = match api_format {
+            Some("anthropic-messages") => (
+                HeaderName::from_static("x-api-key"),
+                HeaderValue::from_str(api_key)
+                    .map_err(|error| format!("Invalid API Key header value: {error}"))?,
+            ),
+            Some("google-generative-ai") => (
+                HeaderName::from_static("x-goog-api-key"),
+                HeaderValue::from_str(api_key)
+                    .map_err(|error| format!("Invalid API Key header value: {error}"))?,
+            ),
+            _ => (
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {api_key}"))
+                    .map_err(|error| format!("Invalid API Key header value: {error}"))?,
+            ),
+        };
+        headers.insert(name, value);
+    }
+
+    if let Some(user_agent) = user_agent {
+        headers.insert(USER_AGENT, user_agent.clone());
+    }
+
+    if let Some(request_headers) = request_headers {
+        for (raw_name, raw_value) in request_headers {
+            let name = raw_name.trim();
+            if name.is_empty() || name.len() > MAX_HEADER_NAME_BYTES {
+                return Err(format!("Invalid model-fetch header name: {raw_name}"));
+            }
+            if raw_value.len() > MAX_HEADER_VALUE_BYTES {
+                return Err(format!("Model-fetch header value is too large: {name}"));
+            }
+            let name = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|error| format!("Invalid model-fetch header name {name}: {error}"))?;
+            let value = HeaderValue::from_str(raw_value)
+                .map_err(|error| format!("Invalid model-fetch header value for {name}: {error}"))?;
+            headers.insert(name, value);
+        }
+    }
+
+    Ok(headers)
 }
 
 /// 构造「模型列表端点」的候选 URL 列表
@@ -238,6 +341,68 @@ fn ends_with_version_segment(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_fetch_headers_follow_pi_api_format() {
+        let anthropic =
+            build_model_fetch_headers("anthropic-key", Some("anthropic-messages"), None, None)
+                .unwrap();
+        assert_eq!(anthropic["x-api-key"], "anthropic-key");
+        assert!(!anthropic.contains_key(AUTHORIZATION));
+
+        let google =
+            build_model_fetch_headers("google-key", Some("google-generative-ai"), None, None)
+                .unwrap();
+        assert_eq!(google["x-goog-api-key"], "google-key");
+        assert!(!google.contains_key(AUTHORIZATION));
+
+        let openai =
+            build_model_fetch_headers("openai-key", Some("openai-responses"), None, None).unwrap();
+        assert_eq!(openai[AUTHORIZATION], "Bearer openai-key");
+    }
+
+    #[test]
+    fn model_fetch_headers_allow_validated_header_only_auth_and_overrides() {
+        let custom = BTreeMap::from([
+            ("Authorization".to_string(), "Token literal".to_string()),
+            ("X-Tenant".to_string(), "tenant-a".to_string()),
+        ]);
+        let headers =
+            build_model_fetch_headers("", Some("openai-completions"), None, Some(&custom)).unwrap();
+        assert_eq!(headers[AUTHORIZATION], "Token literal");
+        assert_eq!(headers["x-tenant"], "tenant-a");
+
+        let override_default =
+            BTreeMap::from([("x-api-key".to_string(), "header-managed-key".to_string())]);
+        let headers = build_model_fetch_headers(
+            "provider-key",
+            Some("anthropic-messages"),
+            None,
+            Some(&override_default),
+        )
+        .unwrap();
+        assert_eq!(headers["x-api-key"], "header-managed-key");
+    }
+
+    #[test]
+    fn model_fetch_headers_reject_invalid_or_missing_credentials() {
+        assert!(build_model_fetch_headers("", None, None, None).is_err());
+        let invalid = BTreeMap::from([("bad header".to_string(), "literal-value".to_string())]);
+        assert!(build_model_fetch_headers("", None, None, Some(&invalid)).is_err());
+    }
+
+    #[test]
+    fn model_fetch_error_body_redacts_known_header_credentials() {
+        let secrets = vec![
+            "short".to_string(),
+            "Bearer literal-header-secret".to_string(),
+        ];
+        let body = redact_model_fetch_error_body(
+            "invalid short / Bearer literal-header-secret".to_string(),
+            &secrets,
+        );
+        assert_eq!(body, "invalid [REDACTED] / [REDACTED]");
+    }
 
     #[test]
     fn test_candidates_plain_root() {
@@ -477,5 +642,65 @@ mod tests {
         let json = r#"{"object":"list","data":[]}"#;
         let resp: ModelsResponse = serde_json::from_str(json).unwrap();
         assert!(resp.data.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_response_with_non_zhipu_models_field() {
+        // 回归 #7593：部分供应商的 /models 响应在标准 `data` 之外还附带顶层
+        // `models` 字段（条目为 OpenAI 风格的 {id, ...}，无 slug）。整个响应
+        // 的反序列化不应因此失败。
+        let json = r#"{
+            "data": [
+                {"id": "model-a", "name": "model-a", "max_tokens": 32000, "context_window": 400000},
+                {"id": "model-b", "name": "model-b", "max_tokens": 32000, "context_window": 1000000}
+            ],
+            "models": [
+                {"id": "model-a", "name": "model-a", "max_tokens": 32000, "context_window": 400000},
+                {"id": "model-b", "name": "model-b", "max_tokens": 32000, "context_window": 1000000}
+            ],
+            "success": true
+        }"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let data = resp.data.unwrap();
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0].id, "model-a");
+        assert_eq!(data[1].id, "model-b");
+    }
+
+    #[test]
+    fn test_catalog_model_ids_slug_then_id() {
+        // `models` 条目解析：slug 优先，回退 id，两者皆缺时跳过。
+        let json = r#"{"models": [
+            {"slug": "glm-4.7"},
+            {"id": "openai-shaped"},
+            {"name": "neither-slug-nor-id"},
+            {}
+        ]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let ids = catalog_model_ids(resp.models);
+        assert_eq!(
+            ids,
+            vec!["glm-4.7".to_string(), "openai-shaped".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_response_tolerates_any_models_shape() {
+        // #7593：data 合法时，任意形状的 models 都不能让整体解析失败
+        for models in [
+            r#"["a","b"]"#,
+            r#"{"count":1}"#,
+            "2",
+            r#"[{"slug":"glm","id":123}]"#,
+            r#"[{"slug":1}]"#,
+        ] {
+            let json = format!(r#"{{"data":[{{"id":"model-a"}}],"models":{models}}}"#);
+            let resp: ModelsResponse = serde_json::from_str(&json).unwrap();
+            assert_eq!(resp.data.unwrap()[0].id, "model-a");
+        }
+        // 无 data 时：非字符串 id 跳过，slug 照常可用
+        let resp: ModelsResponse =
+            serde_json::from_str(r#"{"models":[{"slug":"glm","id":123}]}"#).unwrap();
+        assert_eq!(catalog_model_ids(resp.models), vec!["glm".to_string()]);
     }
 }

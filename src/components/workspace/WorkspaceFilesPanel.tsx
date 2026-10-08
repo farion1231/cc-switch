@@ -17,6 +17,7 @@ import {
   FolderOpen,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { workspaceApi } from "@/lib/api/workspace";
 import WorkspaceFileEditor from "./WorkspaceFileEditor";
 import DailyMemoryPanel from "./DailyMemoryPanel";
@@ -84,14 +85,15 @@ const WorkspaceFilesPanel: React.FC = () => {
 
   return (
     <div className="px-6 pt-4 pb-8">
-      <p
-        className="text-sm text-muted-foreground mb-6 cursor-pointer hover:text-foreground transition-colors inline-flex items-center gap-1"
-        onClick={() => workspaceApi.openDirectory("workspace")}
-        title={t("workspace.openDirectory")}
-      >
-        ~/.openclaw/workspace/
-        <FolderOpen className="w-3.5 h-3.5" />
-      </p>
+      <HoverTip content={t("workspace.openDirectory")}>
+        <p
+          className="text-sm text-fg-2 mb-6 cursor-pointer hover:text-fg-1 transition-colors inline-flex items-center gap-1"
+          onClick={() => workspaceApi.openDirectory("workspace")}
+        >
+          ~/.openclaw/workspace/
+          <FolderOpen className="w-3.5 h-3.5" />
+        </p>
+      </HoverTip>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {WORKSPACE_FILES.map((file) => {
@@ -102,25 +104,23 @@ const WorkspaceFilesPanel: React.FC = () => {
             <button
               key={file.filename}
               onClick={() => setEditingFile(file.filename)}
-              className="flex items-start gap-3 p-4 rounded-xl border border-border bg-card hover:bg-accent/50 transition-colors text-left group"
+              className="flex items-start gap-3 p-4 rounded-xl border border-border bg-surface hover:bg-subtle transition-colors text-left group"
             >
-              <div className="mt-0.5 text-muted-foreground group-hover:text-foreground transition-colors">
+              <div className="mt-0.5 text-fg-2 group-hover:text-fg-1 transition-colors">
                 <Icon className="w-5 h-5" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium text-sm text-foreground">
+                  <span className="font-medium text-sm text-fg-1">
                     {file.filename}
                   </span>
                   {exists ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                    <CheckCircle2 className="w-3.5 h-3.5 text-success-text flex-shrink-0" />
                   ) : (
-                    <Circle className="w-3.5 h-3.5 text-muted-foreground/40 flex-shrink-0" />
+                    <Circle className="w-3.5 h-3.5 text-fg-3 flex-shrink-0" />
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {t(file.descKey)}
-                </p>
+                <p className="text-xs text-fg-2 mt-0.5">{t(file.descKey)}</p>
               </div>
             </button>
           );
@@ -129,20 +129,20 @@ const WorkspaceFilesPanel: React.FC = () => {
         {/* Daily Memory — inline with workspace files */}
         <button
           onClick={() => setShowDailyMemory(true)}
-          className="flex items-start gap-3 p-4 rounded-xl border border-border bg-card hover:bg-accent/50 transition-colors text-left group"
+          className="flex items-start gap-3 p-4 rounded-xl border border-border bg-surface hover:bg-subtle transition-colors text-left group"
         >
-          <div className="mt-0.5 text-muted-foreground group-hover:text-foreground transition-colors">
+          <div className="mt-0.5 text-fg-2 group-hover:text-fg-1 transition-colors">
             <Calendar className="w-5 h-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <span className="font-medium text-sm text-foreground">
+            <span className="font-medium text-sm text-fg-1">
               {t("workspace.dailyMemory.cardTitle")}
             </span>
-            <p className="text-xs text-muted-foreground mt-0.5">
+            <p className="text-xs text-fg-2 mt-0.5">
               {t("workspace.dailyMemory.cardDescription")}
             </p>
           </div>
-          <div className="mt-0.5 text-muted-foreground group-hover:text-foreground transition-colors">
+          <div className="mt-0.5 text-fg-2 group-hover:text-fg-1 transition-colors">
             <ChevronRight className="w-4 h-4" />
           </div>
         </button>

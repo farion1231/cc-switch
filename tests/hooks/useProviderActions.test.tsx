@@ -55,6 +55,7 @@ vi.mock("@/lib/query", () => ({
 
 const providersApiUpdateMock = vi.fn();
 const providersApiUpdateTrayMenuMock = vi.fn();
+const piApiUpdateProviderUsageScriptMock = vi.fn();
 const settingsApiGetMock = vi.fn();
 const settingsApiApplyMock = vi.fn();
 const openclawApiGetModelCatalogMock = vi.fn();
@@ -62,6 +63,10 @@ const openclawApiGetDefaultModelMock = vi.fn();
 const openclawApiSetDefaultModelMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
+  piApi: {
+    updateProviderUsageScript: (...args: unknown[]) =>
+      piApiUpdateProviderUsageScriptMock(...args),
+  },
   providersApi: {
     update: (...args: unknown[]) => providersApiUpdateMock(...args),
     updateTrayMenu: (...args: unknown[]) =>
@@ -113,6 +118,7 @@ beforeEach(() => {
   switchProviderMutateAsync.mockReset();
   providersApiUpdateMock.mockReset();
   providersApiUpdateTrayMenuMock.mockReset();
+  piApiUpdateProviderUsageScriptMock.mockReset();
   settingsApiGetMock.mockReset();
   settingsApiApplyMock.mockReset();
   openclawApiGetModelCatalogMock.mockReset();
@@ -198,6 +204,25 @@ describe("useProviderActions", () => {
     );
   });
 
+  it("asks for a Gemini CLI restart after switching, since it reads .env only at startup", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({ category: "custom" });
+
+    const { result } = renderHook(() => useProviderActions("gemini"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "切换成功，请重启 Gemini CLI 以生效",
+      { closeButton: true },
+    );
+  });
+
   it("warns but still switches providers that require proxy when proxy is not running", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
@@ -208,7 +233,7 @@ describe("useProviderActions", () => {
       },
     });
 
-    const { result } = renderHook(() => useProviderActions("claude", false), {
+    const { result } = renderHook(() => useProviderActions("claude"), {
       wrapper,
     });
 
@@ -230,7 +255,7 @@ describe("useProviderActions", () => {
       },
     });
 
-    const { result } = renderHook(() => useProviderActions("codex", false), {
+    const { result } = renderHook(() => useProviderActions("codex"), {
       wrapper,
     });
 
@@ -250,7 +275,7 @@ describe("useProviderActions", () => {
       meta: { apiFormat: "anthropic" },
     });
 
-    const { result } = renderHook(() => useProviderActions("codex", false), {
+    const { result } = renderHook(() => useProviderActions("codex"), {
       wrapper,
     });
 
@@ -285,10 +310,9 @@ describe("useProviderActions", () => {
       }),
     ];
 
-    const { result } = renderHook(
-      () => useProviderActions("grokbuild", false),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useProviderActions("grokbuild"), {
+      wrapper,
+    });
 
     for (const provider of providers) {
       await act(async () => {
@@ -311,10 +335,9 @@ describe("useProviderActions", () => {
       },
     });
 
-    const { result } = renderHook(
-      () => useProviderActions("codex", true, false),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useProviderActions("codex", false), {
+      wrapper,
+    });
 
     await act(async () => {
       await result.current.switchProvider(provider);
@@ -337,8 +360,28 @@ describe("useProviderActions", () => {
       },
     });
 
+    const { result } = renderHook(() => useProviderActions("codex", true), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).not.toHaveBeenCalled();
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
+  it("does not warn for Claude Desktop model mapping, which starts routing itself", async () => {
+    switchProviderMutateAsync.mockResolvedValue(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { claudeDesktopMode: "proxy" },
+    });
+
     const { result } = renderHook(
-      () => useProviderActions("codex", true, true),
+      () => useProviderActions("claude-desktop", false),
       { wrapper },
     );
 
@@ -350,37 +393,7 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
-  it("uses proxy process readiness for Claude Desktop routing", async () => {
-    switchProviderMutateAsync.mockResolvedValue(undefined);
-    const { wrapper } = createWrapper();
-    const provider = createProvider({
-      category: "custom",
-      meta: { claudeDesktopMode: "proxy" },
-    });
-
-    const { result, rerender } = renderHook(
-      ({ isProxyRunning }) =>
-        useProviderActions("claude-desktop", isProxyRunning, false),
-      { initialProps: { isProxyRunning: true }, wrapper },
-    );
-
-    await act(async () => {
-      await result.current.switchProvider(provider);
-    });
-    expect(toastWarningMock).not.toHaveBeenCalled();
-
-    rerender({ isProxyRunning: false });
-    await act(async () => {
-      await result.current.switchProvider(provider);
-    });
-
-    expect(toastWarningMock).toHaveBeenCalledTimes(1);
-    expect(toastWarningMock).toHaveBeenCalledWith(
-      expect.stringContaining("Claude Desktop 本地路由模式"),
-    );
-  });
-
-  it("allows the built-in Codex official provider during takeover", async () => {
+  it("allows the native Codex official provider during takeover", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
     const provider = createProvider({
@@ -388,10 +401,9 @@ describe("useProviderActions", () => {
       category: "official",
     });
 
-    const { result } = renderHook(
-      () => useProviderActions("codex", true, true),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useProviderActions("codex", true), {
+      wrapper,
+    });
 
     await act(async () => {
       await result.current.switchProvider(provider);
@@ -408,10 +420,9 @@ describe("useProviderActions", () => {
       category: "official",
     });
 
-    const { result } = renderHook(
-      () => useProviderActions("claude", true, true),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useProviderActions("claude", true), {
+      wrapper,
+    });
 
     await act(async () => {
       await result.current.switchProvider(provider);
@@ -421,23 +432,32 @@ describe("useProviderActions", () => {
     expect(toastErrorMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not grant routing capability to a UUID Codex official copy", async () => {
+  it("allows a managed Codex Official card during takeover", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
     const provider = createProvider({
       id: "generated-uuid",
       category: "official",
+      settingsConfig: { auth: {}, config: "" },
+      meta: {
+        providerType: "codex_oauth",
+        authBinding: {
+          source: "managed_account",
+          authProvider: "codex_oauth",
+          accountId: "acct-managed",
+        },
+      },
     });
-    const { result } = renderHook(
-      () => useProviderActions("codex", true, true),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useProviderActions("codex", true), {
+      wrapper,
+    });
 
     await act(async () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
-    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith("generated-uuid");
+    expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {
@@ -639,6 +659,36 @@ describe("useProviderActions", () => {
     expect(toastErrorMock.mock.calls[0]?.[0]).toBe("Save failed");
   });
 
+  it("saves Pi usage metadata without updating the native provider config", async () => {
+    piApiUpdateProviderUsageScriptMock.mockResolvedValueOnce(true);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      settingsConfig: {
+        name: "Pi provider",
+        futureField: { preserve: true },
+      },
+    });
+    const script: UsageScript = {
+      enabled: true,
+      language: "javascript",
+      code: "return {}",
+    };
+
+    const { result } = renderHook(() => useProviderActions("pi"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.saveUsageScript(provider, script);
+    });
+
+    expect(piApiUpdateProviderUsageScriptMock).toHaveBeenCalledWith(
+      provider.id,
+      script,
+    );
+    expect(providersApiUpdateMock).not.toHaveBeenCalled();
+  });
+
   it("should use default error message when saveUsageScript fails without error message", async () => {
     providersApiUpdateMock.mockRejectedValueOnce(new Error(""));
     const { wrapper } = createWrapper();
@@ -720,7 +770,7 @@ describe("useProviderActions", () => {
     expect(result.current.isLoading).toBe(true);
   });
 
-  it("does not show backup details when setting OpenClaw default model", async () => {
+  it("sets the first OpenClaw model without inventing a fallback chain", async () => {
     openclawApiSetDefaultModelMock.mockResolvedValueOnce({
       backupPath: "/tmp/openclaw-backup.json5",
       warnings: [],
@@ -743,10 +793,41 @@ describe("useProviderActions", () => {
 
     expect(openclawApiSetDefaultModelMock).toHaveBeenCalledWith({
       primary: "provider-1/gpt-4.1",
-      fallbacks: ["provider-1/gpt-4.1-mini"],
     });
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
     expect(toastSuccessMock.mock.calls[0]?.[1]).toEqual({ closeButton: true });
+  });
+
+  it("sets the explicitly selected OpenClaw model and preserves existing fallbacks", async () => {
+    openclawApiGetDefaultModelMock.mockResolvedValueOnce({
+      primary: "other/old-primary",
+      fallbacks: ["provider-1/gpt-4.1-mini", "other/fallback"],
+      customPolicy: "preserve-me",
+    });
+    openclawApiSetDefaultModelMock.mockResolvedValueOnce({
+      warnings: [],
+    });
+
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      settingsConfig: {
+        models: [{ id: "gpt-4.1" }, { id: "gpt-4.1-mini" }],
+      },
+    });
+
+    const { result } = renderHook(() => useProviderActions("openclaw"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.setAsDefaultModel(provider, "gpt-4.1-mini");
+    });
+
+    expect(openclawApiSetDefaultModelMock).toHaveBeenCalledWith({
+      primary: "provider-1/gpt-4.1-mini",
+      fallbacks: ["other/fallback"],
+      customPolicy: "preserve-me",
+    });
   });
 });
 it("clears loading flag when all mutations idle", () => {

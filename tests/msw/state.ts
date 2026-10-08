@@ -73,6 +73,8 @@ const createDefaultProviders = (): ProvidersByApp => ({
   opencode: {},
   openclaw: {},
   hermes: {},
+  pi: {},
+  mcode: {},
   kilo: {},
 });
 
@@ -85,6 +87,8 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   opencode: "",
   openclaw: "",
   hermes: "",
+  pi: "",
+  mcode: "",
   kilo: "",
 });
 
@@ -202,6 +206,8 @@ let mcpConfigs: McpConfigState = {
   opencode: {},
   openclaw: {},
   hermes: {},
+  pi: {},
+  mcode: {},
   kilo: {},
 };
 
@@ -275,6 +281,8 @@ export const resetProviderState = () => {
     opencode: {},
     openclaw: {},
     hermes: {},
+    pi: {},
+    mcode: {},
     kilo: {},
   };
 };

@@ -63,6 +63,26 @@ where
     s3_sync_service::run_with_sync_lock(operation).await
 }
 
+async fn run_download_with_s3_lock<T, U, DownloadFut, Project, ProjectFut>(
+    download: DownloadFut,
+    project: Project,
+) -> Result<U, AppError>
+where
+    DownloadFut: std::future::Future<Output = Result<T, AppError>>,
+    Project: FnOnce(T) -> ProjectFut,
+    ProjectFut: std::future::Future<Output = Result<U, AppError>>,
+{
+    run_with_s3_lock(async {
+        let result = {
+            let _auto_sync_suppression =
+                crate::services::s3_auto_sync::AutoSyncSuppressionGuard::new();
+            download.await?
+        };
+        project(result).await
+    })
+    .await
+}
+
 fn map_sync_result<T, F>(result: Result<T, AppError>, on_error: F) -> Result<T, String>
 where
     F: FnOnce(&AppError),
@@ -107,21 +127,30 @@ pub async fn s3_sync_upload(state: State<'_, AppState>) -> Result<Value, String>
 #[tauri::command]
 pub async fn s3_sync_download(state: State<'_, AppState>) -> Result<Value, String> {
     let db = state.db.clone();
-    let db_for_sync = db.clone();
+    let app_state_for_sync = state.inner().clone();
     let mut settings = require_enabled_s3_settings()?;
-    let _auto_sync_suppression = crate::services::s3_auto_sync::AutoSyncSuppressionGuard::new();
 
-    let sync_result = run_with_s3_lock(s3_sync_service::download(&db, &mut settings)).await;
-    let mut result = map_sync_result(sync_result, |error| {
+    // Keep the derived live configuration refresh in the same global sync
+    // operation. Otherwise another WebDAV/S3 restore can start after the DB
+    // apply but before this snapshot has finished projecting its live files.
+    let sync_result = run_download_with_s3_lock(
+        s3_sync_service::download(&db, &mut settings),
+        |result| async move {
+            let post_sync_result = tauri::async_runtime::spawn_blocking(move || {
+                run_post_import_sync(&app_state_for_sync)
+            })
+            .await
+            .map_err(|e| e.to_string());
+            Ok((result, post_sync_result))
+        },
+    )
+    .await;
+    let (mut result, post_sync_result) = map_sync_result(sync_result, |error| {
         persist_sync_error(&mut settings, error, "manual")
     })?;
 
     // Post-download sync is best-effort: snapshot restore has already succeeded.
-    let warning = post_sync_warning_from_result(
-        tauri::async_runtime::spawn_blocking(move || run_post_import_sync(db_for_sync))
-            .await
-            .map_err(|e| e.to_string()),
-    );
+    let warning = post_sync_warning_from_result(post_sync_result);
     if let Some(msg) = warning.as_ref() {
         log::warn!("[S3] post-download sync warning: {msg}");
     }
@@ -164,7 +193,7 @@ pub async fn s3_sync_fetch_remote_info() -> Result<Value, String> {
 mod tests {
     use super::{
         map_sync_result, persist_sync_error, require_enabled_s3_settings,
-        resolve_secret_for_request, run_with_s3_lock, s3_sync_mutex,
+        resolve_secret_for_request, run_download_with_s3_lock, run_with_s3_lock, s3_sync_mutex,
     };
     use crate::error::AppError;
     use crate::settings::{AppSettings, S3SyncSettings};
@@ -202,6 +231,51 @@ mod tests {
             .expect("background task should not panic");
 
         assert!(acquired.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn download_suppression_starts_after_s3_lock_acquisition() {
+        assert!(!crate::services::s3_auto_sync::is_auto_sync_suppressed());
+        let guard = s3_sync_mutex().lock().await;
+        let download_entered = AtomicBool::new(false);
+        let projection_entered = AtomicBool::new(false);
+        let download = run_download_with_s3_lock(
+            async {
+                download_entered.store(true, Ordering::SeqCst);
+                assert!(crate::services::s3_auto_sync::is_auto_sync_suppressed());
+                Ok::<(), AppError>(())
+            },
+            |_| async {
+                projection_entered.store(true, Ordering::SeqCst);
+                assert!(!crate::services::s3_auto_sync::is_auto_sync_suppressed());
+                Ok::<(), AppError>(())
+            },
+        );
+        tokio::pin!(download);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), download.as_mut())
+                .await
+                .is_err(),
+            "download must wait while another sync operation holds the global lock"
+        );
+        assert!(!download_entered.load(Ordering::SeqCst));
+        assert!(!projection_entered.load(Ordering::SeqCst));
+        assert!(
+            !crate::services::s3_auto_sync::is_auto_sync_suppressed(),
+            "local changes must remain observable while the download waits for the global lock"
+        );
+
+        drop(guard);
+        tokio::time::timeout(Duration::from_secs(1), download.as_mut())
+            .await
+            .expect("download should start after lock release")
+            .expect("download operation should complete");
+
+        assert!(download_entered.load(Ordering::SeqCst));
+        assert!(projection_entered.load(Ordering::SeqCst));
+        assert!(!crate::services::s3_auto_sync::is_auto_sync_suppressed());
     }
 
     #[tokio::test]

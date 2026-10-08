@@ -3,6 +3,7 @@ import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Link2, Zap } from "lucide-react";
+import { REQUIRED_LABEL } from "../BasicFormFields";
 
 interface EndpointFieldProps {
   id: string;
@@ -53,17 +54,17 @@ export function EndpointField({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-3">
-          <FormLabel htmlFor={id}>{label}</FormLabel>
+          <FormLabel htmlFor={id} className={REQUIRED_LABEL}>
+            {label}
+          </FormLabel>
           {showFullUrlToggle && onFullUrlChange ? (
-            <div className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/30 px-2.5 py-1">
+            <div className="flex items-center gap-2 rounded-full border border-border px-2.5 py-1">
               <Link2
-                className={`h-3.5 w-3.5 ${
-                  isFullUrl ? "text-primary" : "text-muted-foreground"
-                }`}
+                className={`h-3.5 w-3.5 ${isFullUrl ? "text-fg-1" : "text-fg-3"}`}
               />
               <span
-                className={`text-xs font-medium ${
-                  isFullUrl ? "text-foreground" : "text-muted-foreground"
+                className={`text-caption font-medium ${
+                  isFullUrl ? "text-fg-1" : "text-fg-2"
                 }`}
               >
                 {t("providerForm.fullUrlLabel", {
@@ -85,7 +86,7 @@ export function EndpointField({
           <button
             type="button"
             onClick={onManageClick}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="flex items-center gap-1 text-caption text-fg-2 transition-colors hover:text-fg-1"
           >
             <Zap className="h-3.5 w-3.5" />
             {manageButtonLabel || defaultManageLabel}
@@ -99,13 +100,12 @@ export function EndpointField({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         autoComplete="off"
+        aria-required="true"
       />
       {effectiveHint ? (
-        <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
-          <p className="text-xs text-amber-600 dark:text-amber-400">
-            {effectiveHint}
-          </p>
-        </div>
+        <p className="text-caption text-fg-2">
+          {effectiveHint.replace(/^💡\s*/u, "")}
+        </p>
       ) : null}
     </div>
   );
