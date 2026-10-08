@@ -1926,12 +1926,10 @@ pub fn anthropic_to_responses(
 
     if let Some(max_uses) = hosted_web_search_max_uses {
         if is_codex_oauth {
-            // The ChatGPT Codex contract rejects max_tool_calls, so enforce the
-            // Anthropic per-tool budget locally instead: a soft cap via
-            // instructions here, and a hard cap downstream where the streaming
-            // and aggregating converters count web_search_call items. Hosted
-            // web search is the only built-in tool this transform produces, so
-            // that count is exact whether or not the tool was forced.
+            // Codex rejects max_tool_calls. Add a soft instruction cap here;
+            // downstream converters count web_search_call items and cut off the
+            // response on excess calls, forced or not. This response-side bound
+            // cannot guarantee that excess searches have not executed upstream.
             let existing = result
                 .get("instructions")
                 .and_then(Value::as_str)
@@ -3485,8 +3483,7 @@ mod tests {
             ]
         });
 
-        // Claude Code never forces tool_choice for WebSearch; the request must
-        // still go through, with the cap enforced locally instead of failing.
+        // An unforced hosted search must coexist with client-side tools.
         let result = anthropic_to_responses(input, None, true, false).unwrap();
         assert!(result.get("max_tool_calls").is_none());
         assert!(result["instructions"]
@@ -4277,6 +4274,77 @@ mod tests {
             })
         );
         assert_eq!(result["usage"]["server_tool_use"]["web_search_requests"], 1);
+    }
+
+    #[test]
+    fn test_web_search_max_uses_cuts_off_later_function_calls() {
+        let input = json!({
+            "id": "resp_mixed_search_limit",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_first",
+                    "status": "completed",
+                    "action": {"type": "search", "query": "first query"}
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_before",
+                    "name": "get_weather",
+                    "arguments": "{\"location\":\"Tokyo\"}"
+                },
+                {
+                    "type": "web_search_call",
+                    "id": "ws_second",
+                    "status": "completed",
+                    "action": {"type": "search", "query": "second query"}
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_after",
+                    "name": "get_weather",
+                    "arguments": "{\"location\":\"Paris\"}"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Later answer."}]
+                }
+            ],
+            "usage": {"input_tokens": 4, "output_tokens": 3}
+        });
+
+        let within_limit = responses_to_anthropic_with_web_search_options(
+            input.clone(),
+            Some("web_search"),
+            Some(2),
+        )
+        .unwrap();
+        let content = within_limit["content"].as_array().unwrap();
+        assert_eq!(content.len(), 7);
+        assert_eq!(content[2]["id"], "call_before");
+        assert_eq!(content[5]["id"], "call_after");
+        assert_eq!(content[6]["text"], "Later answer.");
+        assert_eq!(within_limit["stop_reason"], "tool_use");
+
+        // Match stream cutoff: preserve completed calls before the excess
+        // search, but do not return anything produced after that search.
+        let over_limit =
+            responses_to_anthropic_with_web_search_options(input, Some("web_search"), Some(1))
+                .unwrap();
+        let content = over_limit["content"].as_array().unwrap();
+        assert_eq!(content.len(), 5);
+        assert_eq!(content[2]["id"], "call_before");
+        assert_eq!(content[2]["input"], json!({"location": "Tokyo"}));
+        assert_eq!(content[3]["id"], "ws_second");
+        assert_eq!(content[4]["content"]["error_code"], "max_uses_exceeded");
+        assert_eq!(over_limit["stop_reason"], "tool_use");
+        assert_eq!(
+            over_limit["usage"]["server_tool_use"]["web_search_requests"],
+            1
+        );
     }
 
     #[test]
