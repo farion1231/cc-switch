@@ -1112,6 +1112,7 @@ async fn handle_responses_for_app(
     if compaction_request
         && matches!(app_type, AppType::Codex)
         && !super::providers::is_codex_official_provider(&ctx.provider)
+        && !super::providers::codex_provider_supports_native_protocol(&ctx.provider)
     {
         return handle_codex_native_compaction_response(response, &ctx, &state, connection_guard)
             .await;

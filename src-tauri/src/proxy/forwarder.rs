@@ -440,7 +440,8 @@ impl RequestForwarder {
             return None;
         }
         let codex_third_party = matches!(app_type, AppType::Codex)
-            && !super::providers::is_codex_official_provider(provider);
+            && !super::providers::is_codex_official_provider(provider)
+            && !super::providers::codex_provider_supports_native_protocol(provider);
         detect_opaque_state_rejection(error, &self.rectifier_config, request, codex_third_party)
     }
 
@@ -1367,6 +1368,8 @@ impl RequestForwarder {
         let mut copilot_endpoint_override: Option<String> = None;
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
+        let codex_native_protocol = matches!(app_type, AppType::Codex)
+            && super::providers::codex_provider_supports_native_protocol(provider);
         let codex_stack_request = self.stack_request && matches!(app_type, AppType::Codex);
 
         if codex_official_auth_passthrough {
@@ -1894,20 +1897,20 @@ impl RequestForwarder {
         };
 
         // Codex 远程压缩，以及同一线程里别家回合留下的状态（见 `codex_compaction`）。
-        // Chat / Anthropic 转换在转换器里处理；这里管原样转发的两种上游：官方清掉
-        // CC Switch 产出、官方一定会拒的条目，原生 Responses 第三方把压缩触发和
+        // Chat / Anthropic 转换在转换器里处理；官方和声明原生协议的中转保留压缩触发与
+        // 原生密文，只清掉 CC Switch 产出的不兼容状态。普通 Responses 第三方把压缩触发和
         // CC Switch 包装的压缩摘要改成普通消息。看不出来源的密文原样发出，被拒后由
         // `opaque_state_rectifier` 处理。请求里没有这些条目时逐字节不变。
         if matches!(app_type, AppType::Codex)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
         {
-            if codex_official_auth_passthrough {
+            if codex_official_auth_passthrough || codex_native_protocol {
                 if super::providers::codex_compaction::scrub_ccswitch_state_for_official(
                     &mut request_body,
                 ) {
                     log::debug!(
-                        "[Codex] Scrubbed third-party turn state before the official upstream (provider={})",
+                        "[Codex] Scrubbed bridge turn state before a native OpenAI protocol upstream (provider={})",
                         provider.id
                     );
                 }
@@ -2441,12 +2444,18 @@ impl RequestForwarder {
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
             // Codex Stack 请求发往第三方时同样剥掉：官方做路由时 Codex 每个请求都带着 ChatGPT
-            // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。Stack 目标不会是官方账号，
-            // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
+            // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。声明原生协议的中转仍
+            // 保留客户端会话标识用于账号池粘性路由，但不保留官方账号或上游签发的状态。
+            // 只限 Codex：Claude Code 自己的 `x-stainless-*`
             // 是 Anthropic SDK 的正常请求头，Stack 请求照常转发。
             if (codex_responses_to_anthropic
-                || (codex_stack_request && !codex_official_auth_passthrough))
+                || (matches!(app_type, AppType::Codex)
+                    && !codex_official_auth_passthrough
+                    && (codex_stack_request || codex_native_protocol)))
                 && is_codex_client_fingerprint_header(key_str)
+                && !(codex_native_protocol
+                    && !codex_responses_to_anthropic
+                    && is_codex_native_protocol_header(key_str))
             {
                 continue;
             }
@@ -3442,6 +3451,24 @@ fn base_url_is_full_endpoint(base_url: &str, endpoint_suffix: &str) -> bool {
     path.trim_end_matches('/')
         .to_ascii_lowercase()
         .ends_with(endpoint_suffix)
+}
+
+// Native relays need protocol negotiation and stable client session identifiers
+// for account-pool affinity. These do not include the default account's identity,
+// device attestation, or backend-issued opaque turn state.
+fn is_codex_native_protocol_header(key_str: &str) -> bool {
+    matches!(
+        key_str,
+        "originator"
+            | "version"
+            | "openai-beta"
+            | "x-codex-beta-features"
+            | "session_id"
+            | "session-id"
+            | "thread-id"
+            | "conversation_id"
+            | "x-client-request-id"
+    )
 }
 
 fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
@@ -6811,8 +6838,10 @@ mod tests {
                 ("session_id", "session-1"),
                 ("x-codex-turn-state", "state"),
                 ("openai-beta", "responses=experimental"),
+                ("x-codex-beta-features", "remote_compaction_v2"),
                 ("x-oai-attestation", "device-proof"),
                 ("x-openai-fedramp", "true"),
+                ("x-openai-internal-codex-responses-lite", "true"),
             ] {
                 headers.insert(
                     http::HeaderName::from_static(name),
@@ -6967,6 +6996,115 @@ mod tests {
             .await;
             assert_eq!(seen.body["tools"], plain["tools"]);
             assert_eq!(seen.body["input"], plain["input"]);
+        }
+
+        #[tokio::test]
+        async fn compatible_native_compaction_preserves_wire_protocol() {
+            let upstream = upstream().await;
+            let mut native = provider(&upstream, "openai_responses");
+            native.meta.as_mut().unwrap().codex_official_compatible = Some(true);
+            let mut request = body(
+                "listed",
+                json!([
+                    { "type": "function", "name": "shell", "parameters": { "type": "object" } }
+                ]),
+            );
+            request["service_tier"] = json!("priority");
+            request["input"] = json!([
+                { "type": "compaction", "encrypted_content": "gAAAA-native" },
+                { "role": "user", "content": [{ "type": "input_text", "text": "retain native context" }] },
+                { "type": "compaction_trigger" }
+            ]);
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                native,
+                "/responses",
+                request.clone(),
+            )
+            .await;
+            assert_eq!(seen.body["input"], request["input"]);
+            assert_eq!(seen.body["tools"], request["tools"]);
+            assert_eq!(seen.body["service_tier"], "priority");
+            assert_eq!(
+                seen.headers["x-codex-beta-features"],
+                "remote_compaction_v2"
+            );
+            assert_eq!(seen.headers["originator"], "codex_cli_rs");
+            assert_eq!(seen.headers["session_id"], "session-1");
+            assert_eq!(seen.headers["authorization"], "Bearer sk-third-party");
+            assert!(!seen.headers.contains_key("chatgpt-account-id"));
+            assert!(!seen.headers.contains_key("x-oai-attestation"));
+            assert!(!seen.headers.contains_key("x-codex-turn-state"));
+            assert!(!seen
+                .headers
+                .contains_key("x-openai-internal-codex-responses-lite"));
+        }
+
+        #[tokio::test]
+        async fn compatible_route_keeps_protocol_headers_and_its_own_credentials() {
+            let upstream = upstream().await;
+            let mut native = provider(&upstream, "openai_responses");
+            native.meta.as_mut().unwrap().codex_official_compatible = Some(true);
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                native,
+                "/responses/compact",
+                body("listed", json!([])),
+            )
+            .await;
+            assert_eq!(seen.headers["authorization"], "Bearer sk-third-party");
+            assert_eq!(
+                seen.headers["x-codex-beta-features"],
+                "remote_compaction_v2"
+            );
+            assert_eq!(seen.headers["session_id"], "session-1");
+            assert!(!seen.headers.contains_key("chatgpt-account-id"));
+            assert!(!seen.headers.contains_key("x-oai-attestation"));
+        }
+
+        #[test]
+        fn compatible_compaction_is_not_removed_on_an_unrelated_client_error() {
+            let upstream = Upstream {
+                base_url: "http://127.0.0.1:12345".to_string(),
+                seen: Arc::new(Mutex::new(Vec::new())),
+            };
+            let mut native = provider(&upstream, "openai_responses");
+            let mut request = body("listed", json!([]));
+            request["input"] = json!([
+                { "type": "compaction", "encrypted_content": "native-history" }
+            ]);
+            let error = ProxyError::UpstreamError {
+                status: 400,
+                body: Some("unrelated validation error".to_string()),
+            };
+            let fwd = forwarder(true);
+            assert!(
+                fwd.opaque_state_retry_rejection(
+                    &AppType::Codex,
+                    &native,
+                    Some(CodexUpstreamFormat::NativeResponses),
+                    false,
+                    &request,
+                    &error
+                )
+                .is_some(),
+                "ordinary third parties keep the existing fallback"
+            );
+            native.meta.as_mut().unwrap().codex_official_compatible = Some(true);
+            assert!(
+                fwd.opaque_state_retry_rejection(
+                    &AppType::Codex,
+                    &native,
+                    Some(CodexUpstreamFormat::NativeResponses),
+                    false,
+                    &request,
+                    &error
+                )
+                .is_none(),
+                "a native relay must not lose compacted history for an unrelated 400"
+            );
         }
 
         /// 剥身份头只针对 Codex：Claude Code 的 Stack 请求照常带着 Anthropic SDK 的请求头。

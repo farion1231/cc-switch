@@ -554,6 +554,13 @@ pub struct ProviderMeta {
     /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
     #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
     pub codex_fast_mode: Option<bool>,
+    /// Explicit native OpenAI protocol declaration for a Responses gateway.
+    /// Disabled by default; this is not an automatic capability verification.
+    #[serde(
+        rename = "codexOfficialCompatible",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub codex_official_compatible: Option<bool>,
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,

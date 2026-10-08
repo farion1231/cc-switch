@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -170,6 +171,8 @@ interface CodexFormFieldsProps {
   onApiFormatChange: (format: CodexApiFormat) => void;
   copilotApiFormat?: CodexCopilotApiFormat;
   onCopilotApiFormatChange?: (format: CodexCopilotApiFormat) => void;
+  officialCompatible?: boolean;
+  onOfficialCompatibleChange?: (value: boolean) => void;
   // Auth field for the Anthropic Messages upstream (only used when apiFormat === "anthropic")
   anthropicAuthField: ClaudeApiKeyField;
   onAnthropicAuthFieldChange: (value: ClaudeApiKeyField) => void;
@@ -518,6 +521,8 @@ export function CodexFormFields({
   onApiFormatChange,
   copilotApiFormat = "auto",
   onCopilotApiFormatChange,
+  officialCompatible = false,
+  onOfficialCompatibleChange,
   anthropicAuthField,
   onAnthropicAuthFieldChange,
   impersonateClaudeCode,
@@ -1607,6 +1612,37 @@ export function CodexFormFields({
           onManageClick={() => onEndpointModalToggle(true)}
         />
       )}
+      {shouldShowSpeedTest &&
+        category !== "official" &&
+        !isCodexOauthPreset &&
+        !isCopilotPreset &&
+        !isXaiOauthPreset &&
+        apiFormat === "openai_responses" &&
+        onOfficialCompatibleChange && (
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={officialCompatible}
+                onCheckedChange={onOfficialCompatibleChange}
+                aria-describedby="codex-official-compatible-hint"
+              />
+              <span>
+                {t("codexConfig.officialCompatibleLabel", {
+                  defaultValue: "原生 OpenAI 协议兼容",
+                })}
+              </span>
+            </label>
+            <p
+              id="codex-official-compatible-hint"
+              className="text-xs text-muted-foreground"
+            >
+              {t("codexConfig.officialCompatibleHint", {
+                defaultValue:
+                  "仅适用于支持 OpenAI 原生远程压缩的 Responses 服务。匹配官方 GPT 模型时保留 Fast 选项与压缩兼容性；实际优先档及跨账号压缩兼容性由上游决定。",
+              })}
+            </p>
+          </div>
+        )}
     </>
   );
 

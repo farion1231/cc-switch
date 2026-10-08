@@ -1844,6 +1844,8 @@
     "proxyTakeoverStorageNotice": "💡 This app is in Routing mode. You are editing the stored provider config; the live config is temporarily managed by the routing service.",
     "enableRemoteCompaction": "Enable remote compaction",
     "remoteCompactionHint": "When enabled, the active model_providers entry name is written as OpenAI so Codex can try remote compaction.",
+    "officialCompatibleLabel": "Native OpenAI protocol compatibility",
+    "officialCompatibleHint": "Enable only for Responses services that support native OpenAI remote compaction. Retains Fast options and compaction compatibility for matching official GPT models; actual priority service and cross-account compaction compatibility depend on the upstream.",
     "apiUrlLabel": "API Request URL",
     "extractFailed": "Extract failed: {{error}}",
     "saveFailed": "Save failed: {{error}}",

@@ -5864,6 +5864,123 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
+    async fn codex_native_relay_compaction_keeps_the_upstream_ciphertext() {
+        let _home = Home::new();
+        seed_codex("[features]\nmemories = true\n", None);
+        let ciphertext = "native-test-ciphertext";
+        let item = json!({ "type": "compaction", "encrypted_content": ciphertext });
+        let native_sse = format!(
+            "event: response.output_item.done\ndata: {}\n\nevent: response.completed\ndata: {}\n\n",
+            json!({ "type": "response.output_item.done", "output_index": 0, "item": item }),
+            json!({ "type": "response.completed", "response": {
+                "id": "resp_native", "status": "completed", "output": [item]
+            } })
+        );
+        let seen = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = {
+            let seen = seen.clone();
+            let native_sse = native_sse.clone();
+            axum::Router::new().fallback(
+                move |headers: axum::http::HeaderMap, body: bytes::Bytes| {
+                    let seen = seen.clone();
+                    let native_sse = native_sse.clone();
+                    async move {
+                        seen.lock()
+                            .await
+                            .push((headers, serde_json::from_slice::<Value>(&body).unwrap()));
+                        ([("content-type", "text/event-stream")], native_sse)
+                    }
+                },
+            )
+        };
+        let upstream = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut relay = codex_native("relay", &format!("http://{address}/v1"), "", None);
+        relay.meta.as_mut().unwrap().codex_official_compatible = Some(true);
+        let generic = codex_native("generic", "https://generic.example/v1", "", None);
+        let state = state_with(AppType::Codex, &[relay, generic], "relay").await;
+        for stack in [false, true] {
+            enter(&state, &AppType::Codex, stack).await.expect("enter");
+            if stack {
+                set_route(&state, &AppType::Codex, "generic").await.unwrap();
+                set_codex_member(&state, "relay", true).await;
+            }
+            let doc = codex_doc();
+            let id = doc["model_provider"].as_str().unwrap();
+            assert_eq!(doc["model_providers"][id]["name"].as_str(), Some("OpenAI"));
+            assert_eq!(doc["features"]["memories"].as_bool(), Some(true));
+            let request = json!({
+                "model": if stack { "ccs-relay/gpt-relay" } else { "gpt-relay" },
+                "stream": true, "service_tier": "priority",
+                "prompt_cache_key": "stable-client-session",
+                "input": [{ "type": "compaction_trigger" }],
+                "tools": [{ "type": "function", "name": "shell", "parameters": {"type":"object"} }]
+            });
+            let proxy = state.proxy_service.get_status().await.unwrap();
+            let response = reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .post(format!("http://127.0.0.1:{}/v1/responses", proxy.port))
+                .header("authorization", "Bearer official-test-token")
+                .header("chatgpt-account-id", "default-account")
+                .header("session_id", "stable-client-session")
+                .json(&request)
+                .send()
+                .await
+                .expect("native compaction response");
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            let response_bytes = response.bytes().await.unwrap();
+            assert_eq!(
+                response_bytes.as_ref(),
+                native_sse.as_bytes(),
+                "native SSE stays intact"
+            );
+            let (headers, body) = seen.lock().await.pop().unwrap();
+            assert_eq!(body["model"], "gpt-relay");
+            assert_eq!(body["input"], request["input"]);
+            assert_eq!(body["tools"], request["tools"]);
+            assert_eq!(body["service_tier"], "priority");
+            assert_eq!(body["prompt_cache_key"], "stable-client-session");
+            assert_eq!(headers["authorization"], "Bearer sk-relay");
+            assert_eq!(headers["session_id"], "stable-client-session");
+            assert!(!headers.contains_key("chatgpt-account-id"));
+        }
+        state.proxy_service.stop().await.unwrap();
+        upstream.abort();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_native_member_enables_remote_compaction_with_a_generic_default() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let generic = codex_native("generic", "https://generic.example/v1", "", None);
+        let mut native = codex_native("native", "https://native.example/v1", "", None);
+        native.meta.as_mut().unwrap().codex_official_compatible = Some(true);
+        let state = state_with(AppType::Codex, &[generic, native], "generic").await;
+        enter(&state, &AppType::Codex, true).await.unwrap();
+        let provider_name = || {
+            let doc = codex_doc();
+            let id = doc["model_provider"].as_str().unwrap();
+            doc["model_providers"][id]["name"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_ne!(provider_name(), "OpenAI");
+        set_codex_member(&state, "native", true).await;
+        assert_eq!(provider_name(), "OpenAI");
+        set_codex_member(&state, "native", false).await;
+        assert_ne!(provider_name(), "OpenAI");
+        state.proxy_service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn codex_stack_models_join_the_catalog_and_leave_with_it() {
         let _home = Home::new();
         seed_codex("approval_policy = \"on-request\"\n", None);

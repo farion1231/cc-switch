@@ -585,7 +585,9 @@ pub(crate) fn plan(
         }
         (
             Target::Proxy {
-                route, base_url, ..
+                route,
+                base_url,
+                stack,
             },
             Some(_),
         ) => {
@@ -604,7 +606,21 @@ pub(crate) fn plan(
                 )
             } else {
                 (
-                    RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false)),
+                    RouteWrite::Custom(proxy_route_table(
+                        if crate::proxy::providers::codex_provider_supports_native_protocol(route)
+                            || stack.iter().any(|member| {
+                                crate::proxy::providers::codex_provider_supports_native_protocol(
+                                    &member.provider,
+                                )
+                            })
+                        {
+                            "OpenAI"
+                        } else {
+                            ROUTE_ID
+                        },
+                        base_url,
+                        false,
+                    )),
                     Some(RouteAuth::Bearer),
                     AuthGoal::KeepNative,
                 )
