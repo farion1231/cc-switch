@@ -68,12 +68,14 @@ export const FONT_FAMILY_OPTIONS: Array<{
   {
     value: "sf-pro",
     labelKey: "settings.fontFamilySFPro",
-    css: '"SF Pro Text", -apple-system, BlinkMacSystemFont, var(--cc-system-font-family)',
+    css:
+      '"SF Pro Text", -apple-system, BlinkMacSystemFont, var(--cc-system-font-family)',
   },
   {
     value: "noto-sans",
     labelKey: "settings.fontFamilyNotoSans",
-    css: '"Noto Sans", "Noto Sans CJK SC", "Source Han Sans SC", var(--cc-system-font-family)',
+    css:
+      '"Noto Sans", "Noto Sans CJK SC", "Source Han Sans SC", var(--cc-system-font-family)',
   },
   {
     value: "ibm-plex",
