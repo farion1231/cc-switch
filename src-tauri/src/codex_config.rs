@@ -1323,6 +1323,9 @@ fn codex_catalog_model_entry(
     entry_obj.insert("service_tiers".to_string(), json!([]));
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
+    // 缓存的 gpt-5.5 模板可能被官方标成 `hide`：这里的行都是用户显式配置的，
+    // 同 `codex_official_model_entry`，必须出现在选择器里。
+    entry_obj.insert("visibility".to_string(), json!("list"));
 
     // Image support is a model capability, not a tool-profile capability.
     // Trust hidden preset metadata first, then the confirmed text-only registry;
@@ -5024,6 +5027,52 @@ wire_api = "responses"
         // 克隆 gpt-5.5 的 gpt-6-sol 行：显示名、窗口都不是官方的，照旧还原，不当成镜像。
         assert_eq!(models[1]["model"], "gpt-6-sol");
         assert_ne!(models[1], json!({ "model": "gpt-6-sol" }));
+    }
+
+    #[test]
+    fn template_cloned_rows_are_listed_even_when_the_template_is_hidden() {
+        // models_cache.json 里的 gpt-5.5 可能被官方标成 `hide`：这里生成的行都是
+        // 用户显式配置的供应商模型，和官方镜像行一样必须在选择器里出现。
+        let template = native_row(
+            "gpt-5.5",
+            json!({
+                "display_name": "GPT-5.5",
+                "visibility": "hide",
+                "model_messages": { "instructions_template": "GPT-5.5 prompt" },
+                "supported_reasoning_levels": [
+                    { "effort": "low", "description": "l" },
+                    { "effort": "high", "description": "h" }
+                ],
+                "default_reasoning_level": "low",
+                "context_window": 272_000,
+            }),
+        );
+        let settings = json!({ "modelCatalog": { "models": [
+            { "model": "glm-5", "displayName": "GLM 5", "contextWindow": 200_000 },
+            { "model": "glm-5-air" }
+        ] } });
+        let catalog = codex_model_catalog_from_specs(
+            &codex_catalog_model_specs(&settings),
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
+
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models.len(), 2);
+        for model in models {
+            assert_eq!(model["visibility"], "list");
+        }
+        // 其余字段照旧从模板继承。
+        assert_eq!(models[0]["slug"], "glm-5");
+        assert_eq!(models[0]["display_name"], "GLM 5");
+        assert_eq!(models[0]["context_window"], 200_000);
+        assert_eq!(
+            models[0]["model_messages"]["instructions_template"],
+            "GPT-5.5 prompt"
+        );
+        assert_eq!(models[0]["default_reasoning_level"], "low");
+        assert_eq!(models[1]["slug"], "glm-5-air");
     }
 
     fn native_row(slug: &str, extra: Value) -> Value {
