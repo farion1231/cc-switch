@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Save } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import type { Provider } from "@/types";
+import type { AppMode } from "@/types/proxy";
 import {
   ProviderForm,
   type ProviderFormValues,
@@ -36,7 +39,25 @@ interface EditProviderDialogProps {
   }) => Promise<void> | void;
   appId: AppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
+  /** 正在编辑的是当前生效的那家（切换式应用）：页头下提示保存后立即生效 */
+  isCurrent?: boolean;
+  /** 从供应商页哪一格打开的，见 ProviderForm 的同名参数 */
+  modeView?: AppMode;
 }
+
+/** 直连时保存当前供应商会写进的配置文件 */
+const LIVE_FILE: Partial<Record<AppId, string>> = {
+  claude: "~/.claude/settings.json",
+  codex: "~/.codex/config.toml",
+  gemini: "~/.gemini/.env",
+};
+const SWITCH_APPS: AppId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "grokbuild",
+  "claude-desktop",
+];
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -50,9 +71,13 @@ export function EditProviderDialog({
   onSubmit,
   appId,
   isProxyTakeover = false,
+  isCurrent = false,
+  modeView,
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
+  const [stackLayout, setStackLayout] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
     useState<ManagedAuthProvider | null>(null);
 
@@ -133,6 +158,7 @@ export function EditProviderDialog({
             asRecord(provider.settingsConfig) ?? {},
             provider.category,
             provider.id,
+            appId === "codex" ? provider.meta : undefined,
           );
           if (!cancelled) {
             setEditorView(view);
@@ -311,26 +337,67 @@ export function EditProviderDialog({
 
   const waitingForEditorView = usesEditorView(appId) && !hasLoadedLive;
 
+  const liveFile = !isProxyTakeover ? LIVE_FILE[appId] : undefined;
+  const currentNotice =
+    isCurrent && SWITCH_APPS.includes(appId) ? (
+      <Notice
+        tone="neutral"
+        title={
+          liveFile ? (
+            <>
+              {t("provider.editCurrentNoticeFile")}{" "}
+              <code className="font-mono text-caption">{liveFile}</code>
+              {t("provider.editCurrentNoticeFileEnd")}
+            </>
+          ) : (
+            t("provider.editCurrentNotice")
+          )
+        }
+      />
+    ) : null;
+
   return (
     <FullScreenPanel
       isOpen={open}
-      title={t("provider.editProvider")}
+      trackUnsavedChanges
+      title={t("provider.editProviderNamed", { name: provider.name })}
+      subtitle={
+        stackLayout
+          ? t("provider.formSubtitleStack", {
+              app: APP_DISPLAY_NAME[appId],
+              defaultValue: "{{app}}（聚合模式）",
+            })
+          : APP_DISPLAY_NAME[appId]
+      }
+      backLabel={t("provider.backToList")}
       onClose={handlePanelClose}
-      contentClassName={appId === "pi" ? "pb-0" : undefined}
+      contentClassName={appId === "pi" ? "pb-0 pt-4" : "pt-4"}
       footer={
-        <Button
-          type="submit"
-          form="provider-form"
-          disabled={isFormSubmitting || !isFormReady}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Save className="h-4 w-4 mr-2" />
-          {t("common.save")}
-        </Button>
+        <>
+          <Button
+            type="button"
+            variant="neutral"
+            size="regular"
+            onClick={closeDialog}
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button
+            type="submit"
+            form="provider-form"
+            variant="solid"
+            size="regular"
+            disabled={isFormSubmitting || !isFormReady}
+          >
+            {isFormSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            {t("common.save")}
+          </Button>
+        </>
       }
     >
+      {currentNotice}
       {waitingForEditorView ? (
-        <div className="py-12 text-center text-sm text-muted-foreground">
+        <div className="py-12 text-center text-body text-fg-2">
           {t("common.loading")}
         </div>
       ) : (
@@ -347,6 +414,8 @@ export function EditProviderDialog({
           showButtons={false}
           isProxyTakeover={isProxyTakeover}
           inactiveFields={editorView?.inactive}
+          modeView={modeView}
+          onStackLayoutChange={setStackLayout}
         />
       )}
       {conflictDialog}

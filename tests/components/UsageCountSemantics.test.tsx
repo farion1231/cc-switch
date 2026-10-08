@@ -1,4 +1,10 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelStatsTable } from "@/components/usage/ModelStatsTable";
 import { ProviderStatsTable } from "@/components/usage/ProviderStatsTable";
@@ -30,6 +36,7 @@ vi.mock("react-i18next", () => ({
         "usage.averageCostLabel.perActivity": labels.perActivity,
         "usage.successRate": labels.successRate,
         "usage.avgLatency": labels.avgLatency,
+        "usage.speed": "Speed",
       };
       return translations[key] ?? key;
     },
@@ -95,6 +102,7 @@ const modelStats = [
     totalReasoningTokens: 0,
     totalCost: "1.000000",
     avgCostPerRequest: "0.500000",
+    successRate: 100,
   },
 ];
 
@@ -114,6 +122,7 @@ function renderCountedStats(appType: string) {
       <ModelStatsTable range={range} appType={appType} refreshIntervalMs={0} />
     </>,
   );
+  fireEvent.click(screen.getByRole("button", { name: "usage.metrics.more" }));
 }
 
 describe("usage count semantics", () => {
@@ -197,10 +206,11 @@ describe("usage count semantics", () => {
 
     const cacheWriteLabel = screen.getByText("usage.cacheWrite");
     const cacheWriteStat = cacheWriteLabel.parentElement!.parentElement!;
-    expect(within(cacheWriteStat).getByText("120")).toHaveClass(
-      "text-muted-foreground/70",
+    expect(within(cacheWriteStat).getByText("120")).toHaveClass("text-fg-3");
+    expect(within(cacheWriteStat).getByText("120")).toHaveAttribute(
+      "title",
+      expect.stringContaining("usage.cacheWritePartial"),
     );
-    expect(cacheWriteStat).toHaveAttribute("title", "usage.cacheWritePartial");
   });
 
   it("keeps Hermes-only cache write separate from cache creation", () => {
@@ -219,6 +229,7 @@ describe("usage count semantics", () => {
     });
 
     render(<UsageHero range={range} appType="hermes" refreshIntervalMs={0} />);
+    fireEvent.click(screen.getByRole("button", { name: "usage.metrics.more" }));
 
     const cacheWriteLabel = screen.getByText("usage.cacheWrite");
     expect(
@@ -237,28 +248,28 @@ describe("usage count semantics", () => {
 
       expect(screen.getAllByText(countLabel)).toHaveLength(3);
       expect(
-        screen.getByRole("columnheader", { name: averageLabel }),
+        screen.getByTitle((title) => title.includes(averageLabel)),
       ).toBeInTheDocument();
     },
   );
 
-  it("removes status and latency columns and uses a four-column empty state for Hermes", () => {
+  it("keeps the upstream six-column empty state for Hermes without inventing metrics", () => {
     useProviderStatsMock.mockReturnValue({ data: [], isLoading: false });
     renderCountedStats("hermes");
 
     const table = screen.getAllByRole("table")[0]!;
-    expect(within(table).getAllByRole("columnheader")).toHaveLength(4);
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(6);
     expect(
       within(table).queryByRole("columnheader", { name: labels.successRate }),
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
     expect(
       within(table).queryByRole("columnheader", { name: labels.avgLatency }),
     ).not.toBeInTheDocument();
-    expect(within(table).getByRole("cell")).toHaveAttribute("colspan", "4");
+    expect(within(table).getByRole("cell")).toHaveAttribute("colspan", "6");
   });
 
   it.each(["all", "claude"])(
-    "keeps status and latency columns for %s mode",
+    "keeps the upstream status and speed columns for %s mode",
     (appType) => {
       renderCountedStats(appType);
 
@@ -268,7 +279,7 @@ describe("usage count semantics", () => {
         within(table).getByRole("columnheader", { name: labels.successRate }),
       ).toBeInTheDocument();
       expect(
-        within(table).getByRole("columnheader", { name: labels.avgLatency }),
+        within(table).getByRole("columnheader", { name: /Speed/ }),
       ).toBeInTheDocument();
     },
   );

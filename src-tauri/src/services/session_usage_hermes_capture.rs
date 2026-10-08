@@ -408,6 +408,7 @@ mod tests {
         Database::create_tables_on_conn(&conn).unwrap();
         Database {
             conn: Mutex::new(conn),
+            log_count_cache: Mutex::new(None),
         }
     }
 

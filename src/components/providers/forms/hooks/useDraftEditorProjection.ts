@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { providersApi, type AppId } from "@/lib/api";
+import type { ProviderMeta } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 /** 编辑器投影读不了客户端配置文件（比如手改坏了）：编辑器退回显示保存的内容。 */
@@ -42,7 +43,7 @@ export function useDraftEditorProjection(
     () => () => {
       sequence.current += 1;
     },
-    [],
+    [appId, onEditorBaseChange],
   );
 
   const projectDraft = useCallback(
@@ -50,12 +51,13 @@ export function useDraftEditorProjection(
       settings: Record<string, unknown>,
       category: string | undefined,
       apply: (shown: Record<string, unknown>) => void,
+      meta?: ProviderMeta,
     ) => {
       if (!onEditorBaseChange) return;
       const current = ++sequence.current;
       onEditorBaseChange(null);
       providersApi
-        .getEditorView(appId, settings, category)
+        .getEditorView(appId, settings, category, undefined, meta)
         .then((view) => {
           if (current !== sequence.current) return;
           apply(view.settings);

@@ -199,3 +199,21 @@ pub async fn toggle_mcp_app(
 pub async fn import_mcp_from_apps(state: State<'_, AppState>) -> Result<usize, String> {
     McpService::import_from_all_apps(&state).map_err(|e| e.to_string())
 }
+
+/// 按数据库里的开关把 MCP 重新写进各应用的 live 配置，逐应用返回结果。
+///
+/// `apps` 缺省或为空时同步全部受管应用。每个应用先拿它的切换锁再写，
+/// 和切换供应商互斥；单个应用失败（如配置文件解析失败）不影响其余应用。
+#[tauri::command]
+pub async fn resync_mcp_to_apps(
+    state: State<'_, AppState>,
+    apps: Option<Vec<String>>,
+) -> Result<Vec<crate::services::mcp::McpAppSyncOutcome>, String> {
+    let targets = McpService::resync_targets(apps.as_deref()).map_err(|e| e.to_string())?;
+    let mut outcomes = Vec::with_capacity(targets.len());
+    for app in targets {
+        let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+        outcomes.push(McpService::resync_app(&state, &app));
+    }
+    Ok(outcomes)
+}

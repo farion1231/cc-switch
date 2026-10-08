@@ -6,10 +6,23 @@ use crate::services::usage_stats::*;
 use crate::store::AppState;
 use tauri::State;
 
+/// 统计查询放到阻塞线程池里跑：同步命令在 Tauri 2 里跑在主线程上，
+/// 大范围（如「全部」）的聚合扫描会让整个窗口卡住。
+async fn run_db_query<T, F>(state: &State<'_, AppState>, query: F) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce(&crate::database::Database) -> Result<T, AppError> + Send + 'static,
+{
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || query(&db))
+        .await
+        .map_err(|error| AppError::Message(format!("用量查询任务失败: {error}")))?
+}
+
 /// 获取使用量汇总
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn get_usage_summary(
+pub async fn get_usage_summary(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
@@ -19,20 +32,36 @@ pub fn get_usage_summary(
     profile_name: Option<String>,
     task: Option<String>,
 ) -> Result<UsageSummary, AppError> {
-    state.db.get_usage_summary_with_hermes_filters(
-        start_date,
-        end_date,
-        app_type.as_deref(),
-        provider_name.as_deref(),
-        model.as_deref(),
-        profile_name.as_deref(),
-        task.as_deref(),
-    )
+    run_db_query(&state, move |db| {
+        db.get_usage_summary_with_hermes_filters(
+            start_date,
+            end_date,
+            app_type.as_deref(),
+            provider_name.as_deref(),
+            model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
+        )
+    })
+    .await
+}
+
+/// 获取单个会话的使用量汇总（会话阅读页头部）
+#[tauri::command]
+pub async fn get_session_usage_summary(
+    state: State<'_, AppState>,
+    app_type: String,
+    session_id: String,
+) -> Result<UsageSummary, AppError> {
+    run_db_query(&state, move |db| {
+        db.get_session_usage_summary(&app_type, &session_id)
+    })
+    .await
 }
 
 /// 获取按 app_type 拆分的使用量汇总
 #[tauri::command]
-pub fn get_usage_summary_by_app(
+pub async fn get_usage_summary_by_app(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
@@ -41,20 +70,23 @@ pub fn get_usage_summary_by_app(
     profile_name: Option<String>,
     task: Option<String>,
 ) -> Result<Vec<UsageSummaryByApp>, AppError> {
-    state.db.get_usage_summary_by_app_with_hermes_filters(
-        start_date,
-        end_date,
-        provider_name.as_deref(),
-        model.as_deref(),
-        profile_name.as_deref(),
-        task.as_deref(),
-    )
+    run_db_query(&state, move |db| {
+        db.get_usage_summary_by_app_with_hermes_filters(
+            start_date,
+            end_date,
+            provider_name.as_deref(),
+            model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
+        )
+    })
+    .await
 }
 
 /// 获取每日趋势
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn get_usage_trends(
+pub async fn get_usage_trends(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
@@ -64,21 +96,24 @@ pub fn get_usage_trends(
     profile_name: Option<String>,
     task: Option<String>,
 ) -> Result<Vec<DailyStats>, AppError> {
-    state.db.get_daily_trends_with_hermes_filters(
-        start_date,
-        end_date,
-        app_type.as_deref(),
-        provider_name.as_deref(),
-        model.as_deref(),
-        profile_name.as_deref(),
-        task.as_deref(),
-    )
+    run_db_query(&state, move |db| {
+        db.get_daily_trends_with_hermes_filters(
+            start_date,
+            end_date,
+            app_type.as_deref(),
+            provider_name.as_deref(),
+            model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
+        )
+    })
+    .await
 }
 
 /// 获取 Provider 统计
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn get_provider_stats(
+pub async fn get_provider_stats(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
@@ -88,21 +123,24 @@ pub fn get_provider_stats(
     profile_name: Option<String>,
     task: Option<String>,
 ) -> Result<Vec<ProviderStats>, AppError> {
-    state.db.get_provider_stats_with_hermes_filters(
-        start_date,
-        end_date,
-        app_type.as_deref(),
-        provider_name.as_deref(),
-        model.as_deref(),
-        profile_name.as_deref(),
-        task.as_deref(),
-    )
+    run_db_query(&state, move |db| {
+        db.get_provider_stats_with_hermes_filters(
+            start_date,
+            end_date,
+            app_type.as_deref(),
+            provider_name.as_deref(),
+            model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
+        )
+    })
+    .await
 }
 
 /// 获取模型统计
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn get_model_stats(
+pub async fn get_model_stats(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
@@ -112,35 +150,41 @@ pub fn get_model_stats(
     profile_name: Option<String>,
     task: Option<String>,
 ) -> Result<Vec<ModelStats>, AppError> {
-    state.db.get_model_stats_with_hermes_filters(
-        start_date,
-        end_date,
-        app_type.as_deref(),
-        provider_name.as_deref(),
-        model.as_deref(),
-        profile_name.as_deref(),
-        task.as_deref(),
-    )
+    run_db_query(&state, move |db| {
+        db.get_model_stats_with_hermes_filters(
+            start_date,
+            end_date,
+            app_type.as_deref(),
+            provider_name.as_deref(),
+            model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
+        )
+    })
+    .await
 }
 
 /// 获取请求日志列表
 #[tauri::command]
-pub fn get_request_logs(
+pub async fn get_request_logs(
     state: State<'_, AppState>,
     filters: LogFilters,
     page: u32,
     page_size: u32,
 ) -> Result<PaginatedLogs, AppError> {
-    state.db.get_request_logs(&filters, page, page_size)
+    run_db_query(&state, move |db| {
+        db.get_request_logs(&filters, page, page_size)
+    })
+    .await
 }
 
 /// 获取单个请求详情
 #[tauri::command]
-pub fn get_request_detail(
+pub async fn get_request_detail(
     state: State<'_, AppState>,
     request_id: String,
 ) -> Result<Option<RequestLogDetail>, AppError> {
-    state.db.get_request_detail(&request_id)
+    run_db_query(&state, move |db| db.get_request_detail(&request_id)).await
 }
 
 /// 获取模型定价列表
@@ -284,6 +328,13 @@ pub async fn sync_session_usage(
     })
     .await
     .map_err(|error| AppError::Message(format!("会话用量同步任务失败: {error}")))
+}
+
+/// 会话日志扫描（后台定时或手动同步）最近一次完成的时间，毫秒时间戳；
+/// 本次启动后还没扫过时为 `null`。
+#[tauri::command]
+pub fn get_session_usage_last_sync() -> Option<i64> {
+    crate::services::session_usage::last_sync_completed_at()
 }
 
 /// Codex reset 成功后，无论重导是否导入新行或返回错误，都必须通知前端刷新。

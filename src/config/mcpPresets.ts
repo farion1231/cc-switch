@@ -43,11 +43,13 @@ export const mcpPresets: McpPreset[] = [
   },
   {
     id: "time",
-    name: "@modelcontextprotocol/server-time",
+    name: "mcp-server-time",
     tags: ["stdio", "time", "utility"],
+    // 官方 time 服务器只发布在 PyPI（mcp-server-time），npm 上没有 @modelcontextprotocol/server-time
     server: {
       type: "stdio",
-      ...createNpxCommand("@modelcontextprotocol/server-time", ["-y"]),
+      command: "uvx",
+      args: ["mcp-server-time"],
     } as McpServerSpec,
     homepage: "https://github.com/modelcontextprotocol/servers",
     docs: "https://github.com/modelcontextprotocol/servers/tree/main/src/time",
