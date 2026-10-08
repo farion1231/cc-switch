@@ -113,9 +113,11 @@ jobs:
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
           cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --no-tests fail --no-capture --run-ignored only -E 'test(=config::tests::atomic_write_replaces_existing_wsl_unc_file)'
 
+      # The 9P share sometimes aborts a write mid-test (os error 995). Retry here
+      # only, not in the ci profile; nextest still reports such tests as FLAKY.
       - name: Run lib tests against WSL2-backed home
         shell: pwsh
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --test-threads 1 -E 'not test(/database::/)'
+          cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --test-threads 1 --retries 2 -E 'not test(/database::/)'
