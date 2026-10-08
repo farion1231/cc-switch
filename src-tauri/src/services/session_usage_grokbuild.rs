@@ -1397,9 +1397,15 @@ mod tests {
 
         // 构造循环：sub/cycle -> enc 父目录
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&enc, sub.join("cycle")).expect("symlink");
+        let linked = std::os::unix::fs::symlink(&enc, sub.join("cycle"));
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&enc, sub.join("cycle")).expect("symlink");
+        let linked = std::os::windows::fs::symlink_dir(&enc, sub.join("cycle"));
+        if let Err(err) = linked {
+            // Windows 在 \\wsl.localhost 上建不了符号链接（Incorrect function），夹具无从构造
+            assert!(crate::config::is_wsl_path(temp.path()), "symlink: {err}");
+            eprintln!("cannot create symlinks on WSL share ({err}); skipping");
+            return;
+        }
 
         // 也放一个真实的目标文件，确认正常遍历仍工作
         std::fs::write(enc.join("updates.jsonl"), b"{}\n").expect("write real file");
