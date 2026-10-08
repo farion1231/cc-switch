@@ -155,17 +155,26 @@ describe("MoArk (模力方舟) provider presets", () => {
     // MoArk 不校验该字段，退回 DeepSeek 官方目录的档位。
     expect(levels[DEFAULT_MODEL]).toEqual(["low", "high", "max"]);
     // MoArk 对 qwen3-coder-plus 完全不兑现 effort（none 与 ultra 的
-    // reasoning_tokens 同为 0）→ 不写档位，避免给出不起作用的选择器。
-    expect(levels["qwen3-coder-plus"]).toBeUndefined();
+    // reasoning_tokens 同为 0）。留空不等于"没有档位"：后端会把未填写理解为沿用
+    // 原生模板的 none/high 两档、默认 high，Codex 仍会给出一个不改变任何行为的
+    // 选择器，所以要显式声明单档 none。
+    expect(levels["qwen3-coder-plus"]).toEqual(["none"]);
 
-    // 每档都含 high，后端才会保留模板默认 high，与 config 的
+    // 只有单档时 Codex 直接应用、不显示选择界面；四款支持思考的模型必须保留多档
+    // 且每档都含 high，后端才会保留模板默认 high，与 config 的
     // model_reasoning_effort = "high" 一致。
-    for (const model of preset?.modelCatalog ?? []) {
-      if (model.reasoningLevels) {
-        expect(model.reasoningLevels, `${model.model} keeps high`).toContain(
-          "high",
-        );
-      }
+    const thinkingModels = (preset?.modelCatalog ?? []).filter(
+      (model) => model.model !== "qwen3-coder-plus",
+    );
+    expect(thinkingModels).toHaveLength(4);
+    for (const model of thinkingModels) {
+      expect(model.reasoningLevels, `${model.model} keeps high`).toContain(
+        "high",
+      );
+      expect(
+        model.reasoningLevels?.length,
+        `${model.model} still offers a choice`,
+      ).toBeGreaterThan(1);
     }
     expect(preset?.config).toContain('model_reasoning_effort = "high"');
   });
