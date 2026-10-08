@@ -87,6 +87,7 @@ const IMPORT_SOURCE_FILES: Record<
   opencode: { file: "~/.config/opencode/opencode.json" },
   hermes: { file: "~/.hermes/config.yaml" },
   pi: { file: "~/.pi/agent/mcp.json" },
+  ohmypi: { file: "~/.omp/agent/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
 };
 
