@@ -179,18 +179,20 @@ module.exports = {
       },
       fontSize: {
         // v7 字体角色（AUTHORING.md「颜色与字体」）
-        badge: ["11px", { lineHeight: "16px", fontWeight: "500" }],
-        caption: ["12px", { lineHeight: "18px" }],
-        body: ["13px", { lineHeight: "20px" }],
-        strong: ["14px", { lineHeight: "20px", fontWeight: "500" }],
-        section: ["15px", { lineHeight: "22px", fontWeight: "600" }],
-        title: ["16px", { lineHeight: "24px", fontWeight: "600" }],
-        page: ["18px", { lineHeight: "26px", fontWeight: "600" }],
-        metric: ["24px", { lineHeight: "32px", fontWeight: "600" }],
+        badge: ["calc(11px * var(--ui-font-scale))", { lineHeight: "16px", fontWeight: "500" }],
+        caption: ["calc(12px * var(--ui-font-scale))", { lineHeight: "18px" }],
+        body: ["calc(13px * var(--ui-font-scale))", { lineHeight: "20px" }],
+        strong: ["calc(14px * var(--ui-font-scale))", { lineHeight: "20px", fontWeight: "500" }],
+        section: ["calc(15px * var(--ui-font-scale))", { lineHeight: "22px", fontWeight: "600" }],
+        title: ["calc(16px * var(--ui-font-scale))", { lineHeight: "24px", fontWeight: "600" }],
+        page: ["calc(18px * var(--ui-font-scale))", { lineHeight: "26px", fontWeight: "600" }],
+        metric: ["calc(24px * var(--ui-font-scale))", { lineHeight: "32px", fontWeight: "600" }],
       },
       fontFamily: {
         // 使用与之前版本保持一致的系统字体栈
-        sans: [
+        sans: ["var(--ui-font-family)"],
+        /* Legacy fallback retained in CSS via --cc-system-font-family. */
+        legacySans: [
           "-apple-system",
           "BlinkMacSystemFont",
           '"SF Pro Text"',
