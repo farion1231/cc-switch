@@ -1906,6 +1906,7 @@ pub fn anthropic_to_responses(
                 let mut response_tool = json!({
                     "type": "function",
                     "name": tool.get("name").and_then(Value::as_str).unwrap_or(""),
+                    "strict": false,
                 });
                 // 同 transform.rs：缺失的 description 省略而非输出 null，
                 // 否则严格上游会拒绝整个请求。
@@ -3350,6 +3351,43 @@ mod tests {
         );
         // input_schema should not appear
         assert!(result["tools"][0].get("input_schema").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_preserves_optional_tool_arguments() {
+        let input = json!({
+            "model": "gpt-5.6",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Delegate a task"}],
+            "tools": [{
+                "name": "Agent",
+                "description": "Launch a subagent",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "isolation": {
+                            "type": "string",
+                            "enum": ["worktree", "remote"]
+                        }
+                    },
+                    "required": ["prompt"]
+                }
+            }]
+        });
+
+        for is_codex_oauth in [false, true] {
+            let result =
+                anthropic_to_responses(input.clone(), None, is_codex_oauth, false).unwrap();
+            let tool = &result["tools"][0];
+
+            assert_eq!(tool["strict"], json!(false));
+            assert_eq!(tool["parameters"]["required"], json!(["prompt"]));
+            assert_eq!(
+                tool["parameters"]["properties"]["isolation"]["enum"],
+                json!(["worktree", "remote"])
+            );
+        }
     }
 
     #[test]
