@@ -12,7 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, KeyRound, MoreHorizontal, Plus } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Provider, VisibleApps } from "@/types";
+import type { Provider, Settings as AppSettings, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import {
@@ -139,19 +139,61 @@ interface SyncStatusUpdatedPayload {
 
 type OpenClawConfigTab = "env" | "tools" | "agents";
 
-const getInitialApp = (): AppId => {
-  const saved = localStorage.getItem(APP_STORAGE_KEY) as AppId | null;
-  if (saved && APP_IDS.includes(saved)) {
-    return saved;
+const STORAGE_KEY = APP_STORAGE_KEY;
+// 后端写入完成前记下待同步的选择，确保退出或写入失败后仍能恢复它。
+const PENDING_STORAGE_KEY = "cc-switch-last-app-pending";
+
+const readStoredApp = (key: string): AppId | null => {
+  try {
+    const saved = localStorage.getItem(key) as AppId | null;
+    return saved && APP_IDS.includes(saved) ? saved : null;
+  } catch {
+    return null;
   }
-  return "claude";
 };
+
+const getStoredApp = (): AppId | null => readStoredApp(STORAGE_KEY);
+const getPendingApp = (): AppId | null => readStoredApp(PENDING_STORAGE_KEY);
+
+const setPendingApp = (app: AppId | null) => {
+  try {
+    if (app) {
+      localStorage.setItem(PENDING_STORAGE_KEY, app);
+    } else {
+      localStorage.removeItem(PENDING_STORAGE_KEY);
+    }
+  } catch (error) {
+    console.warn("Failed to record pending active app", error);
+  }
+};
+
+let activeAppPersistence: Promise<unknown> = Promise.resolve();
+let activeAppPersistenceRequest = 0;
+
+const persistLastActiveApp = (app: AppId) => {
+  const request = ++activeAppPersistenceRequest;
+  setPendingApp(app);
+  activeAppPersistence = activeAppPersistence
+    .then(() => settingsApi.setLastActiveApp(app))
+    .then(() => {
+      // 只有在没有更晚的选择时才清标记，避免旧请求清掉新请求留下的待同步值。
+      if (activeAppPersistenceRequest === request) setPendingApp(null);
+    })
+    .catch((error) => {
+      if (activeAppPersistenceRequest === request) setPendingApp(app);
+      console.warn("Failed to persist active app in settings", error);
+    });
+};
+
+const getInitialApp = (): AppId =>
+  getPendingApp() ?? getStoredApp() ?? "claude";
 
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
+  const [hasRestoredActiveApp, setHasRestoredActiveApp] = useState(false);
   const sharedFeatureApp = sharedFeatureAppOf(activeApp);
   const [currentView, setCurrentView] = useState<View>(readStoredView);
   const [settingsSection, setSettingsSection] =
@@ -164,6 +206,15 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
+  const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    provider: Provider;
+    action: "remove" | "delete";
+  } | null>(null);
+  const hasProviderOperation = Boolean(
+    isAddOpen || editingProvider || usageProvider || confirmAction,
+  );
   // 供应商页顶部正在看的那格（直连 / 路由 / 聚合），由 SwitchModePanel 报上来。打开新增、
   // 编辑时记下当时那格，表单按它选布局：在聚合那格打开就是聚合的简化表单。
   const [providerModeView, setProviderModeView] = useState<{
@@ -201,15 +252,89 @@ function App() {
     [settingsData?.visibleApps],
   );
 
-  const getFirstVisibleApp = (): AppId => {
-    return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
-  };
+  const firstVisibleApp = useMemo<AppId>(
+    () => APP_IDS.find((app) => visibleApps[app]) ?? "claude",
+    [visibleApps],
+  );
+
+  const setActiveAppLocally = useCallback((app: AppId) => {
+    setActiveApp(app);
+    try {
+      localStorage.setItem(STORAGE_KEY, app);
+    } catch (error) {
+      console.warn("Failed to persist active app in localStorage", error);
+    }
+  }, []);
+
+  const userSelectedApp = useRef(false);
+  const handleAppSwitch = useCallback(
+    (app: AppId) => {
+      userSelectedApp.current = true;
+      setActiveAppLocally(app);
+      queryClient.setQueryData<AppSettings>(["settings"], (current) =>
+        current ? { ...current, lastActiveApp: app } : current,
+      );
+      persistLastActiveApp(app);
+    },
+    [queryClient, setActiveAppLocally],
+  );
+
+  const restoredPersistedApp = useRef(false);
+  useEffect(() => {
+    if (!settingsData || restoredPersistedApp.current) return;
+    restoredPersistedApp.current = true;
+
+    // 设置加载前已打开的表单/确认框属于当前应用，不可被迟到的恢复跨应用重定向。
+    if (userSelectedApp.current || hasProviderOperation) {
+      if (!userSelectedApp.current) handleAppSwitch(activeApp);
+      queryClient.setQueryData<AppSettings>(["settings"], (current) =>
+        current ? { ...current, lastActiveApp: activeApp } : current,
+      );
+      setHasRestoredActiveApp(true);
+      return;
+    }
+
+    // 上次写入失败时后端存的是旧值，此处不能把它当权威。
+    const pendingApp = getPendingApp();
+    const persistedApp =
+      pendingApp ?? settingsData.lastActiveApp ?? getStoredApp();
+    const resolvedApp =
+      persistedApp && visibleApps[persistedApp]
+        ? persistedApp
+        : firstVisibleApp;
+    setActiveAppLocally(resolvedApp);
+    if (persistedApp && settingsData.lastActiveApp !== resolvedApp) {
+      // 顺带重试上次失败的写入。
+      persistLastActiveApp(resolvedApp);
+    } else if (pendingApp) {
+      // 后端其实已是该值（只是上次回包失败），清掉标记即可。
+      setPendingApp(null);
+    }
+    setHasRestoredActiveApp(true);
+  }, [
+    activeApp,
+    firstVisibleApp,
+    handleAppSwitch,
+    hasProviderOperation,
+    queryClient,
+    setActiveAppLocally,
+    settingsData,
+    visibleApps,
+  ]);
 
   useEffect(() => {
+    if (!hasRestoredActiveApp || hasProviderOperation) return;
     if (!visibleApps[activeApp]) {
-      setActiveApp(getFirstVisibleApp());
+      handleAppSwitch(firstVisibleApp);
     }
-  }, [visibleApps, activeApp]);
+  }, [
+    visibleApps,
+    activeApp,
+    firstVisibleApp,
+    handleAppSwitch,
+    hasProviderOperation,
+    hasRestoredActiveApp,
+  ]);
 
   // 启动后把其他可见应用的供应商列表预取进缓存：第一次切过去直接有数据，不先画骨架
   const providersPrefetchedRef = useRef(false);
@@ -254,12 +379,6 @@ function App() {
     }
   }, [activeApp, currentView]);
 
-  const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
-  const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{
-    provider: Provider;
-    action: "remove" | "delete";
-  } | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
 
@@ -651,8 +770,7 @@ function App() {
     if (managementBusyRef.current) return;
     if (confirmLeave(() => selectApp(app))) return;
     closeProviderPanels();
-    setActiveApp(app);
-    localStorage.setItem(APP_STORAGE_KEY, app);
+    handleAppSwitch(app);
     setCurrentView("providers");
   };
 

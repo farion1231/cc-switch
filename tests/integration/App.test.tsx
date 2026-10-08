@@ -8,13 +8,15 @@ import {
   within,
 } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { providersApi } from "@/lib/api/providers";
 import {
   resetProviderState,
   setCurrentProviderId,
   setLiveProviderIds,
   setProviders,
+  setSettings,
+  getSettings,
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
@@ -200,6 +202,7 @@ describe("App integration with MSW", () => {
     skillsPanelMocks.initialViews = [];
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
+    localStorage.removeItem("cc-switch-last-app-pending");
   });
 
   it("covers basic provider flows via real hooks", async () => {
@@ -427,6 +430,244 @@ describe("App integration with MSW", () => {
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
+  });
+
+  it("restores and persists the last active app through settings", async () => {
+    localStorage.setItem("cc-switch-last-app", "claude");
+    setSettings({ lastActiveApp: "codex" });
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(sidebarApp("Codex")).toHaveAttribute("aria-current", "page"),
+    );
+
+    fireEvent.click(sidebarApp("OpenClaw"));
+
+    await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
+    expect(localStorage.getItem("cc-switch-last-app")).toBe("openclaw");
+  });
+
+  it("does not overwrite a visible backend app when the initial app is hidden", async () => {
+    setSettings({
+      lastActiveApp: "codex",
+      visibleApps: {
+        claude: false,
+        "claude-desktop": true,
+        codex: true,
+        gemini: false,
+        grokbuild: false,
+        opencode: true,
+        openclaw: false,
+        hermes: false,
+        pi: false,
+        mcode: false,
+      },
+    });
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(sidebarApp("Codex")).toHaveAttribute("aria-current", "page"),
+    );
+    await delay(100);
+    expect(getSettings().lastActiveApp).toBe("codex");
+    expect(localStorage.getItem("cc-switch-last-app")).toBe("codex");
+  });
+
+  it("keeps a user selection made before settings finish loading", async () => {
+    setSettings({ lastActiveApp: "codex" });
+    const staleSettings = getSettings();
+    server.use(
+      http.post("http://tauri.local/get_settings", async () => {
+        await delay(75);
+        return HttpResponse.json(staleSettings);
+      }),
+    );
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    fireEvent.click(sidebarApp("OpenClaw"));
+
+    await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
+    await delay(100);
+    expect(sidebarApp("OpenClaw")).toHaveAttribute("aria-current", "page");
+    expect(getSettings().lastActiveApp).toBe("openclaw");
+    expect(localStorage.getItem("cc-switch-last-app")).toBe("openclaw");
+  });
+
+  it.each([
+    ["edit", "edit-provider-dialog"],
+    ["delete", "confirm-dialog"],
+  ])(
+    "keeps the app context of an early %s operation",
+    async (action, dialog) => {
+      setSettings({ lastActiveApp: "codex" });
+      const staleSettings = getSettings();
+      let releaseSettings!: () => void;
+      const settingsGate = new Promise<void>((resolve) => {
+        releaseSettings = resolve;
+      });
+      server.use(
+        http.post("http://tauri.local/get_settings", async () => {
+          await settingsGate;
+          return HttpResponse.json(staleSettings);
+        }),
+      );
+      const { default: App } = await import("@/App");
+      renderApp(App);
+      try {
+        await waitFor(() =>
+          expect(screen.getByTestId("provider-list").textContent).toContain(
+            "claude-1",
+          ),
+        );
+        fireEvent.click(
+          screen.getByRole("button", { name: action, hidden: true }),
+        );
+        expect(screen.getByTestId(dialog)).toBeInTheDocument();
+      } finally {
+        releaseSettings();
+      }
+      await waitFor(() => expect(getSettings().lastActiveApp).toBe("claude"));
+      expect(sidebarApp("Claude Code")).toHaveAttribute("aria-current", "page");
+      expect(screen.getByTestId(dialog)).toBeInTheDocument();
+    },
+  );
+
+  it("falls back and persists when the last active app is hidden", async () => {
+    setSettings({
+      lastActiveApp: "codex",
+      visibleApps: {
+        claude: true,
+        "claude-desktop": false,
+        codex: false,
+        gemini: false,
+        grokbuild: false,
+        opencode: true,
+        openclaw: false,
+        hermes: false,
+        pi: false,
+        mcode: false,
+      },
+    });
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() => expect(getSettings().lastActiveApp).toBe("claude"));
+    expect(sidebarApp("Claude Code")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("serializes rapid switches so the latest selection wins", async () => {
+    server.use(
+      http.post(
+        "http://tauri.local/set_last_active_app",
+        async ({ request }) => {
+          const { app } = (await request.json()) as {
+            app: "claude" | "codex" | "openclaw";
+          };
+          if (app === "codex") await delay(75);
+          setSettings({ lastActiveApp: app });
+          return HttpResponse.json(true);
+        },
+      ),
+    );
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() =>
+      expect(sidebarApp("Claude Code")).toHaveAttribute("aria-current", "page"),
+    );
+
+    fireEvent.click(sidebarApp("Codex"));
+    fireEvent.click(sidebarApp("OpenClaw"));
+
+    await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
+    await delay(100);
+    expect(getSettings().lastActiveApp).toBe("openclaw");
+  });
+
+  it("restores a selection while its backend write is still pending", async () => {
+    setSettings({ lastActiveApp: "claude" });
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    server.use(
+      http.post(
+        "http://tauri.local/set_last_active_app",
+        async ({ request }) => {
+          const { app } = (await request.json()) as { app: "codex" };
+          await writeGate;
+          setSettings({ lastActiveApp: app });
+          return HttpResponse.json(true);
+        },
+      ),
+    );
+    const { default: App } = await import("@/App");
+    const firstLaunch = renderApp(App);
+    await waitFor(() =>
+      expect(sidebarApp("Claude Code")).toHaveAttribute("aria-current", "page"),
+    );
+    fireEvent.click(sidebarApp("Codex"));
+    try {
+      expect(localStorage.getItem("cc-switch-last-app-pending")).toBe("codex");
+      firstLaunch.unmount();
+      renderApp(App);
+      await waitFor(() =>
+        expect(sidebarApp("Codex")).toHaveAttribute("aria-current", "page"),
+      );
+      await delay(100);
+      expect(getSettings().lastActiveApp).toBe("claude");
+      expect(sidebarApp("Codex")).toHaveAttribute("aria-current", "page");
+    } finally {
+      releaseWrite();
+    }
+    await waitFor(() =>
+      expect(localStorage.getItem("cc-switch-last-app-pending")).toBeNull(),
+    );
+    expect(getSettings().lastActiveApp).toBe("codex");
+  });
+
+  it("keeps a selection whose backend write failed and retries it on restart", async () => {
+    setSettings({ lastActiveApp: "claude" });
+    let failedWrites = 0;
+    server.use(
+      http.post("http://tauri.local/set_last_active_app", () => {
+        failedWrites += 1;
+        return HttpResponse.json(
+          { error: "settings file is locked" },
+          { status: 500 },
+        );
+      }),
+    );
+    const { default: App } = await import("@/App");
+    const firstLaunch = renderApp(App);
+    await waitFor(() =>
+      expect(sidebarApp("Claude Code")).toHaveAttribute("aria-current", "page"),
+    );
+
+    fireEvent.click(sidebarApp("OpenClaw"));
+
+    await waitFor(() => expect(failedWrites).toBe(1));
+    await waitFor(() =>
+      expect(localStorage.getItem("cc-switch-last-app-pending")).toBe(
+        "openclaw",
+      ),
+    );
+    expect(getSettings().lastActiveApp).toBe("claude");
+
+    // 重启：后端恢复可写，待同步的选择应当胜过 settings 里的旧值。
+    firstLaunch.unmount();
+    server.resetHandlers();
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(sidebarApp("OpenClaw")).toHaveAttribute("aria-current", "page"),
+    );
+    await waitFor(() => expect(getSettings().lastActiveApp).toBe("openclaw"));
+    await waitFor(() =>
+      expect(localStorage.getItem("cc-switch-last-app-pending")).toBeNull(),
+    );
   });
 
   it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {
