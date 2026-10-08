@@ -1422,7 +1422,7 @@ struct CodexCatalogModelSpec {
     /// model identity / system preamble). Carries each vendor's OFFICIAL value
     /// (e.g. MiMo "developed by Xiaomi", MiniMax "based on MiniMax-M3"); falls
     /// back to the template default when absent. Only consulted for
-    /// `NativeResponses`, `Anthropic`, and matched Copilot GPT prompt overlays.
+    /// `NativeResponses`.
     base_instructions: Option<String>,
     /// Per-row override for the generated catalog's `supported_reasoning_levels`
     /// (e.g. ["none", "low", "medium", "high", "xhigh", "max"]). When omitted
@@ -2247,18 +2247,8 @@ fn codex_copilot_model_entry(
         return entry;
     };
 
-    // Never leave the generic GPT-5.5 messages overriding a legacy official
-    // base prompt, or an explicit per-row instruction override in newer Codex.
+    // Never leave the generic GPT-5.5 messages overriding a legacy official prompt.
     obj.remove("model_messages");
-    if let Some(instructions) = spec
-        .base_instructions
-        .as_deref()
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-    {
-        obj.insert("base_instructions".to_string(), json!(instructions));
-        return entry;
-    }
     if let Some(instructions) = official
         .get("base_instructions")
         .filter(|value| value.is_string())
@@ -4905,24 +4895,28 @@ wire_api = "responses"
     }
 
     #[test]
-    fn copilot_gpt_rows_reuse_only_official_core_prompt_fields() {
+    fn copilot_catalog_uses_model_prompts_without_changing_account_capabilities_or_tools() {
         let mut official = official_gpt_row("gpt-6-sol", "Sol {{ personality }} prompt");
         let variables = json!({ "personality_default": "Sol personality" });
         official["model_messages"]["instructions_variables"] = variables.clone();
-        // Real bundled entries carry more harness objects. Even future tool
-        // fields must not change the existing Copilot transport/tool surface.
+        // Official prompt reuse must not grant the official harness or tools.
         official["model_messages"]["approvals"] = json!({ "prompt": "official approvals" });
-        official["model_messages"]["persistent_instructions"] = json!("persistent mode");
         official["model_messages"]["tools"] = json!([{ "type": "custom" }]);
-        official["model_messages"]["future_code_mode"] = json!(true);
         official["tools"] = json!([{ "type": "custom", "name": "code_mode" }]);
-        official["experimental_supported_tools"] = json!(["code_mode"]);
-        official["future_transport"] = json!("official-only");
-        official["shell_type"] = json!("local_shell");
-        official["supports_parallel_tool_calls"] = json!(true);
-        official["default_reasoning_summary"] = json!("detailed");
-        let rows = normalize_codex_native_rows(vec![official]).unwrap();
-        let input = json!([{ "model": "gpt-6-sol" }]);
+        let legacy = native_row("gpt-6", json!({ "base_instructions": "Legacy GPT prompt" }));
+        let non_gpt = official_gpt_row("claude-sonnet-5", "Not a GPT prompt");
+        let rows = normalize_codex_native_rows(vec![official, legacy, non_gpt]).unwrap();
+        let input = json!([
+            {
+                "model": "gpt-6-sol-high", "displayName": "Account Sol",
+                "contextWindow": 200_000, "inputModalities": ["text"],
+                "supportsParallelToolCalls": true,
+                "reasoningLevels": ["low", "high"], "defaultReasoningLevel": "high",
+            },
+            { "model": "gpt-6" },
+            { "model": "claude-sonnet-5", "contextWindow": 400_000 },
+            { "model": "gpt-new" },
+        ]);
         let baseline = with_official_models(Vec::new(), || {
             catalog_for(input.clone(), "", CodexCatalogToolProfile::Copilot)
         });
@@ -4940,216 +4934,14 @@ wire_api = "responses"
                 "instructions_variables": variables,
             })
         );
-        assert!(actual[0].get("tool_mode").is_none());
-        assert!(actual[0].get("tools").is_none());
-        assert_eq!(
-            actual[0]["apply_patch_tool_type"],
-            baseline[0]["apply_patch_tool_type"]
-        );
-        assert!(!actual[0]["supports_parallel_tool_calls"].as_bool().unwrap());
-        assert!(!actual[0]["supports_image_detail_original"]
-            .as_bool()
-            .unwrap());
-        assert!(codex_native_row_is_valid(&actual[0]));
-        // Equality outside the prompt allowlist guards ALL other fields,
-        // including unknown future official capabilities and account metadata.
-        actual[0]["base_instructions"] = baseline[0]["base_instructions"].clone();
-        actual[0]["model_messages"] = baseline[0]["model_messages"].clone();
-        assert_eq!(actual, baseline);
-    }
-
-    #[test]
-    fn copilot_gpt_prompts_use_existing_prefix_and_namespace_matching() {
-        let rows = with_official_models(official_gpt_rows(), || {
-            catalog_for(
-                json!([
-                    { "model": "gpt-6-sol-high" },
-                    { "model": "openai/gpt-5.5" },
-                    { "model": "gpt-6" },
-                ]),
-                "",
-                CodexCatalogToolProfile::Copilot,
-            )
-        });
-        for (index, (model, prompt)) in [
-            ("gpt-6-sol-high", "GPT-6 Sol prompt"),
-            ("openai/gpt-5.5", "GPT-5.5 prompt"),
-            ("gpt-6", "GPT-6 base prompt"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            assert_eq!(rows[index]["slug"], model);
-            assert_eq!(rows[index]["display_name"], model);
-            assert_eq!(rows[index]["description"], model);
-            assert_eq!(rows[index]["base_instructions"], prompt);
-            assert_eq!(
-                rows[index]["model_messages"]["instructions_template"],
-                prompt
-            );
-            assert_eq!(rows[index]["priority"], 1000 + index);
-        }
-    }
-
-    #[test]
-    fn copilot_gpt_prompt_overlay_preserves_live_account_and_reasoning_overrides() {
-        let input = json!([
-            {
-                "model": "gpt-6-sol", "displayName": "Copilot Sol",
-                "contextWindow": 200_000, "inputModalities": ["text"],
-                "supportsParallelToolCalls": true,
-                "reasoningLevels": ["none", "medium", "high"],
-                "defaultReasoningLevel": "none",
-            },
-            {
-                "model": "gpt-6", "display_name": "Copilot GPT",
-                "context_window": 180_000, "input_modalities": ["text", "image"],
-                "supports_parallel_tool_calls": false,
-                "reasoning_levels": ["low", "high"],
-                "default_reasoning_level": "high",
-            },
-            { "model": "gpt-5.5" },
-        ]);
-        let config = "model_context_window = 160000\n";
-        let baseline = with_official_models(Vec::new(), || {
-            catalog_for(input.clone(), config, CodexCatalogToolProfile::Copilot)
-        });
-        let mut actual = with_official_models(official_gpt_rows(), || {
-            catalog_for(input, config, CodexCatalogToolProfile::Copilot)
-        });
-        assert_eq!(actual[0]["display_name"], "Copilot Sol");
-        assert_eq!(actual[0]["context_window"], 200_000);
-        assert_eq!(actual[0]["max_context_window"], 200_000);
-        assert_eq!(actual[0]["input_modalities"], json!(["text"]));
-        assert_eq!(actual[0]["supports_parallel_tool_calls"], true);
-        assert_eq!(actual[0]["default_reasoning_level"], "none");
-        assert_eq!(actual[1]["default_reasoning_level"], "high");
-        assert_eq!(actual[1]["supports_parallel_tool_calls"], false);
-        assert_eq!(actual[2]["context_window"], 160_000);
-        assert_eq!(actual[2]["supports_parallel_tool_calls"], false);
-        for (row, before) in actual.iter_mut().zip(&baseline) {
+        assert_eq!(actual[1]["base_instructions"], "Legacy GPT prompt");
+        assert!(actual[1].get("model_messages").is_none());
+        // Account settings, tools, and fallback rows must stay exactly as before.
+        for (row, before) in actual.iter_mut().take(2).zip(&baseline) {
             row["base_instructions"] = before["base_instructions"].clone();
             row["model_messages"] = before["model_messages"].clone();
         }
         assert_eq!(actual, baseline);
-    }
-
-    #[test]
-    fn copilot_gpt_explicit_base_instructions_override_both_official_prompt_forms() {
-        let rows = with_official_models(official_gpt_rows(), || {
-            catalog_for(
-                json!([
-                    { "model": "gpt-6-sol", "baseInstructions": "  Copilot override  " },
-                    { "model": "gpt-6", "base_instructions": "legacy override" },
-                    { "model": "gpt-5.5", "baseInstructions": "  " },
-                ]),
-                "",
-                CodexCatalogToolProfile::Copilot,
-            )
-        });
-        assert_eq!(rows[0]["base_instructions"], "Copilot override");
-        assert_eq!(rows[1]["base_instructions"], "legacy override");
-        assert!(rows[0].get("model_messages").is_none());
-        assert!(rows[1].get("model_messages").is_none());
-        assert_eq!(
-            rows[2]["model_messages"]["instructions_template"],
-            "GPT-5.5 prompt"
-        );
-        for row in &rows {
-            assert!(codex_native_row_is_valid(row));
-        }
-    }
-
-    #[test]
-    fn copilot_gpt_legacy_official_prompt_drops_conflicting_template_messages() {
-        for messages in [
-            None,
-            Some(Value::Null),
-            Some(json!({ "instructions_variables": { "personality_default": "legacy" } })),
-            Some(json!({ "instructions_template": null, "future_tool": "code_mode" })),
-        ] {
-            let mut official = official_gpt_row("gpt-6-sol", "unused");
-            official["base_instructions"] = json!("Legacy Sol prompt");
-            official.as_object_mut().unwrap().remove("model_messages");
-            if let Some(messages) = messages {
-                official["model_messages"] = messages;
-            }
-            let rows = normalize_codex_native_rows(vec![official]).unwrap();
-            let actual = with_official_models(rows, || {
-                catalog_for(
-                    json!([{ "model": "gpt-6-sol" }]),
-                    "",
-                    CodexCatalogToolProfile::Copilot,
-                )
-            });
-            assert_eq!(actual[0]["base_instructions"], "Legacy Sol prompt");
-            assert!(actual[0].get("model_messages").is_none());
-            assert!(codex_native_row_is_valid(&actual[0]));
-        }
-    }
-
-    #[test]
-    fn copilot_gpt_new_prompt_does_not_inherit_generic_personality_variables() {
-        for variables in [None, Some(Value::Null)] {
-            let mut official = official_gpt_row("gpt-6-sol", "Sol prompt");
-            if let Some(value) = variables.clone() {
-                official["model_messages"]["instructions_variables"] = value;
-            }
-            let rows = normalize_codex_native_rows(vec![official]).unwrap();
-            let actual = with_official_models(rows, || {
-                catalog_for(
-                    json!([{ "model": "gpt-6-sol" }]),
-                    "",
-                    CodexCatalogToolProfile::Copilot,
-                )
-            });
-            assert_eq!(actual[0]["base_instructions"], "Sol prompt");
-            assert_eq!(
-                actual[0]["model_messages"]["instructions_template"],
-                "Sol prompt"
-            );
-            assert_eq!(
-                actual[0]["model_messages"].get("instructions_variables"),
-                variables.as_ref()
-            );
-        }
-    }
-
-    #[test]
-    fn copilot_non_gpt_and_unmatched_rows_keep_exact_fallback_entries() {
-        let input = json!([
-            { "model": "claude-sonnet-5", "contextWindow": 400_000 },
-            { "model": "gpt-new" },
-            { "model": "GPT-6-sol" },
-            { "model": "a/b/gpt-6-sol" },
-        ]);
-        let baseline = with_official_models(Vec::new(), || {
-            catalog_for(input.clone(), "", CodexCatalogToolProfile::Copilot)
-        });
-        let mut rows = official_gpt_rows();
-        rows.push(official_gpt_row("claude-sonnet-5", "NOT a GPT prompt"));
-        let rows = normalize_codex_native_rows(rows).unwrap();
-        let actual = with_official_models(rows, || {
-            catalog_for(input, "", CodexCatalogToolProfile::Copilot)
-        });
-        assert_eq!(actual, baseline);
-    }
-
-    #[test]
-    fn copilot_bundled_fallback_only_overlays_the_known_static_gpt() {
-        let rows = with_official_models(codex_static_official_models(), || {
-            catalog_for(
-                json!([{ "model": "gpt-5.5" }, { "model": "gpt-6-sol" }]),
-                "",
-                CodexCatalogToolProfile::Copilot,
-            )
-        });
-        let template = load_codex_model_template_static().unwrap();
-        for row in &rows {
-            assert_eq!(row["base_instructions"], template["base_instructions"]);
-            assert_eq!(row["model_messages"], template["model_messages"]);
-            assert!(row.get("tool_mode").is_none());
-        }
     }
 
     #[test]
@@ -5174,25 +4966,6 @@ wire_api = "responses"
             .collect();
         with_official_models(official.clone(), || {
             let rows = catalog_for(json!(input), "", CodexCatalogToolProfile::Copilot);
-            for (row, native) in rows.iter().zip(&official) {
-                for field in [
-                    "display_name",
-                    "context_window",
-                    "input_modalities",
-                    "supports_parallel_tool_calls",
-                ] {
-                    assert_eq!(
-                        row.get(field),
-                        native.get(field),
-                        "{field} must exercise the old mirror collision"
-                    );
-                }
-                assert!(!is_codex_official_mirror(
-                    row,
-                    row["slug"].as_str().unwrap(),
-                    native
-                ));
-            }
             let simplified =
                 build_simplified_catalog_from_texts("", &json!({ "models": rows }).to_string())
                     .unwrap();
@@ -5208,65 +4981,6 @@ wire_api = "responses"
             );
             assert_eq!(regenerated, rows);
         });
-    }
-
-    #[test]
-    fn full_official_mirrors_still_round_trip_as_bare_models_in_both_profiles() {
-        let mut modern = official_gpt_row("gpt-6-sol", "GPT-6 Sol prompt");
-        modern["model_messages"]["approvals"] = json!({ "prompt": "approval" });
-        let official =
-            normalize_codex_native_rows(vec![modern, load_codex_model_template_static().unwrap()])
-                .unwrap();
-        with_official_models(official, || {
-            for profile in [
-                CodexCatalogToolProfile::NativeResponses,
-                CodexCatalogToolProfile::ProxyChat,
-            ] {
-                let rows = catalog_for(
-                    json!([{ "model": "gpt-6-sol" }, { "model": "gpt-5.5" }]),
-                    "",
-                    profile,
-                );
-                let simplified =
-                    build_simplified_catalog_from_texts("", &json!({ "models": rows }).to_string())
-                        .unwrap();
-                assert_eq!(
-                    simplified["models"],
-                    json!([{ "model": "gpt-6-sol" }, { "model": "gpt-5.5" }])
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn old_full_official_mirrors_stay_bare_on_round_trip_after_official_prompt_updates() {
-        let previous = normalize_codex_native_rows(vec![
-            official_gpt_row("gpt-6-sol", "Previous Sol prompt"),
-            load_codex_model_template_static().unwrap(),
-        ])
-        .unwrap();
-        let mut current = previous.clone();
-        for row in &mut current {
-            row["base_instructions"] = json!("Updated official base instructions");
-            row["model_messages"]["instructions_template"] = json!("Updated official prompt");
-            row["model_messages"]["instructions_variables"] = json!({
-                "personality_default": "Updated personality",
-            });
-        }
-        let input = json!([{ "model": "gpt-6-sol" }, { "model": "gpt-5.5" }]);
-        for profile in [
-            CodexCatalogToolProfile::NativeResponses,
-            CodexCatalogToolProfile::ProxyChat,
-        ] {
-            let previous_catalog = with_official_models(
-                previous.clone(),
-                || json!({ "models": catalog_for(input.clone(), "", profile) }),
-            );
-            let simplified = with_official_models(current.clone(), || {
-                build_simplified_catalog_from_texts("", &previous_catalog.to_string()).unwrap()
-            });
-            assert_eq!(simplified["models"], input);
-        }
     }
 
     #[test]
@@ -5305,12 +5019,6 @@ wire_api = "responses"
         assert_eq!(row["context_window"], 200_000);
         assert_eq!(row["supports_parallel_tool_calls"], true);
         assert_eq!(row["default_reasoning_level"], "high");
-        assert_eq!(row["comp_hash"], CODEX_STACK_COMP_HASH);
-        assert_eq!(row["priority"], 2);
-        assert!(row["display_name"]
-            .as_str()
-            .unwrap()
-            .contains("Account Sol"));
         assert_eq!(
             row["slug"],
             crate::mode::stack::encode(
@@ -5479,27 +5187,45 @@ wire_api = "responses"
 
     #[test]
     fn mirrored_rows_round_trip_as_bare_models() {
-        let (catalog, simplified) = with_official_models(official_gpt_rows(), || {
-            let catalog = json!({
-                "models": catalog_for(
-                    json!([
-                        { "model": "gpt-6-sol" },
-                        { "model": "glm-5", "displayName": "GLM 5", "contextWindow": 200_000 }
-                    ]),
-                    "",
-                    CodexCatalogToolProfile::NativeResponses,
-                )
+        let previous = normalize_codex_native_rows(vec![
+            official_gpt_row("gpt-6-sol", "GPT-6 Sol prompt"),
+            load_codex_model_template_static().unwrap(),
+        ])
+        .unwrap();
+        let mut current = previous.clone();
+        for row in &mut current {
+            row["base_instructions"] = json!("Updated official prompt");
+            row["model_messages"]["instructions_template"] = json!("Updated official prompt");
+        }
+        for profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::ProxyChat,
+        ] {
+            let catalog = with_official_models(previous.clone(), || {
+                json!({
+                    "models": catalog_for(
+                        json!([
+                            { "model": "gpt-6-sol" },
+                            { "model": "glm-5", "displayName": "GLM 5", "contextWindow": 200_000 },
+                            { "model": "gpt-5.5" },
+                        ]),
+                        "",
+                        profile,
+                    )
+                })
             });
-            let simplified = build_simplified_catalog_from_texts("", &catalog.to_string());
-            (catalog, simplified)
-        });
-        // 官方的显示名、窗口、档位不能被当成用户填的存回去。
-        assert_eq!(catalog["models"][0]["display_name"], "GPT-6-SOL");
-        let rows = simplified.unwrap()["models"].as_array().unwrap().clone();
-        assert_eq!(rows[0], json!({ "model": "gpt-6-sol" }));
-        assert_eq!(rows[1]["model"], "glm-5");
-        assert_eq!(rows[1]["displayName"], "GLM 5");
-        assert_eq!(rows[1]["contextWindow"], 200_000);
+            // Official prompt updates must not turn mirrors into user overrides.
+            let simplified = with_official_models(current.clone(), || {
+                build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap()
+            });
+            assert_eq!(catalog["models"][0]["display_name"], "GPT-6-SOL");
+            let rows = simplified["models"].as_array().unwrap();
+            assert_eq!(rows[0], json!({ "model": "gpt-6-sol" }));
+            assert_eq!(rows[1]["model"], "glm-5");
+            assert_eq!(rows[1]["displayName"], "GLM 5");
+            assert_eq!(rows[1]["contextWindow"], 200_000);
+            assert_eq!(rows[2], json!({ "model": "gpt-5.5" }));
+        }
     }
 
     #[test]
