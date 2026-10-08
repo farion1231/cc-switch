@@ -146,7 +146,7 @@ pub(crate) fn build_provider_from_request(
 ) -> Result<Provider, AppError> {
     let settings_config = match app_type {
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
-        AppType::Codex => build_codex_settings(request),
+        AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),
         AppType::GrokBuild => build_grokbuild_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
@@ -395,7 +395,7 @@ fn extract_claude_config_env(
 }
 
 /// Build Codex settings configuration
-fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+fn build_codex_settings(request: &DeepLinkImportRequest) -> Result<serde_json::Value, AppError> {
     let provider_display_name = request
         .name
         .as_deref()
@@ -426,10 +426,11 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
 
     let provider_display_name = toml_edit::Value::from(provider_display_name.as_str()).to_string();
     let model_name = toml_edit::Value::from(model_name.as_str()).to_string();
+    let catalog = extract_codex_model_catalog(request, &endpoint)?;
     let endpoint = toml_edit::Value::from(endpoint.as_str()).to_string();
 
     // Build config.toml content
-    let config_toml = format!(
+    let mut config_toml = format!(
         r#"model_provider = "custom"
 model = {model_name}
 model_reasoning_effort = "high"
@@ -443,12 +444,82 @@ requires_openai_auth = true
 "#
     );
 
-    json!({
+    if let Some(url) = catalog {
+        config_toml.push_str(&format!(
+            "model_catalog_url = {}\n",
+            toml_edit::Value::from(url.as_str()),
+        ));
+    }
+
+    Ok(json!({
         "auth": {
             "OPENAI_API_KEY": request.api_key,
         },
         "config": config_toml
-    })
+    }))
+}
+
+/// Preserve the active provider's explicit remote catalog without copying other
+/// inline auth/provider tables. Codex sends provider credentials to this URL, so
+/// compare it with the final (URL-parameter-authoritative) inference origin.
+fn extract_codex_model_catalog(
+    request: &DeepLinkImportRequest,
+    endpoint: &str,
+) -> Result<Option<String>, AppError> {
+    let Some(config_b64) = &request.config else {
+        return Ok(None);
+    };
+    let decoded = decode_base64_param("config", config_b64)?;
+    let text = std::str::from_utf8(&decoded)
+        .map_err(|_| AppError::InvalidInput("Invalid UTF-8 in config".to_string()))?;
+    let config: toml::Value = match request.config_format.as_deref().unwrap_or("json") {
+        "json" => {
+            let value: serde_json::Value = serde_json::from_str(text)
+                .map_err(|_| AppError::InvalidInput("Invalid JSON config".to_string()))?;
+            let Some(config_text) = value.get("config").and_then(|v| v.as_str()) else {
+                return Ok(None);
+            };
+            toml::from_str(config_text)
+        }
+        "toml" => toml::from_str(text),
+        _ => {
+            return Err(AppError::InvalidInput(
+                "Unsupported config format".to_string(),
+            ))
+        }
+    }
+    .map_err(|_| AppError::InvalidInput("Invalid Codex TOML config".to_string()))?;
+    // Partial configs commonly specify only model_providers.custom. Never take a
+    // catalog from an inactive provider just because its table appears first.
+    let provider_id = config
+        .get("model_provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("custom");
+    let Some(value) = config
+        .get("model_providers")
+        .and_then(|v| v.get(provider_id))
+        .and_then(|v| v.get("model_catalog_url"))
+    else {
+        return Ok(None);
+    };
+    let invalid_url = || {
+        AppError::InvalidInput(
+            "Codex model_catalog_url must be an absolute HTTP(S) URL on the provider endpoint's origin, without userinfo or a fragment".to_string(),
+        )
+    };
+    let catalog_url = value.as_str().ok_or_else(invalid_url)?;
+    let url = url::Url::parse(catalog_url).map_err(|_| invalid_url())?;
+    let endpoint_url = url::Url::parse(endpoint).map_err(|_| invalid_url())?;
+    if !matches!(url.scheme(), "https" | "http")
+        || catalog_url.chars().any(char::is_control)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || url.origin() != endpoint_url.origin()
+    {
+        return Err(invalid_url());
+    }
+    Ok(Some(catalog_url.to_string()))
 }
 
 /// Build Gemini settings configuration
@@ -1143,7 +1214,7 @@ mod tests {
             ..Default::default()
         };
 
-        let settings = build_codex_settings(&request);
+        let settings = build_codex_settings(&request).expect("build Codex settings");
         let config_text = settings
             .get("config")
             .and_then(|value| value.as_str())
@@ -1170,6 +1241,127 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("https://api.example.com/v1")
         );
+    }
+
+    #[test]
+    fn codex_deeplink_preserves_remote_catalog_from_active_provider() {
+        use base64::prelude::*;
+
+        let catalog_url = "https://api.example.com/v1/models?format=codex&label=%22test%22";
+        let config = format!(
+            r#"model_provider = "relay"
+model = "ignored-model"
+model_catalog_json = "/private/local-models.json"
+[model_providers.inactive]
+model_catalog_url = "https://inactive.example/models"
+[model_providers.relay]
+base_url = "https://api.example.com/old"
+model_catalog_url = "{catalog_url}"
+experimental_bearer_token = "must-not-copy"
+[mcp_servers.untrusted]
+command = "must-not-copy"
+"#
+        );
+        let request = DeepLinkImportRequest {
+            app: Some("codex".to_string()),
+            resource: "provider".to_string(),
+            name: Some("Relay".to_string()),
+            endpoint: Some("https://api.example.com/v1/,https://backup.example/v1".to_string()),
+            model: Some("selected-model".to_string()),
+            api_key: Some("sk-query-key".to_string()),
+            config: Some(BASE64_STANDARD.encode(json!({ "config": config }).to_string())),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).expect("merge inline config");
+        let settings = build_codex_settings(&merged).expect("build catalog config");
+        let text = settings["config"].as_str().expect("config TOML");
+        let doc: toml::Value = toml::from_str(text).expect("valid TOML");
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(doc["model"].as_str(), Some("selected-model"));
+        assert_eq!(settings["auth"]["OPENAI_API_KEY"], "sk-query-key");
+        assert_eq!(
+            doc["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://api.example.com/v1")
+        );
+        assert_eq!(
+            doc["model_providers"]["custom"]["model_catalog_url"].as_str(),
+            Some(catalog_url)
+        );
+        assert!(!text.contains("must-not-copy"));
+        assert!(!text.contains("model_catalog_json"));
+        assert!(doc["model_providers"].get("inactive").is_none());
+    }
+
+    #[test]
+    fn codex_deeplink_preserves_catalog_in_partial_json_and_toml_configs() {
+        use base64::prelude::*;
+
+        for format in ["json", "toml"] {
+            let text = "[model_providers.custom]\nmodel_catalog_url = \"http://127.0.0.1:8000/catalog?format=codex\"\n".to_string();
+            let config = if format == "json" {
+                json!({ "config": text }).to_string()
+            } else {
+                text
+            };
+            let request = DeepLinkImportRequest {
+                endpoint: Some("http://127.0.0.1:8000/v1".to_string()),
+                config: Some(BASE64_STANDARD.encode(config)),
+                config_format: Some(format.to_string()),
+                ..Default::default()
+            };
+            let settings = build_codex_settings(&request).expect("build remote catalog");
+            let doc: toml::Value = toml::from_str(settings["config"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                doc["model_providers"]["custom"]["model_catalog_url"].as_str(),
+                Some("http://127.0.0.1:8000/catalog?format=codex")
+            );
+        }
+    }
+
+    #[test]
+    fn codex_deeplink_rejects_invalid_or_cross_origin_catalogs() {
+        use base64::prelude::*;
+
+        for value in [
+            json!("https://different.example/models"),
+            json!("http://api.example.com/models"),
+            json!("https://api.example.com:8443/models"),
+            json!("https://user:password@api.example.com/models"),
+            json!("https://api.example.com/models#fragment"),
+            json!("file:///tmp/catalog.json"),
+            json!("/models"),
+            json!("https://api.example.com/models\n"),
+            json!(42),
+        ] {
+            let config = json!({ "config": format!("[model_providers.custom]\nmodel_catalog_url = {value}\n") });
+            let request = DeepLinkImportRequest {
+                endpoint: Some("https://api.example.com/v1".to_string()),
+                config: Some(BASE64_STANDARD.encode(config.to_string())),
+                ..Default::default()
+            };
+            let error = build_codex_settings(&request).expect_err("reject unsafe catalog URL");
+            assert!(error.to_string().contains("model_catalog_url"));
+            assert!(!error.to_string().contains("password"));
+        }
+    }
+
+    #[test]
+    fn codex_deeplink_without_catalog_keeps_legacy_template() {
+        use base64::prelude::*;
+
+        let mut request = DeepLinkImportRequest {
+            name: Some("Relay".to_string()),
+            endpoint: Some("https://api.example.com/v1".to_string()),
+            model: Some("gpt-test".to_string()),
+            api_key: Some("sk-test".to_string()),
+            ..Default::default()
+        };
+        let expected = "model_provider = \"custom\"\nmodel = \"gpt-test\"\nmodel_reasoning_effort = \"high\"\ndisable_response_storage = true\n\n[model_providers.custom]\nname = \"Relay\"\nbase_url = \"https://api.example.com/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n";
+        assert_eq!(build_codex_settings(&request).unwrap()["config"], expected);
+        // An inactive provider's catalog does not enable discovery implicitly.
+        request.config = Some(BASE64_STANDARD.encode(json!({ "config": "model_provider = \"active\"\n[model_providers.active]\nbase_url = \"https://api.example.com/v1\"\n[model_providers.other]\nmodel_catalog_url = \"https://api.example.com/models\"\n" }).to_string()));
+        assert_eq!(build_codex_settings(&request).unwrap()["config"], expected);
     }
 
     #[test]
