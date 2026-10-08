@@ -489,16 +489,8 @@ fn extract_codex_model_catalog(
         }
     }
     .map_err(|_| AppError::InvalidInput("Invalid Codex TOML config".to_string()))?;
-    // Partial configs commonly specify only model_providers.custom. Never take a
-    // catalog from an inactive provider just because its table appears first.
-    let provider_id = config
-        .get("model_provider")
-        .and_then(|v| v.as_str())
-        .unwrap_or("custom");
-    let Some(value) = config
-        .get("model_providers")
-        .and_then(|v| v.get(provider_id))
-        .and_then(|v| v.get("model_catalog_url"))
+    let Some(value) =
+        active_codex_provider(&config).and_then(|provider| provider.get("model_catalog_url"))
     else {
         return Ok(None);
     };
@@ -1018,15 +1010,20 @@ fn merge_additive_config(
 
 /// Extract base_url from Codex TOML config
 fn extract_codex_base_url(toml_value: &toml::Value) -> Option<String> {
-    // Try to find base_url in model_providers section
-    if let Some(providers) = toml_value.get("model_providers").and_then(|v| v.as_table()) {
-        for (_key, provider) in providers.iter() {
-            if let Some(base_url) = provider.get("base_url").and_then(|v| v.as_str()) {
-                return Some(base_url.to_string());
-            }
-        }
-    }
-    None
+    active_codex_provider(toml_value)?
+        .get("base_url")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// Inference and catalog must select the same provider. Partial config payloads
+/// conventionally use custom; never fall back to an unrelated provider table.
+fn active_codex_provider(config: &toml::Value) -> Option<&toml::value::Table> {
+    let provider_id = config
+        .get("model_provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("custom");
+    config.get("model_providers")?.get(provider_id)?.as_table()
 }
 
 #[cfg(test)]
@@ -1317,6 +1314,53 @@ command = "must-not-copy"
                 Some("http://127.0.0.1:8000/catalog?format=codex")
             );
         }
+    }
+
+    #[test]
+    fn codex_deeplink_infers_endpoint_from_the_catalogs_provider() {
+        use base64::prelude::*;
+
+        for selector in [Some("relay"), None] {
+            let provider_id = selector.unwrap_or("custom");
+            let selector_line = selector
+                .map(|id| format!("model_provider = \"{id}\"\n"))
+                .unwrap_or_default();
+            let text = format!(
+                "{selector_line}model = \"custom-model\"\n\n[model_providers.{provider_id}]\nbase_url = \"https://api.example.com/v1\"\nmodel_catalog_url = \"https://api.example.com/v1/models?format=codex\"\n\n[model_providers.aaa_inactive]\nbase_url = \"https://inactive.example.com/v1\"\n"
+            );
+            let request = DeepLinkImportRequest {
+                resource: "provider".to_string(),
+                app: Some("codex".to_string()),
+                api_key: Some("sk-test".to_string()),
+                config: Some(BASE64_STANDARD.encode(json!({ "config": text }).to_string())),
+                ..Default::default()
+            };
+            let merged = parse_and_merge_config(&request).expect("infer endpoint and model");
+            assert_eq!(
+                merged.endpoint.as_deref(),
+                Some("https://api.example.com/v1")
+            );
+            assert_eq!(merged.model.as_deref(), Some("custom-model"));
+            let settings =
+                build_codex_settings(&merged).expect("matching inference and catalog origin");
+            let config: toml::Value = toml::from_str(settings["config"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                config["model_providers"]["custom"]["base_url"].as_str(),
+                Some("https://api.example.com/v1")
+            );
+            assert_eq!(
+                config["model_providers"]["custom"]["model_catalog_url"].as_str(),
+                Some("https://api.example.com/v1/models?format=codex")
+            );
+        }
+    }
+
+    #[test]
+    fn codex_deeplink_does_not_infer_an_inactive_endpoint() {
+        let config: toml::Value = toml::from_str(
+            "model_provider = \"relay\"\n[model_providers.relay]\nmodel_catalog_url = \"https://api.example.com/models\"\n[model_providers.aaa_inactive]\nbase_url = \"https://inactive.example.com/v1\"\n",
+        ).unwrap();
+        assert_eq!(extract_codex_base_url(&config), None);
     }
 
     #[test]

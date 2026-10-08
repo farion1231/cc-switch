@@ -93,16 +93,14 @@ fn deeplink_import_codex_remote_catalog_survives_db_and_live_switch() {
     reset_test_fs();
     let home = ensure_test_home();
     let config = serde_json::json!({
-        "config": "[model_providers.custom]\nmodel_catalog_url = \"https://api.example.com/v1/models?format=codex\"\n"
+        "config": "model_provider = \"relay\"\nmodel = \"custom-model\"\n\n[model_providers.relay]\nbase_url = \"https://api.example.com/v1\"\nmodel_catalog_url = \"https://api.example.com/v1/models?format=codex\"\n\n[model_providers.aaa_inactive]\nbase_url = \"https://inactive.example.com/v1\"\n"
     });
     let mut url = url::Url::parse("ccswitch://v1/import").unwrap();
     url.query_pairs_mut().extend_pairs([
         ("resource", "provider"),
         ("app", "codex"),
         ("name", "Catalog Relay"),
-        ("endpoint", "https://api.example.com/v1"),
         ("apiKey", "sk-test-catalog"),
-        ("model", "custom-model"),
         ("enabled", "true"),
         ("configFormat", "json"),
         (
@@ -125,6 +123,10 @@ fn deeplink_import_codex_remote_catalog_survives_db_and_live_switch() {
         assert_eq!(
             config["model_providers"]["custom"]["model_catalog_url"].as_str(),
             Some("https://api.example.com/v1/models?format=codex")
+        );
+        assert_eq!(
+            config["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://api.example.com/v1")
         );
         assert_eq!(config["model"].as_str(), Some("custom-model"));
     }
