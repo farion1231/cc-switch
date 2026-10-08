@@ -18,6 +18,8 @@ use crate::config;
 pub enum CredentialStatus {
     Valid,
     Expired,
+    /// 访问令牌过期，但刷新令牌还能用：客户端下次运行时自己会换新的，不用重新登录。
+    RefreshPending,
     NotFound,
     ParseError,
 }
@@ -51,6 +53,15 @@ pub struct ExtraUsage {
     pub currency: Option<String>,
 }
 
+/// ChatGPT 订阅存下的限额重置次数（Codex「存下重置、需要时再用」）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCredits {
+    /// 每一次可用重置的到期时间（ISO 8601），先到期的在前，不过期的是 None 排最后；
+    /// 长度就是可用次数（只收 available 且查询时还没过期的）
+    pub expires_at: Vec<Option<String>>,
+}
+
 /// 订阅额度查询结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +72,12 @@ pub struct SubscriptionQuota {
     pub success: bool,
     pub tiers: Vec<QuotaTier>,
     pub extra_usage: Option<ExtraUsage>,
+    /// 只有 ChatGPT 订阅（codex / codex_oauth）有；没查到时为 None，不影响额度本身
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_credits: Option<ResetCredits>,
+    /// ChatGPT 订阅买的 Codex Credits 余额（额度用完后才扣）；没有、不限量或为 0 时为 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credits_balance: Option<f64>,
     pub error: Option<String>,
     pub queried_at: Option<i64>,
 }
@@ -74,6 +91,8 @@ impl SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
+            credits_balance: None,
             error: None,
             queried_at: None,
         }
@@ -87,6 +106,8 @@ impl SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
+            credits_balance: None,
             error: Some(message),
             queried_at: Some(now_millis()),
         }
@@ -102,6 +123,10 @@ struct ClaudeOAuthEntry {
     access_token: Option<String>,
     #[serde(rename = "expiresAt")]
     expires_at: Option<serde_json::Value>,
+    #[serde(rename = "refreshToken")]
+    refresh_token: Option<String>,
+    #[serde(rename = "refreshTokenExpiresAt")]
+    refresh_token_expires_at: Option<serde_json::Value>,
 }
 
 /// 读取 Claude OAuth 凭据
@@ -231,11 +256,29 @@ fn parse_claude_credentials_json(
     // 检查 token 是否过期
     if let Some(expires_at) = entry.expires_at {
         if is_token_expired(&expires_at) {
-            return (
-                Some(access_token),
-                CredentialStatus::Expired,
-                Some("OAuth token has expired".to_string()),
-            );
+            // 访问令牌几小时一换，Claude Code 下次运行时用刷新令牌换新的；
+            // 刷新令牌还在就不算登录过期。
+            let refreshable = entry.refresh_token.is_some_and(|t| !t.is_empty())
+                && !entry
+                    .refresh_token_expires_at
+                    .as_ref()
+                    .is_some_and(is_token_expired);
+            return if refreshable {
+                (
+                    Some(access_token),
+                    CredentialStatus::RefreshPending,
+                    Some(
+                        "Access token has expired; Claude Code refreshes it the next time it runs"
+                            .to_string(),
+                    ),
+                )
+            } else {
+                (
+                    Some(access_token),
+                    CredentialStatus::Expired,
+                    Some("OAuth token has expired".to_string()),
+                )
+            };
         }
     }
 
@@ -522,6 +565,8 @@ fn parse_claude_quota(body: &serde_json::Value) -> SubscriptionQuota {
         success: true,
         tiers,
         extra_usage,
+        reset_credits: None,
+        credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -543,7 +588,7 @@ struct CodexTokens {
 }
 
 /// (access_token, account_id, status, message)
-type CodexCredentials = (
+pub(crate) type CodexCredentials = (
     Option<String>,
     Option<String>,
     CredentialStatus,
@@ -553,7 +598,7 @@ type CodexCredentials = (
 /// 读取 Codex OAuth 凭据
 ///
 /// 按优先级尝试以下来源：
-/// 1. macOS Keychain (service: "Codex Auth")
+/// 1. macOS Keychain (service: "Codex Auth"，账户按 Codex 配置目录区分)
 /// 2. 凭据文件 ~/.codex/auth.json
 ///
 /// 仅 auth_mode == "chatgpt" (OAuth) 时有效，API key 模式不支持用量查询。
@@ -571,22 +616,60 @@ fn read_codex_credentials() -> CodexCredentials {
 /// 从 macOS Keychain 读取 Codex 凭据
 #[cfg(target_os = "macos")]
 fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
+    read_codex_keychain_secret()
+        .ok()
+        .flatten()
+        .map(|json_str| parse_codex_credentials_json(&json_str))
+}
+
+/// Codex 在 Keychain 里存登录用的账户名：`cli|` 加规范化后的 Codex 配置目录路径的
+/// SHA-256 十六进制前 16 位（codex-rs `login/src/auth/storage.rs` 的 `compute_store_key`）。
+/// 规范化失败时用原路径，和上游一致。
+#[cfg(target_os = "macos")]
+fn codex_keychain_account(codex_home: &std::path::Path) -> String {
+    let canonical = codex_home
+        .canonicalize()
+        .unwrap_or_else(|_| codex_home.to_path_buf());
+    let hex = crate::live::engine::sha256_hex(canonical.to_string_lossy().as_bytes());
+    format!("cli|{}", &hex[..16])
+}
+
+/// `security` 找不到条目时的退出码（errSecItemNotFound）。
+#[cfg(target_os = "macos")]
+const SECURITY_ITEM_NOT_FOUND: i32 = 44;
+
+/// Keychain 里当前 Codex 配置目录的登录 JSON。服务名所有配置目录共用，必须带上账户名：
+/// 只按服务名查，本机有别的配置目录的登录时 `security` 返回第一条匹配的。
+///
+/// `Ok(None)`：确定没有这一条。`Err`：读不出来（访问被拒、`security` 跑不起来），
+/// 不知道里面有什么。
+#[cfg(target_os = "macos")]
+fn read_codex_keychain_secret() -> Result<Option<String>, String> {
+    let account = codex_keychain_account(&crate::codex_config::get_codex_config_dir());
     let output = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", "Codex Auth", "-w"])
+        .args([
+            "find-generic-password",
+            "-s",
+            "Codex Auth",
+            "-a",
+            &account,
+            "-w",
+        ])
         .output()
-        .ok()?;
-
+        .map_err(|error| format!("运行 security 失败: {error}"))?;
+    if output.status.code() == Some(SECURITY_ITEM_NOT_FOUND) {
+        return Ok(None);
+    }
     if !output.status.success() {
-        return None;
+        return Err(format!(
+            "security 退出码 {:?}: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
-
-    let json_str = String::from_utf8(output.stdout).ok()?;
-    let json_str = json_str.trim();
-    if json_str.is_empty() {
-        return None;
-    }
-
-    Some(parse_codex_credentials_json(json_str))
+    let secret = String::from_utf8_lossy(&output.stdout);
+    let secret = secret.trim();
+    Ok((!secret.is_empty()).then(|| secret.to_string()))
 }
 
 /// 从文件读取 Codex 凭据
@@ -612,8 +695,42 @@ fn read_codex_credentials_from_file() -> CodexCredentials {
     parse_codex_credentials_json(&content)
 }
 
+/// 系统钥匙串里 Codex 的登录（`cli_auth_credentials_store` 为 keyring / auto 时 Codex 存在
+/// 这里）。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum CodexKeychainLogin {
+    // 只有 macOS 读得到钥匙串，其他平台的正式构建里只会出现 Unknown。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    Found(serde_json::Value),
+    /// 确定没有，或者内容不是 JSON（Codex 自己也读不了，auto 模式同样退回 `auth.json`）。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    Missing,
+    /// 读不出来：不是 macOS（Windows、Linux 的凭据库 CC Switch 读不了），或者 macOS 上
+    /// 访问被拒。Codex 看到的可能是另一个登录，不能拿 `auth.json` 顶替。
+    Unknown,
+}
+
+pub(crate) fn read_codex_keychain_login() -> CodexKeychainLogin {
+    #[cfg(target_os = "macos")]
+    {
+        match read_codex_keychain_secret() {
+            Ok(Some(secret)) => serde_json::from_str(&secret)
+                .map_or(CodexKeychainLogin::Missing, CodexKeychainLogin::Found),
+            Ok(None) => CodexKeychainLogin::Missing,
+            Err(error) => {
+                log::warn!("读取 Keychain 里的 Codex 登录失败: {error}");
+                CodexKeychainLogin::Unknown
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        CodexKeychainLogin::Unknown
+    }
+}
+
 /// 解析 Codex 凭据 JSON（Keychain 和文件共用）
-fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
+pub(crate) fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
     let auth: CodexAuthJson = match serde_json::from_str(content) {
         Ok(a) => a,
         Err(e) => {
@@ -713,6 +830,24 @@ struct CodexRateLimit {
 #[derive(Deserialize)]
 struct CodexUsageResponse {
     rate_limit: Option<CodexRateLimit>,
+    /// 原样收下再挑字段：形状不对时只是不显示余额，不能让整份额度解析失败
+    credits: Option<serde_json::Value>,
+}
+
+/// `wham/usage` 的 `credits`：`{has_credits, unlimited, balance}`，balance 实测是字符串
+/// （"62500"），也收数字（同 CodexBar）。不限量、没有或为 0 时不显示
+fn parse_codex_credits_balance(credits: &serde_json::Value) -> Option<f64> {
+    if credits.get("has_credits").and_then(|v| v.as_bool()) != Some(true)
+        || credits.get("unlimited").and_then(|v| v.as_bool()) == Some(true)
+    {
+        return None;
+    }
+    let balance = match credits.get("balance")? {
+        serde_json::Value::Number(n) => n.as_f64()?,
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok()?,
+        _ => return None,
+    };
+    (balance.is_finite() && balance > 0.0).then_some(balance)
 }
 
 /// 根据窗口秒数映射到 tier 名称（与 Claude 的命名兼容以复用前端 i18n）
@@ -740,12 +875,101 @@ fn unix_ts_to_iso(ts: i64) -> Option<String> {
     chrono::DateTime::from_timestamp(ts, 0).map(|dt| dt.to_rfc3339())
 }
 
-/// 查询 Codex / ChatGPT 反代订阅额度
+#[derive(Deserialize)]
+struct CodexResetCreditsResponse {
+    #[serde(default)]
+    credits: Vec<CodexResetCreditEntry>,
+}
+
+#[derive(Deserialize)]
+struct CodexResetCreditEntry {
+    status: Option<String>,
+    expires_at: Option<String>,
+}
+
+/// 解析 `wham/rate-limit-reset-credits`：不信 `available_count`，自己按
+/// status == "available" 且没过期来数（同 CodexBar），先到期的排前面
+fn parse_codex_reset_credits(
+    raw: &[u8],
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<ResetCredits> {
+    let body: CodexResetCreditsResponse = serde_json::from_slice(raw).ok()?;
+    let mut expiries: Vec<Option<chrono::DateTime<chrono::Utc>>> = body
+        .credits
+        .into_iter()
+        .filter(|credit| credit.status.as_deref() == Some("available"))
+        .filter_map(|credit| match credit.expires_at {
+            None => Some(None),
+            // 认不出的到期时间当作不过期，宁可多显示一次也不吞掉
+            Some(raw) => match chrono::DateTime::parse_from_rfc3339(&raw) {
+                Ok(at) => {
+                    let at = at.with_timezone(&chrono::Utc);
+                    (at > now).then_some(Some(at))
+                }
+                Err(_) => Some(None),
+            },
+        })
+        .collect();
+    // None（不过期）排最后
+    expiries.sort_by_key(|at| (at.is_none(), *at));
+    Some(ResetCredits {
+        expires_at: expiries
+            .into_iter()
+            .map(|at| at.map(|at| at.to_rfc3339()))
+            .collect(),
+    })
+}
+
+/// 查存下的限额重置次数。附带查询：任何失败都只返回 None，不连累额度本身
+async fn query_codex_reset_credits(
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Option<ResetCredits> {
+    let mut req = crate::proxy::http_client::get()
+        .get("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("User-Agent", "codex-cli")
+        .header("Accept", "application/json")
+        .header("OpenAI-Beta", "codex-1");
+    if let Some(id) = account_id {
+        req = req.header("ChatGPT-Account-Id", id);
+    }
+    let resp = req
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        log::debug!("Codex reset credits query failed: HTTP {}", resp.status());
+        return None;
+    }
+    let raw = resp.bytes().await.ok()?;
+    parse_codex_reset_credits(&raw, chrono::Utc::now())
+}
+
+/// 查询 Codex / ChatGPT 反代订阅额度（连同存下的重置次数，两个请求并行）
 ///
 /// 参数化 `tool_label` 和 `expired_message` 让该函数可被两个调用点共用：
 /// - `"codex"` + "Please re-login with Codex CLI."（CLI 凭据路径）
 /// - `"codex_oauth"` + "Please re-login via cc-switch."（cc-switch 自管 OAuth 路径）
 pub(crate) async fn query_codex_quota(
+    access_token: &str,
+    account_id: Option<&str>,
+    tool_label: &str,
+    expired_message: &str,
+) -> Result<SubscriptionQuota, String> {
+    let (quota, reset_credits) = tokio::join!(
+        query_codex_usage(access_token, account_id, tool_label, expired_message),
+        query_codex_reset_credits(access_token, account_id),
+    );
+    let mut quota = quota?;
+    if quota.success {
+        quota.reset_credits = reset_credits;
+    }
+    Ok(quota)
+}
+
+async fn query_codex_usage(
     access_token: &str,
     account_id: Option<&str>,
     tool_label: &str,
@@ -831,6 +1055,8 @@ pub(crate) async fn query_codex_quota(
         success: true,
         tiers,
         extra_usage: None,
+        reset_credits: None,
+        credits_balance: body.credits.as_ref().and_then(parse_codex_credits_balance),
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -1294,6 +1520,8 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         success: true,
         tiers,
         extra_usage: None,
+        reset_credits: None,
+        credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -1318,7 +1546,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     CredentialStatus::ParseError,
                     message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
                 )),
-                CredentialStatus::Expired => {
+                CredentialStatus::Expired | CredentialStatus::RefreshPending => {
                     // 即使过期也尝试调用 API（token 可能实际上仍有效）
                     if let Some(token) = token {
                         let result = query_claude_quota(&token).await?;
@@ -1328,7 +1556,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     }
                     Ok(SubscriptionQuota::error(
                         "claude",
-                        CredentialStatus::Expired,
+                        status,
                         message.unwrap_or_else(|| "OAuth token has expired".to_string()),
                     ))
                 }
@@ -1348,7 +1576,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     CredentialStatus::ParseError,
                     message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
                 )),
-                CredentialStatus::Expired => {
+                CredentialStatus::Expired | CredentialStatus::RefreshPending => {
                     // 即使可能过期也尝试调用 API
                     if let Some(token) = token {
                         let result = query_codex_quota(
@@ -1390,7 +1618,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     CredentialStatus::ParseError,
                     message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
                 )),
-                CredentialStatus::Expired => {
+                CredentialStatus::Expired | CredentialStatus::RefreshPending => {
                     // Gemini access_token 仅 ~1h 有效，尝试用 refresh_token 刷新
                     if let Some(ref rt) = refresh_token {
                         if let Some(new_token) = refresh_gemini_token(rt).await {
@@ -1433,6 +1661,150 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_reset_credits_count_only_unexpired_available() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-04T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let raw = br#"{
+            "available_count": 9,
+            "credits": [
+                {"id":"a","reset_type":"weekly","status":"available","granted_at":"2026-09-20T00:00:00Z","expires_at":"2026-10-20T00:00:00Z"},
+                {"id":"b","reset_type":"weekly","status":"available","granted_at":"2026-09-01T00:00:00Z","expires_at":"2026-10-03T00:00:00Z"},
+                {"id":"c","reset_type":"weekly","status":"redeemed","granted_at":"2026-09-01T00:00:00Z","expires_at":"2026-10-30T00:00:00Z"},
+                {"id":"d","reset_type":"weekly","status":"available","granted_at":"2026-09-01T00:00:00Z","expires_at":null},
+                {"id":"e","reset_type":"weekly","status":"available","granted_at":"2026-09-25T00:00:00.123Z","expires_at":"2026-10-08T12:00:00.123Z"}
+            ]
+        }"#;
+        let credits = parse_codex_reset_credits(raw, now).unwrap();
+        // b 已过期、c 已用掉；剩下按到期先后，不过期的排最后
+        assert_eq!(credits.expires_at.len(), 3);
+        assert!(credits.expires_at[0]
+            .as_deref()
+            .unwrap()
+            .starts_with("2026-10-08T12:00:00.123"));
+        assert!(credits.expires_at[1]
+            .as_deref()
+            .unwrap()
+            .starts_with("2026-10-20"));
+        assert_eq!(credits.expires_at[2], None);
+    }
+
+    #[test]
+    fn codex_reset_credits_empty_and_malformed() {
+        let now = chrono::Utc::now();
+        let empty = parse_codex_reset_credits(br#"{"available_count":0,"credits":[]}"#, now);
+        assert_eq!(empty.unwrap().expires_at.len(), 0);
+        assert!(parse_codex_reset_credits(b"<html>", now).is_none());
+        // 新序列化的字段对旧缓存是可选的
+        let quota: SubscriptionQuota = serde_json::from_str(
+            r#"{"tool":"codex","credentialStatus":"valid","credentialMessage":null,
+                "success":true,"tiers":[],"extraUsage":null,"error":null,"queriedAt":1}"#,
+        )
+        .unwrap();
+        assert!(quota.reset_credits.is_none());
+        assert!(quota.credits_balance.is_none());
+    }
+
+    #[test]
+    fn codex_credits_balance_from_usage_response() {
+        let parse = |raw: &str| {
+            let body: CodexUsageResponse = serde_json::from_str(raw).unwrap();
+            body.credits.as_ref().and_then(parse_codex_credits_balance)
+        };
+        // 实测形状：balance 是字符串
+        assert_eq!(
+            parse(
+                r#"{"credits":{"has_credits":true,"unlimited":false,"overage_limit_reached":false,
+                    "balance":"62500","approx_local_messages":[15625,81250]}}"#
+            ),
+            Some(62500.0)
+        );
+        assert_eq!(
+            parse(r#"{"credits":{"has_credits":true,"unlimited":false,"balance":42.5}}"#),
+            Some(42.5)
+        );
+        // 0、不限量、没有、缺字段、形状不对：都不显示，也不让额度解析失败
+        assert_eq!(
+            parse(r#"{"credits":{"has_credits":true,"unlimited":false,"balance":"0"}}"#),
+            None
+        );
+        assert_eq!(
+            parse(r#"{"credits":{"has_credits":true,"unlimited":true,"balance":"10"}}"#),
+            None
+        );
+        assert_eq!(
+            parse(r#"{"credits":{"has_credits":false,"unlimited":false,"balance":"10"}}"#),
+            None
+        );
+        assert_eq!(parse(r#"{"credits":{"has_credits":true}}"#), None);
+        assert_eq!(parse(r#"{"credits":"weird","rate_limit":null}"#), None);
+        assert_eq!(parse(r#"{}"#), None);
+    }
+
+    /// 和 codex-rs `compute_store_key` 同一算法：路径不存在时按原样算，存在时先规范化
+    /// （符号链接和它指向的目录是同一个账户）。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn codex_keychain_account_matches_codex() {
+        assert_eq!(
+            codex_keychain_account(std::path::Path::new("/nonexistent/codex-home")),
+            "cli|b5d85b424b15c4d9"
+        );
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let real = dir.path().join("codex-home");
+        std::fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(codex_keychain_account(&link), codex_keychain_account(&real));
+    }
+
+    #[test]
+    fn claude_expired_access_token_with_live_refresh_token_is_refresh_pending() {
+        let past = now_millis() - 60_000;
+        let future = now_millis() + 3_600_000;
+        let status = |entry: serde_json::Value| {
+            parse_claude_credentials_json(
+                &serde_json::json!({ "claudeAiOauth": entry }).to_string(),
+            )
+            .1
+        };
+
+        assert!(matches!(
+            status(serde_json::json!({
+                "accessToken": "a", "expiresAt": past,
+                "refreshToken": "r", "refreshTokenExpiresAt": future
+            })),
+            CredentialStatus::RefreshPending
+        ));
+        // 旧版凭据没有刷新令牌的过期时间：有刷新令牌就按能刷新算。
+        assert!(matches!(
+            status(serde_json::json!({
+                "accessToken": "a", "expiresAt": past, "refreshToken": "r"
+            })),
+            CredentialStatus::RefreshPending
+        ));
+        // 刷新令牌也过期了 / 根本没有：真的要重新登录。
+        assert!(matches!(
+            status(serde_json::json!({
+                "accessToken": "a", "expiresAt": past,
+                "refreshToken": "r", "refreshTokenExpiresAt": past
+            })),
+            CredentialStatus::Expired
+        ));
+        assert!(matches!(
+            status(serde_json::json!({ "accessToken": "a", "expiresAt": past })),
+            CredentialStatus::Expired
+        ));
+        assert!(matches!(
+            status(serde_json::json!({
+                "accessToken": "a", "expiresAt": future, "refreshToken": "r"
+            })),
+            CredentialStatus::Valid
+        ));
+    }
 
     fn scoped_limit(model: &str, percent: f64) -> serde_json::Value {
         serde_json::json!({

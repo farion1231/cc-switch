@@ -1,8 +1,9 @@
 //! 项目 Profile 管理命令
 
 use serde::Serialize;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
+use crate::app_config::AppType;
 use crate::database::Profile;
 use crate::services::profile::{ProfilePayload, ProfileScope, ProfileService};
 use crate::store::AppState;
@@ -59,12 +60,14 @@ pub struct ProfilesResponse {
 ///
 /// 只对项目所属分组内的应用发 provider-switched。UI 与托盘两个入口必须
 /// 共用此函数，保证事件 payload 形状一致（前端 App.tsx 的
-/// provider-switched 监听依赖该形状）。
+/// provider-switched 监听依赖该形状）。`desktop_was_mapping` 是应用前
+/// Claude Desktop 是否在用模型映射卡，见 [`desktop_uses_mapping`]。
 pub fn emit_profile_apply_events(
     app: &tauri::AppHandle,
     state: &AppState,
     profile_id: &str,
     scope: ProfileScope,
+    desktop_was_mapping: bool,
 ) {
     for app_type in scope.apps().iter() {
         let app_str = app_type.as_str();
@@ -95,6 +98,24 @@ pub fn emit_profile_apply_events(
         log::error!("发射 profile-applied 事件失败: {e}");
     }
     crate::tray::refresh_tray_menu(app);
+    if scope.apps().contains(&AppType::ClaudeDesktop) {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Some(state) = app.try_state::<AppState>() {
+                crate::mode::controller::sync_desktop_mapping_service(
+                    state.inner(),
+                    desktop_was_mapping,
+                )
+                .await;
+            }
+        });
+    }
+}
+
+/// 应用项目前取一次：这个分组含 Claude Desktop 且它当前是模型映射卡。
+pub fn desktop_uses_mapping(state: &AppState, scope: ProfileScope) -> bool {
+    scope.apps().contains(&AppType::ClaudeDesktop)
+        && crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
 }
 
 #[tauri::command]
@@ -175,7 +196,8 @@ pub fn apply_profile(
     scope: String,
 ) -> Result<Vec<String>, String> {
     let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
+    let desktop_was_mapping = desktop_uses_mapping(&state, scope);
     let warnings = ProfileService::apply(&state, &id, scope).map_err(|e| e.to_string())?;
-    emit_profile_apply_events(&app, &state, &id, scope);
+    emit_profile_apply_events(&app, &state, &id, scope, desktop_was_mapping);
     Ok(warnings)
 }

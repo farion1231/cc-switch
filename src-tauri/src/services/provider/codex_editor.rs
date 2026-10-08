@@ -26,11 +26,11 @@ use crate::live::engine::{read_current, LiveFile};
 use crate::live::floor;
 use crate::live::patch::toml::parse;
 use crate::live::project::codex::{
-    CodexProjection, Route, RowInput, OFFICIAL_PROXY_ROUTE_ID, ROUTE_ID,
+    is_keyless_fallback, CodexProjection, Route, RowInput, OFFICIAL_PROXY_ROUTE_ID, ROUTE_ID,
 };
 use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
-use crate::provider::Provider;
+use crate::provider::{Provider, ProviderMeta};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::store::AppState;
 
@@ -105,6 +105,7 @@ pub fn view(
     state: &AppState,
     settings_config: &Value,
     category: Option<&str>,
+    meta: Option<&ProviderMeta>,
 ) -> Result<EditorView, AppError> {
     let path = get_codex_config_path();
     let pre = read_current(&path)?;
@@ -113,13 +114,9 @@ pub fn view(
     let mut provider =
         Provider::with_id(String::new(), String::new(), settings_config.clone(), None);
     provider.category = category.map(str::to_string);
+    provider.meta = meta.cloned();
     let live_owner = LiveOwner::read(state)?;
-    let planned = codex_direct::plan(
-        &state.db,
-        &live_owner.owner(),
-        &Target::Direct(Some(&provider)),
-        &Prepared::default(),
-    )?;
+    let planned = plan_for_view(&state.db, &live_owner.owner(), &provider)?;
     planned.config().apply_to(&path, &mut doc)?;
 
     // Key 在 API Key 输入框里（行的 auth），TOML 里不再重复显示。
@@ -136,7 +133,7 @@ pub fn view(
             .get("experimental_bearer_token")
             .and_then(Item::as_str)
             .map(str::to_string);
-        if injected.is_some() && injected == row_key {
+        if injected.is_some() && (injected == row_key || injected.as_deref() == Some(PENDING_KEY)) {
             route.remove("experimental_bearer_token");
         }
     }
@@ -154,6 +151,84 @@ pub fn view(
         inactive: inactive_fields(config_text(settings_config), &doc),
         settings: Value::Object(settings),
     })
+}
+
+/// 还没填 Key 的行按「填了 Key」投影时用的占位 Key。只出现在内存里的投影中：显示前、存行
+/// 前都去掉，从不写盘。
+const PENDING_KEY: &str = "cc-switch-editor-pending-key";
+
+/// `settings` 换上占位 Key（没有 `auth` 就补一个）。
+fn with_pending_key(settings: &Value) -> Option<Value> {
+    let mut settings = settings.clone();
+    let auth = settings
+        .as_object_mut()?
+        .entry("auth")
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()?;
+    auth.insert(
+        "OPENAI_API_KEY".to_string(),
+        Value::String(PENDING_KEY.to_string()),
+    );
+    Some(settings)
+}
+
+/// 编辑器显示用的投影。新增对话框一打开就投影自定义模板，选第三方预设也会投影，这时 Key
+/// 还没填：行里的 `requires_openai_auth = true`（或顶层 `openai_base_url`）会被切换的
+/// 安全闸拒绝。显示不该拒：Key 本来就不在 TOML 里显示，填没填显示都一样。只对这一个错误
+/// 按占位 Key 再投影一次；再投影也不行就报原来的错。安全闸留在写 live 的地方（切换、编辑
+/// 当前供应商、重写代理契约），它们用的都是真实的行。
+fn plan_for_view(
+    db: &Database,
+    owner: &Owner<'_>,
+    provider: &Provider,
+) -> Result<codex_direct::Planned, AppError> {
+    let plan = |provider: &Provider| {
+        codex_direct::plan(
+            db,
+            owner,
+            &Target::Direct(Some(provider)),
+            &Prepared::default(),
+        )
+    };
+    let error = match plan(provider) {
+        Err(error) if is_keyless_fallback(&error) => error,
+        other => return other,
+    };
+    let Some(settings) = with_pending_key(&provider.settings_config) else {
+        return Err(error);
+    };
+    let mut pending = provider.clone();
+    pending.settings_config = settings;
+    plan(&pending).map_err(|_| error)
+}
+
+/// 保存时拆行用的投影。没填 Key 的行照样能存（和不经编辑器的新增一样，表单会先确认一次）：
+/// 存行不写 live。行要进 live 时（编辑直连的当前供应商、新增第一个供应商、它是代理路由那
+/// 家）写入按真实的行再投影一次，安全闸在那里拦，行跟着撤回。
+fn project_for_save(input: &RowInput<'_>) -> Result<CodexProjection, AppError> {
+    let error = match CodexProjection::of(input) {
+        Err(error) if is_keyless_fallback(&error) => error,
+        other => return other,
+    };
+    let Some(settings) = with_pending_key(input.settings) else {
+        return Err(error);
+    };
+    let mut projection = CodexProjection::of(&RowInput {
+        settings: &settings,
+        official: input.official,
+        proxy_injected_oauth: input.proxy_injected_oauth,
+    })
+    .map_err(|_| error)?;
+    if let Route::Custom { table, .. } = &mut projection.route {
+        if table
+            .get("experimental_bearer_token")
+            .and_then(Item::as_str)
+            == Some(PENDING_KEY)
+        {
+            table.remove("experimental_bearer_token");
+        }
+    }
+    Ok(projection)
 }
 
 /// 行里保存着、但不随切换生效的全局设置。
@@ -245,7 +320,8 @@ impl Origin {
 }
 
 /// 把编辑器里的完整配置拆开：关键字段、独有字段换进行（行里其余内容原样保留），其余部分
-/// 和 `base` 比，得出用户改过的全局设置。行有问题（会把官方登录发给第三方等）在这里报错。
+/// 和 `base` 比，得出用户改过的全局设置。行本身解析不了在这里报错；没填 Key 不拦（见
+/// [`project_for_save`]）。
 ///
 /// 从 live 带进来的独有字段不归这个供应商：用户没动就不收进行、也不写（否则切走时会把
 /// 用户自己的设置删掉，打开编辑器之后客户端改的值也会被盖回去），用户删了就从 live 删。
@@ -261,7 +337,7 @@ pub(crate) fn plan_save(
 ) -> Result<CodexEditorPlan, AppError> {
     let edited_doc = parse_text(config_text(edited), "edited")?;
     let base_doc = parse_text(config_text(base), "base")?;
-    let mut projection = CodexProjection::of(&RowInput {
+    let mut projection = project_for_save(&RowInput {
         settings: edited,
         official,
         proxy_injected_oauth,
