@@ -1926,15 +1926,12 @@ pub fn anthropic_to_responses(
 
     if let Some(max_uses) = hosted_web_search_max_uses {
         if is_codex_oauth {
-            if forced_hosted_web_search_name.is_none() {
-                // The ChatGPT Codex contract rejects max_tool_calls. Without a
-                // forced, isolated hosted tool, the proxy cannot safely bound
-                // which built-in calls consume Anthropic's per-tool budget.
-                return Err(ProxyError::InvalidRequest(
-                    "Anthropic WebSearch max_uses on the Codex OAuth backend requires forcing that hosted tool"
-                        .to_string(),
-                ));
-            }
+            // The ChatGPT Codex contract rejects max_tool_calls, so enforce the
+            // Anthropic per-tool budget locally instead: a soft cap via
+            // instructions here, and a hard cap downstream where the streaming
+            // and aggregating converters count web_search_call items. Hosted
+            // web search is the only built-in tool this transform produces, so
+            // that count is exact whether or not the tool was forced.
             let existing = result
                 .get("instructions")
                 .and_then(Value::as_str)
@@ -3470,19 +3467,41 @@ mod tests {
     }
 
     #[test]
-    fn test_codex_auto_hosted_web_search_max_uses_fails_closed() {
+    fn test_codex_auto_hosted_web_search_max_uses_enforced_via_instructions() {
         let input = json!({
             "model": "gpt-5.6",
             "messages": [{"role": "user", "content": "Search"}],
-            "tools": [{
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 3
-            }]
+            "tools": [
+                {
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": 3
+                },
+                {
+                    "name": "get_weather",
+                    "description": "A client-side function",
+                    "input_schema": {"type": "object"}
+                }
+            ]
         });
 
-        let error = anthropic_to_responses(input, None, true, false).unwrap_err();
-        assert!(error.to_string().contains("requires forcing"));
+        // Claude Code never forces tool_choice for WebSearch; the request must
+        // still go through, with the cap enforced locally instead of failing.
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
+        assert!(result.get("max_tool_calls").is_none());
+        assert!(result["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("no more than 3 web search calls"));
+        // Unrelated tools are preserved when the hosted tool is not forced.
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(tools
+            .iter()
+            .any(|tool| tool["type"] == "web_search" && tool["external_web_access"] == true));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["type"] == "function" && tool["name"] == "get_weather"));
     }
 
     #[test]
