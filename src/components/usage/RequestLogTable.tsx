@@ -23,6 +23,7 @@ import {
   parseFiniteNumber,
 } from "./format";
 import { usageTable } from "./usageTable";
+import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 
 interface RequestLogTableProps {
   range: UsageRangeSelection;
@@ -163,7 +164,8 @@ export function RequestLogTable({
     const isCacheInclusive = log.inputTokens !== freshInput;
     const time = formatLogTime(log.createdAt, now);
     const fullTime = formatLogFullTime(log.createdAt);
-    const provider = log.providerName || t("usage.unknownProvider");
+    const providerLabel = getUsageProviderLabel(log.providerName, t);
+    const provider = providerLabel.shortLabel;
     const exactTps = formatOutputTokensPerSecond(log);
     // 会话日志导入的请求没有首字计时，速度是按日志时间戳估的，前面带 ≈
     const estimatedTps =
@@ -242,7 +244,10 @@ export function RequestLogTable({
         {/* 供应商、模型两列按比例取宽（max-w-0 让百分比宽度生效、内容截断）；
             比例合计 40%，再大就会把数值列挤到只剩内容宽度。模型名通常比供应商名长 */}
         <td className={cn(usageTable.td, "w-[18%] max-w-0")}>
-          <span className="block truncate" title={provider}>
+          <span
+            className="block truncate"
+            title={usageProviderTitle(providerLabel)}
+          >
             {provider}
           </span>
         </td>
@@ -313,8 +318,9 @@ export function RequestLogTable({
   return (
     <div className="flex flex-col">
       <div className={usageTable.scroller}>
+        {/* 最小窗口（900）展开侧栏时表格区只有 644px：最小宽度超过它，最右的速度列就被挤到横向滚动里看不见 */}
         <table
-          className={cn(usageTable.table, "min-w-[700px]")}
+          className={cn(usageTable.table, "min-w-[620px]")}
           aria-label={t("usage.requestLogs")}
         >
           <thead>

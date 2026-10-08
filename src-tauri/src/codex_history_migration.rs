@@ -25,10 +25,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use toml_edit::DocumentMut;
 
-const MIGRATION_NAME: &str = "codex-history-provider-migration-v1";
-const OFFICIAL_UNIFY_MIGRATION_NAME: &str = "codex-official-history-unify-v1";
+pub(crate) const MIGRATION_NAME: &str = "codex-history-provider-migration-v1";
+pub(crate) const OFFICIAL_UNIFY_MIGRATION_NAME: &str = "codex-official-history-unify-v1";
 /// 还原操作自身的备份目录（与迁移备份分开，保持迁移账本目录纯净）。
-const OFFICIAL_UNIFY_RESTORE_BACKUP_NAME: &str = "codex-official-history-unify-restore-v1";
+pub(crate) const OFFICIAL_UNIFY_RESTORE_BACKUP_NAME: &str =
+    "codex-official-history-unify-restore-v1";
 /// SQLite 变量上限保守值，IN 列表按此分块。
 const STATE_DB_ID_CHUNK: usize = 500;
 
@@ -40,6 +41,11 @@ fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
     CODEX_OFFICIAL_HISTORY_OP_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 用户在「备份与恢复」里删除迁移备份目录时拿同一把锁，避免抽掉正在写的备份。
+pub(crate) fn lock_history_op_for_backup_cleanup() -> std::sync::MutexGuard<'static, ()> {
+    lock_codex_official_history_op()
 }
 /// Codex 内建默认 provider id：config.toml 没有 `model_provider` 键时会话归入此桶。
 /// 官方订阅（ChatGPT OAuth / OpenAI API key）的历史会话都记录这个 id。

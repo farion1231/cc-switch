@@ -27,10 +27,15 @@ body:
       multiple: true
       options:
         - Claude Code
+        - Claude Desktop
         - Codex
         - Gemini CLI
+        - Grok Build
         - OpenCode
         - OpenClaw
+        - Hermes
+        - Pi
+        - MiniMax Code
         - General / 通用
     validations:
       required: true

@@ -34,7 +34,8 @@
 │   ├── 4.2 应用路由
 │   ├── 4.3 故障转移
 │   ├── 4.4 用量统计
-│   └── 4.5 连通检测
+│   ├── 4.5 连通检测
+│   └── 4.6 聚合模式
 │
 └── 5. 常见问题
     ├── 5.1 配置文件说明
@@ -51,16 +52,16 @@
 |------|------|
 | [1.1-introduction.md](./1-getting-started/1.1-introduction.md) | 软件介绍、核心功能、支持平台 |
 | [1.2-installation.md](./1-getting-started/1.2-installation.md) | Windows/macOS/Linux 安装指南 |
-| [1.3-interface.md](./1-getting-started/1.3-interface.md) | 界面布局、导航栏、供应商卡片说明 |
+| [1.3-interface.md](./1-getting-started/1.3-interface.md) | 侧栏布局、连接模式标签、供应商卡片说明 |
 | [1.4-quickstart.md](./1-getting-started/1.4-quickstart.md) | 5 分钟快速上手教程 |
-| [1.5-settings.md](./1-getting-started/1.5-settings.md) | 语言、主题、目录、云同步配置 |
+| [1.5-settings.md](./1-getting-started/1.5-settings.md) | 设置六个分组：通用、应用配置、本地路由、网络、数据、关于 |
 
 ### 2. 供应商管理
 
 | 文件 | 内容 |
 |------|------|
 | [2.1-add.md](./2-providers/2.1-add.md) | 使用预设、自定义配置、统一供应商 |
-| [2.2-switch.md](./2-providers/2.2-switch.md) | 主界面切换、托盘切换、生效方式 |
+| [2.2-switch.md](./2-providers/2.2-switch.md) | 直连/路由/聚合、托盘切换、生效方式 |
 | [2.3-edit.md](./2-providers/2.3-edit.md) | 编辑配置、修改 API Key、全局设置与编辑冲突 |
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | 拖拽排序、复制供应商、删除 |
 | [2.5-usage-query.md](./2-providers/2.5-usage-query.md) | 用量查询、剩余额度、多套餐显示 |
@@ -71,7 +72,7 @@
 | 文件 | 内容 |
 |------|------|
 | [3.1-mcp.md](./3-extensions/3.1-mcp.md) | MCP 协议、添加服务器、应用绑定 |
-| [3.2-prompts.md](./3-extensions/3.2-prompts.md) | 创建预设、激活切换、智能回填 |
+| [3.2-prompts.md](./3-extensions/3.2-prompts.md) | 创建提示词、启用切换、目标文件 |
 | [3.3-skills.md](./3-extensions/3.3-skills.md) | 发现技能、安装卸载、仓库管理 |
 | [3.4-sessions.md](./3-extensions/3.4-sessions.md) | 会话浏览、搜索过滤、恢复与删除 |
 | [3.5-workspace.md](./3-extensions/3.5-workspace.md) | OpenClaw 工作区文件、每日记忆 |
@@ -85,6 +86,7 @@
 | [4.3-failover.md](./4-proxy/4.3-failover.md) | 故障转移队列、熔断器、健康状态 |
 | [4.4-usage.md](./4-proxy/4.4-usage.md) | 用量统计、趋势图表、定价配置 |
 | [4.5-model-test.md](./4-proxy/4.5-model-test.md) | 连通检测、检测参数 |
+| [4.6-aggregation.md](./4-proxy/4.6-aggregation.md) | 聚合模式、默认供应商、ccs- 前缀、Codex 重启 |
 
 ### 5. 常见问题
 
@@ -106,19 +108,19 @@
 
 ## 版本信息
 
-- 文档版本：v3.20.4
-- 最后更新：2026-09-26
-- 适用于 CC Switch v3.20.4+
+- 文档版本：v4.0.4
+- 最后更新：2026-10-07
+- 适用于 CC Switch v4.0.4+
 
-### 近期主要变化
+### 近期主要变化（v4.0）
 
-- **新增受管应用**：Grok Build（v3.18.0）、Pi（v3.20.0）、MiniMax Code（v3.20.4），受管应用共 10 个 — 详见 [1.1 软件介绍](./1-getting-started/1.1-introduction.md)
-- **Codex 官方预设改为原生 Responses 直连**：DeepSeek、智谱 GLM（v3.20.2）和 Kimi（v3.20.3）等不再需要为协议转换开启本地路由— 详见 [2.1 添加供应商](./2-providers/2.1-add.md)
-- **Codex 切换只写 config.toml**：第三方 API Key 不再写入 `auth.json`（v3.20.1）— 详见 [1.5 个性化配置 → Codex 应用增强](./1-getting-started/1.5-settings.md#codex-应用增强)
-- **「上游格式」取代「需要本地路由映射」开关**（v3.16.5）— 详见 [2.1 添加供应商](./2-providers/2.1-add.md#codex--grok-build-的上游格式与模型映射)
-- **连通检测取代模型检查**：只探测地址是否可达，不再发送真实模型请求（v3.16.3）— 详见 [4.5 连通检测](./4-proxy/4.5-model-test.md)
-- **不开本地路由也能统计用量**：从各工具的本地会话记录导入 — 详见 [4.4 用量统计](./4-proxy/4.4-usage.md)
-- **云同步支持 S3 兼容存储** — 详见 [1.5 个性化配置](./1-getting-started/1.5-settings.md)
+- **界面改版**：顶部导航换成左侧栏，用量统计、授权中心、MCP、Skills、提示词、会话、应用各占一页；设置分为通用、应用配置、本地路由、网络、数据、关于六组 — 详见 [1.3 界面概览](./1-getting-started/1.3-interface.md)、[1.5 个性化配置](./1-getting-started/1.5-settings.md)
+- **直连 / 路由 / 聚合三种连接模式**：在每个应用页顶部选择，回到直连只需一步 — 详见 [2.2 切换供应商](./2-providers/2.2-switch.md)
+- **新增聚合模式**：Claude Code 和 Codex 可以在一个会话里按模型混用多家供应商 — 详见 [4.6 聚合模式](./4-proxy/4.6-aggregation.md)
+- **切换只改关键字段**：地址、密钥、模型等关键字段以外的设置原样保留，不再使用通用配置片段 — 详见 [2.3 编辑供应商](./2-providers/2.3-edit.md)
+- **授权中心**：ChatGPT、GitHub Copilot、xAI 等账号集中在侧栏「授权中心」管理 — 详见 [1.5 个性化配置](./1-getting-started/1.5-settings.md)
+- **「应用」页**：安装、升级各 CLI 工具，选择侧栏显示哪些应用 — 详见 [1.2 安装指南](./1-getting-started/1.2-installation.md)
+- 完整变化见 [v4.0 发布说明](../../release-notes/v4.0.4-zh.md)
 
 ## 贡献
 
