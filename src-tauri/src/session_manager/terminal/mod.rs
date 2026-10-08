@@ -19,6 +19,8 @@ pub fn launch_terminal(
         "iTerm" | "iterm" => launch_iterm(command, cwd),
         "ghostty" => launch_ghostty(command, cwd),
         "kitty" => launch_kitty(command, cwd),
+        #[cfg(target_os = "macos")]
+        "otty" => launch_otty(command, cwd),
         "wezterm" => launch_wezterm(command, cwd),
         "kaku" => launch_kaku(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
@@ -50,6 +52,105 @@ end tell"#
     } else {
         Err("Terminal command execution failed".to_string())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn build_otty_tab_args(command: &str, cwd: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "tab".to_string(),
+        "new".to_string(),
+        "--window".to_string(),
+        "0".to_string(),
+    ];
+    if let Some(cwd) = cwd.filter(|value| !value.trim().is_empty()) {
+        args.push("--cwd".to_string());
+        args.push(cwd.to_string());
+    }
+    args.push("--command".to_string());
+    args.push(command.to_string());
+    args
+}
+
+#[cfg(target_os = "macos")]
+fn build_otty_window_args(command: &str, cwd: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "open".to_string(),
+        "--command".to_string(),
+        command.to_string(),
+    ];
+    if let Some(cwd) = cwd.filter(|value| !value.trim().is_empty()) {
+        args.push(cwd.to_string());
+    }
+    args
+}
+
+#[cfg(target_os = "macos")]
+fn launch_otty(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let otty_cli = find_otty_cli().ok_or_else(|| {
+        "Otty CLI not found. Install Otty to /Applications or ~/Applications.".to_string()
+    })?;
+
+    let tab_result = Command::new(&otty_cli)
+        .args(build_otty_tab_args(command, cwd))
+        .output()
+        .map_err(|e| format!("Failed to launch Otty CLI: {e}"))?;
+    if tab_result.status.success() {
+        return Ok(());
+    }
+
+    let window_result = Command::new(&otty_cli)
+        .args(build_otty_window_args(command, cwd))
+        .output()
+        .map_err(|e| format!("Failed to launch Otty CLI: {e}"))?;
+    if window_result.status.success() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Failed to launch Otty: {}",
+        String::from_utf8_lossy(&window_result.stderr).trim()
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn find_otty_cli() -> Option<std::path::PathBuf> {
+    otty_cli_candidates()
+        .into_iter()
+        .find(|path| path.is_file() && is_executable_file(path))
+}
+
+#[cfg(target_os = "macos")]
+fn otty_cli_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = vec![std::path::PathBuf::from(
+        "/Applications/Otty.app/Contents/MacOS/otty-cli",
+    )];
+
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(
+            std::path::PathBuf::from(home).join("Applications/Otty.app/Contents/MacOS/otty-cli"),
+        );
+    }
+
+    candidates.push(std::path::PathBuf::from("/usr/local/bin/otty"));
+    candidates.push(std::path::PathBuf::from("/opt/homebrew/bin/otty"));
+
+    if let Some(path) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&path) {
+            candidates.push(directory.join("otty"));
+            candidates.push(directory.join("otty-cli"));
+        }
+    }
+
+    candidates
+}
+
+#[cfg(target_os = "macos")]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 fn launch_iterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
@@ -351,6 +452,50 @@ mod tests {
             build_shell_command("claude --resume abc-123", None),
             "claude --resume abc-123"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn otty_launches_a_new_tab_without_injecting_into_the_current_session() {
+        assert_eq!(
+            build_otty_tab_args("claude --resume abc-123", Some("/tmp/project-$(id -un)")),
+            vec![
+                "tab",
+                "new",
+                "--window",
+                "0",
+                "--cwd",
+                "/tmp/project-$(id -un)",
+                "--command",
+                "claude --resume abc-123",
+            ]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn otty_falls_back_to_a_new_window_with_the_same_command_and_cwd() {
+        assert_eq!(
+            build_otty_window_args("claude --resume abc-123", Some("/tmp/project dir")),
+            vec![
+                "open",
+                "--command",
+                "claude --resume abc-123",
+                "/tmp/project dir",
+            ]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn otty_cli_candidates_include_bundle_and_installed_cli_locations() {
+        let candidates = otty_cli_candidates();
+
+        assert!(candidates.contains(&std::path::PathBuf::from(
+            "/Applications/Otty.app/Contents/MacOS/otty-cli"
+        )));
+        assert!(candidates.contains(&std::path::PathBuf::from("/usr/local/bin/otty")));
+        assert!(candidates.contains(&std::path::PathBuf::from("/opt/homebrew/bin/otty")));
     }
 
     #[test]
