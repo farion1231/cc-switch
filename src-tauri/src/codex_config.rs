@@ -1319,6 +1319,10 @@ fn codex_catalog_model_entry(
     entry_obj.insert("context_window".to_string(), json!(context_window));
     entry_obj.insert("max_context_window".to_string(), json!(context_window));
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
+    // Custom models are explicitly user-configured; always list them in the
+    // selector even when the template (e.g. a hidden official model) carries
+    // visibility=hide.
+    entry_obj.insert("visibility".to_string(), json!("list"));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
     entry_obj.insert("availability_nux".to_string(), Value::Null);
