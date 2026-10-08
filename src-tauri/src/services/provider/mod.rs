@@ -228,11 +228,27 @@ mod tests {
         let old_home = std::env::var_os("HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
         std::env::set_var("HOME", temp.path());
+        // Neutralize the env vars get_hermes_dir() consults, so an ambient
+        // HERMES_HOME / LOCALAPPDATA (e.g. set by a Hermes install) can't make
+        // hermes live-import tests escape the temp home and pollute the real
+        // config. Restored below. (与 hermes_config::tests::with_test_home 同款)
+        let old_hermes_home = std::env::var_os("HERMES_HOME");
+        let old_local_appdata = std::env::var_os("LOCALAPPDATA");
+        std::env::remove_var("HERMES_HOME");
+        std::env::remove_var("LOCALAPPDATA");
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
         let result = test(&state, temp.path());
 
+        match old_local_appdata {
+            Some(value) => std::env::set_var("LOCALAPPDATA", value),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
+        match old_hermes_home {
+            Some(value) => std::env::set_var("HERMES_HOME", value),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
         match old_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
@@ -2056,6 +2072,18 @@ requires_openai_auth = true
                 .await
                 .expect("update app proxy config");
         }
+        // 绑临时端口（listen_port=0 由系统分配）：默认 15721 会与本机正在
+        // 运行的 CC Switch 实例冲突（服务支持 0 并回填实际端口）
+        {
+            let mut global = db
+                .get_global_proxy_config()
+                .await
+                .expect("get global proxy config");
+            global.listen_port = 0;
+            db.update_global_proxy_config(global)
+                .await
+                .expect("update global proxy config");
+        }
 
         state
             .proxy_service
@@ -2103,9 +2131,15 @@ requires_openai_auth = true
 
         let profile_path = claude_desktop_profile_path(home.dir.path());
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
+        // 临时端口（listen_port=0）启动后由服务回填实际端口，读回比对
+        let actual_port = db
+            .get_global_proxy_config()
+            .await
+            .expect("get persisted proxy config")
+            .listen_port;
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!("http://127.0.0.1:{actual_port}/claude-desktop")),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
