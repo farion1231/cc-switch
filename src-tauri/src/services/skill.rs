@@ -1214,7 +1214,12 @@ impl SkillService {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    /// 递归收集目录下所有非隐藏文件
+    /// 递归收集目录下所有非隐藏文件。
+    ///
+    /// `__pycache__/` 目录与 `*.pyc` 文件是 Python 运行/导入时生成的字节码缓存，
+    /// 不属于 Skill 自身内容；只跑一遍 Skill（不修改任何源文件）就会让目录哈希
+    /// 发生变化，结果是 Skill 会被报为「有更新」，用户点更新又会触发整目录替
+    /// 换（见 #7772）。忽略这两类条目后，运行 Skill 不再影响哈希。
     #[allow(clippy::only_used_in_recursion)]
     fn collect_files_for_hash(base: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
         let entries = fs::read_dir(current)
@@ -1227,8 +1232,14 @@ impl SkillService {
             }
             let path = entry.path();
             if path.is_dir() {
+                if name == "__pycache__" {
+                    continue;
+                }
                 Self::collect_files_for_hash(base, &path, files)?;
             } else {
+                if name.ends_with(".pyc") {
+                    continue;
+                }
                 files.push(path);
             }
         }
@@ -6454,6 +6465,53 @@ mod tests {
         assert_eq!(
             SkillService::local_hash_for_update_check(ssot.path(), "../evil", None),
             None
+        );
+    }
+
+    /// `#7772`：运行 Skill 留下的 `__pycache__/`、`*.pyc` 不属于 Skill 自身
+    /// 内容，必须在目录哈希里忽略，否则只跑一遍 Skill 就会改变哈希并被报为
+    /// 「有更新」，点更新又会触发整目录替换、覆盖本地修改。
+    #[test]
+    fn compute_dir_hash_ignores_python_bytecode() {
+        let dir = tempdir().expect("tempdir");
+        let baseline = dir.path().join("baseline");
+        fs::create_dir(&baseline).expect("create baseline dir");
+        fs::write(baseline.join("SKILL.md"), "---\nname: x\n---\n").expect("write skill");
+        fs::write(baseline.join("helper.py"), "def f():\n    return 1\n").expect("write helper");
+        let baseline_hash = SkillService::compute_dir_hash(&baseline).expect("baseline hash");
+
+        // 复制一份并补上 `__pycache__/` 与同名 `.pyc`，其它内容不变。
+        let with_bytecode = dir.path().join("with-bytecode");
+        SkillService::copy_dir_recursive(&baseline, &with_bytecode).expect("copy baseline");
+        fs::create_dir(with_bytecode.join("__pycache__")).expect("create pycache dir");
+        fs::write(
+            with_bytecode
+                .join("__pycache__")
+                .join("helper.cpython-311.pyc"),
+            b"\x00\x00\x00\x00 bytecode blob \x00\x00",
+        )
+        .expect("write nested pyc");
+        fs::write(
+            with_bytecode.join("helper.pyc"),
+            b"\x00\x00\x00\x00 standalone pyc \x00\x00",
+        )
+        .expect("write root pyc");
+        let with_bytecode_hash =
+            SkillService::compute_dir_hash(&with_bytecode).expect("with-bytecode hash");
+
+        assert_eq!(
+            baseline_hash, with_bytecode_hash,
+            "__pycache__/ 与 *.pyc 不应影响目录哈希"
+        );
+
+        // 仍然要识别真正修改过的源文件。
+        let edited = dir.path().join("edited");
+        SkillService::copy_dir_recursive(&baseline, &edited).expect("copy edited");
+        fs::write(edited.join("helper.py"), "def f():\n    return 2\n").expect("edit helper");
+        let edited_hash = SkillService::compute_dir_hash(&edited).expect("edited hash");
+        assert_ne!(
+            baseline_hash, edited_hash,
+            "修改过的源文件仍必须改变目录哈希"
         );
     }
 
