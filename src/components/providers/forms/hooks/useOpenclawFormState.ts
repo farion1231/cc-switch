@@ -161,10 +161,19 @@ export function useOpenclawFormState({
     (enabled: boolean) => {
       setOpenclawUserAgent(enabled);
       updateOpenclawConfig((config) => {
+        const headers: Record<string, string> = { ...(config.headers ?? {}) };
         if (enabled) {
-          config.headers = { "User-Agent": OPENCLAW_DEFAULT_USER_AGENT };
+          if (!("User-Agent" in headers)) {
+            headers["User-Agent"] = OPENCLAW_DEFAULT_USER_AGENT;
+          }
+          config.headers = headers;
         } else {
-          delete config.headers;
+          delete headers["User-Agent"];
+          if (Object.keys(headers).length > 0) {
+            config.headers = headers;
+          } else {
+            delete config.headers;
+          }
         }
       });
     },
