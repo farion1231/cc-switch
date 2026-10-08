@@ -510,7 +510,7 @@ impl FromStr for AppType {
             "hermes" => Ok(AppType::Hermes),
             "pi" => Ok(AppType::Pi),
             "mcode" => Ok(AppType::Mcode),
-            "ohmypi" => Ok(AppType::OhMyPi),
+            "ohmypi" | "oh-my-pi" | "oh_my_pi" | "omp" => Ok(AppType::OhMyPi),
             other => Err(AppError::localized(
                 "unsupported_app",
                 format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, ohmypi。"),
@@ -1071,6 +1071,16 @@ mod tests {
             AppType::ClaudeDesktop
         );
         assert_eq!(AppType::ClaudeDesktop.as_str(), "claude-desktop");
+    }
+
+    #[test]
+    fn app_type_parses_ohmypi_aliases() {
+        assert_eq!("ohmypi".parse::<AppType>().unwrap(), AppType::OhMyPi);
+        assert_eq!("oh-my-pi".parse::<AppType>().unwrap(), AppType::OhMyPi);
+        assert_eq!("oh_my_pi".parse::<AppType>().unwrap(), AppType::OhMyPi);
+        assert_eq!("omp".parse::<AppType>().unwrap(), AppType::OhMyPi);
+        assert_eq!("OMP".parse::<AppType>().unwrap(), AppType::OhMyPi);
+        assert_eq!(AppType::OhMyPi.as_str(), "ohmypi");
     }
 
     struct TempHome {
