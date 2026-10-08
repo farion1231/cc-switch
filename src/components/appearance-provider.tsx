@@ -47,37 +47,37 @@ export const FONT_SIZE_OPTIONS = [12, 13, 14, 15, 16, 17, 18] as const;
 
 export const FONT_FAMILY_OPTIONS: Array<{
   value: FontFamily;
-  label: string;
+  labelKey: string;
   css: string;
 }> = [
   {
     value: "system",
-    label: "System UI",
+    labelKey: "settings.fontFamilySystem",
     css: 'var(--cc-system-font-family)',
   },
   {
     value: "inter",
-    label: "Inter",
+    labelKey: "settings.fontFamilyInter",
     css: '"Inter", var(--cc-system-font-family)',
   },
   {
     value: "segoe",
-    label: "Segoe UI",
+    labelKey: "settings.fontFamilySegoeUI",
     css: '"Segoe UI Variable Text", "Segoe UI", var(--cc-system-font-family)',
   },
   {
     value: "sf-pro",
-    label: "SF Pro",
+    labelKey: "settings.fontFamilySFPro",
     css: '"SF Pro Text", -apple-system, BlinkMacSystemFont, var(--cc-system-font-family)',
   },
   {
     value: "noto-sans",
-    label: "Noto Sans",
+    labelKey: "settings.fontFamilyNotoSans",
     css: '"Noto Sans", "Noto Sans CJK SC", "Source Han Sans SC", var(--cc-system-font-family)',
   },
   {
     value: "ibm-plex",
-    label: "IBM Plex Sans",
+    labelKey: "settings.fontFamilyIBMPlexSans",
     css: '"IBM Plex Sans", var(--cc-system-font-family)',
   },
 ];
