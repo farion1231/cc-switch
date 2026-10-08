@@ -8,6 +8,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
@@ -19,13 +20,29 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// 打开外部链接
+/// 外部链接白名单：只允许 `http:` / `https:` / `mailto:`。
+/// 不带协议的裸域名（如 `example.com/docs`）按旧行为补 `https://`；
+/// `javascript:`、`file:`、`data:` 及其他自定义协议一律拒绝（前端已过滤，这里是第二道）。
+fn validate_external_url(raw: &str) -> Result<String, String> {
+    let raw = raw.trim();
+    let parsed = match url::Url::parse(raw) {
+        Ok(parsed) => parsed,
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            url::Url::parse(&format!("https://{raw}")).map_err(|_| "链接格式无效".to_string())?
+        }
+        Err(_) => return Err("链接格式无效".to_string()),
+    };
+    match parsed.scheme() {
+        "http" | "https" if parsed.host_str().is_some_and(|h| !h.is_empty()) => Ok(parsed.into()),
+        "mailto" => Ok(parsed.into()),
+        "http" | "https" => Err("链接格式无效".to_string()),
+        _ => Err("只能打开 http、https 或 mailto 链接".to_string()),
+    }
+}
+
 #[tauri::command]
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
-    let url = if url.starts_with("http://") || url.starts_with("https://") {
-        url
-    } else {
-        format!("https://{url}")
-    };
+    let url = validate_external_url(&url)?;
 
     app.opener()
         .open_url(&url, None::<String>)
@@ -177,6 +194,59 @@ pub async fn get_tool_versions(
     Ok(results)
 }
 
+// 不同工具仍可能共用 pnpm/npm 的全局目录。先保守地串行化所有安装写入，
+// 并在排队前锁定工具，防止页面重挂或另一 IPC 调用重复提交同一工具。
+struct ToolLifecycleCoordinator {
+    tools: HashMap<&'static str, Arc<tokio::sync::Mutex<()>>>,
+    execution: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Default for ToolLifecycleCoordinator {
+    fn default() -> Self {
+        Self {
+            tools: VALID_TOOLS
+                .iter()
+                .map(|&tool| (tool, Arc::new(tokio::sync::Mutex::new(()))))
+                .collect(),
+            execution: Arc::new(tokio::sync::Mutex::new(())),
+        }
+    }
+}
+
+impl ToolLifecycleCoordinator {
+    async fn run<F>(&self, tools: Vec<&'static str>, operation: F) -> Result<(), String>
+    where
+        F: FnOnce(&[&str]) -> Result<(), String> + Send + 'static,
+    {
+        let tool_guards = tools
+            .iter()
+            .map(|tool| {
+                self.tools
+                    .get(tool)
+                    .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?
+                    .clone()
+                    .try_lock_owned()
+                    // 稳定错误码供前端区分后台任务仍在进行与真正的执行失败。
+                    .map_err(|_| "TOOL_ACTION_IN_PROGRESS".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let execution_guard = self.execution.clone().lock_owned().await;
+
+        // 必须把锁移进 blocking 任务：即使等待它的 IPC future 被取消，
+        // 子进程仍会继续运行，直到它真正退出前都不能允许下一次写入。
+        tokio::task::spawn_blocking(move || {
+            let _tool_guards = tool_guards;
+            let _execution_guard = execution_guard;
+            operation(&tools)
+        })
+        .await
+        .map_err(|e| format!("tool lifecycle task join error: {e}"))?
+    }
+}
+
+static TOOL_LIFECYCLE: Lazy<ToolLifecycleCoordinator> =
+    Lazy::new(ToolLifecycleCoordinator::default);
+
 #[tauri::command]
 pub async fn run_tool_lifecycle_action(
     tools: Vec<String>,
@@ -194,15 +264,14 @@ pub async fn run_tool_lifecycle_action(
         ToolLifecycleAction::Update => "tool_update",
     };
 
-    // build 阶段含锚定探测（对每个工具跑 `--version` 定位命令行实际命中那处），
-    // 与执行一并放进 blocking 线程，避免阻塞 async runtime。
-    tokio::task::spawn_blocking(move || {
-        let command_line =
-            build_tool_lifecycle_command(&requested, action, wsl_shell_by_tool.as_ref())?;
-        run_tool_lifecycle_silently(&command_line, label)
-    })
-    .await
-    .map_err(|e| format!("tool lifecycle task join error: {e}"))?
+    // 排队结束后再探测安装目标，与执行一起持锁，避免读到另一升级的中间状态。
+    TOOL_LIFECYCLE
+        .run(requested, move |tools| {
+            let command_line =
+                build_tool_lifecycle_command(tools, action, wsl_shell_by_tool.as_ref())?;
+            run_tool_lifecycle_silently(&command_line, label)
+        })
+        .await
 }
 
 /// 静默执行工具安装/更新脚本：直接捕获子进程输出并阻塞到命令真正结束，
@@ -234,8 +303,12 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
-    let bat_file =
-        std::env::temp_dir().join(format!("cc_switch_{}_{}.bat", label, std::process::id()));
+    // 每次调用使用独立目录，避免同进程并发升级时覆盖或删除另一工具的脚本。
+    let script_dir = tempfile::Builder::new()
+        .prefix("cc_switch_lifecycle_")
+        .tempdir()
+        .map_err(|e| format!("创建批处理目录失败: {e}"))?;
+    let bat_file = script_dir.path().join(format!("{label}.bat"));
     std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
     let output = Command::new("cmd")
@@ -243,7 +316,6 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
         .arg(&bat_file)
         .creation_flags(CREATE_NO_WINDOW)
         .output();
-    let _ = std::fs::remove_file(&bat_file);
 
     finish_lifecycle_output(&output.map_err(|e| format!("启动安装进程失败: {e}"))?)
 }
@@ -640,7 +712,9 @@ enum LifecycleCommandShell {
 
 fn npm_install_command_for(tool: &str) -> Option<&'static str> {
     match tool {
-        "claude" => Some("npm i -g @anthropic-ai/claude-code@latest"),
+        "claude" => Some(
+            "npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
+        ),
         "codex" => Some("npm i -g @openai/codex@latest"),
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
         "grok" => Some("npm i -g @xai-official/grok@latest"),
@@ -657,6 +731,8 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 /// `npm i -g` 时须追加的参数（前导空格已含），与 `npm_install_command_for` 的静态命令
 /// 保持一致，供锚定到某处 npm 的升级命令复用。
 ///
+/// Claude Code 的 postinstall 把平台 optional dependency 中的原生程序放到 bin/claude.exe。
+/// npm 12 拦截该脚本时会留下文本占位文件，Windows 执行后报“与 Windows 版本不兼容”。
 /// MiniMax Code 依赖 better-sqlite3 的安装脚本：npm 12 默认拦截依赖的 install 脚本，
 /// 只放行 `--allow-scripts` 列出的包（按注册表包名匹配），被拦后 SQLite 不可用；
 /// `--ignore-scripts=false` / `--include=optional` 抵消用户 npmrc 里的相反设置。
@@ -664,6 +740,9 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 /// 加双引号：逗号在 PowerShell 里会被当成数组分隔符，bash/cmd 都会剥掉这层引号。
 fn npm_install_extra_args(tool: &str) -> &'static str {
     match tool {
+        "claude" => {
+            " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
+        }
         "mcode" => {
             " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""
         }
@@ -915,24 +994,14 @@ fn windows_cmd_double_quote_arg(value: &str) -> String {
 }
 
 /// 获取单个工具的版本信息（内部实现）
-async fn get_single_tool_version_impl(
+/// 本机工具的版本（只探测本地，不联网）。
+fn probe_local_version(
     tool: &str,
+    wsl_distro: Option<&str>,
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
-) -> ToolVersion {
-    debug_assert!(
-        VALID_TOOLS.contains(&tool),
-        "unexpected tool name in get_single_tool_version_impl: {tool}"
-    );
-
-    // 判断该工具的运行环境 & WSL distro（如有）
-    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
-
-    // 使用全局 HTTP 客户端（已包含代理配置）
-    let client = crate::proxy::http_client::get();
-
-    // 1. 获取本地版本
-    let probe = if let Some(distro) = wsl_distro.as_deref() {
+) -> ShellProbe {
+    if let Some(distro) = wsl_distro {
         try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
     } else {
         #[cfg(target_os = "windows")]
@@ -963,7 +1032,36 @@ async fn get_single_tool_version_impl(
                 found => found,
             }
         }
-    };
+    }
+}
+
+/// 本机实际安装的工具版本（和「关于」页探测的是同一个）；拿不到为 `None`。
+pub(crate) fn local_tool_version(tool: &str) -> Option<String> {
+    let (_, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+    match probe_local_version(tool, wsl_distro.as_deref(), None, None) {
+        ShellProbe::Found(version) => Some(version),
+        _ => None,
+    }
+}
+
+async fn get_single_tool_version_impl(
+    tool: &str,
+    wsl_shell: Option<&str>,
+    wsl_shell_flag: Option<&str>,
+) -> ToolVersion {
+    debug_assert!(
+        VALID_TOOLS.contains(&tool),
+        "unexpected tool name in get_single_tool_version_impl: {tool}"
+    );
+
+    // 判断该工具的运行环境 & WSL distro（如有）
+    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+
+    // 使用全局 HTTP 客户端（已包含代理配置）
+    let client = crate::proxy::http_client::get();
+
+    // 1. 获取本地版本
+    let probe = probe_local_version(tool, wsl_distro.as_deref(), wsl_shell, wsl_shell_flag);
     let (local_version, local_error, installed_but_broken) = match probe {
         ShellProbe::Found(v) => (Some(v), None, false),
         ShellProbe::FoundButFailed(e) => (None, Some(e), true),
@@ -4202,6 +4300,15 @@ pub async fn probe_tool_installations(
     .map_err(|e| format!("probe task join error: {e}"))
 }
 
+/// 「应用」页显示每个工具的路径、安装来源和多处安装。和升级前的预检是同一份枚举，
+/// 单列一个命令只为把「打开页面时的展示」和「点升级时的预检」分开调用。
+#[tauri::command]
+pub async fn list_tool_installations(
+    tools: Vec<String>,
+) -> Result<Vec<ToolInstallationReport>, String> {
+    probe_tool_installations(tools).await
+}
+
 #[cfg(target_os = "windows")]
 fn wsl_distro_for_tool(tool: &str) -> Option<String> {
     let override_dir = match tool {
@@ -5249,7 +5356,189 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_url_whitelist() {
+        assert_eq!(
+            validate_external_url("https://example.com/a").unwrap(),
+            "https://example.com/a"
+        );
+        assert!(validate_external_url("http://localhost:3000").is_ok());
+        assert!(validate_external_url("mailto:a@example.com").is_ok());
+        assert_eq!(
+            validate_external_url("example.com/docs").unwrap(),
+            "https://example.com/docs"
+        );
+        for bad in [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            " javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:text/html,<script>alert(1)</script>",
+            "vscode://open",
+            "https://",
+            "",
+        ] {
+            assert!(validate_external_url(bad).is_err(), "{bad}");
+        }
+    }
     use std::path::{Path, PathBuf};
+
+    #[tokio::test]
+    async fn lifecycle_coordinator_serializes_writes_and_rejects_duplicate_tools() {
+        let coordinator = Arc::new(ToolLifecycleCoordinator::default());
+        let output_dir = tempfile::tempdir().unwrap();
+        let output = output_dir.path().join("installed.txt");
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let first = {
+            let coordinator = coordinator.clone();
+            let output = output.clone();
+            tokio::spawn(async move {
+                coordinator
+                    .run(vec!["codex"], move |_| {
+                        started_tx.send(()).unwrap();
+                        finish_rx.recv().unwrap();
+                        std::fs::write(output, "codex").unwrap();
+                        Ok(())
+                    })
+                    .await
+            })
+        };
+        started_rx.await.unwrap();
+
+        // 独立调用者（例如重挂后的页面）不能重复启动正在执行的工具。
+        assert_eq!(
+            coordinator
+                .run(vec!["codex"], |_| panic!("duplicate must not execute"))
+                .await
+                .unwrap_err(),
+            "TOOL_ACTION_IN_PROGRESS"
+        );
+        // 批次部分取锁失败时，已取得的其他工具锁也必须释放。
+        assert!(coordinator
+            .run(vec!["claude", "codex"], |_| panic!(
+                "batch must not execute"
+            ))
+            .await
+            .is_err());
+
+        let second_output = output.clone();
+        let second = coordinator.run(vec!["claude"], move |_| {
+            assert_eq!(std::fs::read_to_string(&second_output).unwrap(), "codex");
+            std::fs::write(second_output, "codex,claude").unwrap();
+            Ok(())
+        });
+        tokio::pin!(second);
+        assert!(futures::poll!(second.as_mut()).is_pending());
+        assert!(!output.exists(), "first write has not finished yet");
+        assert_eq!(
+            coordinator
+                .run(vec!["claude"], |_| panic!(
+                    "queued duplicate must not execute"
+                ))
+                .await
+                .unwrap_err(),
+            "TOOL_ACTION_IN_PROGRESS"
+        );
+
+        finish_tx.send(()).unwrap();
+        first.await.unwrap().unwrap();
+        second.await.unwrap();
+        assert_eq!(std::fs::read_to_string(output).unwrap(), "codex,claude");
+    }
+
+    #[tokio::test]
+    async fn lifecycle_coordinator_keeps_running_locks_when_caller_is_cancelled() {
+        let coordinator = Arc::new(ToolLifecycleCoordinator::default());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let first = {
+            let coordinator = coordinator.clone();
+            tokio::spawn(async move {
+                coordinator
+                    .run(vec!["codex"], move |_| {
+                        started_tx.send(()).unwrap();
+                        finish_rx.recv().unwrap();
+                        Ok(())
+                    })
+                    .await
+            })
+        };
+        started_rx.await.unwrap();
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        assert!(coordinator
+            .run(vec!["codex"], |_| panic!(
+                "running duplicate must not execute"
+            ))
+            .await
+            .is_err());
+
+        {
+            let cancelled = coordinator.run(vec!["claude"], |_| {
+                panic!("cancelled queued operation must not execute")
+            });
+            tokio::pin!(cancelled);
+            assert!(futures::poll!(cancelled.as_mut()).is_pending());
+        }
+        // 尚未开始的排队请求取消后可以重试，但仍须等待正在运行的子任务退出。
+        let retry = coordinator.run(vec!["claude"], |_| Ok(()));
+        tokio::pin!(retry);
+        assert!(futures::poll!(retry.as_mut()).is_pending());
+        finish_tx.send(()).unwrap();
+        retry.await.unwrap();
+        coordinator.run(vec!["codex"], |_| Ok(())).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn lifecycle_coordinator_releases_locks_after_error_or_panic() {
+        let coordinator = ToolLifecycleCoordinator::default();
+        assert_eq!(
+            coordinator
+                .run(vec!["claude"], |_| Err("installer failed".to_string()))
+                .await,
+            Err("installer failed".to_string())
+        );
+        coordinator.run(vec!["claude"], |_| Ok(())).await.unwrap();
+        assert!(coordinator
+            .run(vec!["claude"], |_| panic!("installer panicked"))
+            .await
+            .unwrap_err()
+            .contains("tool lifecycle task join error"));
+        coordinator.run(vec!["claude"], |_| Ok(())).await.unwrap();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn concurrent_lifecycle_runs_use_independent_scripts() {
+        let output_dir = tempfile::tempdir().unwrap();
+        let outputs = [
+            output_dir.path().join("first.txt"),
+            output_dir.path().join("second.txt"),
+        ];
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            for output in &outputs {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let command = format!("@echo off\r\n>\"{}\" echo %~f0\r\n", output.display());
+                    barrier.wait();
+                    run_tool_lifecycle_silently(&command, "tool_update").unwrap();
+                });
+            }
+        });
+        let script_paths =
+            outputs.map(|output| PathBuf::from(std::fs::read_to_string(output).unwrap().trim()));
+        assert_ne!(script_paths[0], script_paths[1]);
+        for script_path in script_paths {
+            assert!(!script_path.exists(), "temporary script must be cleaned up");
+            assert!(
+                !script_path.parent().unwrap().exists(),
+                "temporary directory must be cleaned up"
+            );
+        }
+    }
 
     /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。
     /// `/bin/echo --version` 在 macOS/Linux 均即刻成功退出。
@@ -6712,7 +7001,7 @@ mod tests {
                 wsl_tool_action_shell_command("claude", ToolLifecycleAction::Install).unwrap();
             assert!(
                 claude.starts_with("bash -c 'tmp=$(mktemp) && curl -fsSL https://claude.ai/install.sh ")
-                    && claude.contains(" || npm i -g @anthropic-ai/claude-code@latest"),
+                    && claude.ends_with(" || npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"),
                 "WSL claude install should prefer native POSIX installer with npm fallback: {claude}"
             );
             assert!(!claude.contains("| bash"));
@@ -6748,7 +7037,7 @@ mod tests {
             let cmd = wsl_tool_action_shell_command("claude", ToolLifecycleAction::Update).unwrap();
             assert_eq!(
                 cmd,
-                "claude update || npm i -g @anthropic-ai/claude-code@latest"
+                "claude update || npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
             );
         }
     }
@@ -7812,7 +8101,7 @@ mod tests {
         fn update_fallbacks_use_official_cli_only_when_supported() {
             assert_eq!(
                 static_fallback_command("claude"),
-                "claude update || npm i -g @anthropic-ai/claude-code@latest"
+                "claude update || npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
             );
             assert_eq!(
                 static_fallback_command("codex"),

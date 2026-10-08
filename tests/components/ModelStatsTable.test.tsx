@@ -15,6 +15,7 @@ const stats = [
     totalTokens: 900,
     totalCost: "0.40",
     avgCostPerRequest: "0.20",
+    successRate: 100,
   },
   {
     model: "beta",
@@ -22,6 +23,7 @@ const stats = [
     totalTokens: 100,
     totalCost: "0.10",
     avgCostPerRequest: "0.02",
+    successRate: 100,
   },
 ];
 
@@ -38,11 +40,11 @@ describe("ModelStatsTable", () => {
     const rows = screen.getAllByRole("row");
     expect(within(rows[1]).getByText("alpha")).toBeInTheDocument();
     expect(
-      screen.getByRole("columnheader", { name: "usage.totalCost" }),
+      screen.getByRole("columnheader", { name: "usage.cost" }),
     ).toHaveAttribute("aria-sort", "descending");
   });
 
-  it("sorts numeric metrics in both directions", () => {
+  it("sorts every numeric metric in both directions", () => {
     render(
       <ModelStatsTable range={{ preset: "today" }} refreshIntervalMs={0} />,
     );
@@ -57,5 +59,29 @@ describe("ModelStatsTable", () => {
     expect(
       screen.getByRole("columnheader", { name: "usage.requests" }),
     ).toHaveAttribute("aria-sort", "ascending");
+
+    fireEvent.click(screen.getByRole("button", { name: "usage.tokens" }));
+    rows = screen.getAllByRole("row");
+    expect(within(rows[1]).getByText("alpha")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "usage.tokens" }));
+    rows = screen.getAllByRole("row");
+    expect(within(rows[1]).getByText("beta")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "usage.cost" }));
+    rows = screen.getAllByRole("row");
+    expect(within(rows[1]).getByText("alpha")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "usage.cost" }));
+    rows = screen.getAllByRole("row");
+    expect(within(rows[1]).getByText("beta")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "usage.avgCost" }));
+    rows = screen.getAllByRole("row");
+    expect(within(rows[1]).getByText("alpha")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "usage.avgCost" }));
+    rows = screen.getAllByRole("row");
+    expect(within(rows[1]).getByText("beta")).toBeInTheDocument();
   });
 });

@@ -73,7 +73,7 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         .unwrap_or(false)
 }
 
-pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
+pub fn is_codex_responses_endpoint(endpoint: &str) -> bool {
     let path = endpoint
         .split_once('?')
         .map_or(endpoint, |(path, _query)| path);
@@ -81,7 +81,11 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
     matches!(
         path,
         "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
-    ) && codex_provider_uses_chat_completions(provider)
+    )
+}
+
+pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
+    is_codex_responses_endpoint(endpoint) && codex_provider_uses_chat_completions(provider)
 }
 
 /// Whether a converted Codex Responses request may send `prompt_cache_key` to
@@ -243,6 +247,15 @@ fn provider_is_xai_native_responses(provider: &Provider) -> bool {
         .is_some_and(|url| url.contains("api.x.ai"))
 }
 
+/// 原生 Responses 透传的响应要不要补迟到的函数调用参数（见 `responses_late_arguments`）：
+/// 官方以外的上游都补。触发条件是协议违规本身（结束事件参数为空、增量排在后面，实测
+/// MiniMax），不按厂商名：转发 MiniMax 原生流的中转站同样会带过来。顺序正常的流原样放行。
+///
+/// 只在转 Chat / 转 Anthropic / xAI 改写之外的原生透传分支里调用。
+pub fn provider_needs_responses_late_arguments_repair(provider: &Provider) -> bool {
+    !is_codex_official_provider(provider)
+}
+
 fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
     let non_empty_setting = |key: &str| {
         provider
@@ -395,6 +408,9 @@ pub fn resolve_codex_catalog_tool_profile(
     if provider.is_xai_oauth() {
         return CodexCatalogToolProfile::NativeResponses;
     }
+    if provider.is_github_copilot() {
+        return CodexCatalogToolProfile::Copilot;
+    }
     if codex_provider_uses_anthropic(provider) {
         return CodexCatalogToolProfile::Anthropic;
     }
@@ -514,6 +530,64 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     let upstream_model = codex_provider_upstream_model(provider)?;
     body["model"] = JsonValue::String(upstream_model.clone());
     Some(upstream_model)
+}
+
+/// Stack 请求的上游拒收 Codex 的托管 `web_search`：按这家的地址和模型品牌判断，和它做
+/// 路由时写 `web_search = "disabled"` 的依据相同（归一化后的配置，旧形态的行也认得出
+/// 地址）；另看这次请求的模型：行里配了多个模型时，选中的不一定是行的 `model`。
+pub fn codex_stack_upstream_rejects_web_search(
+    provider: &Provider,
+    request_model: Option<&str>,
+) -> bool {
+    if provider.is_github_copilot() {
+        return true;
+    }
+
+    let projected =
+        crate::live::project::codex::CodexProjection::of(&crate::live::project::codex::RowInput {
+            settings: &provider.settings_config,
+            official: false,
+            proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
+        })
+        .map(|projection| projection.catalog_input_text());
+    let config_text = match &projected {
+        Ok(text) => text.as_str(),
+        Err(_) => provider
+            .settings_config
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap_or(""),
+    };
+    crate::codex_config::codex_native_gateway_rejects_web_search(config_text)
+        || request_model.is_some_and(crate::codex_config::codex_model_rejects_web_search)
+}
+
+/// 去掉 Responses 请求里托管的 `web_search` 工具：`tools` 去完为空时整个键删掉；指向它
+/// 的 `tool_choice` 一并删掉，`tools` 整个没了时 `tool_choice` 也删（上游对没有工具的
+/// `tool_choice` 报 400）。其余字段不动。返回是否改了请求。
+pub fn strip_codex_hosted_web_search(body: &mut JsonValue) -> bool {
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    let is_web_search =
+        |tool: &JsonValue| tool.get("type").and_then(|value| value.as_str()) == Some("web_search");
+    let mut changed = false;
+    let mut tools_gone = false;
+    if let Some(JsonValue::Array(tools)) = obj.get_mut("tools") {
+        let before = tools.len();
+        tools.retain(|tool| !is_web_search(tool));
+        changed = tools.len() != before;
+        tools_gone = changed && tools.is_empty();
+    }
+    if tools_gone {
+        obj.remove("tools");
+    }
+    let choice_is_web_search = obj.get("tool_choice").is_some_and(is_web_search);
+    if choice_is_web_search || (tools_gone && obj.contains_key("tool_choice")) {
+        obj.remove("tool_choice");
+        changed = true;
+    }
+    changed
 }
 
 pub fn resolve_codex_chat_reasoning_config(
@@ -953,6 +1027,10 @@ impl ProviderAdapter for CodexAdapter {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
 
+        if provider.is_github_copilot() {
+            return Ok("https://api.githubcopilot.com".to_string());
+        }
+
         // xAI OAuth: ignore editable provider base URLs and always use the xAI
         // API origin associated with the managed token.
         if provider.is_xai_oauth() {
@@ -1009,6 +1087,13 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        if provider.is_github_copilot() {
+            return Some(AuthInfo::new(
+                "copilot_placeholder".to_string(),
+                AuthStrategy::GitHubCopilot,
+            ));
+        }
+
         // xAI OAuth (Grok subscription): placeholder credentials only; the real
         // access_token is resolved per-request by the forwarder via XaiOAuthManager.
         if provider.is_xai_oauth() {
@@ -1079,6 +1164,9 @@ impl ProviderAdapter for CodexAdapter {
         auth: &AuthInfo,
     ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
         use super::adapter::auth_header_value;
+        if auth.strategy == AuthStrategy::GitHubCopilot {
+            return super::copilot_auth::build_copilot_request_headers(&auth.api_key);
+        }
         let bearer = format!("Bearer {}", auth.api_key);
         // Anthropic gateway: send only x-api-key (anthropic-version is filled in by
         // the forwarder). Mutually exclusive with Bearer to avoid a 401 from the
@@ -1099,6 +1187,7 @@ impl ProviderAdapter for CodexAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ProviderMeta;
     use serde_json::json;
 
     fn create_provider(config: serde_json::Value) -> Provider {
@@ -1116,6 +1205,114 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    fn create_copilot_provider() -> Provider {
+        let mut provider = create_provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..ProviderMeta::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn codex_adapter_uses_managed_copilot_auth_and_endpoint() {
+        let adapter = CodexAdapter::new();
+        let provider = create_copilot_provider();
+
+        assert_eq!(
+            adapter.extract_base_url(&provider).unwrap(),
+            "https://api.githubcopilot.com"
+        );
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::GitHubCopilot);
+        let headers = adapter.get_auth_headers(&auth).unwrap();
+        assert!(headers
+            .iter()
+            .any(|(name, _)| name.as_str() == "copilot-integration-id"));
+    }
+
+    #[test]
+    fn stack_web_search_rejection_includes_managed_copilot() {
+        let copilot = create_copilot_provider();
+        assert!(codex_stack_upstream_rejects_web_search(&copilot, None));
+
+        let ordinary = create_provider(json!({
+            "config": r#"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://relay.example.com/v1"
+wire_api = "responses"
+"#
+        }));
+        assert!(!codex_stack_upstream_rejects_web_search(&ordinary, None));
+        assert!(codex_stack_upstream_rejects_web_search(
+            &ordinary,
+            Some("MiniMaxAI/MiniMax-M3")
+        ));
+    }
+
+    #[test]
+    fn copilot_catalog_profile_survives_live_projection_and_format_overrides() {
+        use crate::codex_config::{codex_disables_web_search, CodexCatalogToolProfile};
+        use crate::live::project::codex::{CodexProjection, RowInput};
+
+        for base_url in ["https://api.githubcopilot.com", "http://localhost:15721/v1"] {
+            let mut provider = create_copilot_provider();
+            provider.settings_config = json!({
+                "auth": {},
+                "config": format!(
+                    "model = \"claude-sonnet-5\"\nmodel_provider = \"copilot\"\n\n[model_providers.copilot]\nbase_url = \"{base_url}\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+                )
+            });
+            let projection = CodexProjection::of(&RowInput {
+                settings: &provider.settings_config,
+                official: is_codex_official_provider(&provider),
+                proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
+            })
+            .unwrap();
+            let config = projection.catalog_input_text();
+            let parsed: TomlValue = toml::from_str(&config).unwrap();
+            assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+            let route = &parsed["model_providers"]["custom"];
+            assert_eq!(route["wire_api"].as_str(), Some("responses"));
+            assert!(route.get("requires_openai_auth").is_none());
+
+            for api_format in [
+                None,
+                Some("openai_chat"),
+                Some("openai_responses"),
+                Some("anthropic"),
+            ] {
+                for transport in [
+                    None,
+                    Some("auto"),
+                    Some("openai_responses"),
+                    Some("openai_chat"),
+                ] {
+                    let meta = provider.meta.as_mut().unwrap();
+                    meta.api_format = api_format.map(str::to_string);
+                    meta.codex_copilot_api_format = transport.map(str::to_string);
+                    let profile = resolve_codex_catalog_tool_profile(&provider);
+                    assert_eq!(profile, CodexCatalogToolProfile::Copilot);
+                    assert!(codex_disables_web_search(
+                        &provider.settings_config,
+                        &config,
+                        profile
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn codex_responses_endpoint_detection_ignores_query() {
+        assert!(is_codex_responses_endpoint("/responses"));
+        assert!(is_codex_responses_endpoint(
+            "/v1/responses/compact?client_version=0.149"
+        ));
+        assert!(!is_codex_responses_endpoint("/alpha/search"));
     }
 
     #[test]
@@ -1531,6 +1728,12 @@ wire_api = "anthropic"
         assert_eq!(
             resolve_codex_catalog_tool_profile(&chat),
             CodexCatalogToolProfile::ProxyChat
+        );
+
+        let copilot = create_copilot_provider();
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&copilot),
+            CodexCatalogToolProfile::Copilot
         );
 
         // Host fallback (#6944): a DB row saved while the Zhipu preset was still

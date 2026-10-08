@@ -683,6 +683,7 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
     rt.block_on(cc_switch_lib::mode::controller::enter(
         &state,
         &AppType::Claude,
+        false,
     ))
     .expect("enter routing mode");
 

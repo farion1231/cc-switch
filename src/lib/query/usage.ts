@@ -1,4 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { usageApi } from "@/lib/api/usage";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type {
@@ -143,6 +148,8 @@ export const usageKeys = {
   detail: (requestId: string) =>
     [...usageKeys.all, "detail", requestId] as const,
   pricing: () => [...usageKeys.all, "pricing"] as const,
+  session: (appType: string, sessionId: string) =>
+    [...usageKeys.all, "session", appType, sessionId] as const,
   limits: (providerId: string, appType: string) =>
     [...usageKeys.all, "limits", providerId, appType] as const,
   script: (providerId: string, appType: string) =>
@@ -159,6 +166,8 @@ function normalizeScopeFilters(filters?: UsageScopeFilters): UsageScopeFilters {
 }
 
 // Hooks
+// 统计类查询都带 keepPreviousData：换筛选、时间范围、翻页时先留着上一份数据，
+// 新数据到了再换，不让指标闪成「…」、请求日志表塌成骨架。
 export function useUsageSummary(
   range: UsageRangeSelection,
   filters?: UsageScopeFilters,
@@ -183,6 +192,7 @@ export function useUsageSummary(
         effective.model,
       );
     },
+    placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -210,6 +220,7 @@ export function useUsageSummaryByApp(
         filters?.model,
       );
     },
+    placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -239,6 +250,7 @@ export function useUsageTrends(
         effective.model,
       );
     },
+    placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -268,6 +280,7 @@ export function useProviderStats(
         effective.model,
       );
     },
+    placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -297,6 +310,7 @@ export function useModelStats(
         effective.model,
       );
     },
+    placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -326,6 +340,7 @@ export function useRequestLogs({
       const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
+    placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -336,6 +351,29 @@ export function useRequestDetail(requestId: string) {
     queryKey: usageKeys.detail(requestId),
     queryFn: () => usageApi.getRequestDetail(requestId),
     enabled: !!requestId,
+  });
+}
+
+/**
+ * 会话日志扫描（后台定时或手动同步）最近一次完成的时间（毫秒）。
+ * 后台每 60 秒扫一次，这里 30 秒问一次；挂在 usage 下，同步后跟着失效重取。
+ */
+export function useSessionUsageLastSync() {
+  return useQuery({
+    queryKey: [...usageKeys.all, "session-last-sync"] as const,
+    queryFn: () => usageApi.getSessionUsageLastSync(),
+    refetchInterval: DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+  });
+}
+
+/** 单个会话的用量汇总（会话阅读页头部），只数会话日志导入的行。 */
+export function useSessionUsageSummary(appType: string, sessionId: string) {
+  return useQuery({
+    queryKey: usageKeys.session(appType, sessionId),
+    queryFn: () => usageApi.getSessionUsageSummary(appType, sessionId),
+    refetchInterval: DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: false,
   });
 }
 

@@ -50,7 +50,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 19;
+pub(crate) const SCHEMA_VERSION: i32 = 20;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -76,6 +76,8 @@ pub(crate) use lock_conn;
 /// rusqlite::Connection 本身不是 Sync 的，因此需要这层包装。
 pub struct Database {
     pub(crate) conn: Mutex<Connection>,
+    /// 请求日志总数缓存，见 `services::usage_stats::LogCountCache`
+    pub(crate) log_count_cache: Mutex<Option<crate::services::usage_stats::LogCountCache>>,
 }
 
 fn register_db_change_hook(conn: &Connection) {
@@ -118,6 +120,7 @@ impl Database {
 
         let db = Self {
             conn: Mutex::new(conn),
+            log_count_cache: Mutex::new(None),
         };
         db.create_tables()?;
 
@@ -192,6 +195,7 @@ impl Database {
 
         let db = Self {
             conn: Mutex::new(conn),
+            log_count_cache: Mutex::new(None),
         };
         db.create_tables()?;
         db.ensure_model_pricing_seeded()?;

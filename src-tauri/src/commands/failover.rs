@@ -116,9 +116,10 @@ pub async fn get_available_providers_for_failover(
         .collect())
 }
 
-/// 添加供应商到故障转移队列
+/// 添加供应商到故障转移队列。托盘的故障转移子菜单只列队列成员：队列一变就重建。
 #[tauri::command]
 pub async fn add_to_failover_queue(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     app_type: String,
     provider_id: String,
@@ -128,12 +129,15 @@ pub async fn add_to_failover_queue(
     state
         .db
         .add_to_failover_queue(&app_type, &provider_id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::tray::refresh_tray_menu(&app);
+    Ok(())
 }
 
 /// 从故障转移队列移除供应商
 #[tauri::command]
 pub async fn remove_from_failover_queue(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     app_type: String,
     provider_id: String,
@@ -142,7 +146,9 @@ pub async fn remove_from_failover_queue(
     state
         .db
         .remove_from_failover_queue(&app_type, &provider_id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::tray::refresh_tray_menu(&app);
+    Ok(())
 }
 
 /// 获取指定应用的自动故障转移开关状态（从 proxy_config 表读取）
@@ -258,9 +264,14 @@ pub async fn set_auto_failover_enabled(
 
     // 开启前先切到 P1。只有切换成功后才写入 auto_failover_enabled=true，
     // 避免 P1 不可切换（例如 official provider）时留下“开关已开但目标未切”的脏状态。
+    // Stack 模式不做故障转移，切换在锁内拒绝（见 `switch_route_for_failover`）。
     if enabled {
-        if let Err(e) =
-            crate::mode::controller::switch_route(state.inner(), &app_enum, &p1_provider_id).await
+        if let Err(e) = crate::mode::controller::switch_route_for_failover(
+            state.inner(),
+            &app_enum,
+            &p1_provider_id,
+        )
+        .await
         {
             if let Some(provider_id) = auto_added_provider_id {
                 let _ = state.db.remove_from_failover_queue(&app_type, &provider_id);

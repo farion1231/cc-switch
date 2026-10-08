@@ -444,6 +444,7 @@ command = "say"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,

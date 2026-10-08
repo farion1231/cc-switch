@@ -20,17 +20,71 @@ use crate::error::AppError;
 /// 为了让 Windows CI/本地测试能稳定隔离真实用户数据，可通过 `CC_SWITCH_TEST_HOME`
 /// 显式覆盖 home dir（仅用于测试/调试场景）。
 pub fn get_home_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("CC_SWITCH_TEST_HOME") {
-        let trimmed = home.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
+    if let Some(home) = test_home_override() {
+        return home;
     }
 
     dirs::home_dir().unwrap_or_else(|| {
         log::warn!("无法获取用户主目录，回退到当前目录");
         PathBuf::from(".")
     })
+}
+
+/// 检测路径是否为 WSL 网络路径（如 \\wsl$\Ubuntu\... 或 \\wsl.localhost\Ubuntu\...）
+/// 注意：仅检测直接 UNC 路径，映射磁盘符（如 Z: -> \\wsl$\...）无法检测
+#[cfg(windows)]
+pub(crate) fn is_wsl_path(path: &Path) -> bool {
+    use std::path::Prefix;
+    if let Some(Component::Prefix(prefix)) = path.components().next() {
+        match prefix.kind() {
+            Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) => {
+                let s = server.to_string_lossy();
+                s.eq_ignore_ascii_case("wsl$") || s.eq_ignore_ascii_case("wsl.localhost")
+            }
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn is_wsl_path(_path: &Path) -> bool {
+    false
+}
+
+/// 临时目录在 WSL 共享路径上时（WSL2 夜间测试），SQLite 拿不到文件锁，
+/// 在磁盘上建 SQLite 夹具的测试只能跳过。
+#[cfg(test)]
+pub(crate) fn sqlite_unsupported_in_temp_dir() -> bool {
+    let temp = std::env::temp_dir();
+    let unsupported = is_wsl_path(&temp);
+    if unsupported {
+        eprintln!(
+            "temp dir {} is a WSL share where SQLite cannot lock; skipping",
+            temp.display()
+        );
+    }
+    unsupported
+}
+
+/// `CC_SWITCH_TEST_HOME` 的覆盖值（测试/调试用的 home 覆盖）。
+///
+/// 返回 `Some` 即表示显式覆盖生效——此时任何基于“库里有没有 db”的启发式回退
+/// 都不该再介入，否则测试会被引导到真实用户数据上。
+///
+/// 用 `var_os` 而非 `var`：非 Unicode 的取值只应让路径变 lossy，而不该让
+/// “覆盖是否存在”的判断失效、进而退回真实用户目录。
+fn test_home_override() -> Option<PathBuf> {
+    let raw = std::env::var_os("CC_SWITCH_TEST_HOME")?;
+    // to_string_lossy 的结果必须先绑住，否则 trim 借的是一个已释放的临时值。
+    let lossy = raw.to_string_lossy();
+    let trimmed = lossy.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
 }
 
 /// 获取 Claude Code 配置目录路径
@@ -267,6 +321,16 @@ pub fn get_app_config_dir() -> PathBuf {
     // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
     // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
     // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
+    //
+    // `CC_SWITCH_TEST_HOME` 是测试用的显式 home 覆盖，必须在这里短路：测试的临时
+    // 目录本来就不带 cc-switch.db，若不先返回，下面的 HOME 回退会把测试指向真实
+    // 用户库（Windows 上 runner 的 HOME 下常常确实有该 db），既污染用户数据，又让
+    // 隔离测试读到别人写的状态而失败。
+    #[cfg(windows)]
+    if test_home_override().is_some() {
+        return default_dir;
+    }
+
     #[cfg(windows)]
     {
         let default_db = default_dir.join("cc-switch.db");
@@ -619,6 +683,20 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
 mod tests {
     use super::*;
 
+    /// 共享的环境变量互斥锁：改 `HOME` / `CC_SWITCH_TEST_HOME` 这类进程级
+    /// 状态的测试都必须经它（配合 `#[serial_test::serial]`）。锁必须放在
+    /// 函数里经 `OnceLock` 取用——写成某个测试函数体内的 `static` 只对那一个
+    /// 测试可见，等于没有互斥。
+    ///
+    /// 目前唯一使用者是下面的 Windows 回归测试，故同样 cfg 掉，避免在
+    /// Linux/macOS 的 `clippy -D warnings` 里变成 never-used。
+    #[cfg(windows)]
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        use std::sync::OnceLock;
+        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     fn assert_atomic_write_replaces_existing_file(dir: &Path) {
         let path = dir.join("atomic-write-contract.json");
         std::fs::write(&path, b"old contents").unwrap();
@@ -916,6 +994,51 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&sorted_a).unwrap(),
             serde_json::to_string(&sorted_b).unwrap(),
+        );
+    }
+
+    /// 回归：`CC_SWITCH_TEST_HOME` 必须盖过 v3.10.3 的 `HOME` 兼容回退。
+    ///
+    /// Windows 上回退只看"默认位置有没有 cc-switch.db"，而测试临时目录里通常没有，
+    /// 于是会被引向 `HOME/.cc-switch`——runner 的 HOME 下往往真有一份 db，测试就此
+    /// 读写到真实用户数据（既污染用户库，又让断言读到别人写下的状态）。
+    #[cfg(windows)]
+    #[test]
+    #[serial_test::serial]
+    fn test_home_short_circuits_the_home_legacy_fallback() {
+        // 进程级环境变量的读写必须与同样改它们的测试互斥。锁是模块级共享的
+        // （写成测试函数体内的 static 只能锁住自己，等于没锁），见
+        // `proxy::http_client` 里同一套 env_lock() 用法。
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+
+        // 假装 HOME 指向另一处，并且那里有一份 db——正是会触发回退的形状
+        let legacy_home = tempfile::tempdir().expect("tempdir");
+        let legacy_dir = legacy_home.path().join(".cc-switch");
+        std::fs::create_dir_all(&legacy_dir).expect("create legacy dir");
+        std::fs::write(legacy_dir.join("cc-switch.db"), b"legacy").expect("seed legacy db");
+
+        let test_home = tempfile::tempdir().expect("tempdir");
+        let saved_home = std::env::var_os("HOME");
+        let saved_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+
+        std::env::set_var("HOME", legacy_home.path());
+        std::env::set_var("CC_SWITCH_TEST_HOME", test_home.path());
+
+        let dir = get_app_config_dir();
+
+        match saved_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match saved_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        let expected = test_home.path().join(".cc-switch");
+        assert_eq!(
+            dir, expected,
+            "测试 home 优先：不得回退到 HOME 下的旧库目录"
         );
     }
 }

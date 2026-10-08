@@ -1,16 +1,18 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { useModelStats } from "@/lib/query/usage";
-import { fmtUsd } from "./format";
+import { TablePagination, useClientPagination } from "./TablePagination";
+import { cn } from "@/lib/utils";
+import {
+  fmtInt,
+  fmtUsd,
+  formatTokensCompact,
+  getLocaleFromLanguage,
+  getResolvedLang,
+} from "./format";
+import { usageTable } from "./usageTable";
+import { SuccessSpeedCells, SuccessSpeedHeaders } from "./statsColumns";
 import type { UsageRangeSelection } from "@/types/usage";
 
 type SortKey =
@@ -43,15 +45,18 @@ export function ModelStatsTable({
   model,
   refreshIntervalMs,
 }: ModelStatsTableProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const { data: stats, isLoading } = useModelStats(
     range,
     { appType, providerName, model },
-    { refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false },
+    {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
   );
 
-  const sortedStats = useMemo(
+  const rows = useMemo(
     () =>
       [...(stats ?? [])].sort((left, right) => {
         const difference =
@@ -62,6 +67,10 @@ export function ModelStatsTable({
         return left.model.localeCompare(right.model);
       }),
     [sort, stats],
+  );
+  const pagination = useClientPagination(
+    rows,
+    JSON.stringify([range, appType, providerName, model, sort]),
   );
 
   const toggleSort = (key: SortKey) => {
@@ -84,79 +93,103 @@ export function ModelStatsTable({
   };
 
   if (isLoading) {
-    return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;
+    return <div className={usageTable.skeleton} />;
   }
 
   const sortableColumns: ReadonlyArray<readonly [SortKey, string]> = [
     ["requestCount", t("usage.requests")],
     ["totalTokens", t("usage.tokens")],
-    ["totalCost", t("usage.totalCost")],
+    ["totalCost", t("usage.cost")],
     ["avgCostPerRequest", t("usage.avgCost")],
   ];
 
   return (
-    <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-hidden">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{t("usage.model")}</TableHead>
-            {sortableColumns.map(([key, label]) => (
-              <TableHead
-                key={key}
-                className="text-right"
-                aria-sort={
-                  sort.key === key
-                    ? sort.direction === "asc"
-                      ? "ascending"
-                      : "descending"
-                    : "none"
-                }
-              >
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 hover:text-foreground"
-                  onClick={() => toggleSort(key)}
+    <div className="flex flex-col">
+      <div className={usageTable.scroller}>
+        <table
+          className={cn(usageTable.table, "min-w-[620px]")}
+          aria-label={t("usage.modelStats")}
+        >
+          <thead>
+            <tr className={usageTable.headRow}>
+              <th className={usageTable.th}>{t("usage.model")}</th>
+              {sortableColumns.map(([key, label]) => (
+                <th
+                  key={key}
+                  className={usageTable.thEnd}
+                  aria-sort={
+                    sort.key === key
+                      ? sort.direction === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
                 >
-                  {label}
-                  {sortIcon(key)}
-                </button>
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {sortedStats.length === 0 ? (
-            <TableRow>
-              <TableCell
-                colSpan={5}
-                className="text-center text-muted-foreground"
-              >
-                {t("usage.noData")}
-              </TableCell>
-            </TableRow>
-          ) : (
-            sortedStats.map((stat) => (
-              <TableRow key={stat.model}>
-                <TableCell className="font-mono text-sm">
-                  {stat.model}
-                </TableCell>
-                <TableCell className="text-right">
-                  {stat.requestCount.toLocaleString()}
-                </TableCell>
-                <TableCell className="text-right">
-                  {stat.totalTokens.toLocaleString()}
-                </TableCell>
-                <TableCell className="text-right">
-                  {fmtUsd(stat.totalCost, 4)}
-                </TableCell>
-                <TableCell className="text-right">
-                  {fmtUsd(stat.avgCostPerRequest, 6)}
-                </TableCell>
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 hover:text-fg-1"
+                    onClick={() => toggleSort(key)}
+                  >
+                    {label}
+                    {sortIcon(key)}
+                  </button>
+                </th>
+              ))}
+              <SuccessSpeedHeaders />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className={usageTable.empty}>
+                  {t("usage.noData")}
+                </td>
+              </tr>
+            ) : (
+              pagination.pageRows.map((stat) => (
+                <tr key={stat.model} className={usageTable.row}>
+                  <td className={cn(usageTable.td, usageTable.mono)}>
+                    <span
+                      className="block max-w-[320px] truncate"
+                      title={stat.model}
+                    >
+                      {stat.model}
+                    </span>
+                  </td>
+                  <td className={usageTable.tdEnd}>
+                    {fmtInt(stat.requestCount, locale)}
+                  </td>
+                  <td
+                    className={usageTable.tdEnd}
+                    title={fmtInt(stat.totalTokens, locale)}
+                  >
+                    {formatTokensCompact(stat.totalTokens, locale)}
+                  </td>
+                  <td
+                    className={cn(usageTable.tdEnd, "font-medium")}
+                    title={fmtUsd(stat.totalCost, 6)}
+                  >
+                    {fmtUsd(stat.totalCost, 2)}
+                  </td>
+                  <td
+                    className={cn(usageTable.tdEnd, "font-medium")}
+                    title={fmtUsd(stat.avgCostPerRequest, 6)}
+                  >
+                    {fmtUsd(stat.avgCostPerRequest, 4)}
+                  </td>
+                  <SuccessSpeedCells stat={stat} />
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+      <TablePagination
+        page={pagination.page}
+        totalPages={pagination.totalPages}
+        total={pagination.total}
+        onPageChange={pagination.setPage}
+      />
     </div>
   );
 }
