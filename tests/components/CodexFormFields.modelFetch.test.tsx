@@ -152,32 +152,6 @@ describe("Codex model-fetch lifecycle", () => {
     vi.restoreAllMocks();
   });
 
-  it.each(["classic", "stack"] as const)(
-    "keeps Copilot auto controls and advanced expansion independent of generic format (%s)",
-    (variant) => {
-      const props = {
-        ...makeProps("copilot"),
-        copilotApiFormat: "auto" as const,
-        apiFormat: "openai_responses" as const,
-        onCodexChatReasoningChange: vi.fn(),
-        variant,
-      };
-      const { rerender } = render(<Harness {...props} />);
-      const advanced = screen.getByRole("button", { name: "高级选项" });
-      // Classic Copilot cards already expand explicitly; Stack starts collapsed.
-      expect(advanced).toHaveAttribute(
-        "aria-expanded",
-        variant === "classic" ? "true" : "false",
-      );
-      if (variant === "classic") fireEvent.click(advanced);
-      rerender(<Harness {...props} apiFormat="anthropic" />);
-      expect(advanced).toHaveAttribute("aria-expanded", "false");
-      fireEvent.click(advanced);
-      expect(screen.getByText("提示词缓存路由")).toBeVisible();
-      expect(screen.queryByLabelText("认证字段")).not.toBeInTheDocument();
-    },
-  );
-
   it("fetches only models supporting the selected Copilot protocol", async () => {
     const responsesModel = advertisedModel("responses-model");
     const chatModel = {

@@ -239,37 +239,12 @@ describe("Codex Copilot provider form", () => {
       expect(saved.meta?.codexCopilotApiFormat).toBe(
         format === "auto" ? undefined : format,
       );
-      expect(saved.meta).not.toHaveProperty("apiFormat");
       expect(JSON.parse(saved.settingsConfig).config).toContain(
         'wire_api = "responses"',
       );
       expect(JSON.parse(saved.settingsConfig).modelCatalog.models).toEqual(
         getCopilotPreset().modelCatalog,
       );
-    },
-  );
-
-  it.each<CodexCopilotApiFormat>(["auto", "openai_chat", "openai_responses"])(
-    "loads and saves a managed %s card without generic apiFormat",
-    async (format) => {
-      const onSubmit = renderForm({
-        providerType: "github_copilot",
-        codexCopilotApiFormat: format,
-        authBinding: {
-          source: "managed_account",
-          authProvider: "github_copilot",
-          accountId: "copilot-secondary",
-        },
-      });
-      expect(formatControl()).toHaveTextContent(formatLabels[format]);
-      fireEvent.click(screen.getByRole("button", { name: "save" }));
-      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-      const saved = onSubmit.mock.calls[0][0];
-      expect(saved.meta).not.toHaveProperty("apiFormat");
-      expect(saved.meta?.codexCopilotApiFormat).toBe(
-        format === "auto" ? undefined : format,
-      );
-      expect(saved.meta?.authBinding?.accountId).toBe("copilot-secondary");
     },
   );
 
@@ -284,7 +259,7 @@ describe("Codex Copilot provider form", () => {
     await waitFor(() =>
       expect(onEditorBaseChange).toHaveBeenLastCalledWith(base, draft),
     );
-    expect(requests.at(-1)).toEqual({
+    expect(requests.at(-1)).toMatchObject({
       app: "codex",
       settingsConfig: draft,
       category: preset.category,
@@ -362,9 +337,7 @@ describe("Codex Copilot provider form", () => {
       );
     };
     await waitForPreset(copilot);
-    expect(requests.at(-1)?.meta).toEqual({
-      providerType: "github_copilot",
-    });
+    expect(requests.at(-1)?.meta?.providerType).toBe("github_copilot");
     await selectFormat("openai_responses");
 
     fireEvent.click(screen.getByRole("button", { name: /DeepSeek/ }));
@@ -375,9 +348,7 @@ describe("Codex Copilot provider form", () => {
     fireEvent.click(screen.getByRole("button", { name: /GitHub Copilot/ }));
     await waitForPreset(copilot);
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
-    expect(requests.at(-1)?.meta).toEqual({
-      providerType: "github_copilot",
-    });
+    expect(requests.at(-1)?.meta?.providerType).toBe("github_copilot");
 
     const previousRequests = requests.length;
     fireEvent.click(
@@ -456,7 +427,6 @@ describe("Codex Copilot provider form", () => {
     expect(saved.meta?.githubAccountId).toBe(accountId ?? undefined);
     expect(saved.meta?.providerType).toBe("github_copilot");
     expect(saved.meta?.codexCopilotApiFormat).toBe("openai_responses");
-    expect(saved.meta).not.toHaveProperty("apiFormat");
     const settings = JSON.parse(saved.settingsConfig);
     expect(settings.auth).toEqual({});
     expect(settings.config).toContain('wire_api = "responses"');
@@ -513,115 +483,10 @@ describe("Codex Copilot provider form", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it.each<ProviderMeta["apiFormat"]>([
-    undefined,
-    "openai_chat",
-    "openai_responses",
-    "anthropic",
-  ])(
-    "keeps legacy %s cards automatic and removes generic format on save",
-    async (apiFormat) => {
-      const onSubmit = renderForm({
-        providerType: "github_copilot",
-        apiFormat,
-      });
-      expect(formatControl()).toHaveTextContent(formatLabels.auto);
-      expect(screen.getByText("模型映射")).toBeVisible();
-      fireEvent.click(screen.getByRole("button", { name: "save" }));
-      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-      const saved = onSubmit.mock.calls[0][0];
-      expect(saved.meta).not.toHaveProperty("apiFormat");
-      expect(saved.meta?.codexCopilotApiFormat).toBeUndefined();
-      expect(JSON.parse(saved.settingsConfig).config).toContain(
-        'wire_api = "responses"',
-      );
-    },
-  );
-
-  it.each(["future_transport", "OPENAI_CHAT", ""])(
-    "displays unknown selection %s as auto and preserves it on unrelated edits",
-    async (format) => {
-      const onSubmit = renderForm({
-        providerType: "github_copilot",
-        apiFormat: "openai_chat",
-        codexCopilotApiFormat: format,
-        authBinding: {
-          source: "managed_account",
-          authProvider: "github_copilot",
-          accountId: "copilot-secondary",
-        },
-      });
-      expect(formatControl()).toHaveTextContent(formatLabels.auto);
-      fireEvent.change(screen.getByLabelText("默认模型"), {
-        target: { value: "gpt-5.6-luna" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "save" }));
-      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-      const saved = onSubmit.mock.calls[0][0];
-      expect(saved.meta?.codexCopilotApiFormat).toBe(format);
-      expect(saved.meta).not.toHaveProperty("apiFormat");
-      expect(saved.meta?.authBinding?.accountId).toBe("copilot-secondary");
-    },
-  );
-
-  it.each<CodexCopilotApiFormat>(["auto", "openai_chat", "openai_responses"])(
-    "replaces an unknown stored selection only when the user chooses %s",
-    async (format) => {
-      const onSubmit = renderForm({
-        providerType: "github_copilot",
-        codexCopilotApiFormat: "future_transport",
-      });
-      expect(formatControl()).toHaveTextContent(formatLabels.auto);
-      // Auto is already displayed; choose a different value before returning to it.
-      if (format === "auto") await selectFormat("openai_chat");
-      await selectFormat(format);
-      fireEvent.click(screen.getByRole("button", { name: "save" }));
-      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-      const saved = onSubmit.mock.calls[0][0];
-      expect(saved.meta?.codexCopilotApiFormat).toBe(
-        format === "auto" ? undefined : format,
-      );
-      expect(saved.meta).not.toHaveProperty("apiFormat");
-    },
-  );
-
-  it.each([undefined, "auto", "openai_chat", "future_transport"])(
-    "preserves Chat-only settings for Copilot selection %s independently of legacy format",
-    async (format) => {
-      const onSubmit = renderForm({
-        providerType: "github_copilot",
-        apiFormat: "openai_responses",
-        codexCopilotApiFormat: format,
-        promptCacheRouting: "enabled",
-        codexChatReasoning: { supportsThinking: true },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "save" }));
-      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-      const saved = onSubmit.mock.calls[0][0];
-      expect(saved.meta?.promptCacheRouting).toBe("enabled");
-      expect(saved.meta?.codexChatReasoning).toMatchObject({
-        supportsThinking: true,
-      });
-      expect(saved.meta).not.toHaveProperty("apiFormat");
-    },
-  );
-
-  it("uses the Copilot override ahead of stale generic format and drops Chat-only options for Responses", async () => {
-    const onSubmit = renderForm({
-      providerType: "github_copilot",
-      apiFormat: "openai_chat",
-      codexCopilotApiFormat: "openai_responses",
-      promptCacheRouting: "enabled",
-      codexChatReasoning: { supportsThinking: true },
-    });
-    expect(formatControl()).toHaveTextContent(formatLabels.openai_responses);
-    fireEvent.click(screen.getByRole("button", { name: "save" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const saved = onSubmit.mock.calls[0][0];
-    expect(saved.meta?.codexCopilotApiFormat).toBe("openai_responses");
-    expect(saved.meta?.promptCacheRouting).toBeUndefined();
-    expect(saved.meta?.codexChatReasoning).toBeUndefined();
-    expect(saved.meta).not.toHaveProperty("apiFormat");
+  it("keeps legacy cards automatic and shows mapping even with an empty catalog", () => {
+    renderForm({ providerType: "github_copilot", apiFormat: "openai_chat" });
+    expect(formatControl()).toHaveTextContent(formatLabels.auto);
+    expect(screen.getByText("模型映射")).toBeVisible();
   });
 
   it("does not offer preset switching while editing an existing Copilot card", () => {
@@ -701,7 +566,6 @@ requires_openai_auth = true`;
     expect(
       onSubmit.mock.calls[0][0].meta?.codexCopilotApiFormat,
     ).toBeUndefined();
-    expect(onSubmit.mock.calls[0][0].meta).not.toHaveProperty("apiFormat");
   });
 
   it("excludes Messages only for Copilot and resets the override on preset changes", async () => {

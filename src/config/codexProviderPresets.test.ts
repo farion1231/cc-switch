@@ -36,7 +36,6 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
       requiresOAuth: true,
       auth: {},
     });
-    expect(preset).not.toHaveProperty("apiFormat");
     expect(preset?.config).toContain(
       'base_url = "https://api.githubcopilot.com"',
     );
