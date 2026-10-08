@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CC Switch",
-  "version": "3.20.4",
+  "version": "4.0.4",
   "identifier": "com.ccswitch.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -15,6 +15,7 @@
         "label": "main",
         "title": "",
         "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 14, "y": 16 },
         "width": 1000,
         "height": 650,
         "minWidth": 900,

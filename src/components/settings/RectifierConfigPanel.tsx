@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
@@ -68,7 +68,7 @@ export function RectifierConfigPanel() {
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
           <Label>{t("settings.advanced.rectifier.enabled")}</Label>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-fg-2">
             {t("settings.advanced.rectifier.enabledDescription")}
           </p>
         </div>
@@ -79,13 +79,13 @@ export function RectifierConfigPanel() {
       </div>
 
       <div className="space-y-4">
-        <h4 className="text-sm font-medium text-muted-foreground">
+        <h4 className="text-sm font-medium text-fg-2">
           {t("settings.advanced.rectifier.requestGroup")}
         </h4>
         <div className="flex items-center justify-between pl-4">
           <div className="space-y-0.5">
             <Label>{t("settings.advanced.rectifier.thinkingSignature")}</Label>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-fg-2">
               {t("settings.advanced.rectifier.thinkingSignatureDescription")}
             </p>
           </div>
@@ -100,7 +100,7 @@ export function RectifierConfigPanel() {
         <div className="flex items-center justify-between pl-4">
           <div className="space-y-0.5">
             <Label>{t("settings.advanced.rectifier.thinkingBudget")}</Label>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-fg-2">
               {t("settings.advanced.rectifier.thinkingBudgetDescription")}
             </p>
           </div>
@@ -115,7 +115,7 @@ export function RectifierConfigPanel() {
         <div className="flex items-center justify-between pl-4">
           <div className="space-y-0.5">
             <Label>{t("settings.advanced.rectifier.mediaFallback")}</Label>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-fg-2">
               {t("settings.advanced.rectifier.mediaFallbackDescription")}
             </p>
           </div>
@@ -130,7 +130,7 @@ export function RectifierConfigPanel() {
         <div className="flex items-center justify-between pl-8">
           <div className="space-y-0.5">
             <Label>{t("settings.advanced.rectifier.mediaHeuristic")}</Label>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-fg-2">
               {t("settings.advanced.rectifier.mediaHeuristicDescription")}
             </p>
           </div>
@@ -149,7 +149,7 @@ export function RectifierConfigPanel() {
           <h3 className="text-sm font-medium">
             {t("settings.advanced.optimizer.title")}
           </h3>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-fg-2">
             {t("settings.advanced.optimizer.description")}
           </p>
         </div>
@@ -173,7 +173,7 @@ export function RectifierConfigPanel() {
                 <Label>
                   {t("settings.advanced.optimizer.thinkingOptimizer")}
                 </Label>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-fg-2">
                   {t(
                     "settings.advanced.optimizer.thinkingOptimizerDescription",
                   )}
@@ -191,7 +191,7 @@ export function RectifierConfigPanel() {
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
                 <Label>{t("settings.advanced.optimizer.cacheInjection")}</Label>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-fg-2">
                   {t("settings.advanced.optimizer.cacheInjectionDescription")}
                 </p>
               </div>

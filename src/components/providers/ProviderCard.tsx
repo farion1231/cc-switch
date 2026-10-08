@@ -11,36 +11,30 @@ import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
-import type { OpenClawProviderConfig, Provider } from "@/types";
+import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { ProviderActions } from "@/components/providers/ProviderActions";
-import { ProviderIcon } from "@/components/ProviderIcon";
+import { ProviderIconBox } from "@/components/ProviderIconBox";
+import { HoverTip } from "@/components/ui/hover-tip";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
-import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
-import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
-import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import {
-  resolveCodexOfficialIdentity,
-  supportsOfficialProxyTakeover,
-  providerNeedsRouting,
-} from "@/utils/providerCapabilities";
+import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
-import { ProviderStatusBadge } from "@/components/providers/ProviderStatusBadge";
 import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
+import { ProviderCardActions } from "./ProviderCardActions";
+import type { CardChip, CardPresentation, CardTone } from "./presentation";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -50,36 +44,71 @@ interface DragHandleProps {
 
 interface ProviderCardProps {
   provider: Provider;
-  isCurrent: boolean;
   appId: AppId;
-  isInConfig?: boolean; // OpenCode: 是否已添加到 opencode.json
-  isOmo?: boolean;
-  isOmoSlim?: boolean;
-  onSwitch: (provider: Provider) => void;
+  /** 卡片怎么画：模式色、状态 / 按钮、徽标（由列表按模式算好） */
+  presentation: CardPresentation;
+  /** 用来决定额度是否自动查询（共存式应用看 isInConfig） */
+  isCurrent: boolean;
+  isInConfig?: boolean;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
-  onRemoveFromConfig?: (provider: Provider) => void;
-  onDisableOmo?: () => void;
-  onDisableOmoSlim?: () => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
-  onDuplicate: (provider: Provider) => void;
+  onDuplicate?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
-  isProxyRunning: boolean;
-  isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
   dragHandleProps?: DragHandleProps;
-  isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
-  failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
-  isInFailoverQueue?: boolean; // 是否在故障转移队列中
-  onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
-  activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
-  // OpenClaw: default model
-  isDefaultModel?: boolean;
-  isRemovalProtected?: boolean;
-  isStateChangeProtected?: boolean;
-  onSetAsDefault?: (modelId?: string) => void;
+}
+
+/** 当前那张：模式色边框 + 淡底；共存式「已添加」是中性的。 */
+const TONE_CLASS: Record<CardTone, string> = {
+  direct: "border-direct-border bg-direct-soft",
+  route: "border-route-border bg-route-soft",
+  stack: "border-stack-border bg-stack-soft",
+  neutral: "border-border-strong bg-subtle",
+};
+
+const CHIP_CLASS: Record<CardChip["tone"], string> = {
+  outline: "border border-border-strong text-fg-2",
+  direct: "bg-direct-soft text-direct-text",
+  route: "bg-route-soft text-route-text",
+  stack: "bg-stack-soft text-stack-text",
+  success: "bg-success-soft text-success-text",
+  warning: "bg-warning-soft text-warning-text",
+  danger: "bg-danger-soft text-danger-text",
+};
+
+export function CardChipBadge({ chip }: { chip: CardChip }) {
+  return (
+    <span
+      title={chip.title}
+      className={cn(
+        "inline-flex h-[18px] shrink-0 items-center whitespace-nowrap rounded-full px-1.5 text-badge",
+        CHIP_CLASS[chip.tone],
+        chip.title && "cursor-help",
+      )}
+    >
+      {chip.label}
+    </span>
+  );
+}
+
+function HealthChip({
+  consecutiveFailures,
+  isHealthy,
+}: {
+  consecutiveFailures: number;
+  isHealthy?: boolean;
+}) {
+  const { t } = useTranslation();
+  const chip: CardChip =
+    consecutiveFailures === 0
+      ? { key: "health", label: t("health.operational"), tone: "success" }
+      : isHealthy !== false
+        ? { key: "health", label: t("health.degraded"), tone: "warning" }
+        : { key: "health", label: t("health.circuitOpen"), tone: "danger" };
+  return <CardChipBadge chip={chip} />;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -167,36 +196,19 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
 
 export function ProviderCard({
   provider,
-  isCurrent,
   appId,
+  presentation,
+  isCurrent,
   isInConfig = true,
-  isOmo = false,
-  isOmoSlim = false,
-  onSwitch,
   onEdit,
   onDelete,
-  onRemoveFromConfig,
-  onDisableOmo,
-  onDisableOmoSlim,
   onConfigureUsage,
   onOpenWebsite,
   onDuplicate,
   onTest,
   onOpenTerminal,
   isTesting,
-  isProxyRunning,
-  isProxyTakeover = false,
   dragHandleProps,
-  isAutoFailoverEnabled = false,
-  failoverPriority,
-  isInFailoverQueue = false,
-  onToggleFailover,
-  activeProviderId,
-  // OpenClaw: default model
-  isDefaultModel,
-  isRemovalProtected,
-  isStateChangeProtected,
-  onSetAsDefault,
 }: ProviderCardProps) {
   const { t } = useTranslation();
   const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
@@ -227,16 +239,10 @@ export function ProviderCard({
           `OpenAI Official (${managedCodexAccount.login})`),
   );
 
-  // OMO and OMO Slim share the same card behavior
-  const isAnyOmo = isOmo || isOmoSlim;
-  const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
-  const isAdditiveMode =
-    (appId === "opencode" && !isAnyOmo) || appId === "pi" || appId === "mcode";
-
   const { data: health } = useProviderHealth(
     provider.id,
     appId,
-    isProxyAppId(appId),
+    Boolean(presentation.showHealth) && isProxyAppId(appId),
   );
 
   const fallbackUrlText = t("provider.notConfigured", {
@@ -246,15 +252,6 @@ export function ProviderCard({
   const displayUrl = useMemo(() => {
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
-
-  const openclawDefaultModelOptions = useMemo(() => {
-    if (appId !== "openclaw") return [];
-    const config = provider.settingsConfig as OpenClawProviderConfig;
-    if (!Array.isArray(config?.models)) return [];
-    return config.models
-      .filter((model) => typeof model.id === "string" && model.id.trim())
-      .map((model) => ({ id: model.id, name: model.name }));
-  }, [appId, provider.settingsConfig]);
 
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
@@ -277,39 +274,16 @@ export function ProviderCard({
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
   const officialSubscriptionEnabled =
     supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
-  // 官方判定只认显式 category === "official"（SSOT），不回退 isOfficial 的空字段启发式。
-  // 理由（此判定曾在「纯 category ↔ category+isOfficial 回退」间反复，结论钉死于此）：
-  //  1) 封号保护是高代价决策，不该建立在「base_url/key 缺失」这种脆弱信号上——它无法区分
-  //     「想直连官方」与「自定义但还没填完」，两者都表现为字段为空，必然误伤后者。
-  //  2) 启发式在 UI 多拦的部分，执行层 useProviderActions.ts 也只认 category === "official"、
-  //     并不兑现（绕过 UI 即可切换）→ 属虚保护，却以误伤 category 缺失的自定义供应商为代价。
-  //  3) 预设导入的官方一定带 category="official"，category 缺失的「真官方」现实中≈不存在。
-  // 真官方就该有显式 category；手动新建官方应引导标注，而不是靠空字段猜。
-  const supportsOfficialRouting = supportsOfficialProxyTakeover(
-    appId,
-    provider,
-  );
-  const isOfficialBlockedByProxy =
-    isProxyTakeover &&
-    provider.category === "official" &&
-    !supportsOfficialRouting;
+
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
-  // Hermes v12+ overlay entries live under the `providers:` dict and are
-  // read-only here — writes have to go through Hermes Web UI.
-  const isHermesReadOnly =
-    appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     appId === "codex"
       ? isBoundCodexOfficial
       : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
-  // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
-  // apiFormat 被改动/缺省影响。此 badge 仅在 Codex 视图渲染，故加 appId 守卫。
-  const codexNeedsRouting =
-    appId === "codex" && providerNeedsRouting(appId, provider);
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
@@ -337,6 +311,9 @@ export function ProviderCard({
     usage.data.length > 1;
 
   const [isExpanded, setIsExpanded] = useState(false);
+  const expandLabel = isExpanded
+    ? t("usage.collapse", { defaultValue: "收起" })
+    : t("usage.expand", { defaultValue: "展开" });
 
   useEffect(() => {
     if (hasMultiplePlans) {
@@ -350,267 +327,157 @@ export function ProviderCard({
     }
     onOpenWebsite(displayUrl);
   };
-
-  // 判断是否是"当前使用中"的供应商
-  // - OMO/OMO Slim 供应商：使用 isCurrent
-  // - OpenClaw：使用默认模型归属的 provider 作为当前项（蓝色边框）
-  // - OpenCode（非 OMO）：不存在"当前"概念，返回 false
-  // - 故障转移模式：代理实际使用的供应商（activeProviderId）
-  // - 普通模式：isCurrent
-  const isActiveProvider = isAnyOmo
-    ? isCurrent
-    : appId === "openclaw"
-      ? Boolean(isDefaultModel)
-      : appId === "opencode" || appId === "pi" || appId === "mcode"
-        ? false
-        : isAutoFailoverEnabled
-          ? activeProviderId === provider.id
-          : isCurrent;
-
-  const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
-  const hasPersistentConfigHighlight = isAdditiveMode && isInConfig;
-  const shouldUseBlue =
-    (isAnyOmo && isActiveProvider) ||
-    (!isAnyOmo &&
-      !isProxyTakeover &&
-      (isActiveProvider || hasPersistentConfigHighlight));
-  const hasStateHighlight = shouldUseGreen || shouldUseBlue;
-
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
-        "bg-card text-card-foreground group",
-        isAutoFailoverEnabled || isProxyTakeover
-          ? "hover:border-emerald-500/50"
-          : "hover:border-border-active",
-        shouldUseGreen &&
-          "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
-        shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
-        !hasStateHighlight && "hover:shadow-sm",
-        dragHandleProps?.isDragging &&
-          "cursor-grabbing border-primary shadow-lg scale-105 z-10",
+        "group relative rounded-panel border transition-[border-color,box-shadow,background-color] duration-150",
+        presentation.tone
+          ? TONE_CLASS[presentation.tone]
+          : "border-border bg-surface hover:border-border-strong hover:shadow-v7-sm",
+        dragHandleProps?.isDragging && "z-10 cursor-grabbing shadow-v7-md",
       )}
     >
-      <div
-        className={cn(
-          "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
-          shouldUseGreen && "from-emerald-500/10",
-          shouldUseBlue && "from-blue-500/10",
-          !hasStateHighlight && "from-primary/10",
-          hasStateHighlight ? "opacity-100" : "opacity-0",
+      <div className="flex min-h-[58px] items-center gap-3 py-2.5 pe-3 ps-2">
+        {dragHandleProps ? (
+          <button
+            type="button"
+            className={cn(
+              "flex h-6 w-4 shrink-0 cursor-grab items-center justify-center text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing",
+              dragHandleProps.isDragging && "cursor-grabbing opacity-100",
+            )}
+            aria-label={t("provider.dragHandle")}
+            {...dragHandleProps.attributes}
+            {...dragHandleProps.listeners}
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
+        ) : (
+          <span className="w-4 shrink-0" />
         )}
-      />
-      <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          {dragHandleProps && (
-            <button
-              type="button"
-              className={cn(
-                "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
-                "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
-                dragHandleProps.isDragging && "cursor-grabbing",
-              )}
-              aria-label={t("provider.dragHandle")}
-              {...dragHandleProps.attributes}
-              {...dragHandleProps.listeners}
-            >
-              <GripVertical className="h-4 w-4" />
-            </button>
-          )}
 
-          <div className="h-8 w-8 flex-shrink-0 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
-            <ProviderIcon
-              icon={resolveProviderIcon(
-                appId,
-                provider.icon,
-                provider.iconColor,
+        <ProviderIconBox
+          icon={resolveProviderIcon(appId, provider.icon, provider.iconColor)}
+          name={provider.name}
+          color={provider.iconColor}
+          className={cn(
+            // 底色固定为白，图标颜色也要固定：单色（currentColor）图标和首字母
+            // fallback 不能继承深色模式下的浅色文字
+            "bg-white text-neutral-900",
+            presentation.dim && "opacity-60",
+          )}
+          fallbackClassName="bg-transparent text-neutral-600"
+        />
+
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h3
+              className={cn(
+                "m-0 min-w-0 truncate text-strong",
+                presentation.dim ? "text-fg-2" : "text-fg-1",
               )}
-              name={provider.name}
-              color={provider.iconColor}
-              size={20}
-            />
+              title={provider.name}
+            >
+              {provider.name}
+            </h3>
+            {presentation.chips.map((chip) => (
+              <CardChipBadge key={chip.key} chip={chip} />
+            ))}
+            {presentation.showHealth && health && (
+              <HealthChip
+                consecutiveFailures={health.consecutive_failures}
+                isHealthy={health.is_healthy}
+              />
+            )}
           </div>
 
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex flex-wrap items-center gap-2 min-h-7">
-              <h3
-                className={cn(
-                  "text-base font-semibold leading-none",
-                  codexOfficialIdentity && "min-w-0 flex-1 truncate",
-                )}
-                title={codexOfficialIdentity ? provider.name : undefined}
-              >
-                {provider.name}
-              </h3>
-
-              {isOmo && (
-                <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
-                  OMO
-                </span>
-              )}
-
-              {isOmoSlim && (
-                <span className="inline-flex items-center rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
-                  Slim
-                </span>
-              )}
-
-              {appId === "claude-desktop" &&
-                providerNeedsRouting(appId, provider) && (
-                  <ProviderStatusBadge
-                    tone="info"
-                    label={t("provider.needsRouting", {
-                      defaultValue: "需要路由",
+          {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+              {codexOfficialIdentity === "native_login" ? (
+                <span className="min-w-0 truncate" title={manualNote}>
+                  {manualNote ??
+                    t("codex.followCodexLoginDescription", {
+                      defaultValue: "账号会随 Codex CLI 当前登录变化",
                     })}
-                  />
-                )}
-
-              {appId === "claude" && providerNeedsRouting(appId, provider) && (
-                <ProviderStatusBadge
-                  tone="info"
-                  label={t("provider.needsRouting", {
-                    defaultValue: "需要路由",
-                  })}
-                />
-              )}
-
-              {codexNeedsRouting && (
-                <ProviderStatusBadge
-                  tone="info"
-                  label={t("provider.needsRouting", {
-                    defaultValue: "需要路由",
-                  })}
-                />
-              )}
-
-              {appId === "claude" && provider.category === "official" && (
-                <ProviderStatusBadge
-                  label={t("provider.noRoutingSupport", {
-                    defaultValue: "不支持路由",
-                  })}
-                />
-              )}
-
-              {isProxyRunning &&
-                !supportsOfficialRouting &&
-                isInFailoverQueue &&
-                health && (
-                  <ProviderHealthBadge
-                    consecutiveFailures={health.consecutive_failures}
-                    isHealthy={health.is_healthy}
-                  />
-                )}
-
-              {isAutoFailoverEnabled &&
-                !supportsOfficialRouting &&
-                isInFailoverQueue &&
-                failoverPriority && (
-                  <FailoverPriorityBadge priority={failoverPriority} />
-                )}
-
-              {isHermesReadOnly && (
-                <span
-                  className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
-                  title={t("provider.managedByHermesHint", {
-                    defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
-                  })}
-                >
-                  {t("provider.managedByHermes", {
-                    defaultValue: "Hermes Managed",
+                </span>
+              ) : managedCodexAccount ? (
+                <>
+                  <span
+                    className="min-w-0 truncate"
+                    title={manualNote ?? managedCodexAccount.login}
+                  >
+                    {manualNote ??
+                      (providerNameIncludesAccountLogin
+                        ? t("codex.openAiAccount", {
+                            defaultValue: "OpenAI 账号",
+                          })
+                        : managedCodexAccount.login)}
+                  </span>
+                  {managedCodexAccount.reauth_required && (
+                    <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {t("codexOauth.reauthBadge", "需要重新登录")}
+                    </span>
+                  )}
+                </>
+              ) : isCodexAuthStatusError ? (
+                <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {t("codex.accountStatusUnavailable", {
+                      defaultValue: "无法读取账号信息",
+                    })}
+                  </span>
+                </span>
+              ) : isCodexAuthStatusSuccess ? (
+                <>
+                  <span className="inline-flex min-w-0 items-center gap-1 text-sm text-warning-text">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">
+                      {t("codex.boundAccountUnavailable", {
+                        defaultValue: "绑定的账号不可用",
+                      })}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-body font-medium text-action-text hover:underline"
+                    onClick={() => onEdit(provider)}
+                  >
+                    {t("codex.chooseAccount", {
+                      defaultValue: "选择账号",
+                    })}
+                  </button>
+                </>
+              ) : (
+                <span className="min-w-0 truncate">
+                  {t("codex.accountLoading", {
+                    defaultValue: "正在加载账号…",
                   })}
                 </span>
               )}
             </div>
-
-            {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
-              <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
-                {codexOfficialIdentity === "native_login" ? (
-                  <span className="min-w-0 truncate" title={manualNote}>
-                    {manualNote ??
-                      t("codex.followCodexLoginDescription", {
-                        defaultValue: "账号会随 Codex CLI 当前登录变化",
-                      })}
-                  </span>
-                ) : managedCodexAccount ? (
-                  <>
-                    <span
-                      className="min-w-0 truncate"
-                      title={manualNote ?? managedCodexAccount.login}
-                    >
-                      {manualNote ??
-                        (providerNameIncludesAccountLogin
-                          ? t("codex.openAiAccount", {
-                              defaultValue: "OpenAI 账号",
-                            })
-                          : managedCodexAccount.login)}
-                    </span>
-                    {managedCodexAccount.reauth_required && (
-                      <span className="inline-flex shrink-0 items-center gap-1 text-amber-700 dark:text-amber-300">
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        {t("codexOauth.reauthBadge", "需要重新登录")}
-                      </span>
-                    )}
-                  </>
-                ) : isCodexAuthStatusError ? (
-                  <span className="inline-flex min-w-0 items-center gap-1 text-amber-700 dark:text-amber-300">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">
-                      {t("codex.accountStatusUnavailable", {
-                        defaultValue: "无法读取账号信息",
-                      })}
-                    </span>
-                  </span>
-                ) : isCodexAuthStatusSuccess ? (
-                  <>
-                    <span className="inline-flex min-w-0 items-center gap-1 text-sm text-amber-700 dark:text-amber-300">
-                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">
-                        {t("codex.boundAccountUnavailable", {
-                          defaultValue: "绑定的账号不可用",
-                        })}
-                      </span>
-                    </span>
-                    <button
-                      type="button"
-                      className="shrink-0 text-sm font-medium text-primary hover:underline"
-                      onClick={() => onEdit(provider)}
-                    >
-                      {t("codex.chooseAccount", {
-                        defaultValue: "选择账号",
-                      })}
-                    </button>
-                  </>
-                ) : (
-                  <span className="min-w-0 truncate">
-                    {t("codex.accountLoading", {
-                      defaultValue: "正在加载账号…",
-                    })}
-                  </span>
-                )}
-              </div>
-            ) : displayUrl ? (
-              <button
-                type="button"
-                onClick={handleOpenWebsite}
-                className={cn(
-                  "inline-flex max-w-full items-center overflow-hidden text-left text-sm",
-                  isClickableUrl
-                    ? "text-blue-500 transition-colors hover:underline dark:text-blue-400 cursor-pointer"
-                    : "text-muted-foreground cursor-default",
-                )}
-                title={displayUrl}
-                disabled={!isClickableUrl}
-              >
-                <span className="min-w-0 truncate">{displayUrl}</span>
-              </button>
-            ) : null}
-          </div>
+          ) : displayUrl ? (
+            <button
+              type="button"
+              onClick={handleOpenWebsite}
+              className={cn(
+                "mt-0.5 inline-flex max-w-full items-center overflow-hidden text-start text-caption text-fg-2",
+                isClickableUrl
+                  ? "cursor-pointer decoration-border-strong underline-offset-[3px] hover:underline"
+                  : "cursor-default",
+              )}
+              title={displayUrl}
+              disabled={!isClickableUrl}
+            >
+              <span className="min-w-0 truncate">{displayUrl}</span>
+            </button>
+          ) : null}
         </div>
 
-        <div className="flex items-center ml-auto min-w-0 gap-3">
-          <div className="ml-auto">
-            <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-3">
+          {/* 额度列 136 宽，带重置倒计时时 194 宽（见 QuotaLines） */}
+          <div className="max-w-[208px] text-end">
+            <div className="flex items-center justify-end gap-1">
               {isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
@@ -648,14 +515,12 @@ export function ProviderCard({
                   />
                 ) : null
               ) : hasMultiplePlans ? (
-                <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                  <span className="font-medium">
-                    {t("usage.multiplePlans", {
-                      count: usage?.data?.length || 0,
-                      defaultValue: `${usage?.data?.length || 0} 个套餐`,
-                    })}
-                  </span>
-                </div>
+                <span className="text-caption text-fg-2">
+                  {t("usage.multiplePlans", {
+                    count: usage?.data?.length || 0,
+                    defaultValue: `${usage?.data?.length || 0} 个套餐`,
+                  })}
+                </span>
               ) : (
                 <UsageFooter
                   provider={provider}
@@ -668,87 +533,57 @@ export function ProviderCard({
                 />
               )}
               {hasMultiplePlans && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsExpanded(!isExpanded);
-                  }}
-                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
-                  title={
-                    isExpanded
-                      ? t("usage.collapse", { defaultValue: "收起" })
-                      : t("usage.expand", { defaultValue: "展开" })
-                  }
-                >
-                  {isExpanded ? (
-                    <ChevronUp size={14} />
-                  ) : (
-                    <ChevronDown size={14} />
-                  )}
-                </button>
+                <HoverTip content={expandLabel}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsExpanded(!isExpanded);
+                    }}
+                    className="shrink-0 rounded-control p-1 text-fg-3 transition-colors hover:bg-subtle hover:text-fg-1"
+                    aria-label={expandLabel}
+                    aria-expanded={isExpanded}
+                  >
+                    {isExpanded ? (
+                      <ChevronUp size={14} />
+                    ) : (
+                      <ChevronDown size={14} />
+                    )}
+                  </button>
+                </HoverTip>
               )}
             </div>
           </div>
-
-          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
-            <ProviderActions
-              appId={appId}
-              isCurrent={isCurrent}
-              isInConfig={isInConfig}
-              isTesting={isTesting}
-              isProxyTakeover={isProxyTakeover}
-              isOfficialBlockedByProxy={isOfficialBlockedByProxy}
-              isReadOnly={isHermesReadOnly}
-              isOmo={isAnyOmo}
-              onSwitch={() => onSwitch(provider)}
-              onEdit={() => onEdit(provider)}
-              onDuplicate={() => onDuplicate(provider)}
-              onTest={
-                // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
-                // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
-                // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
-                // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
-                // 官方是原生 1P 模式，根本不在请求路径上）。
-                onTest && appId !== "mcode" && provider.category !== "official"
-                  ? () => onTest(provider)
-                  : undefined
-              }
-              onConfigureUsage={
-                (isOfficial && !supportsOfficialSubscription) ||
-                isCopilot ||
-                (isCodexOauth && !isBoundCodexOfficial) ||
-                isXaiOauth
-                  ? undefined
-                  : () => onConfigureUsage(provider)
-              }
-              onDelete={() => onDelete(provider)}
-              onRemoveFromConfig={
-                onRemoveFromConfig
-                  ? () => onRemoveFromConfig(provider)
-                  : undefined
-              }
-              onDisableOmo={handleDisableAnyOmo}
-              onOpenTerminal={
-                onOpenTerminal ? () => onOpenTerminal(provider) : undefined
-              }
-              isAutoFailoverEnabled={isAutoFailoverEnabled}
-              isInFailoverQueue={isInFailoverQueue}
-              onToggleFailover={
-                supportsOfficialRouting ? undefined : onToggleFailover
-              }
-              // OpenClaw: default model
-              isDefaultModel={isDefaultModel}
-              isRemovalProtected={isRemovalProtected}
-              isStateChangeProtected={isStateChangeProtected}
-              defaultModelOptions={openclawDefaultModelOptions}
-              onSetAsDefault={onSetAsDefault}
-            />
-          </div>
+          <ProviderCardActions
+            providerName={provider.name}
+            presentation={presentation}
+            onEdit={() => onEdit(provider)}
+            onDelete={() => onDelete(provider)}
+            onDuplicate={onDuplicate ? () => onDuplicate(provider) : undefined}
+            onTest={
+              // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放。官方供应商一律不给：
+              // 它们 base_url 故意留空、走客户端默认/OAuth 端点，没有可靠的探测目标。
+              onTest && appId !== "mcode" && provider.category !== "official"
+                ? () => onTest(provider)
+                : undefined
+            }
+            isTesting={isTesting}
+            onConfigureUsage={
+              (isOfficial && !supportsOfficialSubscription) ||
+              isCopilot ||
+              (isCodexOauth && !isBoundCodexOfficial) ||
+              isXaiOauth
+                ? undefined
+                : () => onConfigureUsage(provider)
+            }
+            onOpenTerminal={
+              onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+            }
+          />
         </div>
       </div>
 
       {isExpanded && hasMultiplePlans && (
-        <div className="mt-4 pt-4 border-t border-border-default">
+        <div className="mx-4 mb-3 border-t border-border pt-3">
           <UsageFooter
             provider={provider}
             providerId={provider.id}
