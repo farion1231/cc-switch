@@ -1,5 +1,13 @@
 import { useTranslation } from "react-i18next";
-import { ChevronRight, Minus, Monitor, Moon, Plus, RotateCcw, Sun } from "lucide-react";
+import {
+  ChevronRight,
+  Minus,
+  Monitor,
+  Moon,
+  Plus,
+  RotateCcw,
+  Sun,
+} from "lucide-react";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { useTheme } from "@/components/theme-provider";
 import {
@@ -106,7 +114,7 @@ export function GeneralSection({
                       value={font.value}
                       style={{ fontFamily: font.css }}
                     >
-                      {font.label}
+                      {t(font.labelKey)}
                     </SelectItem>
                   ))}
                 </SelectContent>
