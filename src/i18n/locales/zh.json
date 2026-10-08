@@ -1003,7 +1003,20 @@
     },
     "data": {
       "location": "存储位置"
-    }
+    },
+    "fontFamily": "界面字体",
+    "fontSize": "字体大小",
+    "pageZoom": "页面缩放",
+    "pageZoomHint": "按 20% 调整整体界面缩放。也可以使用 Ctrl/Cmd + =、Ctrl/Cmd + - 和 Ctrl/Cmd + 0。",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "resetZoom": "重置缩放",
+    "fontFamilySystem": "系统 UI",
+    "fontFamilyInter": "Inter",
+    "fontFamilySegoeUI": "Segoe UI",
+    "fontFamilySFPro": "SF Pro",
+    "fontFamilyNotoSans": "Noto Sans",
+    "fontFamilyIBMPlexSans": "IBM Plex Sans"
   },
   "apps": {
     "claude": "Claude",
