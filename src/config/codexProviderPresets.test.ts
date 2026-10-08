@@ -25,4 +25,58 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
       generateThirdPartyConfig("acme", "https://api.acme.dev/v1", "m1"),
     ).toContain("requires_openai_auth = true");
   });
+
+  it("exposes GitHub Copilot as a keyless Codex provider", () => {
+    const preset = codexProviderPresets.find(
+      (item) => item.providerType === "github_copilot",
+    );
+
+    expect(preset).toMatchObject({
+      name: "GitHub Copilot",
+      apiFormat: "openai_chat",
+      requiresOAuth: true,
+      auth: {},
+    });
+    expect(preset?.config).toContain(
+      'base_url = "https://api.githubcopilot.com"',
+    );
+    expect(preset?.config).toContain('wire_api = "responses"');
+    expect(preset?.config).toContain("requires_openai_auth = false");
+    expect(preset?.config).toContain('model = "gpt-6-astra"');
+    expect(preset?.config).toContain('model_reasoning_effort = "high"');
+    expect(preset?.modelCatalog).toEqual([
+      {
+        model: "gpt-6-astra",
+        displayName: "GPT-6 Astra",
+        contextWindow: 272000,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      ...["Sol", "Terra"].map((name) => ({
+        model: `gpt-5.6-${name.toLowerCase()}`,
+        displayName: `GPT-5.6 ${name}`,
+        contextWindow: 272000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      })),
+      {
+        model: "gpt-5.6-luna",
+        displayName: "GPT-5.6 Luna",
+        contextWindow: 200000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.5",
+        displayName: "GPT-5.5",
+        contextWindow: 272000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+    ]);
+  });
 });

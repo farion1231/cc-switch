@@ -2,6 +2,14 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
+  "88api": {
+    name: "88api",
+    displayName: "88API",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["88api", "88", "aggregator", "gateway"],
+    defaultColor: "currentColor",
+  },
   "9527code": {
     name: "9527code",
     displayName: "9527CODE",
@@ -43,6 +51,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "apikeyfun",
     displayName: "APIKEY.FUN",
     category: "ai-provider",
+    shape: "tile",
     keywords: [
       "apikeyfun",
       "api key",
@@ -58,6 +67,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "apinebula",
     displayName: "APINebula",
     category: "ai-provider",
+    shape: "tile",
     keywords: [
       "apinebula",
       "api nebula",
@@ -88,6 +98,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "fluxa",
     displayName: "FluxA",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["fluxa", "fluxapay", "agentmarket", "tokenplan", "marketplace"],
     defaultColor: "currentColor",
   },
@@ -109,6 +120,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "sudocode",
     displayName: "SudoCode.chat",
     category: "ai-provider",
+    shape: "tile",
     keywords: [
       "sudocode",
       "sudo code",
@@ -213,6 +225,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "ccsub",
     displayName: "CCSub",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["ccsub", "aggregator", "relay", "claude", "codex", "gateway"],
     defaultColor: "#1E88E5",
   },
@@ -220,6 +233,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "subrouter",
     displayName: "SubRouter",
     category: "ai-provider",
+    shape: "tile",
     keywords: [
       "subrouter",
       "subrouter.ai",
@@ -250,6 +264,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "cherryin",
     displayName: "CherryIN",
     category: "ai-provider",
+    shape: "tile",
     keywords: [
       "cherryin",
       "cherry",
@@ -271,6 +286,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "claudecn",
     displayName: "ClaudeCN",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["claudecn", "claude", "enterprise"],
   },
   cloudflare: {
@@ -293,6 +309,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["cohere"],
     defaultColor: "#39594D",
+  },
+  commandcode: {
+    name: "commandcode",
+    displayName: "Command Code",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: [
+      "commandcode",
+      "command code",
+      "aggregator",
+      "relay",
+      "gateway",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "#000000",
   },
   copilot: {
     name: "copilot",
@@ -328,6 +360,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "zetaapi",
     displayName: "ZetaAPI",
     category: "ai-provider",
+    shape: "tile",
     keywords: [
       "zetaapi",
       "zeta",
@@ -343,6 +376,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "teamorouter",
     displayName: "TeamoRouter",
     category: "ai-provider",
+    shape: "tile",
     keywords: [
       "teamorouter",
       "teamo",
@@ -477,6 +511,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "zenmux",
     displayName: "ZenMux",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["zenmux", "zen", "mux"],
     defaultColor: "#6366F1",
   },
@@ -547,6 +582,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "pateway",
     displayName: "PatewayAI",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["pateway", "patewayai", "claude", "codex"],
   },
   palm: {
@@ -598,10 +634,27 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["hunyuan"],
     defaultColor: "#00A4FF",
   },
+  tuzi: {
+    name: "tuzi",
+    displayName: "Tu-zi",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: [
+      "tuzi",
+      "tu-zi",
+      "兔子",
+      "aggregator",
+      "relay",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "currentColor",
+  },
   unity2: {
     name: "unity2",
     displayName: "Unity2.ai",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["unity2", "aggregator", "relay", "claude", "codex", "gateway"],
     defaultColor: "#000000",
   },
@@ -658,6 +711,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "pipellm",
     displayName: "PIPELLM",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["pipellm", "pipe"],
     defaultColor: "currentColor",
   },
@@ -665,6 +719,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "qiniu",
     displayName: "七牛云",
     category: "ai-provider",
+    shape: "tile",
     keywords: [
       "qiniu",
       "qnaigc",
@@ -683,18 +738,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "runapi",
     displayName: "RunAPI",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["runapi", "run", "aggregator", "gateway"],
   },
   relaxcode: {
     name: "relaxcode",
     displayName: "RelaxyCode",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["relaxycode", "relaxcode", "relax"],
   },
   eflowcode: {
     name: "eflowcode",
     displayName: "E-FlowCode",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["eflowcode", "e-flowcode", "flow"],
     defaultColor: "currentColor",
   },
@@ -702,6 +760,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "shengsuanyun",
     displayName: "Shengsuanyun",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["shengsuanyun", "shengsuanyun"],
     defaultColor: "currentColor",
   },
@@ -709,6 +768,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "sub2api",
     displayName: "Sub2API",
     category: "ai-provider",
+    shape: "tile",
     keywords: [
       "sub2api",
       "sub2",
@@ -746,6 +806,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "aihubmix",
     displayName: "AiHubMix",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["aihubmix", "hub", "mix", "aggregator"],
     defaultColor: "#006FFB",
   },
@@ -753,6 +814,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "xiaomimimo",
     displayName: "Xiaomi MiMo",
     category: "ai-provider",
+    shape: "tile",
     keywords: ["xiaomimimo", "xiaomi", "mimo"],
     defaultColor: "#000000",
   },
@@ -791,6 +853,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["jiekou", "jiekou ai", "interface ai", "aggregator"],
     defaultColor: "#000000",
   },
+  moark: {
+    name: "moark",
+    displayName: "MoArk",
+    category: "ai-provider",
+    keywords: [
+      "moark",
+      "模力方舟",
+      "魔力方舟",
+      "gitee ai",
+      "aggregator",
+      "token",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "currentColor",
+  },
   xycai: {
     name: "xycai",
     displayName: "XycAi",
@@ -798,10 +876,72 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["xycai", "xyc", "aggregator", "relay", "gateway", "token"],
     defaultColor: "#1E88E5",
   },
+  bailing: {
+    name: "bailing",
+    displayName: "BaiLing",
+    category: "ai-provider",
+    keywords: ["bailing", "百灵", "ant ling", "antling", "ling", "ant group"],
+    defaultColor: "#1E6FFF",
+  },
+  dmxapi: {
+    name: "dmxapi",
+    displayName: "DMXAPI",
+    category: "ai-provider",
+    keywords: ["dmxapi", "dmx", "aggregator", "relay", "gateway"],
+    defaultColor: "currentColor",
+  },
+  therouter: {
+    name: "therouter",
+    displayName: "TheRouter",
+    category: "ai-provider",
+    keywords: ["therouter", "the router", "router", "aggregator", "gateway"],
+    defaultColor: "currentColor",
+  },
+  astron: {
+    name: "astron",
+    displayName: "Astron",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: [
+      "astron",
+      "讯飞星辰",
+      "讯飞",
+      "xfyun",
+      "iflytek",
+      "maas",
+      "coding plan",
+    ],
+    defaultColor: "#6C4CF5",
+  },
+  together: {
+    name: "together",
+    displayName: "Together AI",
+    category: "ai-provider",
+    keywords: ["together", "together ai", "togetherai"],
+    defaultColor: "currentColor",
+  },
+  ucloud: {
+    name: "ucloud",
+    displayName: "UCloud",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["ucloud", "优刻得", "compshare", "优云智算"],
+  },
+  sssaicode: {
+    name: "sssaicode",
+    displayName: "SSSAiCode",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["sssaicode", "ssai", "relay", "gateway"],
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {
   return iconMetadata[name.toLowerCase()];
+}
+
+export function isTileIcon(name?: string): boolean {
+  return !!name && getIconMetadata(name)?.shape === "tile";
 }
 
 export function searchIcons(query: string): string[] {

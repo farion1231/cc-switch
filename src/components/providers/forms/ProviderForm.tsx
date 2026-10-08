@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
@@ -14,7 +14,10 @@ import {
 } from "@/lib/requestOverrides";
 import { providersApi, type AppId, type ManagedAuthProvider } from "@/lib/api";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
-import { overlayClaudeProviderFields } from "@/utils/claudeEditorOverlay";
+import {
+  overlayClaudeProviderFields,
+  withClaudeGatewayDefaults,
+} from "@/utils/claudeEditorOverlay";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
   ProviderCategory,
@@ -22,6 +25,7 @@ import type {
   ClaudeApiFormat,
   ClaudeStackModel,
   CodexApiFormat,
+  CodexCopilotApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
   PromptCacheRoutingMode,
@@ -85,7 +89,7 @@ import {
   type ClaudeStackModelRow,
 } from "./ClaudeStackModelsField";
 import { setClaudeOneMMarker } from "./hooks/useModelState";
-import { useSettingsQuery } from "@/lib/query";
+import { useAppMode } from "@/lib/query/proxy";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
@@ -94,6 +98,7 @@ import { McodeProviderForm } from "./McodeProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
+import type { AppMode } from "@/types/proxy";
 import {
   useProviderCategory,
   useDraftEditorProjection,
@@ -123,6 +128,8 @@ import {
   GEMINI_DEFAULT_CONFIG,
   OPENCODE_DEFAULT_CONFIG,
   OPENCLAW_DEFAULT_CONFIG,
+  hasNativeOpencodeDefinition,
+  isNativeOpencodeConfig,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
@@ -303,6 +310,13 @@ export interface ProviderFormProps {
    * 作为三方比较的底；投影进行中或失败时为 `null`。
    */
   onEditorBaseChange?: EditorBaseChange;
+  /**
+   * 从供应商页哪一格（直连 / 路由 / 聚合）打开的：Claude Code、Codex 按它选布局，在聚合那格
+   * 打开就用聚合的简化表单。不传时按应用实际生效的模式。
+   */
+  modeView?: AppMode;
+  /** 用不用聚合的简化表单：页头据此在应用名后标「聚合模式」。卸载时报 false */
+  onStackLayoutChange?: (stackLayout: boolean) => void;
 }
 
 export function ProviderForm(props: ProviderFormProps) {
@@ -336,6 +350,8 @@ function ProviderFormFull({
   inactiveFields,
   claudeLiveBase,
   onEditorBaseChange,
+  modeView,
+  onStackLayoutChange,
 }: ProviderFormProps) {
   if (appId === "claude-desktop") {
     throw new Error("ProviderFormFull should not receive claude-desktop");
@@ -440,11 +456,14 @@ function ProviderFormFull({
       notes: initialData?.notes ?? "",
       settingsConfig: initialData?.settingsConfig
         ? JSON.stringify(initialData.settingsConfig, null, 2)
-        : appId === "claude" && claudeLiveBase
+        : appId === "claude"
           ? JSON.stringify(
               overlayClaudeProviderFields(
-                claudeLiveBase,
-                JSON.parse(CLAUDE_DEFAULT_CONFIG) as Record<string, unknown>,
+                claudeLiveBase ?? {},
+                withClaudeGatewayDefaults(
+                  JSON.parse(CLAUDE_DEFAULT_CONFIG) as Record<string, unknown>,
+                  "custom",
+                ),
               ),
               null,
               2,
@@ -661,8 +680,8 @@ function ProviderFormFull({
     );
   }, [claudeSettingsConfig]);
   const shownClaudeStackRows = claudeStackRows ?? mappedClaudeStackRows;
-  // 列表的第一个就是默认模型：它一变（设为默认、删掉、改名），`ANTHROPIC_MODEL` 当场跟着变，
-  // 两种布局共用这份状态，切到完整表单也看得到；没动第一个就不碰。删光了也不碰。
+  // 列表的第一个就是默认模型：它一变（设为默认、删掉、改名），`ANTHROPIC_MODEL` 当场跟着变；
+  // 没动第一个就不碰。删光了也不碰。
   const handleClaudeStackRowsChange = (rows: ClaudeStackModelRow[]) => {
     setClaudeStackRows(rows);
     const next = claudeStackDefaultModel(rows);
@@ -671,10 +690,12 @@ function ProviderFormFull({
     }
   };
 
-  // 设置里开了 Stack 模式时，Claude Code / Codex 的第三方供应商默认用简化面板（连接 + 模型
-  // 列表 + 高级）；可以切到完整表单，两种布局共用同一份表单状态。
-  const { data: settingsData } = useSettingsQuery();
-  const [preferFullForm, setPreferFullForm] = useState(false);
+  // 聚合模式下 Claude Code / Codex 的第三方供应商用简化面板（连接 + 模型列表 + 高级）；
+  // 两种布局共用同一份表单状态，完整表单从直连 / 路由那格打开。
+  const { data: appModeView } = useAppMode(
+    appId,
+    appId === "claude" || appId === "codex",
+  );
 
   const {
     codexAuth,
@@ -709,8 +730,18 @@ function ProviderFormFull({
               ),
             ) ?? "openai_responses");
 
+  const initialCodexCopilotApiFormat =
+    initialData?.meta?.codexCopilotApiFormat ?? "auto";
   const [localCodexApiFormat, setLocalCodexApiFormat] =
-    useState<CodexApiFormat>(initialCodexApiFormat);
+    useState<CodexApiFormat>(
+      initialData?.meta?.providerType === "github_copilot"
+        ? initialCodexCopilotApiFormat === "auto"
+          ? "openai_chat"
+          : initialCodexCopilotApiFormat
+        : initialCodexApiFormat,
+    );
+  const [codexCopilotApiFormat, setCodexCopilotApiFormat] =
+    useState<CodexCopilotApiFormat>(initialCodexCopilotApiFormat);
 
   // Auth-field choice for the Anthropic Messages upstream (defaults to the Bearer form)
   const initialCodexAnthropicAuthField: ClaudeApiKeyField =
@@ -758,13 +789,30 @@ function ProviderFormFull({
     [setCodexConfig, debouncedValidate],
   );
 
+  const handleCodexCopilotApiFormatChange = useCallback(
+    (format: CodexCopilotApiFormat) => {
+      setCodexCopilotApiFormat(format);
+      handleCodexApiFormatChange(format === "auto" ? "openai_chat" : format);
+    },
+    [handleCodexApiFormatChange],
+  );
+
   // 新增：预设或模板投影到当前配置文件上显示。每次重置显示内容都要重新投影，否则保存时
   // 三方比较的底和显示内容对不上。
   const { projectDraft } = useDraftEditorProjection(appId, onEditorBaseChange);
   const projectCodexDraft = useCallback(
-    (auth: Record<string, unknown>, config: string, category?: string) =>
-      projectDraft({ auth, config }, category, (shown) =>
-        setCodexConfig(typeof shown.config === "string" ? shown.config : ""),
+    (
+      auth: Record<string, unknown>,
+      config: string,
+      category?: string,
+      meta?: ProviderMeta,
+    ) =>
+      projectDraft(
+        { auth, config },
+        category,
+        (shown) =>
+          setCodexConfig(typeof shown.config === "string" ? shown.config : ""),
+        meta,
       ),
     [projectDraft, setCodexConfig],
   );
@@ -852,11 +900,13 @@ function ProviderFormFull({
   );
   const presetProviderType = getPresetProviderType(selectedPresetEntry?.preset);
   const initialProviderType = initialData?.meta?.providerType;
+  const hasManagedCopilotIdentity =
+    presetProviderType === "github_copilot" ||
+    initialProviderType === "github_copilot";
   const isCopilotProvider =
-    appId === "claude" &&
-    (presetProviderType === "github_copilot" ||
-      initialProviderType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com"));
+    (appId === "codex" && hasManagedCopilotIdentity) ||
+    (appId === "claude" &&
+      (hasManagedCopilotIdentity || baseUrl.includes("githubcopilot.com")));
   const isClaudeCodexOauthProvider =
     appId === "claude" &&
     (presetProviderType === "codex_oauth" ||
@@ -875,12 +925,16 @@ function ProviderFormFull({
         selectedPresetEntry?.preset.category === "official"));
   const isCodexOfficialManagedOauthBound =
     isCodexOfficialProvider && Boolean(selectedCodexAccountId);
-  const stackLayoutAvailable =
-    settingsData?.enableStackMode === true &&
+  // 在聚合那格打开（没给就看应用实际是否在聚合模式）时，新增 / 编辑用聚合的简化表单
+  const useStackLayout =
+    (modeView ?? appModeView?.mode) === "stack" &&
     (appId === "claude" || appId === "codex") &&
     category !== "official" &&
     !isCodexOfficialProvider;
-  const useStackLayout = stackLayoutAvailable && !preferFullForm;
+  useEffect(() => {
+    onStackLayoutChange?.(useStackLayout);
+    return () => onStackLayoutChange?.(false);
+  }, [useStackLayout, onStackLayoutChange]);
   const requiresExplicitCodexOfficialSelection =
     isCodexOfficialProvider && !hasValidCodexOfficialSelection;
   const requiresCodexOauthLogin =
@@ -1012,13 +1066,36 @@ function ProviderFormFull({
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
+  const isNativeOpencode =
+    appId === "opencode" &&
+    !isAnyOmoCategory &&
+    isNativeOpencodeConfig(
+      form.watch("settingsConfig"),
+      initialData?.meta?.opencodeConfigFormat,
+    );
+  const isExistingNativeOpencodeKey =
+    isNativeOpencode && providerId === opencodeForm.opencodeProviderKey;
+  // Existing native IDs are kept exactly as OpenCode accepted them.
+  const isOpencodeProviderKeyInvalid =
+    opencodeForm.opencodeProviderKey.trim() !== "" &&
+    !isExistingNativeOpencodeKey &&
+    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeForm.opencodeProviderKey);
 
-  const canKeepExistingOpencodeOverride =
+  const keepsOpencodeProviderId =
     isEditMode &&
     !!providerId &&
-    opencodeForm.opencodeProviderKey === providerId &&
+    opencodeForm.opencodeProviderKey === providerId;
+  const canKeepExistingOpencodeOverride =
+    keepsOpencodeProviderId &&
     isOpencodeLiveProviderIdsSuccess &&
-    opencodeLiveProviderIds.includes(providerId);
+    opencodeLiveProviderIds.includes(opencodeForm.opencodeProviderKey);
+  // Unlike V1, no older version copied native rows without their definition
+  // (copies now require one), so a stored native row keeping its ID may stay
+  // package-less after removal from the live config.
+  const canInheritOpencodeDefinition =
+    canKeepExistingOpencodeOverride ||
+    (keepsOpencodeProviderId &&
+      initialData?.meta?.opencodeConfigFormat === "v2");
 
   const initialOmoSettings =
     appId === "opencode" &&
@@ -1201,7 +1278,7 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyRequired"));
         return;
       }
-      if (!keyPattern.test(opencodeForm.opencodeProviderKey)) {
+      if (isOpencodeProviderKeyInvalid) {
         toast.error(t("opencode.providerKeyInvalid"));
         return;
       }
@@ -1220,14 +1297,26 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyDuplicate"));
         return;
       }
-      // Only an unchanged ID already in the live config may inherit defaults.
-      if (
-        !canKeepExistingOpencodeOverride &&
-        (!opencodeForm.opencodeNpm.trim() ||
-          Object.keys(opencodeForm.opencodeModels).length === 0)
-      ) {
-        toast.error(t("opencode.customProviderRequired"));
-        return;
+      // Only an existing override keeping its ID may inherit defaults.
+      // Native V2 declarations name their package in `package`, not `npm`.
+      if (!canInheritOpencodeDefinition) {
+        const hasDefinition = isNativeOpencode
+          ? hasNativeOpencodeDefinition(
+              form.getValues("settingsConfig"),
+              opencodeForm.opencodeProviderKey,
+            )
+          : !!opencodeForm.opencodeNpm.trim() &&
+            Object.keys(opencodeForm.opencodeModels).length > 0;
+        if (!hasDefinition) {
+          toast.error(
+            t(
+              isNativeOpencode
+                ? "opencode.nativeCustomProviderRequired"
+                : "opencode.customProviderRequired",
+            ),
+          );
+          return;
+        }
       }
     }
 
@@ -1467,16 +1556,16 @@ function ProviderFormFull({
           );
         }
       } else if (appId === "codex") {
-        // 托管 OAuth 预设（xAI）：端点由 adapter 硬定向、token 由代理注入，
+        // 托管 OAuth 预设（Copilot/xAI）：端点由 adapter 硬定向、token 由代理注入，
         // 两项都不需要用户填写
-        if (!isXaiOauthProvider && !codexBaseUrl.trim()) {
+        if (!isCopilotProvider && !isXaiOauthProvider && !codexBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!isXaiOauthProvider && !codexApiKey.trim()) {
+        if (!isCopilotProvider && !isXaiOauthProvider && !codexApiKey.trim()) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1495,7 +1584,7 @@ function ProviderFormFull({
           issues.push(
             t("providerForm.stackLayout.noModels", {
               defaultValue:
-                "模型列表为空：叠加这家后，模型选择器里不会多出它的模型",
+                "模型列表为空：把这家加入聚合后，模型选择器里不会多出它的模型",
             }),
           );
         }
@@ -1766,6 +1855,7 @@ function ProviderFormFull({
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
+      opencodeConfigFormat: isNativeOpencode ? "v2" : undefined,
       // Claude Code、Codex、Gemini CLI 的通用配置片段已冻结：沿用行里原有的标记，新增时
       // 由后端写 true（兼容旧版）。
       commonConfigEnabled:
@@ -1833,10 +1923,20 @@ function ProviderFormFull({
             ? "openai_responses"
             : localApiFormat
           : appId === "codex" && category !== "official"
-            ? isXaiOauthProvider
-              ? "openai_responses"
-              : localCodexApiFormat
+            ? isCopilotProvider
+              ? codexCopilotApiFormat === "auto"
+                ? "openai_chat"
+                : codexCopilotApiFormat
+              : isXaiOauthProvider
+                ? "openai_responses"
+                : localCodexApiFormat
             : undefined,
+      codexCopilotApiFormat:
+        appId === "codex" &&
+        isCopilotProvider &&
+        codexCopilotApiFormat !== "auto"
+          ? codexCopilotApiFormat
+          : undefined,
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&
@@ -1868,6 +1968,7 @@ function ProviderFormFull({
       isFullUrl:
         supportsFullUrl &&
         category !== "official" &&
+        !isCopilotProvider &&
         !isXaiOauthProvider &&
         localIsFullUrl
           ? true
@@ -1999,6 +2100,7 @@ function ProviderFormFull({
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
         setPromptCacheRouting("auto");
+        setCodexCopilotApiFormat("auto");
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
@@ -2043,6 +2145,7 @@ function ProviderFormFull({
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
       setPromptCacheRouting(preset.promptCacheRouting ?? "auto");
+      setCodexCopilotApiFormat("auto");
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -2056,7 +2159,15 @@ function ProviderFormFull({
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
       });
-      projectCodexDraft(auth, config, preset.category);
+      // Preset selection resets Copilot to auto; do not reuse the previous render's metadata.
+      projectCodexDraft(
+        auth,
+        config,
+        preset.category,
+        preset.providerType === "github_copilot"
+          ? { providerType: preset.providerType, apiFormat: preset.apiFormat }
+          : undefined,
+      );
       return;
     }
 
@@ -2157,10 +2268,13 @@ function ProviderFormFull({
     );
     // 预设只带关键字段和独有字段，套在当前 live 上显示（和切换的结果一致）。
     const config =
-      appId === "claude" && claudeLiveBase
+      appId === "claude"
         ? overlayClaudeProviderFields(
-            claudeLiveBase,
-            templated as Record<string, unknown>,
+            claudeLiveBase ?? {},
+            withClaudeGatewayDefaults(
+              templated as Record<string, unknown>,
+              preset.category,
+            ),
           )
         : templated;
 
@@ -2200,7 +2314,7 @@ function ProviderFormFull({
         <form
           id="provider-form"
           onSubmit={form.handleSubmit(handleSubmit)}
-          className="space-y-6 glass rounded-xl p-6 border border-white/10"
+          className="space-y-6"
         >
           {!initialData && (
             <ProviderPresetSelector
@@ -2237,10 +2351,7 @@ function ProviderFormFull({
                         opencodeForm.opencodeProviderKey,
                       ) &&
                         !isProviderKeyLocked) ||
-                      (opencodeForm.opencodeProviderKey.trim() !== "" &&
-                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                          opencodeForm.opencodeProviderKey,
-                        ))
+                      isOpencodeProviderKeyInvalid
                         ? "border-destructive"
                         : ""
                     }
@@ -2253,24 +2364,18 @@ function ProviderFormFull({
                         {t("opencode.providerKeyDuplicate")}
                       </p>
                     )}
-                  {opencodeForm.opencodeProviderKey.trim() !== "" &&
-                    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                      opencodeForm.opencodeProviderKey,
-                    ) && (
-                      <p className="text-xs text-destructive">
-                        {t("opencode.providerKeyInvalid")}
-                      </p>
-                    )}
+                  {isOpencodeProviderKeyInvalid && (
+                    <p className="text-xs text-destructive">
+                      {t("opencode.providerKeyInvalid")}
+                    </p>
+                  )}
                   {!(
                     additiveExistingProviderKeys.includes(
                       opencodeForm.opencodeProviderKey,
                     ) && !isProviderKeyLocked
                   ) &&
-                    (opencodeForm.opencodeProviderKey.trim() === "" ||
-                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                        opencodeForm.opencodeProviderKey,
-                      )) && (
-                      <p className="text-xs text-muted-foreground">
+                    !isOpencodeProviderKeyInvalid && (
+                      <p className="text-xs text-fg-2">
                         {isProviderKeyLocked
                           ? t("opencode.providerKeyLockedHint", {
                               defaultValue:
@@ -2333,7 +2438,7 @@ function ProviderFormFull({
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         openclawForm.openclawProviderKey,
                       )) && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-fg-2">
                         {isProviderKeyLocked
                           ? t("openclaw.providerKeyLockedHint", {
                               defaultValue:
@@ -2400,7 +2505,7 @@ function ProviderFormFull({
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         hermesForm.hermesProviderKey,
                       )) && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-fg-2">
                         {isProviderKeyLocked
                           ? t("hermes.form.providerKeyLockedHint", {
                               defaultValue:
@@ -2416,26 +2521,6 @@ function ProviderFormFull({
               ) : undefined
             }
           />
-
-          {stackLayoutAvailable && (
-            <div className="-mt-2 flex justify-end">
-              <Button
-                type="button"
-                variant="link"
-                size="sm"
-                className="h-auto p-0 text-xs text-muted-foreground"
-                onClick={() => setPreferFullForm((value) => !value)}
-              >
-                {useStackLayout
-                  ? t("providerForm.stackLayout.fullForm", {
-                      defaultValue: "显示完整表单",
-                    })
-                  : t("providerForm.stackLayout.simpleForm", {
-                      defaultValue: "返回叠加模式的简化表单",
-                    })}
-              </Button>
-            </div>
-          )}
 
           {appId === "claude" && (
             <ClaudeFormFields
@@ -2522,6 +2607,10 @@ function ProviderFormFull({
           {appId === "codex" && (
             <CodexFormFields
               providerId={providerId}
+              isCopilotPreset={isCopilotProvider}
+              isCopilotAuthenticated={isCopilotAuthenticated}
+              selectedGitHubAccountId={selectedGitHubAccountId}
+              onGitHubAccountSelect={setSelectedGitHubAccountId}
               isXaiOauthPreset={
                 presetProviderType === "xai_oauth" ||
                 initialData?.meta?.providerType === "xai_oauth"
@@ -2572,6 +2661,8 @@ function ProviderFormFull({
               onModelChange={handleCodexModelChange}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
+              copilotApiFormat={codexCopilotApiFormat}
+              onCopilotApiFormatChange={handleCodexCopilotApiFormatChange}
               anthropicAuthField={localCodexAnthropicAuthField}
               onAnthropicAuthFieldChange={setLocalCodexAnthropicAuthField}
               impersonateClaudeCode={localCodexImpersonateClaudeCode}
@@ -2624,7 +2715,7 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "opencode" && !isAnyOmoCategory && (
+          {appId === "opencode" && !isAnyOmoCategory && !isNativeOpencode && (
             <OpenCodeFormFields
               allowBuiltinDefaults={canKeepExistingOpencodeOverride}
               npm={opencodeForm.opencodeNpm}
@@ -2766,17 +2857,26 @@ function ProviderFormFull({
                 <Label htmlFor="settingsConfig">
                   {t("provider.configJson")}
                 </Label>
+                {isNativeOpencode && (
+                  <p className="text-sm text-fg-2">
+                    {t("opencode.nativeConfigHint")}
+                  </p>
+                )}
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
                   onChange={(config) => form.setValue("settingsConfig", config)}
-                  placeholder={`{
+                  placeholder={
+                    isNativeOpencode
+                      ? "{}"
+                      : `{
   "npm": "@ai-sdk/openai-compatible",
   "options": {
     "baseURL": "https://your-api-endpoint.com",
     "apiKey": "your-api-key-here"
   },
   "models": {}
-}`}
+}`
+                  }
                   rows={3}
                   showValidation={true}
                   language="json"

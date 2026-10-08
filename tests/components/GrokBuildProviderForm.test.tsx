@@ -46,6 +46,28 @@ describe("GrokBuildProviderForm", () => {
     expect(nameInput?.value).toBe("PatewayAI");
   });
 
+  it("points the get-API-key link at the preset's apiKeyUrl", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /88API/ }));
+
+    const websiteInput = container.querySelector<HTMLInputElement>(
+      'input[name="websiteUrl"]',
+    );
+    expect(websiteInput?.value).toBe("https://88api.ai");
+    expect(screen.getByRole("link", { name: /API Key/ })).toHaveAttribute(
+      "href",
+      "https://88api.ai/sign-up?aff=HSGY",
+    );
+  });
+
   it("submits a complete config.toml payload with Grok defaults", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();

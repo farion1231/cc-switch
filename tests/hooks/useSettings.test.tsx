@@ -123,6 +123,7 @@ const createDirectorySettingsMock = (
   },
   isLoading: false,
   initialAppConfigDir: undefined,
+  commitAppConfigDir: vi.fn(),
   updateDirectory: vi.fn(),
   updateAppConfigDir: vi.fn(),
   browseDirectory: vi.fn(),
@@ -297,6 +298,10 @@ describe("useSettings hook", () => {
     });
 
     expect(saveResult).toEqual({ requiresRestart: true });
+    // 存完把基准值换成刚存的，保存按钮和下一次「需要重启」只跟新改动走
+    expect(directorySettingsMock.commitAppConfigDir).toHaveBeenCalledWith(
+      "/override/app",
+    );
     expect(mutateAsyncMock).toHaveBeenCalledTimes(1);
     const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
     expect(payload.claudeConfigDir).toBe("/custom/claude");
