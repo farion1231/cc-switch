@@ -1509,6 +1509,100 @@ impl Database {
         Ok(stats)
     }
 
+    /// 最早有用量记录的那一天（本地日期 `YYYY-MM-DD`），明细和日聚合一起看；没有记录时为 `None`。
+    ///
+    /// 给「全部」的按年热力图定起始年份用，所以不套跨源去重：被去重掉的会话行
+    /// 和对应的代理行只差几分钟，不会改变最早的日期。
+    pub fn get_first_usage_date(
+        &self,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<Option<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let mut detail_conditions = Vec::new();
+        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(at) = app_type {
+            detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
+            detail_params.push(Box::new(at.to_string()));
+        }
+        push_provider_model_filters(
+            &mut detail_conditions,
+            &mut detail_params,
+            "l",
+            "p",
+            provider_name,
+            model,
+        );
+        let detail_where = if detail_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", detail_conditions.join(" AND "))
+        };
+        let detail_join = if provider_name.is_some() {
+            providers_join("l", "p")
+        } else {
+            String::new()
+        };
+        let detail_param_refs: Vec<&dyn rusqlite::ToSql> =
+            detail_params.iter().map(|p| p.as_ref()).collect();
+        let first_detail_ts: Option<i64> = conn.query_row(
+            &format!(
+                "SELECT MIN(l.created_at) FROM proxy_request_logs l {detail_join} {detail_where}"
+            ),
+            detail_param_refs.as_slice(),
+            |row| row.get(0),
+        )?;
+        let first_detail = first_detail_ts
+            .map(|ts| local_datetime_from_timestamp(ts).map(|dt| dt.date_naive()))
+            .transpose()?;
+
+        let mut rollup_conditions = Vec::new();
+        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(at) = app_type {
+            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
+            rollup_params.push(Box::new(at.to_string()));
+        }
+        push_provider_model_filters(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r",
+            "p2",
+            provider_name,
+            model,
+        );
+        let rollup_where = if rollup_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", rollup_conditions.join(" AND "))
+        };
+        let rollup_join = if provider_name.is_some() {
+            providers_join("r", "p2")
+        } else {
+            String::new()
+        };
+        let rollup_param_refs: Vec<&dyn rusqlite::ToSql> =
+            rollup_params.iter().map(|p| p.as_ref()).collect();
+        let first_rollup_raw: Option<String> = conn.query_row(
+            &format!("SELECT MIN(r.date) FROM usage_daily_rollups r {rollup_join} {rollup_where}"),
+            rollup_param_refs.as_slice(),
+            |row| row.get(0),
+        )?;
+        let first_rollup = first_rollup_raw
+            .map(|raw| {
+                NaiveDate::parse_from_str(&raw, "%Y-%m-%d")
+                    .map_err(|err| AppError::Database(format!("解析 rollup 日期失败: {err}")))
+            })
+            .transpose()?;
+
+        let first = match (first_detail, first_rollup) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        Ok(first.map(|day| day.format("%Y-%m-%d").to_string()))
+    }
+
     /// 获取 Provider 统计
     pub fn get_provider_stats(
         &self,
@@ -3860,6 +3954,78 @@ mod tests {
 
         let empty = db.get_session_usage_summary("claude", "missing")?;
         assert_eq!(empty.total_requests, 0);
+
+        Ok(())
+    }
+
+    /// 最早日期：明细和日聚合取较早的一天，筛选与 Dashboard 同口径（claude 包含 claude-desktop）。
+    #[test]
+    fn test_get_first_usage_date_spans_rollups_and_logs() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        assert_eq!(db.get_first_usage_date(None, None, None)?, None);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES ('2024-03-05', 'claude', 'p1', 'claude-3', 1, 1, 10, 5, 0, 0, '0', 100)",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "codex-1",
+                "codex",
+                "p2",
+                "gpt-5.5",
+                "proxy",
+                local_ts(2025, 1, 2, 10, 0, 0),
+                10,
+                5,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            insert_usage_log(
+                &conn,
+                "desktop-1",
+                "claude-desktop",
+                "p3",
+                "claude-3",
+                "proxy",
+                local_ts(2023, 12, 31, 23, 30, 0),
+                10,
+                5,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        assert_eq!(
+            db.get_first_usage_date(None, None, None)?.as_deref(),
+            Some("2023-12-31")
+        );
+        assert_eq!(
+            db.get_first_usage_date(Some("claude"), None, None)?
+                .as_deref(),
+            Some("2023-12-31")
+        );
+        assert_eq!(
+            db.get_first_usage_date(Some("codex"), None, None)?
+                .as_deref(),
+            Some("2025-01-02")
+        );
+        assert_eq!(
+            db.get_first_usage_date(None, None, Some("claude-3"))?
+                .as_deref(),
+            Some("2023-12-31")
+        );
+        assert_eq!(db.get_first_usage_date(Some("gemini"), None, None)?, None);
 
         Ok(())
     }
