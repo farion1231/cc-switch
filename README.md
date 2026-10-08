@@ -539,6 +539,8 @@ CC Switch itself only ships as a desktop app that requires a graphical interface
 
 By default, CC Switch CLI shares the `~/.cc-switch` data directory with the desktop app and is compatible with the desktop app's WebDAV sync. The two projects are released separately, and the database version the CLI supports sometimes lags behind the desktop app; if you see a "database version is too new" message, upgrade the CLI or wait for it to catch up.
 
+For daily control of an existing desktop configuration, this repository also has an optional source-built `cc-switch-cli` target: inspect saved providers/configuration/status, preview a switch, or switch Claude Code, Codex, and Gemini providers through the desktop's Rust service. See the [native provider CLI guide](docs/guides/native-provider-cli.md) for build instructions, safe output, backups, and routing limitations. It is not currently included in desktop installers.
+
 </details>
 
 <details>

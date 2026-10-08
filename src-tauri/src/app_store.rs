@@ -15,7 +15,7 @@ fn override_cache() -> &'static RwLock<Option<PathBuf>> {
     APP_CONFIG_DIR_OVERRIDE.get_or_init(|| RwLock::new(None))
 }
 
-fn update_cached_override(value: Option<PathBuf>) {
+pub(crate) fn update_cached_override(value: Option<PathBuf>) {
     if let Ok(mut guard) = override_cache().write() {
         *guard = value;
     }

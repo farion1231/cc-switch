@@ -63,6 +63,28 @@ pub fn provider_for(
     crate::settings::get_effective_current_provider(db, app)
 }
 
+/// Read the same pointer without repairing stale device settings (CLI queries).
+pub(crate) fn provider_for_read_only(
+    db: &Database,
+    app: &AppType,
+    purpose: Purpose,
+) -> Result<Option<String>, AppError> {
+    if app.is_additive_mode() {
+        return Ok(None);
+    }
+    if purpose == Purpose::InUse {
+        let mode = if app.supports_local_proxy() {
+            state::mode_state_read_only(&DeviceStore::for_device(), app.as_str())?
+        } else {
+            ModeState::default()
+        };
+        if let Some(route) = route_row(db, app, mode)? {
+            return Ok(Some(route.id));
+        }
+    }
+    crate::settings::get_effective_current_provider_read_only(db, app)
+}
+
 /// 正在用的那一行（见 [`Purpose::InUse`]）。
 pub fn provider_in_use(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
     match proxy_route_row(db, app)? {
@@ -74,7 +96,10 @@ pub fn provider_in_use(db: &Database, app: &AppType) -> Result<Option<Provider>,
 /// 代理模式下代理路由那一行；不在代理模式、或者路由那家在库里不存在（按直连处理）时
 /// 为 `None`。
 fn proxy_route_row(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
-    let mode = mode_state(app);
+    route_row(db, app, mode_state(app))
+}
+
+fn route_row(db: &Database, app: &AppType, mode: ModeState) -> Result<Option<Provider>, AppError> {
     if !mode.is_proxy() {
         return Ok(None);
     }
