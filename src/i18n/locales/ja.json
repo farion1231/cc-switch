@@ -1003,7 +1003,20 @@
     },
     "data": {
       "location": "保存場所"
-    }
+    },
+    "fontFamily": "UI フォント",
+    "fontSize": "フォントサイズ",
+    "pageZoom": "ページズーム",
+    "pageZoomHint": "20% 刻みで画面全体のズームを調整します。Ctrl/Cmd + =、Ctrl/Cmd + -、Ctrl/Cmd + 0 も使えます。",
+    "zoomIn": "拡大",
+    "zoomOut": "縮小",
+    "resetZoom": "ズームをリセット",
+    "fontFamilySystem": "システム UI",
+    "fontFamilyInter": "Inter",
+    "fontFamilySegoeUI": "Segoe UI",
+    "fontFamilySFPro": "SF Pro",
+    "fontFamilyNotoSans": "Noto Sans",
+    "fontFamilyIBMPlexSans": "IBM Plex Sans"
   },
   "apps": {
     "claude": "Claude",
