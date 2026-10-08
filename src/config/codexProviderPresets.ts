@@ -160,7 +160,6 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       { requiresOpenAiAuth: false },
     ),
     endpointCandidates: ["https://api.githubcopilot.com"],
-    apiFormat: "openai_chat",
     providerType: "github_copilot",
     requiresOAuth: true,
     modelCatalog: modelCatalog([

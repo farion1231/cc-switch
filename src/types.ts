@@ -199,8 +199,9 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
-  // Missing means automatic capability routing, including legacy Copilot cards.
-  codexCopilotApiFormat?: CodexCopilotApiFormat;
+  // Managed Codex Copilot uses this instead of apiFormat. Missing/unknown means auto.
+  // Keep the raw string so selections from newer versions survive an edit/save.
+  codexCopilotApiFormat?: string;
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名

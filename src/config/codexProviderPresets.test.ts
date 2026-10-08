@@ -33,10 +33,10 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
 
     expect(preset).toMatchObject({
       name: "GitHub Copilot",
-      apiFormat: "openai_chat",
       requiresOAuth: true,
       auth: {},
     });
+    expect(preset).not.toHaveProperty("apiFormat");
     expect(preset?.config).toContain(
       'base_url = "https://api.githubcopilot.com"',
     );
