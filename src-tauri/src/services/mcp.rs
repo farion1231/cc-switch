@@ -219,6 +219,9 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
+            AppType::OhMyPi => {
+                mcp::sync_single_server_to_ohmypi(&Default::default(), &server.id, &server.server)?
+            }
         }
         Ok(())
     }
@@ -231,7 +234,7 @@ impl McpService {
     ) -> Result<(), AppError> {
         // 从所有曾启用的应用中移除
         for app in server.apps.enabled_apps() {
-            if matches!(app, AppType::Mcode | AppType::Pi) {
+            if matches!(app, AppType::Mcode | AppType::Pi | AppType::OhMyPi) {
                 continue; // Already removed before deleting the managed record.
             }
             Self::remove_server_from_app(state, id, &app)?;
@@ -260,6 +263,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
+            AppType::OhMyPi => mcp::remove_server_from_ohmypi(id)?,
         }
         Ok(())
     }
@@ -659,6 +663,44 @@ impl McpService {
         Ok(new_count)
     }
 
+    /// 从 Oh My Pi 导入 MCP
+    pub fn import_from_ohmypi(state: &AppState) -> Result<usize, AppError> {
+        // 创建临时 MultiAppConfig 用于导入
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+
+        // 调用导入逻辑（从 mcp/ohmypi.rs）
+        let count = crate::mcp::import_from_ohmypi(&mut temp_config)?;
+
+        let mut new_count = 0;
+
+        // 如果有导入的服务器，保存到数据库
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
+                for server in servers.values() {
+                    // 已存在：仅启用 Oh My Pi，不覆盖其他字段（与导入模块语义保持一致）
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.ohmypi = true;
+                        merged
+                    } else {
+                        // 真正的新服务器
+                        new_count += 1;
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+
+                    // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
+                    // 显式编辑、启用/禁用或手动同步时再执行写回。
+                }
+            }
+        }
+
+        Ok(new_count)
+    }
+
     /// 从所有支持 MCP 的应用导入服务器，返回新导入的数量。
     ///
     /// Best-effort：单个应用导入失败（如坏 config.toml）不阻断其余应用；
@@ -669,7 +711,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 8] = [
+        let results: [(&str, Result<usize, AppError>); 9] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -678,6 +720,7 @@ impl McpService {
             ("hermes", Self::import_from_hermes(state)),
             ("mcode", mcp::mcode::import(state)),
             ("pi", mcp::pi::import(state)),
+            ("ohmypi", Self::import_from_ohmypi(state)),
         ];
         for (app, result) in results {
             match result {
