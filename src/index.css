@@ -5,6 +5,12 @@
 @layer base {
   /* shadcn 组件用的 HSL token（可以带 /50 这类透明度），取值对齐 v7 设计稿的 tokens.css */
   :root {
+    --cc-system-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+      "PingFang SC", "Hiragino Sans GB", "Segoe UI Variable Text", "Segoe UI",
+      "Microsoft YaHei UI", "Microsoft YaHei", Roboto, "Helvetica Neue", Arial,
+      system-ui, sans-serif;
+    --ui-font-family: var(--cc-system-font-family);
+    --ui-font-scale: 1;
     --background: 0 0% 100%;
     --foreground: 240 5.9% 10%;
     --card: 0 0% 100%;
@@ -375,6 +381,8 @@
 
 html {
   @apply font-sans antialiased;
+  font-family: var(--ui-font-family);
+  --ui-font-scale: 1;
   line-height: 1.5;
   color-scheme: light;
   overscroll-behavior: none;
@@ -382,6 +390,7 @@ html {
 
 body {
   @apply m-0 p-0 text-sm;
+  font-family: var(--ui-font-family);
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
 }
