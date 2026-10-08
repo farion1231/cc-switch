@@ -104,23 +104,39 @@ fn supports_max_reasoning_effort(model: &str) -> bool {
 ///    `low`/`medium`/`high`/`xhigh` map 1:1 (`xhigh` is what Claude Code's
 ///    `/effort xhigh` sends); `max` stays `max` for models that support a
 ///    distinct max tier, otherwise it falls back to `xhigh`. Unknown values are ignored.
+///    When thinking is off (`thinking` absent or `disabled`) the effort drops to
+///    the lowest tier: Claude Code keeps sending `effort` with thinking turned
+///    off (and Workflow subagents send `disabled` + effort), and forwarding it
+///    verbatim would make OpenAI/xAI reason at full strength anyway. `none` /
+///    `minimal` are not accepted by every whitelisted model, so the floor is `low`.
+///    Models whose omitted `thinking` still means adaptive (the 5.x Claude models) are
+///    made explicit before the transform by
+///    [`make_default_adaptive_thinking_explicit`], since the mapped model name no
+///    longer carries that default.
 /// 2. Fallback: `thinking.type` + `budget_tokens`:
 ///    - `adaptive` → `xhigh` (adaptive = maximum reasoning effort)
 ///    - `enabled` with budget → `low` (<4 000) / `medium` (4 000–15 999) / `high` (≥16 000)
 ///    - `enabled` without budget → `high` (conservative default)
 ///    - `disabled` / absent → `None`
+///
+/// The result is finally clamped to the tiers the target model accepts
+/// (see [`clamp_reasoning_effort_for_model`]).
 pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
     let model = body
         .get("model")
         .and_then(|m| m.as_str())
         .unwrap_or_default();
+    resolve_requested_reasoning_effort(body, model)
+        .map(|effort| clamp_reasoning_effort_for_model(model, effort))
+}
 
+fn resolve_requested_reasoning_effort(body: &Value, model: &str) -> Option<&'static str> {
     // --- Priority 1: explicit output_config.effort ---
     if let Some(effort) = body
         .pointer("/output_config/effort")
         .and_then(|v| v.as_str())
     {
-        return match effort {
+        let mapped = match effort {
             "low" => Some("low"),
             "medium" => Some("medium"),
             "high" => Some("high"),
@@ -128,6 +144,15 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             "max" if supports_max_reasoning_effort(model) => Some("max"),
             "max" => Some("xhigh"),
             _ => None, // unknown value — do not inject
+        };
+        let thinking_off = matches!(
+            body.pointer("/thinking/type").and_then(|t| t.as_str()),
+            None | Some("disabled")
+        );
+        return if thinking_off {
+            mapped.map(|_| "low")
+        } else {
+            mapped
         };
     }
 
@@ -145,6 +170,44 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             }
         }
         _ => None, // disabled or missing
+    }
+}
+
+/// Clamp an effort to the tiers the target model accepts (OpenAI model pages):
+/// `gpt-5-pro` only accepts `high`; the later `gpt-5.x-pro` models accept
+/// `medium`/`high`/`xhigh`, so `low` is raised to `medium`.
+fn clamp_reasoning_effort_for_model(model: &str, effort: &'static str) -> &'static str {
+    let normalized = model.to_ascii_lowercase();
+    if normalized == "gpt-5-pro" || normalized.starts_with("gpt-5-pro-") {
+        return "high";
+    }
+    let is_gpt_pro = normalized.starts_with("gpt-")
+        && (normalized.ends_with("-pro") || normalized.contains("-pro-"));
+    if is_gpt_pro && effort == "low" {
+        return "medium";
+    }
+    effort
+}
+
+/// Anthropic leaves adaptive thinking on when `thinking` is omitted for the 5.x
+/// models (Fable, Mythos, Opus, Sonnet — Claude Code omits it for Fable and
+/// Opus 5.5 when thinking is "off", because those cannot turn thinking off). Once the request
+/// is mapped to another vendor's model that default is lost, and
+/// [`resolve_reasoning_effort`] would read the omission as "thinking off". Make
+/// it explicit from the client's model before converting to Chat / Responses.
+pub fn make_default_adaptive_thinking_explicit(body: &mut Value, client_model: Option<&str>) {
+    let Some(client_model) = client_model else {
+        return;
+    };
+    if body
+        .get("thinking")
+        .is_some_and(|thinking| !thinking.is_null())
+        || !crate::proxy::thinking_optimizer::adaptive_thinking_is_default(client_model)
+    {
+        return;
+    }
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("thinking".to_string(), json!({"type": "adaptive"}));
     }
 }
 
@@ -1899,19 +1962,19 @@ mod tests {
 
     #[test]
     fn test_output_config_low_maps_to_reasoning_effort_low() {
-        let body = json!({"output_config": {"effort": "low"}});
+        let body = json!({"thinking": {"type": "adaptive"}, "output_config": {"effort": "low"}});
         assert_eq!(resolve_reasoning_effort(&body), Some("low"));
     }
 
     #[test]
     fn test_output_config_medium_maps_to_reasoning_effort_medium() {
-        let body = json!({"output_config": {"effort": "medium"}});
+        let body = json!({"thinking": {"type": "adaptive"}, "output_config": {"effort": "medium"}});
         assert_eq!(resolve_reasoning_effort(&body), Some("medium"));
     }
 
     #[test]
     fn test_output_config_high_maps_to_reasoning_effort_high() {
-        let body = json!({"output_config": {"effort": "high"}});
+        let body = json!({"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}});
         assert_eq!(resolve_reasoning_effort(&body), Some("high"));
     }
 
@@ -1928,6 +1991,7 @@ mod tests {
         ] {
             let body = json!({
                 "model": model,
+                "thinking": {"type": "adaptive"},
                 "output_config": {"effort": "max"}
             });
             assert_eq!(
@@ -1942,6 +2006,7 @@ mod tests {
     fn test_output_config_max_falls_back_to_xhigh_for_older_model() {
         let body = json!({
             "model": "gpt-5.4",
+            "thinking": {"type": "adaptive"},
             "output_config": {"effort": "max"}
         });
         assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
@@ -1950,7 +2015,7 @@ mod tests {
     #[test]
     fn test_output_config_xhigh_maps_verbatim() {
         // Claude Code's `/effort xhigh` sends output_config.effort="xhigh"
-        let body = json!({"output_config": {"effort": "xhigh"}});
+        let body = json!({"thinking": {"type": "adaptive"}, "output_config": {"effort": "xhigh"}});
         assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
     }
 
@@ -1962,6 +2027,142 @@ mod tests {
             "thinking": {"type": "adaptive"}
         });
         assert_eq!(resolve_reasoning_effort(&body), Some("low"));
+    }
+
+    #[test]
+    fn test_output_config_without_thinking_clamps_to_low() {
+        // Claude Code with thinking turned off omits `thinking` but still sends
+        // `effort: "high"`; the upstream must not reason at full strength.
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let body = json!({"model": "gpt-6-sol", "output_config": {"effort": effort}});
+            assert_eq!(resolve_reasoning_effort(&body), Some("low"), "{effort}");
+        }
+    }
+
+    #[test]
+    fn test_output_config_with_thinking_disabled_clamps_to_low() {
+        // Workflow subagents send `thinking: disabled` alongside an effort.
+        let body = json!({
+            "model": "gpt-6-sol",
+            "thinking": {"type": "disabled"},
+            "output_config": {"effort": "max"}
+        });
+        assert_eq!(resolve_reasoning_effort(&body), Some("low"));
+    }
+
+    #[test]
+    fn test_pro_models_never_receive_unsupported_low_effort() {
+        // gpt-5.x-pro only accepts medium/high/xhigh.
+        for model in [
+            "gpt-5.2-pro",
+            "gpt-5.4-pro",
+            "gpt-5.4-pro-2026-03-05",
+            "gpt-5.5-pro",
+        ] {
+            let thinking_off = json!({"model": model, "output_config": {"effort": "high"}});
+            assert_eq!(
+                resolve_reasoning_effort(&thinking_off),
+                Some("medium"),
+                "{model}"
+            );
+            let explicit_low = json!({
+                "model": model,
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "low"}
+            });
+            assert_eq!(
+                resolve_reasoning_effort(&explicit_low),
+                Some("medium"),
+                "{model}"
+            );
+            let small_budget = json!({
+                "model": model,
+                "thinking": {"type": "enabled", "budget_tokens": 1024}
+            });
+            assert_eq!(
+                resolve_reasoning_effort(&small_budget),
+                Some("medium"),
+                "{model}"
+            );
+            let explicit_xhigh = json!({
+                "model": model,
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "xhigh"}
+            });
+            assert_eq!(
+                resolve_reasoning_effort(&explicit_xhigh),
+                Some("xhigh"),
+                "{model}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_gpt_5_pro_only_receives_high_effort() {
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let body = json!({
+                "model": "gpt-5-pro",
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": effort}
+            });
+            assert_eq!(resolve_reasoning_effort(&body), Some("high"), "{effort}");
+        }
+        let thinking_off = json!({"model": "gpt-5-pro", "output_config": {"effort": "high"}});
+        assert_eq!(resolve_reasoning_effort(&thinking_off), Some("high"));
+    }
+
+    #[test]
+    fn test_o_series_pro_keeps_low_effort() {
+        let body = json!({"model": "o3-pro", "output_config": {"effort": "high"}});
+        assert_eq!(resolve_reasoning_effort(&body), Some("low"));
+    }
+
+    #[test]
+    fn test_default_adaptive_client_model_keeps_effort_after_mapping() {
+        // Claude Code omits `thinking` for Fable when thinking is "off" (Fable
+        // cannot turn it off); after mapping to GPT the effort must survive.
+        for client_model in [
+            "claude-fable-5-1",
+            "claude-sonnet-5",
+            "claude-mythos-5",
+            "claude-opus-5",
+            "claude-opus-5-5",
+        ] {
+            let mut body = json!({"model": "gpt-6-sol", "output_config": {"effort": "high"}});
+            make_default_adaptive_thinking_explicit(&mut body, Some(client_model));
+            assert_eq!(body["thinking"]["type"], "adaptive", "{client_model}");
+            assert_eq!(
+                resolve_reasoning_effort(&body),
+                Some("high"),
+                "{client_model}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_adaptive_helper_leaves_other_requests_alone() {
+        // Opus 4.8 does not think by default: omission still means off.
+        let mut omitted = json!({"model": "gpt-6-sol", "output_config": {"effort": "high"}});
+        make_default_adaptive_thinking_explicit(&mut omitted, Some("claude-opus-4-8"));
+        assert!(omitted.get("thinking").is_none());
+        assert_eq!(resolve_reasoning_effort(&omitted), Some("low"));
+
+        // An explicit `disabled` (Claude Code's Sonnet 5 "off") is kept.
+        let mut disabled = json!({
+            "model": "gpt-6-sol",
+            "thinking": {"type": "disabled"},
+            "output_config": {"effort": "high"}
+        });
+        make_default_adaptive_thinking_explicit(&mut disabled, Some("claude-sonnet-5"));
+        assert_eq!(disabled["thinking"]["type"], "disabled");
+
+        let mut unknown_client = json!({"model": "gpt-6-sol"});
+        make_default_adaptive_thinking_explicit(&mut unknown_client, None);
+        assert!(unknown_client.get("thinking").is_none());
+
+        let mut null_thinking = json!({"model": "gpt-6-sol", "thinking": null});
+        make_default_adaptive_thinking_explicit(&mut null_thinking, Some("claude-fable-5-1"));
+        assert_eq!(null_thinking["thinking"]["type"], "adaptive");
     }
 
     #[test]
@@ -2032,6 +2233,7 @@ mod tests {
         let input = json!({
             "model": "gpt-5.4",
             "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
             "output_config": {"effort": "medium"},
             "messages": [{"role": "user", "content": "Hello"}]
         });
@@ -2045,6 +2247,7 @@ mod tests {
         let input = json!({
             "model": "gpt-5.4",
             "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
             "output_config": {"effort": "max"},
             "messages": [{"role": "user", "content": "Hello"}]
         });

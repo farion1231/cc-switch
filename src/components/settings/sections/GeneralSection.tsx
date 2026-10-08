@@ -120,7 +120,7 @@ export function GeneralSection({
               title: t("settings.appVisibility.showProfileSwitcher"),
               body: t("settings.appVisibility.showProfileSwitcherDescription"),
             }}
-            checked={settings.showProfileSwitcher ?? true}
+            checked={settings.showProfileSwitcher ?? false}
             onCheckedChange={(value) =>
               void onAutoSave({ showProfileSwitcher: value })
             }

@@ -199,6 +199,8 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
+  // Missing means automatic capability routing, including legacy Copilot cards.
+  codexCopilotApiFormat?: CodexCopilotApiFormat;
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
@@ -228,6 +230,8 @@ export interface ProviderMeta {
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
   // Whether this provider is currently projected into an additive app's live config.
   liveConfigManaged?: boolean;
+  // Source format is needed for package-less OpenCode built-in overrides.
+  opencodeConfigFormat?: "v1" | "v2";
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -268,6 +272,8 @@ export type ClaudeApiFormat =
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
 // - "anthropic": native Anthropic Messages format, needs local routing to convert to Responses
 export type CodexApiFormat = "openai_responses" | "openai_chat" | "anthropic";
+
+export type CodexCopilotApiFormat = "auto" | "openai_responses" | "openai_chat";
 
 export interface CodexCatalogModel {
   model: string;
@@ -409,6 +415,8 @@ export interface Settings {
   firstRunNoticeConfirmed?: boolean;
   // User has confirmed the one-time "new layout" dialog shown to upgrading users
   newLayoutNoticeConfirmed?: boolean;
+  // Highest app version whose "what's new" summary the user has seen on this device
+  whatsNewSeenVersion?: string;
   // User has confirmed the auto-sync traffic warning
   autoSyncConfirmed?: boolean;
   // User has confirmed the common config first-run notice
@@ -729,6 +737,7 @@ export interface McpApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  pi?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）

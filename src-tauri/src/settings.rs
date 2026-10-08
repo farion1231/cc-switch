@@ -392,7 +392,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub enable_failover_toggle: bool,
     /// Whether to show the project profile switcher on the main page header
-    #[serde(default = "default_show_profile_switcher")]
+    #[serde(default)]
     pub show_profile_switcher: bool,
     /// Check installed CLI tools for new versions at startup (off by default:
     /// many users do not want to chase every release).
@@ -421,6 +421,9 @@ pub struct AppSettings {
     /// User has confirmed the one-time "new layout" dialog shown to upgrading users
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_layout_notice_confirmed: Option<bool>,
+    /// Highest app version whose "what's new" summary the user has seen on this device
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whats_new_seen_version: Option<String>,
     /// User has confirmed the common config first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub common_config_confirmed: Option<bool>,
@@ -524,10 +527,6 @@ fn default_minimize_to_tray_on_close() -> bool {
     true
 }
 
-fn default_show_profile_switcher() -> bool {
-    true
-}
-
 fn default_session_auto_sync_enabled() -> bool {
     true
 }
@@ -549,7 +548,7 @@ impl Default for AppSettings {
             usage_dashboard_refresh_interval_ms: None,
             session_auto_sync_enabled: true,
             enable_failover_toggle: false,
-            show_profile_switcher: true,
+            show_profile_switcher: false,
             check_tool_updates_on_startup: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
@@ -557,6 +556,7 @@ impl Default for AppSettings {
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             new_layout_notice_confirmed: None,
+            whats_new_seen_version: None,
             common_config_confirmed: None,
             language: None,
             visible_apps: None,

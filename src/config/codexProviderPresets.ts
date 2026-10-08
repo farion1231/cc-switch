@@ -26,7 +26,7 @@ export interface CodexProviderPreset extends PresetFamilyFields {
   config: string; // 将写入 ~/.codex/config.toml（TOML 字符串）
   isOfficial?: boolean; // 标识是否为官方预设
   isPartner?: boolean; // 标识是否为商业合作伙伴
-  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
+  primePartner?: boolean; // 旧版的置顶合作伙伴标记；v7 起界面不再读取，新预设不写
   partnerPromotionKey?: string; // 合作伙伴促销信息的 i18n key
   category?: ProviderCategory; // 新增：分类
   isCustomTemplate?: boolean; // 标识是否为自定义模板
@@ -39,8 +39,8 @@ export interface CodexProviderPreset extends PresetFamilyFields {
   iconColor?: string; // 图标颜色
   // Codex API 格式
   apiFormat?: CodexApiFormat;
-  // 仅用于区分预设来源；ChatGPT/Codex 与 xAI/Grok 的认证流程彼此独立。
-  providerType?: "codex_oauth" | "xai_oauth";
+  // 仅用于区分托管认证来源；各 OAuth provider 的认证流程彼此独立。
+  providerType?: "codex_oauth" | "xai_oauth" | "github_copilot";
   // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
   requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
@@ -147,7 +147,69 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "openai",
     iconColor: "#00A67E",
   },
-  // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
+  {
+    name: "GitHub Copilot",
+    websiteUrl: "https://github.com/features/copilot",
+    auth: {},
+    // Codex talks Responses to the local proxy. The proxy selects Copilot's
+    // native Responses or Chat Completions transport from model capabilities.
+    config: generateThirdPartyConfig(
+      "github-copilot",
+      "https://api.githubcopilot.com",
+      "gpt-6-astra",
+      { requiresOpenAiAuth: false },
+    ),
+    endpointCandidates: ["https://api.githubcopilot.com"],
+    apiFormat: "openai_chat",
+    providerType: "github_copilot",
+    requiresOAuth: true,
+    modelCatalog: modelCatalog([
+      {
+        model: "gpt-6-astra",
+        displayName: "GPT-6 Astra",
+        contextWindow: 272000,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.6-sol",
+        displayName: "GPT-5.6 Sol",
+        contextWindow: 272000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.6-terra",
+        displayName: "GPT-5.6 Terra",
+        contextWindow: 272000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.6-luna",
+        displayName: "GPT-5.6 Luna",
+        contextWindow: 200000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.5",
+        displayName: "GPT-5.5",
+        contextWindow: 272000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+    ]),
+    category: "third_party",
+    icon: "github",
+    iconColor: "#000000",
+  },
+  // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",
     family: "kimi",
@@ -667,6 +729,22 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "fluxa",
     icon: "fluxa",
+  },
+  {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "88api",
+      "https://api.88api.ai/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: ["https://api.88api.ai/v1", "https://88api.ai/v1"],
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
   },
   {
     name: "APIKEY.FUN",
@@ -1217,6 +1295,7 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "dmxapi", // 促销信息 i18n key
+    icon: "dmxapi",
   },
   {
     name: "SudoCode.chat",
@@ -1290,6 +1369,26 @@ requires_openai_auth = true`,
     icon: "xycai",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
+  {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "tuzi",
+      "https://api.tu-zi.com/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://api.tu-zi.com/v1",
+      "https://api.ourzhishi.top/v1",
+      "https://api.sydney-ai.com/v1",
+      "https://apicdn.tu-zi.com/v1",
+    ],
+    icon: "tuzi",
+  },
   {
     name: "Amux",
     websiteUrl: "https://amux.ai",
@@ -2913,6 +3012,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
+    icon: "astron",
   },
   {
     name: "BaiLing",
@@ -2934,6 +3034,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cn_official",
+    icon: "bailing",
   },
   {
     name: "Xiaomi MiMo",
@@ -3221,8 +3322,10 @@ requires_openai_auth = true`,
   },
   {
     name: "OpenCode Go",
+    family: "opencode",
+    planKey: "coding",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
@@ -3289,6 +3392,27 @@ requires_openai_auth = true`,
       },
     ]),
     category: "third_party",
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
+    // Zen 按量网关：GPT 模型原生走 /v1/responses，直连不需要路由；
+    // 免费模型只能在 OpenCode 里用（外部调用 403 FreeTierError），默认不用。
+    // 默认不用全仓通用的 gpt-5.6-sol：Zen 上游对它返回 403「Model access is
+    // disabled」（2026-10-06 真 Key 实测），gpt-6-sol 经 Codex 跑通工具调用。
+    name: "OpenCode Zen",
+    family: "opencode",
+    planKey: "payg",
+    websiteUrl: "https://opencode.ai/zen",
+    apiKeyUrl: "https://opencode.ai/auth",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "opencode_zen",
+      "https://opencode.ai/zen/v1",
+      "gpt-6-sol",
+    ),
+    endpointCandidates: ["https://opencode.ai/zen/v1"],
+    category: "aggregator",
     icon: "opencode",
     iconColor: "#211E1E",
   },
@@ -3407,6 +3531,7 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ),
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
+    icon: "therouter",
   },
   {
     name: "JieKou AI",
@@ -3482,5 +3607,20 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ]),
     category: "third_party",
     icon: "commandcode",
+  },
+  {
+    name: "模力方舟",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    auth: generateThirdPartyAuth(""),
+    // 官方文档（CC Switch 快速配置）：Codex 走 /v1 的 Responses 原生协议
+    config: generateThirdPartyConfig(
+      "moark",
+      "https://moark.com/v1",
+      "deepseek-v4-flash-0731",
+    ),
+    endpointCandidates: ["https://moark.com/v1"],
+    category: "aggregator",
+    icon: "moark",
   },
 ];

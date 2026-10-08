@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde_json::Value;
@@ -24,7 +25,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
     let mut sessions = Vec::new();
 
-    // Iterate over project directories: tmp/<project_name>/chats/session-*.json
+    // Iterate over project directories: tmp/<project_name>/chats/session-*.json(l)
     let project_dirs = match std::fs::read_dir(&tmp_dir) {
         Ok(entries) => entries,
         Err(_) => return Vec::new(),
@@ -46,7 +47,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
         for file_entry in chat_files.flatten() {
             let path = file_entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            if !is_session_file(&path) {
                 continue;
             }
             if let Some(meta) = parse_session(&path) {
@@ -61,10 +62,124 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions
 }
 
-pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
+/// 会话文件：旧版 `.json`，或新版 Gemini CLI 写的 `.jsonl`。旧文件被 resume 迁移后
+/// 会留下同名 `.json`，此时只认 `.jsonl`，避免同一会话列两次。
+pub(crate) fn is_session_file(path: &Path) -> bool {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("jsonl") => true,
+        Some("json") => !path.with_extension("jsonl").exists(),
+        _ => false,
+    }
+}
+
+/// 把会话文件还原成旧版单个 JSON 对象的形状 `{sessionId, ..., messages: [...]}`。
+///
+/// 旧版 `.json` 整个文件就是这个对象，原样返回。新版 `.jsonl` 按 Gemini CLI 的
+/// `loadConversationRecord` 回放：带 `sessionId` 的行是元数据；带 `id` 的行是消息，
+/// 同 id 后写覆盖先写（位置不变）；`{"$set": {...}}` 合并元数据，带 `messages` 时整体
+/// 替换消息；`{"$rewindTo": id}` 删掉该条及之后的消息，找不到 id 时清空。
+pub(crate) fn parse_session_document(data: &str) -> Option<Value> {
+    // 只有元数据一行的 `.jsonl` 也能整体解析成对象，补上空的 messages
+    if let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(data) {
+        map.entry("messages")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        return Some(Value::Object(map));
+    }
+
+    let mut metadata = serde_json::Map::new();
+    let mut log = MessageLog::default();
+    let mut seen_record = false;
+
+    for line in data.lines() {
+        let Ok(Value::Object(mut record)) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        seen_record = true;
+        if let Some(id) = record.get("$rewindTo").and_then(Value::as_str) {
+            log.rewind_to(id);
+        } else if record.get("id").is_some_and(Value::is_string) {
+            log.upsert(Value::Object(record));
+        } else if let Some(Value::Object(mut set)) = record.remove("$set") {
+            if let Some(Value::Array(list)) = set.remove("messages") {
+                log.reset(list);
+            }
+            metadata.extend(set);
+        } else if record.get("sessionId").is_some_and(Value::is_string) {
+            if let Some(Value::Array(list)) = record.remove("messages") {
+                for msg in list {
+                    log.upsert(msg);
+                }
+            }
+            metadata.extend(record);
+        }
+    }
+
+    if !seen_record {
+        return None;
+    }
+    metadata.insert("messages".to_string(), Value::Array(log.messages));
+    Some(Value::Object(metadata))
+}
+
+/// JSONL 回放中的消息表：同 id 原位覆盖、保持首次出现的顺序（同上游的 JS `Map`），
+/// 按 id 建索引，整体回放是线性的。
+#[derive(Default)]
+struct MessageLog {
+    messages: Vec<Value>,
+    index: HashMap<String, usize>,
+}
+
+impl MessageLog {
+    /// 没有字符串 `id` 的不是消息，忽略
+    fn upsert(&mut self, msg: Value) {
+        let Some(id) = msg.get("id").and_then(Value::as_str).map(str::to_string) else {
+            return;
+        };
+        match self.index.get(&id) {
+            Some(&i) => self.messages[i] = msg,
+            None => {
+                self.index.insert(id, self.messages.len());
+                self.messages.push(msg);
+            }
+        }
+    }
+
+    /// 删掉该条及之后的消息；找不到 id 时清空
+    fn rewind_to(&mut self, id: &str) {
+        let len = self.index.get(id).copied().unwrap_or(0);
+        self.messages.truncate(len);
+        self.index.retain(|_, i| *i < len);
+    }
+
+    /// `$set.messages` 检查点：整体替换
+    fn reset(&mut self, list: Vec<Value>) {
+        self.messages.clear();
+        self.index.clear();
+        for msg in list {
+            self.upsert(msg);
+        }
+    }
+}
+
+/// Gemini CLI 注入或非提问的用户文本（同上游 `isIgnoredUserContent`）
+fn is_ignored_user_text(text: &str) -> bool {
+    let t = text.trim();
+    t.is_empty() || t.starts_with('/') || t.starts_with('?') || is_injected_user_text(t)
+}
+
+/// CLI 注入的上下文（环境信息、hook 输出），不是用户的提问
+fn is_injected_user_text(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with("<session_context>") || t.starts_with("<hook_context>")
+}
+
+fn read_session_document(path: &Path) -> Result<Value, String> {
     let data = std::fs::read_to_string(path).map_err(|e| format!("Failed to read session: {e}"))?;
-    let value: Value =
-        serde_json::from_str(&data).map_err(|e| format!("Failed to parse session JSON: {e}"))?;
+    parse_session_document(&data).ok_or_else(|| "Failed to parse session JSON".to_string())
+}
+
+pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
+    let value = read_session_document(path)?;
 
     let messages = value
         .get("messages")
@@ -90,7 +205,11 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                 if text.trim().is_empty() {
                     continue;
                 }
-                SessionMessage::from_blocks("user", ts, vec![SessionBlock::text(text)])
+                let injected = is_injected_user_text(&text);
+                let mut message =
+                    SessionMessage::from_blocks("user", ts, vec![SessionBlock::text(text)]);
+                message.injected = injected;
+                message
             }
             Some("gemini") => {
                 let blocks = gemini_blocks(msg, &base, &file_ref);
@@ -369,6 +488,19 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
         ));
     }
 
+    // resume 迁移后残留的旧版 `.json` 先删：失败就整体失败，否则 `.jsonl` 没了它会重新出现在列表里
+    if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+        let legacy = path.with_extension("json");
+        if legacy.is_file() {
+            std::fs::remove_file(&legacy).map_err(|e| {
+                format!(
+                    "Failed to delete legacy Gemini session file {}: {e}",
+                    legacy.display()
+                )
+            })?;
+        }
+    }
+
     std::fs::remove_file(path).map_err(|e| {
         format!(
             "Failed to delete Gemini session file {}: {e}",
@@ -380,24 +512,23 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
-    let data = std::fs::read_to_string(path).ok()?;
-    let value: Value = serde_json::from_str(&data).ok()?;
+    let value = read_session_document(path).ok()?;
 
     let session_id = value.get("sessionId").and_then(Value::as_str)?.to_string();
 
     let created_at = value.get("startTime").and_then(parse_timestamp_to_ms);
     let last_active_at = value.get("lastUpdated").and_then(parse_timestamp_to_ms);
 
-    // Derive title from first user message
+    // 标题取第一条真正的提问，跳过 CLI 注入的上下文和斜杠命令
     let title = value
         .get("messages")
         .and_then(Value::as_array)
         .and_then(|msgs| {
             msgs.iter()
-                .find(|m| m.get("type").and_then(Value::as_str) == Some("user"))
-                .and_then(|m| m.get("content").and_then(Value::as_str))
-                .filter(|s| !s.trim().is_empty())
-                .map(|s| truncate_summary(s, 160))
+                .filter(|m| m.get("type").and_then(Value::as_str) == Some("user"))
+                .map(|m| content_text(m.get("content")))
+                .find(|s| !is_ignored_user_text(s))
+                .map(|s| truncate_summary(&s, 160))
         });
 
     let source_path = path.to_string_lossy().to_string();
@@ -446,6 +577,143 @@ mod tests {
         delete_session(temp.path(), &path, "gemini-session-123").expect("delete session");
 
         assert!(!path.exists());
+    }
+
+    fn write_jsonl(path: &Path, lines: &[Value]) {
+        let data: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(path, data).expect("write jsonl");
+    }
+
+    /// #7861：新版 Gemini CLI 写 `.jsonl`，按记录回放成消息列表
+    #[test]
+    fn jsonl_session_replays_updates_set_and_rewind() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-2026-10-04T10-00-abcd1234.jsonl");
+        let user = |id: &str, text: &str| {
+            serde_json::json!({"id": id, "timestamp": "2026-10-04T10:00:00Z", "type": "user",
+                               "content": [{"text": text}]})
+        };
+        let gemini = |id: &str, text: &str| {
+            serde_json::json!({"id": id, "timestamp": "2026-10-04T10:00:01Z", "type": "gemini",
+                               "content": text})
+        };
+        write_jsonl(
+            &path,
+            &[
+                serde_json::json!({"sessionId": "sess-1", "projectHash": "h",
+                                   "startTime": "2026-10-04T10:00:00Z",
+                                   "lastUpdated": "2026-10-04T10:00:00Z"}),
+                user("u1", "first question"),
+                gemini("g1", "draft"),
+                // 同 id 再写一次：原位替换
+                gemini("g1", "answer one"),
+                user("u2", "dropped"),
+                gemini("g2", "dropped too"),
+                serde_json::json!({"$rewindTo": "u2"}),
+                user("u3", "second question"),
+                serde_json::json!({"$set": {"lastUpdated": "2026-10-04T11:00:00Z"}}),
+            ],
+        );
+
+        let texts: Vec<_> = load_messages(&path)
+            .expect("load")
+            .into_iter()
+            .map(|m| (m.role, m.content))
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                ("user".to_string(), "first question".to_string()),
+                ("assistant".to_string(), "answer one".to_string()),
+                ("user".to_string(), "second question".to_string()),
+            ]
+        );
+
+        let meta = parse_session(&path).expect("meta");
+        assert_eq!(meta.session_id, "sess-1");
+        assert_eq!(meta.title.as_deref(), Some("first question"));
+        assert_eq!(
+            meta.last_active_at,
+            parse_timestamp_to_ms(&Value::from("2026-10-04T11:00:00Z"))
+        );
+
+        // `$set.messages` 是检查点：整体替换消息
+        let doc = parse_session_document(
+            &[
+                serde_json::json!({"sessionId": "s", "projectHash": "h"}),
+                user("a", "old"),
+                serde_json::json!({"$set": {"messages": [user("b", "new")]}}),
+            ]
+            .iter()
+            .map(|l| format!("{l}\n"))
+            .collect::<String>(),
+        )
+        .expect("doc");
+        assert_eq!(doc["messages"].as_array().map(Vec::len), Some(1));
+        assert_eq!(doc["messages"][0]["id"], "b");
+    }
+
+    /// 新会话的首个 `$set.messages` 检查点以 CLI 注入的 `<session_context>` 开头：
+    /// 标题跳过它和斜杠命令，详情里标成注入内容
+    #[test]
+    fn jsonl_session_context_is_skipped_for_title_and_marked_injected() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-2026-10-04T10-00-abcd1234.jsonl");
+        let user = |id: &str, text: &str| serde_json::json!({"id": id, "type": "user", "content": [{"text": text}]});
+        write_jsonl(
+            &path,
+            &[
+                serde_json::json!({"sessionId": "sess-1", "projectHash": "h"}),
+                serde_json::json!({"$set": {"messages": [
+                    user("ctx", "<session_context>\nThis is the Gemini CLI. We are setting up the context"),
+                ]}}),
+                user("cmd", "/model"),
+                user("q", "fix the build"),
+            ],
+        );
+
+        let meta = parse_session(&path).expect("meta");
+        assert_eq!(meta.title.as_deref(), Some("fix the build"));
+
+        let msgs = load_messages(&path).expect("load");
+        let injected: Vec<_> = msgs.iter().map(|m| m.injected).collect();
+        assert_eq!(injected, [true, false, false]);
+    }
+
+    #[test]
+    fn jsonl_with_only_metadata_line_loads_empty() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-x.jsonl");
+        write_jsonl(
+            &path,
+            &[serde_json::json!({"sessionId": "x", "projectHash": "h"})],
+        );
+
+        assert!(load_messages(&path).expect("load").is_empty());
+        assert_eq!(parse_session(&path).expect("meta").session_id, "x");
+    }
+
+    #[test]
+    fn migrated_legacy_json_is_hidden_and_deleted_with_jsonl() {
+        let temp = tempdir().expect("tempdir");
+        let legacy = temp.path().join("session-x.json");
+        let migrated = temp.path().join("session-x.jsonl");
+        let only_legacy = temp.path().join("session-y.json");
+        std::fs::write(&legacy, r#"{"sessionId":"x","messages":[]}"#).expect("write");
+        std::fs::write(&only_legacy, r#"{"sessionId":"y","messages":[]}"#).expect("write");
+        write_jsonl(
+            &migrated,
+            &[serde_json::json!({"sessionId": "x", "projectHash": "h"})],
+        );
+
+        assert!(!is_session_file(&legacy));
+        assert!(is_session_file(&migrated));
+        assert!(is_session_file(&only_legacy));
+
+        delete_session(temp.path(), &migrated, "x").expect("delete");
+        assert!(!migrated.exists());
+        assert!(!legacy.exists());
+        assert!(only_legacy.exists());
     }
 
     #[test]

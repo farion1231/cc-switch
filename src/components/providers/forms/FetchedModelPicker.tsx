@@ -105,8 +105,11 @@ export function FetchedModelPicker({
         </div>
       </ScrollArea>
       <div className="flex justify-end">
+        {/* Neutral, not solid: the picker sits inside a provider form whose
+            only solid button is Save. */}
         <Button
           type="button"
+          variant="neutral"
           size="sm"
           disabled={selectedModels.length === 0}
           onClick={() => {

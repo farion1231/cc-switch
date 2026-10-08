@@ -262,6 +262,7 @@ describe("subscriptionQuotaState", () => {
         queriedAt: 1,
       },
       false,
+      "zh",
     );
     expect(ok?.kind).toBe("rows");
     if (ok?.kind === "rows") {
@@ -285,10 +286,68 @@ describe("subscriptionQuotaState", () => {
           queriedAt: 1,
         },
         false,
+        "zh",
       ),
     ).toEqual({ kind: "failed", reason: "HTTP 500" });
-    expect(subscriptionQuotaState(t, undefined, true)).toEqual({
+    expect(subscriptionQuotaState(t, undefined, true, "zh")).toEqual({
       kind: "loading",
     });
+  });
+});
+
+describe("AccountQuotaColumn", () => {
+  it("opens the saved resets to list when each one expires", async () => {
+    const user = userEvent.setup();
+    const { AccountQuotaColumn } = await import(
+      "@/components/settings/auth/AccountQuota"
+    );
+    render(
+      <AccountQuotaColumn
+        login="me@example.com"
+        loading={false}
+        onRefresh={vi.fn()}
+        state={{
+          kind: "rows",
+          rows: [
+            {
+              label: "重置",
+              line: {
+                key: "reset_credits",
+                text: "重置剩余 3 次",
+                value: "剩余 3 次",
+                caption: "10月6日到期",
+                tone: "warning",
+                left: Infinity,
+                breakdown: {
+                  title: "存下的限额重置",
+                  openLabel: "查看 3 次重置各自的到期时间",
+                  items: [
+                    {
+                      key: "a",
+                      label: "10月6日",
+                      hint: "2d0h后",
+                      value: "2 次",
+                      tone: "warning",
+                    },
+                    { key: "b", label: "不会过期", value: "1 次", tone: "normal" },
+                  ],
+                },
+              },
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.queryByText("存下的限额重置")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "查看 3 次重置各自的到期时间" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "存下的限额重置" });
+    expect(
+      within(dialog)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["10月6日2d0h后2 次", "不会过期1 次"]);
   });
 });

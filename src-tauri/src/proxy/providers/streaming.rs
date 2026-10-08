@@ -873,6 +873,50 @@ mod tests {
             .collect()
     }
 
+    #[tokio::test]
+    async fn test_tool_call_with_mixed_sse_line_endings() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_mixed\",\"model\":\"test-model\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_0\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"README.md\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        for delimiter in ["\n\r\n", "\r\n\n"] {
+            let input = input.replace("\n\n", delimiter);
+            for parts in [
+                vec![input.clone()],
+                input.chars().map(|c| c.to_string()).collect(),
+            ] {
+                let events = collect_events(parts).await;
+                let tool_start = events.iter().find(|event| {
+                    event_type(event) == Some("content_block_start")
+                        && event["content_block"]["type"] == "tool_use"
+                });
+                let tool_start = tool_start.expect("mixed delimiters must preserve the tool call");
+                assert_eq!(tool_start["content_block"]["id"], "call_0");
+                assert_eq!(tool_start["content_block"]["name"], "read_file");
+                let arguments =
+                    collect_delta_text(&events, "input_json_delta", "/delta/partial_json");
+                assert_eq!(
+                    serde_json::from_str::<Value>(&arguments).unwrap(),
+                    json!({"path": "README.md"})
+                );
+                assert!(events.iter().any(|event| {
+                    event_type(event) == Some("message_delta")
+                        && event["delta"]["stop_reason"] == "tool_use"
+                }));
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| event_type(event) == Some("message_stop"))
+                        .count(),
+                    1
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_map_stop_reason_legacy_and_filtered_values() {
         assert_eq!(

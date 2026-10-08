@@ -672,14 +672,8 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
         }
     }
     if let Some(remaining) = data.remaining {
-        let has_total = total.is_some_and(|total| total > 0.0);
-        let left = if remaining <= 0.0 {
-            0.0
-        } else if has_total {
-            remaining / total.unwrap_or(1.0) * 100.0
-        } else {
-            f64::INFINITY
-        };
+        // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）
+        let left = if remaining <= 0.0 { 0.0 } else { f64::INFINITY };
         let text = if remaining <= 0.0 {
             texts.balance_used_up.to_string()
         } else {
@@ -2977,6 +2971,8 @@ mod tests {
             success,
             tiers,
             extra_usage: None,
+            reset_credits: None,
+            credits_balance: None,
             error: None,
             queried_at: Some(0),
         }
@@ -3153,7 +3149,7 @@ mod tests {
     }
 
     #[test]
-    fn balance_is_shown_and_warns_below_ten_percent_of_total() {
+    fn balance_is_shown_and_never_warns_before_running_out() {
         let balance = |remaining: f64, total: Option<f64>| UsageData {
             plan_name: Some("CNY".to_string()),
             extra: None,
@@ -3171,7 +3167,7 @@ mod tests {
         );
         assert_eq!(
             one(balance(5.0, Some(100.0))),
-            Some(("余额 5.00 CNY".to_string(), true))
+            Some(("余额 5.00 CNY".to_string(), false))
         );
         assert_eq!(
             one(balance(0.0, Some(100.0))),

@@ -81,13 +81,11 @@ vi.mock("@/components/prompts/PromptFormPanel", async (importOriginal) => {
       initialData,
       onSave,
       onClose,
-      onDelete,
     }: {
       editingId?: string;
       initialData?: Prompt;
       onSave: (id: string, prompt: Prompt) => Promise<void | boolean>;
       onClose: () => void;
-      onDelete?: (id: string) => void;
     }) => (
       <div data-testid="prompt-form">
         {editingId}:{initialData?.name}
@@ -111,11 +109,6 @@ vi.mock("@/components/prompts/PromptFormPanel", async (importOriginal) => {
         <button type="button" onClick={onClose}>
           form-close
         </button>
-        {editingId && onDelete ? (
-          <button type="button" onClick={() => onDelete(editingId)}>
-            form-delete
-          </button>
-        ) : null}
       </div>
     ),
   };
@@ -383,19 +376,6 @@ describe("PromptPanel", () => {
     });
     expect(item).toHaveAttribute("data-disabled");
     expect(within(menu).getByText("prompts.deleteBlocked")).toBeInTheDocument();
-  });
-
-  it("deletes from the drawer after closing it", async () => {
-    renderPanel();
-    await waitForPanelReady();
-
-    fireEvent.click(editButton("Harbor Prompt"));
-    fireEvent.click(screen.getByRole("button", { name: "form-delete" }));
-
-    await waitFor(() =>
-      expect(mocks.deletePrompt).toHaveBeenCalledWith("second-record"),
-    );
-    expect(screen.queryByTestId("prompt-form")).not.toBeInTheDocument();
   });
 
   it("disabling says the file was emptied and undo re-enables it", async () => {

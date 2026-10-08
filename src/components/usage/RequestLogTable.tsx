@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRequestLogs } from "@/lib/query/usage";
+import { TablePagination } from "./TablePagination";
 import { HelpTip } from "@/components/ui/help-tip";
-import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api";
 import {
@@ -24,6 +23,7 @@ import {
   parseFiniteNumber,
 } from "./format";
 import { usageTable } from "./usageTable";
+import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 
 interface RequestLogTableProps {
   range: UsageRangeSelection;
@@ -111,7 +111,6 @@ export function RequestLogTable({
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
   const [page, setPage] = useState(0);
-  const [pageDraft, setPageDraft] = useState<string | null>(null);
   const pageSize = 20;
 
   const effectiveFilters: LogFilters = {
@@ -140,7 +139,6 @@ export function RequestLogTable({
 
   useEffect(() => {
     setPage(0);
-    setPageDraft(null);
   }, [
     dashboardAppType,
     providerName,
@@ -150,16 +148,6 @@ export function RequestLogTable({
     range.customStartDate,
     range.preset,
   ]);
-
-  const commitPageDraft = () => {
-    if (pageDraft == null) return;
-    const trimmed = pageDraft.trim();
-    setPageDraft(null);
-    if (!/^\d+$/.test(trimmed)) return;
-    const parsed = Number(trimmed);
-    if (parsed < 1 || parsed > totalPages) return;
-    setPage(parsed - 1);
-  };
 
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
@@ -176,7 +164,8 @@ export function RequestLogTable({
     const isCacheInclusive = log.inputTokens !== freshInput;
     const time = formatLogTime(log.createdAt, now);
     const fullTime = formatLogFullTime(log.createdAt);
-    const provider = log.providerName || t("usage.unknownProvider");
+    const providerLabel = getUsageProviderLabel(log.providerName, t);
+    const provider = providerLabel.shortLabel;
     const exactTps = formatOutputTokensPerSecond(log);
     // 会话日志导入的请求没有首字计时，速度是按日志时间戳估的，前面带 ≈
     const estimatedTps =
@@ -255,7 +244,10 @@ export function RequestLogTable({
         {/* 供应商、模型两列按比例取宽（max-w-0 让百分比宽度生效、内容截断）；
             比例合计 40%，再大就会把数值列挤到只剩内容宽度。模型名通常比供应商名长 */}
         <td className={cn(usageTable.td, "w-[18%] max-w-0")}>
-          <span className="block truncate" title={provider}>
+          <span
+            className="block truncate"
+            title={usageProviderTitle(providerLabel)}
+          >
             {provider}
           </span>
         </td>
@@ -326,8 +318,9 @@ export function RequestLogTable({
   return (
     <div className="flex flex-col">
       <div className={usageTable.scroller}>
+        {/* 最小窗口（900）展开侧栏时表格区只有 644px：最小宽度超过它，最右的速度列就被挤到横向滚动里看不见 */}
         <table
-          className={cn(usageTable.table, "min-w-[700px]")}
+          className={cn(usageTable.table, "min-w-[620px]")}
           aria-label={t("usage.requestLogs")}
         >
           <thead>
@@ -364,51 +357,12 @@ export function RequestLogTable({
         </table>
       </div>
 
-      <div className="flex h-10 items-center gap-2 text-caption text-fg-3">
-        <span className="tabular-nums">
-          {t("usage.totalRecords", { total })}
-        </span>
-        <div className="flex-1" />
-        <HoverTip content={t("usage.prevPage")}>
-          <button
-            type="button"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 disabled:pointer-events-none disabled:opacity-45"
-            aria-label={t("usage.prevPage")}
-            disabled={page === 0}
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-        </HoverTip>
-        <span className="flex items-center gap-1 tabular-nums text-fg-2">
-          <input
-            type="text"
-            inputMode="numeric"
-            aria-label={t("usage.pageInputPlaceholder")}
-            className="h-6 w-9 rounded-[4px] border border-transparent bg-transparent text-center text-caption text-fg-1 transition-[border-color,box-shadow] hover:border-border-strong focus:border-ring focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-ring/20"
-            value={pageDraft ?? String(page + 1)}
-            onChange={(event) => setPageDraft(event.target.value)}
-            onFocus={(event) => event.target.select()}
-            onBlur={commitPageDraft}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") commitPageDraft();
-              if (event.key === "Escape") setPageDraft(null);
-            }}
-          />
-          <span>/ {fmtInt(totalPages, locale)}</span>
-        </span>
-        <HoverTip content={t("usage.nextPage")}>
-          <button
-            type="button"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 disabled:pointer-events-none disabled:opacity-45"
-            aria-label={t("usage.nextPage")}
-            disabled={page >= totalPages - 1}
-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </HoverTip>
-      </div>
+      <TablePagination
+        page={page}
+        totalPages={totalPages}
+        total={total}
+        onPageChange={setPage}
+      />
     </div>
   );
 }

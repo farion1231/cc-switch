@@ -716,6 +716,7 @@ export function ClaudeFormFields({
           value={apiKey}
           onChange={onApiKeyChange}
           category={category}
+          required
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
           isPartner={isPartner}

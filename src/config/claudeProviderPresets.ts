@@ -32,7 +32,7 @@ export interface ProviderPreset extends PresetFamilyFields {
   settingsConfig: object;
   isOfficial?: boolean; // 标识是否为官方预设
   isPartner?: boolean; // 标识是否为商业合作伙伴
-  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
+  primePartner?: boolean; // 旧版的置顶合作伙伴标记；v7 起界面不再读取，新预设不写
   partnerPromotionKey?: string; // 合作伙伴促销信息的 i18n key
   category?: ProviderCategory; // 新增：分类
   // 新增：指定该预设所使用的 API Key 字段名（默认 ANTHROPIC_AUTH_TOKEN）
@@ -91,7 +91,7 @@ export const providerPresets: ProviderPreset[] = [
     icon: "anthropic",
     iconColor: "#D4915D",
   },
-  // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
+  // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",
     family: "kimi",
@@ -421,6 +421,22 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "fluxa",
     icon: "fluxa",
+  },
+  {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.88api.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://api.88api.ai", "https://88api.ai"],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
   },
   {
     name: "APIKEY.FUN",
@@ -885,6 +901,7 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "dmxapi", // 促销信息 i18n key
+    icon: "dmxapi",
   },
   {
     name: "SudoCode.chat",
@@ -942,6 +959,28 @@ export const providerPresets: ProviderPreset[] = [
     icon: "xycai",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
+  {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    // 兔子文档要求 Claude Code 用 ANTHROPIC_API_KEY（x-api-key）而非 AUTH_TOKEN
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.tu-zi.com",
+        ANTHROPIC_API_KEY: "",
+      },
+    },
+    endpointCandidates: [
+      "https://api.tu-zi.com",
+      "https://api.ourzhishi.top",
+      "https://api.sydney-ai.com",
+      "https://apicdn.tu-zi.com",
+    ],
+    category: "aggregator",
+    icon: "tuzi",
+  },
   {
     name: "Amux",
     websiteUrl: "https://amux.ai",
@@ -1035,8 +1074,10 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "OpenCode Go",
+    family: "opencode",
+    planKey: "coding",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     // Go 网关 /v1/messages 只认 x-api-key（Bearer 被静默忽略），
     // 必须用 ANTHROPIC_API_KEY，不能换回 ANTHROPIC_AUTH_TOKEN。
@@ -1055,6 +1096,31 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "third_party",
     endpointCandidates: ["https://opencode.ai/zen/go"],
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
+    // Zen 按量网关：Claude 模型原生走 /v1/messages，直连不需要路由。
+    // 和 Go 一样只认 x-api-key（Bearer 报 Missing API key）。
+    // 免费模型只能在 OpenCode 里用（外部调用 403 FreeTierError），默认不用。
+    name: "OpenCode Zen",
+    family: "opencode",
+    planKey: "payg",
+    websiteUrl: "https://opencode.ai/zen",
+    apiKeyUrl: "https://opencode.ai/auth",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://opencode.ai/zen"],
     icon: "opencode",
     iconColor: "#211E1E",
   },
@@ -1636,6 +1702,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
+    icon: "bailing",
   },
   {
     name: "AiHubMix",
@@ -1737,6 +1804,7 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],
+    icon: "therouter",
   },
   {
     name: "Novita AI",
@@ -2033,5 +2101,24 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.commandcode.ai/provider"],
     modelsUrl: "https://api.commandcode.ai/provider/v1/models",
     icon: "commandcode",
+  },
+  {
+    name: "模力方舟",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    settingsConfig: {
+      env: {
+        // 官方文档（CC Switch 快速配置）指定 Claude Code 走 Anthropic 原生入口
+        ANTHROPIC_BASE_URL: "https://moark.com/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash-0731",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://moark.com/anthropic"],
+    icon: "moark",
   },
 ];

@@ -543,6 +543,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "fluxa",
   },
   {
+    name: "88API",
+    providerKey: "cc-switch-88api",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      name: "88API",
+      baseUrl: "https://api.88api.ai",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5",
+        }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
+  },
+  {
     name: "APIKEY.FUN",
     providerKey: "cc-switch-apikey-fun",
     websiteUrl: "https://apikey.fan",
@@ -992,6 +1016,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "dmxapi",
+    icon: "dmxapi",
   },
   {
     name: "SudoCode.chat",
@@ -1531,6 +1556,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "cn_official",
+    icon: "bailing",
   },
   {
     name: "Xiaomi MiMo",
@@ -1614,7 +1640,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     name: "OpenCode Go",
     providerKey: "cc-switch-open-code-go",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     settingsConfig: {
       name: "OpenCode Go",
       baseUrl: "https://opencode.ai/zen/go/v1",
@@ -1770,6 +1796,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "therouter",
   },
   {
     name: "Novita AI",
@@ -2421,6 +2448,56 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "cn_official",
     icon: "tencent",
     iconColor: "#00A4FF",
+  },
+  {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    providerKey: "cc-switch-tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    settingsConfig: {
+      name: "Tu-zi",
+      baseUrl: "https://api.tu-zi.com",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5", {
+          id: "claude-opus-5",
+        }),
+        piModel("anthropic/claude-sonnet-5", {
+          id: "claude-sonnet-5",
+        }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "tuzi",
+  },
+  {
+    name: "模力方舟",
+    providerKey: "cc-switch-moark",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    settingsConfig: {
+      name: "模力方舟",
+      baseUrl: "https://api.moark.com/v1",
+      api: "openai-completions",
+      apiKey: "",
+      // 聚合网关，上游思考档位语义未逐一核对，交给 Pi 原生默认行为（{}）
+      models: [
+        piModel("deepseek/deepseek-v4-flash", {
+          id: "deepseek-v4-flash-0731",
+        }),
+        piModel("deepseek/deepseek-v4-pro", { id: "DeepSeek-V4-Pro" }),
+        piModel("zai/glm-5.3", { id: "GLM-5.3" }),
+        piModel("moonshotai/kimi-k2.7-code", { id: "Kimi-K2.7-Code" }),
+        piModel("qwen/qwen3-coder-plus", { id: "qwen3-coder-plus" }),
+      ],
+    },
+    category: "aggregator",
+    icon: "moark",
   },
 ];
 

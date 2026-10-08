@@ -80,7 +80,7 @@ requires_openai_auth = true`;
 }
 
 export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
-  // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
+  // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.ai",
@@ -236,6 +236,19 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "subrouter",
     icon: "subrouter",
+  },
+  {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    auth: grokAuth(),
+    config: grokPresetConfig("88API", "https://api.88api.ai/v1"),
+    endpointCandidates: ["https://api.88api.ai/v1", "https://88api.ai/v1"],
+    apiFormat: "openai_responses",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
   },
   {
     name: "APIKEY.FUN",
@@ -466,6 +479,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "dmxapi",
+    icon: "dmxapi",
   },
   {
     name: "SudoCode.chat",
@@ -499,6 +513,23 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "sudocode-us",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
+  {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("Tu-zi", "https://api.tu-zi.com/v1"),
+    endpointCandidates: [
+      "https://api.tu-zi.com/v1",
+      "https://api.ourzhishi.top/v1",
+      "https://api.sydney-ai.com/v1",
+      "https://apicdn.tu-zi.com/v1",
+    ],
+    apiFormat: "openai_responses",
+    category: "aggregator",
+    icon: "tuzi",
+  },
   {
     name: "xAI (Grok)",
     websiteUrl: "https://x.ai/api",
@@ -604,5 +635,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     ),
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
+    icon: "therouter",
   },
 ];

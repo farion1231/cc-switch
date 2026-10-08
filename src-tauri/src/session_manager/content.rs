@@ -231,7 +231,15 @@ pub fn resolve_content_ref(
             };
             let file = safe_join(root, rel_path)?;
             let bytes = read_limited(&file, MAX_TEXT_BYTES, TOO_LARGE_TEXT)?;
-            let value: Value = serde_json::from_slice(&bytes).map_err(|_| STALE.to_string())?;
+            let value: Value = if source.provider_id == "gemini" {
+                // 指针按解析器还原后的 `/messages/<i>` 编号，JSONL 也要同样回放
+                std::str::from_utf8(&bytes)
+                    .ok()
+                    .and_then(super::providers::gemini::parse_session_document)
+                    .ok_or_else(|| STALE.to_string())?
+            } else {
+                serde_json::from_slice(&bytes).map_err(|_| STALE.to_string())?
+            };
             // Gemini 多条思考合并成一个块：按解析器同一口径格式化，而不是返回 JSON
             if source.provider_id == "gemini" && pointer.ends_with("/thoughts") {
                 if let Some(thoughts) = value
@@ -835,6 +843,9 @@ mod tests {
     /// Hermes：推理全文与 tool_calls 参数按白名单列回取，仍限定本会话的行
     #[test]
     fn hermes_sqlite_refs_cover_reasoning_and_tool_calls() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         use super::super::model::SessionBlock;
         use super::super::providers::hermes;
 
@@ -950,6 +961,45 @@ mod tests {
         let text = resolve_content_ref(&source, &full).unwrap();
         assert_eq!(text, format!("**Plan**\n\n{long}\n\n**Check**\n\nok"));
         assert!(text.starts_with(&preview));
+    }
+
+    /// Gemini JSONL：`/messages/<i>` 指针按回放后的消息编号解析
+    #[test]
+    fn gemini_jsonl_tool_output_resolves_by_replayed_index() {
+        use super::super::model::SessionBlock;
+        use super::super::providers::gemini;
+        use serde_json::json;
+
+        let root = tempdir().unwrap();
+        let chats = root.path().join("hash").join("chats");
+        std::fs::create_dir_all(&chats).unwrap();
+        let path = chats.join("session-1.jsonl");
+        let long: String = (1..=20).map(|i| format!("line {i}\n")).collect();
+        let lines = [
+            json!({ "sessionId": "s1", "projectHash": "h" }),
+            json!({ "id": "1", "type": "user", "content": [{ "text": "hi" }] }),
+            json!({ "id": "2", "type": "gemini", "content": "", "toolCalls": [
+                { "id": "c1", "name": "run_shell_command", "args": { "command": "ls" },
+                  "status": "success", "resultDisplay": long }
+            ] }),
+        ];
+        let data: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(&path, data).unwrap();
+
+        let messages = gemini::load_messages(&path).unwrap();
+        let full = messages
+            .iter()
+            .flat_map(|m| &m.blocks)
+            .find_map(|b| match b {
+                SessionBlock::ToolResult {
+                    full: Some(full), ..
+                } => Some(full.clone()),
+                _ => None,
+            })
+            .expect("长输出应带引用");
+        let mut source = file_source(root.path(), &path);
+        source.provider_id = "gemini".into();
+        assert_eq!(resolve_content_ref(&source, &full).unwrap(), long);
     }
 
     #[test]
@@ -1085,6 +1135,9 @@ mod tests {
 
     #[test]
     fn sqlite_ref_is_scoped_to_whitelist_and_session() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().unwrap();
         let db = dir.path().join("opencode.db");
         let conn = Connection::open(&db).unwrap();

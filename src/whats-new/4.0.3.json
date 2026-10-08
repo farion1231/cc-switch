@@ -1,0 +1,33 @@
+{
+  "version": "4.0.3",
+  "items": [
+    {
+      "type": "fix",
+      "zh": "修复 Claude Code 映射到 GPT、Grok 后关了思考仍全力推理",
+      "zh-TW": "修復 Claude Code 對應到 GPT、Grok 後關了思考仍全力推理",
+      "en": "Fixed Claude Code mapped to GPT or Grok still reasoning at full strength with thinking off",
+      "ja": "GPT・Grok にマッピングした Claude Code が思考オフでも全力で推論する問題を修正"
+    },
+    {
+      "type": "new",
+      "zh": "新增快捷开关：经网关使用时关闭 auto mode 服务端检查",
+      "zh-TW": "新增快捷開關：經閘道使用時停用 auto mode 伺服器端檢查",
+      "en": "New quick toggle to skip Claude Code's auto mode server check behind a gateway",
+      "ja": "ゲートウェイ経由時に auto mode のサーバー側チェックを無効にするスイッチを追加"
+    },
+    {
+      "type": "fix",
+      "zh": "修复导入 Skill 时勾选的其他应用实际收不到",
+      "zh-TW": "修復匯入 Skill 時勾選的其他應用實際收不到",
+      "en": "Fixed imported skills not reaching the other apps ticked in the import dialog",
+      "ja": "Skill のインポート時に選んだ他のアプリへ実際には配置されない問題を修正"
+    },
+    {
+      "type": "new",
+      "zh": "「备份与恢复」可查看并清理所有备份占用的空间",
+      "zh-TW": "「備份與還原」可查看並清理所有備份佔用的空間",
+      "en": "Backup & Restore now shows how much space every backup takes, and can clean it up",
+      "ja": "「バックアップと復元」ですべてのバックアップの容量を確認・削除できるように"
+    }
+  ]
+}

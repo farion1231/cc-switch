@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::codex_config::{get_codex_config_dir, read_codex_config_text};
-use crate::codex_state_db::codex_state_db_paths;
+use crate::codex_state_db::{codex_state_db_is_lockable, codex_state_db_paths};
 use crate::session_manager::model::{
     project_content, ContentRef, EventKind, ImageRef, MessageMeta, SessionBlock, ToolKind,
     ToolStatus,
@@ -25,10 +25,11 @@ use super::blocks::{
     title_path, title_read, title_shell, title_todo, title_web, ToolSource, THINKING_PREVIEW_CHARS,
 };
 use super::codex_items::{
-    command_from_value, diff_kind, diff_summary, diff_title, exec_title, image_from_url,
-    local_image, opt_str, parse_apply_patch, parse_exec_script, parse_legacy_shell_output,
-    same_command, status_from_str, strip_output_header, web_action_title, CallSpec, CommandInfo,
-    Contents, FileChangeInfo, ItemRecord, RawItem, ResultSpec, Str,
+    apply_patch_rejected, command_from_value, diff_kind, diff_summary, diff_title, exec_title,
+    image_from_url, local_image, opt_str, parse_apply_patch, parse_exec_script,
+    parse_legacy_shell_output, same_command, status_from_str, strip_output_header,
+    web_action_title, CallSpec, CommandInfo, Contents, FileChangeInfo, ItemRecord, RawItem,
+    ResultSpec, Str,
 };
 
 use super::utils::{
@@ -96,7 +97,10 @@ static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new
 fn load_thread_titles() -> HashMap<String, String> {
     let config_dir = get_codex_config_dir();
     let config_text = read_codex_config_text().unwrap_or_default();
-    let db_paths = codex_state_db_paths(&config_dir, &config_text);
+    let db_paths: Vec<PathBuf> = codex_state_db_paths(&config_dir, &config_text)
+        .into_iter()
+        .filter(|path| codex_state_db_is_lockable(path))
+        .collect();
     load_thread_titles_from_paths(&config_dir.join(CODEX_SESSION_INDEX_FILENAME), &db_paths)
 }
 
@@ -1566,6 +1570,9 @@ impl RolloutParser {
             ..
         } = call;
         let is_shell = matches!(flavor, CallFlavor::Exec | CallFlavor::Shell);
+        // 补丁没通过校验 / 被用户拒绝：什么都没改，按失败显示，也不报增删行数
+        let patch_rejected = flavor == CallFlavor::ApplyPatch
+            && out.as_ref().is_some_and(|o| apply_patch_rejected(&o.text));
 
         let mut commands = Vec::new();
         let mut file_change: Option<FileChangeInfo> = None;
@@ -1637,6 +1644,16 @@ impl RolloutParser {
                 *kind = diff_kind(&merged);
                 *diff = Some(merged);
             }
+            if patch_rejected {
+                if let Some(diff) = diff {
+                    diff.added = 0;
+                    diff.removed = 0;
+                    for file in &mut diff.files {
+                        file.added = 0;
+                        file.removed = 0;
+                    }
+                }
+            }
         }
         // 多条命令：拆成 `call_id#1`、`call_id#2`… 多个子调用
         let result_ids: Vec<String> = if is_shell && commands.len() > 1 {
@@ -1697,6 +1714,9 @@ impl RolloutParser {
                 let mut status = output_status(&out, last_command);
                 if let Some(extra @ (ToolStatus::Error | ToolStatus::Interrupted)) = extra_status {
                     status = extra;
+                }
+                if patch_rejected {
+                    status = ToolStatus::Error;
                 }
                 let images = if !out.images.is_empty() {
                     out.images
@@ -2220,6 +2240,9 @@ mod tests {
 
     #[test]
     fn load_thread_titles_from_state_db_trims_and_filters_titles() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join(CODEX_STATE_DB_FILENAME);
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -2257,6 +2280,9 @@ mod tests {
 
     #[test]
     fn load_thread_titles_from_state_db_keeps_title_when_first_user_message_null() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join(CODEX_STATE_DB_FILENAME);
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -2313,6 +2339,9 @@ mod tests {
 
     #[test]
     fn load_thread_titles_prefers_state_db_explicit_title_over_session_index() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let index_path = temp.path().join(CODEX_SESSION_INDEX_FILENAME);
         std::fs::write(
@@ -2871,6 +2900,51 @@ mod tests {
 
     /// 审查 #7825：Codex 0.119–0.128 的写入顺序是「调用 → 输出 → item_completed」，
     /// 迟到的 CommandExecution 不能再单独成一个步骤，只回填退出码和耗时
+    /// 模型写坏的补丁被 `apply_patch verification failed` 拒绝：显示失败、不报增删行数；
+    /// 正文里漏了前缀、以 `- ` 开头的 Markdown 列表行不算删除
+    #[test]
+    fn rejected_apply_patch_is_an_error_without_line_counts() {
+        use serde_json::json;
+        let patch = "*** Begin Patch\n*** Update File: notes.md\n@@\n## Todo\n- old item\n+- new item\n*** Add File: list.md\n+# List\n- forgot the plus\n*** End Patch\n- trailing";
+        let lines = vec![
+            line(0, "session_meta", json!({ "id": "s1", "cwd": "/p" })),
+            line(
+                0,
+                "event_msg",
+                json!({ "type": "task_started", "turn_id": T1 }),
+            ),
+            line(
+                0,
+                "response_item",
+                json!({ "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "edit notes" }] }),
+            ),
+            line(
+                1,
+                "response_item",
+                json!({ "type": "custom_tool_call", "id": "ctc_1", "call_id": "call_bad", "name": "apply_patch", "input": patch }),
+            ),
+            line(
+                2,
+                "response_item",
+                json!({ "type": "custom_tool_call_output", "call_id": "call_bad",
+                "output": "apply_patch verification failed: Failed to find expected lines in /p/notes.md:\n## Todo\n- old item" }),
+            ),
+        ];
+        let (_tmp, _path, msgs) = load_fixture(&lines);
+
+        let SessionBlock::ToolCall { diff, .. } = find_call(&msgs, "call_bad") else {
+            unreachable!()
+        };
+        let diff = diff.as_ref().unwrap();
+        assert_eq!(diff.files.len(), 2);
+        assert_eq!((diff.added, diff.removed), (0, 0));
+        assert!(diff.files.iter().all(|f| f.added == 0 && f.removed == 0));
+        let SessionBlock::ToolResult { status, .. } = find_result(&msgs, "call_bad") else {
+            unreachable!()
+        };
+        assert_eq!(*status, ToolStatus::Error);
+    }
+
     #[test]
     fn late_item_completed_after_output_does_not_duplicate_the_command() {
         use serde_json::json;

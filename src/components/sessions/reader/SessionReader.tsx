@@ -269,8 +269,8 @@ export function SessionReader({
     ? findMatchRowIndex(rows, activeMatch)
     : -1;
   const activeKey = activeRowIndex >= 0 ? rows[activeRowIndex].key : null;
-  const highlightQuery =
-    findOpen && findQuery.trim() ? findQuery.trim() : listQuery;
+  // 高亮词跟命中计算用同一个低优先级值：长会话里每次按键都整页重新解析 Markdown 会卡输入
+  const highlightQuery = deferredFind || listQuery;
 
   const virtualizer = useVirtualizer({
     count: rows.length,
