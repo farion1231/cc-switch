@@ -23,7 +23,7 @@ use crate::proxy::{
         TOOL_RESULT_MEDIA_MOVED_MARKER,
     },
 };
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
 const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
@@ -1429,7 +1429,114 @@ fn normalize_function_parameters(params: Option<&Value>) -> Value {
             }
         }
     }
+    sanitize_parameters_ref_siblings(&mut params);
     params
+}
+
+/// Resolve local `$ref` schema references that carry sibling keywords so the
+/// emitted Chat function schema never combines `$ref` with a sibling `type`.
+///
+/// Moonshot's "moonshot flavored json schema" validator rejects a `$ref` whose
+/// parent object also declares `type` ("when using $ref, type should be defined
+/// in the referenced schema instead of the parent schema"). Codex tool schemas
+/// generated with `$defs` + `$ref` siblings (e.g. `"$defs": {"__schema20":
+/// {"$ref": "#/$defs/X", "type": "object"}}`) trip this on the Responses→Chat
+/// path. A `$ref` with siblings is inlined from its local target (merging the
+/// siblings over it); a bare `$ref` (no siblings) is left untouched because
+/// these upstreams accept it.
+fn sanitize_parameters_ref_siblings(params: &mut Value) {
+    let defs = collect_local_schema_defs(params);
+    let mut inlining: Vec<String> = Vec::new();
+    *params = resolve_ref_siblings(std::mem::take(params), &defs, &mut inlining);
+}
+
+/// Collect the root `$defs` / `definitions` tables keyed by their local `$ref`
+/// path (`$defs/Name`, `definitions/Name`) so lookups are O(1).
+fn collect_local_schema_defs(schema: &Value) -> Map<String, Value> {
+    let mut defs = Map::new();
+    if let Some(obj) = schema.as_object() {
+        for table in ["$defs", "definitions"] {
+            if let Some(entries) = obj.get(table).and_then(Value::as_object) {
+                for (name, def) in entries {
+                    defs.insert(format!("{table}/{name}"), def.clone());
+                }
+            }
+        }
+    }
+    defs
+}
+
+fn resolve_ref_siblings(
+    value: Value,
+    defs: &Map<String, Value>,
+    inlining: &mut Vec<String>,
+) -> Value {
+    match value {
+        Value::Object(obj) => {
+            let local_ref_key = obj
+                .get("$ref")
+                .and_then(Value::as_str)
+                .filter(|r| r.starts_with("#/$defs/") || r.starts_with("#/definitions/"))
+                .and_then(|r| r.strip_prefix("#/"))
+                .map(str::to_string);
+
+            // Only a `$ref` carrying sibling keywords is invalid for the strict
+            // upstream; a bare `$ref` passes through unchanged.
+            if obj.len() > 1 && obj.contains_key("$ref") {
+                if let Some(ref_key) = local_ref_key {
+                    if !inlining.contains(&ref_key) {
+                        if let Some(target) = defs.get(&ref_key) {
+                            inlining.push(ref_key);
+                            // Resolve the target first (it may itself be a `$ref`
+                            // with siblings), then overlay the sibling keywords so
+                            // no constraint is lost. `inlining` guards against a
+                            // recursive def cycling back through this same `$ref`.
+                            let mut merged = resolve_ref_siblings(target.clone(), defs, inlining);
+                            if let Some(merged_obj) = merged.as_object_mut() {
+                                for (key, value) in &obj {
+                                    if key == "$ref" {
+                                        continue;
+                                    }
+                                    merged_obj.insert(
+                                        key.clone(),
+                                        resolve_ref_siblings(value.clone(), defs, inlining),
+                                    );
+                                }
+                            }
+                            inlining.pop();
+                            return merged;
+                        }
+                    }
+                }
+                // Fallback for external, cyclic, or unresolvable refs: drop the
+                // sibling `type` (the keyword strict validators reject next to
+                // `$ref`) and keep the rest of the node intact.
+                let mut cleaned = Map::new();
+                for (key, value) in obj {
+                    if key == "type" {
+                        continue;
+                    }
+                    cleaned.insert(key, resolve_ref_siblings(value, defs, inlining));
+                }
+                return Value::Object(cleaned);
+            }
+
+            // No `$ref`+siblings here; recurse into members (properties, items,
+            // anyOf/oneOf, nested $defs, …).
+            let mut out = Map::new();
+            for (key, value) in obj {
+                out.insert(key, resolve_ref_siblings(value, defs, inlining));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| resolve_ref_siblings(item, defs, inlining))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
@@ -2508,6 +2615,146 @@ mod tests {
             result["tools"][0]["function"]["parameters"],
             json!({"type": "object", "properties": {}})
         );
+    }
+
+    /// Recursively assert that no schema object combines `$ref` with a sibling
+    /// `type` — the exact shape Moonshot's validator rejects.
+    fn assert_no_ref_with_type_sibling(value: &Value) {
+        match value {
+            Value::Object(obj) => {
+                assert!(
+                    !(obj.contains_key("$ref") && obj.contains_key("type")),
+                    "schema still has a `$ref` + sibling `type`: {obj:?}"
+                );
+                for child in obj.values() {
+                    assert_no_ref_with_type_sibling(child);
+                }
+            }
+            Value::Array(items) => {
+                for child in items {
+                    assert_no_ref_with_type_sibling(child);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_inlines_ref_with_sibling_type() {
+        // Moonshot-shaped schema: a `$defs` entry aliased with a sibling `type`,
+        // and a property that references a def bare. The `$ref`+`type` sibling at
+        // `$defs.__schema20` must not survive conversion (Moonshot HTTP 400).
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "function",
+                "name": "query",
+                "description": "Run a query.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filter": {"$ref": "#/$defs/__schema20", "type": "object"},
+                        "plain": {"$ref": "#/$defs/Filter"}
+                    },
+                    "$defs": {
+                        "__schema20": {"$ref": "#/$defs/Filter", "type": "object"},
+                        "Filter": {
+                            "type": "object",
+                            "properties": {"field": {"type": "string"}},
+                            "required": ["field"]
+                        }
+                    }
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let params = &result["tools"][0]["function"]["parameters"];
+
+        assert_no_ref_with_type_sibling(params);
+
+        // The sibling-typed `$defs` alias is inlined from its target.
+        let inlined = &params["$defs"]["__schema20"];
+        assert_eq!(inlined["type"], "object");
+        assert_eq!(inlined["properties"]["field"]["type"], "string");
+        assert!(inlined.get("$ref").is_none());
+
+        // The property that carried `$ref` + sibling `type` is inlined too.
+        let filter = &params["properties"]["filter"];
+        assert!(filter.get("$ref").is_none());
+        assert_eq!(filter["properties"]["field"]["type"], "string");
+
+        // A bare `$ref` (no siblings) is preserved, and `$defs` survive for it.
+        assert_eq!(params["properties"]["plain"]["$ref"], "#/$defs/Filter");
+        assert!(params["$defs"].get("Filter").is_some());
+    }
+
+    #[test]
+    fn responses_request_to_chat_ref_sibling_resolution_is_idempotent() {
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "function",
+                "name": "query",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filter": {"$ref": "#/$defs/Filter", "type": "object"}
+                    },
+                    "$defs": {
+                        "Filter": {"type": "object", "properties": {"f": {"type": "string"}}}
+                    }
+                }
+            }],
+            "input": "hi"
+        });
+
+        let once = responses_to_chat_completions(input.clone()).unwrap();
+        // Re-running the transform over its own tool output must change nothing.
+        let params_once = once["tools"][0]["function"]["parameters"].clone();
+        let normalized_twice = normalize_function_parameters(Some(&params_once));
+        assert_eq!(params_once, normalized_twice);
+    }
+
+    #[test]
+    fn ref_siblings_unresolvable_ref_drops_only_sibling_type() {
+        // A `$ref` that cannot be inlined (not under `$defs`/`definitions`, or
+        // cyclic) must still not carry a sibling `type`; other keys are kept.
+        let mut params = json!({
+            "type": "object",
+            "properties": {
+                "ext": {"$ref": "https://example.com/x.json", "type": "object", "description": "d"}
+            }
+        });
+        sanitize_parameters_ref_siblings(&mut params);
+
+        let ext = &params["properties"]["ext"];
+        assert_eq!(ext["$ref"], "https://example.com/x.json");
+        assert!(ext.get("type").is_none());
+        assert_eq!(ext["description"], "d");
+    }
+
+    #[test]
+    fn ref_siblings_cyclic_ref_terminates() {
+        // A def that references itself with a sibling `type` must not recurse
+        // forever; the cyclic inner `$ref` keeps the ref but drops `type`.
+        let mut params = json!({
+            "type": "object",
+            "properties": {
+                "node": {"$ref": "#/$defs/Node", "type": "object"}
+            },
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "child": {"$ref": "#/$defs/Node", "type": "object"}
+                    }
+                }
+            }
+        });
+        sanitize_parameters_ref_siblings(&mut params);
+        assert_no_ref_with_type_sibling(&params);
     }
 
     #[test]
