@@ -347,6 +347,27 @@ async fn update_tray_menu(
     }
 }
 
+/// Leave the Windows tray / WM_COPYDATA procedure before activating windows.
+/// Submitting from a worker ensures run_on_main_thread queues the task instead
+/// of executing it inline in the originating native callback.
+fn defer_window_callback(
+    app: &tauri::AppHandle,
+    callback: impl FnOnce(&tauri::AppHandle) + Send + 'static,
+) {
+    #[cfg(target_os = "windows")]
+    {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let callback_app = app.clone();
+            if let Err(error) = app.run_on_main_thread(move || callback(&callback_app)) {
+                log::warn!("Failed to queue window activation: {error}");
+            }
+        });
+    }
+    #[cfg(not(target_os = "windows"))]
+    callback(app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
@@ -357,48 +378,50 @@ pub fn run() {
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            log::info!("=== Single Instance Callback Triggered ===");
-            log::debug!("Args count: {}", args.len());
-            for (i, arg) in args.iter().enumerate() {
-                log::debug!("  arg[{i}]: {}", url_for_log(arg));
-            }
-
-            if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-                    log::error!("退出轻量模式重建窗口失败: {e}");
+            defer_window_callback(app, move |app| {
+                log::info!("=== Single Instance Callback Triggered ===");
+                log::debug!("Args count: {}", args.len());
+                for (i, arg) in args.iter().enumerate() {
+                    log::debug!("  arg[{i}]: {}", url_for_log(arg));
                 }
-            }
 
-            // Check for deep link URL in args (mainly for Windows/Linux command line)
-            let mut found_deeplink = false;
-            for arg in &args {
-                if handle_deeplink_url(app, arg, false, "single_instance args") {
-                    found_deeplink = true;
-                    break;
+                if crate::lightweight::is_lightweight_mode() {
+                    if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+                        log::error!("退出轻量模式重建窗口失败: {e}");
+                    }
                 }
-            }
 
-            if !found_deeplink {
-                log::info!("ℹ No deep link URL found in args (this is expected on macOS when launched via system)");
-            }
+                // Check for deep link URL in args (mainly for Windows/Linux command line)
+                let mut found_deeplink = false;
+                for arg in &args {
+                    if handle_deeplink_url(app, arg, false, "single_instance args") {
+                        found_deeplink = true;
+                        break;
+                    }
+                }
 
-            // Show and focus window regardless
-            if let Some(window) = app.get_webview_window("main") {
-                // 防御性重置 Windows 的 skip_taskbar：single_instance 触发时，
-                // 原进程可能因 silent_startup / 关闭到托盘等处于 skip_taskbar(true) 状态，
-                // 仅 show() 不会重置该状态，会导致窗口可见但不在任务栏、最小化后消失。
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = window.set_skip_taskbar(false);
+                if !found_deeplink {
+                    log::info!("ℹ No deep link URL found in args (this is expected on macOS when launched via system)");
                 }
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                #[cfg(target_os = "linux")]
-                {
-                    linux_fix::nudge_main_window(window.clone());
+
+                // Show and focus window regardless
+                if let Some(window) = app.get_webview_window("main") {
+                    // 防御性重置 Windows 的 skip_taskbar：single_instance 触发时，
+                    // 原进程可能因 silent_startup / 关闭到托盘等处于 skip_taskbar(true) 状态，
+                    // 仅 show() 不会重置该状态，会导致窗口可见但不在任务栏、最小化后消失。
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = window.set_skip_taskbar(false);
+                    }
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    #[cfg(target_os = "linux")]
+                    {
+                        linux_fix::nudge_main_window(window.clone());
+                    }
                 }
-            }
+            });
         }));
     }
 
@@ -1141,7 +1164,10 @@ pub fn run() {
                 })
                 .menu(&menu)
                 .on_menu_event(|app, event| {
-                    tray::handle_tray_menu_event(app, &event.id.0);
+                    let event_id = event.id.0.clone();
+                    defer_window_callback(app, move |app| {
+                        tray::handle_tray_menu_event(app, &event_id);
+                    });
                 })
                 .show_menu_on_left_click(cfg!(not(target_os = "windows")));
 

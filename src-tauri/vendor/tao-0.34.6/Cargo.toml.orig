@@ -1,0 +1,159 @@
+[package]
+name = "tao"
+version = "0.34.6"
+description = "Cross-platform window manager library."
+authors = [
+  "Tauri Programme within The Commons Conservancy",
+  "The winit contributors",
+]
+edition = "2021"
+rust-version = "1.74"
+keywords = ["windowing"]
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/tauri-apps/tao"
+documentation = "https://docs.rs/tao"
+categories = ["gui"]
+include = ["/README.md", "src/**/*.rs", "examples/**/*.rs", "LICENSE*"]
+
+[package.metadata.docs.rs]
+features = ["rwh_04", "rwh_05", "rwh_06", "serde", "x11"]
+default-target = "x86_64-unknown-linux-gnu"
+targets = [
+  "i686-pc-windows-msvc",
+  "x86_64-pc-windows-msvc",
+  "i686-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+]
+
+[features]
+default = ["rwh_06", "x11"]
+serde = ["dep:serde", "dpi/serde"]
+rwh_04 = ["dep:rwh_04"]
+rwh_05 = ["dep:rwh_05"]
+rwh_06 = ["dep:rwh_06"]
+x11 = ["dep:gdkx11-sys", "dep:x11-dl"]
+
+[workspace]
+members = ["tao-macros"]
+
+[dependencies]
+libc = "0.2"
+log = "0.4"
+once_cell = "1"
+serde = { version = "1", optional = true, features = ["serde_derive"] }
+rwh_04 = { package = "raw-window-handle", version = "0.4", optional = true }
+rwh_05 = { package = "raw-window-handle", version = "0.5", features = [
+  "std",
+], optional = true }
+rwh_06 = { package = "raw-window-handle", version = "0.6", features = [
+  "std",
+], optional = true }
+bitflags = "2"
+crossbeam-channel = "0.5"
+url = "2"
+dpi = "0.1"
+
+[dev-dependencies]
+image = "0.25"
+env_logger = "0.11"
+
+[target."cfg(target_os = \"windows\")".dev-dependencies]
+softbuffer = "0.4"
+
+[target."cfg(target_os = \"windows\")".dependencies]
+parking_lot = "0.12"
+unicode-segmentation = "1.11"
+windows-version = "0.1"
+windows-core = "0.61"
+
+[target."cfg(target_os = \"windows\")".dependencies.windows]
+version = "0.61"
+features = [
+  "Win32_Devices_HumanInterfaceDevice",
+  "Win32_Foundation",
+  "Win32_Globalization",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_DataExchange",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_System_Registry",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_System_WindowsProgramming",
+  "Win32_System_SystemInformation",
+  "Win32_UI_Accessibility",
+  "Win32_UI_Controls",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_Ime",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Input_Pointer",
+  "Win32_UI_Input_Touch",
+  "Win32_UI_Shell",
+  "Win32_UI_TextServices",
+  "Win32_UI_WindowsAndMessaging",
+]
+
+[target."cfg(target_os = \"android\")".dependencies]
+jni = "0.21"
+ndk = "0.9"
+ndk-sys = "0.6"
+ndk-context = "0.1"
+tao-macros = { version = "0.1.0", path = "./tao-macros" }
+
+[target."cfg(any(target_os = \"ios\", target_os = \"macos\"))".dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+
+[target."cfg(target_os = \"macos\")".dependencies]
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSArray",
+  "NSAttributedString",
+  "NSAutoreleasePool",
+  "NSDate",
+  "NSDictionary",
+  "NSEnumerator",
+  "NSGeometry",
+  "NSObjCRuntime",
+  "NSRange",
+  "NSString",
+  "NSThread",
+  "NSURL",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "objc2-core-foundation",
+  "NSApplication",
+  "NSButton",
+  "NSColor",
+  "NSControl",
+  "NSEvent",
+  "NSGraphics",
+  "NSImage",
+  "NSOpenGLView",
+  "NSPasteboard",
+  "NSResponder",
+  "NSRunningApplication",
+  "NSScreen",
+  "NSView",
+  "NSWindow",
+  "NSUserActivity",
+] }
+core-foundation = "0.10"
+core-graphics = "0.25"
+dispatch2 = "0.3"
+
+[target."cfg(any(target_os = \"linux\", target_os = \"dragonfly\", target_os = \"freebsd\", target_os = \"openbsd\", target_os = \"netbsd\"))".dependencies]
+gtk = "0.18"
+gdkx11-sys = { version = "0.18", optional = true }
+gdkwayland-sys = "0.18.0"
+x11-dl = { version = "2.21", optional = true }
+parking_lot = "0.12"
+dlopen2 = "0.8.0"

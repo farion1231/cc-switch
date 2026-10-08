@@ -121,3 +121,7 @@ strip = "symbols"
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"
+
+# Backport tauri-apps/tao#1264 until Tauri uses a compatible fixed Tao release.
+[patch.crates-io]
+tao = { path = "vendor/tao-0.34.6" }
