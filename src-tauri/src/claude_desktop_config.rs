@@ -1,14 +1,20 @@
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::app_config::AppType;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use crate::config::get_home_dir;
-use crate::config::{atomic_write, delete_file, read_json_file, write_json_file};
+use crate::config::read_json_file;
 use crate::database::Database;
 use crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID;
 use crate::error::AppError;
+use crate::live::engine::{lock_app, DeviceStore, LiveFile};
+use crate::live::floor;
+use crate::live::patch::json::{self as patch_json, ClearScope, JsonPatch};
+use crate::live::patch::{KeyPath, LivePatch, LiveWriteError};
+use crate::mode::operation::{self, FileChange};
+use crate::mode::state::{self, PendingTarget};
 use crate::provider::{ClaudeDesktopMode, Provider};
 
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
@@ -79,18 +85,14 @@ struct ClaudeDesktopPaths {
     config_library_path: PathBuf,
     profile_path: PathBuf,
     meta_path: PathBuf,
+    /// 写前意图和首写备份所在的设备目录。
+    device: DeviceStore,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectGatewayCredentials {
     pub base_url: String,
     pub api_key: String,
-}
-
-#[derive(Debug, Clone)]
-struct FileSnapshot {
-    path: PathBuf,
-    content: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -150,8 +152,10 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
 
     let paths = current_platform_paths()?;
     let applied_id = read_applied_id(&paths.meta_path);
-    let configured = paths.profile_path.exists() || meta_has_profile_entry(&paths.meta_path);
     let profile = read_json_or_empty(&paths.profile_path).unwrap_or_else(|_| json!({}));
+    // 切回官方后 profile 文件保留、只清关键字段，所以不能按文件在不在判断。
+    let configured =
+        meta_has_profile_entry(&paths.meta_path) || profile.get("inferenceProvider").is_some();
     let actual_base_url = profile
         .get("inferenceGatewayBaseUrl")
         .and_then(Value::as_str)
@@ -172,13 +176,10 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
         .ok()
         .flatten()
         .is_some_and(|token| !token.trim().is_empty());
-    let current_provider = crate::settings::get_effective_current_provider(
-        db,
-        &crate::app_config::AppType::ClaudeDesktop,
-    )
-    .ok()
-    .flatten()
-    .and_then(|id| db.get_provider_by_id(&id, "claude-desktop").ok().flatten());
+    let current_provider =
+        crate::mode::current::direct_provider(db, &crate::app_config::AppType::ClaudeDesktop)
+            .ok()
+            .flatten();
     let mode = current_provider.as_ref().map(provider_mode);
     let expected_base_url = match mode {
         Some(ClaudeDesktopMode::Proxy) => proxy_gateway_base_url_from_db(db).ok(),
@@ -223,6 +224,20 @@ pub fn is_compatible_direct_provider(provider: &Provider) -> bool {
 
 pub fn is_official_provider(provider: &Provider) -> bool {
     provider.id == CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID
+}
+
+/// 当前供应商是不是模型映射卡：Claude Desktop 的请求要经本地路由服务转发，服务得一直在跑。
+pub fn current_provider_uses_proxy(db: &Database) -> bool {
+    if current_platform_paths().is_err() {
+        return false;
+    }
+    crate::mode::current::direct_provider(db, &crate::app_config::AppType::ClaudeDesktop)
+        .ok()
+        .flatten()
+        .is_some_and(|provider| {
+            !is_official_provider(&provider)
+                && matches!(provider_mode(&provider), ClaudeDesktopMode::Proxy)
+        })
 }
 
 pub fn provider_mode(provider: &Provider) -> ClaudeDesktopMode {
@@ -928,7 +943,7 @@ pub fn proxy_gateway_base_url_from_db(db: &Database) -> Result<String, AppError>
     }
     Ok(format!(
         "{}{}",
-        proxy_origin_from_parts(&config.listen_address, config.listen_port),
+        crate::services::proxy::proxy_origin(&config.listen_address, config.listen_port),
         CLAUDE_DESKTOP_PROXY_PREFIX
     ))
 }
@@ -943,39 +958,6 @@ fn apply_provider_to_paths(
     }
 
     validate_provider(provider)?;
-    with_rollback(paths, |paths| {
-        apply_provider_to_paths_inner(db, provider, paths)
-    })
-}
-
-fn restore_official_at_paths(paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
-    with_rollback(paths, restore_official_at_paths_inner)
-}
-
-fn with_rollback<F>(paths: &ClaudeDesktopPaths, op: F) -> Result<(), AppError>
-where
-    F: FnOnce(&ClaudeDesktopPaths) -> Result<(), AppError>,
-{
-    let snapshots = snapshot_files(paths)?;
-    match op(paths) {
-        Ok(()) => Ok(()),
-        Err(err) => match restore_snapshots(&snapshots) {
-            Ok(()) => Err(err),
-            Err(rollback_err) => {
-                log::error!("Failed to rollback Claude Desktop config after error: {rollback_err}");
-                Err(AppError::Message(format!(
-                    "{err}; rollback failed: {rollback_err}"
-                )))
-            }
-        },
-    }
-}
-
-fn apply_provider_to_paths_inner(
-    db: &Database,
-    provider: &Provider,
-    paths: &ClaudeDesktopPaths,
-) -> Result<(), AppError> {
     let profile = match provider_mode(provider) {
         ClaudeDesktopMode::Direct => {
             let credentials = direct_gateway_credentials(provider)?;
@@ -1002,25 +984,215 @@ fn apply_provider_to_paths_inner(
         }
     };
 
-    write_deployment_mode(&paths.normal_config_path, "3p")?;
-    write_deployment_mode(&paths.threep_config_path, "3p")?;
-    write_json_file(&paths.profile_path, &profile)?;
-    write_meta(&paths.meta_path, Some(PROFILE_ID))?;
+    let deployment = deployment_mode_patch("3p");
+    let profile = gateway_profile_patch(profile);
+    let meta = MetaPatch { applied: true };
+    write_desktop_files(
+        paths,
+        &[
+            FileChange {
+                file: LiveFile::shared(&paths.normal_config_path),
+                patch: &deployment,
+            },
+            FileChange {
+                file: LiveFile::shared(&paths.threep_config_path),
+                patch: &deployment,
+            },
+            FileChange {
+                file: LiveFile::private(&paths.profile_path),
+                patch: &profile,
+            },
+            FileChange {
+                file: LiveFile::shared(&paths.meta_path),
+                patch: &meta,
+            },
+        ],
+    )
+}
 
+/// 切回官方：两个配置文件改回 `1p`，清掉旧版写进 `enterpriseConfig` 的网关设置，
+/// 把 CC Switch 的 profile 从 `_meta.json` 里摘掉。
+///
+/// profile 文件本身保留、只清关键字段：用户在 Desktop 里对这个 profile 改的设置
+/// （#4774 的 auto 模式）下次切回第三方时还在，Key 也从磁盘上清掉了。Desktop 只按
+/// `_meta.json` 的条目读 profile，摘掉条目后这个文件不会被列出。
+fn restore_official_at_paths(paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
+    let normal = deployment_mode_patch("1p");
+    let mut threep = deployment_mode_patch("1p");
+    threep.remove = LEGACY_ENTERPRISE_GATEWAY_KEYS
+        .iter()
+        .map(|key| KeyPath::new(&["enterpriseConfig", key]))
+        .collect();
+    let threep = DropEmptyEnterpriseConfig(threep);
+    let profile = JsonPatch {
+        clear: vec![ClearScope {
+            parent: KeyPath::root(),
+            is_floor: floor::desktop_profile_floor,
+        }],
+        ..JsonPatch::default()
+    };
+    let meta = MetaPatch { applied: false };
+
+    let mut changes = vec![
+        FileChange {
+            file: LiveFile::shared(&paths.normal_config_path),
+            patch: &normal,
+        },
+        FileChange {
+            file: LiveFile::shared(&paths.threep_config_path),
+            patch: &threep,
+        },
+        FileChange {
+            file: LiveFile::shared(&paths.meta_path),
+            patch: &meta,
+        },
+    ];
+    if paths.profile_path.exists() {
+        changes.push(FileChange {
+            file: LiveFile::private(&paths.profile_path),
+            patch: &profile,
+        });
+    }
+    write_desktop_files(paths, &changes)
+}
+
+/// Desktop 的几个文件作为一次操作写入：任何一个解析失败都不写；写到一半失败或崩溃，
+/// 下次写入或启动时按写前意图补完。
+fn write_desktop_files(
+    paths: &ClaudeDesktopPaths,
+    changes: &[FileChange<'_>],
+) -> Result<(), AppError> {
+    let guard = lock_app(AppType::ClaudeDesktop.as_str());
+    operation::run(
+        &paths.device,
+        &guard,
+        state::op::APPLY,
+        changes,
+        PendingTarget::default(),
+        &|_| Ok(()),
+    )?;
     Ok(())
 }
 
-fn restore_official_at_paths_inner(paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
-    write_deployment_mode(&paths.normal_config_path, "1p")?;
-    write_deployment_mode(&paths.threep_config_path, "1p")?;
-    remove_cc_switch_enterprise_config(&paths.threep_config_path)?;
-
-    if paths.profile_path.exists() {
-        delete_file(&paths.profile_path)?;
+fn deployment_mode_patch(mode: &str) -> JsonPatch {
+    JsonPatch {
+        set: vec![(KeyPath::new(&["deploymentMode"]), json!(mode))],
+        ..JsonPatch::default()
     }
-    write_meta(&paths.meta_path, None)?;
+}
 
-    Ok(())
+/// 旧版写进 `claude_desktop_config.json` 的 `enterpriseConfig` 的网关设置。
+const LEGACY_ENTERPRISE_GATEWAY_KEYS: &[&str] = &[
+    "disableDeploymentModeChooser",
+    "inferenceGatewayApiKey",
+    "inferenceGatewayAuthScheme",
+    "inferenceGatewayBaseUrl",
+    "inferenceProvider",
+];
+
+/// 清完旧网关设置后，`enterpriseConfig` 空了就整个删掉。
+struct DropEmptyEnterpriseConfig(JsonPatch);
+
+impl LivePatch for DropEmptyEnterpriseConfig {
+    fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
+        let (mut doc, style) = patch_json::parse(path, pre)?;
+        self.0.apply_to(path, &mut doc)?;
+        if let Some(obj) = doc.as_object_mut() {
+            if obj
+                .get("enterpriseConfig")
+                .and_then(Value::as_object)
+                .is_some_and(|enterprise| enterprise.is_empty())
+            {
+                obj.shift_remove("enterpriseConfig");
+            }
+        }
+        patch_json::serialize(path, &doc, &style)
+    }
+}
+
+/// `build_gateway_profile` 的结果拆成补丁：关键字段替换，策略键缺失时才写。
+fn gateway_profile_patch(profile: Value) -> JsonPatch {
+    let mut patch = JsonPatch {
+        clear: vec![ClearScope {
+            parent: KeyPath::root(),
+            is_floor: floor::desktop_profile_floor,
+        }],
+        ..JsonPatch::default()
+    };
+    if let Value::Object(fields) = profile {
+        for (key, value) in fields {
+            let key_path = KeyPath::new(&[&key]);
+            if floor::DESKTOP_PROFILE_SEED.contains(&key.as_str()) {
+                patch.seed.push((key_path, value));
+            } else {
+                patch.set.push((key_path, value));
+            }
+        }
+    }
+    patch
+}
+
+/// `configLibrary/_meta.json`：`entries` 里登记 CC Switch 的 profile，`appliedId`
+/// 指向当前生效的那个。已有条目原位更新，不挪位置。
+struct MetaPatch {
+    applied: bool,
+}
+
+impl LivePatch for MetaPatch {
+    fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
+        let (mut doc, style) = patch_json::parse(path, pre)?;
+        let obj = doc.as_object_mut().expect("parse guarantees an object");
+        let not_an_array = || LiveWriteError::Shape {
+            path: path.to_path_buf(),
+            key_path: KeyPath::new(&["entries"]),
+            expected: "数组",
+        };
+        let is_ours = |entry: &Value| entry.get("id").and_then(Value::as_str) == Some(PROFILE_ID);
+
+        if self.applied {
+            let entries = obj
+                .entry("entries")
+                .or_insert_with(|| Value::Array(Vec::new()))
+                .as_array_mut()
+                .ok_or_else(not_an_array)?;
+            match entries.iter_mut().find(|entry| is_ours(entry)) {
+                Some(Value::Object(entry)) => {
+                    entry.insert("name".to_string(), json!(PROFILE_NAME));
+                }
+                _ => entries.push(json!({ "id": PROFILE_ID, "name": PROFILE_NAME })),
+            }
+            match obj.get_mut("appliedId") {
+                Some(slot) => *slot = json!(PROFILE_ID),
+                None => {
+                    obj.insert("appliedId".to_string(), json!(PROFILE_ID));
+                }
+            }
+        } else {
+            let next_id = match obj.get_mut("entries") {
+                Some(entries) => {
+                    let entries = entries.as_array_mut().ok_or_else(not_an_array)?;
+                    entries.retain(|entry| !is_ours(entry));
+                    entries
+                        .iter()
+                        .find_map(|entry| entry.get("id").and_then(Value::as_str))
+                        .map(str::to_string)
+                }
+                None => None,
+            };
+            if obj.get("appliedId").and_then(Value::as_str) == Some(PROFILE_ID) {
+                match next_id {
+                    Some(next_id) => {
+                        obj.insert("appliedId".to_string(), json!(next_id));
+                    }
+                    None => {
+                        obj.shift_remove("appliedId");
+                    }
+                }
+            }
+        }
+
+        patch_json::serialize(path, &doc, &style)
+    }
 }
 
 fn build_gateway_profile(
@@ -1057,137 +1229,6 @@ fn read_json_or_empty(path: &Path) -> Result<Value, AppError> {
     } else {
         Ok(json!({}))
     }
-}
-
-fn snapshot_files(paths: &ClaudeDesktopPaths) -> Result<Vec<FileSnapshot>, AppError> {
-    [
-        &paths.normal_config_path,
-        &paths.threep_config_path,
-        &paths.profile_path,
-        &paths.meta_path,
-    ]
-    .into_iter()
-    .map(|path| {
-        let content = if path.exists() {
-            Some(fs::read(path).map_err(|e| AppError::io(path, e))?)
-        } else {
-            None
-        };
-        Ok(FileSnapshot {
-            path: path.clone(),
-            content,
-        })
-    })
-    .collect()
-}
-
-fn restore_snapshots(snapshots: &[FileSnapshot]) -> Result<(), AppError> {
-    for snapshot in snapshots {
-        match &snapshot.content {
-            Some(content) => {
-                if let Some(parent) = snapshot.path.parent() {
-                    fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-                }
-                atomic_write(&snapshot.path, content)?;
-            }
-            None => {
-                delete_file(&snapshot.path)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn write_deployment_mode(path: &Path, mode: &str) -> Result<(), AppError> {
-    let mut value = read_json_or_empty(path)?;
-    if !value.is_object() {
-        value = json!({});
-    }
-    if let Some(obj) = value.as_object_mut() {
-        obj.insert(
-            "deploymentMode".to_string(),
-            Value::String(mode.to_string()),
-        );
-    }
-    write_json_file(path, &value)
-}
-
-fn remove_cc_switch_enterprise_config(path: &Path) -> Result<(), AppError> {
-    if !path.exists() {
-        return Ok(());
-    }
-
-    let mut value = read_json_or_empty(path)?;
-    let Some(obj) = value.as_object_mut() else {
-        return Ok(());
-    };
-    let Some(enterprise) = obj
-        .get_mut("enterpriseConfig")
-        .and_then(Value::as_object_mut)
-    else {
-        return Ok(());
-    };
-
-    for key in [
-        "disableDeploymentModeChooser",
-        "inferenceGatewayApiKey",
-        "inferenceGatewayAuthScheme",
-        "inferenceGatewayBaseUrl",
-        "inferenceProvider",
-    ] {
-        enterprise.remove(key);
-    }
-
-    if enterprise.is_empty() {
-        obj.remove("enterpriseConfig");
-    }
-
-    write_json_file(path, &value)
-}
-
-fn write_meta(path: &Path, applied_profile_id: Option<&str>) -> Result<(), AppError> {
-    let mut value = read_json_or_empty(path)?;
-    if !value.is_object() {
-        value = json!({});
-    }
-
-    let obj = value.as_object_mut().expect("just normalized to object");
-    let mut entries = obj
-        .get("entries")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-
-    entries.retain(|entry| entry.get("id").and_then(Value::as_str) != Some(PROFILE_ID));
-
-    match applied_profile_id {
-        Some(id) => {
-            entries.push(json!({
-                "id": PROFILE_ID,
-                "name": PROFILE_NAME
-            }));
-            obj.insert("appliedId".to_string(), Value::String(id.to_string()));
-        }
-        None => {
-            let should_clear_applied = obj
-                .get("appliedId")
-                .and_then(Value::as_str)
-                .is_some_and(|id| id == PROFILE_ID);
-            if should_clear_applied {
-                if let Some(next_id) = entries
-                    .iter()
-                    .find_map(|entry| entry.get("id").and_then(Value::as_str))
-                {
-                    obj.insert("appliedId".to_string(), Value::String(next_id.to_string()));
-                } else {
-                    obj.remove("appliedId");
-                }
-            }
-        }
-    }
-
-    obj.insert("entries".to_string(), Value::Array(entries));
-    write_json_file(path, &value)
 }
 
 fn read_applied_id(path: &Path) -> Option<String> {
@@ -1253,7 +1294,7 @@ fn linux_config_dir() -> PathBuf {
     linux_config_dir_from_home(&get_home_dir(), xdg_config_home.as_deref(), is_flatpak())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", all(test, unix)))]
 fn linux_config_dir_from_home(
     home: &Path,
     xdg_config_home: Option<&Path>,
@@ -1339,22 +1380,8 @@ fn paths_from_dirs(normal_dir: PathBuf, threep_dir: PathBuf) -> ClaudeDesktopPat
         config_library_path,
         profile_path,
         meta_path,
+        device: DeviceStore::for_device(),
     }
-}
-
-fn proxy_origin_from_parts(listen_address: &str, listen_port: u16) -> String {
-    let connect_host = match listen_address {
-        "0.0.0.0" => "127.0.0.1",
-        "::" => "::1",
-        value => value,
-    };
-    let connect_host_for_url = if connect_host.contains(':') && !connect_host.starts_with('[') {
-        format!("[{connect_host}]")
-    } else {
-        connect_host.to_string()
-    };
-
-    format!("http://{}:{}", connect_host_for_url, listen_port)
 }
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
@@ -1369,23 +1396,27 @@ fn unsupported_platform_error() -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::write_json_file;
     use crate::database::Database;
     use crate::provider::{ClaudeDesktopModelRoute, ProviderMeta};
     use serde_json::json;
+    use std::fs;
     use tempfile::TempDir;
 
     fn test_paths(home: &Path) -> ClaudeDesktopPaths {
-        paths_from_dirs(
+        let mut paths = paths_from_dirs(
             home.join("Library")
                 .join("Application Support")
                 .join("Claude"),
             home.join("Library")
                 .join("Application Support")
                 .join("Claude-3p"),
-        )
+        );
+        paths.device = DeviceStore::at(home.join(".cc-switch"));
+        paths
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", all(test, unix)))]
     #[test]
     fn linux_config_dir_uses_absolute_xdg_config_home_outside_flatpak() {
         let home = Path::new("/home/tester");
@@ -1397,7 +1428,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", all(test, unix)))]
     #[test]
     fn linux_config_dir_falls_back_for_missing_or_relative_xdg_config_home() {
         let home = Path::new("/home/tester");
@@ -1412,7 +1443,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", all(test, unix)))]
     #[test]
     fn linux_config_dir_uses_host_config_when_cc_switch_runs_in_flatpak() {
         let home = Path::new("/home/tester");
@@ -2195,23 +2226,25 @@ mod tests {
     }
 
     #[test]
-    fn claude_desktop_write_meta_recovers_non_object_meta_file() {
+    fn claude_desktop_refuses_a_meta_file_it_cannot_understand() {
         let temp = TempDir::new().expect("tempdir");
         let paths = test_paths(temp.path());
+        let db = test_db();
         if let Some(parent) = paths.meta_path.parent() {
             fs::create_dir_all(parent).expect("create parent");
         }
         fs::write(&paths.meta_path, "[]").expect("write invalid meta shape");
 
-        write_meta(&paths.meta_path, Some(PROFILE_ID)).expect("write meta");
+        apply_provider_to_paths(&db, &direct_provider("direct"), &paths)
+            .expect_err("a meta file that is not an object must not be overwritten");
 
-        let meta: Value = read_json_file(&paths.meta_path).expect("read meta");
-        assert_eq!(meta["appliedId"], json!(PROFILE_ID));
-        assert!(meta["entries"].as_array().is_some());
+        assert_eq!(fs::read_to_string(&paths.meta_path).unwrap(), "[]");
+        assert!(!paths.profile_path.exists());
+        assert!(!paths.normal_config_path.exists());
     }
 
     #[test]
-    fn claude_desktop_restore_switches_to_1p_and_removes_cc_switch_profile() {
+    fn claude_desktop_restore_switches_to_1p_and_clears_the_cc_switch_profile() {
         let temp = TempDir::new().expect("tempdir");
         let paths = test_paths(temp.path());
         let provider = direct_provider("direct");
@@ -2223,16 +2256,106 @@ mod tests {
         let normal: Value = read_json_file(&paths.normal_config_path).expect("read normal config");
         let threep: Value = read_json_file(&paths.threep_config_path).expect("read 3p config");
         let meta: Value = read_json_file(&paths.meta_path).expect("read meta");
+        let profile: Value = read_json_file(&paths.profile_path).expect("profile is kept");
 
         assert_eq!(normal["deploymentMode"], json!("1p"));
         assert_eq!(threep["deploymentMode"], json!("1p"));
-        assert!(!paths.profile_path.exists());
+        for key in floor::DESKTOP_PROFILE_FLOOR {
+            assert!(profile.get(*key).is_none(), "{key} must be cleared");
+        }
         assert!(meta.get("appliedId").is_none());
         assert!(!meta["entries"]
             .as_array()
             .expect("entries")
             .iter()
             .any(|entry| entry["id"] == json!(PROFILE_ID)));
+    }
+
+    /// #4774：用户在 Desktop 里给 CC Switch 的 profile 打开的设置，切换供应商、
+    /// 切回官方再切回来都不能丢；用户收紧过的出站白名单也不能被改回 `*`。
+    #[test]
+    fn claude_desktop_switches_keep_the_users_own_profile_settings() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let db = test_db();
+
+        apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("apply a");
+        let mut profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        profile["userAutoMode"] = json!(true);
+        profile["coworkEgressAllowedHosts"] = json!(["corp.example"]);
+        fs::write(
+            &paths.profile_path,
+            serde_json::to_string_pretty(&profile).unwrap(),
+        )
+        .unwrap();
+
+        apply_provider_to_paths(&db, &direct_provider_with_models("b"), &paths).expect("apply b");
+        restore_official_at_paths(&paths).expect("restore official");
+        apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("apply a again");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile["userAutoMode"], json!(true));
+        assert_eq!(profile["coworkEgressAllowedHosts"], json!(["corp.example"]));
+        assert_eq!(profile["disableDeploymentModeChooser"], json!(true));
+        assert_eq!(profile["inferenceProvider"], json!("gateway"));
+        assert!(
+            profile.get("inferenceModels").is_none(),
+            "the previous provider's models must not linger"
+        );
+    }
+
+    #[test]
+    fn claude_desktop_keeps_other_meta_entries_in_place() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let db = test_db();
+        write_json_file(
+            &paths.meta_path,
+            &json!({
+                "entries": [
+                    {"id": "other-1", "name": "Mine"},
+                    {"id": PROFILE_ID, "name": "Old name", "note": "kept"},
+                    {"id": "other-2", "name": "Also mine"}
+                ],
+                "appliedId": "other-1"
+            }),
+        )
+        .expect("seed meta");
+
+        apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("apply");
+        let meta: Value = read_json_file(&paths.meta_path).expect("read meta");
+        assert_eq!(
+            meta["entries"],
+            json!([
+                {"id": "other-1", "name": "Mine"},
+                {"id": PROFILE_ID, "name": PROFILE_NAME, "note": "kept"},
+                {"id": "other-2", "name": "Also mine"}
+            ])
+        );
+        assert_eq!(meta["appliedId"], json!(PROFILE_ID));
+
+        restore_official_at_paths(&paths).expect("restore");
+        let meta: Value = read_json_file(&paths.meta_path).expect("read meta");
+        assert_eq!(
+            meta["entries"],
+            json!([{"id": "other-1", "name": "Mine"}, {"id": "other-2", "name": "Also mine"}])
+        );
+        assert_eq!(meta["appliedId"], json!("other-1"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_desktop_profile_with_the_gateway_key_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        apply_provider_to_paths(&test_db(), &direct_provider("a"), &paths).expect("apply");
+        let mode = fs::metadata(&paths.profile_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]
@@ -2252,7 +2375,8 @@ mod tests {
 
         assert_eq!(normal["deploymentMode"], json!("1p"));
         assert_eq!(threep["deploymentMode"], json!("1p"));
-        assert!(!paths.profile_path.exists());
+        let profile: Value = read_json_file(&paths.profile_path).expect("profile is kept");
+        assert!(profile.get("inferenceGatewayApiKey").is_none());
         assert!(meta.get("appliedId").is_none());
     }
 

@@ -55,7 +55,15 @@ use std::time::SystemTime;
 /// 代理行而放行，双算永久留存。让事件先「沉降」再导入后，守卫查询必然
 /// 能看到已落库的代理行，竞态从源头消除。代价：官方态用量最多延迟约一个
 /// 窗口 + 一次后台同步周期（60s）上屏。
-const SETTLE_WINDOW_SECONDS: i64 = SESSION_PROXY_DEDUP_WINDOW_SECONDS;
+///
+/// 窗口只需盖住「代理行落库比 turn_completed 写盘晚」的那几秒：本轮每个
+/// 请求的代理行都在响应结束时写入，而 turn_completed 要等最后一个请求结束
+/// 才写。🔴 勿再与守卫的 ±`SESSION_PROXY_DEDUP_WINDOW_SECONDS` 绑成同一
+/// 常量——两者语义不同，绑定曾让官方态用量平白延迟 10 分钟以上。
+const SETTLE_WINDOW_SECONDS: i64 = 60;
+
+// 沉降期间落库的代理行，时刻最多比事件晚一个沉降窗，必须仍落在守卫窗口内。
+const _: () = assert!(SETTLE_WINDOW_SECONDS < SESSION_PROXY_DEDUP_WINDOW_SECONDS);
 
 /// 单个模型的本轮用量（从 `modelUsage` 或顶层 usage 提取，均为逐轮口径）
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -897,6 +905,88 @@ mod tests {
         assert_eq!(rerun.skipped, 1);
         assert_eq!(rerun.deferred_files, 1);
         assert_eq!(query_rows(&db)?.len(), 1);
+        Ok(())
+    }
+
+    fn unix_now() -> i64 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("now")
+            .as_secs() as i64
+    }
+
+    #[test]
+    fn settled_event_imports_without_waiting_for_dedup_window() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        // 一分半钟前结束的一轮（远未到守卫窗口的 10 分钟）应当已经导入；
+        // 用固定偏移而非沉降窗推算，沉降窗被调回大值时本测试才会失败
+        let event_at = unix_now() - 90;
+        let lines = vec![usage_event_line(
+            event_at,
+            "p1",
+            &model_counters("grok-4.5-build", 100, 10, 0, 1),
+        )];
+        let path = write_session_file(temp.path(), "sess-settled", &lines);
+
+        let result = sync_single_grok_file(
+            &db,
+            &path,
+            &crate::services::session_usage::load_sync_cursors(&db).unwrap(),
+        )?;
+        assert_eq!(result.imported, 1);
+        assert_eq!(result.deferred_files, 0);
+        assert_eq!(query_rows(&db)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn proxy_row_landing_after_event_still_blocks_import() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let event_at = unix_now() - SETTLE_WINDOW_SECONDS - 5;
+        {
+            // 接管态：代理行比 turn_completed 晚几秒落库
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    "grok-proxy-late",
+                    "some-provider",
+                    "grokbuild",
+                    "grok-4.5",
+                    "grok-4.5",
+                    100,
+                    10,
+                    0,
+                    0,
+                    "0.01",
+                    100,
+                    200,
+                    event_at + 3,
+                    "proxy"
+                ],
+            )?;
+        }
+        let temp = tempdir().expect("tempdir");
+        let lines = vec![usage_event_line(
+            event_at,
+            "p1",
+            &model_counters("grok-4.5-build", 100, 10, 0, 1),
+        )];
+        let path = write_session_file(temp.path(), "sess-late-proxy", &lines);
+
+        let result = sync_single_grok_file(
+            &db,
+            &path,
+            &crate::services::session_usage::load_sync_cursors(&db).unwrap(),
+        )?;
+        assert_eq!(result.imported, 0);
+        assert_eq!(result.skipped, 1, "代理行已记账，会话事件不得再入账");
+        assert!(query_rows(&db)?.is_empty());
         Ok(())
     }
 

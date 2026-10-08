@@ -1,0 +1,2 @@
+.codex/auth.json 600
+.codex/config.toml 600

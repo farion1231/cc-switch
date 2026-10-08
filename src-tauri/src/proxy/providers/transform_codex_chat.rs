@@ -7,8 +7,9 @@
 use super::codex_chat_common::{
     append_reasoning_content, extract_reasoning_field_text, extract_reasoning_summary_text,
     response_function_call_item, response_function_call_item_with_namespace,
-    split_leading_think_block,
 };
+use super::codex_compaction;
+use super::inline_think::split_leading_think_block;
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
@@ -68,11 +69,17 @@ pub(crate) struct CodexToolContext {
     seen_chat_names: HashSet<String>,
     chat_name_to_spec: HashMap<String, CodexToolSpec>,
     namespace_name_to_chat_name: HashMap<(String, String), String>,
+    /// 这个请求是 Codex 远程压缩（input 里有 `compaction_trigger`），见 `codex_compaction`。
+    compaction_request: bool,
 }
 
 impl CodexToolContext {
     pub(crate) fn chat_tools(&self) -> &[Value] {
         &self.chat_tools
+    }
+
+    pub(crate) fn is_compaction_request(&self) -> bool {
+        self.compaction_request
     }
 
     pub(crate) fn lookup_chat_name(&self, chat_name: &str) -> Option<&CodexToolSpec> {
@@ -247,8 +254,9 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     }
 
     if let Some(input) = body.get("input") {
-        collect_tool_search_output_tools(input, &mut context);
+        collect_input_declared_tools(input, &mut context);
     }
+    context.compaction_request = codex_compaction::is_compaction_request(body);
 
     context
 }
@@ -312,8 +320,10 @@ pub fn responses_to_chat_completions_with_reasoning(
 
     apply_reasoning_options(&mut result, &body, model, reasoning_config);
 
+    // 压缩回合只要一段摘要：不带工具和结构化输出，与 Codex 本地压缩请求同形。
+    let compaction = tool_context.is_compaction_request();
     let tools = tool_context.chat_tools();
-    if !tools.is_empty() {
+    if !tools.is_empty() && !compaction {
         result["tools"] = json!(tools);
     }
 
@@ -322,6 +332,9 @@ pub fn responses_to_chat_completions_with_reasoning(
     }
 
     for key in EXTRA_CHAT_PASSTHROUGH_FIELDS {
+        if compaction && *key == "response_format" {
+            continue;
+        }
         if let Some(value) = body.get(*key) {
             result[*key] = value.clone();
         }
@@ -771,6 +784,39 @@ fn append_responses_item_as_chat_message(
             // 到达时回溯附挂，见 attach_pending_reasoning_to_previous_assistant。
             append_pending_reasoning(pending_reasoning, responses_reasoning_item_text(item));
         }
+        // Codex 远程压缩：触发条目换成压缩提示词，历史里的压缩条目换成摘要正文，
+        // 都按一条普通用户消息处理（回合边界、pending reasoning 的附挂规则照旧）。
+        Some("compaction_trigger") => {
+            append_responses_item_as_chat_message(
+                &codex_compaction::compaction_prompt_item(),
+                messages,
+                pending_tool_calls,
+                pending_media,
+                pending_reasoning,
+                last_assistant_index,
+                tool_context,
+            )?;
+        }
+        Some("compaction" | "compaction_summary" | "context_compaction") => {
+            if let Some(text) = codex_compaction::compaction_item_replay_text(item) {
+                append_responses_item_as_chat_message(
+                    &codex_compaction::user_message_item(&text),
+                    messages,
+                    pending_tool_calls,
+                    pending_media,
+                    pending_reasoning,
+                    last_assistant_index,
+                    tool_context,
+                )?;
+            }
+        }
+        // An `additional_tools` carrier declares tools for this request; its
+        // nested tools are lifted via `build_codex_tool_context_from_request`
+        // and the carrier itself is not a message. It carries a `role` but no
+        // `content`, so letting it fall through the generic message arm used
+        // to fabricate a `content: null` system message that strict chat
+        // gateways reject with `messages[N]: missing field "content"`.
+        Some("additional_tools") => {}
         Some("input_text" | "input_image" | "input_file" | "input_audio") => {
             flush_pending_tool_calls(
                 messages,
@@ -1288,15 +1334,25 @@ fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
     chat_file_from_input_file(part)
 }
 
-fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContext) {
+/// Collect tools declared inline in the request `input` instead of top-level
+/// `tools`: `tool_search_output` items (dynamically loaded tool groups) and
+/// `additional_tools` carriers (Codex 0.154+ ships extra tools — the
+/// `functions`/`collaboration` exec sandbox, plugins — in this Responses
+/// private-extension carrier). The xAI Responses passthrough already promotes
+/// the same carriers (`promote_additional_tools`); the Chat and Anthropic
+/// converters go through this registry so they keep the carried tools too.
+fn collect_input_declared_tools(value: &Value, context: &mut CodexToolContext) {
     match value {
         Value::Array(items) => {
             for item in items {
-                collect_tool_search_output_tools(item, context);
+                collect_input_declared_tools(item, context);
             }
         }
         Value::Object(obj) => {
-            if obj.get("type").and_then(|v| v.as_str()) == Some("tool_search_output") {
+            if matches!(
+                obj.get("type").and_then(|v| v.as_str()),
+                Some("tool_search_output" | "additional_tools")
+            ) {
                 if let Some(tools) = obj.get("tools").and_then(|v| v.as_array()) {
                     for tool in tools {
                         context.add_response_tool(tool);
@@ -1304,7 +1360,7 @@ fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContex
                 }
             }
             for value in obj.values() {
-                collect_tool_search_output_tools(value, context);
+                collect_input_declared_tools(value, context);
             }
         }
         _ => {}
@@ -1404,9 +1460,18 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
 
     let mut function = json!({
         "name": chat_name,
-        "description": tool.get("description").cloned().unwrap_or(Value::Null),
-        "parameters": normalize_function_parameters(tool.get("parameters"))
     });
+    // Omit a missing description instead of serializing null — hosted tools
+    // and undescribed custom tools reach this branch without the field, and
+    // strict OpenAI-compatible upstreams reject the whole request on a null
+    // value (400 "expected string, received null"). Same treatment as the
+    // anthropic→chat/responses converters; insertion keeps the original
+    // name→description→parameters key order for byte-identical output when
+    // the description is present.
+    if let Some(description) = tool.get("description").filter(|d| !d.is_null()) {
+        function["description"] = description.clone();
+    }
+    function["parameters"] = normalize_function_parameters(tool.get("parameters"));
     if let Some(strict) = tool.get("strict") {
         function["strict"] = strict.clone();
     }
@@ -2402,6 +2467,29 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_omits_missing_tool_description() {
+        // A missing description must be omitted, not serialized as null —
+        // strict OpenAI-compatible upstreams reject the whole request on a
+        // null value (400 "expected string, received null").
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ],
+            "tools": [
+                {"type": "function", "name": "no_desc", "parameters": {"type": "object"}},
+                {"type": "function", "name": "with_desc", "description": "Has one", "parameters": {"type": "object"}}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(tools[0]["function"].get("description").is_none());
+        assert_eq!(tools[1]["function"]["description"], "Has one");
+    }
+
+    #[test]
     fn responses_request_to_chat_defaults_null_tool_parameters() {
         let input = json!({
             "model": "gpt-5.4",
@@ -3082,6 +3170,127 @@ mod tests {
         assert!(head_content.contains("You are Codex."));
         assert!(head_content.contains("Permissions block"));
         assert!(head_content.contains("Collaboration Mode: Default"));
+    }
+
+    #[test]
+    fn additional_tools_carrier_is_lifted_not_converted_to_a_message() {
+        // Shape from #7451: Codex 0.154+ ships extra tools in an
+        // `additional_tools` input carrier (role `developer`, no `content`).
+        let input = json!({
+            "model": "agnes-3.0-flash",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "id": "at_a8d5b9f5",
+                    "role": "developer",
+                    "tools": [
+                        {
+                            "type": "namespace",
+                            "name": "functions",
+                            "description": "",
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "name": "exec_command",
+                                    "description": "Run a shell command.",
+                                    "strict": false,
+                                    "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function",
+                            "name": "wait",
+                            "description": "Waits on a yielded exec cell.",
+                            "strict": false,
+                            "parameters": {"type": "object", "properties": {"cell_id": {"type": "string"}}, "required": ["cell_id"]}
+                        }
+                    ]
+                },
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "You are Codex, a coding agent."}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "你好"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // The carrier is not a message: every emitted message must carry
+        // real content, and the developer instruction must remain the only
+        // system head.
+        for (idx, message) in messages.iter().enumerate() {
+            assert!(
+                !matches!(message.get("content"), None | Some(Value::Null)),
+                "messages[{idx}] lost its content: {message}"
+            );
+        }
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "You are Codex, a coding agent.");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "你好");
+
+        // The carried tools survive as flattened chat tools.
+        let tool_names: Vec<&str> = result["tools"]
+            .as_array()
+            .expect("carried tools must be lifted into top-level tools")
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect();
+        assert!(
+            tool_names.contains(&"functions__exec_command"),
+            "{tool_names:?}"
+        );
+        assert!(tool_names.contains(&"wait"), "{tool_names:?}");
+    }
+
+    #[test]
+    fn additional_tools_carrier_tools_dedup_against_top_level_tools() {
+        let input = json!({
+            "model": "m",
+            "tools": [
+                {"type": "function", "name": "wait", "description": "Top-level wait.", "parameters": {"type": "object", "properties": {}}}
+            ],
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [
+                        {"type": "function", "name": "wait", "description": "Carried wait.", "parameters": {"type": "object", "properties": {}}}
+                    ]
+                },
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1, "duplicate carried tool must be dropped");
+        assert_eq!(tools[0]["function"]["name"], "wait");
+        assert_eq!(tools[0]["function"]["description"], "Top-level wait.");
+    }
+
+    #[test]
+    fn plain_developer_messages_convert_without_additional_tools_carrier() {
+        // No carrier present: developer messages keep mapping to system and
+        // no tools array is fabricated.
+        let input = json!({
+            "model": "m",
+            "input": [
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "Instructions."}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "Instructions.");
+        assert_eq!(messages[1]["role"], "user");
+        assert!(result.get("tools").is_none());
     }
 
     #[test]
@@ -4325,7 +4534,7 @@ mod tests {
             .get("image_url")
             .and_then(|value| value.get("url"))
             .and_then(Value::as_str)
-            .is_some_and(|url| url == &data_url)));
+            .is_some_and(|url| url == data_url)));
         assert_eq!(messages[3]["content"], "Viewing the image now.");
         assert_eq!(messages[3]["tool_calls"][0]["id"], "call_next");
         assert_eq!(messages[4]["tool_call_id"], "call_next");
@@ -5264,5 +5473,56 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    #[test]
+    fn compaction_request_becomes_tool_free_summary_turn() {
+        let own_summary = codex_compaction::encode_compaction_summary("earlier progress");
+        let body = json!({
+            "model": "kimi-k3",
+            "stream": true,
+            "input": [
+                { "type": "compaction", "id": "cmp_1", "encrypted_content": own_summary },
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "fix bug" }] },
+                { "type": "function_call", "call_id": "call_1", "name": "shell", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "call_1", "output": "ok" },
+                { "type": "compaction_trigger" }
+            ],
+            "tools": [{ "type": "function", "name": "shell", "parameters": { "type": "object" } }],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true
+        });
+        let result = responses_to_chat_completions(body).unwrap();
+        assert!(result.get("tools").is_none());
+        assert!(result.get("tool_choice").is_none());
+        assert!(result.get("parallel_tool_calls").is_none());
+
+        let messages = result["messages"].as_array().unwrap();
+        let first = serde_json::to_string(&messages[0]["content"]).unwrap();
+        assert!(first.contains("earlier progress"));
+        assert!(first.contains("Another language model started to solve this problem"));
+        let last = messages.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert!(serde_json::to_string(&last["content"])
+            .unwrap()
+            .contains("CONTEXT CHECKPOINT COMPACTION"));
+        // 工具调用历史照常保留（与 Codex 本地压缩请求同形）。
+        assert!(messages.iter().any(|message| message["role"] == "tool"));
+    }
+
+    #[test]
+    fn foreign_compaction_blob_becomes_readable_note_instead_of_vanishing() {
+        let body = json!({
+            "model": "kimi-k3",
+            "input": [
+                { "type": "compaction", "encrypted_content": "gAAAAB-openai-blob" },
+                { "type": "context_compaction" },
+                { "type": "message", "role": "user", "content": "continue" }
+            ]
+        });
+        let result = responses_to_chat_completions(body).unwrap();
+        let rendered = serde_json::to_string(&result["messages"]).unwrap();
+        assert!(rendered.contains(codex_compaction::OPAQUE_COMPACTION_NOTE));
+        assert!(!rendered.contains("gAAAAB-openai-blob"));
     }
 }

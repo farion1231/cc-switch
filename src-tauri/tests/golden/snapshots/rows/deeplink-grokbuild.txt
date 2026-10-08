@@ -1,0 +1,13 @@
+id: relaygrok-<ts>
+name: Relay Grok
+settings_config: {"config":"[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://api.relay.example/v1\"\nname = \"Relay Grok\"\napi_key = \"xai-relay\"\napi_backend = \"responses\"\ncontext_window = 500000\n"}
+website_url: https://relay.example
+category: NULL
+sort_index: NULL
+notes: NULL
+icon: NULL
+icon_color: NULL
+meta: {}
+is_current: true
+in_failover_queue: false
+

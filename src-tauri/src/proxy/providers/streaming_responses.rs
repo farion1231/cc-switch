@@ -67,6 +67,44 @@ fn anthropic_ping_sse() -> Bytes {
     anthropic_sse("ping", &json!({"type": "ping"}))
 }
 
+const UNPROCESSED_REJECTION_MESSAGE: &str = "Upstream rejected the request before processing it \
+(terminal response.incomplete reported max_output_tokens with zero input/output usage). Real \
+output-token truncation reports non-zero usage, so this is a request rejection — commonly caused \
+by a tool schema the upstream refuses (e.g. a `pattern` regex with nested quantifiers), not by \
+hitting the output-token limit.";
+
+/// A terminal `incomplete` response that reports zero input and output usage
+/// never ran on the upstream: genuine max-output-token truncation always
+/// reports non-zero usage. The ChatGPT Codex backend produces exactly this
+/// terminal (with `incomplete_details.reason = "max_output_tokens"`) when it
+/// refuses a request before processing it, e.g. over a tool schema `pattern`
+/// regex with nested quantifiers. Mapping such a terminal to
+/// `stop_reason: "max_tokens"` makes clients report an output-token limit that
+/// was never hit, so callers should surface it as an upstream error instead.
+fn is_unprocessed_max_output_rejection(response_obj: &Value, status: Option<&str>) -> bool {
+    if status != Some("incomplete") {
+        return false;
+    }
+    if !matches!(
+        response_obj
+            .pointer("/incomplete_details/reason")
+            .and_then(Value::as_str),
+        Some("max_output_tokens") | Some("max_tokens") | None
+    ) {
+        return false;
+    }
+    response_obj
+        .pointer("/usage/input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        == 0
+        && response_obj
+            .pointer("/usage/output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            == 0
+}
+
 /// Convert a compatible gateway's non-streaming Responses JSON into a complete
 /// Anthropic SSE lifecycle. This is used when the client requested streaming but
 /// the upstream ignored `stream:true` and returned `application/json`.
@@ -75,6 +113,10 @@ fn responses_json_to_anthropic_sse(
     hosted_web_search_name: Option<&str>,
     max_web_search_uses: Option<u64>,
 ) -> Vec<Bytes> {
+    // Zero-usage incomplete terminals are request rejections, not truncation;
+    // decide before `body` is consumed by the conversion below.
+    let unprocessed_rejection =
+        is_unprocessed_max_output_rejection(&body, body.get("status").and_then(Value::as_str));
     let message = match responses_to_anthropic_with_web_search_options(
         body,
         hosted_web_search_name,
@@ -241,6 +283,23 @@ fn responses_json_to_anthropic_sse(
                 _ => {}
             }
         }
+    }
+
+    if unprocessed_rejection
+        && message
+            .get("content")
+            .and_then(Value::as_array)
+            .is_none_or(|content| content.is_empty())
+    {
+        log::warn!(
+            "[Claude/Responses] terminal incomplete with zero usage and no content; \
+emitting api_error for the unprocessed upstream rejection instead of max_tokens"
+        );
+        events.push(anthropic_error_sse(
+            UNPROCESSED_REJECTION_MESSAGE,
+            "api_error",
+        ));
+        return events;
     }
 
     events.push(anthropic_sse(
@@ -3488,6 +3547,33 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     terminated = true;
                                     continue;
                                 }
+                                if next_content_index == 0
+                                    && !has_substantive_output
+                                    && response_obj.get("output").and_then(Value::as_array).is_some()
+                                {
+                                    let mut terminal_body = response_obj.clone();
+                                    if terminal_body.get("status").and_then(Value::as_str).is_none() {
+                                        terminal_body["status"] = json!(if event_name == "response.incomplete" {
+                                            "incomplete"
+                                        } else {
+                                            "completed"
+                                        });
+                                    }
+                                    for event in responses_json_to_anthropic_sse(
+                                        terminal_body,
+                                        Some(hosted_web_search_name.as_str()),
+                                        max_web_search_uses,
+                                    ) {
+                                        if has_sent_message_start
+                                            && event.starts_with(b"event: message_start\n")
+                                        {
+                                            continue;
+                                        }
+                                        yield Ok(event);
+                                    }
+                                    terminated = true;
+                                    continue;
+                                }
                                 if !has_sent_message_start {
                                     if let Some(id) = response_obj.get("id").and_then(Value::as_str) {
                                         message_id = Some(id.to_string());
@@ -3899,6 +3985,28 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                         .pointer("/incomplete_details/reason")
                                         .and_then(|r| r.as_str()),
                                 );
+
+                                // Zero-usage max_tokens stops are upstream request
+                                // rejections, not truncation; report them as an
+                                // error instead of a fabricated limit hit.
+                                if stop_reason == Some("max_tokens")
+                                    && !has_substantive_output
+                                    && is_unprocessed_max_output_rejection(
+                                        response_obj,
+                                        terminal_status,
+                                    )
+                                {
+                                    log::warn!(
+                                        "[Claude/Responses] terminal incomplete with zero usage \
+    and no content; emitting api_error for the unprocessed upstream rejection instead of max_tokens"
+                                    );
+                                    yield Ok(anthropic_error_sse(
+                                        UNPROCESSED_REJECTION_MESSAGE,
+                                        "api_error",
+                                    ));
+                                    terminated = true;
+                                    continue;
+                                }
 
                                 // Best effort: close any dangling blocks before message_delta/message_stop.
                                 if !open_indices.is_empty() {
@@ -5636,6 +5744,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_response_incomplete_zero_usage_empty_output_is_upstream_error() {
+        // Shape returned by the ChatGPT Codex backend when it rejects the
+        // request before processing it (e.g. over a tool schema pattern):
+        // incomplete/max_output_tokens with zero usage and an empty output.
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
+            "event: response.incomplete\n",
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"output\":[]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("event: message_start"));
+        assert!(merged.contains("event: error"));
+        assert!(merged.contains("Upstream rejected the request before processing"));
+        assert!(!merged.contains("\"stop_reason\":\"max_tokens\""));
+        assert!(!merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_response_incomplete_zero_usage_without_output_array_is_upstream_error() {
+        // Same rejection without an `output` array, which skips the
+        // empty-output fast path and takes the regular terminal handling.
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
+            "event: response.incomplete\n",
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("event: error"));
+        assert!(merged.contains("Upstream rejected the request before processing"));
+        assert!(!merged.contains("\"stop_reason\":\"max_tokens\""));
+    }
+
+    #[tokio::test]
+    async fn test_response_incomplete_zero_input_nonzero_output_keeps_max_tokens() {
+        // Non-zero output usage means tokens were actually generated: keep
+        // reporting it as truncation.
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
+            "event: response.incomplete\n",
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":0,\"output_tokens\":7},\"output\":[]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
+        assert!(merged.contains("event: message_stop"));
+        assert!(!merged.contains("event: error"));
+    }
+
+    #[test]
+    fn test_responses_json_to_anthropic_sse_zero_usage_incomplete_is_error() {
+        // Also covers the compatible-gateway path that feeds a full Responses
+        // JSON document straight into the converter.
+        let events = responses_json_to_anthropic_sse(
+            json!({
+                "id": "resp_1",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+                "output": []
+            }),
+            None,
+            None,
+        );
+        let merged = events
+            .iter()
+            .map(|event| String::from_utf8_lossy(event).to_string())
+            .collect::<String>();
+        assert!(merged.contains("event: message_start"));
+        assert!(merged.contains("event: error"));
+        assert!(merged.contains("Upstream rejected the request before processing"));
+        assert!(!merged.contains("\"stop_reason\":\"max_tokens\""));
+    }
+
+    #[tokio::test]
     async fn test_streaming_hosted_web_search_emits_anthropic_server_tool_blocks() {
         let input = concat!(
             "event: response.created\n",
@@ -6427,6 +6614,93 @@ mod tests {
             vec!["Combined [answer](https://example.com/result)."]
         );
         assert!(merged.contains("\"web_search_requests\":2"));
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_terminal_only_web_search_preserves_output_order() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_order\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_order\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Before\",\"annotations\":[]}]},{\"id\":\"ws_order\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust\"}},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"After\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}}\n\n"
+        );
+
+        let completed_only = &input[input.find("event: response.completed").unwrap()..];
+        let incomplete = input
+            .replace("response.completed", "response.incomplete")
+            .replace("\"status\":\"completed\",\"output\"", "\"output\"");
+        for (stream, stop_reason) in [
+            (input, "end_turn"),
+            (completed_only, "end_turn"),
+            (incomplete.as_str(), "max_tokens"),
+        ] {
+            let merged =
+                convert_stream_text_with_web_search_name(stream.to_owned(), "web_search").await;
+            let events = sse_data_values(&merged);
+            let block_types: Vec<&str> = events
+                .iter()
+                .filter(|event| {
+                    event.get("type").and_then(Value::as_str) == Some("content_block_start")
+                })
+                .filter_map(|event| event.pointer("/content_block/type").and_then(Value::as_str))
+                .collect();
+            let text_deltas: Vec<&str> = events
+                .iter()
+                .filter(|event| {
+                    event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+                })
+                .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
+                .collect();
+
+            assert_eq!(
+                block_types,
+                vec!["text", "server_tool_use", "web_search_tool_result", "text"]
+            );
+            assert_eq!(text_deltas, vec!["Before", "After"]);
+            assert_eq!(merged.matches("event: message_start").count(), 1);
+            assert!(merged.contains(&format!("\"stop_reason\":\"{stop_reason}\"")));
+            assert!(merged.contains("event: message_stop"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_terminal_only_completed_without_status_keeps_stop_reason() {
+        for (output, stop_reason) in [
+            (
+                json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}),
+                "end_turn",
+            ),
+            (
+                json!({"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"}),
+                "tool_use",
+            ),
+        ] {
+            let input = format!(
+                "event: response.completed\ndata: {}\n\n",
+                json!({"type":"response.completed","response":{"id":"resp_statusless","model":"gpt-5.6","output":[output]}})
+            );
+            let merged = convert_stream_text(input).await;
+            assert!(merged.contains(&format!("\"stop_reason\":\"{stop_reason}\"")));
+            if stop_reason == "tool_use" {
+                assert!(merged.contains("\"type\":\"tool_use\""));
+            }
+            assert!(merged.contains("event: message_stop"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_terminal_output_does_not_duplicate_done_reasoning() {
+        let input = concat!(
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_done\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_reasoning\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"rs_done\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+
+        assert_eq!(merged.matches("\"type\":\"thinking_delta\"").count(), 1);
         assert!(merged.contains("event: message_stop"));
     }
 

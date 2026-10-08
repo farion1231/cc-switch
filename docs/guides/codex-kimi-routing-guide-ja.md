@@ -1,16 +1,26 @@
-# Codex で Kimi を使う: CC Switch ローカルルーティングガイド
+# Codex で Kimi を使う: 直接接続と旧版ルーティング
+
+## v3.20.3 以降：ネイティブ Responses で直接接続
+
+Kimi オープンプラットフォームと Kimi For Coding の公式 Codex プリセットは **Responses** に移行しました。プロトコル変換のためのローカルルーティングは不要です。既存カードには作成時のプリセットが保存されており、自動更新はされません。
+
+1. CC Switch v3.20.3 以降に更新し、Codex タブで API Key の発行元に応じた最新の **Kimi** または **Kimi For Coding** プリセットを選択します。国際版（kimi.ai）の Key には **Kimi Global** または **Kimi For Coding Global**（v3.20.4 から提供）を選択します。
+2. 対応する API Key を入力し、保存して有効にします。旧カードはプリセットの追加し直しを推奨します。手動で移行する場合は、エンドポイントを確認して「上流フォーマット」を **Responses** に変更します。
+3. Codex を再起動し、設定とモデルカタログを読み込みます。ネイティブ Responses を通常のプロキシ経由で転送することもできますが、Responses→Chat 変換は不要です。
+
+詳細は [v3.20.3 更新情報](../release-notes/v3.20.3-ja.md)と[プロバイダーの追加](../user-manual/ja/2-providers/2.1-add.md)を参照してください。**以下は既存の Chat カードのトラブルシュート用に残した旧版の手順と画像であり、最新プリセットの設定ではありません。**
 
 > 対象バージョン: CC Switch 3.16.5 およびその前後のバージョン。本記事はリポジトリ内のドキュメントとコードをもとに整理し、OpenAI Chat Completions 互換 API の例として Kimi を使用します。スクリーンショットは現在のフロントエンド UI から、実際の API Key やアカウント残高が漏れないよう匿名化したサンプルデータで生成しています。
 
-## ローカルルーティングが必要な理由
+## 旧版 Chat 設定にローカルルーティングが必要な理由
 
 新しい Codex CLI は OpenAI Responses API を前提にしています。一方で Kimi オープンプラットフォームと Kimi For Coding が実際に公開しているのは、いずれも OpenAI Chat Completions 形式、つまり `/chat/completions` です。この 2 つのプロトコルは、リクエストボディ、ストリーミングイベント、レスポンス構造が異なります。Kimi のエンドポイントをそのまま Codex 設定に入れると、`/responses` へのリクエストが 404 になる、ストリーミングレスポンスを Codex が正しく解析できない、といった問題が起きがちです。
 
-Kimi For Coding が公式にサポートするサードパーティツールは、Claude Code や Roo Code など Anthropic 互換のコーディング Agent であり、Codex はリストに含まれていません。Codex で Kimi を使うにはプロトコル変換レイヤーが必要で、それこそが CC Switch のローカルルーティングの役割です。
+本記事の初稿時点では、Kimi For Coding は Codex を公式にサポートしておらず、旧版の Chat 設定にはプロトコル変換レイヤーが必要でした。その役割を CC Switch のローカルルーティングが担っていました。新しい Responses プリセットにはこの制限はありません。
 
 CC Switch では、Codex が常にローカルルートへ接続し、Responses API のままリクエストを送るようにします。ルート内部で現在のプロバイダーが Chat 形式かどうかを判定し、必要ならリクエストを Chat Completions に書き換えて上流へ送り、最後に Chat レスポンスを Codex が理解できる Responses 形式へ戻します。
 
-![Codex プロバイダー一覧のローカルルーティング必須マーク](../images/codex-kimi-routing/01-codex-providers-require-routing.png)
+![Codex プロバイダー一覧の「ルーティングが必要」マーク](../images/codex-kimi-routing/01-codex-providers-require-routing.png)
 
 この経路は主に 4 つのステップに分かれます：
 
@@ -71,7 +81,7 @@ Codex に入ったら、`/model` で現在のモデルが Kimi プリセット�
 
 ## 他の Chat プロバイダーの場合
 
-Kimi、DeepSeek、MiniMax、SiliconFlow など一般的な Chat 形式プロバイダーは CC Switch にプリセットがあるため、まずはプリセットを使ってください。プリセットにないプロバイダーだけ、カスタム設定を選びます。その場合は相手側のドキュメントに従って API Key、base URL、モデルを入力し、`高級オプション` の `上流フォーマット` を `Chat Completions（ルーティング必須）` に設定します。
+SiliconFlow、ModelScope など一般的な Chat 形式プロバイダーは CC Switch にプリセットがあるため、まずはプリセットを使ってください。プリセットにないプロバイダーだけ、カスタム設定を選びます。その場合は相手側のドキュメントに従って API Key、base URL、モデルを入力し、`高級オプション` の `上流フォーマット` を `Chat Completions（ルーティング必須）` に設定します。
 
 上流が OpenAI Responses API を直接サポートしている場合は、`上流フォーマット` を `Responses` にすれば、CC Switch は Responses のまま直結でき、Chat 変換は行いません。
 
@@ -93,6 +103,7 @@ Kimi、DeepSeek、MiniMax、SiliconFlow など一般的な Chat 形式プロバ�
 
 プロバイダーを保存した後、Codex を再起動してください。CC Switch は `cc-switch-model-catalog.json` を生成し、そのパスを `model_catalog_json` に書き込みますが、実行中の Codex プロセスがモデルカタログをホットロードするとは限りません。
 現在の Codex app は複数モデル選択に対応していないため、設定内の最初のモデルをデフォルトで使用します。
+コマンドラインの `/model` は正常なのに Codex デスクトップアプリのモデルセレクタでカスタムモデルが見えない場合、それは Codex デスクトップアプリ上流自身のモデルゲーティング挙動です。詳しくは [Codex デスクトップアプリでカスタムモデルが見えない？（よくある質問）](./codex-desktop-custom-model-visibility-ja.md) を参照してください。
 
 **ルーティングを有効にしたのに、リクエストが別のプロバイダーへ行く**
 

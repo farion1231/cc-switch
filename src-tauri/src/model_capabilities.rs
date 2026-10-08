@@ -76,9 +76,10 @@ pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
         // `deepseek-v4-flash` is intentionally absent: it is a legacy alias the
         // vendor still accepts and routes to the vision-capable `deepseek-flash`
         // (api-docs.deepseek.com/guides/vision), so it must fail open.
-        // `deepseek-v4-pro` 同样故意不在名单：2026-09-14 12:00 北京时间起，官方把所有
-        // deepseek-v4-pro 请求路由到识图的 V4.1 Flash（api-docs.deepseek.com/quick_start/pricing
-        // 注(2)），继续按纯文本硬拦会把图片剥掉，因此必须 fail-open。
+        // `deepseek-v4-pro` likewise stays out of this global registry: the
+        // official API continues serving V4 Pro after September 14, 2026
+        // (api-docs.deepseek.com), but hosted aliases can differ. First-party
+        // presets declare text-only explicitly; unknown gateways fail open.
         "glm-5.1",
         // Exact rather than prefix matching: GLM visual models use a `v`
         // suffix (for example glm-5.2v), which must remain image-capable.
@@ -91,6 +92,9 @@ pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
         "kat-coder-pro-v1",
         "kat-coder-pro-v2",
         "ling-2.5-1t",
+        // Ant Ling ships vision as separate `-VL` models (Ling-3.0-flash-VL);
+        // Ling-2.6-1T is text-only (developer.ant-ling.com model docs).
+        "ling-2.6-1t",
         "longcat-2.0",
         "longcat-flash-chat",
         "minimax-m2.7",
