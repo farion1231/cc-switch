@@ -68,7 +68,7 @@ pub use codex::{
     resolve_codex_chat_reasoning_config, should_convert_codex_responses_to_anthropic,
     should_convert_codex_responses_to_chat, strip_codex_hosted_web_search,
 };
-pub use gemini::GeminiAdapter;
+pub use gemini::{gemini_configured_model, replace_gemini_endpoint_model, GeminiAdapter};
 
 /// 供应商类型枚举
 ///

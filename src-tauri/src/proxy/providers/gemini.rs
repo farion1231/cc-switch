@@ -256,6 +256,32 @@ impl ProviderAdapter for GeminiAdapter {
     }
 }
 
+/// The model a Gemini provider row is configured for: `GEMINI_MODEL`, else
+/// the settings' `model.name`.
+pub fn gemini_configured_model(provider: &Provider) -> Option<String> {
+    let settings = &provider.settings_config;
+    settings
+        .pointer("/env/GEMINI_MODEL")
+        .or_else(|| settings.pointer("/config/model/name"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+}
+
+/// Replaces the model in `.../models/<model>:<action>` endpoints. `None` when
+/// the endpoint names no model or already uses `model`.
+pub fn replace_gemini_endpoint_model(endpoint: &str, model: &str) -> Option<String> {
+    let start = endpoint.find("/models/")? + "/models/".len();
+    let rest = &endpoint[start..];
+    let end = rest.find([':', '?', '/']).unwrap_or(rest.len());
+    let current = &rest[..end];
+    if current.is_empty() || current == model {
+        return None;
+    }
+    Some(format!("{}{model}{}", &endpoint[..start], &rest[end..]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,5 +468,34 @@ mod tests {
         let adapter = GeminiAdapter::new();
         assert!(adapter.parse_oauth_credentials("AIza-api-key").is_none());
         assert!(adapter.parse_oauth_credentials("invalid-json{").is_none());
+    }
+
+    #[test]
+    fn remote_route_model_replaces_the_endpoint_model() {
+        let provider = create_provider(json!({ "env": { "GEMINI_MODEL": "gemini-b" } }));
+        let model = gemini_configured_model(&provider).unwrap();
+        assert_eq!(
+            replace_gemini_endpoint_model(
+                "/v1beta/models/gemini-a:streamGenerateContent?alt=sse",
+                &model
+            )
+            .as_deref(),
+            Some("/v1beta/models/gemini-b:streamGenerateContent?alt=sse")
+        );
+        assert_eq!(
+            replace_gemini_endpoint_model("/v1beta/models/gemini-b:generateContent", &model),
+            None
+        );
+        assert_eq!(
+            replace_gemini_endpoint_model("/v1beta/models", &model),
+            None
+        );
+
+        let provider = create_provider(json!({ "config": { "model": { "name": "gemini-c" } } }));
+        assert_eq!(
+            gemini_configured_model(&provider).as_deref(),
+            Some("gemini-c")
+        );
+        assert_eq!(gemini_configured_model(&create_provider(json!({}))), None);
     }
 }

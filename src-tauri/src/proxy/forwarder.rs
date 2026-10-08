@@ -1242,6 +1242,18 @@ impl RequestForwarder {
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        // Remote Gemini CLIs keep the model last pushed over SSH in the URL; send
+        // the routed provider's own model when the route moved to another one.
+        let remote_gemini_model = (matches!(app_type, AppType::Gemini)
+            && !self.keeps_resolved_model()
+            && super::remote_gateway::current_origin().is_some())
+        .then(|| super::providers::gemini_configured_model(provider))
+        .flatten();
+        let remote_gemini_endpoint = remote_gemini_model
+            .as_deref()
+            .and_then(|model| super::providers::replace_gemini_endpoint_model(endpoint, model));
+        let endpoint = remote_gemini_endpoint.as_deref().unwrap_or(endpoint);
+
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1620,7 +1632,12 @@ impl RequestForwarder {
             .get("model")
             .and_then(|m| m.as_str())
             .filter(|m| !m.is_empty())
-            .map(str::to_string);
+            .map(str::to_string)
+            .or_else(|| {
+                remote_gemini_endpoint
+                    .as_ref()
+                    .and(remote_gemini_model.clone())
+            });
 
         // Codex→Anthropic: when the model name carries the [1m] marker, strip the
         // suffix and add the context-1m beta header.

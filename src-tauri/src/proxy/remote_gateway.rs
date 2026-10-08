@@ -79,37 +79,112 @@ pub fn session_source(session_id: Option<&str>) -> Option<String> {
     sources.map.get(session_id).cloned()
 }
 
+/// What a host may do with one app through the gateway.
+#[derive(Debug)]
+pub enum RemoteRoute {
+    /// Follows the local current provider (and its failover queue).
+    FollowLocal,
+    Pinned(Box<Provider>),
+    /// The app is not enabled for this host, or its pinned provider is gone.
+    Denied(String),
+}
+
+/// The host token only proves which host is calling; each app needs its own
+/// enabled route, so disabling one app on a shared tunnel revokes it.
+pub fn remote_route(
+    db: &Database,
+    host_key: &str,
+    app_type: &str,
+) -> Result<RemoteRoute, AppError> {
+    let route: Option<(bool, Option<String>)> = {
+        let conn = crate::database::lock_conn!(db.conn);
+        conn.query_row(
+            "SELECT enabled, provider_id FROM remote_gateway_routes
+             WHERE host_key = ?1 AND app_type = ?2",
+            rusqlite::params![host_key, app_type],
+            |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))?
+    };
+    let provider_id = match route {
+        Some((true, provider_id)) => provider_id,
+        _ => {
+            return Ok(RemoteRoute::Denied(format!(
+                "远端 {host_key} 未启用 {app_type} 的本地网关"
+            )))
+        }
+    };
+    let Some(provider_id) = provider_id else {
+        return Ok(RemoteRoute::FollowLocal);
+    };
+    Ok(
+        match db.get_all_providers(app_type)?.shift_remove(&provider_id) {
+            Some(provider) => RemoteRoute::Pinned(Box::new(provider)),
+            None => {
+                log::warn!(
+                    "[RemoteGateway] {host_key} pins missing provider {provider_id} for {app_type}"
+                );
+                RemoteRoute::Denied(format!(
+                    "远端 {host_key} 固定的 {app_type} 供应商已不存在，请在 CC Switch 中重新选择"
+                ))
+            }
+        },
+    )
+}
+
 /// Provider pinned for this app on the request's host, if any. `None` means
-/// the host follows the local current provider (and its failover queue).
+/// the host follows the local current provider; a denied route is an error.
 pub fn pinned_provider(
     db: &Database,
     origin: &RemoteOrigin,
     app_type: &str,
-) -> Result<Option<Provider>, AppError> {
-    let provider_id: Option<String> = {
-        let conn = crate::database::lock_conn!(db.conn);
-        conn.query_row(
-            "SELECT provider_id FROM remote_gateway_routes
-             WHERE host_key = ?1 AND app_type = ?2 AND enabled = 1",
-            rusqlite::params![origin.host_key, app_type],
-            |row| row.get::<_, Option<String>>(0),
-        )
-        .optional()
-        .map_err(|e| AppError::Database(e.to_string()))?
-        .flatten()
-    };
-    let Some(provider_id) = provider_id else {
-        return Ok(None);
-    };
+) -> Result<Option<Provider>, crate::proxy::ProxyError> {
+    match remote_route(db, &origin.host_key, app_type)
+        .map_err(|e| crate::proxy::ProxyError::DatabaseError(e.to_string()))?
+    {
+        RemoteRoute::FollowLocal => Ok(None),
+        RemoteRoute::Pinned(provider) => Ok(Some(*provider)),
+        RemoteRoute::Denied(message) => Err(crate::proxy::ProxyError::AuthError(message)),
+    }
+}
 
-    let provider = db.get_all_providers(app_type)?.shift_remove(&provider_id);
-    if provider.is_none() {
-        log::warn!(
-            "[RemoteGateway] {} pins missing provider {provider_id} for {app_type}; following local",
-            origin.host_key
+/// The app a tunnelled request belongs to. Only the client routes the remote
+/// CLIs call are exposed; everything else (status, other apps) is refused.
+fn remote_app_for(uri: &http::Uri, headers: &HeaderMap) -> Option<&'static str> {
+    let path = uri.path();
+    if ["/v1beta/", "/gemini/v1beta/", "/gemini/v1/"]
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
+    {
+        return Some("gemini");
+    }
+    if matches!(path, "/v1/messages" | "/claude/v1/messages") {
+        return Some("claude");
+    }
+    if matches!(path, "/models" | "/v1/models") {
+        return Some(
+            if super::handlers::is_claude_model_discovery(uri, headers) {
+                "claude"
+            } else {
+                "codex"
+            },
         );
     }
-    Ok(provider)
+    let rest = ["/codex/v1", "/v1/v1", "/v1"]
+        .iter()
+        .find_map(|prefix| path.strip_prefix(prefix))
+        .unwrap_or(path);
+    matches!(
+        rest,
+        "/responses"
+            | "/responses/compact"
+            | "/chat/completions"
+            | "/alpha/search"
+            | "/images/generations"
+            | "/images/edits"
+    )
+    .then_some("codex")
 }
 
 /// Remote routes also keep the shared proxy alive when local apps use direct mode.
@@ -187,9 +262,15 @@ fn strip_key_query(uri: &http::Uri) -> Option<http::Uri> {
 }
 
 fn json_error(status: StatusCode, message: &str) -> Response<Body> {
+    let error_type = match status {
+        StatusCode::UNAUTHORIZED => "authentication_error",
+        StatusCode::FORBIDDEN => "permission_error",
+        StatusCode::NOT_FOUND => "not_found_error",
+        _ => "api_error",
+    };
     let body = serde_json::json!({
         "type": "error",
-        "error": { "type": "authentication_error", "message": message }
+        "error": { "type": error_type, "message": message }
     });
     Response::builder()
         .status(status)
@@ -280,6 +361,24 @@ async fn serve_connection(
                     "CC Switch 远端网关密钥无效，请在 CC Switch 中重新推送网关配置",
                 ));
             };
+            let Some(app_type) = remote_app_for(&parts.uri, &parts.headers) else {
+                return Ok(json_error(
+                    StatusCode::NOT_FOUND,
+                    "CC Switch 远端网关不提供该路径",
+                ));
+            };
+            match remote_route(&db, &host_key, app_type) {
+                Ok(RemoteRoute::FollowLocal | RemoteRoute::Pinned(_)) => {}
+                Ok(RemoteRoute::Denied(message)) => {
+                    return Ok(json_error(StatusCode::FORBIDDEN, &message));
+                }
+                Err(e) => {
+                    return Ok(json_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &e.to_string(),
+                    ));
+                }
+            }
             let Some(mut router) = router_source().await else {
                 return Ok(json_error(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -472,6 +571,164 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("固定供应商"));
+    }
+
+    /// Claude enabled, Codex disabled, Gemini never enabled, all on one host
+    /// token: only Claude gets through the shared tunnel.
+    #[tokio::test]
+    async fn listener_refuses_apps_not_enabled_for_the_host() {
+        let db = std::sync::Arc::new(Database::memory().unwrap());
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO remote_gateways VALUES ('h', '{}', 23456, 'tok', 0);
+                 INSERT INTO remote_gateway_routes VALUES ('h', 'claude', 1, NULL);
+                 INSERT INTO remote_gateway_routes VALUES ('h', 'codex', 0, NULL);",
+            )
+            .unwrap();
+        }
+        let router = Router::new().fallback(|| async { "reached" });
+        let source: RouterSource = std::sync::Arc::new(move || {
+            let router = router.clone();
+            Box::pin(async move { Some(router) })
+        });
+        let listener = RemoteGatewayListener::start(db, source).await.unwrap();
+        let client = reqwest::Client::new();
+        let send = |path: &str, token: &str| {
+            client
+                .post(format!("http://127.0.0.1:{}{path}", listener.port))
+                .bearer_auth(token)
+                .body("{}")
+                .send()
+        };
+
+        assert_eq!(send("/v1/messages", "tok").await.unwrap().status(), 200);
+        assert_eq!(send("/v1/messages", "bad").await.unwrap().status(), 401);
+        assert_eq!(send("/v1/responses", "tok").await.unwrap().status(), 403);
+        assert_eq!(
+            send("/v1beta/models/g:generateContent", "tok")
+                .await
+                .unwrap()
+                .status(),
+            403
+        );
+        assert_eq!(send("/status", "tok").await.unwrap().status(), 404);
+    }
+
+    #[test]
+    fn remote_route_denies_missing_disabled_and_dangling_pins() {
+        let db = Database::memory().unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO remote_gateway_routes VALUES ('h', 'claude', 1, NULL);
+                 INSERT INTO remote_gateway_routes VALUES ('h', 'codex', 0, NULL);
+                 INSERT INTO remote_gateway_routes VALUES ('h', 'gemini', 1, 'gone');",
+            )
+            .unwrap();
+        }
+        assert!(matches!(
+            remote_route(&db, "h", "claude").unwrap(),
+            RemoteRoute::FollowLocal
+        ));
+        for app in ["codex", "gemini", "grokbuild"] {
+            assert!(
+                matches!(remote_route(&db, "h", app).unwrap(), RemoteRoute::Denied(_)),
+                "{app}"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_app_for_maps_client_paths() {
+        let app = |path: &str| remote_app_for(&path.parse().unwrap(), &HeaderMap::new());
+        assert_eq!(app("/v1/messages"), Some("claude"));
+        assert_eq!(app("/v1/responses"), Some("codex"));
+        assert_eq!(app("/codex/v1/responses/compact"), Some("codex"));
+        assert_eq!(app("/v1/models"), Some("codex"));
+        assert_eq!(app("/v1/models?limit=100"), Some("claude"));
+        assert_eq!(app("/v1beta/models/x:generateContent"), Some("gemini"));
+        assert_eq!(app("/grokbuild/v1/responses"), None);
+        assert_eq!(app("/claude-desktop/v1/messages"), None);
+        assert_eq!(app("/status"), None);
+    }
+
+    /// The remote CLI keeps requesting the model pushed when gateway mode was
+    /// enabled; after the route moves to a provider with another model, the
+    /// outbound URL must name that provider's model (pinned or following local).
+    #[tokio::test]
+    async fn remote_gemini_request_uses_the_routed_providers_model() {
+        use tower::Service;
+        let seen = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
+        let upstream = {
+            let seen = seen.clone();
+            Router::new().fallback(move |uri: http::Uri| {
+                let seen = seen.clone();
+                async move {
+                    seen.lock().unwrap().push(uri.path().to_string());
+                    axum::Json(serde_json::json!({"candidates": []}))
+                }
+            })
+        };
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+
+        let db = std::sync::Arc::new(Database::memory().unwrap());
+        for (id, model) in [("a", "gemini-a"), ("b", "gemini-b")] {
+            let provider = Provider::with_id(
+                id.into(),
+                id.into(),
+                serde_json::json!({ "env": {
+                    "GOOGLE_GEMINI_BASE_URL": format!("http://{addr}/{id}"),
+                    "GEMINI_API_KEY": "upstream-key",
+                    "GEMINI_MODEL": model,
+                }}),
+                None,
+            );
+            db.save_provider("gemini", &provider).unwrap();
+        }
+        db.set_current_provider("gemini", "b").unwrap();
+        let server = crate::proxy::server::ProxyServer::new(
+            crate::proxy::types::ProxyConfig::default(),
+            db.clone(),
+            None,
+        );
+
+        for pinned in [Some("b"), None] {
+            {
+                let conn = db.conn.lock().unwrap();
+                conn.execute(
+                    "INSERT OR REPLACE INTO remote_gateway_routes VALUES ('h', 'gemini', 1, ?1)",
+                    [pinned],
+                )
+                .unwrap();
+            }
+            let request = http::Request::builder()
+                .method("POST")
+                .uri("/v1beta/models/gemini-a:generateContent")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"contents":[]}"#))
+                .unwrap();
+            let mut router = server.router();
+            let response = REMOTE_ORIGIN
+                .scope(
+                    RemoteOrigin {
+                        host_key: "h".into(),
+                    },
+                    router.call(request),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{pinned:?}");
+            assert_eq!(
+                seen.lock().unwrap().pop().as_deref(),
+                Some("/b/v1beta/models/gemini-b:generateContent"),
+                "{pinned:?}"
+            );
+        }
     }
 
     #[test]

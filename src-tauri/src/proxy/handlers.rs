@@ -131,7 +131,10 @@ pub async fn handle_models(
 
 /// Claude Code 的模型发现请求：`GET /v1/models?limit=1000`，经 Anthropic SDK 发出，带
 /// `anthropic-version`。Codex 取目录时两者都没有（它带的是 `client_version`）。
-fn is_claude_model_discovery(uri: &axum::http::Uri, headers: &axum::http::HeaderMap) -> bool {
+pub(super) fn is_claude_model_discovery(
+    uri: &axum::http::Uri,
+    headers: &axum::http::HeaderMap,
+) -> bool {
     if headers.contains_key("anthropic-version") {
         return true;
     }
@@ -191,9 +194,7 @@ fn resolve_stack_target(
     }
     if let Some(origin) = super::remote_gateway::current_origin() {
         let pinned = super::remote_gateway::pinned_provider(&state.db, &origin, app_type.as_str())
-            .map_err(|error| {
-                Box::new(ProxyError::DatabaseError(error.to_string()).into_response())
-            })?;
+            .map_err(|error| Box::new(error.into_response()))?;
         if pinned.is_some() {
             let message = "远端已固定供应商，不能使用本地聚合模型；请改为跟随本地或选择普通模型";
             return Err(Box::new(

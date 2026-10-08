@@ -131,8 +131,7 @@ impl RequestContext {
                     &session_id,
                     super::remote_gateway::data_source_for_host(&origin.host_key),
                 );
-                super::remote_gateway::pinned_provider(&state.db, origin, app_type_str)
-                    .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
+                super::remote_gateway::pinned_provider(&state.db, origin, app_type_str)?
             }
             None => None,
         };

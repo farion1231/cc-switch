@@ -264,6 +264,42 @@ fn host_has_enabled_routes(db: &Database, host_key: &str) -> Result<bool, AppErr
     .map_err(db_err)
 }
 
+fn host_enabled_routes(
+    db: &Database,
+    host_key: &str,
+) -> Result<Vec<(AppType, Option<String>)>, AppError> {
+    let conn = crate::database::lock_conn!(db.conn);
+    let mut stmt = conn
+        .prepare(
+            "SELECT app_type, provider_id FROM remote_gateway_routes
+             WHERE host_key = ?1 AND enabled = 1 ORDER BY app_type",
+        )
+        .map_err(db_err)?;
+    let rows = stmt
+        .query_map([host_key], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(db_err)?;
+    let mut routes = Vec::new();
+    for row in rows {
+        let (app, provider_id) = row.map_err(db_err)?;
+        if let Ok(app) = AppType::from_str(&app) {
+            routes.push((app, provider_id));
+        }
+    }
+    Ok(routes)
+}
+
+fn set_remote_port(db: &Database, host_key: &str, remote_port: u16) -> Result<(), AppError> {
+    let conn = crate::database::lock_conn!(db.conn);
+    conn.execute(
+        "UPDATE remote_gateways SET remote_port = ?2 WHERE host_key = ?1",
+        rusqlite::params![host_key, i64::from(remote_port)],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
 fn enabled_routes(db: &Database) -> Result<Vec<(String, String, Option<String>)>, AppError> {
     let conn = crate::database::lock_conn!(db.conn);
     let mut stmt = conn
@@ -733,6 +769,41 @@ fn push_gateway_config(
     Ok((written, remote_state))
 }
 
+/// Points every given app at `record`. The apps share the host's tunnel, so
+/// when a port move fails half way the apps already moved are pointed back at
+/// `previous` (best effort) and the error is returned.
+fn push_routes<T>(
+    routes: &[(AppType, Option<String>)],
+    record: &GatewayRecord,
+    previous: Option<&GatewayRecord>,
+    mut push: impl FnMut(&AppType, Option<&str>, &GatewayRecord) -> Result<T, AppError>,
+) -> Result<Vec<T>, AppError> {
+    let mut results = Vec::with_capacity(routes.len());
+    for (index, (app, provider_id)) in routes.iter().enumerate() {
+        match push(app, provider_id.as_deref(), record) {
+            Ok(result) => results.push(result),
+            Err(error) => {
+                if let Some(previous) = previous {
+                    for (app, provider_id) in &routes[..index] {
+                        if let Err(e) = push(app, provider_id.as_deref(), previous) {
+                            log::warn!(
+                                "[RemoteGateway] failed to restore {} on {}: {e}",
+                                app.as_str(),
+                                previous.host_key
+                            );
+                        }
+                    }
+                }
+                return Err(AppError::Message(format!(
+                    "推送 {} 网关配置失败：{error}",
+                    app.as_str()
+                )));
+            }
+        }
+    }
+    Ok(results)
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -770,6 +841,8 @@ impl RemoteGatewayService {
 
     /// Turns gateway mode on (or re-applies it, e.g. after a port change):
     /// saves the route, brings the tunnel up and points the remote CLI at it.
+    /// The port belongs to the host, so a port change re-points every app
+    /// enabled there; if any step fails the old port and tunnel come back.
     pub async fn enable(
         state: &AppState,
         app: AppType,
@@ -784,47 +857,108 @@ impl RemoteGatewayService {
             .ok_or_else(|| AppError::Message(format!("远端 {host_key} 正在切换中，请稍候")))?;
         validate_pinned_provider(state, &app, provider_id.as_deref())?;
 
+        let previous = load_record(&state.db, &host_key)?
+            .filter(|previous| remote_port.is_some_and(|port| port != previous.remote_port));
+        let mut routes = vec![(app.clone(), provider_id.clone())];
+        let mut _others_in_flight = Vec::new();
+        if previous.is_some() {
+            for route in host_enabled_routes(&state.db, &host_key)? {
+                if route.0 == app {
+                    continue;
+                }
+                let key = format!("{host_key}\n{}", route.0.as_str());
+                _others_in_flight.push(InFlightGuard::acquire(key).ok_or_else(|| {
+                    AppError::Message(format!(
+                        "远端 {host_key} 的 {} 正在切换中，请稍候再修改端口",
+                        route.0.as_str()
+                    ))
+                })?);
+                routes.push(route);
+            }
+        }
+
         let record = ensure_record(&state.db, &host_key, target, remote_port)?;
-        let status = ensure_tunnel(state.db.clone(), state.proxy_service.clone(), &record).await?;
+        let pushed = Self::bring_up(state, resolved, &record, previous.as_ref(), routes).await;
+        let pushed = match pushed {
+            Ok(pushed) => pushed,
+            Err(error) => {
+                Self::recover_failed_enable(state, &host_key, previous).await;
+                return Err(error);
+            }
+        };
+
+        save_route(&state.db, &host_key, &app, true, provider_id.as_deref())?;
+        let remote_state = pushed.first().map(|(_, remote_state)| remote_state.clone());
+        let written_files = pushed.into_iter().flat_map(|(files, _)| files).collect();
+        Ok(RemoteGatewayApplyResult {
+            state: Self::state_for(state, &app, &host_key).await?,
+            remote_state,
+            written_files,
+        })
+    }
+
+    async fn bring_up(
+        state: &AppState,
+        resolved: ResolvedSshTarget,
+        record: &GatewayRecord,
+        previous: Option<&GatewayRecord>,
+        routes: Vec<(AppType, Option<String>)>,
+    ) -> Result<Vec<(Vec<String>, RemoteProviderState)>, AppError> {
+        let status = ensure_tunnel(state.db.clone(), state.proxy_service.clone(), record).await?;
         let status = wait_for_first_attempt(status).await;
         if status.state == TunnelState::Error {
-            if !host_has_enabled_routes(&state.db, &host_key)? {
-                stop_tunnel(&host_key).await;
-            }
             return Err(AppError::Message(format!(
                 "SSH 隧道连接失败：{}",
                 status.message.unwrap_or_default()
             )));
         }
 
-        let provider = routed_provider(state, &app, provider_id.as_deref())?;
-        let (written_files, remote_state) = {
-            let state = state.clone();
-            let app = app.clone();
-            let record = record.clone();
-            tokio::task::spawn_blocking(move || {
-                push_gateway_config(&state, &app, &resolved, &record, provider.as_ref())
-            })
-            .await
-            .map_err(|e| AppError::Message(format!("推送网关配置失败: {e}")))?
-        }
-        .inspect_err(|_| {
-            if !host_has_enabled_routes(&state.db, &host_key).unwrap_or(true) {
-                let host_key = host_key.clone();
-                tokio::spawn(async move { stop_tunnel(&host_key).await });
-            }
-        })?;
-
-        save_route(&state.db, &host_key, &app, true, provider_id.as_deref())?;
-        Ok(RemoteGatewayApplyResult {
-            state: Self::state_for(state, &app, &host_key).await?,
-            remote_state: Some(remote_state),
-            written_files,
+        let state = state.clone();
+        let record = record.clone();
+        let previous = previous.cloned();
+        tokio::task::spawn_blocking(move || {
+            push_routes(
+                &routes,
+                &record,
+                previous.as_ref(),
+                |app, provider_id, record| {
+                    let provider = routed_provider(&state, app, provider_id)?;
+                    push_gateway_config(&state, app, &resolved, record, provider.as_ref())
+                },
+            )
         })
+        .await
+        .map_err(|e| AppError::Message(format!("推送网关配置失败: {e}")))?
+    }
+
+    /// Puts the host back on `previous` (the port before a failed move), or
+    /// drops the tunnel when nothing on the host uses it.
+    async fn recover_failed_enable(
+        state: &AppState,
+        host_key: &str,
+        previous: Option<GatewayRecord>,
+    ) {
+        if let Some(previous) = &previous {
+            if let Err(e) = set_remote_port(&state.db, host_key, previous.remote_port) {
+                log::warn!("[RemoteGateway] failed to restore port for {host_key}: {e}");
+            }
+        }
+        if !host_has_enabled_routes(&state.db, host_key).unwrap_or(true) {
+            stop_tunnel(host_key).await;
+            return;
+        }
+        if let Some(previous) = previous {
+            if let Err(e) =
+                ensure_tunnel(state.db.clone(), state.proxy_service.clone(), &previous).await
+            {
+                log::warn!("[RemoteGateway] failed to restore tunnel to {host_key}: {e}");
+            }
+        }
     }
 
     /// Switches which provider the host uses. Takes effect on the next
-    /// request; only Codex rewrites its remote `model`.
+    /// request: the proxy sends the routed provider's model (Gemini's model in
+    /// the URL included); Codex also rewrites its remote `model`.
     pub async fn set_provider(
         state: &AppState,
         app: AppType,
@@ -1079,6 +1213,85 @@ mod tests {
         stop_tx.send(true).unwrap();
         task.await.unwrap();
         assert_eq!(status_rx.borrow().state, TunnelState::Idle);
+    }
+
+    fn record(remote_port: u16) -> GatewayRecord {
+        GatewayRecord {
+            host_key: "h".to_string(),
+            target: SshConnectionTarget {
+                target_type: Some("config".to_string()),
+                alias: Some("h".to_string()),
+                host: None,
+                user: None,
+                port: None,
+                password: None,
+            },
+            remote_port,
+            token: "tok".to_string(),
+        }
+    }
+
+    #[test]
+    fn port_move_repoints_every_app_on_the_host() {
+        let routes = vec![(AppType::Claude, None), (AppType::Codex, Some("p".into()))];
+        let mut remote: HashMap<String, u16> =
+            HashMap::from([("claude".into(), 23456), ("codex".into(), 23456)]);
+        push_routes(
+            &routes,
+            &record(24567),
+            Some(&record(23456)),
+            |app, _, record| {
+                remote.insert(app.as_str().to_string(), record.remote_port);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(remote["claude"], 24567);
+        assert_eq!(remote["codex"], 24567);
+    }
+
+    #[test]
+    fn failed_port_move_points_moved_apps_back() {
+        let routes = vec![
+            (AppType::Claude, None),
+            (AppType::Codex, None),
+            (AppType::Gemini, None),
+        ];
+        let mut remote: HashMap<String, u16> = HashMap::from([
+            ("claude".into(), 23456),
+            ("codex".into(), 23456),
+            ("gemini".into(), 23456),
+        ]);
+        let error = push_routes(
+            &routes,
+            &record(24567),
+            Some(&record(23456)),
+            |app, _, record| {
+                if app == &AppType::Codex && record.remote_port == 24567 {
+                    return Err(AppError::Message("disk full".to_string()));
+                }
+                remote.insert(app.as_str().to_string(), record.remote_port);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("codex"), "{error}");
+        assert_eq!(remote["claude"], 23456);
+        assert_eq!(remote["codex"], 23456);
+        assert_eq!(remote["gemini"], 23456);
+    }
+
+    #[test]
+    fn host_enabled_routes_lists_only_enabled_apps() {
+        let db = Database::memory().unwrap();
+        save_route(&db, "h", &AppType::Claude, true, None).unwrap();
+        save_route(&db, "h", &AppType::Codex, false, None).unwrap();
+        save_route(&db, "h", &AppType::Gemini, true, Some("g")).unwrap();
+        save_route(&db, "other", &AppType::Codex, true, None).unwrap();
+        assert_eq!(
+            host_enabled_routes(&db, "h").unwrap(),
+            vec![(AppType::Claude, None), (AppType::Gemini, Some("g".into()))]
+        );
     }
 
     #[test]
