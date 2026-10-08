@@ -99,7 +99,9 @@ export function GeneralSection({
             control={
               <Select
                 value={fontFamily}
-                onValueChange={(value) => setFontFamily(value as typeof fontFamily)}
+                onValueChange={(value) =>
+                  setFontFamily(value as typeof fontFamily)
+                }
               >
                 <SelectTrigger
                   className="h-8 w-[180px]"

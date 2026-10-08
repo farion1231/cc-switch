@@ -53,7 +53,7 @@ export const FONT_FAMILY_OPTIONS: Array<{
   {
     value: "system",
     labelKey: "settings.fontFamilySystem",
-    css: 'var(--cc-system-font-family)',
+    css: "var(--cc-system-font-family)",
   },
   {
     value: "inter",
@@ -78,7 +78,7 @@ export const FONT_FAMILY_OPTIONS: Array<{
   {
     value: "ibm-plex",
     labelKey: "settings.fontFamilyIBMPlexSans",
-    css: '"IBM Plex Sans", var(--cc-system-font-family)',
+    css: "\"IBM Plex Sans\", var(--cc-system-font-family)",
   },
 ];
 
@@ -96,7 +96,10 @@ const clampFontSize = (value: number) =>
 const clampPageZoom = (value: number) =>
   Math.min(
     MAX_PAGE_ZOOM,
-    Math.max(MIN_PAGE_ZOOM, Math.round(value / PAGE_ZOOM_STEP) * PAGE_ZOOM_STEP),
+    Math.max(
+      MIN_PAGE_ZOOM,
+      Math.round(value / PAGE_ZOOM_STEP) * PAGE_ZOOM_STEP,
+    ),
   );
 
 const readPreferences = (): AppearancePreferences => {

@@ -131,14 +131,14 @@ async function bootstrap() {
           <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
             <AppearanceProvider>
               <UpdateProvider>
-              {/* 系统开了「减少动态效果」时，framer-motion 的位移动画一律跳过 */}
-              <MotionConfig reducedMotion="user">
-                {/* 全局悬停提示：移上去立即出现（HoverTip） */}
-                <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-                  <App />
-                </TooltipProvider>
-              </MotionConfig>
-              <Toaster />
+                {/* 系统开了「减少动态效果」时，framer-motion 的位移动画一律跳过 */}
+                <MotionConfig reducedMotion="user">
+                  {/* 全局悬停提示：移上去立即出现（HoverTip） */}
+                  <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+                    <App />
+                  </TooltipProvider>
+                </MotionConfig>
+                <Toaster />
               </UpdateProvider>
             </AppearanceProvider>
           </ThemeProvider>
