@@ -566,14 +566,13 @@ export function CodexFormFields({
   ]);
   // 思考能力随 Chat 格式显示（仅 Chat Completions 转换路径用得上）；模型映射常驻
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
-  // Copilot auto may use Chat on any request; its generic apiFormat is not authoritative.
-  const isChatFormat = isCopilotPreset
-    ? copilotApiFormat !== "openai_responses"
-    : apiFormat === "openai_chat";
-  const isResponsesFormat = isCopilotPreset
-    ? copilotApiFormat === "openai_responses"
-    : apiFormat === "openai_responses";
-  const isAnthropicFormat = !isCopilotPreset && apiFormat === "anthropic";
+  const effectiveApiFormat = isCopilotPreset
+    ? copilotApiFormat === "auto"
+      ? "openai_chat"
+      : copilotApiFormat
+    : apiFormat;
+  const isChatFormat = effectiveApiFormat === "openai_chat";
+  const isAnthropicFormat = effectiveApiFormat === "anthropic";
   // Grok Build 复用本表单，但语义与 Codex 有差异（无模型映射、协议由 TOML 的
   // api_backend 声明、请求体也不是 Codex 发出的）——提示文案按 appId 分流，
   // 对应词条在 grokBuild.* 下。
@@ -595,7 +594,7 @@ export function CodexFormFields({
     !!customUserAgent ||
     hasRequestOverrides ||
     catalogModels.length > 0 ||
-    isResponsesFormat ||
+    effectiveApiFormat === "openai_responses" ||
     isAnthropicFormat ||
     supportsThinking ||
     supportsEffort ||

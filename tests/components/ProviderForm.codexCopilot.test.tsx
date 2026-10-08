@@ -259,7 +259,7 @@ describe("Codex Copilot provider form", () => {
     await waitFor(() =>
       expect(onEditorBaseChange).toHaveBeenLastCalledWith(base, draft),
     );
-    expect(requests.at(-1)).toMatchObject({
+    expect(requests.at(-1)).toEqual({
       app: "codex",
       settingsConfig: draft,
       category: preset.category,
@@ -337,7 +337,9 @@ describe("Codex Copilot provider form", () => {
       );
     };
     await waitForPreset(copilot);
-    expect(requests.at(-1)?.meta?.providerType).toBe("github_copilot");
+    expect(requests.at(-1)?.meta).toEqual({
+      providerType: "github_copilot",
+    });
     await selectFormat("openai_responses");
 
     fireEvent.click(screen.getByRole("button", { name: /DeepSeek/ }));
@@ -348,7 +350,9 @@ describe("Codex Copilot provider form", () => {
     fireEvent.click(screen.getByRole("button", { name: /GitHub Copilot/ }));
     await waitForPreset(copilot);
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
-    expect(requests.at(-1)?.meta?.providerType).toBe("github_copilot");
+    expect(requests.at(-1)?.meta).toEqual({
+      providerType: "github_copilot",
+    });
 
     const previousRequests = requests.length;
     fireEvent.click(
