@@ -78,7 +78,7 @@ export const FONT_FAMILY_OPTIONS: Array<{
   {
     value: "ibm-plex",
     labelKey: "settings.fontFamilyIBMPlexSans",
-    css: "\"IBM Plex Sans\", var(--cc-system-font-family)",
+    css: '"IBM Plex Sans", var(--cc-system-font-family)',
   },
 ];
 
