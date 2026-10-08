@@ -49,6 +49,7 @@ import {
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import { isTextEditableTarget } from "@/utils/domUtils";
 
 const SECTION_ICON: Record<
   SettingsSection,
@@ -144,14 +145,53 @@ export function SettingsPage({
     if (section !== "appConfig" || !appConfigScrollTarget || !hasSettings)
       return;
 
+    const container = scrollRef.current;
+    if (!container) return;
+
     let highlight: Animation | undefined;
+    let frame = 0;
+    const inputListeners = new AbortController();
+    const cancelNavigation = () => {
+      cancelAnimationFrame(frame);
+      highlight?.cancel();
+      inputListeners.abort();
+    };
+    const handleScrollKey = (event: KeyboardEvent) => {
+      if (
+        !isTextEditableTarget(event.target) &&
+        [
+          "ArrowUp",
+          "ArrowDown",
+          "PageUp",
+          "PageDown",
+          "Home",
+          "End",
+          " ",
+        ].includes(event.key)
+      ) {
+        cancelNavigation();
+      }
+    };
+    // 用户接管时停止定位，让原生滚动、点击和键盘行为照常执行。
+    const inputOptions = {
+      capture: true,
+      passive: true,
+      signal: inputListeners.signal,
+    };
+    for (const event of ["wheel", "touchstart", "pointerdown"]) {
+      container.addEventListener(event, cancelNavigation, inputOptions);
+    }
+    window.addEventListener("keydown", handleScrollKey, inputOptions);
+
     // 等条目挂载后，仅滚动设置正文，避免 scrollIntoView 带动外层布局。
-    let frame = requestAnimationFrame(() => {
-      const container = scrollRef.current;
-      const target = container?.querySelector<HTMLElement>(
+    frame = requestAnimationFrame(() => {
+      const target = container.querySelector<HTMLElement>(
         `#app-config-${appConfigScrollTarget}`,
       );
-      if (!container || !target) return;
+      if (!target) {
+        inputListeners.abort();
+        return;
+      }
 
       const viewportTop =
         container.getBoundingClientRect().top + container.clientTop;
@@ -186,6 +226,11 @@ export function SettingsPage({
           ],
           { duration: 650, iterations: 2, easing: "ease-in-out" },
         );
+        if (highlight) {
+          highlight.onfinish = () => inputListeners.abort();
+        } else {
+          inputListeners.abort();
+        }
       };
       const prefersReducedMotion = window.matchMedia(
         "(prefers-reduced-motion: reduce)",
@@ -198,10 +243,17 @@ export function SettingsPage({
 
       // 使用同一帧循环完成缓出滚动，结束后再闪烁；切页时可一并取消。
       const startedAt = performance.now();
+      let expectedTop = startTop;
       const scrollToTarget = (now: number) => {
+        // 原生滚动条可能不派发 pointerdown；位置已被外部改变时同样让出控制。
+        if (container.scrollTop !== expectedTop) {
+          cancelNavigation();
+          return;
+        }
         const progress = Math.min((now - startedAt) / 350, 1);
         const eased = 1 - (1 - progress) ** 3;
         container.scrollTop = startTop + (endTop - startTop) * eased;
+        expectedTop = container.scrollTop;
         if (progress < 1) {
           frame = requestAnimationFrame(scrollToTarget);
         } else {
@@ -211,10 +263,7 @@ export function SettingsPage({
       frame = requestAnimationFrame(scrollToTarget);
     });
 
-    return () => {
-      cancelAnimationFrame(frame);
-      highlight?.cancel();
-    };
+    return cancelNavigation;
   }, [section, appConfigScrollTarget, hasSettings]);
 
   const afterSave = useCallback(() => {
