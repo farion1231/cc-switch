@@ -6895,8 +6895,9 @@ mod tests {
             assert!(seen.headers.contains_key("session_id"));
         }
 
-        /// 原生 Responses 第三方收不了 Codex 私有的压缩触发：改成不带工具的摘要回合，
-        /// CC Switch 包装的压缩摘要改成普通消息；看不出来源的压缩密文原样发出。
+        /// 原生 Responses 第三方收不了 Codex 私有的压缩触发：改成禁止新工具调用的摘要回合
+        /// （工具定义保留，历史里的调用条目还引用着它们），CC Switch 包装的压缩摘要改成
+        /// 普通消息；看不出来源的压缩密文原样发出。
         #[tokio::test]
         async fn native_third_party_compaction_becomes_summary_turn() {
             use crate::proxy::providers::codex_compaction::{
@@ -6921,7 +6922,11 @@ mod tests {
                 request,
             )
             .await;
-            assert!(seen.body.get("tools").is_none());
+            assert_eq!(
+                seen.body["tools"],
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }])
+            );
+            assert_eq!(seen.body["tool_choice"], "none");
             let input = seen.body["input"].as_array().unwrap();
             assert_eq!(
                 input[0],
