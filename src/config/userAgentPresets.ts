@@ -4,6 +4,9 @@
  * 取值来自 PR #3671 对 Kimi Coding Plan（api.kimi.com/coding）UA 白名单的 curl 实测：
  * `claude-cli/*`、`claude-code/*`、`Kilo-Code/*` 可通过；`codex-cli`、`kimi-cli` 会被 403。
  * 白名单只校验 UA 名称前缀、不看版本号，因此用静态值即可，版本不会因 Claude Code 升级而失效。
+ * 2026-09-09 更正：Kimi Code 已官方支持 Codex 直连，真机 codex_cli_rs/0.153.4 打
+ * api.kimi.com/coding/v1/responses 全程放行——上面的 403 结论只对当年的 Chat/Anthropic
+ * 路径成立，Codex 预设已改原生 Responses 直连，不再需要借这些预设伪装。
  *
  * 第一条是官方 Claude Code CLI 实际发送的完整格式（参见 `stream_check.rs` 里检测用的
  * `claude-cli/2.1.2 (external, cli)`），最贴近真实客户端、最稳过严格的 UA 校验；其余为简短变体。

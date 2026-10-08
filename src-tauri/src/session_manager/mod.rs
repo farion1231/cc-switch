@@ -1,10 +1,17 @@
+pub mod cache;
+pub mod content;
+pub mod model;
 pub mod providers;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
 
-use providers::{claude, codex, gemini, grokbuild, hermes, openclaw, opencode, pi};
+// 其余模型类型从 `session_manager::model` 引用
+pub use model::SessionMessage;
+use providers::{claude, codex, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,15 +32,6 @@ pub struct SessionMeta {
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionMessage {
-    pub role: String,
-    pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ts: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -86,6 +84,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r6);
     sessions.extend(r7);
     sessions.extend(r8);
+    sessions.extend(mcode::scan_sessions());
 
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
@@ -97,6 +96,9 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 }
 
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
+    if provider_id == "mcode" {
+        return mcode::load_messages(source_path);
+    }
     // SQLite sessions use a "sqlite:" prefixed source_path
     if provider_id == "opencode" && source_path.starts_with("sqlite:") {
         return opencode::load_messages_sqlite(source_path);
@@ -119,11 +121,55 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
     }
 }
 
+/// 一次读取的结果：解析结果、是否命中缓存、耗时（含校验与指纹）
+pub struct LoadedTranscript {
+    pub transcript: Arc<cache::Transcript>,
+    pub cached: bool,
+    pub parse_ms: u64,
+}
+
+/// 校验 `source_path` 归属后读取会话，未变化的源直接用 [`cache::TranscriptCache`]。
+/// 解析仍走上面的 [`load_messages`] 分发。
+pub fn load_transcript(provider_id: &str, source_path: &str) -> Result<LoadedTranscript, String> {
+    let started = Instant::now();
+    let source = content::validate_source(provider_id, source_path)?;
+    let fingerprint = cache::source_fingerprint(&source)
+        .map_err(|e| format!("Failed to read session source: {e}"))?;
+    let key = (source.provider_id.clone(), source.raw.clone());
+    let (transcript, cached) = cache::global().get_or_load(key, fingerprint, || {
+        load_messages(&source.provider_id, &source.load_path()).map(cache::Transcript::new)
+    })?;
+    Ok(LoadedTranscript {
+        transcript,
+        cached,
+        parse_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+/// 删除成功后同时移除该会话的解析缓存（§5.2）
 pub fn delete_session(
     provider_id: &str,
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    let deleted = delete_session_source(provider_id, session_id, source_path)?;
+    if deleted {
+        cache::global().remove(provider_id, source_path);
+    }
+    Ok(deleted)
+}
+
+fn delete_session_source(
+    provider_id: &str,
+    session_id: &str,
+    source_path: &str,
+) -> Result<bool, String> {
+    if provider_id == "mcode" {
+        return Err(
+            "Delete this session in MCode so its runtime state and history are removed together"
+                .into(),
+        );
+    }
     // SQLite sessions bypass the file-based deletion path
     if provider_id == "opencode" && source_path.starts_with("sqlite:") {
         return opencode::delete_session_sqlite(session_id, source_path);
@@ -152,51 +198,19 @@ fn delete_session_with_roots(
     source_path: &Path,
     roots: &[PathBuf],
 ) -> Result<bool, String> {
-    let validated_source = canonicalize_existing_path(source_path, "session source")?;
-
-    let mut saw_existing_root = false;
-    for root in roots {
-        if !root.exists() {
-            continue;
-        }
-
-        saw_existing_root = true;
-        let validated_root = canonicalize_existing_path(root, "session root")?;
-        if validated_source.starts_with(&validated_root) {
-            return match provider_id {
-                "codex" => codex::delete_session(&validated_root, &validated_source, session_id),
-                "claude" => claude::delete_session(&validated_root, &validated_source, session_id),
-                "opencode" => {
-                    opencode::delete_session(&validated_root, &validated_source, session_id)
-                }
-                "openclaw" => {
-                    openclaw::delete_session(&validated_root, &validated_source, session_id)
-                }
-                "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
-                "grokbuild" => {
-                    grokbuild::delete_session(&validated_root, &validated_source, session_id)
-                }
-                "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
-                "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
-                _ => Err(format!("Unsupported provider: {provider_id}")),
-            };
-        }
+    let (validated_root, validated_source) =
+        content::resolve_under_roots(provider_id, source_path, roots)?;
+    match provider_id {
+        "codex" => codex::delete_session(&validated_root, &validated_source, session_id),
+        "claude" => claude::delete_session(&validated_root, &validated_source, session_id),
+        "opencode" => opencode::delete_session(&validated_root, &validated_source, session_id),
+        "openclaw" => openclaw::delete_session(&validated_root, &validated_source, session_id),
+        "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
+        "grokbuild" => grokbuild::delete_session(&validated_root, &validated_source, session_id),
+        "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
+        "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
+        _ => Err(format!("Unsupported provider: {provider_id}")),
     }
-
-    if !saw_existing_root {
-        return Err(format!(
-            "Session root not found for provider {provider_id}: {}",
-            roots
-                .first()
-                .map(|root| root.display().to_string())
-                .unwrap_or_else(|| "<none>".to_string())
-        ));
-    }
-
-    Err(format!(
-        "Session source path is outside provider roots: {}",
-        source_path.display()
-    ))
 }
 
 fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {

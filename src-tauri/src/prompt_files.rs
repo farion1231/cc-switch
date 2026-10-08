@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::app_config::AppType;
 use crate::codex_config::get_codex_auth_path;
@@ -7,6 +7,15 @@ use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
 use crate::openclaw_config::get_openclaw_dir;
 use crate::opencode_config::get_opencode_dir;
+
+pub(crate) fn validate_prompt_content(app: &AppType, content: &str) -> Result<(), AppError> {
+    if matches!(app, AppType::Mcode) && content.len() > 32 * 1024 {
+        return Err(AppError::InvalidInput(
+            "MCode global instructions must not exceed 32 KiB".into(),
+        ));
+    }
+    Ok(())
+}
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
@@ -27,6 +36,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
+        AppType::Mcode => crate::mcode_config::data_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -36,11 +46,24 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",
-        AppType::Pi => "AGENTS.md",
+        AppType::Pi | AppType::Mcode => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))
+}
+
+/// 把用户主目录前缀换成 `~`，给界面显示用（复制路径仍用完整路径）。
+pub fn display_path(path: &Path) -> String {
+    display_path_with_home(path, &crate::config::get_home_dir())
+}
+
+fn display_path_with_home(path: &Path, home: &Path) -> String {
+    match path.strip_prefix(home) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+        Err(_) => path.display().to_string(),
+    }
 }
 
 fn get_base_dir_with_fallback(
@@ -63,6 +86,34 @@ fn get_base_dir_with_fallback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcode_instructions_limit_counts_utf8_bytes() {
+        assert!(validate_prompt_content(&AppType::Mcode, &"a".repeat(32768)).is_ok());
+        assert!(validate_prompt_content(&AppType::Mcode, &"a".repeat(32769)).is_err());
+        assert!(validate_prompt_content(&AppType::Mcode, &"中".repeat(10923)).is_err());
+        assert!(validate_prompt_content(&AppType::OpenCode, &"中".repeat(10923)).is_ok());
+    }
+
+    #[test]
+    fn display_path_shortens_the_home_prefix_only() {
+        let home = Path::new("/Users/me");
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(
+            display_path_with_home(&home.join(".hermes").join("SOUL.md"), home),
+            format!("~{sep}.hermes{sep}SOUL.md")
+        );
+        assert_eq!(display_path_with_home(home, home), "~");
+        assert_eq!(
+            display_path_with_home(Path::new("/opt/hermes/SOUL.md"), home),
+            "/opt/hermes/SOUL.md"
+        );
+        // 只认整段目录前缀，不把 /Users/meow 当成 /Users/me 下面
+        assert_eq!(
+            display_path_with_home(Path::new("/Users/meow/SOUL.md"), home),
+            "/Users/meow/SOUL.md"
+        );
+    }
 
     #[test]
     fn hermes_prompt_file_uses_soul_md() {

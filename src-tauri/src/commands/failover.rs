@@ -116,9 +116,10 @@ pub async fn get_available_providers_for_failover(
         .collect())
 }
 
-/// 添加供应商到故障转移队列
+/// 添加供应商到故障转移队列。托盘的故障转移子菜单只列队列成员：队列一变就重建。
 #[tauri::command]
 pub async fn add_to_failover_queue(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     app_type: String,
     provider_id: String,
@@ -128,12 +129,15 @@ pub async fn add_to_failover_queue(
     state
         .db
         .add_to_failover_queue(&app_type, &provider_id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::tray::refresh_tray_menu(&app);
+    Ok(())
 }
 
 /// 从故障转移队列移除供应商
 #[tauri::command]
 pub async fn remove_from_failover_queue(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     app_type: String,
     provider_id: String,
@@ -142,7 +146,9 @@ pub async fn remove_from_failover_queue(
     state
         .db
         .remove_from_failover_queue(&app_type, &provider_id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::tray::refresh_tray_menu(&app);
+    Ok(())
 }
 
 /// 获取指定应用的自动故障转移开关状态（从 proxy_config 表读取）
@@ -171,6 +177,8 @@ pub async fn set_auto_failover_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     require_failover_app(&app_type)?;
+    let app_enum = crate::app_config::AppType::from_str(&app_type)
+        .map_err(|_| format!("无效的应用类型: {app_type}"))?;
     log::info!(
         "[Failover] Setting auto_failover_enabled: app_type='{app_type}', enabled={enabled}"
     );
@@ -182,8 +190,8 @@ pub async fn set_auto_failover_enabled(
         .await
         .map_err(|e| e.to_string())?;
 
-    if enabled && !config.enabled {
-        return Err("需要先启用该应用的代理接管，再开启故障转移".to_string());
+    if enabled && !crate::mode::current::is_proxy(&app_enum) {
+        return Err("需要先让该应用进入路由模式，再开启故障转移".to_string());
     }
 
     // 队列为空时把当前供应商自动加入作为 P1，避免用户陷入"必须先加队列才能开启"的死锁
@@ -210,11 +218,12 @@ pub async fn set_auto_failover_enabled(
             .collect::<Vec<_>>();
 
         if queue.is_empty() {
-            let app_enum = crate::app_config::AppType::from_str(&app_type)
-                .map_err(|_| format!("无效的应用类型: {app_type}"))?;
-
-            let current_id = crate::settings::get_effective_current_provider(&state.db, &app_enum)
-                .map_err(|e| e.to_string())?;
+            let current_id = crate::mode::current::provider_for(
+                &state.db,
+                &app_enum,
+                crate::mode::current::Purpose::InUse,
+            )
+            .map_err(|e| e.to_string())?;
 
             let Some(current_id) = current_id else {
                 return Err("故障转移队列为空，且未设置当前供应商，无法开启故障转移".to_string());
@@ -255,11 +264,14 @@ pub async fn set_auto_failover_enabled(
 
     // 开启前先切到 P1。只有切换成功后才写入 auto_failover_enabled=true，
     // 避免 P1 不可切换（例如 official provider）时留下“开关已开但目标未切”的脏状态。
+    // Stack 模式不做故障转移，切换在锁内拒绝（见 `switch_route_for_failover`）。
     if enabled {
-        if let Err(e) = state
-            .proxy_service
-            .switch_proxy_target(&app_type, &p1_provider_id)
-            .await
+        if let Err(e) = crate::mode::controller::switch_route_for_failover(
+            state.inner(),
+            &app_enum,
+            &p1_provider_id,
+        )
+        .await
         {
             if let Some(provider_id) = auto_added_provider_id {
                 let _ = state.db.remove_from_failover_queue(&app_type, &provider_id);
@@ -268,8 +280,9 @@ pub async fn set_auto_failover_enabled(
         }
     }
 
-    // 更新 auto_failover_enabled 字段
+    // 更新 auto_failover_enabled 字段（enabled 是模式的镜像，保持和模式一致）
     config.auto_failover_enabled = enabled;
+    config.enabled = crate::mode::current::is_proxy(&app_enum);
 
     // 写回数据库
     state

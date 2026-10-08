@@ -109,3 +109,20 @@ export function formatSkillError(
     description,
   };
 }
+
+/**
+ * 一句话的失败原因，放进「N 个仓库没有读到：owner/name（原因）」这类横幅。
+ * HTTP 403 / 404 / 429 用对应的说明（如「GitHub 访问受限，可能是请求频率过高」），
+ * 其余结构化错误用错误码的文案，非结构化错误取原文第一行。
+ */
+export function skillErrorReason(errorString: string, t: TFunction): string {
+  const parsedError = parseSkillError(errorString);
+  if (!parsedError) {
+    return (errorString.split("\n")[0] ?? "").trim() || t("common.error");
+  }
+  const { code, context, suggestion } = parsedError;
+  if (suggestion && /^http\d{3}$/.test(suggestion)) {
+    return t(getSuggestionI18nKey(suggestion));
+  }
+  return t(getErrorI18nKey(code), context);
+}

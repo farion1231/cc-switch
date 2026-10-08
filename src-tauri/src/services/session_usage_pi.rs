@@ -12,7 +12,6 @@ use crate::services::session_usage::{
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::find_model_pricing;
-use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -34,6 +33,18 @@ const REVISION_COMPLETE_SHIFT: u32 = 60;
 const REVISION_SIZE_SHIFT: u32 = 32;
 const REVISION_MARKER: u64 = 0b101;
 const REVISION_SIZE_MASK: u64 = (1 << 28) - 1;
+const PI_REQUEST_DEDUP_SQL: &str = "SELECT EXISTS(
+         SELECT 1 FROM session_usage_dedup
+         WHERE data_source = ?1 AND request_id = ?2
+     )";
+const PI_SEMANTIC_DEDUP_SQL: &str = "SELECT EXISTS(
+         SELECT 1 FROM session_usage_dedup
+         WHERE data_source = ?1 AND semantic_id = ?2
+     )";
+const PI_LEGACY_SEMANTIC_DEDUP_SQL: &str = "SELECT EXISTS(
+         SELECT 1 FROM session_usage_dedup
+         WHERE data_source = ?1 AND semantic_id = ?2 AND has_entry_id = 0
+     )";
 
 #[derive(Debug, Clone, Copy, Default)]
 struct PiCosts {
@@ -132,8 +143,17 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
         ..Default::default()
     };
 
+    // 游标预取失败必须中止本轮（不能当空表全量重导，见 load_sync_cursors 文档）
+    let cursors = match crate::services::session_usage::load_sync_cursors(db) {
+        Ok(cursors) => cursors,
+        Err(error) => {
+            result.errors.push(format!("预取同步游标失败: {error}"));
+            return result;
+        }
+    };
+
     for file_path in files {
-        match sync_single_pi_file(db, file_path) {
+        match sync_single_pi_file(db, file_path, &cursors) {
             Ok(file_result) => result.merge(file_result),
             Err(error) => {
                 let message = format!("{}: {error}", file_path.display());
@@ -154,7 +174,11 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
     result
 }
 
-fn sync_single_pi_file(db: &Database, file_path: &Path) -> Result<SessionSyncResult, AppError> {
+fn sync_single_pi_file(
+    db: &Database,
+    file_path: &Path,
+    cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
+) -> Result<SessionSyncResult, AppError> {
     let metadata = fs::symlink_metadata(file_path)
         .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件元数据: {error}")))?;
     if !metadata.file_type().is_file()
@@ -174,7 +198,7 @@ fn sync_single_pi_file(db: &Database, file_path: &Path) -> Result<SessionSyncRes
     let file_path_string = file_path.to_string_lossy().to_string();
     let modified = metadata_modified_nanos(&metadata);
     let revision = pi_file_revision(file_path, &metadata, modified)?;
-    let previous = get_pi_sync_state(db, &file_path_string)?;
+    let previous = decode_pi_sync_state(cursors.get(&file_path_string));
     if previous.is_some_and(|state| state.revision == revision) {
         return Ok(SessionSyncResult::default());
     }
@@ -222,46 +246,32 @@ fn sync_single_pi_file(db: &Database, file_path: &Path) -> Result<SessionSyncRes
     Ok(result)
 }
 
-fn get_pi_sync_state(db: &Database, file_path: &str) -> Result<Option<PiSyncState>, AppError> {
-    let conn = lock_conn!(db.conn);
-    let row = conn
-        .query_row(
-            "SELECT last_modified, last_line_offset, last_synced_at
-             FROM session_log_sync WHERE file_path = ?1",
-            rusqlite::params![file_path],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(|error| AppError::Database(format!("读取 Pi 会话同步状态失败: {error}")))?;
-    let Some((modified_nanos, last_line_offset, encoded_revision)) = row else {
-        return Ok(None);
-    };
-    let encoded_revision = encoded_revision as u64;
+/// 从批量预取的游标解码 Pi 同步状态（revision 编码在 `last_synced_at`）。
+fn decode_pi_sync_state(
+    cursor: Option<&crate::services::session_usage::SyncCursor>,
+) -> Option<PiSyncState> {
+    let cursor = cursor?;
+    let last_line_offset = cursor.last_line_offset;
+    let encoded_revision = cursor.last_synced_at as u64;
     if encoded_revision >> REVISION_MARKER_SHIFT != REVISION_MARKER {
-        return Ok(None);
+        return None;
     }
     let file_size = (encoded_revision >> REVISION_SIZE_SHIFT) & REVISION_SIZE_MASK;
     if file_size > crate::session_manager::providers::pi::MAX_SESSION_BYTES
         || last_line_offset < 0
         || last_line_offset > crate::session_manager::providers::pi::MAX_TREE_ENTRIES as i64 + 1
     {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(PiSyncState {
+    Some(PiSyncState {
         revision: PiFileRevision {
-            modified_nanos,
+            modified_nanos: cursor.last_modified,
             file_size,
             tail_fingerprint: encoded_revision as u32,
             complete: ((encoded_revision >> REVISION_COMPLETE_SHIFT) & 1) == 1,
         },
         last_line_offset,
-    }))
+    })
 }
 
 fn update_pi_sync_state_on_conn(
@@ -749,24 +759,25 @@ fn hash_field(hasher: &mut Sha256, value: &[u8]) {
 }
 
 fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
-    let already_seen: bool = conn
+    let request_seen: bool = conn
         .query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM session_usage_dedup
-                WHERE data_source = ?1 AND (
-                    request_id = ?2 OR
-                    (semantic_id = ?3 AND (?4 = 0 OR has_entry_id = 0))
-                )
-            )",
-            rusqlite::params![
-                DATA_SOURCE,
-                record.request_id,
-                record.semantic_id,
-                i64::from(record.has_entry_id),
-            ],
+            PI_REQUEST_DEDUP_SQL,
+            rusqlite::params![DATA_SOURCE, record.request_id],
             |row| row.get(0),
         )
         .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
+    let already_seen = request_seen
+        || conn
+            .query_row(
+                if record.has_entry_id {
+                    PI_LEGACY_SEMANTIC_DEDUP_SQL
+                } else {
+                    PI_SEMANTIC_DEDUP_SQL
+                },
+                rusqlite::params![DATA_SOURCE, record.semantic_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
     if already_seen {
         return Ok(false);
     }
@@ -889,6 +900,32 @@ mod tests {
             .expect("open session for timestamp restore")
             .set_times(FileTimes::new().set_modified(modified))
             .expect("restore session timestamp");
+    }
+
+    #[test]
+    fn dedup_lookups_use_complete_identity_indexes() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        for (sql, expected) in [
+            (PI_REQUEST_DEDUP_SQL, "(data_source=? AND request_id=?)"),
+            (PI_SEMANTIC_DEDUP_SQL, "(data_source=? AND semantic_id=?)"),
+            (
+                PI_LEGACY_SEMANTIC_DEDUP_SQL,
+                "(data_source=? AND semantic_id=? AND has_entry_id=?)",
+            ),
+        ] {
+            let mut statement = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+            let plan = statement
+                .query_map(rusqlite::params![DATA_SOURCE, "identity"], |row| {
+                    row.get::<_, String>(3)
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert!(
+                plan.iter().any(|step| step.contains(expected)),
+                "lookup does not constrain the complete identity {expected}: {plan:?}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -1418,8 +1455,12 @@ mod tests {
         let deferred = sync_pi_files(&db, std::slice::from_ref(&path));
         assert_eq!(deferred.imported, 0);
         assert_eq!(deferred.deferred_files, 1);
-        let deferred_state =
-            get_pi_sync_state(&db, path.to_string_lossy().as_ref())?.expect("deferred sync state");
+        let deferred_state = decode_pi_sync_state(
+            crate::services::session_usage::load_sync_cursors(&db)
+                .unwrap()
+                .get(path.to_string_lossy().as_ref()),
+        )
+        .expect("deferred sync state");
         assert!(!deferred_state.revision.complete);
         let unchanged = sync_pi_files(&db, std::slice::from_ref(&path));
         assert_eq!((unchanged.imported, unchanged.deferred_files), (0, 0));

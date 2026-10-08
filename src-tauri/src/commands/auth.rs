@@ -111,6 +111,7 @@ fn map_device_code_response(
 pub async fn auth_start_login(
     auth_provider: String,
     github_domain: Option<String>,
+    target_account_id: Option<String>,
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
@@ -118,6 +119,9 @@ pub async fn auth_start_login(
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
+            if target_account_id.is_some() {
+                return Err("Targeted re-authentication is only supported for Codex OAuth".into());
+            }
             let auth_manager = copilot_state.0.read().await;
             let response = auth_manager
                 .start_device_flow(github_domain.as_deref())
@@ -128,12 +132,15 @@ pub async fn auth_start_login(
         AUTH_PROVIDER_CODEX_OAUTH => {
             let auth_manager = &codex_state.0;
             let response = auth_manager
-                .start_device_flow()
+                .start_device_flow(target_account_id.as_deref())
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(map_device_code_response(auth_provider, response))
         }
         AUTH_PROVIDER_XAI_OAUTH => {
+            if target_account_id.is_some() {
+                return Err("Targeted re-authentication is only supported for Codex OAuth".into());
+            }
             let auth_manager = xai_state.0.read().await;
             let response = auth_manager
                 .start_device_flow()
@@ -150,6 +157,7 @@ pub async fn auth_poll_for_account(
     auth_provider: String,
     device_code: String,
     github_domain: Option<String>,
+    app_state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
@@ -174,7 +182,15 @@ pub async fn auth_poll_for_account(
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
             let auth_manager = &codex_state.0;
-            match auth_manager.poll_for_token(&device_code).await {
+            match auth_manager
+                .poll_for_token(&device_code, || async {
+                    app_state
+                        .proxy_service
+                        .lock_switch_for_app(AppType::Codex.as_str())
+                        .await
+                })
+                .await
+            {
                 Ok(account) => {
                     let default_account_id = auth_manager.get_status().await.default_account_id;
                     Ok(account.map(|account| {
@@ -199,6 +215,19 @@ pub async fn auth_poll_for_account(
         }
         _ => unreachable!(),
     }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn auth_cancel_login(
+    auth_provider: String,
+    device_code: String,
+    codex_state: State<'_, CodexOAuthState>,
+) -> Result<bool, String> {
+    let auth_provider = ensure_auth_provider(&auth_provider)?;
+    if auth_provider != AUTH_PROVIDER_CODEX_OAUTH {
+        return Err("Login cancellation is only supported for Codex OAuth".to_string());
+    }
+    Ok(codex_state.0.cancel_device_flow(&device_code).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]

@@ -1,4 +1,5 @@
 import type { ProviderCategory } from "@/types";
+import type { PresetFamilyFields } from "./presetFamilies";
 
 /**
  * Gemini 预设供应商的视觉主题配置
@@ -12,7 +13,7 @@ export interface GeminiPresetTheme {
   textColor?: string;
 }
 
-export interface GeminiProviderPreset {
+export interface GeminiProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
@@ -23,7 +24,7 @@ export interface GeminiProviderPreset {
   description?: string;
   category?: ProviderCategory;
   isPartner?: boolean;
-  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
+  primePartner?: boolean; // 旧版的置顶合作伙伴标记；v7 起界面不再读取，新预设不写
   partnerPromotionKey?: string;
   endpointCandidates?: string[];
   theme?: GeminiPresetTheme;
@@ -51,7 +52,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "gemini",
     iconColor: "#4285F4",
   },
-  // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
+  // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.ai",
@@ -218,24 +219,72 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "subrouter",
   },
   {
-    name: "APIKEY.FUN",
-    websiteUrl: "https://apikey.fun",
-    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.apikey.fun",
+        GOOGLE_GEMINI_BASE_URL: "https://api.88api.ai",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.88api.ai",
+    model: "gemini-3.8-flash",
+    description: "88API",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    endpointCandidates: ["https://api.88api.ai", "https://88api.ai"],
+    icon: "88api",
+  },
+  {
+    name: "APIKEY.FUN",
+    websiteUrl: "https://apikey.fan",
+    apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.apikey.fan",
         GEMINI_API_KEY: "",
         GEMINI_MODEL: "gemini-3.6-flash",
       },
     },
-    baseURL: "https://api.apikey.fun",
+    baseURL: "https://api.apikey.fan",
     model: "gemini-3.6-flash",
     description: "APIKEY.FUN",
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "apikeyfun",
-    endpointCandidates: ["https://api.apikey.fun", "https://slb.apikey.fun"],
+    endpointCandidates: [
+      "https://api.apikey.fan",
+      "https://api.apikey.fun",
+      "https://slb.apikey.fun",
+    ],
     icon: "apikeyfun",
+  },
+  {
+    name: "9527CODE",
+    websiteUrl: "https://9527.codes",
+    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://9527.codes",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://9527.codes",
+    model: "gemini-3.6-flash",
+    description: "9527CODE",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    endpointCandidates: [
+      "https://9527.codes",
+      "https://api.9527.codes",
+      "https://cdn.9527.codes",
+    ],
+    icon: "9527code",
   },
   {
     name: "Code0",
@@ -298,24 +347,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "ETok.ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.etok.ai/v1beta",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GOOGLE_GEMINI_BASE_URL: "https://soleapi.com",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
-    baseURL: "https://api.etok.ai/v1beta",
-    model: "gemini-3.6-flash",
-    description: "ETok",
-    category: "third_party",
+    baseURL: "https://soleapi.com",
+    model: "gemini-3.8-flash",
+    description: "SoleAPI",
+    category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "etok",
-    endpointCandidates: ["https://api.etok.ai/v1beta"],
-    icon: "etok",
-    iconColor: "#000000",
+    partnerPromotionKey: "soleapi",
+    endpointCandidates: ["https://soleapi.com"],
+    icon: "soleapi",
   },
   {
     name: "Cubence",
@@ -403,6 +452,30 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.tu-zi.com",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.tu-zi.com",
+    model: "gemini-3.8-flash",
+    description: "Tu-zi",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://api.tu-zi.com",
+      "https://api.ourzhishi.top",
+      "https://api.sydney-ai.com",
+      "https://apicdn.tu-zi.com",
+    ],
+    icon: "tuzi",
+  },
+  {
     name: "E-FlowCode",
     websiteUrl: "https://e-flowcode.cc",
     apiKeyUrl: "https://e-flowcode.cc",
@@ -487,19 +560,25 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "TheRouter",
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],
+    icon: "therouter",
   },
   {
-    name: "自定义",
-    websiteUrl: "",
+    name: "AICodeWith",
+    websiteUrl: "https://aicodewith.ai",
+    apiKeyUrl: "https://aicodewith.ai/login?tab=register",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GOOGLE_GEMINI_BASE_URL: "https://api.aicodewith.ai/gemini_cli",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
-    model: "gemini-3.6-flash",
-    description: "自定义 Gemini API 端点",
-    category: "custom",
+    baseURL: "https://api.aicodewith.ai/gemini_cli",
+    model: "gemini-3.1-pro-preview",
+    description: "AICodeWith",
+    category: "aggregator",
+    endpointCandidates: ["https://api.aicodewith.ai/gemini_cli"],
+    icon: "aicodewith",
+    iconColor: "#3A3B40",
   },
 ];
 
