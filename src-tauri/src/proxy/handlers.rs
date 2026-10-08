@@ -1120,7 +1120,10 @@ async fn handle_responses_for_app(
     // Native Responses passthrough to a strict gateway (xAI): restore flattened
     // function-call names *and* rewrite whole-float tool arguments. The integer
     // rewrite must run even when the request had no namespace tools.
-    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider) {
+    if super::providers::provider_needs_responses_namespace_flatten(
+        &ctx.provider,
+        ctx.outbound_model.as_deref(),
+    ) {
         return handle_codex_xai_native_responses_rewrite(
             response,
             &ctx,
@@ -1435,7 +1438,10 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider) {
+    if super::providers::provider_needs_responses_namespace_flatten(
+        &ctx.provider,
+        ctx.outbound_model.as_deref(),
+    ) {
         return handle_codex_xai_native_responses_rewrite(
             response,
             &ctx,
@@ -1511,7 +1517,7 @@ async fn handle_codex_late_arguments_repair(
         })
 }
 
-/// Response handler for the native Responses passthrough to xAI: restore
+/// Response handler for native Responses to xAI (direct or Copilot): restore
 /// flattened `function_call` names and rewrite whole-float tool arguments.
 /// Error bodies pass through unchanged. Usage is collected exactly as
 /// `process_response` would (same `CODEX_PARSER_CONFIG`).
@@ -1545,9 +1551,23 @@ async fn handle_codex_xai_native_responses_rewrite(
     if response.is_sse() {
         let builder = rewritten_sse_response_builder(status, response.headers());
 
+        let stream = response.bytes_stream();
+        // Keep the existing Copilot late-argument repair before restoring Grok names.
+        // Direct xAI responses retain their original stream pipeline.
+        let stream: std::pin::Pin<
+            Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
+        > = if matches!(ctx.app_type, AppType::Codex) && ctx.provider.is_github_copilot() {
+            Box::pin(
+                super::providers::responses_late_arguments::create_late_arguments_repair_stream(
+                    stream,
+                ),
+            )
+        } else {
+            Box::pin(stream)
+        };
         let restore_stream =
             transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
-                response.bytes_stream(),
+                stream,
                 restore_map,
             );
         let usage_collector =
@@ -4000,6 +4020,215 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["provider"], "HCAI");
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
+    }
+}
+
+#[cfg(test)]
+mod copilot_grok_responses_tests {
+    use super::*;
+    use crate::{
+        database::Database,
+        mode::stack::StackTarget,
+        provider::{Provider, ProviderMeta},
+        proxy::hyper_client::ProxyResponse,
+    };
+    use std::sync::Arc;
+
+    async fn context(copilot: bool) -> (ProxyState, RequestContext) {
+        let state = ProxyState::for_test(Arc::new(Database::memory().unwrap()));
+        let mut provider = Provider::with_id(
+            "native".to_string(),
+            "Native Responses".to_string(),
+            json!({}),
+            None,
+        );
+        if copilot {
+            provider.meta = Some(ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            });
+        }
+        let ctx = RequestContext::new(
+            &state,
+            &json!({ "model": "gpt-test", "stream": true }),
+            &axum::http::HeaderMap::new(),
+            AppType::Codex,
+            "Codex",
+            "codex",
+            Some(StackTarget {
+                provider,
+                upstream_model: "gpt-test".to_string(),
+                original_model: "gpt-test".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+        (state, ctx)
+    }
+
+    fn upstream(body: &str) -> ProxyResponse {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "text/event-stream".parse().unwrap());
+        headers.insert("content-length", body.len().to_string().parse().unwrap());
+        ProxyResponse::buffered(
+            StatusCode::OK,
+            headers,
+            Bytes::copy_from_slice(body.as_bytes()),
+        )
+    }
+
+    async fn body_and_events(response: axum::response::Response) -> (Bytes, Vec<Value>) {
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("content-length").is_none());
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let mut buffer = std::str::from_utf8(&body).unwrap().to_string();
+        let mut events = Vec::new();
+        while let Some(block) = take_sse_block(&mut buffer) {
+            let data = block
+                .lines()
+                .filter_map(|line| strip_sse_field(line, "data"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !data.is_empty() && data.trim() != "[DONE]" {
+                events.push(serde_json::from_str(&data).unwrap());
+            }
+        }
+        (body, events)
+    }
+
+    #[tokio::test]
+    async fn copilot_grok_rewrite_restores_late_tool_arguments() {
+        let (state, mut ctx) = context(true).await;
+        // The client-facing route can have a different name from the resolved model.
+        ctx.outbound_model = Some("grok-4.7".to_string());
+        assert!(
+            super::super::providers::provider_needs_responses_namespace_flatten(
+                &ctx.provider,
+                ctx.outbound_model.as_deref(),
+            )
+        );
+        let restore_map = grok_namespace_restore_map();
+        let call = |id: &str, arguments: &str| {
+            json!({
+                "type": "function_call", "id": id, "call_id": "call_1",
+                "name": "diagnostic__ping", "arguments": arguments
+            })
+        };
+        let input: String = [
+            json!({"type": "response.output_item.added", "output_index": 0,
+                "item": call("start", "")}),
+            json!({"type": "response.function_call_arguments.done", "output_index": 0,
+                "item_id": "start", "arguments": ""}),
+            json!({"type": "response.output_item.done", "output_index": 0,
+                "item": call("start", "")}),
+            json!({"type": "response.function_call_arguments.delta", "output_index": 0,
+                "item_id": "start", "delta": "{\"count\":2.0,\"ratio\":0.5}"}),
+            json!({"type": "response.completed", "response": {
+                "id": "resp_1", "status": "completed", "model": "grok-4.7",
+                "output": [call("start", "{\"count\":2.0,\"ratio\":0.5}")],
+                "usage": {"input_tokens": 3, "output_tokens": 1}
+            }}),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+        let response = handle_codex_xai_native_responses_rewrite(
+            upstream(&input),
+            &ctx,
+            &state,
+            None,
+            restore_map,
+        )
+        .await
+        .unwrap();
+        let (_, events) = body_and_events(response).await;
+
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[0]["item"]["name"], "ping");
+        assert_eq!(events[0]["item"]["namespace"], "diagnostic");
+        assert_eq!(events[1]["type"], "response.function_call_arguments.delta");
+        assert_eq!(events[1]["item_id"], "start");
+        assert_eq!(events[1]["delta"], "{\"count\":2.0,\"ratio\":0.5}");
+        assert_eq!(events[2]["arguments"], "{\"count\":2,\"ratio\":0.5}");
+        assert_eq!(events[2]["item_id"], "start");
+        for item in [&events[3]["item"], &events[4]["response"]["output"][0]] {
+            assert_eq!(item["id"], "start");
+            assert_eq!(item["call_id"], "call_1");
+            assert_eq!(item["name"], "ping");
+            assert_eq!(item["namespace"], "diagnostic");
+            assert_eq!(item["arguments"], "{\"count\":2,\"ratio\":0.5}");
+        }
+        assert_eq!(events[4]["response"]["usage"]["input_tokens"], 3);
+    }
+
+    fn grok_namespace_restore_map(
+    ) -> std::collections::HashMap<String, transform_codex_responses_namespace::NamespacedName>
+    {
+        transform_codex_responses_namespace::namespace_restore_map(&json!({
+            "tools": [{"type": "namespace", "name": "diagnostic", "tools": [
+                {"type": "function", "name": "ping",
+                 "parameters": {"type": "object", "properties": {"count": {"type": "integer"}}}}
+            ]}]
+        }))
+    }
+
+    #[tokio::test]
+    async fn copilot_grok_nonstream_restores_names_and_preserves_usage() {
+        let (state, mut ctx) = context(true).await;
+        ctx.outbound_model = Some("grok-4.7".to_string());
+        let input = json!({
+            "model": "grok-4.7", "status": "completed",
+            "output": [{"type": "function_call", "id": "upstream",
+                "call_id": "call_1", "name": "diagnostic__ping", "arguments": "{\"count\":2.0}"}],
+            "usage": {"input_tokens": 3, "output_tokens": 1}
+        });
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        headers.insert("content-length", input.to_string().len().into());
+        headers.insert("x-request-id", "upstream-request".parse().unwrap());
+        let response = handle_codex_xai_native_responses_rewrite(
+            ProxyResponse::buffered(StatusCode::OK, headers, Bytes::from(input.to_string())),
+            &ctx,
+            &state,
+            None,
+            grok_namespace_restore_map(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["x-request-id"], "upstream-request");
+        assert!(response.headers().get("content-length").is_none());
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let output: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(output["output"][0]["name"], "ping");
+        assert_eq!(output["output"][0]["namespace"], "diagnostic");
+        assert_eq!(output["output"][0]["arguments"], "{\"count\":2}");
+        assert_eq!(output["output"][0]["call_id"], "call_1");
+        assert_eq!(output["usage"], input["usage"]);
+    }
+
+    #[tokio::test]
+    async fn copilot_grok_rewrite_passes_error_bodies_through() {
+        let (state, ctx) = context(true).await;
+        let input = Bytes::from_static(br#"{"error":{"message":"upstream rejected request"}}"#);
+        let response = handle_codex_xai_native_responses_rewrite(
+            ProxyResponse::buffered(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                axum::http::HeaderMap::new(),
+                input.clone(),
+            ),
+            &ctx,
+            &state,
+            None,
+            grok_namespace_restore_map(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            response.into_body().collect().await.unwrap().to_bytes(),
+            input
+        );
     }
 }
 
