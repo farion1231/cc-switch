@@ -569,9 +569,18 @@ pub(crate) fn plan(
                     None,
                     auth,
                 ),
-                Route::Custom { table, auth: kind } => {
-                    (RouteWrite::Custom(table.clone()), Some(*kind), auth)
-                }
+                Route::Custom {
+                    table,
+                    auth: kind,
+                    id,
+                } => (
+                    RouteWrite::Custom {
+                        table: table.clone(),
+                        id: id.clone(),
+                    },
+                    Some(*kind),
+                    auth,
+                ),
                 Route::BuiltIn { id, table } => (
                     RouteWrite::BuiltIn {
                         id: id.clone(),
@@ -604,7 +613,12 @@ pub(crate) fn plan(
                 )
             } else {
                 (
-                    RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false)),
+                    // 代理契约是 CC Switch 自己的路由，不沿用供应商的 id：统一会话
+                    // 历史按共享桶分，关着时也固定 custom，避免和用户的表撞名。
+                    RouteWrite::Custom {
+                        table: proxy_route_table(ROUTE_ID, base_url, false),
+                        id: None,
+                    },
                     Some(RouteAuth::Bearer),
                     AuthGoal::KeepNative,
                 )
@@ -646,13 +660,28 @@ pub(crate) fn plan(
         .map(row_auth);
 
     let config = CodexConfigPatch {
+        // 只有代理契约需要把残留的 custom 表改成指向本地代理的休眠表；直连下
+        // 这张表没人用，清空即可，不留占位 Key。
+        dormant_base_url: match target {
+            Target::Proxy { .. } => configured_proxy_base_url(db),
+            Target::Direct(_) => String::new(),
+        },
         top,
         nested,
         exclusive,
         outgoing: outgoing_exclusive(owner),
-        route,
         catalog: catalog.is_some(),
-        retired: facts.retired,
+        // 这次要写的表不算遗留：关着统一会话历史时它就是行自己的 id，标成遗留会被
+        // 写完立刻删掉，上一家的 Key 也清不掉。
+        retired: {
+            let written = route.selector().unwrap_or("");
+            facts
+                .retired
+                .into_iter()
+                .filter(|known| known.id != written)
+                .collect()
+        },
+        route,
     };
     let official_login = match &auth {
         AuthGoal::Official(row_auth) => codex_login::official_login_requirement(row_auth),
@@ -811,7 +840,7 @@ fn contract_of(
         Target::Direct(_) => "",
     };
     let (selector, table) = match &config.route {
-        RouteWrite::Custom(table) => (ROUTE_ID, table_text(table)),
+        RouteWrite::Custom { table, id } => (id.as_deref().unwrap_or(ROUTE_ID), table_text(table)),
         RouteWrite::OfficialProxy {
             base_url,
             unified: true,
@@ -1024,7 +1053,7 @@ pub(crate) fn run_with_edits(
         }
     };
     let mut config = planned.config;
-    if let (Some(kind), RouteWrite::Custom(table)) = (planned.stamp, &mut config.route) {
+    if let (Some(kind), RouteWrite::Custom { table, .. }) = (planned.stamp, &mut config.route) {
         if matches!(kind, RouteAuth::Bearer | RouteAuth::EnvKey) {
             table.insert(
                 "requires_openai_auth",

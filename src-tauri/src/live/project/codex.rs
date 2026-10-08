@@ -91,9 +91,17 @@ pub fn requires_openai_auth(auth: RouteAuth, login_on_disk: bool) -> bool {
 pub enum Route {
     /// 官方：不写选路，走 Codex 内置的 openai（统一会话历史时另写官方镜像表）。
     Official,
-    /// 第三方：写成 `[model_providers.custom]`。`table` 已带上 Key，`requires_openai_auth`
-    /// 在写入时按 [`requires_openai_auth`] 现算。
-    Custom { table: Table, auth: RouteAuth },
+    /// 第三方。`table` 已带上 Key，`requires_openai_auth` 在写入时按
+    /// [`requires_openai_auth`] 现算。`id` 是行里自己的 `model_provider`：
+    /// 「统一 Codex 会话历史」开启时一律收成 [`ROUTE_ID`]，关闭时按它写，
+    /// 不再把用户的名字强制覆盖成 custom（旧会话按这个 id 分桶，覆盖后 resume 不了）。
+    /// 没有自己的 id（旧形态的顶层 `openai_base_url`、保留 id 表）时为 `None`，
+    /// 回落到 [`ROUTE_ID`]。
+    Custom {
+        table: Table,
+        auth: RouteAuth,
+        id: Option<String>,
+    },
     /// 选中 Codex 内置的其他 provider（ollama、lmstudio、bedrock），bedrock 可以带覆盖表。
     BuiltIn { id: String, table: Option<Table> },
     /// 第三方行里没有任何路由（只有 model、MCP 之类）：不写选路。
@@ -180,7 +188,7 @@ impl CodexProjection {
         let route = if input.official {
             Route::Official
         } else {
-            third_party_route(&doc, input)?
+            third_party_route(&doc, input, crate::settings::unify_codex_session_history())?
         };
         Ok(Self {
             route,
@@ -197,11 +205,12 @@ impl CodexProjection {
         for (key, value) in self.top.iter().chain(&self.exclusive) {
             doc[key.as_str()] = Item::Value(value.clone());
         }
-        if let Route::Custom { table, .. } = &self.route {
-            doc["model_provider"] = toml_edit::value(ROUTE_ID);
+        if let Route::Custom { table, id, .. } = &self.route {
+            let id = id.as_deref().unwrap_or(ROUTE_ID);
+            doc["model_provider"] = toml_edit::value(id);
             let mut providers = Table::new();
             providers.set_implicit(true);
-            providers.insert(ROUTE_ID, Item::Table(table.clone()));
+            providers.insert(id, Item::Table(table.clone()));
             doc["model_providers"] = Item::Table(providers);
         }
         doc.to_string()
@@ -279,7 +288,11 @@ fn declared_auth(table: &dyn TableLike) -> Option<RouteAuth> {
     None
 }
 
-fn third_party_route(doc: &DocumentMut, input: &RowInput<'_>) -> Result<Route, AppError> {
+fn third_party_route(
+    doc: &DocumentMut,
+    input: &RowInput<'_>,
+    unify: bool,
+) -> Result<Route, AppError> {
     // 配置整个是空的却带着 Key：没有地方放 Key，也不知道该发到哪。
     if doc.as_table().is_empty() && row_key(doc, None, input).is_some() {
         return Err(AppError::localized(
@@ -291,6 +304,13 @@ fn third_party_route(doc: &DocumentMut, input: &RowInput<'_>) -> Result<Route, A
     let providers = doc.get("model_providers").and_then(Item::as_table_like);
     let selector = non_empty_str(doc.get("model_provider"));
     let row_table = |id: &str| providers.and_then(|p| p.get(id)).and_then(to_table);
+
+    // 行自己的选路 id。关闭「统一会话历史」时按它写回；内置 id、保留 id 和
+    // 旧形态的顶层改道没有可用的自定义 id，回落到 custom。
+    let own_id = selector
+        .as_deref()
+        .filter(|id| !is_built_in_id(id) && !RESERVED_TABLE_IDS.contains(id))
+        .map(str::to_string);
 
     let (table, fallback_name) = match selector.as_deref() {
         Some(id) if !is_built_in_id(id) => match row_table(id) {
@@ -323,7 +343,7 @@ fn third_party_route(doc: &DocumentMut, input: &RowInput<'_>) -> Result<Route, A
         },
         Some(id) => return built_in_route(id, providers, doc, input),
     };
-    custom_route(table, &fallback_name, doc, input)
+    custom_route(table, &fallback_name, own_id, unify, doc, input)
 }
 
 /// 行的 Key：`auth.OPENAI_API_KEY`，或者直接写在配置里的 `experimental_bearer_token`
@@ -359,6 +379,8 @@ fn keyless_fallback_error() -> AppError {
 fn custom_route(
     mut table: Table,
     fallback_name: &str,
+    own_id: Option<String>,
+    unify: bool,
     doc: &DocumentMut,
     input: &RowInput<'_>,
 ) -> Result<Route, AppError> {
@@ -394,7 +416,10 @@ fn custom_route(
     if matches!(auth, RouteAuth::Headers | RouteAuth::None) {
         table.remove("requires_openai_auth");
     }
-    Ok(Route::Custom { table, auth })
+    // 开了「统一会话历史」才收成共享的 custom 桶；关掉时保留行自己的 id，
+    // 让用户改的 model_provider 生效，不再被强制覆盖。
+    let id = if unify { None } else { own_id };
+    Ok(Route::Custom { table, auth, id })
 }
 
 fn built_in_route(
@@ -442,8 +467,9 @@ pub enum RouteWrite {
     Official { dormant_base_url: String },
     /// 官方直连且开了「统一会话历史」：选路写 custom，表是官方镜像（认证走官方登录）。
     OfficialMirror,
-    /// 第三方（直连或代理契约）：选路写 custom。
-    Custom(Table),
+    /// 第三方（直连或代理契约）。`id` 为空时选路写 [`ROUTE_ID`]（统一会话历史，
+    /// 或行没有自己的 id）；否则按行自己的 `model_provider` 写。
+    Custom { table: Table, id: Option<String> },
     /// Codex 内置的其他 provider。
     BuiltIn { id: String, table: Option<Table> },
     /// 第三方行没有路由：不写选路。
@@ -455,10 +481,12 @@ pub enum RouteWrite {
 }
 
 impl RouteWrite {
-    fn selector(&self) -> Option<&str> {
+    pub(crate) fn selector(&self) -> Option<&str> {
         match self {
             Self::Official { .. } | Self::Default => None,
-            Self::OfficialMirror | Self::Custom(_) => Some(ROUTE_ID),
+            Self::OfficialMirror => Some(ROUTE_ID),
+            // 第三方：统一会话历史开着时收成共享桶，关着时用行自己的 id。
+            Self::Custom { id, .. } => Some(id.as_deref().unwrap_or(ROUTE_ID)),
             Self::BuiltIn { id, .. } => Some(id),
             Self::OfficialProxy { unified, .. } => unified.then_some(ROUTE_ID),
         }
@@ -515,6 +543,8 @@ pub struct KnownTable {
 /// Codex `config.toml` 的补丁：只改关键字段和独有字段，其余字节不碰。
 #[derive(Debug, Clone)]
 pub struct CodexConfigPatch {
+    /// 选路不在 custom 上时，把残留的 custom 表改成休眠形态用的本地代理地址。
+    pub dormant_base_url: String,
     /// 顶层关键字段的目标值。
     pub top: Vec<(String, TomlValue)>,
     pub nested: Vec<(Vec<String>, TomlValue)>,
@@ -737,16 +767,22 @@ impl CodexConfigPatch {
             providers.insert(&renamed, item);
         }
 
-        // 旧版按别的 id 写进去的表（含旧版代理官方路由表）、残留的代理占位表。被 profile
-        // 引用的不动。
+        // 不是这次选路的表：旧版按别的 id 写的（含旧版代理官方路由表）、残留的代理
+        // 占位表，以及统一会话历史关着时上一次选路留下的表（里面可能有真实 Key）。
+        // 被 profile 引用的不动；custom 另算，没人选它时改成休眠形态而不是删。
+        let selected = self.route.selector().unwrap_or("");
         let doomed: Vec<String> = providers
             .iter()
             .filter(|(id, item)| {
                 *id != ROUTE_ID
+                    && *id != selected
                     && !referenced.iter().any(|name| name == id)
                     && (*id == OFFICIAL_PROXY_ROUTE_ID
                         || holds_placeholder(item)
-                        || self.is_retired(id, item))
+                        || self.is_retired(id, item)
+                        || item
+                            .as_table_like()
+                            .is_some_and(|table| table.get("experimental_bearer_token").is_some()))
             })
             .map(|(id, _)| id.to_string())
             .collect();
@@ -784,8 +820,25 @@ impl CodexConfigPatch {
                     container_inline,
                 );
             }
-            RouteWrite::Custom(table) => {
-                put_table(providers, ROUTE_ID, table.clone(), container_inline);
+            RouteWrite::Custom { table, id } => {
+                let id = id.as_deref().unwrap_or(ROUTE_ID);
+                put_table(providers, id, table.clone(), container_inline);
+                // 选路不在 custom 上时，之前统一会话历史留下的 custom 表不能留着真实
+                // Key。代理契约里它是休眠表（切回官方路由时还要在），直连下没人用它，
+                // 只把 Key 去掉。
+                if id != ROUTE_ID {
+                    if self.dormant_base_url.is_empty() {
+                        if let Some(table) = providers
+                            .get_mut(ROUTE_ID)
+                            .and_then(Item::as_table_like_mut)
+                        {
+                            table.remove("experimental_bearer_token");
+                        }
+                    } else if providers.contains_key(ROUTE_ID) {
+                        let dormant = proxy_route_table(ROUTE_ID, &self.dormant_base_url, false);
+                        put_table(providers, ROUTE_ID, dormant, container_inline);
+                    }
+                }
             }
             RouteWrite::OfficialProxy {
                 base_url,
@@ -819,7 +872,9 @@ impl CodexConfigPatch {
     /// 没有 `model_providers` 时要新建的那张表。
     fn owned_table(&self) -> Option<(&str, Table)> {
         match &self.route {
-            RouteWrite::Custom(table) => Some((ROUTE_ID, table.clone())),
+            RouteWrite::Custom { table, id } => {
+                Some((id.as_deref().unwrap_or(ROUTE_ID), table.clone()))
+            }
             RouteWrite::OfficialMirror => Some((ROUTE_ID, official_mirror_table(None, true))),
             RouteWrite::OfficialProxy {
                 base_url,
@@ -952,16 +1007,34 @@ mod tests {
     }
 
     fn project(settings: &Value) -> Result<CodexProjection, AppError> {
-        CodexProjection::of(&RowInput {
+        project_with(settings, false)
+    }
+
+    /// `unify`：开着「统一会话历史」。生产路径读设置，测试直接传，免得碰全局设置。
+    fn project_with(settings: &Value, unify: bool) -> Result<CodexProjection, AppError> {
+        let config_text = settings.get("config").and_then(Value::as_str).unwrap_or("");
+        let doc = config_text.parse::<DocumentMut>().unwrap();
+        let route = third_party_route(
+            &doc,
+            &RowInput {
+                settings,
+                official: false,
+                proxy_injected_oauth: false,
+            },
+            unify,
+        )?;
+        let mut projection = CodexProjection::of(&RowInput {
             settings,
             official: false,
             proxy_injected_oauth: false,
-        })
+        })?;
+        projection.route = route;
+        Ok(projection)
     }
 
     fn custom(projection: &CodexProjection) -> (&Table, RouteAuth) {
         match &projection.route {
-            Route::Custom { table, auth } => (table, *auth),
+            Route::Custom { table, auth, .. } => (table, *auth),
             other => panic!("expected custom route, got {other:?}"),
         }
     }
@@ -1002,6 +1075,26 @@ mod tests {
         );
         assert_eq!(table.get("name").and_then(Item::as_str), Some("Relay"));
         assert_eq!(projection.top[0].0, "model");
+        // 关着时按行自己的 id 归一，而不是 custom。
+        match &projection.route {
+            Route::Custom { id: Some(id), .. } => assert_eq!(id, "relay"),
+            other => panic!("expected the row's own id, got {other:?}"),
+        }
+        assert!(projection
+            .catalog_input_text()
+            .contains("model_providers.relay"));
+    }
+
+    #[test]
+    fn unifying_session_history_collapses_the_route_into_the_shared_bucket() {
+        let settings = row(json!({ "OPENAI_API_KEY": "sk-relay" }), RELAY);
+        let projection = project_with(&settings, true).unwrap();
+        match &projection.route {
+            Route::Custom { id: None, .. } => {}
+            other => panic!("expected the shared bucket, got {other:?}"),
+        }
+        let text = projection.catalog_input_text();
+        assert!(text.contains("model_provider = \"custom\""), "{text}");
     }
 
     #[test]
@@ -1058,6 +1151,7 @@ mod tests {
 
     fn apply(route: RouteWrite, live: &str) -> DocumentMut {
         let patch = CodexConfigPatch {
+            dormant_base_url: PROXY.to_string(),
             top: Vec::new(),
             nested: Vec::new(),
             exclusive: Vec::new(),
@@ -1143,7 +1237,13 @@ mod tests {
         let mut relay = Table::new();
         relay.insert("name", toml_edit::value("relay"));
         relay.insert("base_url", toml_edit::value("https://relay.example/v1"));
-        let third_party = apply(RouteWrite::Custom(relay), &proxied);
+        let third_party = apply(
+            RouteWrite::Custom {
+                table: relay,
+                id: None,
+            },
+            &proxied,
+        );
         assert!(
             third_party.get("openai_base_url").is_none(),
             "{third_party}"
