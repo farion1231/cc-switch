@@ -2949,7 +2949,10 @@
       "modeLabel": "Load balancing mode",
       "off": "Off (primary/backup)",
       "session": "Session-sticky round robin",
-      "hint": "Same session stays on one account; new sessions are spread across the failover queue. Requires auto failover with multiple accounts in the queue."
+      "hint": "Same session stays on one account; new sessions are spread across the failover queue. Requires auto failover with multiple accounts in the queue.",
+      "live": "Pool {{pool}} accounts · {{inflight}} in-flight · {{cooling}} cooling",
+      "liveLoading": "Loading load status…",
+      "minuteUnit": "min"
     },
     "autoFailover": {
       "info": "When the failover queue has multiple providers, the system will try them in priority order when requests fail. When a provider reaches the consecutive failure threshold, the circuit breaker will open and skip it temporarily.",

@@ -136,6 +136,16 @@ pub async fn get_proxy_config_for_app(
         .map_err(|e| e.to_string())
 }
 
+/// 获取指定应用的负载均衡实时指示（池/在途/冷却）
+#[tauri::command]
+pub async fn get_load_balance_status(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+) -> Result<crate::services::proxy::LoadBalanceStatus, String> {
+    require_proxy_app(&app_type)?;
+    state.proxy_service.get_load_balance_status(&app_type).await
+}
+
 /// 更新指定应用的代理配置
 ///
 /// 更新应用级配置（enabled、auto_failover、超时、熔断器等）

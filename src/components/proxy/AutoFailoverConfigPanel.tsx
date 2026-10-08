@@ -13,10 +13,49 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Save, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
-import { useAppProxyConfig, useUpdateAppProxyConfig } from "@/lib/query/proxy";
+import {
+  useAppProxyConfig,
+  useLoadBalanceStatus,
+  useUpdateAppProxyConfig,
+} from "@/lib/query/proxy";
 
 /** 负载均衡模式取值（与后端 is_valid_load_balance_mode 对齐） */
 type LoadBalanceMode = "off" | "session";
+
+/** session 模式下的实时指示：池 N 账号 · 在途 X · 冷却中 Y（5s 轮询） */
+function LoadBalanceLiveIndicator({ appType }: { appType: string }) {
+  const { t } = useTranslation();
+  const { data } = useLoadBalanceStatus(appType, true);
+  if (!data) {
+    return (
+      <p className="text-xs text-muted-foreground/70">
+        {t("proxy.loadBalance.liveLoading", "读取负载状态…")}
+      </p>
+    );
+  }
+  const coolingDetail = data.cooling
+    .map(
+      (entry) =>
+        `${entry.providerName} · ${Math.ceil(entry.remainingSecs / 60)}${t(
+          "proxy.loadBalance.minuteUnit",
+          "分钟",
+        )}`,
+    )
+    .join("\n");
+  return (
+    <p
+      className="text-xs text-muted-foreground"
+      title={coolingDetail || undefined}
+    >
+      {t("proxy.loadBalance.live", {
+        pool: data.poolSize,
+        inflight: data.inFlight,
+        cooling: data.cooling.length,
+        defaultValue: `池 ${data.poolSize} 账号 · 在途 ${data.inFlight} · 冷却中 ${data.cooling.length}`,
+      })}
+    </p>
+  );
+}
 
 export interface AutoFailoverConfigPanelProps {
   appType: string;
@@ -307,6 +346,9 @@ export function AutoFailoverConfigPanel({
               <p className="text-xs text-muted-foreground">
                 {t("proxy.loadBalance.hint")}
               </p>
+              {formData.loadBalanceMode === "session" && (
+                <LoadBalanceLiveIndicator appType={appType} />
+              )}
             </div>
 
             <div className="space-y-2">

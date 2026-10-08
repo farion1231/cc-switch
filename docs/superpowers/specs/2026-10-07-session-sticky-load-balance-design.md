@@ -322,3 +322,10 @@
 （`ProviderLoadBalance`）、前端 `codingPlanPresets.ts` + 
 `AutoFailoverConfigPanel`（模式下拉）+ `ProviderAdvancedConfig`（并发区），
 i18n 四语言同步。
+
+8. 补充落地（2026-10-08 第二轮）：
+   - 4.3 的"可选打磨"实时指示已实现：`get_load_balance_status` IPC
+     （池/在途/冷却，冷却含账号名与剩余分钟），代理设置页 session 模式下
+     5s 轮询展示；手工验收的自动化等价（真实代理 HTTP 层端到端：
+     多会话分摊、同会话恒定、双账号用量日志同涨）落在
+     `proxy/tests_load_balance.rs::e2e_proxy_server_distributes_sessions_and_logs_usage`。

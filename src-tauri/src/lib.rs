@@ -1566,6 +1566,7 @@ pub fn run() {
             commands::get_global_proxy_config,
             commands::update_global_proxy_config,
             commands::get_proxy_config_for_app,
+            commands::get_load_balance_status,
             commands::update_proxy_config_for_app,
             commands::get_default_cost_multiplier,
             commands::set_default_cost_multiplier,

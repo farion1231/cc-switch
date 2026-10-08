@@ -21,6 +21,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -32,7 +33,7 @@ use providers::gemini_shadow::GeminiShadowStore;
 struct MockResponse {
     status: u16,
     retry_after: Option<&'static str>,
-    body: &'static str,
+    body: String,
 }
 
 /// 极简 HTTP mock 上游：读完请求头+body，回 canned 响应。
@@ -74,7 +75,7 @@ async fn spawn_mock_upstream(responses: Vec<MockResponse>) -> (SocketAddr, Arc<A
                     let mut queue = queue.lock().unwrap();
                     match queue.pop_front() {
                         Some(r) => (r.status, r.retry_after, r.body),
-                        None => (500u16, None, "{\"error\":\"exhausted\"}"),
+                        None => (500u16, None, "{\"error\":\"exhausted\"}".to_string()),
                     }
                 };
                 let reason = match status {
@@ -111,7 +112,13 @@ fn extract_content_length(headers: &[u8]) -> usize {
         .unwrap_or(0)
 }
 
-const OK_BODY: &str = "{\"id\":\"msg_1\",\"model\":\"claude-3-5-sonnet\",\"role\":\"assistant\",\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":8,\"output_tokens\":2}}";
+/// 带唯一响应 id 的 OK 响应体。Claude 应用用量日志的去重键回退到响应体 id，
+/// 每条 canned 响应必须各持唯一 id，否则同 provider 的多行日志会被去重覆盖。
+fn ok_body(id: &str) -> String {
+    format!(
+        "{{\"id\":\"{id}\",\"model\":\"claude-3-5-sonnet\",\"role\":\"assistant\",\"type\":\"message\",\"content\":[{{\"type\":\"text\",\"text\":\"hi\"}}],\"stop_reason\":\"end_turn\",\"usage\":{{\"input_tokens\":8,\"output_tokens\":2}}}}"
+    )
+}
 
 /// HOME 隔离（与 provider_router 测试同款），防止 settings 落到真实用户目录
 struct TempHome {
@@ -243,17 +250,17 @@ async fn multiple_sessions_distribute_across_accounts() {
         MockResponse {
             status: 200,
             retry_after: None,
-            body: OK_BODY,
+            body: ok_body("msg_1"),
         },
         MockResponse {
             status: 200,
             retry_after: None,
-            body: OK_BODY,
+            body: ok_body("msg_2"),
         },
         MockResponse {
             status: 200,
             retry_after: None,
-            body: OK_BODY,
+            body: ok_body("msg_3"),
         },
     ])
     .await;
@@ -261,12 +268,12 @@ async fn multiple_sessions_distribute_across_accounts() {
         MockResponse {
             status: 200,
             retry_after: None,
-            body: OK_BODY,
+            body: ok_body("msg_4"),
         },
         MockResponse {
             status: 200,
             retry_after: None,
-            body: OK_BODY,
+            body: ok_body("msg_5"),
         },
     ])
     .await;
@@ -298,12 +305,12 @@ async fn same_session_hits_same_upstream() {
         MockResponse {
             status: 200,
             retry_after: None,
-            body: OK_BODY,
+            body: ok_body("msg_6"),
         },
         MockResponse {
             status: 200,
             retry_after: None,
-            body: OK_BODY,
+            body: ok_body("msg_7"),
         },
     ])
     .await;
@@ -328,19 +335,19 @@ async fn failover_remaps_session_to_survivor() {
     let (addr_a, count_a) = spawn_mock_upstream(vec![MockResponse {
         status: 500,
         retry_after: None,
-        body: "{\"error\":\"boom\"}",
+        body: "{\"error\":\"boom\"}".to_string(),
     }])
     .await;
     let (addr_b, count_b) = spawn_mock_upstream(vec![
         MockResponse {
             status: 200,
             retry_after: None,
-            body: OK_BODY,
+            body: ok_body("msg_8"),
         },
         MockResponse {
             status: 200,
             retry_after: None,
-            body: OK_BODY,
+            body: ok_body("msg_9"),
         },
     ])
     .await;
@@ -372,13 +379,13 @@ async fn rate_limited_account_entering_cooldown_is_skipped() {
     let (addr_a, _count_a) = spawn_mock_upstream(vec![MockResponse {
         status: 429,
         retry_after: Some("120"),
-        body: "{\"error\":{\"message\":\"rate limit exceeded\"}}",
+        body: "{\"error\":{\"message\":\"rate limit exceeded\"}}".to_string(),
     }])
     .await;
     let (addr_b, count_b) = spawn_mock_upstream(vec![MockResponse {
         status: 200,
         retry_after: None,
-        body: OK_BODY,
+        body: ok_body("msg_10"),
     }])
     .await;
 
@@ -400,4 +407,109 @@ async fn rate_limited_account_entering_cooldown_is_skipped() {
         .await
         .unwrap();
     assert_eq!(selected[0].id, "b");
+}
+
+/// 端到端（设计第 6 节手工验收的自动化等价）：起真实代理 HTTP 服务器，
+/// 模拟 Claude Code 多会话请求，验证 ①多会话分摊两账号 ②同会话恒定同账号
+/// ③用量日志两账号同涨（代理页用量的数据层）。
+///
+/// 真实 Claude Code 客户端与上游 prompt cache 命中属环境依赖，无法在
+/// 单测覆盖——上游侧由 mock 的请求计数与粘性映射间接验证。
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn e2e_proxy_server_distributes_sessions_and_logs_usage() {
+    let _home = TempHome::new();
+    ensure_crypto_provider();
+    // a 收 s1/s3/s1 追加共 3 次；b 收 s2 一次
+    let (addr_a, count_a) = spawn_mock_upstream(vec![
+        MockResponse {
+            status: 200,
+            retry_after: None,
+            body: ok_body("msg_11"),
+        },
+        MockResponse {
+            status: 200,
+            retry_after: None,
+            body: ok_body("msg_12"),
+        },
+        MockResponse {
+            status: 200,
+            retry_after: None,
+            body: ok_body("msg_13"),
+        },
+    ])
+    .await;
+    let (addr_b, count_b) = spawn_mock_upstream(vec![MockResponse {
+        status: 200,
+        retry_after: None,
+        body: ok_body("msg_14"),
+    }])
+    .await;
+
+    let db = Arc::new(Database::memory().unwrap());
+    seed_session_mode(&db, &addr_a, &addr_b).await;
+
+    let server = super::server::ProxyServer::new(
+        super::types::ProxyConfig {
+            listen_address: "127.0.0.1".to_string(),
+            listen_port: 0, // 临时端口，避免与本机运行中的实例冲突
+            ..Default::default()
+        },
+        db.clone(),
+        None,
+    );
+    let info = server.start().await.expect("start proxy server");
+
+    let url = format!("http://127.0.0.1:{}/v1/messages", info.port);
+    let client = reqwest::Client::new();
+    let send = |session: &'static str| {
+        let client = client.clone();
+        let url = url.clone();
+        async move {
+            let resp = client
+                .post(&url)
+                .header("x-claude-code-session-id", session)
+                .header("anthropic-version", "2023-06-01")
+                .json(&request_body())
+                .send()
+                .await
+                .expect("send request");
+            let status = resp.status();
+            let body = resp.text().await.expect("read body");
+            assert_eq!(status, 200, "proxy should return 200, body: {body}");
+        }
+    };
+
+    // 三个客户端会话 + s1 追加一轮
+    for session in ["s1", "s2", "s3", "s1"] {
+        send(session).await;
+    }
+
+    server.stop().await.expect("stop proxy server");
+
+    // ① 分摊：a=3（s1 两轮 + s3），b=1（s2）
+    assert_eq!(count_a.load(Ordering::SeqCst), 3, "上游 a 请求计数");
+    assert_eq!(count_b.load(Ordering::SeqCst), 1, "上游 b 请求计数");
+
+    // ② 同会话恒定：s1 两轮都落 a（上游计数即证明）
+    // ③ 用量同涨：两 provider 的 proxy_request_logs 均有行（异步落库，轮询等待）
+    let mut logs = db.count_request_logs_by_provider("claude");
+    for _ in 0..40 {
+        if logs.iter().map(|(_, n)| n).sum::<i64>() >= 4 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        logs = db.count_request_logs_by_provider("claude");
+    }
+    let by_provider: std::collections::HashMap<String, i64> = logs.into_iter().collect();
+    assert_eq!(
+        by_provider.get("a"),
+        Some(&3),
+        "provider a 用量行数: {by_provider:?}"
+    );
+    assert_eq!(
+        by_provider.get("b"),
+        Some(&1),
+        "provider b 用量行数: {by_provider:?}"
+    );
 }

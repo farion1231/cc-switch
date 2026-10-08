@@ -285,6 +285,38 @@ impl SessionLoadBalancer {
         }
     }
 
+    /// 池内账号的在途总数（provider+model 全维度求和）。代理页实时指示用
+    pub fn in_flight_total(&self, provider_ids: &[String]) -> isize {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner
+            .in_flight
+            .iter()
+            .filter(|(key, _)| {
+                key.split_once('\u{0}')
+                    .is_some_and(|(pid, _)| provider_ids.iter().any(|id| id == pid))
+            })
+            .map(|(_, counter)| counter.load(Ordering::Acquire))
+            .sum()
+    }
+
+    /// 池内账号的冷却快照（provider + 剩余秒数）。代理页实时指示用
+    pub fn cooldown_snapshot(
+        &self,
+        app_type: &str,
+        provider_ids: &[String],
+    ) -> Vec<LoadBalanceCooldown> {
+        provider_ids
+            .iter()
+            .filter_map(|id| {
+                self.cooldown_remaining(app_type, id)
+                    .map(|remaining| LoadBalanceCooldown {
+                        provider_id: id.clone(),
+                        remaining_secs: remaining.as_secs(),
+                    })
+            })
+            .collect()
+    }
+
     /// 该账号成功服务一次：清冷却、重置退避计数
     pub fn record_success(&self, app_type: &str, provider_id: &str) {
         self.inner
@@ -299,6 +331,14 @@ impl Default for SessionLoadBalancer {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 冷却中的账号快照（代理页实时指示）
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadBalanceCooldown {
+    pub provider_id: String,
+    pub remaining_secs: u64,
 }
 
 /// 在途计数 RAII 句柄：构造 +1，Drop 同步 -1。
@@ -543,6 +583,25 @@ mod inflight_tests {
         ];
         let _h = lb.acquire_in_flight("a", "m");
         assert_eq!(lb.select_least_in_flight("claude", &pool, "m"), 1);
+    }
+
+    #[test]
+    fn in_flight_total_and_cooldown_snapshot_cover_pool_only() {
+        let lb = SessionLoadBalancer::new();
+        let _h1 = lb.acquire_in_flight("a", "m1");
+        let _h2 = lb.acquire_in_flight("a", "m2");
+        let _h3 = lb.acquire_in_flight("b", "m1");
+        let _h4 = lb.acquire_in_flight("zzz-out-of-pool", "m");
+        // 池 [a, b]：合计 3（池外 zzz 不计）
+        assert_eq!(lb.in_flight_total(&["a".into(), "b".into()]), 3);
+        assert_eq!(lb.in_flight_total(&["a".into()]), 2);
+
+        lb.record_rate_limit("claude", "a", Some(90));
+        lb.record_rate_limit("claude", "zzz-out-of-pool", None);
+        let snapshot = lb.cooldown_snapshot("claude", &["a".into(), "b".into()]);
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].provider_id, "a");
+        assert!(snapshot[0].remaining_secs > 80 && snapshot[0].remaining_secs <= 90);
     }
 
     #[test]
