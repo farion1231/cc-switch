@@ -612,6 +612,25 @@ impl Database {
                         Self::migrate_v21_to_v22(conn)?;
                         Self::set_user_version(conn, 22)?;
                     }
+                    22 => {
+                        // 旧辅助队列分支同样使用过版本 19/20，但没有上游的 Mcode/Pi 列。
+                        // 包括已升级到 22 的库在内，按实际列结构补齐，不覆盖已有开关值。
+                        for (table, column) in [
+                            ("mcp_servers", "enabled_mcode"),
+                            ("skills", "enabled_mcode"),
+                            ("mcp_servers", "enabled_pi"),
+                        ] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    column,
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 23)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -3908,6 +3927,50 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn reconcile_colliding_branch_versions_preserves_flags() -> Result<(), AppError> {
+        for version in [19, 20, 22] {
+            for upstream_columns in [false, true] {
+                let conn = Connection::open_in_memory()?;
+                conn.execute_batch(
+                    "CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_codex BOOLEAN NOT NULL DEFAULT 0);
+                     CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_codex BOOLEAN NOT NULL DEFAULT 0);
+                     INSERT INTO mcp_servers VALUES ('mcp-1', 1);
+                     INSERT INTO skills VALUES ('skill-1', 1);",
+                )?;
+                if upstream_columns {
+                    conn.execute_batch(
+                        "ALTER TABLE mcp_servers ADD COLUMN enabled_mcode BOOLEAN NOT NULL DEFAULT 0;
+                         ALTER TABLE mcp_servers ADD COLUMN enabled_pi BOOLEAN NOT NULL DEFAULT 0;
+                         ALTER TABLE skills ADD COLUMN enabled_mcode BOOLEAN NOT NULL DEFAULT 0;
+                         UPDATE mcp_servers SET enabled_mcode = 1, enabled_pi = 1;
+                         UPDATE skills SET enabled_mcode = 1;",
+                    )?;
+                }
+                Database::set_user_version(&conn, version)?;
+                // Reopening an already migrated database must also be harmless.
+                for _ in 0..2 {
+                    Database::apply_schema_migrations_on_conn(&conn)?;
+                    assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+                    let mcp: (i64, i64, i64) = conn.query_row(
+                        "SELECT enabled_codex, enabled_mcode, enabled_pi FROM mcp_servers WHERE id = 'mcp-1'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )?;
+                    let skill: (i64, i64) = conn.query_row(
+                        "SELECT enabled_codex, enabled_mcode FROM skills WHERE id = 'skill-1'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )?;
+                    let expected = i64::from(upstream_columns);
+                    assert_eq!(mcp, (1, expected, expected));
+                    assert_eq!(skill, (1, expected));
+                }
+            }
+        }
         Ok(())
     }
 
