@@ -2317,7 +2317,10 @@
     },
     "heatmap": {
       "title": "使用量ヒートマップ",
-      "subtitle": "過去 53 週間の日別使用量",
+      "subtitle": "過去 53 週間の日別使用量。展開すると 53 週間ずつさかのぼり、色の濃さは期間をまたいで比較できます",
+      "spanSummary": "{{tokens}} トークン · {{requests}} リクエスト · {{cost}}",
+      "showMore": "もっと見る",
+      "showLess": "折りたたむ",
       "less": "少",
       "more": "多"
     },

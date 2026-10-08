@@ -2317,7 +2317,10 @@
     },
     "heatmap": {
       "title": "Usage heatmap",
-      "subtitle": "Daily usage over the last 53 weeks",
+      "subtitle": "Daily usage over the last 53 weeks; earlier usage continues in 53-week spans, with shading comparable across spans",
+      "spanSummary": "{{tokens}} tokens · {{requests}} requests · {{cost}}",
+      "showMore": "Show more",
+      "showLess": "Show less",
       "less": "Less",
       "more": "More"
     },
