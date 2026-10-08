@@ -243,6 +243,15 @@ fn provider_is_xai_native_responses(provider: &Provider) -> bool {
         .is_some_and(|url| url.contains("api.x.ai"))
 }
 
+/// 原生 Responses 透传的响应要不要补迟到的函数调用参数（见 `responses_late_arguments`）：
+/// 官方以外的上游都补。触发条件是协议违规本身（结束事件参数为空、增量排在后面，实测
+/// MiniMax），不按厂商名：转发 MiniMax 原生流的中转站同样会带过来。顺序正常的流原样放行。
+///
+/// 只在转 Chat / 转 Anthropic / xAI 改写之外的原生透传分支里调用。
+pub fn provider_needs_responses_late_arguments_repair(provider: &Provider) -> bool {
+    !is_codex_official_provider(provider)
+}
+
 fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
     let non_empty_setting = |key: &str| {
         provider
@@ -335,14 +344,16 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
 
 /// Vendors whose OFFICIAL Codex integration is a native `/responses` gateway that
 /// rejects Codex's freeform custom tools (`apply_patch` with `type: "custom"`,
-/// #6944). Same vendor set as `CODEX_WEB_SEARCH_REJECT_HOSTS` in `codex_config`
-/// (kept separate: that list also gates aggregators by model brand). Matched on
+/// #6944). This is intentionally separate from `CODEX_WEB_SEARCH_REJECT_HOSTS`:
+/// web-search compatibility alone must not change a stored Chat provider's
+/// protocol or catalog. Matched on
 /// host labels via `codex_url_host_matches_any`, never by substring.
 const CODEX_NATIVE_RESPONSES_HOSTS: &[&str] = &[
     "bigmodel.cn",
     "z.ai",
     "xiaomimimo.com",
     "minimaxi.com",
+    "minimax.cn",
     "minimax.io",
     "longcat.chat",
 ];
@@ -512,6 +523,60 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     let upstream_model = codex_provider_upstream_model(provider)?;
     body["model"] = JsonValue::String(upstream_model.clone());
     Some(upstream_model)
+}
+
+/// Stack 请求的上游拒收 Codex 的托管 `web_search`：按这家的地址和模型品牌判断，和它做
+/// 路由时写 `web_search = "disabled"` 的依据相同（归一化后的配置，旧形态的行也认得出
+/// 地址）；另看这次请求的模型：行里配了多个模型时，选中的不一定是行的 `model`。
+pub fn codex_stack_upstream_rejects_web_search(
+    provider: &Provider,
+    request_model: Option<&str>,
+) -> bool {
+    let projected =
+        crate::live::project::codex::CodexProjection::of(&crate::live::project::codex::RowInput {
+            settings: &provider.settings_config,
+            official: false,
+            proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
+        })
+        .map(|projection| projection.catalog_input_text());
+    let config_text = match &projected {
+        Ok(text) => text.as_str(),
+        Err(_) => provider
+            .settings_config
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap_or(""),
+    };
+    crate::codex_config::codex_native_gateway_rejects_web_search(config_text)
+        || request_model.is_some_and(crate::codex_config::codex_model_rejects_web_search)
+}
+
+/// 去掉 Responses 请求里托管的 `web_search` 工具：`tools` 去完为空时整个键删掉；指向它
+/// 的 `tool_choice` 一并删掉，`tools` 整个没了时 `tool_choice` 也删（上游对没有工具的
+/// `tool_choice` 报 400）。其余字段不动。返回是否改了请求。
+pub fn strip_codex_hosted_web_search(body: &mut JsonValue) -> bool {
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    let is_web_search =
+        |tool: &JsonValue| tool.get("type").and_then(|value| value.as_str()) == Some("web_search");
+    let mut changed = false;
+    let mut tools_gone = false;
+    if let Some(JsonValue::Array(tools)) = obj.get_mut("tools") {
+        let before = tools.len();
+        tools.retain(|tool| !is_web_search(tool));
+        changed = tools.len() != before;
+        tools_gone = changed && tools.is_empty();
+    }
+    if tools_gone {
+        obj.remove("tools");
+    }
+    let choice_is_web_search = obj.get("tool_choice").is_some_and(is_web_search);
+    if choice_is_web_search || (tools_gone && obj.contains_key("tool_choice")) {
+        obj.remove("tool_choice");
+        changed = true;
+    }
+    changed
 }
 
 pub fn resolve_codex_chat_reasoning_config(
@@ -872,14 +937,6 @@ fn extract_codex_base_url_from_toml(config_text: &str) -> Option<String> {
 impl CodexAdapter {
     pub fn new() -> Self {
         Self
-    }
-
-    /// 检测是否为官方 Codex 客户端
-    ///
-    /// 匹配 User-Agent 模式: `^(codex_vscode|codex_cli_rs)/[\d.]+`
-    #[allow(dead_code)]
-    pub fn is_official_client(user_agent: &str) -> bool {
-        CODEX_CLIENT_REGEX.is_match(user_agent)
     }
 
     /// 从 Provider 配置中提取 API Key
@@ -1246,8 +1303,8 @@ context_window = 500000
 
         let mut unified_session = create_provider(json!({
             "auth": {},
-            "config": crate::codex_config::inject_codex_unified_session_bucket("")
-                .expect("inject unified session route")
+            // 旧版「统一会话历史」注入进 live、又被回填进行里的形态。
+            "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = \"responses\"\n"
         }));
         unified_session.category = Some("official".to_string());
         assert!(is_codex_official_provider(&unified_session));
@@ -1622,6 +1679,7 @@ wire_api = "anthropic"
             "https://api.xiaomimimo.com/v1",
             "https://token-plan-cn.xiaomimimo.com/v1",
             "https://api.minimaxi.com/v1",
+            "https://api.minimax.cn/v1",
             "https://api.minimax.io/v1",
             "https://api.longcat.chat/openai/v1",
         ] {
@@ -1632,11 +1690,42 @@ wire_api = "anthropic"
             "https://api.z.ai/api/coding/paas/v4",
             "https://open.bigmodel.cn/api/paas/v4",
             "https://api.minimaxi.com/v1/chat/completions",
+            "https://api.minimax.cn/v1/chat/completions",
+            "https://api.minimax.cn.example.com/v1",
             "https://api.xyz.ai/v1",
             "https://api.deepseek.com",
             "",
         ] {
             assert!(!is_codex_native_responses_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn new_native_presets_respect_explicit_format_without_reclassifying_chat() {
+        use crate::codex_config::CodexCatalogToolProfile;
+
+        for base_url in [
+            "https://api.stepfun.com/v1",
+            "https://api.stepfun.ai/v1",
+            "https://api.stepfun.com/step_plan/v1",
+            "https://qianfan.baidubce.com/v2",
+            "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1",
+            "https://tokenhub.tencentmaas.com/plan/v3",
+        ] {
+            for (api_format, expected) in [
+                ("openai_responses", CodexCatalogToolProfile::NativeResponses),
+                ("openai_chat", CodexCatalogToolProfile::ProxyChat),
+            ] {
+                let provider = create_provider(json!({
+                    "apiFormat": api_format,
+                    "baseURL": base_url,
+                }));
+                assert_eq!(
+                    resolve_codex_catalog_tool_profile(&provider),
+                    expected,
+                    "{api_format} @ {base_url}",
+                );
+            }
         }
     }
 
@@ -1734,38 +1823,6 @@ wire_api = "anthropic"
         // base_url 已包含 /v1，endpoint 也包含 /v1
         let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses");
         assert_eq!(url, "https://www.packyapi.com/v1/responses");
-    }
-
-    // 官方客户端检测测试
-    #[test]
-    fn test_is_official_client_vscode() {
-        assert!(CodexAdapter::is_official_client("codex_vscode/1.0.0"));
-        assert!(CodexAdapter::is_official_client("codex_vscode/2.3.4"));
-        assert!(CodexAdapter::is_official_client("codex_vscode/0.1"));
-    }
-
-    #[test]
-    fn test_is_official_client_cli() {
-        assert!(CodexAdapter::is_official_client("codex_cli_rs/1.0.0"));
-        assert!(CodexAdapter::is_official_client("codex_cli_rs/0.5.2"));
-    }
-
-    #[test]
-    fn test_is_not_official_client() {
-        assert!(!CodexAdapter::is_official_client("Mozilla/5.0"));
-        assert!(!CodexAdapter::is_official_client("curl/7.68.0"));
-        assert!(!CodexAdapter::is_official_client("python-requests/2.25.1"));
-        assert!(!CodexAdapter::is_official_client("codex_other/1.0.0"));
-        assert!(!CodexAdapter::is_official_client(""));
-    }
-
-    #[test]
-    fn test_is_official_client_partial_match() {
-        // 必须从开头匹配
-        assert!(!CodexAdapter::is_official_client("some codex_vscode/1.0.0"));
-        assert!(!CodexAdapter::is_official_client(
-            "prefix_codex_cli_rs/1.0.0"
-        ));
     }
 
     #[test]

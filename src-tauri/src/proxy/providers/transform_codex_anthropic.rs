@@ -10,6 +10,7 @@
 //! - `transform_responses.rs`: Anthropic request → Responses request, Responses response → Anthropic response
 //! - this module:               Responses request → Anthropic request, Anthropic response → Responses response
 
+use super::codex_compaction;
 use super::transform_codex_chat::{
     build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
     response_tool_call_item_id_from_chat_name, CodexToolContext,
@@ -381,11 +382,16 @@ pub fn responses_request_to_anthropic(
 
     // Reuse the Codex tool context so function, namespace, custom, tool_search, and
     // dynamically loaded tools all receive stable flat names upstream.
-    let anth_tools: Vec<Value> = tool_context
-        .chat_tools()
-        .iter()
-        .filter_map(chat_tool_to_anthropic_tool)
-        .collect();
+    // 压缩回合只要一段摘要，不带工具，与 Codex 本地压缩请求同形。
+    let anth_tools: Vec<Value> = if tool_context.is_compaction_request() {
+        Vec::new()
+    } else {
+        tool_context
+            .chat_tools()
+            .iter()
+            .filter_map(chat_tool_to_anthropic_tool)
+            .collect()
+    };
     let has_tools = !anth_tools.is_empty();
     if has_tools {
         result["tools"] = json!(anth_tools);
@@ -647,6 +653,24 @@ fn convert_input_to_messages(
                     .and_then(decode_anthropic_thinking_block)
                 {
                     push_assistant_thinking_block(&mut messages, block);
+                }
+            }
+            // Codex 远程压缩：触发条目换成压缩提示词，历史里的压缩条目换成摘要正文，
+            // 都作为用户文字（见 `codex_compaction`）。
+            Some("compaction_trigger") => {
+                push_block(
+                    &mut messages,
+                    "user",
+                    json!({ "type": "text", "text": codex_compaction::COMPACT_PROMPT }),
+                );
+            }
+            Some("compaction" | "compaction_summary" | "context_compaction") => {
+                if let Some(text) = codex_compaction::compaction_item_replay_text(item) {
+                    push_block(
+                        &mut messages,
+                        "user",
+                        json!({ "type": "text", "text": text }),
+                    );
                 }
             }
             // message item or an item carrying a role
@@ -3051,5 +3075,32 @@ data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":
             "data: {\"type\":\"message_stop\"}\n\n",
         );
         assert!(anthropic_sse_to_message_value(sse).is_err());
+    }
+
+    #[test]
+    fn compaction_request_becomes_tool_free_summary_turn() {
+        let body = json!({
+            "model": "claude-sonnet",
+            "input": [
+                { "type": "compaction", "encrypted_content": codex_compaction::encode_compaction_summary("prior work") },
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "fix bug" }] },
+                { "type": "function_call", "call_id": "toolu_1", "name": "shell", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "toolu_1", "output": "ok" },
+                { "type": "compaction_trigger" }
+            ],
+            "tools": [{ "type": "function", "name": "shell", "parameters": { "type": "object" } }],
+            "tool_choice": "auto"
+        });
+        let result = responses_request_to_anthropic(body, 8192).unwrap();
+        assert!(result.get("tools").is_none());
+        assert!(result.get("tool_choice").is_none());
+
+        let messages = result["messages"].as_array().unwrap();
+        let first = serde_json::to_string(&messages[0]).unwrap();
+        assert!(first.contains("prior work"));
+        let last = messages.last().unwrap();
+        assert_eq!(last["role"], "user");
+        let last_block = last["content"].as_array().unwrap().last().unwrap();
+        assert_eq!(last_block["text"], codex_compaction::COMPACT_PROMPT);
     }
 }

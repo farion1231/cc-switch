@@ -24,7 +24,7 @@ fn sanitize_provider_name(name: &str) -> String {
 
 #[test]
 fn migrate_legacy_common_config_usage_marks_historical_provider_enabled() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -98,7 +98,7 @@ fn migrate_legacy_common_config_usage_marks_historical_provider_enabled() {
 
 #[test]
 fn provider_service_switch_codex_updates_live_and_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
@@ -167,6 +167,8 @@ command = "say"
                 grokbuild: false,
                 opencode: false,
                 hermes: false,
+                mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -190,13 +192,19 @@ command = "say"
 
     let config_text =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    // 只替换关键字段：live 里用户的 MCP 原样留着；行里的 MCP 不是关键字段，不投影。
     assert!(
-        config_text.contains("mcp_servers.echo-server"),
-        "config.toml should contain synced MCP servers"
+        config_text.contains("[mcp_servers.legacy]"),
+        "live settings outside the key fields stay: {config_text}"
     );
     assert!(
-        config_text.contains("experimental_bearer_token"),
-        "config.toml should carry the selected provider API key"
+        !config_text.contains("mcp_servers.latest"),
+        "the row's own MCP section is not projected: {config_text}"
+    );
+    // 这张卡没有路由（只有 MCP），Key 没有第三方地址可发，不写进 live。
+    assert!(
+        !config_text.contains("experimental_bearer_token"),
+        "{config_text}"
     );
 
     let current_id = state
@@ -213,42 +221,20 @@ command = "say"
         .db
         .get_all_providers(AppType::Codex.as_str())
         .expect("read providers after switch");
-
-    let new_provider = providers.get("new-provider").expect("new provider exists");
-    let new_config_text = new_provider
-        .settings_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    // provider 存储的是原始配置，不包含 MCP 同步后的内容
-    assert!(
-        new_config_text.contains("mcp_servers.latest"),
-        "provider config should contain original MCP servers"
-    );
-    // live 文件额外包含同步的 MCP 服务器
-    assert!(
-        config_text.contains("mcp_servers.echo-server"),
-        "live config should include synced MCP servers"
-    );
-
     let legacy = providers
         .get("old-provider")
         .expect("legacy provider still exists");
-    let legacy_auth_value = legacy
-        .settings_config
-        .get("auth")
-        .and_then(|v| v.get("OPENAI_API_KEY"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
     assert_eq!(
-        legacy_auth_value, "legacy-key",
-        "previous provider should be backfilled with live auth"
+        legacy.settings_config,
+        json!({ "auth": {"OPENAI_API_KEY": "stale"}, "config": "stale-config" }),
+        "switching away never writes live content back into the row"
     );
 }
 
 #[test]
-fn provider_service_switch_codex_preserves_user_model_provider_id_after_migration() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+/// 第三方路由一律写成 `custom`：行里用什么 id 都一样，行本身不改写。
+fn provider_service_switch_codex_writes_every_third_party_route_as_custom() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -316,25 +302,29 @@ requires_openai_auth = true
 
     assert_eq!(
         parsed.get("model_provider").and_then(|v| v.as_str()),
-        Some("aihubmix"),
-        "provider switching should preserve user-editable model_provider after the one-time migration"
+        Some("custom"),
+        "every third-party route is written as the custom table"
     );
 
     let model_providers = parsed
         .get("model_providers")
         .and_then(|v| v.as_table())
         .expect("model_providers table exists");
-    assert!(
-        model_providers.get("custom").is_none(),
-        "provider switching should not force user-edited provider ids back to custom"
-    );
     assert_eq!(
         model_providers
-            .get("aihubmix")
+            .get("custom")
             .and_then(|v| v.get("base_url"))
             .and_then(|v| v.as_str()),
         Some("https://aihubmix.example/v1"),
-        "selected provider id should point at the newly selected supplier endpoint"
+        "the custom table points at the newly selected supplier endpoint"
+    );
+    assert!(
+        model_providers.get("aihubmix").is_none(),
+        "the row's own table id is not written"
+    );
+    assert!(
+        model_providers.get("rightcode").is_none(),
+        "the old version's table for old-provider (same id and address as its row) is retired"
     );
 
     let providers = state
@@ -350,13 +340,13 @@ requires_openai_auth = true
         .unwrap_or_default();
     assert!(
         new_config_text.contains("[model_providers.aihubmix]"),
-        "stored provider template should remain provider-specific"
+        "stored provider template stays as it was"
     );
 }
 
 #[test]
-fn provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+fn provider_service_switch_codex_preserves_oauth_and_keeps_rows_untouched() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
@@ -443,6 +433,11 @@ requires_openai_auth = true
     }
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
+    let bridge_before = state
+        .db
+        .get_provider_by_id("bridge-provider", AppType::Codex.as_str())
+        .expect("read bridge row")
+        .expect("bridge row");
 
     ProviderService::switch(&state, AppType::Codex, "bridge-provider")
         .expect("switch to bridge provider should succeed");
@@ -471,9 +466,14 @@ requires_openai_auth = true
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
     let parsed_live: toml::Value = toml::from_str(&live_config).expect("parse live config");
     assert_eq!(
+        parsed_live.get("model_provider").and_then(|v| v.as_str()),
+        Some("custom"),
+        "third-party routes are always written as the custom table"
+    );
+    assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("aihubmix"))
+            .and_then(|v| v.get("custom"))
             .and_then(|v| v.get("experimental_bearer_token"))
             .and_then(|v| v.as_str()),
         Some("bridge-key"),
@@ -482,45 +482,32 @@ requires_openai_auth = true
     assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("aihubmix"))
+            .and_then(|v| v.get("custom"))
             .and_then(|v| v.get("requires_openai_auth"))
             .and_then(|v| v.as_bool()),
         Some(true)
     );
 
-    ProviderService::switch(&state, AppType::Codex, "plain-provider")
-        .expect("switch away should backfill bridge provider");
-
-    let providers = state
-        .db
-        .get_all_providers(AppType::Codex.as_str())
-        .expect("read providers");
-    let stored_bridge = providers
-        .get("bridge-provider")
-        .expect("bridge provider exists after backfill");
-    assert_eq!(
-        stored_bridge
-            .settings_config
-            .pointer("/auth/OPENAI_API_KEY")
-            .and_then(|v| v.as_str()),
-        Some("bridge-key"),
-        "backfill should restore the API key into stored provider auth"
-    );
+    // 旧版按行的 id 写进 live 的表（id 和地址都对得上 legacy-provider 的投影）被清掉，
+    // 里面的真实 Key 不再留在 live 里。
     assert!(
-        stored_bridge
-            .settings_config
-            .pointer("/auth/tokens")
+        parsed_live
+            .get("model_providers")
+            .and_then(|v| v.get("rightcode"))
             .is_none(),
-        "backfill should not persist ChatGPT OAuth tokens into provider storage"
+        "the table an old version wrote for legacy-provider is retired: {live_config}"
     );
-    assert!(
-        !stored_bridge
-            .settings_config
-            .get("config")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .contains("experimental_bearer_token"),
-        "stored provider config should stay clean; bridge token is generated only for live config"
+
+    ProviderService::switch(&state, AppType::Codex, "plain-provider")
+        .expect("switch away from the bridge provider");
+    let bridge_after = state
+        .db
+        .get_provider_by_id("bridge-provider", AppType::Codex.as_str())
+        .expect("read bridge row")
+        .expect("bridge row");
+    assert_eq!(
+        bridge_after.settings_config, bridge_before.settings_config,
+        "switching away never writes live content back into the row"
     );
 }
 
@@ -530,7 +517,7 @@ requires_openai_auth = true
     reason = "this integration-style test must serialize global test HOME and settings mutations across async takeover calls"
 )]
 async fn codex_official_to_deepseek_then_takeover_enters_and_restores_proxy_managed_live_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
@@ -627,11 +614,9 @@ wire_api = "responses"
         "normal switch should inject the DeepSeek key into config.toml"
     );
 
-    state
-        .proxy_service
-        .set_takeover_for_app("codex", true)
+    cc_switch_lib::mode::controller::enter(&state, &AppType::Codex, false)
         .await
-        .expect("enable Codex takeover");
+        .expect("enter Codex routing mode");
     let proxy_status = state
         .proxy_service
         .get_status()
@@ -661,29 +646,9 @@ wire_api = "responses"
         "takeover live config should not keep the upstream DeepSeek endpoint"
     );
 
-    let backup = state
-        .db
-        .get_live_backup("codex")
+    cc_switch_lib::mode::controller::exit(&state, &AppType::Codex)
         .await
-        .expect("read Codex backup")
-        .expect("backup exists after takeover");
-    let backup_value: serde_json::Value =
-        serde_json::from_str(&backup.original_config).expect("parse backup");
-    let backup_config = backup_value
-        .get("config")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
-    assert!(
-        backup_config.contains("https://api.deepseek.com/v1")
-            && backup_config.contains("deepseek-key"),
-        "takeover backup should remain the restorable DeepSeek config"
-    );
-
-    state
-        .proxy_service
-        .set_takeover_for_app("codex", false)
-        .await
-        .expect("disable Codex takeover");
+        .expect("leave Codex routing mode");
 
     let restored_auth: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read restored auth");
@@ -707,7 +672,7 @@ wire_api = "responses"
 
 #[test]
 fn provider_service_switch_codex_default_removes_auth_json_when_preservation_off() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Intentionally do NOT enable preservation: this locks the default opt-out
     // behavior where a third-party switch deletes auth.json outright — the
@@ -797,7 +762,7 @@ requires_openai_auth = true
 
 #[test]
 fn provider_service_switch_codex_default_injects_bearer_token_into_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Preservation stays OFF (default). Since Codex 0.149 (openai/codex#39214)
     // custom providers no longer inherit ambient auth, so third-party switches
@@ -855,7 +820,7 @@ requires_openai_auth = false
 
 #[test]
 fn provider_service_switch_codex_preserved_login_rejects_empty_third_party_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Preservation ON + third-party provider with an empty config: auth.json is
     // not written, and an empty config.toml has no provider table to carry the
@@ -898,14 +863,14 @@ fn provider_service_switch_codex_preserved_login_rejects_empty_third_party_confi
 
 #[test]
 fn provider_service_switch_codex_preserved_login_normalizes_legacy_reroute_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Preservation ON + a legacy-shape third-party config (top-level
     // openai_base_url rerouting the built-in `openai` provider): the shape
     // has no provider table to carry the bearer token — since 0.149 the
     // built-in provider would keep using the preserved official OAuth from
     // auth.json and send it to the third-party base URL. The switch must
-    // normalize the config into a cc-switch-owned custom table with the key
+    // normalize the config into the custom table with the key
     // injected, leaving the official login untouched.
     let _home = ensure_test_home();
     enable_codex_official_auth_preservation();
@@ -956,10 +921,10 @@ openai_base_url = "https://relay.example/v1"
         "the top-level reroute must be rewritten away; got:\n{live_config}"
     );
     assert!(
-        live_config.contains("[model_providers.cc-switch]")
+        live_config.contains("[model_providers.custom]")
             && live_config.contains("base_url = \"https://relay.example/v1\"")
             && live_config.contains("experimental_bearer_token = \"third-party-key\""),
-        "routing and key must move into the cc-switch provider table; got:\n{live_config}"
+        "routing and key must move into the custom provider table; got:\n{live_config}"
     );
 
     let auth_value: serde_json::Value =
@@ -975,7 +940,7 @@ openai_base_url = "https://relay.example/v1"
 
 #[test]
 fn provider_service_switch_codex_preserved_login_normalizes_config_carried_token() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Same legacy reroute shape, but the key sits in the config text itself
     // (raw-edited provider with `auth = {}`): normalization must see
@@ -1021,8 +986,8 @@ experimental_bearer_token = "config-carried-key"
         "the top-level reroute must be rewritten away; got:\n{live_config}"
     );
     assert!(
-        live_config.contains("[model_providers.cc-switch]"),
-        "a cc-switch provider table must be created; got:\n{live_config}"
+        live_config.contains("[model_providers.custom]"),
+        "the custom provider table must be created; got:\n{live_config}"
     );
     assert_eq!(
         cc_switch_lib::extract_codex_experimental_bearer_token(&live_config).as_deref(),
@@ -1033,7 +998,7 @@ experimental_bearer_token = "config-carried-key"
 
 #[test]
 fn provider_service_switch_codex_default_normalizes_legacy_reroute_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Same legacy shape with preservation OFF (default): the switch is
     // config-only on every path, so instead of feeding the built-in
@@ -1078,15 +1043,15 @@ openai_base_url = "https://relay.example/v1"
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
     assert!(
         !live_config.contains("openai_base_url")
-            && live_config.contains("[model_providers.cc-switch]")
+            && live_config.contains("[model_providers.custom]")
             && live_config.contains("experimental_bearer_token = \"third-party-key\""),
-        "routing and key must move into the cc-switch provider table; got:\n{live_config}"
+        "routing and key must move into the custom provider table; got:\n{live_config}"
     );
 }
 
 #[test]
 fn provider_service_switch_codex_preserved_login_rejects_keyless_official_auth_fallback() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Preservation ON + a header-auth card with NO API key anywhere
     // (`auth = {}`) whose config also sets `requires_openai_auth = true`:
@@ -1173,7 +1138,7 @@ wire_api = "responses"
 
 #[test]
 fn provider_service_switch_codex_preserved_login_allows_keyless_header_auth_provider() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Same keyless header-auth card WITHOUT the fallback flag: 0.149 resolves
     // this provider as unauthenticated, provider headers survive untouched,
@@ -1230,7 +1195,7 @@ http_headers = { Authorization = "Bearer explicit-header-token" }
 
 #[test]
 fn provider_service_switch_codex_supports_official_login_provider_without_auth_write() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1318,11 +1283,11 @@ requires_openai_auth = true
 
 #[test]
 fn provider_service_switch_codex_official_clears_stale_third_party_auth() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
-    // preservation stays OFF (default): switching to the third-party provider
-    // wrote its key into live auth.json, and that residue is what this test
-    // expects the official switch to clean up.
+    // preservation stays OFF (default). Versions before the key moved into
+    // config.toml wrote the third-party key into live auth.json; that residue
+    // is what this test expects the official switch to clean up.
     let _home = ensure_test_home();
 
     let third_party_config = r#"model_provider = "aihubmix"
@@ -1334,9 +1299,10 @@ base_url = "https://aihubmix.example/v1"
 wire_api = "responses"
 requires_openai_auth = true
 "#;
-    // Live key intentionally differs from the DB row so the assertion below
-    // proves the backfill preserved the live copy before it was deleted.
-    let live_auth = json!({ "OPENAI_API_KEY": "stale-live-key" });
+    // The residue is the row's own key: only a key some third-party row
+    // carries is provably CC Switch's to delete (a user's own
+    // `codex login --api-key` login is left alone).
+    let live_auth = json!({ "OPENAI_API_KEY": "old-db-key" });
     write_codex_live_atomic(&live_auth, Some(third_party_config))
         .expect("seed third-party live config");
 
@@ -1395,8 +1361,8 @@ requires_openai_auth = true
             .settings_config
             .pointer("/auth/OPENAI_API_KEY")
             .and_then(|v| v.as_str()),
-        Some("stale-live-key"),
-        "the live key must be backfilled into the outgoing provider before deletion"
+        Some("old-db-key"),
+        "the outgoing row is never rewritten from live"
     );
 
     let live_config =
@@ -1409,7 +1375,7 @@ requires_openai_auth = true
 
 #[test]
 fn provider_service_reswitch_current_official_keeps_live_auth() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1456,7 +1422,7 @@ fn provider_service_reswitch_current_official_keeps_live_auth() {
 
 #[test]
 fn read_codex_live_settings_tolerates_missing_auth_when_config_file_exists() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1479,8 +1445,8 @@ fn read_codex_live_settings_tolerates_missing_auth_when_config_file_exists() {
 }
 
 #[test]
-fn reapply_codex_official_live_resyncs_mcp_servers() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+fn reapply_codex_official_live_rewrites_only_the_session_routing() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1489,105 +1455,10 @@ fn reapply_codex_official_live_resyncs_mcp_servers() {
         "OPENAI_API_KEY": null,
         "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
     });
-    write_codex_live_atomic(&live_auth, Some("")).expect("seed official live auth");
-
-    let mut initial_config = MultiAppConfig::default();
-    {
-        let manager = initial_config
-            .get_manager_mut(&AppType::Codex)
-            .expect("codex manager");
-        let official = Provider::with_id(
-            "codex-official".to_string(),
-            "Official".to_string(),
-            json!({
-                "auth": {
-                    "auth_mode": "chatgpt",
-                    "OPENAI_API_KEY": null,
-                    "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
-                },
-                "config": ""
-            }),
-            None,
-        );
-        manager
-            .providers
-            .insert("codex-official".to_string(), official);
-    }
-    let servers = initial_config
-        .mcp
-        .servers
-        .get_or_insert_with(Default::default);
-    servers.insert(
-        "echo-server".into(),
-        McpServer {
-            id: "echo-server".into(),
-            name: "Echo Server".into(),
-            server: json!({
-                "type": "stdio",
-                "command": "echo"
-            }),
-            apps: McpApps {
-                claude: false,
-                codex: true,
-                gemini: false,
-                grokbuild: false,
-                opencode: false,
-                hermes: false,
-            },
-            description: None,
-            homepage: None,
-            docs: None,
-            tags: Vec::new(),
-        },
-    );
-
-    let state = create_test_state_with_config(&initial_config).expect("create test state");
-
-    ProviderService::switch(&state, AppType::Codex, "codex-official")
-        .expect("switch to official provider");
-    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read config.toml after switch");
-    assert!(
-        live.contains("mcp_servers.echo-server"),
-        "switch should sync enabled MCP servers into live"
-    );
-
-    // 统一会话开关变更触发的 reapply 会整体重写 live config.toml（有意设计），
-    // 写完必须重新投影 DB 里启用的 MCP，否则用户的 MCP 会静默失效。
-    let reapplied =
-        cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply official live");
-    assert!(
-        reapplied,
-        "current provider is official, reapply should run"
-    );
-
-    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read config.toml after reapply");
-    assert!(
-        live.contains("mcp_servers.echo-server"),
-        "reapply must re-project enabled MCP servers after the full live rewrite, got: {live}"
-    );
-}
-
-/// reapply 走到 MCP 投影时 live 已按新开关状态落盘、开关事实上已生效：
-/// ① 投影失败若上抛，save_settings 会回滚开关设置，制造"设置=旧值、
-/// live=新桶"的会话分裂——必须降级为警告而不是失败；
-/// ② 投影必须只针对 Codex：sync_all_enabled 按 AppType::all() 顺序短路，
-/// Claude 排在 Codex 前面，损坏的 ~/.claude.json 会在轮到 Codex 之前
-/// 报错——若吞错了事，刚被整体重写清掉的 [mcp_servers] 就无人补回，
-/// Codex MCP 静默消失。这里用坏 JSON 的 ~/.claude.json 复现该场景。
-#[test]
-fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    let live_auth = json!({
-        "auth_mode": "chatgpt",
-        "OPENAI_API_KEY": null,
-        "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
-    });
-    write_codex_live_atomic(&live_auth, Some("")).expect("seed official live auth");
+    // live 里已有用户的 MCP 和其他设置：开关只改选路，其余字节不碰。
+    let user_part =
+        "approval_policy = \"on-request\"\n\n[mcp_servers.echo-server]\ncommand = \"echo\"\n";
+    write_codex_live_atomic(&live_auth, Some(user_part)).expect("seed official live");
 
     let mut initial_config = MultiAppConfig::default();
     {
@@ -1597,14 +1468,7 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
         let mut official = Provider::with_id(
             "official-provider".to_string(),
             "Official".to_string(),
-            json!({
-                "auth": {
-                    "auth_mode": "chatgpt",
-                    "OPENAI_API_KEY": null,
-                    "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
-                },
-                "config": ""
-            }),
+            json!({ "auth": {}, "config": "" }),
             None,
         );
         official.category = Some("official".to_string());
@@ -1612,68 +1476,56 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
             .providers
             .insert("official-provider".to_string(), official);
     }
-    let servers = initial_config
-        .mcp
-        .servers
-        .get_or_insert_with(Default::default);
-    servers.insert(
-        "echo-server".into(),
-        McpServer {
-            id: "echo-server".into(),
-            name: "Echo Server".into(),
-            server: json!({
-                "type": "stdio",
-                "command": "echo"
-            }),
-            apps: McpApps {
-                claude: false,
-                codex: true,
-                gemini: false,
-                grokbuild: false,
-                opencode: false,
-                hermes: false,
-            },
-            description: None,
-            homepage: None,
-            docs: None,
-            tags: Vec::new(),
-        },
-    );
-
     let state = create_test_state_with_config(&initial_config).expect("create test state");
-
-    // 先切换建立"当前=官方"的前置状态，再破坏 claude 文件，
-    // 让损坏只作用于被测的 reapply 路径。
     ProviderService::switch(&state, AppType::Codex, "official-provider")
         .expect("switch to official provider");
 
-    // 破坏 ~/.claude.json：坏 JSON 能通过 should_sync_claude_mcp 门控
-    // （文件存在即过），但 read_mcp_servers_map 解析必然报错。
-    // 注意 codex-only 的服务器也会触发 claude 的 remove 分支读该文件。
+    // 坏掉的 ~/.claude.json 和 Codex 无关，不能挡住开关，也不能被碰。
     let claude_json = cc_switch_lib::get_claude_mcp_path();
     std::fs::write(&claude_json, "{ not valid json").expect("seed broken claude json");
 
-    let reapplied = cc_switch_lib::reapply_current_codex_official_live(&state)
-        .expect("MCP projection failure must degrade to a warning, not fail the toggle");
-    assert!(
-        reapplied,
-        "current provider is official, reapply should run"
-    );
+    let set_unify = |on: bool| {
+        cc_switch_lib::update_settings(cc_switch_lib::AppSettings {
+            unify_codex_session_history: on,
+            ..Default::default()
+        })
+        .expect("update settings");
+    };
+    let read_live = || {
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml")
+    };
 
-    // 定向投影不碰 claude：Codex 的 MCP 投影必须完成，不能被
-    // 无关应用的损坏文件阻断后静默丢失。
-    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read config.toml after reapply");
-    assert!(
-        live.contains("mcp_servers.echo-server"),
-        "codex MCP projection must not be blocked by a broken ~/.claude.json, got: {live}"
-    );
-
-    // 顺带锁定：定向投影不应把手改坏的 ~/.claude.json 触碰或"修复"。
-    let claude_after = std::fs::read_to_string(&claude_json).expect("read claude json");
+    set_unify(true);
+    assert!(cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply"));
+    let unified = read_live();
+    let doc: toml::Value = toml::from_str(&unified).expect("parse");
+    assert_eq!(doc["model_provider"].as_str(), Some("custom"), "{unified}");
     assert_eq!(
-        claude_after, "{ not valid json",
-        "codex-only projection must not touch claude's live file"
+        doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+        Some(true),
+        "the unified bucket is the official mirror: {unified}"
+    );
+    assert!(
+        unified.contains("[mcp_servers.echo-server]") && unified.contains("approval_policy"),
+        "{unified}"
+    );
+
+    set_unify(false);
+    assert!(cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply"));
+    let direct = read_live();
+    let doc: toml::Value = toml::from_str(&direct).expect("parse");
+    assert!(doc.get("model_provider").is_none(), "{direct}");
+    assert!(direct.contains("[mcp_servers.echo-server]"), "{direct}");
+
+    assert_eq!(
+        std::fs::read_to_string(&claude_json).expect("read claude json"),
+        "{ not valid json"
+    );
+    assert_eq!(
+        read_json_file::<serde_json::Value>(&cc_switch_lib::get_codex_auth_path())
+            .expect("read auth.json"),
+        live_auth,
+        "the official login is never touched"
     );
 }
 
@@ -1682,8 +1534,8 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
 /// 会让"切 Codex"直接报切换失败——而此时 DB is_current 与 live 都已
 /// 落盘，切换事实上成功，报错只制造分裂假象。
 #[test]
-fn switch_codex_projects_mcp_despite_broken_claude_json() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+fn switch_codex_ignores_a_broken_claude_json() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1725,6 +1577,8 @@ fn switch_codex_projects_mcp_despite_broken_claude_json() {
                 grokbuild: false,
                 opencode: false,
                 hermes: false,
+                mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1746,15 +1600,12 @@ fn switch_codex_projects_mcp_despite_broken_claude_json() {
 
     let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
         .expect("read config.toml after switch");
-    assert!(
-        live.contains("mcp_servers.echo-server"),
-        "switch must re-project codex MCP after the full live rewrite, got: {live}"
-    );
+    assert!(live.contains("gpt-5.5"), "{live}");
 
     let claude_after = std::fs::read_to_string(&claude_json).expect("read claude json");
     assert_eq!(
         claude_after, "{ not valid json",
-        "codex-only projection must not touch claude's live file"
+        "a Codex switch must not touch claude's live file"
     );
 }
 
@@ -1765,7 +1616,7 @@ fn switch_codex_projects_mcp_despite_broken_claude_json() {
 /// 状态永远陈旧。
 #[test]
 fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1789,6 +1640,8 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 grokbuild: false,
                 opencode: false,
                 hermes: false,
+                mcode: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1821,7 +1674,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
 
 #[test]
 fn provider_service_switch_codex_official_accounts_write_auth_json() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1914,7 +1767,7 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
 
 #[test]
 fn provider_service_switch_codex_backfill_keeps_provider_specific_model_provider_id() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -2040,8 +1893,8 @@ requires_openai_auth = true
 }
 
 #[test]
-fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+fn sync_current_provider_for_app_leaves_the_proxy_contract_alone() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -2082,65 +1935,47 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
         )
         .expect("set common config snippet");
 
-    let taken_over_live = json!({
-        "env": {
-            "ANTHROPIC_BASE_URL": "http://127.0.0.1:5000",
-            "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"
-        }
-    });
     let settings_path = get_claude_settings_path();
     std::fs::create_dir_all(settings_path.parent().expect("settings dir")).expect("create dir");
     std::fs::write(
         &settings_path,
-        serde_json::to_string_pretty(&taken_over_live).expect("serialize taken over live"),
+        r#"{"env":{"ANTHROPIC_BASE_URL":"https://claude.example","ANTHROPIC_AUTH_TOKEN":"real-token"}}"#,
     )
-    .expect("write taken over live");
+    .expect("seed live settings");
 
-    futures::executor::block_on(state.db.save_live_backup("claude", "{\"env\":{}}"))
-        .expect("seed live backup");
-
-    let mut proxy_config = futures::executor::block_on(state.db.get_proxy_config_for_app("claude"))
-        .expect("get proxy config");
-    proxy_config.enabled = true;
-    futures::executor::block_on(state.db.update_proxy_config_for_app(proxy_config))
-        .expect("enable takeover");
+    let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
+    rt.block_on(async {
+        let mut proxy_config = state.db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 0;
+        state
+            .db
+            .update_proxy_config(proxy_config)
+            .await
+            .expect("use ephemeral proxy port");
+        cc_switch_lib::mode::controller::enter(&state, &AppType::Claude, false)
+            .await
+            .expect("enter routing mode");
+    });
+    let contract_bytes = std::fs::read(&settings_path).expect("read proxy contract");
 
     ProviderService::sync_current_provider_for_app(&state, AppType::Claude)
         .expect("sync current provider should succeed");
 
-    let live_after: serde_json::Value =
-        read_json_file(&settings_path).expect("read live settings after sync");
     assert_eq!(
-        live_after, taken_over_live,
-        "sync should not overwrite live config while takeover is active"
+        std::fs::read(&settings_path).expect("read live settings after sync"),
+        contract_bytes,
+        "routing mode: syncing the routed provider must not rewrite live with its direct projection"
     );
-
-    let backup = futures::executor::block_on(state.db.get_live_backup("claude"))
-        .expect("get live backup")
-        .expect("backup exists");
-    let backup_value: serde_json::Value =
-        serde_json::from_str(&backup.original_config).expect("parse backup value");
-
-    assert_eq!(
-        backup_value
-            .get("includeCoAuthoredBy")
-            .and_then(|v| v.as_bool()),
-        Some(false),
-        "restore backup should receive the updated effective config"
-    );
-    assert_eq!(
-        backup_value
-            .get("env")
-            .and_then(|v| v.get("ANTHROPIC_AUTH_TOKEN"))
-            .and_then(|v| v.as_str()),
-        Some("real-token"),
-        "restore backup should preserve the provider token rather than proxy placeholder"
-    );
+    rt.block_on(cc_switch_lib::mode::controller::exit(
+        &state,
+        &AppType::Claude,
+    ))
+    .expect("leave routing mode");
 }
 
 #[test]
-fn switch_codex_provider_with_takeover_live_but_stopped_proxy_keeps_proxy_live_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+fn switch_codex_in_direct_mode_replaces_leftover_proxy_placeholders() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
@@ -2217,82 +2052,42 @@ wire_api = "responses"
     }
 
     let state = create_test_state_with_config(&config).expect("create test state");
-    futures::executor::block_on(
-        state.db.save_live_backup(
-            "codex",
-            &serde_json::to_string(&json!({
-                "auth": oauth_auth,
-                "config": old_provider_config
-            }))
-            .expect("serialize backup"),
-        ),
-    )
-    .expect("seed Codex live backup");
-
-    assert!(
-        !futures::executor::block_on(state.proxy_service.is_running()),
-        "fixture keeps the proxy server stopped"
-    );
+    assert!(!cc_switch_lib::mode::current::is_proxy(&AppType::Codex));
 
     ProviderService::switch(&state, AppType::Codex, "new-provider")
-        .expect("switch should update takeover backup instead of writing normal live config");
+        .expect("switch in direct mode writes the new provider");
 
     let auth_after: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
     assert_eq!(
         auth_after, oauth_auth,
-        "provider switch during takeover ownership must not rewrite Codex OAuth auth"
+        "preserving the official login keeps OAuth auth.json"
     );
 
     let live_config =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
     assert!(
-        live_config.contains("http://127.0.0.1:15721/v1"),
-        "live config should remain pointed at the local proxy"
+        live_config.contains("https://new.deepseek.example/v1")
+            && !live_config.contains("PROXY_MANAGED"),
+        "a direct switch replaces leftover proxy placeholders: {live_config}"
     );
-    assert!(
-        live_config.contains("PROXY_MANAGED"),
-        "live config should keep the proxy bearer placeholder"
-    );
-    assert!(
-        live_config.contains(r#"model_provider = "deepseek-new""#)
-            && live_config.contains(r#"name = "DeepSeek New""#),
-        "live config should update the Codex-visible provider label during takeover"
-    );
-    assert!(
-        !live_config.contains("https://new.deepseek.example/v1"),
-        "normal provider base_url must not overwrite taken-over live config"
-    );
-
-    let backup = futures::executor::block_on(state.db.get_live_backup("codex"))
-        .expect("get Codex backup")
-        .expect("backup exists");
-    let backup_value: serde_json::Value =
-        serde_json::from_str(&backup.original_config).expect("parse backup");
-    assert_eq!(
-        backup_value.get("auth"),
-        Some(&auth_after),
-        "restore backup should preserve the official OAuth auth"
-    );
-    let backup_config = backup_value
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    assert!(
-        backup_config.contains("new-key") && backup_config.contains("deepseek-new"),
-        "restore backup should be rebuilt from the newly selected provider"
-    );
-
-    let current = state
+    let old_row = state
         .db
-        .get_current_provider(AppType::Codex.as_str())
-        .expect("get current provider");
-    assert_eq!(current.as_deref(), Some("new-provider"));
+        .get_provider_by_id("old-provider", AppType::Codex.as_str())
+        .expect("read old provider")
+        .expect("old provider exists");
+    assert!(
+        !old_row
+            .settings_config
+            .to_string()
+            .contains("PROXY_MANAGED"),
+        "leftover placeholders must not be backfilled into the outgoing provider"
+    );
 }
 
 #[test]
 fn explicitly_cleared_common_snippet_is_not_auto_extracted() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -2330,7 +2125,7 @@ fn explicitly_cleared_common_snippet_is_not_auto_extracted() {
 
 #[test]
 fn legacy_common_config_migration_flag_roundtrip() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -2371,7 +2166,7 @@ fn legacy_common_config_migration_flag_roundtrip() {
 
 #[test]
 fn switch_packycode_gemini_updates_security_selected_type() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -2424,7 +2219,7 @@ fn switch_packycode_gemini_updates_security_selected_type() {
 
 #[test]
 fn packycode_partner_meta_triggers_security_flag_even_without_keywords() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -2479,7 +2274,7 @@ fn packycode_partner_meta_triggers_security_flag_even_without_keywords() {
 
 #[test]
 fn switch_google_official_gemini_preserves_env_vars() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -2542,7 +2337,7 @@ fn switch_google_official_gemini_preserves_env_vars() {
 
 #[test]
 fn provider_service_switch_claude_updates_live_and_state() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -2628,444 +2423,38 @@ fn provider_service_switch_claude_updates_live_and_state() {
     let legacy_provider = providers
         .get("old-provider")
         .expect("legacy provider still exists");
+    // 不再回填：用户在 live 里的改动留在 live，上一家的行不变。
     assert_eq!(
-        legacy_provider.settings_config, legacy_live,
-        "previous provider should receive backfilled live config"
+        legacy_provider.settings_config,
+        json!({ "env": { "ANTHROPIC_API_KEY": "stale-key" } }),
+        "switching away must not copy live into the previous provider"
+    );
+    assert_eq!(
+        live_after["workspace"], legacy_live["workspace"],
+        "non-key settings in live stay where they are"
     );
 }
 
-/// 切走勾选了通用配置的 Claude 供应商时，应把它 live 里新增的可共享键
-/// （用户直接在应用内装插件/改偏好）捕获进通用配置片段，并带到下一个供应商。
-#[test]
-fn switch_claude_syncs_new_shared_keys_from_live_into_common_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
+/// Claude 供应商都勾选了通用配置，`current` 的 live 是原样的 `live` 文本。
+fn seed_claude_switch_state(
+    providers: &[(&str, serde_json::Value)],
+    current: &str,
+    live: &str,
+) -> cc_switch_lib::AppState {
     let settings_path = get_claude_settings_path();
-    if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent).expect("create claude settings dir");
-    }
-    // A 的 live = A 私有密钥（含非 Anthropic 的 OpenRouter 凭据）+ 已共享的 theme
-    // + 用户刚在应用内新增的 enableAllProjectMcpServers
-    let live = json!({
-        "env": { "ANTHROPIC_API_KEY": "a-key", "OPENROUTER_API_KEY": "sk-or-leak" },
-        "theme": "dark",
-        "enableAllProjectMcpServers": true
-    });
-    std::fs::write(
-        &settings_path,
-        serde_json::to_string_pretty(&live).expect("serialize live"),
-    )
-    .expect("seed claude live config");
+    std::fs::create_dir_all(settings_path.parent().expect("settings dir"))
+        .expect("create claude settings dir");
+    std::fs::write(&settings_path, live).expect("seed claude live config");
 
     let mut config = MultiAppConfig::default();
     {
         let manager = config
             .get_manager_mut(&AppType::Claude)
             .expect("claude manager");
-        manager.current = "a".to_string();
-        let mut provider_a = Provider::with_id(
-            "a".to_string(),
-            "A".to_string(),
-            json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
-            None,
-        );
-        provider_a.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-        manager.providers.insert("a".to_string(), provider_a);
-        let mut provider_b = Provider::with_id(
-            "b".to_string(),
-            "B".to_string(),
-            json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
-            None,
-        );
-        provider_b.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-        manager.providers.insert("b".to_string(), provider_b);
-    }
-
-    let state = create_test_state_with_config(&config).expect("create test state");
-    state
-        .db
-        .set_config_snippet(
-            AppType::Claude.as_str(),
-            Some(r#"{"theme":"dark"}"#.to_string()),
-        )
-        .expect("seed common config snippet");
-
-    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
-
-    // 片段应捕获到新增键，并保留已有共享键，且绝不含密钥
-    let snippet = state
-        .db
-        .get_config_snippet(AppType::Claude.as_str())
-        .expect("read snippet")
-        .expect("snippet present");
-    let snippet_value: serde_json::Value =
-        serde_json::from_str(&snippet).expect("snippet is valid JSON");
-    assert_eq!(
-        snippet_value.get("enableAllProjectMcpServers"),
-        Some(&json!(true)),
-        "newly added shared key should be captured into common config"
-    );
-    assert_eq!(
-        snippet_value.get("theme").and_then(|v| v.as_str()),
-        Some("dark"),
-        "previously shared key should be preserved"
-    );
-    assert!(
-        snippet_value
-            .get("env")
-            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
-            .is_none(),
-        "secrets must never leak into the shared snippet"
-    );
-    assert!(
-        snippet_value
-            .get("env")
-            .and_then(|env| env.get("OPENROUTER_API_KEY"))
-            .is_none(),
-        "non-Anthropic Claude credentials must never leak into the shared snippet"
-    );
-
-    // 新增键应通过通用配置带到 B 的 live
-    let live_after: serde_json::Value =
-        read_json_file(&settings_path).expect("read live after switch");
-    assert_eq!(
-        live_after.get("enableAllProjectMcpServers"),
-        Some(&json!(true)),
-        "shared key should propagate to the next provider's live config"
-    );
-    assert!(
-        live_after
-            .get("env")
-            .and_then(|env| env.get("OPENROUTER_API_KEY"))
-            .is_none(),
-        "leaked credential must not be injected into the next provider's live"
-    );
-    assert_eq!(
-        live_after
-            .get("env")
-            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
-            .and_then(|v| v.as_str()),
-        Some("b-key"),
-        "live should reflect new provider's own auth"
-    );
-}
-
-/// 用户在应用内删掉一个已共享的键后，切换应把删除同步进通用配置，
-/// 且不会在切到下一个供应商时被重新注入（否则会"删不掉"）。
-#[test]
-fn switch_claude_syncs_deletions_from_live_into_common_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    let settings_path = get_claude_settings_path();
-    if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent).expect("create claude settings dir");
-    }
-    // live 里 theme 还在，但用户已删掉 enableAllProjectMcpServers
-    let live = json!({
-        "env": { "ANTHROPIC_API_KEY": "a-key" },
-        "theme": "dark"
-    });
-    std::fs::write(
-        &settings_path,
-        serde_json::to_string_pretty(&live).expect("serialize live"),
-    )
-    .expect("seed claude live config");
-
-    let mut config = MultiAppConfig::default();
-    {
-        let manager = config
-            .get_manager_mut(&AppType::Claude)
-            .expect("claude manager");
-        manager.current = "a".to_string();
-        let mut provider_a = Provider::with_id(
-            "a".to_string(),
-            "A".to_string(),
-            json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
-            None,
-        );
-        provider_a.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-        manager.providers.insert("a".to_string(), provider_a);
-        let mut provider_b = Provider::with_id(
-            "b".to_string(),
-            "B".to_string(),
-            json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
-            None,
-        );
-        provider_b.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-        manager.providers.insert("b".to_string(), provider_b);
-    }
-
-    let state = create_test_state_with_config(&config).expect("create test state");
-    // 片段里仍残留 enableAllProjectMcpServers（上次共享的）
-    state
-        .db
-        .set_config_snippet(
-            AppType::Claude.as_str(),
-            Some(r#"{"theme":"dark","enableAllProjectMcpServers":true}"#.to_string()),
-        )
-        .expect("seed common config snippet");
-
-    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
-
-    let snippet = state
-        .db
-        .get_config_snippet(AppType::Claude.as_str())
-        .expect("read snippet")
-        .expect("snippet present");
-    let snippet_value: serde_json::Value =
-        serde_json::from_str(&snippet).expect("snippet is valid JSON");
-    assert!(
-        snippet_value.get("enableAllProjectMcpServers").is_none(),
-        "deleted key should be removed from common config"
-    );
-    assert_eq!(
-        snippet_value.get("theme").and_then(|v| v.as_str()),
-        Some("dark"),
-        "untouched shared key should remain"
-    );
-
-    // 切到 B 后 live 不应再出现被删除的键
-    let live_after: serde_json::Value =
-        read_json_file(&settings_path).expect("read live after switch");
-    assert!(
-        live_after.get("enableAllProjectMcpServers").is_none(),
-        "deleted shared key must not be re-injected into the next provider"
-    );
-}
-
-/// Codex 版切换自动回写：live 里新增的共享键被捕获进通用配置片段并传递给
-/// 下一个供应商；供应商专属字段、密钥与 cc-switch 注入产物绝不进片段；
-/// 回填后旧供应商的存储配置不残留片段内容（autosync 先于 strip，值必然匹配）。
-#[test]
-fn switch_codex_syncs_shared_keys_from_live_into_common_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    // A 激活状态下的 live：A 专属路由 + 已共享的 [tui] + 用户刚加的
-    // disable_response_storage + cc-switch 注入产物 + MCP 同步投影
-    // + 顶层 wire_api（无 model_provider 时的 fallback 写法，属 A 的路由语义）
-    // + 历史错误格式 [mcp.servers]（sync_all_enabled 清不掉的孤儿形态）
-    let live_config = r#"model = "gpt-5.5"
-model_provider = "aprov"
-wire_api = "chat"
-experimental_bearer_token = "sk-a-live-secret"
-model_catalog_json = "cc-switch-model-catalog.json"
-web_search = "disabled"
-disable_response_storage = true
-
-[tui]
-notifications = true
-
-[model_providers.aprov]
-name = "A Prov"
-base_url = "https://a.example/v1"
-wire_api = "responses"
-
-[mcp_servers.echo]
-type = "stdio"
-command = "echo"
-
-[mcp.servers.ghost-legacy]
-command = "ghost-cmd"
-"#;
-    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk-a" }), Some(live_config))
-        .expect("seed codex live config");
-
-    let mut config = MultiAppConfig::default();
-    {
-        let manager = config
-            .get_manager_mut(&AppType::Codex)
-            .expect("codex manager");
-        manager.current = "a".to_string();
-        let mut provider_a = Provider::with_id(
-            "a".to_string(),
-            "A".to_string(),
-            json!({
-                "auth": { "OPENAI_API_KEY": "sk-a" },
-                "config": "model = \"gpt-5.5\"\nmodel_provider = \"aprov\"\n\n[model_providers.aprov]\nname = \"A Prov\"\nbase_url = \"https://a.example/v1\"\nwire_api = \"responses\"\n"
-            }),
-            None,
-        );
-        provider_a.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-        manager.providers.insert("a".to_string(), provider_a);
-        let mut provider_b = Provider::with_id(
-            "b".to_string(),
-            "B".to_string(),
-            json!({
-                "auth": { "OPENAI_API_KEY": "sk-b" },
-                "config": "model = \"gpt-5.5\"\nmodel_provider = \"bprov\"\n\n[model_providers.bprov]\nname = \"B Prov\"\nbase_url = \"https://b.example/v1\"\nwire_api = \"responses\"\n"
-            }),
-            None,
-        );
-        provider_b.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-        manager.providers.insert("b".to_string(), provider_b);
-    }
-
-    let state = create_test_state_with_config(&config).expect("create test state");
-    state
-        .db
-        .set_config_snippet(
-            AppType::Codex.as_str(),
-            Some("[tui]\nnotifications = true\n".to_string()),
-        )
-        .expect("seed codex common config snippet");
-
-    ProviderService::switch(&state, AppType::Codex, "b").expect("switch should succeed");
-
-    // 片段：捕获新增共享键、保留既有共享键；专属字段/密钥/注入产物一律不进
-    let snippet = state
-        .db
-        .get_config_snippet(AppType::Codex.as_str())
-        .expect("read snippet")
-        .expect("snippet present");
-    assert!(
-        snippet.contains("disable_response_storage = true"),
-        "newly added shared key should be captured, got: {snippet}"
-    );
-    assert!(
-        snippet.contains("notifications = true"),
-        "previously shared key should be preserved, got: {snippet}"
-    );
-    for forbidden in [
-        "experimental_bearer_token",
-        "sk-a-live-secret",
-        "model_catalog_json",
-        "web_search",
-        "mcp_servers",
-        "model_providers",
-        "model_provider",
-        "wire_api",
-        "ghost-legacy",
-    ] {
-        assert!(
-            !snippet.contains(forbidden),
-            "'{forbidden}' must never enter the shared snippet, got: {snippet}"
-        );
-    }
-
-    // B 的 live：共享键传递到位，A 的密钥/投影不得跟过来
-    let live_after = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read config.toml after switch");
-    assert!(
-        live_after.contains("disable_response_storage = true"),
-        "shared key should propagate to the next provider's live, got: {live_after}"
-    );
-    assert!(
-        live_after.contains("model_provider = \"bprov\""),
-        "live should be provider B's own config, got: {live_after}"
-    );
-    assert!(
-        !live_after.contains("sk-a-live-secret"),
-        "provider A's bearer token must not leak into B's live, got: {live_after}"
-    );
-    assert!(
-        !live_after.contains("mcp_servers"),
-        "no DB-enabled MCP servers, so live must not resurrect stale entries, got: {live_after}"
-    );
-    assert!(
-        !live_after.contains("ghost-legacy"),
-        "the legacy [mcp.servers] orphan must not propagate to B's live, got: {live_after}"
-    );
-    assert!(
-        !live_after.contains("wire_api = \"chat\""),
-        "provider A's top-level wire_api must not rewrite B's protocol, got: {live_after}"
-    );
-
-    // A 的存储配置：回填后不残留片段内容 / MCP 投影 / 注入产物
-    let providers = state
-        .db
-        .get_all_providers(AppType::Codex.as_str())
-        .expect("read providers after switch");
-    let stored_a = providers.get("a").expect("provider a exists");
-    let stored_a_config = stored_a
-        .settings_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    assert!(
-        stored_a_config.contains("model_provider = \"aprov\""),
-        "provider-owned routing must survive backfill, got: {stored_a_config}"
-    );
-    // 顶层 wire_api 是 A 自己的路由语义：不进片段，但回填时留在 A 的快照里
-    assert!(
-        stored_a_config.contains("wire_api = \"chat\""),
-        "provider-owned top-level wire_api must survive backfill, got: {stored_a_config}"
-    );
-    for forbidden in [
-        "disable_response_storage",
-        "notifications",
-        "mcp_servers",
-        "experimental_bearer_token",
-        "ghost-legacy",
-    ] {
-        assert!(
-            !stored_a_config.contains(forbidden),
-            "'{forbidden}' must be stripped from the stored provider config on backfill, got: {stored_a_config}"
-        );
-    }
-}
-
-/// Codex 版删除同步：用户在 live 里删掉一个已共享的键后，切换应把删除
-/// 同步进通用配置，且不会在切到下一个供应商时被重新注入（否则"删不掉"）。
-#[test]
-fn switch_codex_syncs_deletions_from_live_into_common_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    // 片段里有两个共享键，但用户已在 live 里删掉 disable_response_storage
-    let live_config = r#"model_provider = "aprov"
-
-[tui]
-notifications = true
-
-[model_providers.aprov]
-name = "A Prov"
-base_url = "https://a.example/v1"
-wire_api = "responses"
-"#;
-    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk-a" }), Some(live_config))
-        .expect("seed codex live config");
-
-    let mut config = MultiAppConfig::default();
-    {
-        let manager = config
-            .get_manager_mut(&AppType::Codex)
-            .expect("codex manager");
-        manager.current = "a".to_string();
-        for (id, name, prov_key) in [("a", "A", "aprov"), ("b", "B", "bprov")] {
-            let mut provider = Provider::with_id(
-                id.to_string(),
-                name.to_string(),
-                json!({
-                    "auth": { "OPENAI_API_KEY": format!("sk-{id}") },
-                    "config": format!("model_provider = \"{prov_key}\"\n\n[model_providers.{prov_key}]\nname = \"{name} Prov\"\nbase_url = \"https://{id}.example/v1\"\nwire_api = \"responses\"\n")
-                }),
-                None,
-            );
+        manager.current = current.to_string();
+        for (id, settings) in providers {
+            let mut provider =
+                Provider::with_id(id.to_string(), id.to_string(), settings.clone(), None);
             provider.meta = Some(ProviderMeta {
                 common_config_enabled: Some(true),
                 ..Default::default()
@@ -3073,193 +2462,244 @@ wire_api = "responses"
             manager.providers.insert(id.to_string(), provider);
         }
     }
-
-    let state = create_test_state_with_config(&config).expect("create test state");
-    state
-        .db
-        .set_config_snippet(
-            AppType::Codex.as_str(),
-            Some("disable_response_storage = true\n\n[tui]\nnotifications = true\n".to_string()),
-        )
-        .expect("seed codex common config snippet");
-
-    ProviderService::switch(&state, AppType::Codex, "b").expect("switch should succeed");
-
-    let snippet = state
-        .db
-        .get_config_snippet(AppType::Codex.as_str())
-        .expect("read snippet")
-        .expect("snippet present");
-    assert!(
-        !snippet.contains("disable_response_storage"),
-        "deleted shared key must be removed from the snippet, got: {snippet}"
-    );
-    assert!(
-        snippet.contains("notifications = true"),
-        "kept shared key should remain in the snippet, got: {snippet}"
-    );
-
-    let live_after = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read config.toml after switch");
-    assert!(
-        !live_after.contains("disable_response_storage"),
-        "deleted shared key must not be re-injected into the next provider, got: {live_after}"
-    );
-    assert!(
-        live_after.contains("notifications = true"),
-        "kept shared key should propagate to the next provider, got: {live_after}"
-    );
+    create_test_state_with_config(&config).expect("create test state")
 }
 
-/// 未勾选"写入通用配置"的供应商，其 live 改动不应自动污染通用配置片段。
+fn claude_row(state: &cc_switch_lib::AppState, id: &str) -> serde_json::Value {
+    state
+        .db
+        .get_provider_by_id(id, AppType::Claude.as_str())
+        .expect("read provider")
+        .expect("provider exists")
+        .settings_config
+}
+
+fn claude_live_text() -> String {
+    std::fs::read_to_string(get_claude_settings_path()).expect("read claude live")
+}
+
+fn claude_live() -> serde_json::Value {
+    read_json_file(&get_claude_settings_path()).expect("read claude live")
+}
+
+/// 切换只替换关键字段：hooks、插件、权限、状态栏和用户自己的 env 键原样留在 live，
+/// 顺序不变；A→B→A 之后整份文件和切换前逐字节相同。不回填，也不碰通用配置片段。
 #[test]
-fn switch_claude_does_not_sync_common_config_for_opted_out_provider() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+fn switch_claude_only_replaces_key_fields() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
-    let settings_path = get_claude_settings_path();
-    if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent).expect("create claude settings dir");
-    }
-    let live = json!({
-        "env": { "ANTHROPIC_API_KEY": "a-key" },
-        "providerSpecific": "x"
-    });
-    std::fs::write(
-        &settings_path,
-        serde_json::to_string_pretty(&live).expect("serialize live"),
-    )
-    .expect("seed claude live config");
-
-    let mut config = MultiAppConfig::default();
-    {
-        let manager = config
-            .get_manager_mut(&AppType::Claude)
-            .expect("claude manager");
-        manager.current = "a".to_string();
-        // A 未勾选通用配置（meta = None）
-        manager.providers.insert(
-            "a".to_string(),
-            Provider::with_id(
-                "a".to_string(),
-                "A".to_string(),
-                json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
-                None,
-            ),
-        );
-        manager.providers.insert(
-            "b".to_string(),
-            Provider::with_id(
-                "b".to_string(),
-                "B".to_string(),
-                json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
-                None,
-            ),
-        );
-    }
-
-    let state = create_test_state_with_config(&config).expect("create test state");
+    let live = r#"{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://a.example",
+    "OPENROUTER_API_KEY": "sk-or-user",
+    "ANTHROPIC_AUTH_TOKEN": "sk-a",
+    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status)"
+    ]
+  },
+  "hooks": {
+    "Stop": []
+  },
+  "enabledPlugins": {
+    "example@marketplace": true
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh"
+  }
+}
+"#;
+    let a = json!({ "env": {
+        "ANTHROPIC_BASE_URL": "https://a.example",
+        "ANTHROPIC_AUTH_TOKEN": "sk-a"
+    }});
+    let b = json!({ "env": {
+        "ANTHROPIC_BASE_URL": "https://b.example",
+        "ANTHROPIC_AUTH_TOKEN": "sk-b"
+    }});
+    let state = seed_claude_switch_state(&[("a", a.clone()), ("b", b.clone())], "a", live);
+    let snippet = r#"{"theme":"dark"}"#;
     state
         .db
-        .set_config_snippet(
-            AppType::Claude.as_str(),
-            Some(r#"{"theme":"dark"}"#.to_string()),
-        )
-        .expect("seed common config snippet");
+        .set_config_snippet(AppType::Claude.as_str(), Some(snippet.to_string()))
+        .expect("seed snippet");
 
-    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
-
-    let snippet = state
-        .db
-        .get_config_snippet(AppType::Claude.as_str())
-        .expect("read snippet")
-        .expect("snippet present");
-    let snippet_value: serde_json::Value =
-        serde_json::from_str(&snippet).expect("snippet is valid JSON");
-    assert!(
-        snippet_value.get("providerSpecific").is_none(),
-        "opted-out provider's live changes must not pollute the shared snippet"
+    ProviderService::switch(&state, AppType::Claude, "b").expect("switch to b");
+    let after = claude_live_text();
+    assert_eq!(
+        after,
+        live.replace("https://a.example", "https://b.example")
+            .replace("sk-a", "sk-b"),
+        "only the key fields change, in place"
     );
     assert_eq!(
-        snippet_value.get("theme").and_then(|v| v.as_str()),
-        Some("dark"),
-        "snippet should stay unchanged for opted-out providers"
+        claude_row(&state, "a"),
+        a,
+        "no backfill into the previous row"
     );
-}
-
-/// 用户显式清空过通用配置（_cleared）后，切换不应把片段重新塞回来。
-#[test]
-fn switch_claude_respects_explicitly_cleared_common_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    let settings_path = get_claude_settings_path();
-    if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent).expect("create claude settings dir");
-    }
-    let live = json!({
-        "env": { "ANTHROPIC_API_KEY": "a-key" },
-        "theme": "dark"
-    });
-    std::fs::write(
-        &settings_path,
-        serde_json::to_string_pretty(&live).expect("serialize live"),
-    )
-    .expect("seed claude live config");
-
-    let mut config = MultiAppConfig::default();
-    {
-        let manager = config
-            .get_manager_mut(&AppType::Claude)
-            .expect("claude manager");
-        manager.current = "a".to_string();
-        let mut provider_a = Provider::with_id(
-            "a".to_string(),
-            "A".to_string(),
-            json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
-            None,
-        );
-        provider_a.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-        manager.providers.insert("a".to_string(), provider_a);
-        let mut provider_b = Provider::with_id(
-            "b".to_string(),
-            "B".to_string(),
-            json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
-            None,
-        );
-        provider_b.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-        manager.providers.insert("b".to_string(), provider_b);
-    }
-
-    let state = create_test_state_with_config(&config).expect("create test state");
-    state
-        .db
-        .set_config_snippet_cleared(AppType::Claude.as_str(), true)
-        .expect("mark snippet cleared");
-
-    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
-
-    assert!(
+    assert_eq!(
         state
             .db
             .get_config_snippet(AppType::Claude.as_str())
             .expect("read snippet")
-            .is_none(),
-        "explicitly cleared snippet must not be resurrected by switch-away sync"
+            .as_deref(),
+        Some(snippet),
+        "the frozen snippet is neither read nor written"
+    );
+    assert!(
+        claude_live().get("theme").is_none(),
+        "the snippet is not merged into live"
+    );
+
+    ProviderService::switch(&state, AppType::Claude, "a").expect("switch back to a");
+    assert_eq!(claude_live_text(), live, "A→B→A is byte-identical");
+}
+
+/// 独有字段跟着供应商走：切入时写，切走时只删上一家带进来、值没被改过的。
+#[test]
+fn switch_claude_moves_compat_switches_with_their_provider() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let deepseek = json!({ "env": {
+        "ANTHROPIC_BASE_URL": "https://api.deepseek.example/anthropic",
+        "ANTHROPIC_AUTH_TOKEN": "sk-ds",
+        "CLAUDE_CODE_DISABLE_ARTIFACT": "1"
+    }});
+    let state = seed_claude_switch_state(
+        &[
+            ("deepseek", deepseek.clone()),
+            ("claude-official", json!({ "env": {} })),
+        ],
+        "deepseek",
+        &serde_json::to_string_pretty(&deepseek).expect("serialize"),
+    );
+
+    ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
+    assert_eq!(claude_live(), json!({ "env": {} }));
+
+    ProviderService::switch(&state, AppType::Claude, "deepseek").expect("back to deepseek");
+    assert_eq!(claude_live(), deepseek);
+
+    // 用户在 live 里手动改成了 0：不是 CC Switch 写的，切走时保留。
+    let mut edited = claude_live();
+    edited["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"] = json!("0");
+    std::fs::write(get_claude_settings_path(), edited.to_string()).expect("edit live");
+    ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
+    assert_eq!(
+        claude_live(),
+        json!({ "env": { "CLAUDE_CODE_DISABLE_ARTIFACT": "0" } })
+    );
+}
+
+/// 窗口值按供应商走：千问 → Kimi 换值，Kimi → 官方删掉；旧版给 Kimi 注入、行里
+/// 没有的值由残留清理兜住。
+#[test]
+fn switch_claude_window_values_follow_the_provider() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let qwen = json!({ "env": {
+        "ANTHROPIC_BASE_URL": "https://qwen.example",
+        "ANTHROPIC_AUTH_TOKEN": "sk-qwen",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "983616"
+    }});
+    let kimi = json!({ "env": {
+        "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+        "ANTHROPIC_AUTH_TOKEN": "sk-kimi",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144"
+    }});
+    let old_kimi = json!({ "env": {
+        "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+        "ANTHROPIC_AUTH_TOKEN": "sk-old-kimi"
+    }});
+    let state = seed_claude_switch_state(
+        &[
+            ("qwen", qwen.clone()),
+            ("kimi", kimi),
+            ("old-kimi", old_kimi),
+            ("claude-official", json!({ "env": {} })),
+        ],
+        "qwen",
+        &serde_json::to_string_pretty(&qwen).expect("serialize"),
+    );
+
+    ProviderService::switch(&state, AppType::Claude, "kimi").expect("to kimi");
+    assert_eq!(
+        claude_live()["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+        json!("262144")
+    );
+    ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
+    assert_eq!(claude_live(), json!({ "env": {} }));
+
+    // 旧版切到早期的 Kimi 行时注入的默认值：上一家的行里查不到。
+    ProviderService::switch(&state, AppType::Claude, "old-kimi").expect("to old kimi");
+    let mut live = claude_live();
+    live["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = json!("262144");
+    live["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = json!("262144");
+    std::fs::write(get_claude_settings_path(), live.to_string()).expect("seed injected");
+    ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
+    assert_eq!(claude_live(), json!({ "env": {} }));
+}
+
+/// live 解析不了：切换报错，文件字节、mtime 和当前供应商都不变。
+#[test]
+fn switch_claude_refuses_a_settings_file_it_cannot_parse() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let broken = "{\n  \"env\": {\n    \"ANTHROPIC_BASE_URL\": \"https://a.example\",\n}\n";
+    let state = seed_claude_switch_state(
+        &[
+            (
+                "a",
+                json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example" } }),
+            ),
+            (
+                "b",
+                json!({ "env": { "ANTHROPIC_BASE_URL": "https://b.example" } }),
+            ),
+        ],
+        "a",
+        broken,
+    );
+    let path = get_claude_settings_path();
+    let before = std::fs::metadata(&path)
+        .expect("stat")
+        .modified()
+        .expect("mtime");
+
+    let err = ProviderService::switch(&state, AppType::Claude, "b").expect_err("must refuse");
+    assert!(err.to_string().contains("第 4 行"), "{err}");
+    assert_eq!(claude_live_text(), broken);
+    assert_eq!(
+        std::fs::metadata(&path)
+            .expect("stat")
+            .modified()
+            .expect("mtime"),
+        before
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Claude.as_str())
+            .expect("current")
+            .as_deref(),
+        Some("a")
     );
 }
 
 #[test]
 fn provider_service_switch_missing_provider_returns_error() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -3280,7 +2720,7 @@ fn provider_service_switch_missing_provider_returns_error() {
 
 #[test]
 fn provider_service_switch_codex_missing_auth_returns_error() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -3317,7 +2757,7 @@ fn provider_service_switch_codex_missing_auth_returns_error() {
 
 #[test]
 fn provider_service_delete_codex_removes_provider_and_files() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -3380,7 +2820,7 @@ fn provider_service_delete_codex_removes_provider_and_files() {
 
 #[test]
 fn provider_service_delete_claude_removes_provider_files() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -3440,7 +2880,7 @@ fn provider_service_delete_claude_removes_provider_files() {
 
 #[test]
 fn provider_service_delete_current_provider_returns_error() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -3489,7 +2929,7 @@ fn provider_service_delete_current_provider_returns_error() {
 
 #[test]
 fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_back() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -3526,8 +2966,8 @@ fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_ba
         .set_current_provider(AppType::Claude.as_str(), "default")
         .expect("set current provider");
 
-    futures::executor::block_on(state.proxy_service.recover_from_crash())
-        .expect("recover from crash");
+    // 启动时处理旧版遗留的接管态：没开代理（enabled=0），写回直连。
+    futures::executor::block_on(cc_switch_lib::mode::controller::startup(&state));
 
     let live_after: serde_json::Value =
         read_json_file(&settings_path).expect("read live settings after recovery");
@@ -3543,5 +2983,621 @@ fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_ba
             .map(|url| !url.starts_with("http://127.0.0.1"))
             .unwrap_or(true),
         "recovery must drop the local proxy base URL"
+    );
+}
+
+/// 切换写出的 live 文件里有 Key（Codex 的 auth.json 与 config.toml、Claude Code 的
+/// settings.json、Grok Build 的 config.toml），新建或替换时都只给本人读写：普通写入
+/// 新建文件按 umask 落成 0644，同机其他用户就能读到 Key。
+#[cfg(unix)]
+#[test]
+fn switch_writes_credential_files_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    for dir in [".claude", ".codex", ".grok"] {
+        std::fs::create_dir_all(home.join(dir)).expect("create client dir");
+    }
+    // 已有的 settings.json 是 0644：替换写入后也收紧。
+    let claude_settings = get_claude_settings_path();
+    std::fs::write(&claude_settings, "{}").expect("seed claude settings");
+    std::fs::set_permissions(&claude_settings, std::fs::Permissions::from_mode(0o644))
+        .expect("chmod 644");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let claude = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        claude.current = "claude-a".to_string();
+        for (id, key) in [("claude-a", "sk-a"), ("claude-b", "sk-b")] {
+            claude.providers.insert(
+                id.to_string(),
+                Provider::with_id(
+                    id.to_string(),
+                    id.to_string(),
+                    json!({ "env": { "ANTHROPIC_AUTH_TOKEN": key } }),
+                    None,
+                ),
+            );
+        }
+    }
+    {
+        let codex = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        codex.current = "codex-official".to_string();
+        let mut official = Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI".to_string(),
+            json!({ "auth": { "OPENAI_API_KEY": "sk-official" }, "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        codex
+            .providers
+            .insert("codex-official".to_string(), official);
+        codex.providers.insert(
+            "codex-relay".to_string(),
+            Provider::with_id(
+                "codex-relay".to_string(),
+                "Relay".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-relay" },
+                    "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\n"
+                }),
+                None,
+            ),
+        );
+    }
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .save_provider(
+            AppType::GrokBuild.as_str(),
+            &Provider::with_id(
+                "grok-relay".to_string(),
+                "Relay".to_string(),
+                json!({ "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://relay.example/v1\"\nname = \"Relay\"\napi_key = \"xai-relay\"\napi_backend = \"responses\"\ncontext_window = 500000\n" }),
+                None,
+            ),
+        )
+        .expect("save grok provider");
+
+    let mode = |path: &std::path::Path| {
+        std::fs::metadata(path)
+            .unwrap_or_else(|e| panic!("stat {}: {e}", path.display()))
+            .permissions()
+            .mode()
+            & 0o777
+    };
+
+    ProviderService::switch(&state, AppType::Codex, "codex-official").expect("codex official");
+    assert_eq!(mode(&cc_switch_lib::get_codex_auth_path()), 0o600);
+    ProviderService::switch(&state, AppType::Codex, "codex-relay").expect("codex relay");
+    assert_eq!(mode(&cc_switch_lib::get_codex_config_path()), 0o600);
+    ProviderService::switch(&state, AppType::Claude, "claude-b").expect("claude b");
+    assert_eq!(mode(&claude_settings), 0o600);
+    ProviderService::switch(&state, AppType::GrokBuild, "grok-relay").expect("grok relay");
+    assert_eq!(mode(&cc_switch_lib::get_grok_config_path()), 0o600);
+}
+
+fn editor_save(base: &serde_json::Value, on_conflict: &str) -> cc_switch_lib::EditorSave {
+    serde_json::from_value(json!({ "base": base, "onConflict": on_conflict })).expect("editor save")
+}
+
+/// 打开编辑器：显示的就是切到这个供应商之后的 settings.json。
+fn open_claude_editor(state: &cc_switch_lib::AppState, id: &str) -> (Provider, serde_json::Value) {
+    let row = state
+        .db
+        .get_provider_by_id(id, AppType::Claude.as_str())
+        .expect("read provider")
+        .expect("provider exists");
+    let view = ProviderService::editor_view(state, AppType::Claude, &row.settings_config, None)
+        .expect("editor view");
+    (row, view.settings)
+}
+
+fn save_claude_editor(
+    state: &cc_switch_lib::AppState,
+    row: &Provider,
+    base: &serde_json::Value,
+    edited: serde_json::Value,
+    on_conflict: &str,
+) -> Result<bool, AppError> {
+    let mut provider = row.clone();
+    provider.settings_config = edited;
+    ProviderService::update_from_editor(
+        state,
+        AppType::Claude,
+        None,
+        provider,
+        Some(editor_save(base, on_conflict)),
+    )
+}
+
+/// 编辑器里改全局设置（加 hook、写 `alwaysThinkingEnabled: false`）：保存后立刻进 live，
+/// 切换到别的供应商后仍在；供应商行里不会多出这些键。编辑的是非当前供应商也一样。
+#[test]
+fn claude_editor_global_settings_go_to_live() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let a = json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example" } });
+    let b = json!({ "env": { "ANTHROPIC_BASE_URL": "https://b.example" } });
+    let state = seed_claude_switch_state(
+        &[("a", a.clone()), ("b", b.clone())],
+        "a",
+        &serde_json::to_string_pretty(&a).expect("serialize"),
+    );
+
+    let (row, base) = open_claude_editor(&state, "b");
+    assert_eq!(base, b, "b's key fields over the live file");
+    let mut edited = base.clone();
+    edited["hooks"] =
+        json!({ "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }] }] });
+    edited["alwaysThinkingEnabled"] = json!(false);
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect("save");
+
+    let live = claude_live();
+    assert_eq!(
+        live["env"]["ANTHROPIC_BASE_URL"],
+        json!("https://a.example")
+    );
+    assert_eq!(live["alwaysThinkingEnabled"], json!(false));
+    assert!(live.get("hooks").is_some());
+    assert_eq!(
+        claude_row(&state, "b"),
+        b,
+        "global settings stay out of the row"
+    );
+
+    ProviderService::switch(&state, AppType::Claude, "b").expect("switch");
+    let live = claude_live();
+    assert_eq!(
+        live["env"]["ANTHROPIC_BASE_URL"],
+        json!("https://b.example")
+    );
+    assert!(live.get("hooks").is_some(), "the hook survives the switch");
+}
+
+/// 关键字段、独有字段存进供应商行：非当前供应商改地址、写窗口值，live 不变；
+/// 切过去之后才生效。当前供应商取消「禁用 Artifact」，live 里立刻删掉。
+#[test]
+fn claude_editor_provider_fields_go_to_the_row() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let deepseek = json!({ "env": {
+        "ANTHROPIC_BASE_URL": "https://api.deepseek.example/anthropic",
+        "CLAUDE_CODE_DISABLE_ARTIFACT": "1"
+    }});
+    let qwen = json!({ "env": { "ANTHROPIC_BASE_URL": "https://qwen.example" } });
+    let state = seed_claude_switch_state(
+        &[("deepseek", deepseek.clone()), ("qwen", qwen)],
+        "deepseek",
+        &serde_json::to_string_pretty(&deepseek).expect("serialize"),
+    );
+
+    // 当前带着禁用 Artifact，编辑另一家：不显示这个键。
+    let (row, base) = open_claude_editor(&state, "qwen");
+    assert!(base["env"].get("CLAUDE_CODE_DISABLE_ARTIFACT").is_none());
+    let mut edited = base.clone();
+    edited["env"]["ANTHROPIC_BASE_URL"] = json!("https://qwen-new.example");
+    edited["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = json!("983616");
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect("save qwen");
+    assert_eq!(
+        claude_live(),
+        deepseek,
+        "a non-current edit leaves live alone"
+    );
+    assert_eq!(
+        claude_row(&state, "qwen"),
+        json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://qwen-new.example",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "983616"
+        }})
+    );
+
+    let (row, base) = open_claude_editor(&state, "deepseek");
+    let mut edited = base.clone();
+    edited["env"]
+        .as_object_mut()
+        .expect("env")
+        .remove("CLAUDE_CODE_DISABLE_ARTIFACT");
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect("save deepseek");
+    assert_eq!(
+        claude_live(),
+        json!({ "env": { "ANTHROPIC_BASE_URL": "https://api.deepseek.example/anthropic" } })
+    );
+
+    ProviderService::switch(&state, AppType::Claude, "qwen").expect("switch");
+    assert_eq!(
+        claude_live()["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+        json!("983616")
+    );
+}
+
+/// 深链带进来的非关键字段：编辑器提示它不随切换生效；加进全局设置后写进 live，
+/// 行里的原值还在。
+#[test]
+fn claude_editor_lists_row_fields_that_never_reach_live() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let imported = json!({ "env": {
+        "ANTHROPIC_BASE_URL": "https://relay.example",
+        "API_TIMEOUT_MS": "3000000"
+    }});
+    let state = seed_claude_switch_state(
+        &[("relay", imported.clone())],
+        "relay",
+        r#"{ "env": { "ANTHROPIC_BASE_URL": "https://relay.example" } }"#,
+    );
+
+    let view =
+        ProviderService::editor_view(&state, AppType::Claude, &imported, None).expect("view");
+    assert_eq!(
+        serde_json::to_value(&view.inactive).expect("serialize"),
+        json!([{ "path": ["env", "API_TIMEOUT_MS"], "value": "3000000" }])
+    );
+
+    let row = state
+        .db
+        .get_provider_by_id("relay", AppType::Claude.as_str())
+        .expect("read")
+        .expect("row");
+    let mut edited = view.settings.clone();
+    edited["env"]["API_TIMEOUT_MS"] = json!("3000000");
+    save_claude_editor(&state, &row, &view.settings, edited, "refuse").expect("save");
+    assert_eq!(claude_live()["env"]["API_TIMEOUT_MS"], json!("3000000"));
+    assert_eq!(claude_row(&state, "relay"), imported);
+}
+
+/// 窗口打开后外部把某个键从 1 改成 3，用户在窗口里改成 2：保存报冲突、什么都不写；
+/// 选「用我的」覆盖成 2，选「保留外部的」留着 3，其余改动照常写。
+#[test]
+fn claude_editor_refuses_to_silently_overwrite_external_edits() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let a = json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example" } });
+    let state = seed_claude_switch_state(
+        &[("a", a.clone())],
+        "a",
+        r#"{ "env": { "ANTHROPIC_BASE_URL": "https://a.example" }, "x": 1 }"#,
+    );
+    let (row, base) = open_claude_editor(&state, "a");
+
+    let mut external = claude_live();
+    external["x"] = json!(3);
+    std::fs::write(get_claude_settings_path(), external.to_string()).expect("external edit");
+    let untouched = claude_live_text();
+
+    let mut edited = base.clone();
+    edited["x"] = json!(2);
+    edited["y"] = json!("mine");
+    let err =
+        save_claude_editor(&state, &row, &base, edited.clone(), "refuse").expect_err("conflict");
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.to_string()).expect("structured error");
+    assert_eq!(detail["code"], json!("LIVE_EDIT_CONFLICT"));
+    assert_eq!(detail["keys"], json!(["x"]));
+    assert_eq!(claude_live_text(), untouched, "nothing written");
+
+    save_claude_editor(&state, &row, &base, edited.clone(), "keepTheirs").expect("theirs");
+    assert_eq!(claude_live()["x"], json!(3));
+    assert_eq!(claude_live()["y"], json!("mine"));
+
+    save_claude_editor(&state, &row, &base, edited, "keepMine").expect("mine");
+    assert_eq!(claude_live()["x"], json!(2));
+}
+
+/// 新增第一个供应商：用户已有的 settings.json 不被覆盖，只写关键字段，并设为当前。
+#[test]
+fn claude_editor_first_provider_keeps_the_existing_settings() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    std::fs::create_dir_all(settings_path.parent().expect("dir")).expect("mkdir");
+    let existing = r#"{
+  "permissions": {
+    "allow": [
+      "Bash(git status)"
+    ]
+  },
+  "model": "opus"
+}"#;
+    std::fs::write(&settings_path, existing).expect("seed live");
+    let state = create_test_state().expect("state");
+
+    let base = ProviderService::editor_view(&state, AppType::Claude, &json!({}), None)
+        .expect("view")
+        .settings;
+    assert_eq!(
+        base,
+        json!({ "permissions": { "allow": ["Bash(git status)"] } }),
+        "a new provider starts from live without the key fields"
+    );
+    let mut edited = base.clone();
+    edited["env"] = json!({
+        "ANTHROPIC_BASE_URL": "https://relay.example",
+        "ANTHROPIC_AUTH_TOKEN": "sk-relay"
+    });
+    let provider = Provider::with_id("relay".into(), "Relay".into(), edited, None);
+    ProviderService::add_from_editor(
+        &state,
+        AppType::Claude,
+        provider,
+        true,
+        Some(editor_save(&base, "refuse")),
+    )
+    .expect("add");
+
+    assert_eq!(
+        claude_live(),
+        json!({
+            "permissions": { "allow": ["Bash(git status)"] },
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://relay.example",
+                "ANTHROPIC_AUTH_TOKEN": "sk-relay"
+            }
+        })
+    );
+    let row = state
+        .db
+        .get_provider_by_id("relay", AppType::Claude.as_str())
+        .expect("read")
+        .expect("row");
+    assert_eq!(
+        row.settings_config,
+        json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://relay.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-relay"
+        }})
+    );
+    assert_eq!(
+        row.meta.and_then(|meta| meta.common_config_enabled),
+        Some(true)
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Claude.as_str())
+            .expect("current")
+            .as_deref(),
+        Some("relay")
+    );
+}
+
+/// live 里用户自己写的独有字段（`ENABLE_TOOL_SEARCH` 这类）不归当前供应商：原样保存不会
+/// 把它收进行，切走时也就不会删掉；在编辑器里删掉它就从 live 删；新加的独有字段归供应商。
+#[test]
+fn claude_editor_leaves_exclusive_fields_from_live_to_the_user() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let a = json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example" } });
+    let b = json!({ "env": { "ANTHROPIC_BASE_URL": "https://b.example" } });
+    let state = seed_claude_switch_state(
+        &[("a", a.clone()), ("b", b)],
+        "a",
+        r#"{ "env": { "ANTHROPIC_BASE_URL": "https://a.example", "ENABLE_TOOL_SEARCH": "true", "DISABLE_INTERLEAVED_THINKING": "1" } }"#,
+    );
+
+    // 只改名、配置原样保存。
+    let (mut row, base) = open_claude_editor(&state, "a");
+    assert_eq!(base["env"]["ENABLE_TOOL_SEARCH"], json!("true"));
+    row.name = "renamed".into();
+    save_claude_editor(&state, &row, &base, base.clone(), "refuse").expect("save as is");
+    assert_eq!(
+        claude_row(&state, "a"),
+        a,
+        "live's exclusive fields stay out of the row"
+    );
+
+    // 删掉一个从 live 带进来的，再加一个供应商自己的。
+    let (row, base) = open_claude_editor(&state, "a");
+    let mut edited = base.clone();
+    edited["env"]
+        .as_object_mut()
+        .unwrap()
+        .remove("DISABLE_INTERLEAVED_THINKING");
+    edited["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"] = json!("1");
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect("save edits");
+    let live = claude_live();
+    assert!(
+        live["env"].get("DISABLE_INTERLEAVED_THINKING").is_none(),
+        "{live}"
+    );
+    assert_eq!(live["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"], json!("1"));
+    let a_row = claude_row(&state, "a");
+    assert_eq!(a_row["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"], json!("1"));
+    assert!(a_row["env"].get("ENABLE_TOOL_SEARCH").is_none(), "{a_row}");
+
+    ProviderService::switch(&state, AppType::Claude, "b").expect("switch to b");
+    let live = claude_live();
+    assert_eq!(live["env"]["ENABLE_TOOL_SEARCH"], json!("true"), "{live}");
+    assert!(
+        live["env"].get("CLAUDE_CODE_DISABLE_ARTIFACT").is_none(),
+        "{live}"
+    );
+}
+
+/// 存量 Bedrock API Key 行在编辑器里保存后，Key 还在顶层 `apiKey`：旧版的代理只从那里
+/// 读，降级后照样能用。
+#[test]
+fn claude_editor_keeps_a_legacy_bedrock_key_where_older_versions_read_it() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let legacy = json!({
+        "apiKey": "bedrock-key",
+        "env": { "CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "us-east-1" }
+    });
+    let state = seed_claude_switch_state(&[("bedrock", legacy.clone())], "bedrock", "{}");
+    ProviderService::switch(&state, AppType::Claude, "bedrock").expect("switch");
+
+    let (row, base) = open_claude_editor(&state, "bedrock");
+    assert_eq!(
+        base["env"]["AWS_BEARER_TOKEN_BEDROCK"],
+        json!("bedrock-key")
+    );
+    save_claude_editor(&state, &row, &base, base.clone(), "refuse").expect("save as is");
+    assert_eq!(claude_row(&state, "bedrock"), legacy);
+
+    let (row, base) = open_claude_editor(&state, "bedrock");
+    let mut edited = base.clone();
+    edited["env"]["AWS_BEARER_TOKEN_BEDROCK"] = json!("rotated-key");
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect("rotate the key");
+    let stored = claude_row(&state, "bedrock");
+    assert_eq!(stored["apiKey"], json!("rotated-key"), "{stored}");
+    assert!(stored["env"].get("AWS_BEARER_TOKEN_BEDROCK").is_none());
+    assert_eq!(
+        claude_live()["env"]["AWS_BEARER_TOKEN_BEDROCK"],
+        json!("rotated-key")
+    );
+}
+
+/// 旧版没有 `category` 的 Google 卡：编辑器按库里那一行认出官方卡，预览的登录方式和切换
+/// 写的相同；新增时没有行，只看草稿的 `category`。
+#[test]
+fn gemini_editor_recognizes_a_legacy_google_card_like_switching_does() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    let mut google = Provider::with_id(
+        "google".to_string(),
+        "Google".to_string(),
+        json!({ "env": {} }),
+        None,
+    );
+    google.category = None;
+    state
+        .db
+        .save_provider(AppType::Gemini.as_str(), &google)
+        .expect("save legacy google card");
+
+    let category = ProviderService::editor_category(&state, &AppType::Gemini, Some("google"), None)
+        .expect("category");
+    assert_eq!(category.as_deref(), Some("official"));
+    let shown = ProviderService::editor_view(
+        &state,
+        AppType::Gemini,
+        &google.settings_config,
+        category.as_deref(),
+    )
+    .expect("view")
+    .settings;
+    ProviderService::switch(&state, AppType::Gemini, "google").expect("switch");
+    let live = read_json_file::<serde_json::Value>(&home.join(".gemini/settings.json"))
+        .expect("read gemini settings");
+    assert_eq!(
+        shown.pointer("/config/security/auth/selectedType"),
+        live.pointer("/security/auth/selectedType"),
+    );
+    assert_eq!(
+        live.pointer("/security/auth/selectedType"),
+        Some(&json!("oauth-personal"))
+    );
+
+    assert_eq!(
+        ProviderService::editor_category(&state, &AppType::Gemini, None, Some("third".into()))
+            .expect("category for a draft"),
+        Some("third".to_string())
+    );
+}
+
+/// 新增对话框：底是还没套预设的 live，预设带的独有字段归新供应商，live 里用户自己的
+/// 独有字段不归它。
+#[test]
+fn claude_add_dialog_keeps_the_users_exclusive_fields_out_of_the_new_row() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let a = json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example" } });
+    let state = seed_claude_switch_state(
+        &[("a", a)],
+        "a",
+        r#"{ "env": { "ANTHROPIC_BASE_URL": "https://a.example", "ENABLE_TOOL_SEARCH": "true" } }"#,
+    );
+    let base = ProviderService::editor_view(&state, AppType::Claude, &json!({}), None)
+        .expect("view")
+        .settings;
+    let mut edited = base.clone();
+    edited["env"]["ANTHROPIC_BASE_URL"] = json!("https://relay.example");
+    edited["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"] = json!("1");
+    let provider = Provider::with_id("relay".into(), "Relay".into(), edited, None);
+    ProviderService::add_from_editor(
+        &state,
+        AppType::Claude,
+        provider,
+        true,
+        Some(editor_save(&base, "refuse")),
+    )
+    .expect("add");
+
+    let row = claude_row(&state, "relay");
+    assert_eq!(row["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"], json!("1"));
+    assert!(row["env"].get("ENABLE_TOOL_SEARCH").is_none(), "{row}");
+}
+
+/// 编辑当前供应商：先存行再写 live。存行失败时 live 不动；写 live 被冲突拒绝时撤回刚存
+/// 的行。两种情况行和 live 都还是保存前的样子。
+#[test]
+fn claude_editor_never_leaves_the_row_and_live_apart() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let a = json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example", "ANTHROPIC_AUTH_TOKEN": "sk-old" } });
+    let state = seed_claude_switch_state(
+        &[("a", a.clone())],
+        "a",
+        r#"{ "env": { "ANTHROPIC_BASE_URL": "https://a.example", "ANTHROPIC_AUTH_TOKEN": "sk-old" }, "x": 1 }"#,
+    );
+    let before = claude_live_text();
+
+    // 行存不进去。
+    let (row, base) = open_claude_editor(&state, "a");
+    let mut edited = base.clone();
+    edited["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("sk-new");
+    let db = rusqlite::Connection::open(home.join(".cc-switch/cc-switch.db")).expect("open db");
+    db.execute_batch(
+        "CREATE TRIGGER fail_edit BEFORE UPDATE OF settings_config ON providers \
+         BEGIN SELECT RAISE(ABORT, 'injected save failure'); END;",
+    )
+    .expect("trigger");
+    save_claude_editor(&state, &row, &base, edited.clone(), "refuse").expect_err("save fails");
+    db.execute_batch("DROP TRIGGER fail_edit;")
+        .expect("drop trigger");
+    assert_eq!(claude_live_text(), before, "live untouched");
+    assert_eq!(claude_row(&state, "a"), a);
+
+    // live 写不进去（外部改了同一个全局键）。
+    std::fs::write(
+        get_claude_settings_path(),
+        before.replace("\"x\": 1", "\"x\": 3"),
+    )
+    .expect("external edit");
+    edited["x"] = json!(2);
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect_err("conflict");
+    assert_eq!(claude_row(&state, "a"), a, "the saved row is taken back");
+    assert_eq!(
+        claude_live()["env"]["ANTHROPIC_AUTH_TOKEN"],
+        json!("sk-old")
     );
 }

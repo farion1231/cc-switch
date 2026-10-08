@@ -276,6 +276,13 @@ export const settingsApi = {
     return await invoke("probe_tool_installations", { tools });
   },
 
+  /** 「应用」页展示路径、来源和多处安装（和升级前的预检分开调用）。 */
+  async listToolInstallations(
+    tools: string[],
+  ): Promise<ToolInstallationReport[]> {
+    return await invoke("list_tool_installations", { tools });
+  },
+
   async getRectifierConfig(): Promise<RectifierConfig> {
     return await invoke("get_rectifier_config");
   },
@@ -319,6 +326,8 @@ export interface ToolInstallationReport {
   needs_confirmation: boolean;
   command: string;
   anchored: boolean;
+  /** 默认那处是认不出安装渠道的原生可执行文件：不执行升级，command 为空。 */
+  unmanaged: boolean;
 }
 
 export interface RectifierConfig {
@@ -346,6 +355,15 @@ export interface BackupEntry {
   createdAt: string;
 }
 
+export interface BackupLocation {
+  id: string;
+  path: string;
+  sizeBytes: number;
+  itemCount: number;
+  lastModified?: string | null;
+  deletable: boolean;
+}
+
 export const backupsApi = {
   async createDbBackup(): Promise<string> {
     return await invoke("create_db_backup");
@@ -365,5 +383,18 @@ export const backupsApi = {
 
   async deleteDbBackup(filename: string): Promise<void> {
     await invoke("delete_db_backup", { filename });
+  },
+
+  async listBackupLocations(): Promise<BackupLocation[]> {
+    return await invoke("list_backup_locations");
+  },
+
+  /** 删除一类备份，返回释放的字节数 */
+  async deleteBackupLocation(id: string): Promise<number> {
+    return await invoke("delete_backup_location", { id });
+  },
+
+  async revealBackupLocation(id: string): Promise<boolean> {
+    return await invoke("reveal_backup_location", { id });
   },
 };

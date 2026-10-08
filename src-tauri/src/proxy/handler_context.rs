@@ -3,6 +3,7 @@
 //! 提供请求生命周期的上下文管理，封装通用初始化逻辑
 
 use crate::app_config::AppType;
+use crate::mode::stack::StackTarget;
 use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
@@ -91,6 +92,8 @@ pub struct RequestContext {
     pub auxiliary: AuxiliaryPlan,
     /// 本次请求由 `x-cc-provider` 钉死了供应商
     pub provider_pinned: bool,
+    /// Stack 模型的请求（`mode::stack`）：直达 Stack 里的那一家，不读也不写任何路由状态。
+    pub is_stack: bool,
 }
 
 /// 本次请求的辅助流量判定结果
@@ -115,6 +118,7 @@ impl RequestContext {
     /// * `app_type` - 应用类型
     /// * `tag` - 日志标签
     /// * `app_type_str` - 应用类型字符串
+    /// * `stack` - Stack 模型的目标（请求体里的 `model` 已换成上游名）
     ///
     /// # Errors
     /// 返回 `ProxyError` 如果 Provider 选择失败
@@ -125,6 +129,7 @@ impl RequestContext {
         app_type: AppType,
         tag: &'static str,
         app_type_str: &'static str,
+        stack: Option<StackTarget>,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
 
@@ -140,16 +145,6 @@ impl RequestContext {
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
 
-        let current_provider_id =
-            crate::settings::get_current_provider(&app_type).unwrap_or_default();
-
-        // 从请求体提取模型名称
-        let request_model = body
-            .get("model")
-            .and_then(|m| m.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
         let session_id = session_result.session_id.clone();
@@ -161,6 +156,14 @@ impl RequestContext {
             session_result.source,
             session_result.client_provided
         );
+
+        // 从请求体提取模型名称：AUX-001 日志和常规选路都要用。
+        // Stack 命中的请求不用它选路，但仍作为 fallback 记录在日志里。
+        let request_model = body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown")
+            .to_string();
 
         // 会话级钉住：客户端显式点名了供应商，直接锁定为唯一候选。
         let pin = headers.get(PROVIDER_PIN_HEADER).map(decode_header_value);
@@ -270,34 +273,107 @@ impl RequestContext {
             }
         }
 
-        // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
-        // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        //
-        // 优先级：辅助请求队列 > 会话钉住 > 常规路由。
-        //
-        // 分流压过钉住是用户拍板的语义：x-cc-provider 管的是「这个会话的对话本体走
-        // 哪家」，而 Auto Mode 判定请求是会话里的后台杂务，仍归队列接单 —— 否则钉住
-        // 一家贵渠道后，每条 Bash 命令的判定请求也得按全价走它。队列为空/全熔断时，
-        // 判定请求回落到钉住的供应商（没钉住则走常规链）。
-        let providers = match auxiliary_providers {
-            Some(list) => list,
-            None => match pinned_provider {
-                // 钉住 = 单元素链：转发器据此天然跳过熔断器与故障转移，不会替用户换家
-                Some(provider) => vec![provider],
-                None => state
-                    .provider_router
-                    .select_providers(app_type_str)
-                    .await
-                    .map_err(|e| match e {
-                        crate::error::AppError::AllProvidersCircuitOpen => {
-                            ProxyError::AllProvidersCircuitOpen
+        let is_stack = stack.is_some();
+        let (provider, providers, current_provider_id, request_model) = match stack {
+            Some(target) => {
+                // 选路优先级延续常规请求的语义：辅助请求队列 > 会话钉住 > Stack 目标。
+                // Auto Mode 的判定请求是会话里的后台杂务，不该按 Stack 那家的全价走；
+                // 队列空/全熔断、也没钉住时，才落到 Stack 目标本身。
+                if let Some(list) = auxiliary_providers {
+                    let provider = list
+                        .first()
+                        .cloned()
+                        .ok_or(ProxyError::NoAvailableProvider)?;
+                    (provider, list, target.provider.id, target.original_model)
+                } else if let Some(pinned) = pinned_provider {
+                    // 钉住 = 单元素链：转发器据此天然跳过熔断器与故障转移，不会替用户换家
+                    (
+                        pinned.clone(),
+                        vec![pinned],
+                        target.provider.id,
+                        target.original_model,
+                    )
+                } else {
+                    // Stack 模型：只发往 Stack 里的那一家，不读代理路由、不经熔断器选家。按「单家、
+                    // 不转移」处理：换成有效副本，转发和读响应两个阶段都从这里取，超时和重试
+                    // 跟着关掉（见 `create_forwarder`）。
+                    app_config.auto_failover_enabled = false;
+                    log::debug!(
+                        "[{}] Stacked model {} → provider {}, upstream model {}, session: {}",
+                        tag,
+                        target.original_model,
+                        target.provider.name,
+                        target.upstream_model,
+                        session_id
+                    );
+                    (
+                        target.provider.clone(),
+                        vec![target.provider.clone()],
+                        target.provider.id,
+                        target.original_model,
+                    )
+                }
+            }
+            None => {
+                let current_provider = crate::mode::current::provider_in_use(&state.db, &app_type)
+                    .ok()
+                    .flatten();
+                let current_provider_id = current_provider
+                    .as_ref()
+                    .map(|provider| provider.id.clone())
+                    .unwrap_or_default();
+
+                // Stack 模式不做故障转移：只发往默认那家，和故障转移关着时一样跳过熔断器选家；
+                // 队列留着，回到路由模式恢复。故障转移本来就关着时不用读模式。
+                let stack_mode = app_config.auto_failover_enabled
+                    && crate::mode::stack::stack_mode_now(&app_type);
+                // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
+                // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
+                //
+                // 优先级：辅助请求队列 > 会话钉住 > 常规路由（Stack 模式当前家含在常规路由里）。
+                let providers = match auxiliary_providers {
+                    Some(list) => list,
+                    None => match pinned_provider {
+                        // 钉住 = 单元素链：转发器据此天然跳过熔断器与故障转移，不会替用户换家
+                        Some(provider) => vec![provider],
+                        None => {
+                            if stack_mode {
+                                app_config.auto_failover_enabled = false;
+                                vec![current_provider.ok_or(ProxyError::NoProvidersConfigured)?]
+                            } else {
+                                state
+                                    .provider_router
+                                    .select_providers_with_current(app_type_str, current_provider)
+                                    .await
+                                    .map_err(|e| match e {
+                                        crate::error::AppError::AllProvidersCircuitOpen => {
+                                            ProxyError::AllProvidersCircuitOpen
+                                        }
+                                        crate::error::AppError::NoProvidersConfigured => {
+                                            ProxyError::NoProvidersConfigured
+                                        }
+                                        _ => ProxyError::DatabaseError(e.to_string()),
+                                    })?
+                            }
                         }
-                        crate::error::AppError::NoProvidersConfigured => {
-                            ProxyError::NoProvidersConfigured
-                        }
-                        _ => ProxyError::DatabaseError(e.to_string()),
-                    })?,
-            },
+                    },
+                };
+
+                let provider = providers
+                    .first()
+                    .cloned()
+                    .ok_or(ProxyError::NoAvailableProvider)?;
+
+                log::debug!(
+                    "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
+                    tag,
+                    provider.name,
+                    request_model,
+                    providers.len(),
+                    session_id
+                );
+                (provider, providers, current_provider_id, request_model)
+            }
         };
 
         if auxiliary.routed {
@@ -328,20 +404,6 @@ impl RequestContext {
             );
         }
 
-        let provider = providers
-            .first()
-            .cloned()
-            .ok_or(ProxyError::NoAvailableProvider)?;
-
-        log::debug!(
-            "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
-            tag,
-            provider.name,
-            request_model,
-            providers.len(),
-            session_id
-        );
-
         Ok(Self {
             start_time,
             app_config,
@@ -360,6 +422,7 @@ impl RequestContext {
             copilot_optimizer_config,
             auxiliary,
             provider_pinned,
+            is_stack,
         })
     }
 
@@ -434,6 +497,7 @@ impl RequestContext {
                 provider_pinned: self.provider_pinned,
             },
         )
+        .stack_request(self.is_stack)
     }
 
     /// 获取 Provider 列表（用于故障转移）

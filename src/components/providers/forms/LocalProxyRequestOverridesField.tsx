@@ -31,7 +31,7 @@ export function LocalProxyRequestOverridesField({
             defaultValue: "本地代理请求覆盖",
           })}
         </FormLabel>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t("providerForm.localProxyRequestOverridesHint", {
             defaultValue:
               "仅在本地路由/代理接管后生效，应用于协议转换后的上游请求。",
@@ -41,7 +41,7 @@ export function LocalProxyRequestOverridesField({
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="space-y-2">
-          <FormLabel className="text-xs text-muted-foreground">
+          <FormLabel className="text-xs text-fg-2">
             {t("providerForm.localProxyHeaderOverrides", {
               defaultValue: "Header 覆盖",
             })}
@@ -64,7 +64,7 @@ export function LocalProxyRequestOverridesField({
         </div>
 
         <div className="space-y-2">
-          <FormLabel className="text-xs text-muted-foreground">
+          <FormLabel className="text-xs text-fg-2">
             {t("providerForm.localProxyBodyOverrides", {
               defaultValue: "Body 覆盖",
             })}
