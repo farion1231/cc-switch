@@ -4773,4 +4773,53 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "PowerTokens",
+    websiteUrl: "https://powertokens.ai?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset",
+    apiKeyUrl: "https://www.powertokens.ai/en/api-keys?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset",
+    // https://docs.powertokens.ai/en/ecosystem-tools/openclaw?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset
+    settingsConfig: {
+      baseUrl: "https://api.powertokens.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1000000,
+          maxTokens: 131072,
+          cost: { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+        },
+        {
+          id: "MiniMax-M3",
+          name: "MiniMax-M3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 131072,
+          cost: { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "powertokens",
+    iconColor: "#7B37C3",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "powertokens/glm-5.2" },
+      modelCatalog: {
+        "powertokens/glm-5.2": { alias: "GLM-5.2" },
+        "powertokens/MiniMax-M3": { alias: "MiniMax-M3" },
+      },
+    },
+  }
+  },
 ];

@@ -2121,4 +2121,26 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://moark.com/anthropic"],
     icon: "moark",
   },
+  {
+    name: "PowerTokens",
+    websiteUrl: "https://powertokens.ai?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset",
+    apiKeyUrl: "https://www.powertokens.ai/en/api-keys?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset",
+    // Anthropic Messages 兼容端点：https://docs.powertokens.ai/en/ecosystem-tools/claude-code?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.powertokens.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "glm-5.2",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5-turbo",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.2",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.powertokens.ai"],
+    modelsUrl: "https://api.powertokens.ai/v1/models",
+    icon: "powertokens",
+    iconColor: "#7B37C3",
+  }
+  },
 ];

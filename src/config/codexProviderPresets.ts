@@ -3623,4 +3623,44 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     category: "aggregator",
     icon: "moark",
   },
+  {
+    name: "PowerTokens",
+    websiteUrl: "https://powertokens.ai?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset",
+    apiKeyUrl: "https://www.powertokens.ai/en/api-keys?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset",
+    auth: generateThirdPartyAuth(""),
+    // GLM 不走 /v1/responses，因此经本地路由用 Chat Completions：
+    // https://docs.powertokens.ai/en/ecosystem-tools/text-model-protocols?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset
+    config: generateThirdPartyConfig(
+      "powertokens",
+      "https://api.powertokens.ai/v1",
+      "glm-5.2",
+    ),
+    endpointCandidates: ["https://api.powertokens.ai/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "MiniMax-M3",
+        displayName: "MiniMax-M3",
+        contextWindow: 1000000,
+      },
+    ]),
+    // 未逐模型确认 Codex 侧的 thinking/effort 映射，保持显式关闭。
+    codexChatReasoning: {
+      supportsThinking: false,
+      supportsEffort: false,
+      thinkingParam: "none",
+      effortParam: "none",
+      outputFormat: "reasoning_content",
+    },
+    category: "aggregator",
+    icon: "powertokens",
+    iconColor: "#7B37C3",
+  }
+  },
 ];

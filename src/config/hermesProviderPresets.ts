@@ -2494,4 +2494,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "gpt-5.6-sol", provider: "aicodewith" },
     },
   },
+  {
+    name: "PowerTokens",
+    websiteUrl: "https://powertokens.ai?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset",
+    apiKeyUrl: "https://www.powertokens.ai/en/api-keys?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset",
+    // https://docs.powertokens.ai/en/ecosystem-tools/hermes-agent?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset
+    settingsConfig: {
+      name: "powertokens",
+      base_url: "https://api.powertokens.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "glm-5.2", name: "GLM-5.2", context_length: 1000000 },
+        { id: "MiniMax-M3", name: "MiniMax-M3", context_length: 1000000 },
+        {
+          id: "seed-2-0-pro-260328",
+          name: "Seed 2.0 Pro",
+          context_length: 256000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "powertokens",
+    iconColor: "#7B37C3",
+    suggestedDefaults: {
+      model: { default: "glm-5.2", provider: "powertokens" },
+    },
+  }
+  },
 ];

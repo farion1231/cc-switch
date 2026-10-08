@@ -934,6 +934,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     shape: "tile",
     keywords: ["sssaicode", "ssai", "relay", "gateway"],
   },
+  powertokens: {
+    name: "powertokens",
+    displayName: "PowerTokens",
+    category: "ai-provider",
+    keywords: ["powertokens", "power tokens", "aggregator"],
+    defaultColor: "#7B37C3",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

@@ -3545,4 +3545,51 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "PowerTokens",
+    websiteUrl: "https://powertokens.ai?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset",
+    apiKeyUrl: "https://www.powertokens.ai/en/api-keys?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset",
+    // https://docs.powertokens.ai/en/ecosystem-tools/opencode?utm_source=github&utm_medium=cc-switch&utm_campaign=provider-preset
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "PowerTokens",
+      options: {
+        baseURL: "https://api.powertokens.ai/v1",
+        apiKey: "",
+      },
+      models: {
+        "glm-5.2": {
+          name: "GLM-5.2",
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "MiniMax-M3": {
+          name: "MiniMax-M3",
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "glm-5-turbo": {
+          name: "GLM-5-Turbo",
+          limit: { context: 200000, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "qwen3-coder-plus": {
+          name: "Qwen3 Coder Plus",
+          limit: { context: 1048576, output: 65536 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "powertokens",
+    iconColor: "#7B37C3",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  }
+  },
 ];
