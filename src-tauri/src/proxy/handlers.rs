@@ -36,8 +36,8 @@ use super::{
         transform_gemini, transform_responses,
     },
     response_processor::{
-        create_logged_passthrough_stream, create_usage_collector, process_response,
-        read_decoded_body, strip_entity_headers_for_rebuilt_body,
+        create_logged_passthrough_stream, create_usage_collector, is_sse_response,
+        process_response, read_decoded_body, strip_entity_headers_for_rebuilt_body,
         strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
@@ -967,6 +967,25 @@ pub async fn handle_chat_completions(
     .await
 }
 
+fn should_restore_codex_responses_namespaces(
+    provider: &crate::provider::Provider,
+    endpoint: &str,
+    allow_tool_search_compat: bool,
+    has_namespace_restore_map: bool,
+) -> bool {
+    has_namespace_restore_map
+        && (super::providers::provider_needs_responses_namespace_flatten(provider)
+            || (allow_tool_search_compat
+                && super::providers::should_inject_codex_tool_search_shim(provider, endpoint)))
+}
+
+fn codex_responses_tool_restore_flag(
+    restore_tool_search: bool,
+    restore_namespaces: bool,
+) -> Option<bool> {
+    (restore_tool_search || restore_namespaces).then_some(restore_tool_search)
+}
+
 /// Responses 的 WebSocket 握手（GET 升级请求）：本地代理只讲 HTTP/SSE，回 426。Codex 内置
 /// 的 openai 默认先连 WebSocket，握手拿到 426 就在本会话里改走 HTTP，其它失败要把重试
 /// 用完才回退。
@@ -1046,7 +1065,14 @@ async fn handle_responses_for_app(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
+    let allow_tool_search_compat = super::supports_codex_tool_search_compat(&app_type);
+    let codex_tool_context =
+        transform_codex_chat::build_codex_tool_context_from_request_with_tool_search_compat(
+            &body,
+            allow_tool_search_compat,
+        );
+    let request_uses_tool_search_shim = allow_tool_search_compat
+        && transform_codex_chat::request_uses_responses_tool_search_shim(&body);
     let compaction_request = codex_tool_context.is_compaction_request();
     // Captured before `body` is moved into the forwarder: the flat-name →
     // {namespace, name} map used to restore the native Responses upstream's
@@ -1120,6 +1146,9 @@ async fn handle_responses_for_app(
     // Native Responses passthrough to a strict gateway (xAI): restore flattened
     // function-call names *and* rewrite whole-float tool arguments. The integer
     // rewrite must run even when the request had no namespace tools.
+    let restore_tool_search = super::supports_codex_tool_search_compat(&app_type)
+        && request_uses_tool_search_shim
+        && super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
     if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider) {
         return handle_codex_xai_native_responses_rewrite(
             response,
@@ -1127,6 +1156,34 @@ async fn handle_responses_for_app(
             &state,
             connection_guard,
             namespace_restore_map,
+            restore_tool_search,
+        )
+        .await;
+    }
+
+    let restore_namespaces = should_restore_codex_responses_namespaces(
+        &ctx.provider,
+        &endpoint,
+        allow_tool_search_compat,
+        !namespace_restore_map.is_empty(),
+    );
+    if let Some(restore_tool_search) =
+        codex_responses_tool_restore_flag(restore_tool_search, restore_namespaces)
+    {
+        log::debug!(
+            "[Codex] Native Responses tool restore provider={} tool_search={} namespaces={}",
+            ctx.provider.id,
+            restore_tool_search,
+            restore_namespaces
+        );
+        return handle_codex_responses_tool_restore(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            connection_guard,
+            namespace_restore_map,
+            restore_tool_search,
         )
         .await;
     }
@@ -1379,7 +1436,14 @@ async fn handle_responses_compact_for_app(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
+    let allow_tool_search_compat = super::supports_codex_tool_search_compat(&app_type);
+    let codex_tool_context =
+        transform_codex_chat::build_codex_tool_context_from_request_with_tool_search_compat(
+            &body,
+            allow_tool_search_compat,
+        );
+    let request_uses_tool_search_shim = allow_tool_search_compat
+        && transform_codex_chat::request_uses_responses_tool_search_shim(&body);
     let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
 
     let forwarder = ctx.create_forwarder(&state);
@@ -1435,6 +1499,9 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
+    let restore_tool_search = super::supports_codex_tool_search_compat(&app_type)
+        && request_uses_tool_search_shim
+        && super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
     if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider) {
         return handle_codex_xai_native_responses_rewrite(
             response,
@@ -1442,6 +1509,34 @@ async fn handle_responses_compact_for_app(
             &state,
             connection_guard,
             namespace_restore_map,
+            restore_tool_search,
+        )
+        .await;
+    }
+
+    let restore_namespaces = should_restore_codex_responses_namespaces(
+        &ctx.provider,
+        &endpoint,
+        allow_tool_search_compat,
+        !namespace_restore_map.is_empty(),
+    );
+    if let Some(restore_tool_search) =
+        codex_responses_tool_restore_flag(restore_tool_search, restore_namespaces)
+    {
+        log::debug!(
+            "[Codex] Native Responses compact tool restore provider={} tool_search={} namespaces={}",
+            ctx.provider.id,
+            restore_tool_search,
+            restore_namespaces
+        );
+        return handle_codex_responses_tool_restore(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            connection_guard,
+            namespace_restore_map,
+            restore_tool_search,
         )
         .await;
     }
@@ -1524,6 +1619,7 @@ async fn handle_codex_xai_native_responses_rewrite(
         String,
         transform_codex_responses_namespace::NamespacedName,
     >,
+    restore_tool_search: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
@@ -1549,6 +1645,7 @@ async fn handle_codex_xai_native_responses_rewrite(
             transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
                 response.bytes_stream(),
                 restore_map,
+                restore_tool_search,
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
@@ -1585,9 +1682,10 @@ async fn handle_codex_xai_native_responses_rewrite(
     // this only guards against a malformed upstream).
     let restored_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
         Ok(mut value) => {
-            transform_codex_responses_namespace::restore_response_namespaces(
+            transform_codex_responses_namespace::restore_response_tool_calls(
                 &mut value,
                 &restore_map,
+                restore_tool_search,
             );
             transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
                 &mut value,
@@ -3226,6 +3324,154 @@ async fn log_usage(
     }
 }
 
+async fn handle_codex_responses_tool_restore(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    is_stream: bool,
+    connection_guard: Option<ActiveConnectionGuard>,
+    restore_map: std::collections::HashMap<
+        String,
+        transform_codex_responses_namespace::NamespacedName,
+    >,
+    restore_tool_search: bool,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+
+    // Error bodies (and any non-SSE, non-success response) never contain
+    // restorable function calls; hand them to the generic passthrough so error
+    // shape and usage handling stay identical to the untransformed path.
+    if !status.is_success() {
+        return process_response(
+            response,
+            ctx,
+            state,
+            &CODEX_PARSER_CONFIG,
+            is_stream,
+            connection_guard,
+        )
+        .await;
+    }
+
+    if is_sse_response(&response, is_stream) {
+        let builder = rewritten_sse_response_builder(status, response.headers());
+
+        let restore_stream =
+            transform_codex_responses_namespace::create_tool_call_restore_sse_stream(
+                response.bytes_stream(),
+                restore_map,
+                restore_tool_search,
+            );
+        let usage_collector =
+            create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
+        let logged_stream = create_logged_passthrough_stream(
+            restore_stream,
+            ctx.tag,
+            usage_collector,
+            ctx.streaming_timeout_config(),
+            connection_guard,
+        );
+
+        let body = axum::body::Body::from_stream(logged_stream);
+        return builder.body(body).map_err(|e| {
+            log::error!("[{}] 构建 Codex 工具还原流式响应失败: {e}", ctx.tag);
+            ProxyError::Internal(format!("Failed to build streaming response: {e}"))
+        });
+    }
+
+    // Non-streaming: restore the flattened function-call names in the full body,
+    // then account usage from the (restore-neutral) Responses payload.
+    let _connection_guard = connection_guard;
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut response_headers, status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+    strip_hop_by_hop_response_headers(&mut response_headers);
+
+    // Restore names when the body parses as JSON; otherwise pass the bytes
+    // through untouched (a native Responses non-stream body is always JSON, so
+    // this only guards against a malformed upstream).
+    let restored_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
+        Ok(mut value) => {
+            transform_codex_responses_namespace::restore_response_tool_calls(
+                &mut value,
+                &restore_map,
+                restore_tool_search,
+            );
+            if let Some(usage) =
+                TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
+            {
+                let model = value
+                    .get("model")
+                    .and_then(|m| m.as_str())
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| ctx.outbound_model.clone())
+                    .unwrap_or_else(|| ctx.request_model.clone());
+                let request_model = ctx.request_model.clone();
+                let outbound_model = ctx
+                    .outbound_model
+                    .clone()
+                    .unwrap_or_else(|| ctx.request_model.clone());
+                let app_type_str = ctx.app_type_str;
+                tokio::spawn({
+                    let state = state.clone();
+                    let provider_id = ctx.provider.id.clone();
+                    let session_id = ctx.session_id.clone();
+                    let latency_ms = ctx.latency_ms();
+                    async move {
+                        log_usage(
+                            &state,
+                            &provider_id,
+                            app_type_str,
+                            &model,
+                            &request_model,
+                            &outbound_model,
+                            usage,
+                            latency_ms,
+                            None,
+                            false,
+                            status.as_u16(),
+                            Some(session_id),
+                        )
+                        .await;
+                    }
+                });
+            }
+            match serde_json::to_vec(&value) {
+                Ok(bytes) => Bytes::from(bytes),
+                Err(e) => {
+                    log::error!("[{}] 序列化 Codex 工具还原响应失败: {e}", ctx.tag);
+                    body_bytes
+                }
+            }
+        }
+        Err(_) => body_bytes,
+    };
+
+    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    response_headers.remove(axum::http::header::CONTENT_TYPE);
+
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in response_headers.iter() {
+        builder = builder.header(key, value);
+    }
+    builder = builder.header(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    builder
+        .body(axum::body::Body::from(restored_bytes))
+        .map_err(|e| {
+            log::error!("[{}] 构建 Codex 工具还原响应失败: {e}", ctx.tag);
+            ProxyError::Internal(format!("Failed to build response: {e}"))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -4000,6 +4246,61 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["provider"], "HCAI");
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
+    }
+    #[test]
+    fn native_namespace_restore_matches_route_flatten_with_ordinary_tool_search() {
+        let provider = crate::provider::Provider::with_id(
+            "native-provider".to_string(),
+            "Native Responses".to_string(),
+            serde_json::json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": "base_url = \"https://api.example.com/v1\"\nwire_api = \"responses\""
+            }),
+            None,
+        );
+        let request = serde_json::json!({
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "demo",
+                    "tools": [{
+                        "type": "function",
+                        "name": "run",
+                        "parameters": { "type": "object" }
+                    }]
+                },
+                {
+                    "type": "function",
+                    "name": "tool_search",
+                    "parameters": { "type": "object" }
+                }
+            ]
+        });
+        let namespace_restore_map =
+            crate::proxy::providers::transform_codex_responses_namespace::namespace_restore_map(
+                &request,
+            );
+        let request_uses_tool_search_shim =
+            crate::proxy::providers::transform_codex_chat::request_uses_responses_tool_search_shim(
+                &request,
+            );
+        assert!(!request_uses_tool_search_shim);
+        assert!(!namespace_restore_map.is_empty());
+
+        let restore_namespaces = super::should_restore_codex_responses_namespaces(
+            &provider,
+            "/responses",
+            true,
+            !namespace_restore_map.is_empty(),
+        );
+        assert!(restore_namespaces);
+        assert_eq!(
+            super::codex_responses_tool_restore_flag(
+                request_uses_tool_search_shim,
+                restore_namespaces,
+            ),
+            Some(false),
+        );
     }
 }
 

@@ -233,6 +233,11 @@ pub enum CodexCatalogToolProfile {
     /// hosted web-search endpoint, which Copilot does not expose.
     Copilot,
     NativeResponses,
+    /// Codex reaches a third-party native Responses gateway through CC-Switch's
+    /// local proxy. Keep the clean function-only native tool shape, but advertise
+    /// ToolSearch support so app-server builds the deferred dynamic-tool index;
+    /// the proxy translates ToolSearch for upstream compatibility.
+    ProxiedNativeResponses,
     /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
     /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
     /// tools — the Responses→Anthropic transform keeps only `function` tools.
@@ -240,6 +245,11 @@ pub enum CodexCatalogToolProfile {
     /// (the transform drops it), so it is always disabled — see
     /// `codex_disables_web_search`.
     Anthropic,
+    /// The same Anthropic transport while CC-Switch owns the local proxy route.
+    /// It keeps the conservative Anthropic tool shape while advertising
+    /// ToolSearch so app-server builds the deferred dynamic-tool index that the
+    /// proxy shim transports upstream.
+    ProxiedAnthropic,
 }
 
 impl CodexCatalogToolProfile {
@@ -1397,6 +1407,12 @@ fn codex_catalog_model_entry(
         .get("default_reasoning_level")
         .and_then(|value| value.as_str());
     apply_codex_reasoning_level_override(entry_obj, template_default, spec);
+    if matches!(
+        profile,
+        CodexCatalogToolProfile::ProxiedNativeResponses | CodexCatalogToolProfile::ProxiedAnthropic
+    ) {
+        entry_obj.insert("supports_search_tool".to_string(), json!(true));
+    }
 
     entry
 }
@@ -1898,7 +1914,7 @@ fn load_codex_deepseek_official_catalog_models() -> Vec<Value> {
 }
 
 /// Official vendor catalog entries for the provider in `config_text`, if its
-/// gateway ships one. Only the `NativeResponses` profile qualifies: ProxyChat
+/// gateway ships one. Direct and proxied native Responses profiles qualify: ProxyChat
 /// runs through cc-switch's converter (gpt-5.5 template contract) and the
 /// Anthropic transform drops custom tools, so both must keep their existing
 /// templates. Host-driven like the web_search blacklist, so existing providers
@@ -1907,7 +1923,10 @@ fn codex_official_vendor_catalog_models(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Option<Vec<Value>> {
-    if profile != CodexCatalogToolProfile::NativeResponses {
+    if !matches!(
+        profile,
+        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::ProxiedNativeResponses
+    ) {
         return None;
     }
     let base_url = extract_codex_base_url(config_text)?.to_ascii_lowercase();
@@ -2217,6 +2236,9 @@ fn codex_official_model_entry(
     obj.insert("upgrade".to_string(), Value::Null);
     // 第三方不支持 Responses Lite 协议。
     obj.insert("use_responses_lite".to_string(), Value::Bool(false));
+    if profile == CodexCatalogToolProfile::ProxiedNativeResponses {
+        obj.insert("supports_search_tool".to_string(), json!(true));
+    }
     if profile == CodexCatalogToolProfile::ProxyChat {
         // 同 `codex_catalog_model_entry`：严格的 Chat 网关拒收 `original` 精度的图片。
         obj.insert("supports_image_detail_original".to_string(), json!(false));
@@ -2255,7 +2277,13 @@ fn codex_catalog_from_specs_for_row(
         let entries: Vec<Value> = specs
             .iter()
             .enumerate()
-            .map(|(index, spec)| codex_vendor_catalog_model_entry(&vendor_models, spec, index))
+            .map(|(index, spec)| {
+                let mut entry = codex_vendor_catalog_model_entry(&vendor_models, spec, index);
+                if profile == CodexCatalogToolProfile::ProxiedNativeResponses {
+                    entry["supports_search_tool"] = json!(true);
+                }
+                entry
+            })
             .collect();
         return Ok(json!({ "models": entries }));
     }
@@ -2267,9 +2295,10 @@ fn codex_catalog_from_specs_for_row(
     // no cache dependency); ProxyChat and Copilot keep cloning Codex's gpt-5.5
     // entry so their proxy paths retain custom<->function tool support.
     let template = match profile {
-        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
-            load_codex_native_responses_template()
-        }
+        CodexCatalogToolProfile::NativeResponses
+        | CodexCatalogToolProfile::ProxiedNativeResponses
+        | CodexCatalogToolProfile::ProxiedAnthropic
+        | CodexCatalogToolProfile::Anthropic => load_codex_native_responses_template(),
         CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot => {
             load_codex_model_catalog_template()?
         }
@@ -2279,10 +2308,12 @@ fn codex_catalog_from_specs_for_row(
     // 官方条目里的 custom 工具，这条路不照搬。Copilot 仍按自身的目录配置生成，
     // 保留账号模型的上下文窗口和并行工具能力，而不是套用官方 GPT 的能力。
     let official = match profile {
-        CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => Vec::new(),
-        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::ProxyChat => {
-            codex_openai_official_models()
-        }
+        CodexCatalogToolProfile::Anthropic
+        | CodexCatalogToolProfile::ProxiedAnthropic
+        | CodexCatalogToolProfile::Copilot => Vec::new(),
+        CodexCatalogToolProfile::NativeResponses
+        | CodexCatalogToolProfile::ProxiedNativeResponses
+        | CodexCatalogToolProfile::ProxyChat => codex_openai_official_models(),
     };
     let entries: Vec<Value> = specs
         .iter()
@@ -2319,8 +2350,11 @@ pub(crate) fn codex_disables_web_search(
     profile: CodexCatalogToolProfile,
 ) -> bool {
     match profile {
-        CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => true,
-        CodexCatalogToolProfile::NativeResponses => {
+        CodexCatalogToolProfile::Anthropic
+        | CodexCatalogToolProfile::ProxiedAnthropic
+        | CodexCatalogToolProfile::Copilot => true,
+        CodexCatalogToolProfile::NativeResponses
+        | CodexCatalogToolProfile::ProxiedNativeResponses => {
             !codex_catalog_model_specs(settings).is_empty()
                 && codex_native_gateway_rejects_web_search(config_text)
         }
@@ -3685,6 +3719,40 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
+    fn proxied_anthropic_catalog_advertises_tool_search_without_enabling_direct_profile() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "claude-sonnet",
+                    "displayName": "Claude Sonnet",
+                    "contextWindow": 200_000
+                }]
+            }
+        });
+        let catalog_for = |profile| {
+            codex_model_catalog_from_settings(&settings, "", profile)
+                .expect("catalog generation should not error")
+                .expect("non-empty modelCatalog must yield a catalog")
+        };
+
+        let direct = catalog_for(CodexCatalogToolProfile::Anthropic);
+        let proxied = catalog_for(CodexCatalogToolProfile::ProxiedAnthropic);
+
+        assert_eq!(
+            direct["models"][0]
+                .get("supports_search_tool")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            proxied["models"][0]
+                .get("supports_search_tool")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn codex_model_catalog_uses_provider_models_and_context() {
         let template = json!({
             "slug": "gpt-5.5",
@@ -4421,26 +4489,52 @@ wire_api = "responses"
     }
 
     #[test]
+    fn proxied_native_catalog_keeps_vendor_metadata_and_enables_tool_search() {
+        let settings = json!({
+            "modelCatalog": { "models": [{ "model": "deepseek-v4-pro" }] }
+        });
+        let catalog_for = |profile| {
+            codex_model_catalog_from_settings(&settings, DEEPSEEK_NATIVE_CONFIG, profile)
+                .unwrap()
+                .unwrap()
+        };
+        let mut direct = catalog_for(CodexCatalogToolProfile::NativeResponses);
+        let proxied = catalog_for(CodexCatalogToolProfile::ProxiedNativeResponses);
+        assert_eq!(direct["models"][0]["supports_search_tool"], false);
+        assert_eq!(proxied["models"][0]["supports_search_tool"], true);
+        direct["models"][0]["supports_search_tool"] = json!(true);
+        assert_eq!(
+            proxied, direct,
+            "the official vendor harness must be preserved"
+        );
+    }
+
+    #[test]
     fn official_vendor_catalog_gated_by_native_profile_and_host() {
         // The official mirror is a capability GRANT, so the gate must be
         // narrow: native `/responses` profile AND the vendor's own host. Chat
         // runs through the proxy converter (gpt-5.5 contract), the Anthropic
         // transform drops custom tools, and aggregators hosting the same
         // model may reject freeform tools — all of them keep their templates.
-        assert!(codex_official_vendor_catalog_models(
-            DEEPSEEK_NATIVE_CONFIG,
-            CodexCatalogToolProfile::NativeResponses
-        )
-        .is_some_and(|models| !models.is_empty()));
+        for profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::ProxiedNativeResponses,
+        ] {
+            assert!(
+                codex_official_vendor_catalog_models(DEEPSEEK_NATIVE_CONFIG, profile)
+                    .is_some_and(|models| !models.is_empty())
+            );
+        }
 
         for profile in [
             CodexCatalogToolProfile::ProxyChat,
             CodexCatalogToolProfile::Copilot,
             CodexCatalogToolProfile::Anthropic,
+            CodexCatalogToolProfile::ProxiedAnthropic,
         ] {
             assert!(
                 codex_official_vendor_catalog_models(DEEPSEEK_NATIVE_CONFIG, profile).is_none(),
-                "only the NativeResponses profile may mirror the official catalog"
+                "only native Responses profiles may mirror the official catalog"
             );
         }
 
@@ -4819,6 +4913,30 @@ wire_api = "responses"
         assert_eq!(found("GPT-5.5"), None);
         assert_eq!(found("gpt-5"), None);
         assert_eq!(found("glm-5"), None);
+    }
+
+    #[test]
+    fn proxied_native_gpt_rows_keep_the_official_harness_with_tool_search() {
+        let mut official = official_gpt_rows();
+        for row in &mut official {
+            row["supports_search_tool"] = json!(false);
+        }
+        with_official_models(official, || {
+            let request = json!([{ "model": "gpt-6-sol" }]);
+            let mut direct = catalog_for(
+                request.clone(),
+                "",
+                CodexCatalogToolProfile::NativeResponses,
+            );
+            let proxied = catalog_for(request, "", CodexCatalogToolProfile::ProxiedNativeResponses);
+            assert_eq!(direct[0]["supports_search_tool"], false);
+            assert_eq!(proxied[0]["supports_search_tool"], true);
+            direct[0]["supports_search_tool"] = json!(true);
+            assert_eq!(
+                proxied, direct,
+                "the official GPT harness must be preserved"
+            );
+        });
     }
 
     #[test]
