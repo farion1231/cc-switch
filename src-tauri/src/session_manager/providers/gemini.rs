@@ -575,6 +575,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 
 fn scan_antigravity_sessions() -> Vec<SessionMeta> {
     let mut by_id: HashMap<String, SessionMeta> = HashMap::new();
+    let mut project_cache: HashMap<String, Option<String>> = HashMap::new();
+
     for root in antigravity_roots() {
         let brain_dir = root.join("brain");
         let entries = match std::fs::read_dir(&brain_dir) {
@@ -582,18 +584,35 @@ fn scan_antigravity_sessions() -> Vec<SessionMeta> {
             Err(_) => continue,
         };
 
+        let summaries = load_root_conversation_summaries(&root);
+
         for entry in entries.flatten() {
-            let transcript = entry
-                .path()
+            let session_path = entry.path();
+            let transcript = session_path
                 .join(".system_generated")
                 .join("logs")
                 .join("transcript.jsonl");
             if !transcript.is_file() {
                 continue;
             }
-            let Some(meta) = parse_antigravity_session(&transcript) else {
+            let session_id = match entry.file_name().to_str() {
+                Some(id) if is_safe_id_component(id) => id.to_string(),
+                _ => continue,
+            };
+
+            let project_dir = resolve_antigravity_workspace_dir(
+                &root,
+                &session_id,
+                summaries.get(&session_id),
+                &mut project_cache,
+            );
+
+            let Some(meta) =
+                parse_antigravity_session_with_project_dir(&transcript, &session_id, project_dir)
+            else {
                 continue;
             };
+
             let incoming_ts = meta.last_active_at.or(meta.created_at).unwrap_or(0);
             match by_id.get(&meta.session_id) {
                 Some(existing)
@@ -624,13 +643,469 @@ fn is_antigravity_transcript(path: &Path) -> bool {
             .any(|component| component.as_os_str() == ".system_generated")
 }
 
+fn is_safe_id_component(id: &str) -> bool {
+    if id.is_empty() || id == "." || id == ".." {
+        return false;
+    }
+    if id.contains('/') || id.contains('\\') || id.contains('\0') {
+        return false;
+    }
+    let mut comps = Path::new(id).components();
+    matches!(comps.next(), Some(std::path::Component::Normal(_))) && comps.next().is_none()
+}
+
+fn url_decode_simple(s: &str) -> String {
+    let mut result = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(b) = u8::from_str_radix(hex, 16) {
+                    result.push(b);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&result).to_string()
+}
+
+fn normalize_workspace_path(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if raw.starts_with("file://") {
+        let url = url::Url::parse(raw).ok()?;
+        if url.scheme() != "file" {
+            return None;
+        }
+        let raw_path = if let Ok(file_path) = url.to_file_path() {
+            file_path.to_string_lossy().to_string()
+        } else {
+            let path_str = url.path();
+            if path_str.len() >= 3
+                && path_str.as_bytes()[0] == b'/'
+                && path_str.as_bytes()[1].is_ascii_alphabetic()
+                && path_str.as_bytes()[2] == b':'
+            {
+                url_decode_simple(&path_str[1..])
+            } else if let Some(host) = url.host_str() {
+                if !host.is_empty() {
+                    let decoded_path = url_decode_simple(url.path());
+                    format!(r"\\{host}{decoded_path}")
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        };
+
+        // If the path looks like "/C:/...", strip the leading slash for Windows drive compatibility
+        let bytes = raw_path.as_bytes();
+        let path = if bytes.len() >= 3
+            && bytes[0] == b'/'
+            && bytes[1].is_ascii_alphabetic()
+            && bytes[2] == b':'
+        {
+            raw_path[1..].to_string()
+        } else {
+            raw_path
+        };
+
+        return Some(path);
+    }
+
+    if raw.contains("://") {
+        return None;
+    }
+
+    let is_abs = Path::new(raw).is_absolute()
+        || raw.starts_with('/')
+        || raw.starts_with(r"\\")
+        || (raw.len() >= 3
+            && raw.as_bytes()[0].is_ascii_alphabetic()
+            && raw.as_bytes()[1] == b':'
+            && (raw.as_bytes()[2] == b'/' || raw.as_bytes()[2] == b'\\'));
+
+    if is_abs {
+        Some(raw.to_string())
+    } else {
+        None
+    }
+}
+
+fn extract_path_from_workspace_uris_json(json_str: &str) -> Option<String> {
+    let uris: Vec<String> = serde_json::from_str(json_str).ok()?;
+    for uri in uris {
+        if let Some(path) = normalize_workspace_path(&uri) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+#[derive(Debug, Clone, Default)]
+struct AntigravitySummary {
+    workspace_uris: Option<String>,
+    project_id: Option<String>,
+}
+
+fn load_root_conversation_summaries(root: &Path) -> HashMap<String, AntigravitySummary> {
+    let db_path = root.join("conversation_summaries.db");
+    if !db_path.is_file() {
+        return HashMap::new();
+    }
+    let conn = match rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(c) => c,
+        Err(_) => return HashMap::new(),
+    };
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
+
+    let mut stmt = match conn
+        .prepare("SELECT conversation_id, workspace_uris, project_id FROM conversation_summaries")
+    {
+        Ok(s) => s,
+        Err(_) => return HashMap::new(),
+    };
+
+    let rows = match stmt.query_map([], |row| {
+        let conv_id: Option<String> = row.get(0)?;
+        let uris: Option<String> = row.get(1)?;
+        let project_id: Option<String> = row.get(2)?;
+        Ok((conv_id, uris, project_id))
+    }) {
+        Ok(r) => r,
+        Err(_) => return HashMap::new(),
+    };
+
+    let mut summaries = HashMap::new();
+    for row in rows.flatten() {
+        if let (Some(id), uris, project_id) = row {
+            summaries.insert(
+                id,
+                AntigravitySummary {
+                    workspace_uris: uris.filter(|s| !s.trim().is_empty()),
+                    project_id: project_id.filter(|s| !s.trim().is_empty()),
+                },
+            );
+        }
+    }
+    summaries
+}
+
+#[allow(dead_code)]
+fn load_single_conversation_summary(root: &Path, session_id: &str) -> Option<AntigravitySummary> {
+    let db_path = root.join("conversation_summaries.db");
+    if !db_path.is_file() {
+        return None;
+    }
+    let conn = rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
+    let mut stmt = conn
+        .prepare(
+            "SELECT workspace_uris, project_id FROM conversation_summaries WHERE conversation_id = ?1 LIMIT 1",
+        )
+        .ok()?;
+    stmt.query_row([session_id], |row| {
+        let uris: Option<String> = row.get(0)?;
+        let project_id: Option<String> = row.get(1)?;
+        Ok(AntigravitySummary {
+            workspace_uris: uris.filter(|s| !s.trim().is_empty()),
+            project_id: project_id.filter(|s| !s.trim().is_empty()),
+        })
+    })
+    .ok()
+}
+
+fn resolve_project_dir_from_config(
+    project_id: &str,
+    project_cache: &mut HashMap<String, Option<String>>,
+) -> Option<String> {
+    if !is_safe_id_component(project_id)
+        || project_id == "outside-of-project"
+        || project_id == "default-cli-project"
+    {
+        return None;
+    }
+
+    if let Some(cached) = project_cache.get(project_id) {
+        return cached.clone();
+    }
+
+    let resolved = read_project_config_dir(project_id);
+    project_cache.insert(project_id.to_string(), resolved.clone());
+    resolved
+}
+
+fn read_project_config_dir(project_id: &str) -> Option<String> {
+    let gemini_dir = crate::gemini_config::get_gemini_dir();
+    let config_path = gemini_dir
+        .join("config")
+        .join("projects")
+        .join(format!("{project_id}.json"));
+    if !config_path.is_file() {
+        return None;
+    }
+
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let value: Value = serde_json::from_str(&content).ok()?;
+    let resources = value
+        .get("projectResources")?
+        .get("resources")?
+        .as_array()?;
+
+    for item in resources {
+        if let Some(uri) = item.get("folderUri").and_then(Value::as_str) {
+            if let Some(path) = normalize_workspace_path(uri) {
+                return Some(path);
+            }
+        }
+        if let Some(uri) = item
+            .get("gitFolder")
+            .and_then(|g| g.get("folderUri"))
+            .and_then(Value::as_str)
+        {
+            if let Some(path) = normalize_workspace_path(uri) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn read_acp_meta_cwd(root: &Path, session_id: &str) -> Option<String> {
+    if !is_safe_id_component(session_id) {
+        return None;
+    }
+    let meta_path = root
+        .join("conversations")
+        .join(format!("{session_id}.meta"));
+    if !meta_path.is_file() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&meta_path).ok()?;
+    let value: Value = serde_json::from_str(&content).ok()?;
+    let cwd = value.get("cwd").and_then(Value::as_str)?;
+    normalize_workspace_path(cwd)
+}
+
+fn read_proto_varint(buf: &[u8], offset: &mut usize) -> Option<u64> {
+    let mut val: u64 = 0;
+    let mut shift: u32 = 0;
+    while *offset < buf.len() {
+        let b = buf[*offset];
+        *offset += 1;
+        val = val.checked_add(((b & 0x7f) as u64).checked_shl(shift)?)?;
+        if (b & 0x80) == 0 {
+            return Some(val);
+        }
+        shift = shift.checked_add(7)?;
+        if shift > 64 {
+            return None;
+        }
+    }
+    None
+}
+
+fn read_proto_tag(buf: &[u8], offset: &mut usize) -> Option<(u32, u32)> {
+    let key = read_proto_varint(buf, offset)?;
+    let field_num = u32::try_from(key >> 3).ok()?;
+    let wire_type = (key & 0x7) as u32;
+    Some((field_num, wire_type))
+}
+
+fn read_proto_length_delimited<'a>(buf: &'a [u8], offset: &mut usize) -> Option<&'a [u8]> {
+    let len = read_proto_varint(buf, offset)?;
+    let len = usize::try_from(len).ok()?;
+    let end = offset.checked_add(len)?;
+    if end > buf.len() {
+        return None;
+    }
+    let slice = &buf[*offset..end];
+    *offset = end;
+    Some(slice)
+}
+
+fn parse_workspace_from_trajectory_metadata_blob(data: &[u8]) -> Option<String> {
+    let mut offset = 0;
+    let mut candidate_f7 = None;
+
+    while offset < data.len() {
+        let (field_num, wire_type) = read_proto_tag(data, &mut offset)?;
+        match wire_type {
+            0 => {
+                read_proto_varint(data, &mut offset)?;
+            }
+            1 => {
+                offset = offset.checked_add(8)?;
+                if offset > data.len() {
+                    return None;
+                }
+            }
+            5 => {
+                offset = offset.checked_add(4)?;
+                if offset > data.len() {
+                    return None;
+                }
+            }
+            2 => {
+                let bytes = read_proto_length_delimited(data, &mut offset)?;
+                if field_num == 1 {
+                    let mut sub_offset = 0;
+                    while sub_offset < bytes.len() {
+                        let (sub_fn, sub_wt) = match read_proto_tag(bytes, &mut sub_offset) {
+                            Some(tag) => tag,
+                            None => break,
+                        };
+                        match sub_wt {
+                            0 => {
+                                if read_proto_varint(bytes, &mut sub_offset).is_none() {
+                                    break;
+                                }
+                            }
+                            1 => {
+                                sub_offset = match sub_offset.checked_add(8) {
+                                    Some(o) if o <= bytes.len() => o,
+                                    _ => break,
+                                };
+                            }
+                            5 => {
+                                sub_offset = match sub_offset.checked_add(4) {
+                                    Some(o) if o <= bytes.len() => o,
+                                    _ => break,
+                                };
+                            }
+                            2 => {
+                                let sub_bytes =
+                                    match read_proto_length_delimited(bytes, &mut sub_offset) {
+                                        Some(b) => b,
+                                        None => break,
+                                    };
+                                if sub_fn == 1 {
+                                    if let Ok(s) = std::str::from_utf8(sub_bytes) {
+                                        if let Some(path) = normalize_workspace_path(s) {
+                                            return Some(path);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => break,
+                        }
+                    }
+                } else if field_num == 7 {
+                    if let Ok(s) = std::str::from_utf8(bytes) {
+                        if let Some(path) = normalize_workspace_path(s) {
+                            candidate_f7 = Some(path);
+                        }
+                    }
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    candidate_f7
+}
+
+fn read_trajectory_metadata_workspace(root: &Path, session_id: &str) -> Option<String> {
+    if !is_safe_id_component(session_id) {
+        return None;
+    }
+    let db_path = root.join("conversations").join(format!("{session_id}.db"));
+    if !db_path.is_file() {
+        return None;
+    }
+    let conn = rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
+
+    let mut stmt = conn
+        .prepare("SELECT data FROM trajectory_metadata_blob WHERE id = 'main' LIMIT 1")
+        .ok()?;
+    let data: Vec<u8> = stmt.query_row([], |row| row.get(0)).ok()?;
+    parse_workspace_from_trajectory_metadata_blob(&data)
+}
+
+fn resolve_antigravity_workspace_dir(
+    root: &Path,
+    session_id: &str,
+    summary: Option<&AntigravitySummary>,
+    project_cache: &mut HashMap<String, Option<String>>,
+) -> Option<String> {
+    // 1. conversation_summaries.db workspace_uris
+    if let Some(summary) = summary {
+        if let Some(uris_str) = &summary.workspace_uris {
+            if let Some(path) = extract_path_from_workspace_uris_json(uris_str) {
+                return Some(path);
+            }
+        }
+        // 2. project_id -> config/projects/<id>.json
+        if let Some(project_id) = &summary.project_id {
+            if let Some(path) = resolve_project_dir_from_config(project_id, project_cache) {
+                return Some(path);
+            }
+        }
+    }
+
+    // 3. ACP conversations/<session_id>.meta -> cwd
+    if let Some(path) = read_acp_meta_cwd(root, session_id) {
+        return Some(path);
+    }
+
+    // 4. conversations/<session_id>.db -> trajectory_metadata_blob
+    if let Some(path) = read_trajectory_metadata_workspace(root, session_id) {
+        return Some(path);
+    }
+
+    // 5. None
+    None
+}
+
+fn find_antigravity_root_and_id_for_transcript(
+    transcript_path: &Path,
+) -> Option<(PathBuf, String)> {
+    let mut current = transcript_path.parent();
+    while let Some(dir) = current {
+        if let Some(parent) = dir.parent() {
+            if parent.file_name().and_then(|n| n.to_str()) == Some("brain") {
+                let session_id = dir.file_name()?.to_str()?.to_string();
+                let root = parent.parent()?.to_path_buf();
+                return Some((root, session_id));
+            }
+        }
+        current = dir.parent();
+    }
+    None
+}
+
 fn antigravity_session_id_from_transcript(path: &Path) -> Option<String> {
-    path.parent()?
-        .parent()?
-        .parent()?
-        .file_name()?
-        .to_str()
-        .map(|value| value.to_string())
+    find_antigravity_root_and_id_for_transcript(path)
+        .map(|(_, id)| id)
+        .or_else(|| {
+            path.parent()?
+                .parent()?
+                .parent()?
+                .file_name()?
+                .to_str()
+                .map(|value| value.to_string())
+        })
 }
 
 fn parse_antigravity_timestamp(value: &Value) -> Option<i64> {
@@ -640,8 +1115,25 @@ fn parse_antigravity_timestamp(value: &Value) -> Option<i64> {
         .or_else(|| value.get("created_at").and_then(parse_timestamp_to_ms))
 }
 
-fn parse_antigravity_session(path: &Path) -> Option<SessionMeta> {
-    let session_id = antigravity_session_id_from_transcript(path)?;
+#[allow(dead_code)]
+pub(crate) fn parse_antigravity_session(path: &Path) -> Option<SessionMeta> {
+    let (root, session_id) = find_antigravity_root_and_id_for_transcript(path).or_else(|| {
+        let id = antigravity_session_id_from_transcript(path)?;
+        let root = path.parent()?.parent()?.parent()?.parent()?.to_path_buf();
+        Some((root, id))
+    })?;
+    let mut project_cache = HashMap::new();
+    let summary = load_single_conversation_summary(&root, &session_id);
+    let project_dir =
+        resolve_antigravity_workspace_dir(&root, &session_id, summary.as_ref(), &mut project_cache);
+    parse_antigravity_session_with_project_dir(path, &session_id, project_dir)
+}
+
+fn parse_antigravity_session_with_project_dir(
+    path: &Path,
+    session_id: &str,
+    project_dir: Option<String>,
+) -> Option<SessionMeta> {
     let file = std::fs::File::open(path).ok()?;
     let reader = std::io::BufReader::new(file);
     use std::io::BufRead;
@@ -676,10 +1168,10 @@ fn parse_antigravity_session(path: &Path) -> Option<SessionMeta> {
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
-        session_id: session_id.clone(),
+        session_id: session_id.to_string(),
         title: title.clone(),
         summary: title,
-        project_dir: None,
+        project_dir,
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
@@ -1225,5 +1717,186 @@ mod tests {
             transcript.is_file(),
             "brain transcript must remain retryable"
         );
+    }
+
+    #[test]
+    fn test_normalize_workspace_path_handles_uris_and_local_paths() {
+        assert_eq!(
+            normalize_workspace_path("file:///home/example/Documents/Lab%20report/"),
+            Some("/home/example/Documents/Lab report/".to_string())
+        );
+        assert_eq!(normalize_workspace_path("file:///"), Some("/".to_string()));
+        assert_eq!(
+            normalize_workspace_path("file:///home/example/my-project"),
+            Some("/home/example/my-project".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_path("file:///C:/Users/example/Project%20A"),
+            Some("C:/Users/example/Project A".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_path("/var/log/app"),
+            Some("/var/log/app".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_path(r"\\server\share\folder"),
+            Some(r"\\server\share\folder".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_path("https://github.com/org/repo"),
+            None
+        );
+        assert_eq!(normalize_workspace_path("ssh://git@github.com/repo"), None);
+        assert_eq!(normalize_workspace_path("relative/path/to/folder"), None);
+        assert_eq!(normalize_workspace_path(""), None);
+        assert_eq!(normalize_workspace_path("   "), None);
+    }
+
+    #[test]
+    fn test_is_safe_id_component_rejects_traversals() {
+        assert!(!is_safe_id_component(""));
+        assert!(!is_safe_id_component("."));
+        assert!(!is_safe_id_component(".."));
+        assert!(!is_safe_id_component("foo/bar"));
+        assert!(!is_safe_id_component(r"foo\bar"));
+        assert!(!is_safe_id_component("../escape"));
+        assert!(!is_safe_id_component("foo\0bar"));
+        assert!(is_safe_id_component("valid-id-123"));
+        assert!(is_safe_id_component("0b5bc2e5-c309-4e7a-9468-caf34402bf01"));
+    }
+
+    fn encode_proto_varint_test(val: u64) -> Vec<u8> {
+        let mut v = Vec::new();
+        let mut n = val;
+        while n >= 0x80 {
+            v.push(((n & 0x7f) | 0x80) as u8);
+            n >>= 7;
+        }
+        v.push(n as u8);
+        v
+    }
+
+    fn encode_proto_tag_test(field_num: u32, wire_type: u32) -> Vec<u8> {
+        encode_proto_varint_test(((field_num as u64) << 3) | (wire_type as u64))
+    }
+
+    fn encode_proto_len_delimited_test(field_num: u32, data: &[u8]) -> Vec<u8> {
+        let mut v = encode_proto_tag_test(field_num, 2);
+        v.extend(encode_proto_varint_test(data.len() as u64));
+        v.extend_from_slice(data);
+        v
+    }
+
+    #[test]
+    fn test_protobuf_workspace_parsing_order_and_corruption_resilience() {
+        // Construct Protobuf: field 3 (dummy string) followed by field 1 (subfield 1 = uri)
+        let sub1 = encode_proto_len_delimited_test(1, b"file:///home/example/Workspace/Project");
+        let f1 = encode_proto_len_delimited_test(1, &sub1);
+        let f3 = encode_proto_len_delimited_test(3, b"dummy-metadata");
+
+        let mut blob = Vec::new();
+        blob.extend(f3);
+        blob.extend(f1);
+
+        let parsed = parse_workspace_from_trajectory_metadata_blob(&blob);
+        assert_eq!(parsed, Some("/home/example/Workspace/Project".to_string()));
+
+        // Field 7 fallback
+        let f7 = encode_proto_len_delimited_test(7, b"file:///home/example/FallbackF7");
+        let parsed_f7 = parse_workspace_from_trajectory_metadata_blob(&f7);
+        assert_eq!(parsed_f7, Some("/home/example/FallbackF7".to_string()));
+
+        // Corrupted slice / invalid wire type / truncated varint
+        assert_eq!(
+            parse_workspace_from_trajectory_metadata_blob(&[0xFF, 0xFF]),
+            None
+        );
+        assert_eq!(
+            parse_workspace_from_trajectory_metadata_blob(&[0x0A, 0x50, 0x01]),
+            None
+        );
+        assert_eq!(parse_workspace_from_trajectory_metadata_blob(&[]), None);
+    }
+
+    #[test]
+    fn test_resolve_antigravity_workspace_dir_full_priority_chain() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let session_id = "test-session-priority";
+        let mut cache = HashMap::new();
+
+        // 1. Summaries workspace_uris with multiple entries (first valid wins)
+        let summary1 = AntigravitySummary {
+            workspace_uris: Some(
+                "[\"not-a-valid-path\", \"file:///home/example/FirstValidWS\", \"file:///home/example/SecondWS\"]"
+                    .to_string(),
+            ),
+            project_id: Some("ignored-project-id".to_string()),
+        };
+        let res1 = resolve_antigravity_workspace_dir(root, session_id, Some(&summary1), &mut cache);
+        assert_eq!(res1, Some("/home/example/FirstValidWS".to_string()));
+
+        // 2. Fallback to ACP .meta
+        let conv_dir = root.join("conversations");
+        std::fs::create_dir_all(&conv_dir).expect("create conv_dir");
+        let meta_file = conv_dir.join(format!("{session_id}.meta"));
+        std::fs::write(&meta_file, r#"{"cwd": "/home/example/ACPCwd"}"#).expect("write meta");
+
+        let res2 = resolve_antigravity_workspace_dir(root, session_id, None, &mut cache);
+        assert_eq!(res2, Some("/home/example/ACPCwd".to_string()));
+
+        // 3. Fallback to trajectory_metadata_blob in .db
+        std::fs::remove_file(&meta_file).expect("remove meta");
+        let db_file = conv_dir.join(format!("{session_id}.db"));
+        let conn = rusqlite::Connection::open(&db_file).expect("open db");
+        conn.execute(
+            "CREATE TABLE trajectory_metadata_blob (id text DEFAULT 'main', data blob, PRIMARY KEY(id))",
+            [],
+        )
+        .expect("create table");
+
+        let sub1 = encode_proto_len_delimited_test(1, b"file:///home/example/TrajectoryBlobWS");
+        let f1 = encode_proto_len_delimited_test(1, &sub1);
+        conn.execute(
+            "INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?1)",
+            rusqlite::params![f1],
+        )
+        .expect("insert blob");
+
+        let res3 = resolve_antigravity_workspace_dir(root, session_id, None, &mut cache);
+        assert_eq!(res3, Some("/home/example/TrajectoryBlobWS".to_string()));
+
+        // 4. Traversal session ID is rejected
+        let res_traversal = resolve_antigravity_workspace_dir(root, "../sneaky", None, &mut cache);
+        assert_eq!(res_traversal, None);
+
+        // 5. None when all sources exhausted
+        conn.execute("DELETE FROM trajectory_metadata_blob", [])
+            .expect("delete blob");
+        let res_none = resolve_antigravity_workspace_dir(root, session_id, None, &mut cache);
+        assert_eq!(res_none, None);
+    }
+
+    #[test]
+    fn test_parse_antigravity_session_directly() {
+        let temp = tempdir().expect("tempdir");
+        let session_id = "direct-parse-session";
+        let transcript = temp
+            .path()
+            .join("brain")
+            .join(session_id)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl");
+        std::fs::create_dir_all(transcript.parent().expect("parent")).expect("create brain");
+        std::fs::write(
+            &transcript,
+            r#"{"ts": 1783689764000, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Direct test message"}"#,
+        )
+        .expect("write transcript");
+
+        let meta = parse_antigravity_session(&transcript).expect("parse session");
+        assert_eq!(meta.session_id, session_id);
+        assert_eq!(meta.title.as_deref(), Some("Direct test message"));
     }
 }
