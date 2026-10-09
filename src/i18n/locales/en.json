@@ -158,7 +158,8 @@
     "dragHandle": "Drag to reorder",
     "searchPlaceholder": "Search name, notes, or URL...",
     "searchAriaLabel": "Search providers",
-    "searchScopeHint": "Matches provider name, notes, and URL.",
+    "searchScopeHint": "Matches provider name, notes, website, and API address.",
+    "searchButtonTip": "Search providers ({{shortcut}})",
     "searchCloseHint": "Press Esc to close",
     "searchCloseAriaLabel": "Close provider search",
     "noSearchResults": "No providers match your search.",
@@ -827,7 +828,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "Show project switcher",
-      "showProfileSwitcherDescription": "Show the project switcher in the main page header"
+      "showProfileSwitcherDescription": "Show the project switcher in the main page header",
+      "showProviderSearch": "Show provider search",
+      "showProviderSearchDescription": "Show a search button at the top of the provider page to find providers by name, notes, website, or API address. When hidden, ⌘F / Ctrl+F still opens search"
     },
     "terminal": {
       "title": "Preferred Terminal",

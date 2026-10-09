@@ -158,7 +158,8 @@
     "dragHandle": "ドラッグで並べ替え",
     "searchPlaceholder": "名前・メモ・URLで検索...",
     "searchAriaLabel": "プロバイダーを検索",
-    "searchScopeHint": "名前・メモ・URL を対象に検索します。",
+    "searchScopeHint": "名前・メモ・公式サイト・API アドレスを対象に検索します。",
+    "searchButtonTip": "プロバイダーを検索（{{shortcut}}）",
     "searchCloseHint": "Esc で閉じる",
     "searchCloseAriaLabel": "検索を閉じる",
     "noSearchResults": "一致するプロバイダーがありません。",
@@ -827,7 +828,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "プロジェクト切り替えを表示",
-      "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します"
+      "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します",
+      "showProviderSearch": "プロバイダー検索を表示",
+      "showProviderSearchDescription": "プロバイダー画面の上部に検索ボタンを表示し、名前・メモ・公式サイト・API アドレスで検索できます。非表示にしても ⌘F / Ctrl+F で検索を開けます"
     },
     "terminal": {
       "title": "優先ターミナル",

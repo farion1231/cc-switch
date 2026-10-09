@@ -401,6 +401,8 @@ export interface Settings {
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header
   showProfileSwitcher?: boolean;
+  // 供应商页页头显示搜索按钮（默认开；关掉后 ⌘F 仍可用）
+  showProviderSearch?: boolean;
   // 启动时检查已安装的命令行应用有没有新版本（默认关）
   checkToolUpdatesOnStartup?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers

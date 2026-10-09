@@ -158,7 +158,8 @@
     "dragHandle": "拖拽排序",
     "searchPlaceholder": "按名称/备注/网址搜索供应商...",
     "searchAriaLabel": "搜索供应商",
-    "searchScopeHint": "根据名称、备注和官网链接匹配结果。",
+    "searchScopeHint": "根据名称、备注、官网和请求地址匹配结果。",
+    "searchButtonTip": "搜索供应商（{{shortcut}}）",
     "searchCloseHint": "按 Esc 关闭",
     "searchCloseAriaLabel": "关闭供应商搜索",
     "noSearchResults": "没有符合搜索条件的供应商。",
@@ -827,7 +828,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "显示项目切换",
-      "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口"
+      "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口",
+      "showProviderSearch": "显示供应商搜索",
+      "showProviderSearchDescription": "在供应商页顶部显示搜索按钮，可按名称、备注、官网和请求地址查找。关掉后仍可用 ⌘F / Ctrl+F 打开搜索"
     },
     "terminal": {
       "title": "首选终端",

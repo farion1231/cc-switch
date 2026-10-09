@@ -394,6 +394,10 @@ pub struct AppSettings {
     /// Whether to show the project profile switcher on the main page header
     #[serde(default)]
     pub show_profile_switcher: bool,
+    /// Show the provider search button in the provider page header (on by default;
+    /// Cmd/Ctrl+F still opens the search when it is hidden)
+    #[serde(default = "default_true")]
+    pub show_provider_search: bool,
     /// Check installed CLI tools for new versions at startup (off by default:
     /// many users do not want to chase every release).
     #[serde(default)]
@@ -554,6 +558,7 @@ impl Default for AppSettings {
             session_auto_sync_enabled: true,
             enable_failover_toggle: false,
             show_profile_switcher: false,
+            show_provider_search: true,
             check_tool_updates_on_startup: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,

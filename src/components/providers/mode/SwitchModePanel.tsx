@@ -48,6 +48,8 @@ type ListCallbacks = Pick<
   | "onOpenWebsite"
   | "onOpenTerminal"
   | "onCreate"
+  | "searchOpen"
+  | "onSearchOpenChange"
 >;
 
 interface SwitchModePanelProps extends ListCallbacks {

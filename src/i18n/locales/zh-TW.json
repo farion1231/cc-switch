@@ -158,7 +158,8 @@
     "dragHandle": "拖曳排序",
     "searchPlaceholder": "依名稱/備註/網址搜尋供應商...",
     "searchAriaLabel": "搜尋供應商",
-    "searchScopeHint": "根據名稱、備註和官網連結比對結果。",
+    "searchScopeHint": "根據名稱、備註、官網和請求位址比對結果。",
+    "searchButtonTip": "搜尋供應商（{{shortcut}}）",
     "searchCloseHint": "按 Esc 關閉",
     "searchCloseAriaLabel": "關閉供應商搜尋",
     "noSearchResults": "沒有符合搜尋條件的供應商。",
@@ -827,7 +828,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "顯示專案切換",
-      "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口"
+      "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口",
+      "showProviderSearch": "顯示供應商搜尋",
+      "showProviderSearchDescription": "在供應商頁頂部顯示搜尋按鈕，可依名稱、備註、官網和請求位址查找。關閉後仍可用 ⌘F / Ctrl+F 開啟搜尋"
     },
     "terminal": {
       "title": "首選終端機",

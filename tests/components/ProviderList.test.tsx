@@ -385,6 +385,61 @@ describe("ProviderList Component", () => {
     ).toBeInTheDocument();
   });
 
+  it("matches the API address and stops filtering once the panel closes", () => {
+    const relay = createProvider({
+      id: "relay",
+      name: "My Relay",
+      settingsConfig: {
+        env: { ANTHROPIC_BASE_URL: "https://api.relay-example.com" },
+      },
+    });
+    const other = createProvider({ id: "other", name: "Other" });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [relay, other],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    const props = {
+      providers: { relay, other },
+      currentProviderId: "",
+      appId: "claude" as const,
+      onSwitch: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onDuplicate: vi.fn(),
+      onOpenWebsite: vi.fn(),
+    };
+    const onSearchOpenChange = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const ui = (searchOpen: boolean) => (
+      <QueryClientProvider client={queryClient}>
+        <ProviderList
+          {...props}
+          searchOpen={searchOpen}
+          onSearchOpenChange={onSearchOpenChange}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(ui(true));
+
+    fireEvent.change(
+      screen.getByPlaceholderText("Search name, notes, or URL..."),
+      { target: { value: "relay-example" } },
+    );
+    expect(screen.getByTestId("provider-card-relay")).toBeInTheDocument();
+    expect(screen.queryByTestId("provider-card-other")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onSearchOpenChange).toHaveBeenCalledWith(false);
+
+    rerender(ui(false));
+    expect(screen.getByTestId("provider-card-other")).toBeInTheDocument();
+  });
+
   it("does not manufacture a Pi selection summary card", async () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
