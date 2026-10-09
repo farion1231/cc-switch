@@ -485,7 +485,11 @@ impl ChatToResponsesState {
                 "Upstream returned {dropped} tool call(s) without a function name, \
                  leaving no usable tool call in this turn"
             );
-            events.push(self.failed_event(message, Some("upstream_tool_call_dropped".to_string())));
+            events.push(self.failed_event(
+                message,
+                Some("upstream_tool_call_dropped".to_string()),
+                None,
+            ));
             return events;
         }
 
@@ -517,6 +521,7 @@ impl ChatToResponsesState {
             events.push(self.failed_event(
                 "Upstream returned no summary text for the compaction turn".to_string(),
                 Some("compaction_summary_empty".to_string()),
+                None,
             ));
             return events;
         }
@@ -713,10 +718,19 @@ impl ChatToResponsesState {
         index
     }
 
-    fn failed_event(&mut self, message: String, error_type: Option<String>) -> Bytes {
+    fn failed_event(
+        &mut self,
+        message: String,
+        error_type: Option<String>,
+        error_code: Option<String>,
+    ) -> Bytes {
         self.completed = true;
-        let mut error = json!({ "message": message });
-        if let Some(error_type) = error_type.filter(|value| !value.is_empty()) {
+        let error_type = error_type.filter(|value| !value.is_empty());
+        // Grok Build / Codex 的 Responses 错误解析器要求 error 对象必须带
+        // code 字段，缺失会报 "missing field `code`"。上游自带 code 时优先保留。
+        let code = sse::error_code_for(error_type.as_deref(), error_code.as_deref());
+        let mut error = json!({ "message": message, "code": code });
+        if let Some(error_type) = error_type {
             error["type"] = json!(error_type);
         }
 
@@ -792,8 +806,8 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                         };
 
                         if event_name.as_deref() == Some("error") || chunk.get("error").is_some() {
-                            let (message, error_type) = extract_chat_sse_error(&chunk);
-                            yield Ok(state.failed_event(message, error_type));
+                            let (message, error_type, error_code) = extract_chat_sse_error(&chunk);
+                            yield Ok(state.failed_event(message, error_type, error_code));
                             stream_failed = true;
                             break;
                         }
@@ -811,6 +825,7 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                     yield Ok(state.failed_event(
                         format!("Stream error: {e}"),
                         Some("stream_error".to_string()),
+                        None,
                     ));
                     stream_failed = true;
                     break;
@@ -832,13 +847,14 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                 yield Ok(state.failed_event(
                     "Upstream Chat Completions stream ended before sending finish_reason".to_string(),
                     Some("stream_truncated".to_string()),
+                    None,
                 ));
             }
         }
     }
 }
 
-fn extract_chat_sse_error(value: &Value) -> (String, Option<String>) {
+fn extract_chat_sse_error(value: &Value) -> (String, Option<String>, Option<String>) {
     let error = value.get("error").unwrap_or(value);
     let message = error
         .as_str()
@@ -856,8 +872,13 @@ fn extract_chat_sse_error(value: &Value) -> (String, Option<String>) {
         .or_else(|| error.get("code"))
         .and_then(|v| v.as_str())
         .map(ToString::to_string);
+    let error_code = error
+        .get("code")
+        .and_then(|v| v.as_str())
+        .filter(|code| !code.is_empty())
+        .map(ToString::to_string);
 
-    (message, error_type)
+    (message, error_type, error_code)
 }
 
 #[cfg(test)]
@@ -876,6 +897,8 @@ mod tests {
             .collect();
         let upstream = stream::iter(chunks);
         let converted = create_responses_sse_stream_from_chat_with_context(upstream, tool_context);
+        // 与 handlers 的 Chat 出口一致：转换器之上再套序号盖章，测试路径贴近生产。
+        let converted = sse::stamp_sequence_numbers(converted);
         let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
         String::from_utf8(bytes.concat()).unwrap()
     }
@@ -914,6 +937,50 @@ mod tests {
             2
         );
         assert_eq!(completed["response"]["usage"]["cache_read_input_tokens"], 2);
+    }
+
+    #[tokio::test]
+    async fn response_created_event_carries_input_tokens_details_even_when_empty() {
+        // 回归保护：首个 response.created 事件的空 usage 也必须带
+        // input_tokens_details，否则 Grok Build 在流首帧就解析失败。
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+        ])
+        .await;
+
+        let events = parse_sse_events(&output);
+        let created = events
+            .iter()
+            .find(|e| e["type"] == "response.created")
+            .expect("response.created event missing");
+        assert_eq!(
+            created["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn events_carry_monotonic_sequence_number() {
+        // 回归保护：Grok Build 新版解析器要求每个 SSE 事件带顶层
+        // sequence_number，且从 0 开始连续递增。
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6}}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let events = parse_sse_events(&output);
+        let seqs: Vec<u64> = events
+            .iter()
+            .map(|e| {
+                e["sequence_number"]
+                    .as_u64()
+                    .expect("event missing sequence_number")
+            })
+            .collect();
+        let expected: Vec<u64> = (0..events.len() as u64).collect();
+        assert_eq!(seqs, expected);
     }
 
     #[tokio::test]
@@ -1583,5 +1650,37 @@ mod tests {
         assert!(empty.contains("event: response.failed"));
         assert!(empty.contains("compaction_summary_empty"));
         assert!(!empty.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn failed_event_includes_error_code_field() {
+        // 回归保护：上游错误只带 type 不带 code 时，代理也必须补 code，
+        // 否则 Grok Build 报 "missing field `code`"。
+        let output = collect(vec![
+            "data: {\"error\":{\"message\":\"boom\",\"type\":\"rate_limit_error\"}}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("\"code\":\"rate_limit_exceeded\""));
+        assert!(output.contains("\"type\":\"rate_limit_error\""));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn failed_event_preserves_upstream_error_code() {
+        // 上游错误自带具体 code 时必须原样保留，不能被 type 映射覆盖
+        //（与非流式转换的行为一致）。
+        let output = collect(vec![
+            "data: {\"error\":{\"message\":\"boom\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("\"code\":\"model_not_found\""));
+        assert!(output.contains("\"type\":\"invalid_request_error\""));
+        assert!(!output.contains("\"code\":\"invalid_request_error\""));
     }
 }

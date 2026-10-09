@@ -14,6 +14,7 @@
 //! `output_item_added` / `output_item_done` helpers.
 
 use bytes::Bytes;
+use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 
 /// Serialize one Responses SSE event with the standard `event:`/`data:` framing.
@@ -22,6 +23,75 @@ pub(crate) fn sse_event(event: &str, data: Value) -> Bytes {
         "event: {event}\ndata: {}\n\n",
         serde_json::to_string(&data).unwrap_or_default()
     ))
+}
+
+/// 用单调递增的 `sequence_number` 给转换器产出的每个 SSE 事件盖章的通用流适配器。
+///
+/// 盖在 handlers 的 Responses SSE 出口上（Chat / Anthropic 两条转换路径共用），
+/// 以后新增转换路径同样套一层即可，不会漏盖序号。
+pub(crate) fn stamp_sequence_numbers<S, E>(
+    stream: S,
+) -> impl Stream<Item = Result<Bytes, E>> + Send + 'static
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: Send + 'static,
+{
+    async_stream::stream! {
+        let mut stream = std::pin::pin!(stream);
+        let mut sequence_number: u64 = 0;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(event) => {
+                    let stamped = inject_sequence_number(&event, sequence_number);
+                    sequence_number += 1;
+                    yield Ok(stamped);
+                }
+                Err(error) => yield Err(error),
+            }
+        }
+    }
+}
+
+/// Grok Build / Codex 的 Responses 错误解析器要求 error 对象带 `code` 字段，
+/// 缺失会报 "missing field `code`"。上游自带 code 时原样保留（与非流式
+/// 转换一致），只在上游缺失时按 type 映射补全。
+pub(crate) fn error_code_for(error_type: Option<&str>, upstream_code: Option<&str>) -> String {
+    if let Some(code) = upstream_code.filter(|code| !code.is_empty()) {
+        return code.to_string();
+    }
+    match error_type {
+        Some("rate_limit_error") => "rate_limit_exceeded".to_string(),
+        Some(other) => other.to_string(),
+        None => "proxy_error".to_string(),
+    }
+}
+
+/// 给已序列化的 SSE 事件注入顶层 `sequence_number`。
+///
+/// Grok Build / Codex 的新版 Responses 解析器要求每个事件都带一个单调递增的
+/// `sequence_number`（与 `type` 平级）。序号由 [`stamp_sequence_numbers`]
+/// 统一分配，解析失败（如 `[DONE]`）时原样返回。
+pub(crate) fn inject_sequence_number(event: &Bytes, sequence_number: u64) -> Bytes {
+    let text = String::from_utf8_lossy(event);
+    let mut lines = text.splitn(3, '\n');
+    let Some(event_line) = lines.next() else {
+        return event.clone();
+    };
+    let Some(data_line) = lines.next() else {
+        return event.clone();
+    };
+    let Some(payload) = data_line.strip_prefix("data: ") else {
+        return event.clone();
+    };
+    let Ok(mut value) = serde_json::from_str::<Value>(payload) else {
+        return event.clone();
+    };
+    let Some(object) = value.as_object_mut() else {
+        return event.clone();
+    };
+    object.insert("sequence_number".to_string(), json!(sequence_number));
+    let new_payload = serde_json::to_string(&value).unwrap_or_default();
+    Bytes::from(format!("{event_line}\ndata: {new_payload}\n\n"))
 }
 
 // ---------------------------------------------------------------------------
