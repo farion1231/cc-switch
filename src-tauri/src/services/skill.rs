@@ -6285,9 +6285,9 @@ mod tests {
 
     /// CC_SWITCH_TEST_HOME 隔离守卫（serial 测试间互斥由 #[serial] 保证，
     /// 守卫只负责在测试结束后恢复原值）。
-    struct TestHomeGuard(Option<std::ffi::OsString>);
+    pub(crate) struct TestHomeGuard(Option<std::ffi::OsString>);
     impl TestHomeGuard {
-        fn set(home: &Path) -> Self {
+        pub(crate) fn set(home: &Path) -> Self {
             let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
             guard

@@ -7,7 +7,7 @@
 //! （`scripts/glob-oracle/gen.mjs` 用与 pi 相同版本的 minimatch 生成）。
 
 use regex::Regex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// minimatch@10（默认选项）glob 子集匹配。pattern 与 target 均为 posix 路径。
 /// 不支持花括号展开与 extglob（调用方先经 [`is_supported_pattern`] 过滤）。
@@ -26,7 +26,6 @@ pub(crate) fn glob_match(pattern: &str, target: &str) -> bool {
 }
 
 /// 是否为支持的 glob 语法（花括号展开 `{…}`、extglob `+(…)`/`?(…)`/`*(…)`/`@(…)`/`!(…)` 不支持）。
-#[expect(dead_code)] // S4 消费后移除
 pub(crate) fn is_supported_pattern(pattern: &str) -> bool {
     if pattern.contains('{') || pattern.contains('}') {
         return false;
@@ -50,6 +49,176 @@ pub(crate) struct PiPatternSet {
     pub force_includes: Vec<String>,
     /// `-path`：精确强制排除（赢过 +）
     pub force_excludes: Vec<String>,
+}
+
+/// pi 的一个共享技能根目录
+pub(crate) struct PiSharedRoot {
+    /// 规范化后的绝对路径（canonicalize）
+    pub path: PathBuf,
+    /// 来源
+    #[expect(dead_code)] // S5 判定 baseDir 时消费
+    pub origin: PiSharedRootOrigin,
+}
+
+pub(crate) enum PiSharedRootOrigin {
+    /// pi 全局自动发现的 `~/.agents/skills`（无条件存在）
+    AgentsDir,
+    /// settings.json `skills` 数组中的扫描根条目（保留原始字符串用于展示）
+    SettingsEntry {
+        #[expect(dead_code)] // S9 展示时消费
+        raw: String,
+    },
+}
+
+/// 一次解析出的 pi 技能来源全景（每次现算，不缓存）。
+/// 解析失败与不支持语法均降级为 `approximate = true`，不阻断。
+pub(crate) struct PiSkillSources {
+    pub roots: Vec<PiSharedRoot>,
+    pub patterns: PiPatternSet,
+    pub warnings: Vec<String>,
+    /// 任一不支持语法或 settings 解析失败 → 本次解析所有结果均近似
+    pub approximate: bool,
+    /// pi agent 目录（模式匹配与相对路径解析的基准）；None = 解析失败退化
+    pub agent_dir: Option<PathBuf>,
+}
+
+/// 解析 pi 的全部共享技能根与模式（方案 §3.1）。
+/// 固定追加 `~/.agents/skills`；settings 条目分类按 §1.1；
+/// 任何失败路径均不报错，降级为近似结果 + warning。
+#[expect(dead_code)] // S5 消费后移除
+pub(crate) fn resolve_pi_skill_sources() -> PiSkillSources {
+    let mut sources = PiSkillSources {
+        roots: Vec::new(),
+        patterns: PiPatternSet::default(),
+        warnings: Vec::new(),
+        approximate: false,
+        agent_dir: None,
+    };
+
+    let agent_dir = crate::pi_config::get_pi_agent_dir().ok();
+    sources.agent_dir = agent_dir.clone();
+
+    // 1. ~/.agents/skills：pi 无条件自动发现（目录不存在也保留，S_exists 按技能判定）
+    let home = crate::config::get_home_dir();
+    let agents = home.join(".agents").join("skills");
+    let agents = agents.canonicalize().unwrap_or(agents);
+    sources.roots.push(PiSharedRoot {
+        path: agents,
+        origin: PiSharedRootOrigin::AgentsDir,
+    });
+
+    // 2. settings.json skills 数组
+    match crate::pi_config::read_pi_settings_skills_array() {
+        Ok(Some(entries)) => {
+            for raw in entries {
+                classify_entry(&raw, &agent_dir, &mut sources);
+            }
+        }
+        Ok(None) => {}
+        Err(err) => {
+            sources.approximate = true;
+            sources
+                .warnings
+                .push(format!("pi settings.json 解析失败：{err}"));
+        }
+    }
+
+    sources
+}
+
+/// settings `skills` 条目分类（§1.1）：
+/// package scheme 跳过；`!`/`+`/`-` 前缀与含通配符 → 模式；
+/// 纯路径 → 扫描根（`~` 展开、相对 agent 目录、需存在且为目录）。
+fn classify_entry(raw: &str, agent_dir: &Option<PathBuf>, sources: &mut PiSkillSources) {
+    const SCHEMES: [&str; 7] = [
+        "npm:", "git:", "github:", "http:", "https:", "ssh:", "builtin:",
+    ];
+    if SCHEMES.iter().any(|s| raw.starts_with(s)) {
+        return; // Pi packages，out of scope
+    }
+    let stripped = match raw.as_bytes().first().copied() {
+        Some(b'!') => {
+            if let Some(w) = push_pattern(&mut sources.patterns.excludes, &raw[1..]) {
+                sources.approximate = true;
+                sources.warnings.push(w);
+            }
+            return;
+        }
+        Some(b'+') => {
+            if let Some(w) = push_pattern(&mut sources.patterns.force_includes, &raw[1..]) {
+                sources.approximate = true;
+                sources.warnings.push(w);
+            }
+            return;
+        }
+        Some(b'-') => {
+            if let Some(w) = push_pattern(&mut sources.patterns.force_excludes, &raw[1..]) {
+                sources.approximate = true;
+                sources.warnings.push(w);
+            }
+            return;
+        }
+        _ => raw,
+    };
+    if stripped.contains('*') || stripped.contains('?') {
+        if let Some(w) = push_pattern(&mut sources.patterns.includes, stripped) {
+            sources.approximate = true;
+            sources.warnings.push(w);
+        }
+        return;
+    }
+    // 纯路径 → 扫描根
+    let resolved = resolve_entry_path(stripped, agent_dir);
+    if let Some(path) = resolved {
+        push_root(
+            &mut sources.roots,
+            path,
+            PiSharedRootOrigin::SettingsEntry {
+                raw: raw.to_string(),
+            },
+        );
+    }
+}
+
+/// 收集模式（posix 化）；不支持语法时返回 warning 文案
+fn push_pattern(bucket: &mut Vec<String>, pattern: &str) -> Option<String> {
+    let warning = (!is_supported_pattern(pattern))
+        .then(|| format!("不支持的 glob 语法（近似处理）：{pattern:?}"));
+    bucket.push(to_posix_str(pattern));
+    warning
+}
+
+/// 条目路径解析：`~` 展开；相对路径相对 pi agent 目录（agent 目录不可用时跳过）。
+fn resolve_entry_path(entry: &str, agent_dir: &Option<PathBuf>) -> Option<PathBuf> {
+    let path = if let Some(rest) = entry.strip_prefix("~/") {
+        crate::config::get_home_dir().join(rest)
+    } else if entry == "~" {
+        crate::config::get_home_dir()
+    } else if entry.starts_with('/') {
+        PathBuf::from(entry)
+    } else {
+        agent_dir.as_ref()?.join(entry)
+    };
+    // 仅目录成为扫描根（单文件技能/out of scope；不存在的路径跳过）
+    if path.is_dir() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+/// 追加扫描根（仅存在目录：canonicalize 后按路径去重，失败则跳过）
+fn push_root(roots: &mut Vec<PiSharedRoot>, path: PathBuf, origin: PiSharedRootOrigin) {
+    let Ok(canonical) = path.canonicalize() else {
+        return;
+    };
+    if roots.iter().any(|r| r.path == canonical) {
+        return;
+    }
+    roots.push(PiSharedRoot {
+        path: canonical,
+        origin,
+    });
 }
 
 /// §1.2.B：自动发现目录（`~/.pi/agent/skills`、`~/.agents/skills`）的启用判定
@@ -700,5 +869,104 @@ mod tests {
             Path::new(AGENT),
             &p
         ));
+    }
+
+    // ===== S4：共享根解析 =====
+
+    use super::{resolve_pi_skill_sources, PiSharedRootOrigin};
+    use serial_test::serial;
+    use std::fs;
+
+    use crate::services::skill::tests::TestHomeGuard;
+
+    fn write_dir(path: &std::path::Path) -> std::path::PathBuf {
+        fs::create_dir_all(path).expect("mkdir");
+        path.canonicalize().expect("canonicalize")
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_classifies_entries_and_always_includes_agents_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _agent = crate::pi_config::test_support::TestAgentDir::new();
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent dir");
+
+        let claude = write_dir(&temp.path().join(".claude").join("skills"));
+        let inside = write_dir(&agent_dir.join("my-skills"));
+        let agents = temp.path().join(".agents").join("skills");
+        fs::create_dir_all(&agents).expect("mkdir agents");
+        let agents = agents.canonicalize().expect("canonicalize agents");
+        // 不存在的路径 + 单文件
+        fs::write(temp.path().join("loose.md"), "x").expect("write md");
+
+        _agent.write_settings(&format!(
+            r#"{{
+              "skills": [
+                "~/.claude/skills",
+                "my-skills",
+                "/nonexistent/path",
+                "~/loose.md",
+                "npm:@scope/pkg",
+                "!pdf",
+                "+skills/pdf",
+                "-skills/doc",
+                "foo*"
+              ]
+            }}"#
+        ));
+
+        let sources = resolve_pi_skill_sources();
+
+        // 根：~/.agents/skills（AgentsDir）+ ~/.claude/skills + agent/my-skills；
+        // 不存在路径、.md 文件、npm scheme 不产生根
+        let root_paths: Vec<&PathBuf> = sources.roots.iter().map(|r| &r.path).collect();
+        assert_eq!(root_paths.len(), 3, "roots: {root_paths:?}");
+        assert!(root_paths.contains(&&agents));
+        assert!(root_paths.contains(&&claude));
+        assert!(root_paths.contains(&&inside));
+        assert!(matches!(
+            sources.roots[0].origin,
+            PiSharedRootOrigin::AgentsDir
+        ));
+
+        // 模式分类
+        assert_eq!(sources.patterns.excludes, vec!["pdf"]);
+        assert_eq!(sources.patterns.force_includes, vec!["skills/pdf"]);
+        assert_eq!(sources.patterns.force_excludes, vec!["skills/doc"]);
+        assert_eq!(sources.patterns.includes, vec!["foo*"]);
+        assert!(!sources.approximate);
+        assert!(sources.agent_dir.is_some());
+    }
+
+    #[test]
+    #[serial]
+    fn broken_settings_degrades_to_approximate() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _agent = crate::pi_config::test_support::TestAgentDir::new();
+        _agent.write_settings("{ broken");
+
+        let sources = resolve_pi_skill_sources();
+        assert!(sources.approximate);
+        assert!(!sources.warnings.is_empty());
+        // 降级仍有 ~/.agents/skills 根与空模式
+        assert_eq!(sources.roots.len(), 1);
+        assert!(sources.patterns.excludes.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn unsupported_syntax_marks_global_approximate() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _agent = crate::pi_config::test_support::TestAgentDir::new();
+        _agent.write_settings(r#"{ "skills": ["!{a,b}"] }"#);
+
+        let sources = resolve_pi_skill_sources();
+        assert!(sources.approximate);
+        assert!(!sources.warnings.is_empty());
+        // 模式仍被收集（供展示），但结果全部近似
+        assert_eq!(sources.patterns.excludes, vec!["{a,b}"]);
     }
 }

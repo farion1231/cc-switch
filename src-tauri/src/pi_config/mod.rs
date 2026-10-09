@@ -103,7 +103,6 @@ pub(crate) fn read_pi_native_defaults() -> Result<PiNativeDefaults, AppError> {
 /// - `Ok(None)`：文件不存在或无 `skills` 键；
 /// - `Ok(Some)`：数组内容（跳过非字符串条目）；
 /// - `Err`：文件存在但解析失败，或 `skills` 存在但不是数组。
-#[expect(dead_code)] // pi_shared 模块（S4）消费后移除
 pub(crate) fn read_pi_settings_skills_array() -> Result<Option<Vec<String>>, AppError> {
     let path = get_pi_settings_path()?;
     if !path.exists() {
