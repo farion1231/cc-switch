@@ -84,3 +84,54 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
         "config.toml content should contain model setting"
     );
 }
+
+#[test]
+fn deeplink_import_codex_remote_catalog_survives_db_and_live_switch() {
+    use base64::prelude::*;
+
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let config = serde_json::json!({
+        "config": "model_provider = \"relay\"\nmodel = \"custom-model\"\n\n[model_providers.relay]\nbase_url = \"https://api.example.com/v1\"\nmodel_catalog_url = \"https://api.example.com/v1/models?format=codex\"\n\n[model_providers.aaa_inactive]\nbase_url = \"https://inactive.example.com/v1\"\n"
+    });
+    let mut url = url::Url::parse("ccswitch://v1/import").unwrap();
+    url.query_pairs_mut().extend_pairs([
+        ("resource", "provider"),
+        ("app", "codex"),
+        ("name", "Catalog Relay"),
+        ("apiKey", "sk-test-catalog"),
+        ("enabled", "true"),
+        ("configFormat", "json"),
+        (
+            "config",
+            BASE64_STANDARD.encode(config.to_string()).as_str(),
+        ),
+    ]);
+    let request = parse_deeplink_url(url.as_str()).expect("parse catalog deeplink");
+    let db = Arc::new(Database::memory().expect("memory database"));
+    let state = AppState::new(db.clone());
+    let id =
+        import_provider_from_deeplink(&state, request).expect("import and enable catalog provider");
+    let providers = db
+        .get_all_providers("codex")
+        .expect("read imported providers");
+    let stored = providers[&id].settings_config["config"].as_str().unwrap();
+    let live = std::fs::read_to_string(home.join(".codex/config.toml")).expect("live Codex config");
+    for text in [stored, live.as_str()] {
+        let config: toml::Value = toml::from_str(text).expect("valid persisted TOML");
+        assert_eq!(
+            config["model_providers"]["custom"]["model_catalog_url"].as_str(),
+            Some("https://api.example.com/v1/models?format=codex")
+        );
+        assert_eq!(
+            config["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://api.example.com/v1")
+        );
+        assert_eq!(config["model"].as_str(), Some("custom-model"));
+    }
+    assert_eq!(
+        providers[&id].settings_config["auth"]["OPENAI_API_KEY"],
+        "sk-test-catalog"
+    );
+}
