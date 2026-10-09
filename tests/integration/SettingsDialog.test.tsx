@@ -3,10 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { http, HttpResponse } from "msw";
+import type { Settings } from "@/types";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import {
   resetProviderState,
   getSettings,
+  setSettings,
   getAppConfigDirOverride,
 } from "../msw/state";
 import { server } from "../msw/server";
@@ -203,6 +205,44 @@ describe("SettingsPage integration", () => {
 
     fireEvent.click(resetButtons[0]);
     await waitFor(() => expect(claudeInput.value).toBe("/home/mock/.claude"));
+  });
+
+  it("does not save directory drafts when toggling an unrelated setting", async () => {
+    const savedDirectory = getSettings().claudeConfigDir;
+    const saves: Settings[] = [];
+    const syncLive = vi.fn();
+    server.use(
+      http.post("http://tauri.local/save_settings", async ({ request }) => {
+        const { settings } = (await request.json()) as { settings: Settings };
+        saves.push(settings);
+        setSettings(settings);
+        return HttpResponse.json(true);
+      }),
+      http.post("http://tauri.local/sync_current_providers_live", () => {
+        syncLive();
+        return HttpResponse.json(true);
+      }),
+    );
+    renderDialog({ section: "appConfig" });
+
+    const directory = await screen.findByPlaceholderText(
+      "settings.browsePlaceholderClaude",
+    );
+    fireEvent.change(directory, { target: { value: "/unsaved/claude" } });
+    expect(saves).toHaveLength(0);
+
+    const toggle = screen.getByRole("switch", {
+      name: "settings.skipClaudeOnboarding",
+    });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(getSettings().skipClaudeOnboarding).toBe(true));
+    expect(saves[0].claudeConfigDir).toBe(savedDirectory);
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(getSettings().skipClaudeOnboarding).toBe(false));
+    expect(saves).toHaveLength(2);
+    expect(saves[1].claudeConfigDir).toBe(savedDirectory);
+    expect(syncLive).not.toHaveBeenCalled();
   });
 
   it("notifies when export fails", async () => {
