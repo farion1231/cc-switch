@@ -1844,6 +1844,8 @@
     "proxyTakeoverStorageNotice": "💡 This app is in Routing mode. You are editing the stored provider config; the live config is temporarily managed by the routing service.",
     "enableRemoteCompaction": "Enable remote compaction",
     "remoteCompactionHint": "When enabled, the active model_providers entry name is written as OpenAI so Codex can try remote compaction.",
+    "enableRemoteModelCatalog": "Fetch model list from provider",
+    "remoteModelCatalogHint": "For Codex 0.156+: writes [features] api_key_model_discovery = true and model_catalog_url = <base_url>/models so Codex loads its model list from the provider. The provider must serve a Codex-format model catalog at that URL; otherwise Codex falls back to its built-in list.",
     "apiUrlLabel": "API Request URL",
     "extractFailed": "Extract failed: {{error}}",
     "saveFailed": "Save failed: {{error}}",
