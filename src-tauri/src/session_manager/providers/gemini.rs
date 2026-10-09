@@ -1142,6 +1142,21 @@ fn parse_antigravity_timestamp(value: &Value) -> Option<i64> {
         .or_else(|| value.get("created_at").and_then(parse_timestamp_to_ms))
 }
 
+fn antigravity_resume_command(session_id: &str) -> Option<String> {
+    // Resume commands are executed by a shell or copied into a terminal. Keep
+    // identifiers safe for both POSIX shells and Windows terminals, while still
+    // allowing sessions with unusual directory names to be read and deleted.
+    if !is_safe_id_component(session_id)
+        || session_id.starts_with('-')
+        || !session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return None;
+    }
+    Some(format!("agy --conversation {session_id}"))
+}
+
 #[allow(dead_code)]
 pub(crate) fn parse_antigravity_session(path: &Path) -> Option<SessionMeta> {
     let (root, session_id) = find_antigravity_root_and_id_for_transcript(path).or_else(|| {
@@ -1202,7 +1217,7 @@ fn parse_antigravity_session_with_project_dir(
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
-        resume_command: Some(format!("agy --conversation {session_id}")),
+        resume_command: antigravity_resume_command(session_id),
     })
 }
 
@@ -1993,6 +2008,57 @@ mod tests {
         let meta = parse_antigravity_session(&transcript).expect("parse session");
         assert_eq!(meta.session_id, session_id);
         assert_eq!(meta.title.as_deref(), Some("Direct test message"));
+    }
+
+    #[test]
+    fn antigravity_metadata_disables_resume_for_unsafe_session_ids() {
+        let temp = tempdir().expect("tempdir");
+        let transcript = temp.path().join("transcript.jsonl");
+        std::fs::write(
+            &transcript,
+            r#"{"source":"USER_EXPLICIT","type":"USER_INPUT","content":"Example"}"#,
+        )
+        .expect("write transcript");
+
+        for session_id in [
+            "session; printf unexpected",
+            "session$(printf unexpected)",
+            "session`printf unexpected`",
+            "session\nprintf unexpected",
+            "session with spaces",
+            "session'quote",
+            "session\"quote",
+            "session&command",
+            "session|command",
+            "session>file",
+            "session%VARIABLE%",
+            "session!VARIABLE!",
+            "session^command",
+            "-option",
+            "",
+            ".",
+            "..",
+        ] {
+            let meta = parse_antigravity_session_with_project_dir(&transcript, session_id, None)
+                .expect("session remains readable");
+            assert_eq!(meta.session_id, session_id);
+            assert_eq!(meta.title.as_deref(), Some("Example"));
+            assert!(meta.resume_command.is_none(), "{session_id:?}");
+        }
+    }
+
+    #[test]
+    fn antigravity_resume_command_preserves_safe_session_ids() {
+        for session_id in [
+            "12345678-1234-1234-1234-123456789abc",
+            "agy-session-123",
+            "session_with_underscores.v2",
+        ] {
+            assert_eq!(
+                antigravity_resume_command(session_id),
+                Some(format!("agy --conversation {session_id}"))
+            );
+        }
     }
     // Opt-in validation of copied client metadata; never runs against user data in CI.
     #[test]
