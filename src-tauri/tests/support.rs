@@ -24,6 +24,10 @@ pub fn ensure_test_home() -> &'static Path {
         // 用 CC_SWITCH_TEST_HOME 显式覆盖，以确保测试不会污染真实用户目录。
         std::env::set_var("CC_SWITCH_TEST_HOME", &base);
         std::env::set_var("HOME", &base);
+        // Linux Claude Desktop prefers XDG_CONFIG_HOME over HOME. Keep its
+        // live profile inside the same isolated test directory.
+        #[cfg(target_os = "linux")]
+        std::env::set_var("XDG_CONFIG_HOME", base.join(".config"));
         #[cfg(windows)]
         std::env::set_var("USERPROFILE", &base);
         // Claude Desktop 的配置目录在 Windows 上只读 LOCALAPPDATA（见 claude_desktop_config.rs

@@ -76,12 +76,24 @@ fn parse_provider_deeplink(
     let app = params
         .get("app")
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter".to_string()))?
-        .clone();
+        .as_str();
+    // Use the canonical ID for frontend previews and provider cache invalidation.
+    let app = match app {
+        "claude_desktop" | "claudedesktop" => "claude-desktop",
+        _ => app,
+    };
 
     // Validate app type
     if !matches!(
-        app.as_str(),
-        "claude" | "codex" | "gemini" | "grokbuild" | "opencode" | "openclaw" | "hermes"
+        app,
+        "claude"
+            | "claude-desktop"
+            | "codex"
+            | "gemini"
+            | "grokbuild"
+            | "opencode"
+            | "openclaw"
+            | "hermes"
     ) {
         return Err(AppError::InvalidInput(format!(
             "Invalid provider app type: '{app}'"
@@ -145,7 +157,7 @@ fn parse_provider_deeplink(
     Ok(DeepLinkImportRequest {
         version,
         resource,
-        app: Some(app),
+        app: Some(app.to_string()),
         name: Some(name),
         enabled,
         homepage,

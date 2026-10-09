@@ -23,6 +23,19 @@ context_window = 500000
 `;
 
 describe("parseDeepLinkConfigPreview", () => {
+  it("previews Claude Desktop environment configuration", () => {
+    const env = {
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "sonnet-test",
+      CUSTOM_ENV: "value",
+    };
+    expect(
+      parseDeepLinkConfigPreview({
+        app: "claude-desktop",
+        config: encodeBase64(JSON.stringify({ env })),
+      }),
+    ).toEqual({ type: "claude", env });
+  });
+
   it("previews direct Grok Build TOML and masks its API key", () => {
     const preview = parseDeepLinkConfigPreview({
       app: "grokbuild",

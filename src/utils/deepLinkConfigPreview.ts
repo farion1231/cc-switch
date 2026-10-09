@@ -57,7 +57,7 @@ export function parseDeepLinkConfigPreview(
     }
 
     const parsed = JSON.parse(decoded) as Record<string, unknown>;
-    if (request.app === "claude") {
+    if (request.app === "claude" || request.app === "claude-desktop") {
       return {
         type: "claude",
         env: (parsed.env as Record<string, string>) || {},
