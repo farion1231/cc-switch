@@ -2138,6 +2138,15 @@ impl SkillService {
         Ok(())
     }
 
+    /// 追加 pi 共享根扫描源（label "pi-shared"）。同一目录兼具多重身份
+    /// （如 ~/.agents/skills = agents 规范目录 + pi 共享根）时标签并存属预期；
+    /// 追加在各应用目录之后，不改变现有首匹配 path 行为。
+    fn push_pi_shared_sources(scan_sources: &mut Vec<(PathBuf, String)>) {
+        for root in pi_shared::resolve_pi_skill_sources().roots {
+            scan_sources.push((root.path, "pi-shared".to_string()));
+        }
+    }
+
     /// 扫描未管理的 Skills
     ///
     /// 扫描各应用目录，找出未被 CC Switch 管理的 Skills
@@ -2162,6 +2171,7 @@ impl SkillService {
         if let Ok(ssot_dir) = Self::get_ssot_dir() {
             scan_sources.push((ssot_dir, "cc-switch".to_string()));
         }
+        Self::push_pi_shared_sources(&mut scan_sources);
 
         let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
 
@@ -2234,6 +2244,7 @@ impl SkillService {
             search_sources.push((agents_dir, "agents".to_string()));
         }
         search_sources.push((ssot_dir.clone(), "cc-switch".to_string()));
+        Self::push_pi_shared_sources(&mut search_sources);
 
         for selection in imports {
             // selection.directory 由前端 IPC 直接传入、此前全程无校验，而它既被
@@ -5459,6 +5470,49 @@ mod tests {
         assert!(vis.shared_roots[0].contains(".claude/skills"));
         assert_eq!(vis.same_content_as_ssot, Some(true));
         assert!(!vis.excluded_by_pattern);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn scan_unmanaged_includes_pi_shared_labels() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        _pi_dir.write_settings(r#"{ "skills": ["~/.claude/skills"] }"#);
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+
+        // ~/.agents/skills：agents 规范目录 + pi 共享根双标签
+        write_skill(
+            &temp
+                .path()
+                .join(".agents")
+                .join("skills")
+                .join("agents-skill"),
+            "x",
+        );
+        // settings 扫描根（~/.claude/skills）：claude 应用目录 + pi 共享根双标签
+        write_skill(
+            &temp
+                .path()
+                .join(".claude")
+                .join("skills")
+                .join("claude-skill"),
+            "x",
+        );
+
+        let unmanaged = SkillService::scan_unmanaged(&db).expect("scan");
+        let find = |dir: &str| {
+            unmanaged
+                .iter()
+                .find(|s| s.directory == dir)
+                .unwrap_or_else(|| panic!("missing {dir}: {unmanaged:?}"))
+        };
+        let agents_skill = find("agents-skill");
+        assert!(agents_skill.found_in.contains(&"agents".to_string()));
+        assert!(agents_skill.found_in.contains(&"pi-shared".to_string()));
+        let claude_skill = find("claude-skill");
+        assert!(claude_skill.found_in.contains(&"claude".to_string()));
+        assert!(claude_skill.found_in.contains(&"pi-shared".to_string()));
     }
 
     #[test]
