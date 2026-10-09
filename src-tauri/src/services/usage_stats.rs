@@ -2563,8 +2563,9 @@ pub(crate) fn resolve_antigravity_pricing(
         return (None, target);
     }
 
-    // 4. Verified opaque placeholder exceptions
+    // 4. Explicit AGY aliases and verified opaque placeholder exceptions
     let placeholder_target = match without_thinking {
+        "gemini-3.8-flash-n" => Some("gemini-3.8-flash"),
         "model_placeholder_m187" | "model_placeholder_m20" | "gemini-default" => {
             Some("gemini-3.5-flash")
         }

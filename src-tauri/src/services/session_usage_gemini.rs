@@ -1487,6 +1487,10 @@ mod tests {
             "gemini-3.8-flash"
         );
         assert_eq!(
+            normalize_antigravity_pricing_model(&conn, "gemini-3.8-flash-n"),
+            "gemini-3.8-flash"
+        );
+        assert_eq!(
             normalize_antigravity_pricing_model(&conn, "gemini-3.8-flash-thinking"),
             "gemini-3.8-flash"
         );
@@ -1828,6 +1832,7 @@ mod tests {
             "gemini-9.12-flash-a",
             "gemini-9.12-flash-pro",
             "gemini-9.12-flash-fast",
+            "gemini-9.12-flash-n",
             "gemini-9.13-flash-high",
             "gemini-9-flash-high",
         ] {
@@ -1853,6 +1858,7 @@ mod tests {
         for (raw_model, canonical_model) in [
             ("9.12flash", "gemini-9.12-flash"),
             ("model_placeholder_m187", "gemini-3.5-flash"),
+            ("gemini-3.8-flash-n", "gemini-3.8-flash"),
         ] {
             let db = Database::memory()?;
             {
