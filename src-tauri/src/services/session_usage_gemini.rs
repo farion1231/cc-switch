@@ -24,7 +24,7 @@ use crate::services::session_usage::{
 };
 use crate::services::usage_stats::{
     find_model_pricing, has_matching_proxy_usage_log, is_placeholder_pricing_model,
-    should_skip_session_insert, DedupKey,
+    resolve_antigravity_pricing, should_skip_session_insert, DedupKey,
 };
 use crate::session_manager::providers::gemini::{is_session_file, parse_session_document};
 use rust_decimal::Decimal;
@@ -870,95 +870,9 @@ fn extract_token_fields(data: &[u8], tokens: &mut AntigravityTokenData) {
     }
 }
 
-/// Maps Antigravity placeholders and physical model aliases to billable model IDs.
-fn resolve_antigravity_pricing_placeholder(normalized: &str) -> Option<String> {
-    let without_thinking = normalized.strip_suffix("-thinking").unwrap_or(normalized);
-    match without_thinking {
-        "model_placeholder_m187" | "model_placeholder_m20" | "gemini-default" => {
-            Some("gemini-3.5-flash".to_string())
-        }
-        "model_placeholder_m132" | "gemini-3-flash-a" => Some("gemini-3.5-flash".to_string()),
-        "model_placeholder_m36"
-        | "gemini-3.1-pro-low"
-        | "model_placeholder_m16"
-        | "gemini-pro-default" => Some("gemini-3.1-pro-preview".to_string()),
-        "gemini-3.8-flash"
-        | "gemini-3.8-flash-a"
-        | "gemini-3.8-flash-b"
-        | "gemini-3.8-flash-exp-a"
-        | "gemini-3.8-flash-exp-b"
-        | "gemini-3.8-flash-low"
-        | "gemini-3.8-flash-medium"
-        | "gemini-3.8-flash-high"
-        | "gemini-3.8-flash-preview"
-        | "gemini-3.8-flash-tiered"
-        | "gemini-3.8"
-        | "3.8"
-        | "3.8flash"
-        | "3.8-flash"
-        | "flash-3.8" => Some("gemini-3.8-flash".to_string()),
-        "gemini-3.7-flash"
-        | "gemini-3.7-flash-a"
-        | "gemini-3.7-flash-b"
-        | "gemini-3.7-flash-exp-a"
-        | "gemini-3.7-flash-exp-b"
-        | "gemini-3.7-flash-low"
-        | "gemini-3.7-flash-medium"
-        | "gemini-3.7-flash-high"
-        | "gemini-3.7-flash-preview"
-        | "gemini-3.7-flash-tiered"
-        | "gemini-3.7"
-        | "3.7"
-        | "3.7flash"
-        | "3.7-flash"
-        | "flash-3.7" => Some("gemini-3.7-flash".to_string()),
-        "gemini-3.6-flash"
-        | "gemini-3.6-flash-a"
-        | "gemini-3.6-flash-b"
-        | "gemini-3.6-flash-exp-a"
-        | "gemini-3.6-flash-exp-b"
-        | "gemini-3.6-flash-low"
-        | "gemini-3.6-flash-medium"
-        | "gemini-3.6-flash-high"
-        | "gemini-3.6-flash-preview"
-        | "gemini-3.6-flash-tiered"
-        | "gemini-3.6"
-        | "3.6"
-        | "3.6flash"
-        | "3.6-flash"
-        | "flash-3.6" => Some("gemini-3.6-flash".to_string()),
-        // Antigravity's placeholders and bare Claude 4.6 IDs use the dated
-        // canonical rows below; both seeded rows intentionally share pricing.
-        "model_placeholder_m35" | "claude-sonnet-4-6" => {
-            Some("claude-sonnet-4-6-20260217".to_string())
-        }
-        "model_placeholder_m26" | "claude-opus-4-6" => Some("claude-opus-4-6-20260206".to_string()),
-        "gpt-oss-120b-medium" => Some("gpt-oss-120b-medium".to_string()),
-        "unknown" | "null" | "none" | "" => Some("unknown".to_string()),
-        other if other.starts_with("model_placeholder_") => Some("unknown".to_string()),
-        _ => None,
-    }
-}
-
-/// 归一化 Antigravity 离线会话中的计费模型名称。
-fn normalize_antigravity_pricing_model(raw_model: &str) -> String {
-    let normalized = raw_model.trim().to_ascii_lowercase();
-    // 优先映射占位符和对应的物理模型别名到现存的计费模型
-    if let Some(resolved) = resolve_antigravity_pricing_placeholder(&normalized) {
-        return resolved;
-    }
-
-    let without_thinking = normalized
-        .strip_suffix("-thinking")
-        .unwrap_or(&normalized)
-        .to_string();
-    if let Some(base) = without_thinking.strip_suffix("-a") {
-        return format!("{base}-preview");
-    }
-    if let Some(base) = without_thinking.strip_suffix("-b") {
-        return format!("{base}-preview");
-    }
-    without_thinking
+#[cfg(test)]
+fn normalize_antigravity_pricing_model(conn: &rusqlite::Connection, raw_model: &str) -> String {
+    resolve_antigravity_pricing(conn, raw_model).1
 }
 
 fn insert_antigravity_session_entry(
@@ -969,11 +883,38 @@ fn insert_antigravity_session_entry(
     created_at: i64,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
-    // Agy gen_metadata 的 f3 已是完整输出（包含 thinking），无需额外合并 f9/f10。
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| AppError::Database(format!("启动 Antigravity 会话导入事务失败: {e}")))?;
+
+    let ledger_exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM session_usage_dedup
+                WHERE data_source = 'antigravity_session' AND request_id = ?1
+            )",
+            rusqlite::params![request_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Database(format!("查询 Antigravity 去重账本失败: {e}")))?;
+
+    let detail_exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM proxy_request_logs
+                WHERE request_id = ?1
+            )",
+            rusqlite::params![request_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Database(format!("查询 Antigravity 会话明细失败: {e}")))?;
+
+    // 明细已被聚合清理但持久账本存在：阻止重复导入与双算
+    if ledger_exists && !detail_exists {
+        return Ok(false);
+    }
+
     let output_tokens = token_data.output_tokens;
-    // Persist Antigravity data with the same cache-inclusive input convention
-    // used by upstream Gemini proxy/session rows. This keeps shared dashboard
-    // aggregations and proxy/session fingerprint de-duplication compatible.
     let input_tokens = token_data
         .input_tokens
         .saturating_add(token_data.cached_tokens);
@@ -983,7 +924,8 @@ fn insert_antigravity_session_entry(
     } else {
         raw_model
     };
-    let pricing_model = normalize_antigravity_pricing_model(model);
+
+    let (pricing, pricing_model) = resolve_antigravity_pricing(&tx, model);
 
     let dedup_key = DedupKey {
         app_type: "gemini",
@@ -994,7 +936,17 @@ fn insert_antigravity_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    if has_matching_proxy_usage_log(&conn, &dedup_key)? {
+
+    if !detail_exists && has_matching_proxy_usage_log(&tx, &dedup_key)? {
+        tx.execute(
+            "INSERT OR IGNORE INTO session_usage_dedup
+             (data_source, request_id, semantic_id, has_entry_id)
+             VALUES ('antigravity_session', ?1, ?1, 1)",
+            rusqlite::params![request_id],
+        )
+        .map_err(|e| AppError::Database(format!("写入 Antigravity 去重账本失败: {e}")))?;
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交 Antigravity 代理跳过事务失败: {e}")))?;
         return Ok(false);
     }
 
@@ -1007,7 +959,6 @@ fn insert_antigravity_session_entry(
         message_id: None,
     };
 
-    let pricing = find_gemini_pricing(&conn, &pricing_model);
     if pricing.is_none() && !is_placeholder_pricing_model(&pricing_model) {
         log::warn!("[GEMINI-SYNC] Antigravity 模型未命中定价: {model} -> {pricing_model}");
     }
@@ -1034,7 +985,7 @@ fn insert_antigravity_session_entry(
         ),
     };
 
-    conn.execute(
+    let upserted = tx.execute(
         "INSERT INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
@@ -1091,7 +1042,18 @@ fn insert_antigravity_session_entry(
     )
     .map_err(|e| AppError::Database(format!("插入 Antigravity 会话日志失败: {e}")))?;
 
-    let changed = conn.changes() > 0;
+    tx.execute(
+        "INSERT OR IGNORE INTO session_usage_dedup
+         (data_source, request_id, semantic_id, has_entry_id)
+         VALUES ('antigravity_session', ?1, ?1, 1)",
+        rusqlite::params![request_id],
+    )
+    .map_err(|e| AppError::Database(format!("写入 Antigravity 去重账本失败: {e}")))?;
+
+    tx.commit()
+        .map_err(|e| AppError::Database(format!("提交 Antigravity 会话导入事务失败: {e}")))?;
+
+    let changed = upserted > 0;
     if changed {
         crate::usage_events::notify_log_recorded();
     }
@@ -1432,135 +1394,384 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_antigravity_pricing_model_aliases() {
+    fn test_normalize_antigravity_pricing_model_aliases() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3-flash-a-thinking"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3-flash-a-thinking"),
             "gemini-3.5-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3-pro-b"),
-            "gemini-3-pro-preview"
-        );
-        assert_eq!(
-            normalize_antigravity_pricing_model("gemini-pro-default"),
+            normalize_antigravity_pricing_model(&conn, "gemini-pro-default"),
             "gemini-3.1-pro-preview"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-pro-default-thinking"),
+            normalize_antigravity_pricing_model(&conn, "gemini-pro-default-thinking"),
             "gemini-3.1-pro-preview"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("MODEL_PLACEHOLDER_M187"),
+            normalize_antigravity_pricing_model(&conn, "MODEL_PLACEHOLDER_M187"),
             "gemini-3.5-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("MODEL_PLACEHOLDER_M20"),
+            normalize_antigravity_pricing_model(&conn, "MODEL_PLACEHOLDER_M20"),
             "gemini-3.5-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("MODEL_PLACEHOLDER_M132"),
+            normalize_antigravity_pricing_model(&conn, "MODEL_PLACEHOLDER_M132"),
             "gemini-3.5-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("MODEL_PLACEHOLDER_M36"),
+            normalize_antigravity_pricing_model(&conn, "MODEL_PLACEHOLDER_M36"),
             "gemini-3.1-pro-preview"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("MODEL_PLACEHOLDER_M16"),
+            normalize_antigravity_pricing_model(&conn, "MODEL_PLACEHOLDER_M16"),
             "gemini-3.1-pro-preview"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("MODEL_PLACEHOLDER_M35"),
+            normalize_antigravity_pricing_model(&conn, "MODEL_PLACEHOLDER_M35"),
             "claude-sonnet-4-6-20260217"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("MODEL_PLACEHOLDER_M26"),
+            normalize_antigravity_pricing_model(&conn, "MODEL_PLACEHOLDER_M26"),
             "claude-opus-4-6-20260206"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("3.8flash"),
+            normalize_antigravity_pricing_model(&conn, "3.8flash"),
             "gemini-3.8-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("3.8-flash"),
+            normalize_antigravity_pricing_model(&conn, "3.8-flash"),
             "gemini-3.8-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("3.8"),
+            normalize_antigravity_pricing_model(&conn, "3.8"),
             "gemini-3.8-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3.8"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3.8"),
             "gemini-3.8-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3.8-flash-a"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3.8-flash-a"),
             "gemini-3.8-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3.8-flash-tiered"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3.8-flash-tiered"),
             "gemini-3.8-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3.8-flash-thinking"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3.8-flash-thinking"),
             "gemini-3.8-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("3.7flash"),
+            normalize_antigravity_pricing_model(&conn, "3.7flash"),
             "gemini-3.7-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("3.7-flash"),
+            normalize_antigravity_pricing_model(&conn, "3.7-flash"),
             "gemini-3.7-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("3.7"),
+            normalize_antigravity_pricing_model(&conn, "3.7"),
             "gemini-3.7-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3.7"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3.7"),
             "gemini-3.7-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3.7-flash-exp-b"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3.7-flash-exp-b"),
             "gemini-3.7-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3.7-flash-thinking"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3.7-flash-thinking"),
             "gemini-3.7-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("3.6flash"),
+            normalize_antigravity_pricing_model(&conn, "3.6flash"),
             "gemini-3.6-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("3.6-flash"),
+            normalize_antigravity_pricing_model(&conn, "3.6-flash"),
             "gemini-3.6-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("3.6"),
+            normalize_antigravity_pricing_model(&conn, "3.6"),
             "gemini-3.6-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3.6"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3.6"),
             "gemini-3.6-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3.6-flash-exp-a"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3.6-flash-exp-a"),
             "gemini-3.6-flash"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("gemini-3.6-flash-thinking"),
+            normalize_antigravity_pricing_model(&conn, "gemini-3.6-flash-thinking"),
             "gemini-3.6-flash"
         );
-        assert_eq!(normalize_antigravity_pricing_model("unknown"), "unknown");
         assert_eq!(
-            normalize_antigravity_pricing_model("MODEL_PLACEHOLDER_M999"),
+            normalize_antigravity_pricing_model(&conn, "unknown"),
             "unknown"
         );
         assert_eq!(
-            normalize_antigravity_pricing_model("model_placeholder_custom"),
-            "unknown"
+            normalize_antigravity_pricing_model(&conn, "MODEL_PLACEHOLDER_M999"),
+            "model_placeholder_m999"
         );
+        assert_eq!(
+            normalize_antigravity_pricing_model(&conn, "model_placeholder_custom"),
+            "model_placeholder_custom"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_antigravity_dedup_ledger_blocks_reinsertion_after_detail_pruning(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let request_id = "gemini_antigravity_session:test-session:0";
+        let token_data = AntigravityTokenData {
+            input_tokens: 100,
+            output_tokens: 50,
+            cached_tokens: 20,
+            model: "gemini-3.5-flash".to_string(),
+        };
+
+        // 1. 首次导入：写入明细与去重账本
+        let imported = insert_antigravity_session_entry(
+            &db,
+            request_id,
+            &token_data,
+            Some("test-session"),
+            10_000,
+        )?;
+        assert!(imported);
+
+        {
+            let conn = lock_conn!(db.conn);
+            let detail_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = ?1",
+                [request_id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(detail_count, 1);
+            let ledger_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'antigravity_session' AND request_id = ?1",
+                [request_id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(ledger_count, 1);
+        }
+
+        // 2. 模拟聚合清理 (rollup_and_prune)：删除明细行，但保留 session_usage_dedup 账本
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "DELETE FROM proxy_request_logs WHERE request_id = ?1",
+                [request_id],
+            )?;
+        }
+
+        // 3. 再次同步（例如由于其他步骤仍为 status 2 导致未推进检查点）：
+        // 持久账本阻止已聚合事件重新插入，避免双算
+        let re_imported = insert_antigravity_session_entry(
+            &db,
+            request_id,
+            &token_data,
+            Some("test-session"),
+            10_000,
+        )?;
+        assert!(!re_imported, "明细被清理但账本存在时，必须阻止重新插入");
+
+        {
+            let conn = lock_conn!(db.conn);
+            let detail_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = ?1",
+                [request_id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(detail_count, 0, "明细表不得被重新插入");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_antigravity_status_two_step_allows_final_token_upsert() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let request_id = "gemini_antigravity_session:running-session:1";
+
+        // 步骤尚在运行（status 2）时，先记录初始中间 token
+        let initial_tokens = AntigravityTokenData {
+            input_tokens: 10,
+            output_tokens: 2,
+            cached_tokens: 0,
+            model: "gemini-3.5-flash".to_string(),
+        };
+        assert!(insert_antigravity_session_entry(
+            &db,
+            request_id,
+            &initial_tokens,
+            Some("running-session"),
+            1_000,
+        )?);
+
+        // 步骤完成或推进时更新为最终 token
+        let final_tokens = AntigravityTokenData {
+            input_tokens: 80,
+            output_tokens: 40,
+            cached_tokens: 20,
+            model: "gemini-3.5-flash".to_string(),
+        };
+        let updated = insert_antigravity_session_entry(
+            &db,
+            request_id,
+            &final_tokens,
+            Some("running-session"),
+            1_000,
+        )?;
+        assert!(updated, "最终 token 变更时应成功更新");
+
+        {
+            let conn = lock_conn!(db.conn);
+            let (input, output, cache_read): (i64, i64, i64) = conn.query_row(
+                "SELECT input_tokens, output_tokens, cache_read_tokens FROM proxy_request_logs WHERE request_id = ?1",
+                [request_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            // 80 + 20 cached = 100 cache-inclusive input
+            assert_eq!(input, 100);
+            assert_eq!(output, 40);
+            assert_eq!(cache_read, 20);
+        }
+
+        // 再次相同同步，无变化返回 false
+        let unchanged = insert_antigravity_session_entry(
+            &db,
+            request_id,
+            &final_tokens,
+            Some("running-session"),
+            1_000,
+        )?;
+        assert!(!unchanged);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_antigravity_proxy_first_records_ledger_and_skips_detail() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        // 1. 代理日志先到达
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source, pricing_model
+                ) VALUES ('proxy-early', 'google', 'gemini', 'gemini-3.5-flash', 'gemini-3.5-flash', 100, 50, 20, 0, '0.05', 200, 200, 10000, 'proxy', 'gemini-3.5-flash')",
+                [],
+            )?;
+        }
+
+        // 2. 会话同步后到达（完全相同的指纹：80 fresh + 20 cached = 100 cache-inclusive input）
+        let token_data = AntigravityTokenData {
+            input_tokens: 80,
+            output_tokens: 50,
+            cached_tokens: 20,
+            model: "gemini-3.5-flash".to_string(),
+        };
+        let imported = insert_antigravity_session_entry(
+            &db,
+            "session-req-distinct",
+            &token_data,
+            Some("proxy-first"),
+            10_000,
+        )?;
+        assert!(!imported, "代理日志命中时跳过会话明细插入");
+
+        // 3. 验证去重账本已记录，即使代理日志后续被清理也不会重新插入
+        {
+            let conn = lock_conn!(db.conn);
+            let ledger_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'antigravity_session' AND request_id = 'session-req-distinct'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(ledger_count, 1);
+
+            // 清理代理日志
+            conn.execute(
+                "DELETE FROM proxy_request_logs WHERE data_source = 'proxy'",
+                [],
+            )?;
+        }
+
+        let re_imported = insert_antigravity_session_entry(
+            &db,
+            "session-req-distinct",
+            &token_data,
+            Some("proxy-first"),
+            10_000,
+        )?;
+        assert!(!re_imported, "代理日志清理后，持久账本阻止重新插入");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_antigravity_pricing_custom_pricing_precedence_and_claude_5_5() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+
+        // 1. 用户对 claude-sonnet-4-6 设置了自定义价格 $1.00
+        conn.execute(
+            "UPDATE model_pricing SET input_cost_per_million = '1.0' WHERE model_id = 'claude-sonnet-4-6'",
+            [],
+        )?;
+
+        let (pricing, pricing_model) = resolve_antigravity_pricing(&conn, "claude-sonnet-4-6");
+        assert_eq!(pricing_model, "claude-sonnet-4-6");
+        assert_eq!(
+            pricing.expect("pricing").input_cost_per_million,
+            Decimal::from(1)
+        );
+
+        // 2. claude-opus-5-5 命中已种子价格 ($4.00)
+        let (opus_pricing, opus_model) = resolve_antigravity_pricing(&conn, "claude-opus-5-5");
+        assert_eq!(opus_model, "claude-opus-5-5");
+        assert_eq!(
+            opus_pricing.expect("opus pricing").input_cost_per_million,
+            Decimal::from(4)
+        );
+
+        // 3. claude-opus-5.5-thinking 剥离 -thinking 并命中 claude-opus-5-5
+        let (opus_think_pricing, opus_think_model) =
+            resolve_antigravity_pricing(&conn, "claude-opus-5.5-thinking");
+        assert_eq!(opus_think_model, "claude-opus-5-5");
+        assert_eq!(
+            opus_think_pricing
+                .expect("opus think")
+                .input_cost_per_million,
+            Decimal::from(4)
+        );
+
+        // 4. claude-sonnet-5.5 保留完整版本号与家族，不降级为 5 或 4.6，且由于无内置价格返回未定价 (None)
+        let (sonnet_55_pricing, sonnet_55_model) =
+            resolve_antigravity_pricing(&conn, "claude-sonnet-5.5");
+        assert_eq!(sonnet_55_model, "claude-sonnet-5-5");
+        assert!(sonnet_55_pricing.is_none(), "无官方价格条目时不得猜测价格");
+
+        // 5. 未知占位符保留原始 ID，不产生价格
+        let (m999_pricing, m999_model) =
+            resolve_antigravity_pricing(&conn, "model_placeholder_m999");
+        assert_eq!(m999_model, "model_placeholder_m999");
+        assert!(m999_pricing.is_none());
+
+        Ok(())
     }
 }

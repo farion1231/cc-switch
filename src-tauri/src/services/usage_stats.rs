@@ -2469,6 +2469,146 @@ pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<Mo
         })
 }
 
+pub(crate) fn resolve_antigravity_pricing(
+    conn: &Connection,
+    raw_model: &str,
+) -> (Option<ModelPricing>, String) {
+    let trimmed = raw_model.trim();
+    if trimmed.is_empty()
+        || matches!(
+            trimmed.to_ascii_lowercase().as_str(),
+            "unknown" | "null" | "none"
+        )
+    {
+        return (None, "unknown".to_string());
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+
+    // 1. Exact match on raw model ID (protecting user custom pricing on variants)
+    if let Ok(Some(row)) = query_model_pricing_exact(conn, &normalized) {
+        if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+            return (Some(pricing), normalized);
+        }
+    }
+
+    // 2. Reuse standard pricing candidates (namespaces, dates, reasoning efforts, dot versions)
+    let candidates = model_pricing_candidates(&normalized);
+    for candidate in &candidates {
+        if let Ok(Some(row)) = query_model_pricing_exact(conn, candidate) {
+            if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+                return (Some(pricing), candidate.clone());
+            }
+        }
+    }
+
+    // 3. AGY-specific syntax variant rules
+    // 3a. Strip -thinking suffix and re-evaluate candidates without thinking
+    if let Some(base) = normalized.strip_suffix("-thinking") {
+        if let Ok(Some(row)) = query_model_pricing_exact(conn, base) {
+            if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+                return (Some(pricing), base.to_string());
+            }
+        }
+        let base_candidates = model_pricing_candidates(base);
+        for candidate in &base_candidates {
+            if let Ok(Some(row)) = query_model_pricing_exact(conn, candidate) {
+                if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+                    return (Some(pricing), candidate.clone());
+                }
+            }
+        }
+    }
+
+    // 3b. Proved Gemini flash variants
+    let without_thinking = normalized.strip_suffix("-thinking").unwrap_or(&normalized);
+    let gemini_variant = match without_thinking {
+        "3.8"
+        | "3.8flash"
+        | "3.8-flash"
+        | "flash-3.8"
+        | "gemini-3.8"
+        | "gemini-3.8-flash-a"
+        | "gemini-3.8-flash-b"
+        | "gemini-3.8-flash-exp-a"
+        | "gemini-3.8-flash-exp-b"
+        | "gemini-3.8-flash-low"
+        | "gemini-3.8-flash-medium"
+        | "gemini-3.8-flash-high"
+        | "gemini-3.8-flash-preview"
+        | "gemini-3.8-flash-tiered" => Some("gemini-3.8-flash"),
+        "3.7"
+        | "3.7flash"
+        | "3.7-flash"
+        | "flash-3.7"
+        | "gemini-3.7"
+        | "gemini-3.7-flash-a"
+        | "gemini-3.7-flash-b"
+        | "gemini-3.7-flash-exp-a"
+        | "gemini-3.7-flash-exp-b"
+        | "gemini-3.7-flash-low"
+        | "gemini-3.7-flash-medium"
+        | "gemini-3.7-flash-high"
+        | "gemini-3.7-flash-preview"
+        | "gemini-3.7-flash-tiered" => Some("gemini-3.7-flash"),
+        "3.6"
+        | "3.6flash"
+        | "3.6-flash"
+        | "flash-3.6"
+        | "gemini-3.6"
+        | "gemini-3.6-flash-a"
+        | "gemini-3.6-flash-b"
+        | "gemini-3.6-flash-exp-a"
+        | "gemini-3.6-flash-exp-b"
+        | "gemini-3.6-flash-low"
+        | "gemini-3.6-flash-medium"
+        | "gemini-3.6-flash-high"
+        | "gemini-3.6-flash-preview"
+        | "gemini-3.6-flash-tiered" => Some("gemini-3.6-flash"),
+        _ => None,
+    };
+    if let Some(target) = gemini_variant {
+        if let Ok(Some(row)) = query_model_pricing_exact(conn, target) {
+            if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+                return (Some(pricing), target.to_string());
+            }
+        }
+    }
+
+    // 4. Verified opaque placeholder exceptions
+    let placeholder_target = match without_thinking {
+        "model_placeholder_m187" | "model_placeholder_m20" | "gemini-default" => {
+            Some("gemini-3.5-flash")
+        }
+        "model_placeholder_m132" | "gemini-3-flash-a" => Some("gemini-3.5-flash"),
+        "model_placeholder_m36"
+        | "gemini-3.1-pro-low"
+        | "model_placeholder_m16"
+        | "gemini-pro-default" => Some("gemini-3.1-pro-preview"),
+        "model_placeholder_m35" => Some("claude-sonnet-4-6-20260217"),
+        "model_placeholder_m26" => Some("claude-opus-4-6-20260206"),
+        "gpt-oss-120b-medium" => Some("gpt-oss-120b-medium"),
+        _ => None,
+    };
+    if let Some(target) = placeholder_target {
+        if let Ok(Some(row)) = query_model_pricing_exact(conn, target) {
+            if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+                return (Some(pricing), target.to_string());
+            }
+        }
+    }
+
+    // 5. Unpriced: normalize formatting (e.g. dot to dash for Claude) but preserve original ID without guessing
+    let resolved_name = if without_thinking.starts_with("claude-") && without_thinking.contains('.')
+    {
+        without_thinking.replace('.', "-")
+    } else {
+        without_thinking.to_string()
+    };
+
+    (None, resolved_name)
+}
+
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
