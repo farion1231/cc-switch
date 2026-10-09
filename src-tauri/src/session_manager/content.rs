@@ -18,7 +18,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::model::{ContentRef, ImageRef, ImageSource};
-use super::providers::{hermes, opencode};
+use super::providers::{hermes, kilo, opencode};
 use super::{canonicalize_existing_path, provider_roots};
 
 /// 单次读取的全文上限
@@ -99,6 +99,11 @@ pub fn validate_source(provider_id: &str, source_path: &str) -> Result<Validated
             source_path,
             hermes::parse_sqlite_source(source_path),
             &crate::hermes_config::get_hermes_dir().join("state.db"),
+        )?,
+        "kilo" if source_path.starts_with("sqlite:") => validate_sqlite_source(
+            source_path,
+            kilo::parse_sqlite_source(source_path),
+            &crate::kilo_config::get_kilo_db_path(),
         )?,
         _ => {
             let roots = provider_roots(provider_id)?;
@@ -707,7 +712,39 @@ mod tests {
 
         let raw = format!("sqlite:{}:ses_1", other.display());
         assert!(validate_sqlite_source(&raw, opencode::parse_sqlite_source(&raw), &own).is_err());
+        assert!(validate_sqlite_source(&raw, kilo::parse_sqlite_source(&raw), &own).is_err());
         assert!(hermes::parse_sqlite_source("sqlite:/x/state.db#").is_none());
+        assert!(kilo::parse_sqlite_source("sqlite:/x/kilo.db#").is_none());
+    }
+
+    #[test]
+    #[allow(deprecated)] // set_var/remove_var deprecated since Rust 1.81; safe here under mutex
+    fn kilo_sqlite_source_is_not_treated_as_file_path() {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let _guard = LOCK.get_or_init(Default::default).lock().unwrap();
+
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("kilo.db");
+        std::fs::write(&db, "").unwrap();
+        let original = std::env::var_os("KILO_DB");
+        std::env::set_var("KILO_DB", &db);
+
+        let raw = format!("sqlite:{}:ses_1", db.display());
+        let location = validate_source("kilo", &raw).unwrap().location;
+        assert!(
+            matches!(&location, SourceLocation::Sqlite { session_id, .. } if session_id == "ses_1")
+        );
+
+        let foreign = format!("sqlite:{}:ses_1", dir.path().join("other.db").display());
+        assert!(validate_source("kilo", &foreign).is_err());
+        let err = validate_source("kilo", &raw.replace(":ses_1", ":other_1")).unwrap_err();
+        assert!(err.contains("Invalid SQLite session source"), "{err}");
+
+        #[allow(deprecated)]
+        match original {
+            Some(value) => std::env::set_var("KILO_DB", value),
+            None => std::env::remove_var("KILO_DB"),
+        }
     }
 
     /// 超长注入文本与压缩摘要只下发预览：`full` 必须能取回原文（Claude 与 Codex 解析器）
