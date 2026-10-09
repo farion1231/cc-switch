@@ -65,6 +65,12 @@ pub struct RequestContext {
     pub session_id: String,
     /// Session ID 是否由客户端提供。生成的 UUID 不能作为上游缓存 key，否则每个请求都会换 key。
     pub session_client_provided: bool,
+    /// 压缩见证的隔离键（thread 级，见 `session::SessionIdResult::witness_key`）。
+    ///
+    /// 与 `session_id` 分工：`session_id` 是会话身份（日志 / 缓存 / 官方 OAuth 透传）；
+    /// 见证记录 / 查询 / 作废按这个 key 隔离（Codex 需 thread-id 与会话拼写齐备）。
+    /// None 时见证链路整体 fail-closed。
+    pub witness_key: Option<String>,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -217,6 +223,7 @@ impl RequestContext {
             app_type,
             session_id,
             session_client_provided: session_result.client_provided,
+            witness_key: session_result.witness_key.clone(),
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
@@ -278,11 +285,13 @@ impl RequestContext {
             state.current_providers.clone(),
             state.gemini_shadow.clone(),
             state.codex_chat_history.clone(),
+            state.codex_compaction_replay.clone(),
             state.failover_manager.clone(),
             state.app_handle.clone(),
             self.current_provider_id.clone(),
             self.session_id.clone(),
             self.session_client_provided,
+            self.witness_key.clone(),
             first_byte_timeout,
             idle_timeout,
             self.rectifier_config.clone(),

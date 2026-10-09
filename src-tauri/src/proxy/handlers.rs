@@ -19,6 +19,7 @@ use super::{
     providers::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
+        codex_compaction::CompactionWitnessObserver,
         get_adapter, get_claude_api_format,
         streaming::create_anthropic_sse_stream,
         streaming_codex_anthropic::{
@@ -649,6 +650,9 @@ async fn handle_claude_transform(
             sse_stream,
             "Claude/OpenRouter",
             usage_collector,
+            // 普通响应复用仍在册的压缩见证 response id 时在转发现场作废它（Claude 路径
+            // 恒为 None，仅为与其余接线点保持同一形态）。
+            CompactionWitnessObserver::for_context(ctx, &state.codex_compaction_replay),
             timeout_config,
             connection_guard,
         );
@@ -1194,12 +1198,19 @@ async fn handle_codex_native_compaction_response(
 
     let compaction_stream = super::providers::codex_compaction::create_native_compaction_sse_stream(
         response.bytes_stream(),
+        Some(state.codex_compaction_replay.clone()),
+        // 没有客户端提供的 thread 级见证键时不让压缩回合在见证记录里留痕：
+        // 后续游标整流按同一见证键查询，无键的记录既查不到也用不上。
+        ctx.witness_key.clone(),
     );
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
     let logged_stream = create_logged_passthrough_stream(
         compaction_stream,
         ctx.tag,
         usage_collector,
+        // 压缩流不观察：它的 response id 就是 finish() 里刚写入的见证，"普通响应复用
+        // 同名 id" 的作废观察在这里会立刻删掉自己刚记录的记录。
+        None,
         ctx.streaming_timeout_config(),
         connection_guard,
     );
@@ -1500,6 +1511,8 @@ async fn handle_codex_late_arguments_repair(
         repair_stream,
         ctx.tag,
         usage_collector,
+        // 普通响应签发/复用的 response id 与一条仍在册的压缩见证重名时，在转发现场作废它。
+        CompactionWitnessObserver::for_context(ctx, &state.codex_compaction_replay),
         ctx.streaming_timeout_config(),
         connection_guard,
     );
@@ -1556,6 +1569,8 @@ async fn handle_codex_xai_native_responses_rewrite(
             restore_stream,
             ctx.tag,
             usage_collector,
+            // 普通响应签发/复用的 response id 与一条仍在册的压缩见证重名时，在转发现场作废它。
+            CompactionWitnessObserver::for_context(ctx, &state.codex_compaction_replay),
             ctx.streaming_timeout_config(),
             connection_guard,
         );
@@ -1592,6 +1607,15 @@ async fn handle_codex_xai_native_responses_rewrite(
             transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
                 &mut value,
             );
+            // 普通非流式成功响应复用了仍在册的压缩见证 response id 时作废旧见证
+            //（命名空间还原只改函数名，不影响顶层 id）。
+            if status.is_success() {
+                if let Some(observer) =
+                    CompactionWitnessObserver::for_context(ctx, &state.codex_compaction_replay)
+                {
+                    observer.observe_json_response(&value);
+                }
+            }
             if let Some(usage) =
                 TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
             {
@@ -1752,6 +1776,8 @@ async fn handle_codex_chat_to_responses_transform(
             sse_stream,
             ctx.tag,
             usage_collector,
+            // 普通响应签发/复用的 response id 与一条仍在册的压缩见证重名时，在转发现场作废它。
+            CompactionWitnessObserver::for_context(ctx, &state.codex_compaction_replay),
             ctx.streaming_timeout_config(),
             connection_guard,
         );
@@ -1820,6 +1846,15 @@ async fn handle_codex_chat_to_responses_transform(
         .codex_chat_history
         .record_response(&responses_response)
         .await;
+
+    // 普通非流式成功响应复用了仍在册的压缩见证 response id 时作废旧见证。
+    if status.is_success() {
+        if let Some(observer) =
+            CompactionWitnessObserver::for_context(ctx, &state.codex_compaction_replay)
+        {
+            observer.observe_json_response(&responses_response);
+        }
+    }
 
     // 上游非流式 Chat 省略 usage 时，chat_usage_to_responses_usage 会合成全 0 usage
     // (transform_codex_chat.rs:1581)，from_codex_response 对 input/output 字段存在(哪怕=0)
@@ -1990,6 +2025,15 @@ async fn handle_codex_anthropic_to_responses_transform(
             e
         })?;
 
+    // 普通非流式成功响应复用了仍在册的压缩见证 response id 时作废旧见证。
+    if status.is_success() {
+        if let Some(observer) =
+            CompactionWitnessObserver::for_context(ctx, &state.codex_compaction_replay)
+        {
+            observer.observe_json_response(&responses_response);
+        }
+    }
+
     if let Some(usage) = TokenUsage::from_codex_response_auto(&responses_response)
         .filter(TokenUsage::has_billable_tokens)
     {
@@ -2125,6 +2169,8 @@ fn build_codex_anthropic_sse_response(
         sse_stream,
         ctx.tag,
         usage_collector,
+        // 普通响应签发/复用的 response id 与一条仍在册的压缩见证重名时，在转发现场作废它。
+        CompactionWitnessObserver::for_context(ctx, &state.codex_compaction_replay),
         ctx.streaming_timeout_config(),
         connection_guard,
     );

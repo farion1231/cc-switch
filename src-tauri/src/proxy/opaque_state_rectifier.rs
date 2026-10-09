@@ -28,6 +28,11 @@ const ENCRYPTED_FUNCTION_OUTPUT_REJECTION: &str =
 /// 函数输出、agent_message 里去掉的加密片段换成这句。
 const ENCRYPTED_PART_PLACEHOLDER: &str = "[encrypted content omitted]";
 
+/// 游标"查不到"类措辞：上游回查自家签发的历史找不到这个 id 的具体表现。整流只认这种
+/// 正向证据——错误信息仅仅点名游标字段还不够，用法 / 能力协商错误（和 `conversation` 同时使用、
+/// endpoint 不支持 continuation）同样会点名游标，但不该靠改写请求来绕过。
+const CURSOR_LOOKUP_FAILURE_TERMS: &[&str] = &["not found", "does not exist", "unknown response"];
+
 /// 上游拒绝了请求里的密文，重试前要去掉哪些状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpaqueStateRejection {
@@ -39,6 +44,12 @@ pub struct OpaqueStateRejection {
     ///   转成文字，到得了官方的压缩密文都是官方自己签发的。
     /// - 第三方：一被拒就换。它收到的压缩密文多半是官方签发的（Stack 模式下切换过来）。
     pub compaction: bool,
+    /// 去掉请求顶层的 `previous_response_id`。它是续聊指针而不是密文，语义独立成一个维度：
+    /// 上游只是不认这个游标时，这家自己签发的推理条目多半还查得到，不该跟着被清；反过来
+    /// 密文类被拒时，指向这家历史的游标也不该被殃及。这里只负责识别该不该删；删掉之后
+    /// 请求是否仍有完整历史，由转发层拿压缩回合的见证记录（`CompactionReplayStore`）核对，
+    /// 核对不上就保留游标、原样返回查找错误，不制造一个可能被上游照收却丢上下文的请求。
+    pub previous_response_id: bool,
 }
 
 /// 整流结果
@@ -54,6 +65,8 @@ pub struct OpaqueStateRectifyResult {
     pub replaced_encrypted_parts: usize,
     /// 去掉的别家格式条目 id 数量
     pub removed_foreign_ids: usize,
+    /// 去掉的响应游标数量（`previous_response_id`）
+    pub removed_previous_response_id: usize,
 }
 
 /// 上游是不是因为验不了请求里的密文而拒绝。受整流器总开关管辖。
@@ -89,13 +102,22 @@ pub fn detect_opaque_state_rejection(
             502 => is_encrypted_function_output_rejection(body, &messages),
             _ => false,
         };
-        if rejected {
+        // 5xx 是上游自己的故障，按常规重试 / 故障转移处理；删续聊指针只允许在 4xx 的
+        // 明确拒绝上进行，故障状态码即便错误文本点名游标也不动请求。这里只是纯识别；
+        // 删掉之后请求是否仍有完整历史，由转发层拿压缩回合的见证记录核对后再决定。
+        let cursor_rejected = matches!(*status, 400..=499)
+            && payload.as_ref().is_some_and(|payload| {
+                is_previous_response_id_rejection(payload, &messages, request)
+            });
+        if rejected || cursor_rejected {
             return Some(OpaqueStateRejection {
-                reasoning: true,
-                compaction: codex_third_party
-                    || messages
-                        .iter()
-                        .any(|message| message.contains("compaction")),
+                reasoning: rejected,
+                compaction: rejected
+                    && (codex_third_party
+                        || messages
+                            .iter()
+                            .any(|message| message.contains("compaction"))),
+                previous_response_id: cursor_rejected,
             });
         }
     }
@@ -111,6 +133,7 @@ pub fn detect_opaque_state_rejection(
         OpaqueStateRejection {
             reasoning: false,
             compaction: true,
+            previous_response_id: false,
         },
     )
 }
@@ -164,6 +187,40 @@ fn is_rejection_message(message: &str) -> bool {
         || (message.contains("not found") && message.contains("Items are not persisted when"))
 }
 
+/// 上游不认请求里的 `previous_response_id`：错误要同时给出两样证据——字段定位（结构化
+/// `error.param` 指向游标，或消息里点名 `previous_response_id`）和"查不到"的原因
+/// （`CURSOR_LOOKUP_FAILURE_TERMS`），且请求里真的带着非空游标。只点名字段、原因却是
+/// 用法 / 能力协商（和 `conversation` 同时使用、endpoint 不支持 continuation）的不算：
+/// 那类错误不该靠删掉游标来绕过。
+///
+/// 可达性：游标维度的输入前提是请求自带非空游标。当前公开 Codex 的 HTTP 请求体
+/// （codex-api `ResponsesApiRequest`）不含 `previous_response_id`——该字段只随 Responses
+/// WebSocket 的 `response.create`（`ResponseCreateWsRequest`）发送，而本地代理对 WS 升级
+/// 返回 426、Codex 随即改走 HTTP。因此标准 Codex HTTP 路径在这里必然 fail-closed；本维度
+/// 实际覆盖的是任何携带游标的兼容客户端。
+fn is_previous_response_id_rejection(payload: &Value, messages: &[&str], request: &Value) -> bool {
+    let carries_cursor = request
+        .get("previous_response_id")
+        .and_then(Value::as_str)
+        .is_some_and(|cursor| !cursor.is_empty());
+    if !carries_cursor {
+        return false;
+    }
+    let lookup_failure = |message: &&str| {
+        let lower = message.to_ascii_lowercase();
+        CURSOR_LOOKUP_FAILURE_TERMS
+            .iter()
+            .any(|term| lower.contains(term))
+    };
+    if payload.pointer("/error/param").and_then(Value::as_str) == Some("previous_response_id") {
+        return messages.iter().any(lookup_failure);
+    }
+    messages.iter().any(|message| {
+        let lower = message.to_ascii_lowercase();
+        lower.contains("previous_response_id") && lookup_failure(message)
+    })
+}
+
 /// OpenAI 不收带内容的推理条目："Invalid 'input[N].content': array too long. Expected an array
 /// with maximum length 0, ..."（错误码 `array_above_max_length`）。
 fn is_content_array_rejection(message: &str) -> bool {
@@ -188,7 +245,9 @@ fn carries_plaintext_reasoning(request: &Value) -> bool {
         })
 }
 
-/// 去掉请求里上游可能验不了的状态（按 `rejection` 的两个开关）：
+/// 去掉请求里上游可能验不了的状态（按 `rejection` 的三个开关）：
+/// - `previous_response_id` 是续聊指针：上游按 id 回查自家签发的历史，跨供应商时一定查不到。
+///   它在请求顶层，先于 `input` 处理，不依赖 `input` 存不存在、是不是数组。
 /// - 推理条目整条去掉。它们只携带密文（或一个要回查的 id），被拒时分不清哪条是别家的；
 ///   去掉后同一段历史每次整流结果相同，重试之间的缓存前缀也稳定。
 /// - 函数输出、agent_message 里的加密片段换成占位文字。
@@ -197,13 +256,29 @@ fn carries_plaintext_reasoning(request: &Value) -> bool {
 /// - 压缩条目换成文字（CC Switch 的摘要解回正文，别家的换成一句说明），没有载荷的
 ///   标记直接去掉。
 ///
-/// 只动 `input` 里的条目，压缩触发等其他条目原样保留，交给转发时的常规处理。
+/// `input` 里只动上面几类条目，压缩触发等其他条目原样保留，交给转发时的常规处理。
 pub fn rectify_opaque_state(
     body: &mut Value,
     rejection: OpaqueStateRejection,
 ) -> OpaqueStateRectifyResult {
     let mut result = OpaqueStateRectifyResult::default();
+
+    // 游标在顶层，和 input 无关：没有 input 数组的请求也要能删掉它。null 之类的无效值
+    // 不算一次整流。
+    if rejection.previous_response_id {
+        if let Some(object) = body.as_object_mut() {
+            let present = object
+                .get("previous_response_id")
+                .and_then(Value::as_str)
+                .is_some_and(|cursor| !cursor.is_empty());
+            if present && object.remove("previous_response_id").is_some() {
+                result.removed_previous_response_id += 1;
+            }
+        }
+    }
+
     let Some(items) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        result.applied = result.removed_previous_response_id > 0;
         return result;
     };
 
@@ -246,6 +321,7 @@ pub fn rectify_opaque_state(
         + result.replaced_compaction_items
         + result.replaced_encrypted_parts
         + result.removed_foreign_ids
+        + result.removed_previous_response_id
         > 0;
     result
 }
@@ -279,17 +355,34 @@ mod tests {
     const OFFICIAL: bool = false;
     const THIRD_PARTY: bool = true;
 
+    /// 一并清掉密文类状态（推理条目、加密片段、别家 id）和压缩条目——自证的拒绝在第三方
+    /// 上游下的形态（`detect` 输出），不含游标维度。
+    const REASONING_AND_COMPACTION: OpaqueStateRejection = OpaqueStateRejection {
+        reasoning: true,
+        compaction: true,
+        previous_response_id: false,
+    };
+    /// 三个维度全开，给整流函数本身的测试用。
     const ALL_STATE: OpaqueStateRejection = OpaqueStateRejection {
         reasoning: true,
         compaction: true,
+        previous_response_id: true,
     };
     const REASONING_ONLY: OpaqueStateRejection = OpaqueStateRejection {
         reasoning: true,
         compaction: false,
+        previous_response_id: false,
     };
     const COMPACTION_ONLY: OpaqueStateRejection = OpaqueStateRejection {
         reasoning: false,
         compaction: true,
+        previous_response_id: false,
+    };
+    /// 上游只是不认请求里的游标：清它，别的不碰。
+    const CURSOR_ONLY: OpaqueStateRejection = OpaqueStateRejection {
+        reasoning: false,
+        compaction: false,
+        previous_response_id: true,
     };
 
     fn upstream(status: u16, body: Value) -> ProxyError {
@@ -350,7 +443,7 @@ mod tests {
             400,
             json!({ "code": "invalid-argument", "error": "Could not decode the compaction blob: bad" }),
         );
-        assert_eq!(detect(&xai), Some(ALL_STATE));
+        assert_eq!(detect(&xai), Some(REASONING_AND_COMPACTION));
 
         let function_output = ProxyError::UpstreamError {
             status: 502,
@@ -380,7 +473,7 @@ mod tests {
         );
         assert_eq!(
             detect_with(&rejection, &plaintext, THIRD_PARTY),
-            Some(ALL_STATE)
+            Some(REASONING_AND_COMPACTION)
         );
 
         let encrypted_only = json!({ "input": [
@@ -431,6 +524,283 @@ mod tests {
         assert_eq!(body["input"][0]["id"], "070ff2_msg_3");
     }
 
+    /// 游标拒绝单独成维：识别要求请求里真带着非空游标，错误同时给出字段定位和"查不到"
+    /// 证据；用法 / 能力协商错误不认；整流只删游标、保推理条目。
+    #[test]
+    fn detects_previous_response_id_rejection_and_removes_cursor_only() {
+        let cursor_request = json!({
+            "previous_response_id": "resp_foreign",
+            "input": [
+                { "type": "message", "id": "msg_01a1", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA-other" }
+            ]
+        });
+        let cases = [
+            r#"{"error":{"message":"Invalid 'previous_response_id': 'resp_68a1b2c3'. Previous response not found."}}"#,
+            // 结构化字段路径：param 点名游标，消息再给出"查不到"证据才认。
+            r#"{"error":{"param":"previous_response_id","message":"Previous response not found."}}"#,
+            r#"{"error":{"param":"previous_response_id","message":"Unknown response id 'resp_68a1b2c3'."}}"#,
+        ];
+        for body in cases {
+            let rejection = upstream(400, serde_json::from_str(body).unwrap());
+            assert_eq!(
+                detect_with(&rejection, &cursor_request, OFFICIAL),
+                Some(CURSOR_ONLY),
+                "body={body}"
+            );
+        }
+
+        // 请求里没有游标可删时不触发：错误文本提到游标也不认。
+        let error = upstream(
+            400,
+            json!({ "error": { "message": "previous_response_id is not found for this key" } }),
+        );
+        assert_eq!(detect_with(&error, &json!({ "input": [] }), OFFICIAL), None);
+
+        // 用法 / 能力协商错误（和 conversation 同时用、endpoint 不支持这种 continuation）：
+        // 只是点名了游标字段，没有"查不到"证据，不触发整流。
+        for message in [
+            "previous_response_id cannot be used with conversation",
+            "previous_response_id is not supported by this endpoint",
+            "previous_response_id is invalid for this endpoint",
+        ] {
+            let error = upstream(
+                400,
+                json!({ "error": { "param": "previous_response_id", "message": message } }),
+            );
+            assert_eq!(
+                detect_with(&error, &cursor_request, OFFICIAL),
+                None,
+                "message={message}"
+            );
+        }
+
+        // 只有字面出现、没有任何拒绝措辞的场合不算。
+        let unrelated = upstream(
+            400,
+            json!({ "error": { "message": "previous_response_id was echoed back in metadata" } }),
+        );
+        assert_eq!(detect_with(&unrelated, &cursor_request, OFFICIAL), None);
+
+        // 游标被拒：只删游标，这家自己签发的推理条目原样保留。
+        let mut body = cursor_request.clone();
+        let result = rectify_opaque_state(&mut body, CURSOR_ONLY);
+        assert!(result.applied);
+        assert_eq!(result.removed_previous_response_id, 1);
+        assert_eq!(result.removed_reasoning_items, 0);
+        assert_eq!(result.replaced_encrypted_parts, 0);
+        assert!(body.get("previous_response_id").is_none());
+        assert_eq!(body["input"].as_array().unwrap().len(), 2);
+
+        // 反过来：密文类被拒时，请求里的游标必须留下。
+        let mut body = cursor_request.clone();
+        let result = rectify_opaque_state(&mut body, REASONING_ONLY);
+        assert!(result.applied);
+        assert_eq!(result.removed_reasoning_items, 1);
+        assert_eq!(result.removed_previous_response_id, 0);
+        assert_eq!(body["previous_response_id"], "resp_foreign");
+    }
+
+    /// 5xx 是上游自己的故障：删续聊指针只允许在 4xx 的明确拒绝上进行，故障类状态码
+    /// 即便错误文本点名游标也按常规错误处理（重试 / 故障转移），不改请求。
+    #[test]
+    fn does_not_touch_cursor_on_5xx() {
+        let cursor_request = json!({ "previous_response_id": "resp_own" });
+        for status in [500u16, 502, 503] {
+            let error = upstream(
+                status,
+                json!({ "error": { "param": "previous_response_id",
+                                   "message": "previous_response_id not found" } }),
+            );
+            assert_eq!(
+                detect_with(&error, &cursor_request, OFFICIAL),
+                None,
+                "status={status}"
+            );
+        }
+
+        // 502 的既有例外不受影响：函数输出密文解不开时照旧整流（只清密文类状态）。
+        let function_output = ProxyError::UpstreamError {
+            status: 502,
+            body: Some(ENCRYPTED_FUNCTION_OUTPUT_REJECTION.to_string()),
+        };
+        assert_eq!(
+            detect_with(&function_output, &cursor_request, OFFICIAL),
+            Some(REASONING_ONLY)
+        );
+    }
+
+    /// 游标拒绝的识别只看错误证据和"请求里真带着游标"，与 `input` 形态无关——删游标
+    /// 之后历史是否完整不在这层证明：转发层会拿压缩回合的见证记录
+    /// （`CompactionReplayStore`）核对，核对不上就 fail-closed、原样返回查找错误。
+    #[test]
+    fn cursor_rejection_identification_is_independent_of_input_shape() {
+        let lookup_error = || {
+            upstream(
+                400,
+                json!({ "error": { "message":
+                    "Invalid 'previous_response_id': 'resp_x'. Previous response not found." } }),
+            )
+        };
+
+        let shapes = [
+            // 增量普通 user 回合。
+            json!({ "previous_response_id": "resp_x", "input": [
+                { "type": "message", "role": "user",
+                  "content": [{ "type": "input_text", "text": "continue from the previous answer" }] }
+            ] }),
+            // 孤儿工具输出。
+            json!({ "previous_response_id": "resp_x", "input": [
+                { "type": "function_call_output", "call_id": "call_123", "output": "done" }
+            ] }),
+            // 最近一组完整工具对。
+            json!({ "previous_response_id": "resp_x", "input": [
+                { "type": "function_call", "call_id": "call_1", "name": "shell", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "call_1", "output": "ok" }
+            ] }),
+            // 局部重放（几条消息 + 推理条目）。
+            json!({ "previous_response_id": "resp_x", "input": [
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA-other" },
+                { "type": "message", "id": "msg_1", "role": "assistant",
+                  "content": [{ "type": "output_text", "text": "a" }] },
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "again" }] }
+            ] }),
+            // 没有 input。
+            json!({ "previous_response_id": "resp_x" }),
+            // 别家的压缩密文。
+            json!({ "previous_response_id": "resp_x", "input": [
+                { "type": "compaction", "encrypted_content": "gAAAA-openai" },
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "again" }] }
+            ] }),
+            // CC Switch 包装的完整摘要。
+            json!({ "previous_response_id": "resp_x", "input": [
+                { "type": "compaction", "encrypted_content": encode_compaction_summary("prior work") },
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "again" }] }
+            ] }),
+            // 摘要已经换成文字（上一轮整流换掉过）。
+            json!({ "previous_response_id": "resp_x", "input": [
+                { "type": "message", "role": "user",
+                  "content": [{ "type": "input_text", "text": format!("{SUMMARY_PREFIX}\nprior work") }] },
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "again" }] }
+            ] }),
+        ];
+        for (index, shape) in shapes.iter().enumerate() {
+            assert_eq!(
+                detect_with(&lookup_error(), shape, OFFICIAL),
+                Some(CURSOR_ONLY),
+                "shape={index}"
+            );
+        }
+    }
+
+    /// 游标证据齐备、但请求本身不带游标：不得识别为游标拒绝——没有可删的东西。标准
+    /// Codex HTTP 请求体就是这个形态：codex-api `ResponsesApiRequest` 的字段集不含
+    /// `previous_response_id`（游标只随 Responses WebSocket 的 `response.create` 发送；
+    /// 本地代理对 WS 升级返回 426，Codex 改走 HTTP）。
+    #[test]
+    fn cursor_evidence_without_a_cursor_in_the_request_is_not_a_cursor_rejection() {
+        let error = upstream(
+            400,
+            json!({ "error": { "message":
+                "Invalid 'previous_response_id': 'resp_x'. Previous response not found." } }),
+        );
+
+        let requests = [
+            // 生产形状：完整字段集里没有游标。
+            json!({
+                "model": "gpt-5-codex",
+                "stream": true,
+                "input": [{ "type": "message", "role": "user",
+                            "content": [{ "type": "input_text", "text": "hi" }] }],
+                "tools": [],
+                "tool_choice": "auto",
+                "parallel_tool_calls": false,
+                "reasoning": { "effort": "medium" },
+                "store": false,
+                "include": [],
+                "prompt_cache_key": "8b1f0b5e-6d3a-4c2f-9f0d-2a7c4e6b8d10"
+            }),
+            // null / 空串同样不算携带游标。
+            json!({ "previous_response_id": null, "input": [] }),
+            json!({ "previous_response_id": "", "input": [] }),
+        ];
+        for (index, request) in requests.iter().enumerate() {
+            for third_party in [OFFICIAL, THIRD_PARTY] {
+                assert_eq!(
+                    detect_with(&error, request, third_party),
+                    None,
+                    "request={index} third_party={third_party}"
+                );
+            }
+        }
+    }
+
+    /// 游标删除不依赖 `input` 的形态：没有 input、空数组、非数组都要能删掉；null 之类的
+    /// 无效值不算一次整流。压缩类重试不碰游标。
+    #[test]
+    fn cursor_removal_ignores_input_shape() {
+        let mut body = json!({ "previous_response_id": "resp_only" });
+        let result = rectify_opaque_state(&mut body, CURSOR_ONLY);
+        assert!(result.applied);
+        assert_eq!(result.removed_previous_response_id, 1);
+        assert!(body.get("previous_response_id").is_none());
+
+        let mut body = json!({ "previous_response_id": "resp_empty", "input": [] });
+        assert!(rectify_opaque_state(&mut body, CURSOR_ONLY).applied);
+        assert!(body.get("previous_response_id").is_none());
+
+        let mut body = json!({ "previous_response_id": "resp_non_array", "input": "x" });
+        assert!(rectify_opaque_state(&mut body, CURSOR_ONLY).applied);
+        assert!(body.get("previous_response_id").is_none());
+        assert_eq!(body["input"], "x");
+
+        // null 游标：删不删都不算整流（没有可用的东西被去掉）。
+        let mut body = json!({ "previous_response_id": null, "input": [] });
+        assert!(!rectify_opaque_state(&mut body, CURSOR_ONLY).applied);
+
+        // 只换压缩条目的重试不碰游标。
+        let mut body = json!({ "previous_response_id": "resp_keep", "input": [] });
+        assert!(!rectify_opaque_state(&mut body, COMPACTION_ONLY).applied);
+        assert_eq!(body["previous_response_id"], "resp_keep");
+    }
+
+    /// 游标 + 增量函数输出（携带游标的续聊形态，见 providers::codex_chat_history）：
+    /// 整流只删游标，不尝试重建只有游标才查得到的历史；剩下的 input 原样交给上游判断。
+    #[test]
+    fn cursor_removal_keeps_incremental_function_call_output() {
+        let mut body = json!({
+            "previous_response_id": "resp_provider_a",
+            "input": [
+                { "type": "function_call_output", "call_id": "call_123", "output": "done" }
+            ]
+        });
+        let result = rectify_opaque_state(&mut body, CURSOR_ONLY);
+        assert!(result.applied);
+        assert_eq!(result.removed_previous_response_id, 1);
+        assert!(body.get("previous_response_id").is_none());
+        assert_eq!(body["input"].as_array().unwrap().len(), 1);
+        assert_eq!(body["input"][0]["call_id"], "call_123");
+        assert_eq!(body["input"][0]["output"], "done");
+    }
+
+    /// 别家 id 被拒：同一开关下顺带清 id，游标留着。
+    #[test]
+    fn foreign_id_rejection_keeps_cursor() {
+        let mut body = json!({
+            "previous_response_id": "resp_own",
+            "input": [
+                { "type": "message", "id": "070ff2d8f785aadf67bc4cd4c344154b_msg_35", "role": "assistant", "content": [] }
+            ]
+        });
+        let result = rectify_opaque_state(&mut body, REASONING_ONLY);
+        assert!(result.applied);
+        assert_eq!(result.removed_foreign_ids, 1);
+        assert_eq!(result.removed_previous_response_id, 0);
+        assert_eq!(body["previous_response_id"], "resp_own");
+        assert!(body["input"][0].get("id").is_none());
+    }
+
     #[test]
     fn ignores_unrelated_errors_and_respects_master_switch() {
         let unrelated = upstream(
@@ -470,7 +840,7 @@ mod tests {
         );
         assert_eq!(
             detect_with(&coded, &json!({}), THIRD_PARTY),
-            Some(ALL_STATE)
+            Some(REASONING_AND_COMPACTION)
         );
         assert_eq!(
             detect_with(&coded, &json!({}), OFFICIAL),
