@@ -18,6 +18,8 @@ use tokio::time::timeout;
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::config::get_app_config_dir;
 use crate::database::Database;
+
+mod pi_shared;
 use crate::error::format_skill_error;
 
 // ========== Skills state coordination ==========

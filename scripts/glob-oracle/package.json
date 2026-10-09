@@ -1,0 +1,12 @@
+{
+  "name": "glob-oracle",
+  "private": true,
+  "type": "module",
+  "description": "用与 pi 相同版本的 minimatch 生成 glob-oracle.json，锁死 cc-switch Rust 匹配器行为",
+  "scripts": {
+    "gen": "node gen.mjs"
+  },
+  "dependencies": {
+    "minimatch": "10.2.6"
+  }
+}

@@ -1,0 +1,5960 @@
+{
+  "minimatchVersion": "10.2.6",
+  "cases": [
+    {
+      "pattern": "*",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "pdf",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "skills",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "a",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "pdf-tools",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "pdf.md",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "*literal",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "a?b",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "]",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**",
+      "target": "",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "pdf",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "skills",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "skills/pdf",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "a",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "a/b",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "a/b/c",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "foo/x/y/bar",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "foo/bar",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "foo//bar",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "**",
+      "target": "pdf-tools",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "pdf.md",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "**",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "**",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "x/y/z/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "*literal",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "a?b",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "]",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "**",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "**",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "**",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "pdf",
+      "matches": true
+    },
+    {
+      "pattern": "pdf",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "*.md",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "pdf.md",
+      "matches": true
+    },
+    {
+      "pattern": "*.md",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "pdf",
+      "matches": true
+    },
+    {
+      "pattern": "*df",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "pdf",
+      "matches": true
+    },
+    {
+      "pattern": "pdf*",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "pdf-tools",
+      "matches": true
+    },
+    {
+      "pattern": "pdf*",
+      "target": "pdf.md",
+      "matches": true
+    },
+    {
+      "pattern": "pdf*",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "skills/pdf",
+      "matches": true
+    },
+    {
+      "pattern": "skills/*",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "skills/pdf",
+      "matches": true
+    },
+    {
+      "pattern": "skills/**",
+      "target": "skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "skills/**",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "pdf",
+      "matches": true
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "skills/pdf",
+      "matches": true
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "x/y/z/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "pdf.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "x/y/z/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "skills/pdf",
+      "matches": true
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "skills/pdf/SKILL.md",
+      "matches": true
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "a/b",
+      "matches": true
+    },
+    {
+      "pattern": "a/**",
+      "target": "a/b/c",
+      "matches": true
+    },
+    {
+      "pattern": "a/**",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "foo/x/y/bar",
+      "matches": true
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "foo/bar",
+      "matches": true
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "foo//bar",
+      "matches": true
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "foo/x/y/bar",
+      "matches": true
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "foo/bar",
+      "matches": true
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "foo//bar",
+      "matches": true
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "pdf",
+      "matches": true
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "pdf",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "skills",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "a",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "pdf-tools",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "pdf.md",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "a?b",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "]",
+      "matches": true
+    },
+    {
+      "pattern": "[]]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": ".hidden",
+      "matches": true
+    },
+    {
+      "pattern": ".*",
+      "target": ".hidden.md",
+      "matches": true
+    },
+    {
+      "pattern": ".*",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": ".x",
+      "matches": true
+    },
+    {
+      "pattern": ".*",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": ".hidden",
+      "matches": true
+    },
+    {
+      "pattern": ".h*",
+      "target": ".hidden.md",
+      "matches": true
+    },
+    {
+      "pattern": ".h*",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": ".",
+      "matches": true
+    },
+    {
+      "pattern": "[.]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": ".x",
+      "matches": true
+    },
+    {
+      "pattern": ".[x]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": ".x",
+      "matches": true
+    },
+    {
+      "pattern": ".?",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "~/.claude/skills",
+      "matches": true
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "~/.claude/skills",
+      "matches": true
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "skills/pdf",
+      "matches": true
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "*literal",
+      "matches": true
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "a?b",
+      "matches": true
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "skills/.hidden",
+      "matches": false
+    }
+  ],
+  "unsupported": [
+    "{a,b}.md",
+    "a{1,2}",
+    "a+(b)",
+    "a?(b)",
+    "@(a|b)",
+    "!(a)",
+    "a*(",
+    "a@("
+  ]
+}
