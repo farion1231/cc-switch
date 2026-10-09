@@ -4906,7 +4906,18 @@ mod tests {
                     input_tokens, output_tokens, total_cost_usd,
                     latency_ms, status_code, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                params!["req-1", "shared-p1", "claude", "m1", 100, 50, "0.01", 100, 200, 1000],
+                params![
+                    "req-1",
+                    "shared-p1",
+                    "claude",
+                    "m1",
+                    100,
+                    50,
+                    "0.01",
+                    100,
+                    200,
+                    1000
+                ],
             )?;
 
             // Rollup under claude-desktop
@@ -4918,8 +4929,18 @@ mod tests {
                     success_count, avg_latency_ms
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
-                    "2026-10-08", "claude-desktop", "shared-p1", "m1",
-                    10, 1000, 500, 0, 0, "0.10", 10, 120
+                    "2026-10-08",
+                    "claude-desktop",
+                    "shared-p1",
+                    "m1",
+                    10,
+                    1000,
+                    500,
+                    0,
+                    0,
+                    "0.10",
+                    10,
+                    120
                 ],
             )?;
         }
@@ -4928,7 +4949,10 @@ mod tests {
         let stats = db.get_provider_stats(None, None, Some("claude"), None, None)?;
         assert_eq!(stats.len(), 2);
 
-        let claude_stat = stats.iter().find(|s| s.app_type == "claude").expect("claude stat");
+        let claude_stat = stats
+            .iter()
+            .find(|s| s.app_type == "claude")
+            .expect("claude stat");
         assert_eq!(claude_stat.provider_id, "shared-p1");
         assert_eq!(claude_stat.provider_name, "Shared Provider");
         assert_eq!(claude_stat.request_count, 1);
