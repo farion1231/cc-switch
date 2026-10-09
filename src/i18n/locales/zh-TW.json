@@ -2318,7 +2318,10 @@
     },
     "heatmap": {
       "title": "用量熱力圖",
-      "subtitle": "最近 53 週的每日用量",
+      "subtitle": "最近 53 週的每日用量；展開後每 53 週一段往前排，各段顏色深淺可以直接比較",
+      "spanSummary": "{{tokens}} Token · {{requests}} 次請求 · {{cost}}",
+      "showMore": "顯示更多",
+      "showLess": "收起",
       "less": "少",
       "more": "多"
     },
