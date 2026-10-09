@@ -65,7 +65,7 @@ const MAX_NAME_CHARS: usize = 32;
 /// 问题区里切换失败的原因最多几个字。
 const MAX_REASON_CHARS: usize = 60;
 /// 额度剩余不到这个百分比算「快用完」（和前端 `quotaRules.WARN_BELOW_PERCENT` 一致）。
-const WARN_BELOW_PERCENT: f64 = 10.0;
+const WARN_BELOW_PERCENT: f64 = 20.0;
 
 /// 每个应用行的子菜单句柄，额度更新时就地改标题而不是整菜单重建（整建会关掉 macOS 上
 /// 正开着的菜单）。`create_tray_menu` 每次重建都整表覆盖写入。
@@ -3040,7 +3040,7 @@ mod tests {
     }
 
     #[test]
-    fn almost_out_only_below_ten_percent_left_and_not_when_used_up() {
+    fn almost_out_only_below_twenty_percent_left_and_not_when_used_up() {
         let at = |used: f64| {
             title(format_subscription_quota(
                 &zh(),
@@ -3048,8 +3048,8 @@ mod tests {
             ))
             .unwrap()
         };
-        assert_eq!(at(85.0), ("5 小时剩余 15%".to_string(), false));
-        assert_eq!(at(91.0), ("5 小时剩余 9%".to_string(), true));
+        assert_eq!(at(80.0), ("5 小时剩余 20%".to_string(), false));
+        assert_eq!(at(85.0), ("5 小时剩余 15%".to_string(), true));
         // 用完时额度本身写「已用完」，不再加「快用完」。
         assert_eq!(at(100.0), ("5 小时已用完".to_string(), false));
     }
