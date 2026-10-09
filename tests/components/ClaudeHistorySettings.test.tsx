@@ -43,7 +43,9 @@ describe("ClaudeHistorySettings", () => {
       const { rerender } = render(<ClaudeHistorySettings />);
       await waitFor(() => expect(input()).toHaveValue(days));
       rerender(<ClaudeHistorySettings />);
-      expect(save()).toBeDisabled();
+      expect(
+        screen.queryByRole("button", { name: /^common.sav/ }),
+      ).not.toBeInTheDocument();
       expect(set).not.toHaveBeenCalled();
       expect(get).toHaveBeenCalledTimes(1);
     },
@@ -53,7 +55,9 @@ describe("ClaudeHistorySettings", () => {
     get.mockResolvedValue(saved(null));
     render(<ClaudeHistorySettings />);
     await waitFor(() => expect(input()).toHaveValue(30));
-    expect(save()).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /^common.sav/ }),
+    ).not.toBeInTheDocument();
     expect(reset()).toBeDisabled();
     expect(set).not.toHaveBeenCalled();
   });
@@ -67,7 +71,9 @@ describe("ClaudeHistorySettings", () => {
     );
     render(<ClaudeHistorySettings />);
     expect(input()).toBeDisabled();
-    expect(save()).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /^common.sav/ }),
+    ).not.toBeInTheDocument();
     expect(reset()).toBeDisabled();
     await act(async () => resolve(saved(90)));
     expect(input()).toHaveValue(90);
@@ -80,7 +86,11 @@ describe("ClaudeHistorySettings", () => {
     fireEvent.change(input(), { target: { value: "90" } });
     expect(set).not.toHaveBeenCalled();
     fireEvent.click(save());
-    await waitFor(() => expect(save()).toBeDisabled());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /^common.sav/ }),
+      ).not.toBeInTheDocument(),
+    );
     expect(set).toHaveBeenCalledTimes(1);
     expect(set).toHaveBeenCalledWith(saved(730), 90);
     expect(input()).toHaveValue(90);
@@ -132,7 +142,9 @@ describe("ClaudeHistorySettings", () => {
     render(<ClaudeHistorySettings />);
     await screen.findByRole("alert");
     expect(input()).toBeDisabled();
-    expect(save()).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /^common.sav/ }),
+    ).not.toBeInTheDocument();
     expect(reset()).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
     await waitFor(() => expect(input()).toHaveValue(730));

@@ -94,14 +94,16 @@ export function ClaudeHistorySettings() {
         <span className="text-body text-fg-2">
           {t("settings.claudeHistoryRetention.days")}
         </span>
-        <Button
-          variant="solid"
-          size="compact"
-          disabled={disabled || !valid || days === (current?.days ?? 30)}
-          onClick={() => void save(days)}
-        >
-          {t(saving ? "common.saving" : "common.save")}
-        </Button>
+        {current && (draft !== String(current.days ?? 30) || saving) && (
+          <Button
+            variant="solid"
+            size="compact"
+            disabled={disabled || !valid || days === (current.days ?? 30)}
+            onClick={() => void save(days)}
+          >
+            {t(saving ? "common.saving" : "common.save")}
+          </Button>
+        )}
         <Button
           variant="quiet"
           size="compact"
