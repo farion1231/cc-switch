@@ -845,6 +845,8 @@ fn contract_of(
     let parts = serde_json::json!({
         "app": "codex",
         "version": CONTRACT_VERSION,
+        // 即使当前路由没变，升级后也要重写一次，补回旧官方会话的无密钥兼容入口。
+        "legacyOfficialMirror": 1,
         "url": base_url,
         "top": pairs(&config.top),
         "nested": nested,

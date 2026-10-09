@@ -167,10 +167,9 @@ fn deferred_key_fields(
 /// - 官方做路由且官方模型行拿不到时（`prepare_official_rows` 拿不到预测登录 /
 ///   `NativeSource::Unavailable`）同样跳过——与 `codex_stack_notice` 的
 ///   `officialModelsUnavailable` 同源判定；`Bundled` 是降级可用，仍发布；
-/// - 被编辑成员自己得有可发布条目（显式模型目录非空或顶层 `model` 非空，
+/// - 被编辑成员在保存前或保存后得有可发布条目（显式模型目录非空或顶层 `model` 非空，
 ///   `codex_published_specs` 空列表早退）：没有条目的成员窗口/模型改动只进 DB 行。
-///   `edited` 是这次保存进行的 `settings_config`。成员的目录类改动进不了客户端时，
-///   不算即时生效。
+///   删除最后一个条目同样会立即更新目录；前后都没有条目时才不豁免窗口改动。
 fn member_catalog_published(
     state: &AppState,
     mode: &crate::mode::state::ModeState,
@@ -5664,8 +5663,7 @@ impl ProviderService {
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
         let mut provider = provider;
-        // 这次保存在表单里提交的 settings_config（plan_save 之后会被换成规范化的行）：
-        // 成员目录发布的判定看它——用户删掉顶层 model / 目录列表后就不该再豁免。
+        // 保存后的目录条目与保存前一起判断，避免把已生效的最后一个模型删除误报为延迟。
         let edited_settings = provider.settings_config.clone();
         let plan = codex_editor::plan_save(
             existing.as_ref().map(|row| &row.settings_config),
@@ -5689,6 +5687,9 @@ impl ProviderService {
 
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
+        let member_catalog_was_published = existing
+            .as_ref()
+            .is_some_and(|row| member_catalog_published(state, &mode, &row.settings_config));
 
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written = if key_fields {
@@ -5725,7 +5726,8 @@ impl ProviderService {
                 &app_type,
                 &provider.id,
                 plan.key_field_changes,
-                member_catalog_published(state, &mode, &edited_settings),
+                member_catalog_was_published
+                    || member_catalog_published(state, &mode, &edited_settings),
             )
         {
             result

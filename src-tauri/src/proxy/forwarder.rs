@@ -5408,6 +5408,45 @@ mod tests {
     }
 
     #[test]
+    fn legacy_official_mirror_uses_native_login_instead_of_proxy_placeholder() {
+        use crate::live::patch::toml::TomlDocPatch;
+        use crate::live::project::codex::{CodexConfigPatch, RouteWrite, OFFICIAL_PROXY_ROUTE_ID};
+
+        let mut provider = test_provider_with_type(None);
+        provider.id = "codex-official".to_string();
+        provider.category = Some("official".to_string());
+        let mut doc: toml_edit::DocumentMut = "model_provider = \"cc-switch-official\"\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nexperimental_bearer_token = \"PROXY_MANAGED\"\n".parse().unwrap();
+        let patch = CodexConfigPatch {
+            top: Vec::new(),
+            nested: Vec::new(),
+            exclusive: Vec::new(),
+            outgoing: Vec::new(),
+            route: RouteWrite::OfficialProxy {
+                base_url: "http://127.0.0.1:15721/v1".to_string(),
+                unified: false,
+            },
+            catalog: false,
+            retired: Vec::new(),
+        };
+        TomlDocPatch::apply_to(&patch, std::path::Path::new("config.toml"), &mut doc).unwrap();
+        let table = &doc["model_providers"][OFFICIAL_PROXY_ROUTE_ID];
+        assert_eq!(table["requires_openai_auth"].as_bool(), Some(true));
+        // Codex uses an explicit table bearer if present; otherwise official auth supplies its token.
+        let token = table
+            .get("experimental_bearer_token")
+            .and_then(toml_edit::Item::as_str)
+            .unwrap_or("native-access");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        validate_codex_official_authorization(&headers, &provider, None, None)
+            .expect("native authorization is accepted by the real proxy guard");
+        assert_eq!(token, "native-access");
+    }
+
+    #[test]
     fn official_codex_rejects_stale_proxy_placeholder_with_restart_hint() {
         let mut headers = HeaderMap::new();
         headers.insert(

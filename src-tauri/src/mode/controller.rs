@@ -467,6 +467,37 @@ fn repair_codex_legacy_live(state: &AppState) {
     }
 }
 
+/// 上一版可能已清表并记录完成：只补官方入口，不重放卡片或迁移历史。
+fn repair_codex_legacy_history_route(state: &AppState) -> Result<(), String> {
+    if !direct_provider(state, &AppType::Codex)?
+        .as_ref()
+        .is_some_and(codex_direct::is_official)
+    {
+        return Ok(());
+    }
+    let patch = crate::live::project::codex::LegacyOfficialMirrorPatch {
+        base_url: None,
+        seed: true,
+    };
+    let store = DeviceStore::for_device();
+    let guard = crate::live::engine::lock_app("codex");
+    operation::run(
+        &store,
+        &guard,
+        op::APPLY,
+        &[operation::FileChange {
+            file: crate::live::engine::LiveFile::private(
+                crate::codex_config::get_codex_config_path(),
+            ),
+            patch: &patch,
+        }],
+        PendingTarget::default(),
+        &|target| commit_state(state, &AppType::Codex, target).map_err(AppError::Message),
+    )
+    .map_err(err)?;
+    Ok(())
+}
+
 /// 写回直连投影（直连指针的供应商）。
 fn write_direct(
     state: &AppState,
@@ -500,6 +531,7 @@ fn write_direct(
                 // settled 直连：live 归用户管，不写。只有认出旧版接管的遗留物才归一化一次
                 //（issue #7948）；没有标记的手写配置一个字节都不动。
                 repair_codex_legacy_live(state);
+                repair_codex_legacy_history_route(state)?;
                 commit_state(state, app, &pending_target)?;
                 return Ok(());
             }
@@ -1633,6 +1665,7 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
         //（`cc-switch-official` 选路 / 表、指向本地代理的官方路由）没有任何写入会清它，
         // 命中标记就归一化一次（issue #7948）。
         repair_codex_legacy_live(state);
+        repair_codex_legacy_history_route(state)?;
     }
     Ok(())
 }
@@ -2993,10 +3026,10 @@ mod mode_tests {
             base_url.starts_with("http://127.0.0.1:") && base_url.ends_with("/v1"),
             "{official_contract}"
         );
-        assert!(
-            doc["model_providers"].get("cc-switch-official").is_none(),
-            "{official_contract}"
-        );
+        let legacy = &doc["model_providers"]["cc-switch-official"];
+        assert_eq!(legacy["base_url"].as_str(), Some(base_url));
+        assert_eq!(legacy["requires_openai_auth"].as_bool(), Some(true));
+        assert!(legacy.get("experimental_bearer_token").is_none());
         assert!(state
             .proxy_service
             .live_has_proxy_placeholder(&AppType::Codex));
@@ -3057,6 +3090,18 @@ mod mode_tests {
             })
             .unwrap();
             let state = state_with(AppType::Codex, &[official.clone()], &official.id).await;
+            let codex_dir = crate::codex_config::get_codex_config_dir();
+            let session_dir = codex_dir.join("sessions");
+            fs::create_dir_all(&session_dir).unwrap();
+            let session_path = session_dir.join("legacy.jsonl");
+            let session_text = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"legacy-thread\",\"model_provider\":\"cc-switch-official\"}}\n";
+            fs::write(&session_path, session_text).unwrap();
+            let state_path = codex_dir.join("state_5.sqlite");
+            {
+                let conn = rusqlite::Connection::open(&state_path).unwrap();
+                conn.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT); INSERT INTO threads VALUES ('legacy-thread', 'cc-switch-official');").unwrap();
+            }
+            let state_before = fs::read(&state_path).unwrap();
             ProviderService::switch(&state, AppType::Codex, &official.id).expect("direct official");
             let config_path = crate::codex_config::get_codex_config_path();
             let selector = || -> Option<String> {
@@ -3090,7 +3135,9 @@ mod mode_tests {
                 );
             } else {
                 assert!(doc["openai_base_url"].as_str().is_some(), "{contract}");
-                assert!(doc.get("model_providers").is_none(), "{contract}");
+                let legacy = &doc["model_providers"]["cc-switch-official"];
+                assert_eq!(legacy["requires_openai_auth"].as_bool(), Some(true));
+                assert!(legacy.get("experimental_bearer_token").is_none());
             }
             assert!(state
                 .proxy_service
@@ -3105,6 +3152,13 @@ mod mode_tests {
             let restored = fs::read_to_string(&config_path).unwrap();
             assert_eq!(selector(), bucket, "exit, unified={unified}: {restored}");
             assert!(!restored.contains("openai_base_url"), "{restored}");
+            assert_legacy_official_direct_mirror(&restored);
+            assert_eq!(fs::read_to_string(&session_path).unwrap(), session_text);
+            assert_eq!(
+                fs::read(&state_path).unwrap(),
+                state_before,
+                "state DB stays byte-identical"
+            );
             assert!(!state
                 .proxy_service
                 .live_has_proxy_placeholder(&AppType::Codex));
@@ -4600,6 +4654,68 @@ model_provider = "c"
         }
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn stack_member_removing_last_published_model_warns_nothing() {
+        for explicit in [false, true] {
+            let _home = Home::new();
+            set_preservation(true);
+            seed_codex(CODEX_USER_LIVE, None);
+            let mut rows = codex_a_b();
+            if explicit {
+                rows[1].settings_config["modelCatalog"] =
+                    json!({ "models": [{ "model": "gpt-b" }] });
+                let config = rows[1].settings_config["config"]
+                    .as_str()
+                    .unwrap()
+                    .replace("model = \"gpt-b\"\n", "");
+                rows[1].settings_config["config"] = json!(config);
+            }
+            let state = state_with(AppType::Codex, &rows, "a").await;
+            enter(&state, &AppType::Codex, true)
+                .await
+                .expect("enter stack");
+            set_codex_member(&state, "b", true).await;
+            let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+            assert!(fs::read_to_string(&catalog_path).unwrap().contains("gpt-b"));
+            let mut row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+            let base =
+                ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+                    .unwrap()
+                    .settings;
+            let mut edited = base.clone();
+            let mut doc = base["config"]
+                .as_str()
+                .unwrap()
+                .parse::<toml_edit::DocumentMut>()
+                .unwrap();
+            doc.remove("model");
+            edited["config"] = json!(doc.to_string());
+            if explicit {
+                edited["modelCatalog"] = json!({ "models": [] });
+            }
+            row.settings_config = edited;
+            let result = ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                Some("b"),
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+            .expect("remove last model");
+            let removed = !fs::read_to_string(&catalog_path).unwrap().contains("gpt-b");
+            if state.proxy_service.is_running().await {
+                state.proxy_service.stop().await.unwrap();
+            }
+            assert!(removed, "the published model is removed immediately");
+            assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        }
+    }
+
     /// 只删一个从 live 带进来的独有字段：删除是立即生效的全局改动（当场写进 live），
     /// 不弹「切换时才生效」的提醒（issue #7948 外审 Minor 4）。
     #[tokio::test]
@@ -4650,13 +4766,19 @@ model_provider = "c"
         );
     }
 
+    fn assert_legacy_official_direct_mirror(text: &str) {
+        let doc: toml::Table = toml::from_str(text).unwrap();
+        let legacy = &doc["model_providers"]["cc-switch-official"];
+        assert_eq!(legacy["requires_openai_auth"].as_bool(), Some(true));
+        assert!(legacy.get("base_url").is_none(), "{text}");
+        assert!(legacy.get("experimental_bearer_token").is_none(), "{text}");
+    }
+
     /// 升级遗留（issue #7948）：settled 直连的 Codex live 里留着 v3.17–v3.20 官方代理接管的
     /// `[model_providers.cc-switch-official]` 表（顶层选路早已换走，没有别的写入会清它）→
     /// 启动时按直连那家归一化一次；用户的表和全局设置原样保留。归一化等于一次干净的切换：
-    /// 引用旧 id 的存量会话由此进入 Codex 自己的「provider not found，重新打开对话线程」
-    /// 指引（本地代理对旧凭据的 401 也有现成的「请重启 Codex 或新建会话」指引，见
-    /// forwarder 的 official_codex_rejects_stale_proxy_placeholder_with_restart_hint），
-    /// 新会话用的当前供应商表则必须完整。
+    /// 引用旧 id 的存量会话仍可解析官方兼容入口，且不会读到第三方占位 Key；
+    /// 新会话用的当前供应商表也必须完整。
     #[tokio::test]
     #[serial]
     async fn startup_repairs_a_legacy_codex_takeover_table_in_settled_direct() {
@@ -4678,7 +4800,7 @@ model_provider = "c"
         startup(&state).await;
 
         let after = codex_text();
-        assert!(!after.contains("cc-switch-official"), "{after}");
+        assert_legacy_official_direct_mirror(&after);
         assert!(
             after.contains("https://a.example/v1"),
             "rewritten from the direct card: {after}"
@@ -4687,7 +4809,7 @@ model_provider = "c"
         assert_eq!(codex_user_parts(&after).len(), 6, "{after}");
 
         // 会话按 provider id 分桶、按当前 config.toml 解析：归一化后新会话的表必须完整
-        //（地址 + Key），旧 id 的会话走 Codex 自己的 not-found 指引。
+        //（地址 + Key），旧 id 的会话仍用无第三方密钥的官方兼容入口。
         let doc = codex_doc();
         assert_eq!(doc["model_provider"].as_str(), Some("custom"));
         assert_eq!(
@@ -4698,6 +4820,30 @@ model_provider = "c"
             doc["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
             Some("sk-a")
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn startup_restores_a_missing_legacy_official_route_without_replaying_the_card() {
+        let _home = Home::new();
+        set_preservation(true);
+        let live = "# hand edited\nmodel = \"user-model\"\napproval_policy = \"on-request\"\n";
+        seed_codex(live, Some(&chatgpt_login("acct")));
+        let state = state_with(
+            AppType::Codex,
+            &[codex_official()],
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID,
+        )
+        .await;
+        startup(&state).await;
+        let after = codex_text();
+        assert!(
+            after.starts_with(live),
+            "the current model and user fields stay unchanged: {after}"
+        );
+        assert_legacy_official_direct_mirror(&after);
+        startup(&state).await;
+        assert_eq!(codex_text(), after, "the repair is idempotent");
     }
 
     /// settled 直连的 Codex live 没有旧版接管标记时，启动一个字节都不写（issue #7948）。
@@ -4786,10 +4932,7 @@ model_provider = "c"
         );
         fs::write(codex_config_path(), &residue).unwrap();
         startup(&state).await;
-        assert!(
-            !codex_text().contains("cc-switch-official"),
-            "repaired once"
-        );
+        assert!(!codex_text().contains("15721"), "repaired once");
         let dir_key = crate::codex_history_migration::canonical_dir_string(
             &crate::codex_config::get_codex_config_dir(),
         );
@@ -4860,7 +5003,7 @@ model_provider = "c"
             .save_provider("codex", &codex_row("a", "https://a.example/v1", "model_context_window = 200000\n[agents]\ndefault_subagent_model = \"gpt-a-mini\"\n"))
             .unwrap();
         startup(&state).await;
-        assert!(!codex_text().contains("cc-switch-official"), "retried");
+        assert_legacy_official_direct_mirror(&codex_text());
         assert!(
             !state::legacy_takeover_repaired_in(&DeviceStore::for_device(), "codex")
                 .unwrap()
@@ -4885,10 +5028,7 @@ model_provider = "c"
         startup(&state).await;
         fs::write(codex_config_path(), &residue).unwrap();
         startup(&state).await;
-        assert!(
-            !codex_text().contains("cc-switch-official"),
-            "dir A repaired"
-        );
+        assert_legacy_official_direct_mirror(&codex_text());
 
         // 切到目录 B（带同样的残留）：标记绑定目录，B 仍要修。
         let dir_b = home.dir.path().join("codex-b");
@@ -4903,7 +5043,7 @@ model_provider = "c"
         startup(&state).await;
         let text_b = fs::read_to_string(dir_b.join("config.toml")).unwrap();
         assert!(
-            !text_b.contains("cc-switch-official"),
+            !text_b.contains("15721"),
             "the new config dir is still repaired: {text_b}"
         );
 
