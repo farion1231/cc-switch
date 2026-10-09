@@ -3149,7 +3149,6 @@
     "checkUpdates": "檢查更新",
     "checkingUpdates": "檢查中...",
     "noUpdates": "所有技能已是最新版本",
-    "updatesFound": "發現 {{count}} 個技能有可用更新",
     "updateAll": "全部更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "已成功更新 {{count}} 個技能",
@@ -4520,7 +4519,8 @@
       "uninstallManyButton": "解除安裝 {{count}} 個",
       "updateAll": "更新 {{count}} 個 Skill？",
       "updateBody": "更新會用倉庫裡的內容取代本機目錄。本機改過的地方只保留在備份裡（{{path}}）。",
-      "updateAllButton": "更新 {{count}} 個"
+      "updateAllButton": "更新 {{count}} 個",
+      "updateListAria": "將要更新的 Skill"
     },
     "toast": {
       "installed": "已安裝 {{name}}，並在 {{apps}} 啟用",
@@ -4609,7 +4609,8 @@
     "headerUpdates": "{{count}} 個可更新",
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "顯示全部 Skill",
-    "updateAllCount": "全部更新（{{count}} 個）"
+    "updateAllCount": "全部更新（{{count}} 個）",
+    "updatingProgress": "正在更新 {{done}}/{{total}}…"
   },
   "newLayoutNotice": {
     "title": "介面改版了",

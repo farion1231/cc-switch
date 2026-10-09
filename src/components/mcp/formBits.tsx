@@ -51,11 +51,13 @@ export function V7Dialog({
   );
 }
 
-/** 确认框：后果写在正文里，取消默认聚焦；不可撤销的操作（danger）确认键用红底，可恢复的传 danger={false}。 */
+/** 确认框：后果写在正文里，取消默认聚焦；不可撤销的操作（danger）确认键用红底，可恢复的传 danger={false}。
+ *  details 放在正文下面（正文是 <p>，列表这类块级内容放这里）。 */
 export function V7ConfirmDialog({
   open,
   title,
   body,
+  details,
   confirmLabel,
   danger = true,
   pending = false,
@@ -65,6 +67,7 @@ export function V7ConfirmDialog({
   open: boolean;
   title: string;
   body: React.ReactNode;
+  details?: React.ReactNode;
   confirmLabel: string;
   danger?: boolean;
   pending?: boolean;
@@ -87,6 +90,7 @@ export function V7ConfirmDialog({
           {body}
         </DialogDescription>
       </div>
+      {details}
       <div className="flex flex-wrap justify-end gap-2 pt-1">
         <Button
           type="button"

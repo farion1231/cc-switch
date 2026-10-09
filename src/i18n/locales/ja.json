@@ -3148,7 +3148,6 @@
     "checkUpdates": "更新を確認",
     "checkingUpdates": "確認中...",
     "noUpdates": "すべてのスキルは最新です",
-    "updatesFound": "{{count}} 個のスキルに更新があります",
     "updateAll": "すべて更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "{{count}} 個のスキルを更新しました",
@@ -4519,7 +4518,8 @@
       "uninstallManyButton": "{{count}} 件をアンインストール",
       "updateAll": "{{count}} 件の Skill を更新しますか？",
       "updateBody": "更新するとローカルのフォルダーをリポジトリの内容で置き換えます。ローカルの変更はバックアップ（{{path}}）にだけ残ります。",
-      "updateAllButton": "{{count}} 件を更新"
+      "updateAllButton": "{{count}} 件を更新",
+      "updateListAria": "更新する Skill"
     },
     "toast": {
       "installed": "{{name}} をインストールし、{{apps}} で有効にしました",
@@ -4608,7 +4608,8 @@
     "headerUpdates": "{{count}} 件の更新",
     "headerUpdatesShow": "更新がある Skill だけを表示",
     "headerUpdatesClear": "すべての Skill を表示",
-    "updateAllCount": "すべて更新（{{count}} 件）"
+    "updateAllCount": "すべて更新（{{count}} 件）",
+    "updatingProgress": "更新中 {{done}}/{{total}}…"
   },
   "newLayoutNotice": {
     "title": "画面が新しくなりました",
