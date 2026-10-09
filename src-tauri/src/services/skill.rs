@@ -780,10 +780,19 @@ impl SkillService {
     /// 获取所有已安装的 Skills
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
         let mut skills = db.get_all_installed_skills()?;
+        let pi_ctx = pi_shared::build_context();
         for skill in skills.values_mut() {
-            skill.apps.pi = Self::skill_exists_in_app(&skill.directory, &AppType::Pi);
+            Self::refresh_pi_state(skill, &pi_ctx);
         }
         Ok(skills.into_values().collect())
+    }
+
+    /// 重算单个技能的 pi 状态（exists=active 语义不变，判定范围扩大为 原生 ∨ 共享根）
+    /// 并填充 piVisibility 详情（动态计算，不入 DB）。
+    fn refresh_pi_state(skill: &mut InstalledSkill, ctx: &pi_shared::PiVisibilityContext) {
+        let vis = pi_shared::pi_skill_visibility(&skill.directory, ctx);
+        skill.apps.pi = vis.is_active();
+        skill.pi_visibility = Some(vis.into());
     }
 
     /// Reuse an existing installation or reject a directory owned by another repo.
@@ -1018,6 +1027,7 @@ impl SkillService {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            pi_visibility: None,
         };
 
         Self::persist_and_sync_new_skill(db, &installed_skill, current_app)?;
@@ -1499,7 +1509,7 @@ impl SkillService {
         let mut skill = db
             .get_installed_skill(skill_id)?
             .ok_or_else(|| anyhow!("Skill not found: {skill_id}"))?;
-        skill.apps.pi = Self::skill_exists_in_app(&skill.directory, &AppType::Pi);
+        Self::refresh_pi_state(&mut skill, &pi_shared::build_context());
 
         // 本函数后续三种危险操作都用 directory 拼路径：备份源（把任意目录复制进
         // 备份区并在界面列出）、remove_dir_all（删任意目录）、copy_dir_recursive
@@ -1599,7 +1609,7 @@ impl SkillService {
             return Err(anyhow!("Skill changed during update: {}", skill.id));
         }
         Self::require_valid_directory(&current_skill.directory)?;
-        current_skill.apps.pi = Self::skill_exists_in_app(&current_skill.directory, &AppType::Pi);
+        Self::refresh_pi_state(&mut current_skill, &pi_shared::build_context());
         let skill = current_skill;
 
         let dest = ssot_dir.join(&skill.directory);
@@ -1653,6 +1663,7 @@ impl SkillService {
             installed_at: skill.installed_at,
             content_hash: new_hash,
             updated_at: chrono::Utc::now().timestamp(),
+            pi_visibility: None,
         };
 
         let mut updated_skill = if skill.apps.mcode {
@@ -1673,7 +1684,7 @@ impl SkillService {
             }
             Self::persist_updated_skill_metadata(db, &updated_metadata)?
         };
-        updated_skill.apps.pi = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Pi);
+        Self::refresh_pi_state(&mut updated_skill, &pi_shared::build_context());
 
         // 同步到所有已启用的应用目录
         for app in updated_skill.apps.enabled_apps() {
@@ -2271,9 +2282,11 @@ impl SkillService {
             let skill_md = dest.join("SKILL.md");
             let (name, description) = Self::read_skill_name_desc(&skill_md, &dir_name);
 
-            // 其他应用保存用户选择；Pi 的 exists=active 必须直接来自原生目录。
+            // 其他应用保存用户选择；Pi 的 exists=active 直接来自磁盘事实
+            // （判定范围含共享根）。
             let mut apps = selection.apps;
-            apps.pi = Self::skill_exists_in_app(&dir_name, &AppType::Pi);
+            apps.pi =
+                pi_shared::pi_skill_visibility(&dir_name, &pi_shared::build_context()).is_active();
 
             // An explicitly imported MCode link must point at the managed copy
             // so subsequent toggles and updates can verify its ownership.
@@ -2353,6 +2366,7 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                pi_visibility: None,
             };
 
             // 保存到数据库
@@ -4248,6 +4262,7 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                pi_visibility: None,
             };
 
             Self::persist_and_sync_new_skill(db, &skill, current_app)?;
@@ -4694,6 +4709,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            pi_visibility: None,
         };
 
         db.save_skill(&skill)?;
@@ -5407,6 +5423,42 @@ mod tests {
 
         SkillService::toggle_app(&db, &skill.id, &AppType::Pi, false).expect("disable Pi skill");
         assert!(!SkillService::get_all_installed(&db).unwrap()[0].apps.pi);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn pi_state_extends_to_shared_roots_with_visibility_info() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        _pi_dir.write_settings(r#"{ "skills": ["~/.claude/skills"] }"#);
+
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let skill = poisoned_skill("local:pdf", "pdf");
+        db.save_skill(&skill).expect("save skill");
+
+        // SSOT 副本 + 共享副本（内容一致）
+        write_skill(&SkillService::get_ssot_dir().unwrap().join("pdf"), "pdf");
+        write_skill(
+            &temp.path().join(".claude").join("skills").join("pdf"),
+            "pdf",
+        );
+
+        let installed = SkillService::get_all_installed(&db).expect("read skills");
+        let skill = installed
+            .iter()
+            .find(|s| s.directory == "pdf")
+            .expect("find skill");
+        assert!(
+            skill.apps.pi,
+            "共享副本生效即 pi 启用（exists=active 扩大）"
+        );
+        let vis = skill.pi_visibility.as_ref().expect("piVisibility 已填充");
+        assert_eq!(vis.state, "shared");
+        assert_eq!(vis.shared_roots.len(), 1);
+        assert!(vis.shared_roots[0].contains(".claude/skills"));
+        assert_eq!(vis.same_content_as_ssot, Some(true));
+        assert!(!vis.excluded_by_pattern);
     }
 
     #[test]
@@ -6331,6 +6383,7 @@ mod tests {
             installed_at: 0,
             content_hash: None,
             updated_at: 0,
+            pi_visibility: None,
         }
     }
 
@@ -7093,7 +7146,13 @@ mod tests {
                 assert_eq!(updated.name, "renamed-skill");
                 assert_eq!(updated.readme_url, expected_url);
                 assert_eq!(updated.directory, installed.directory);
-                assert_eq!(updated.apps, installed.apps);
+                // Unified 存储模式下 SSOT = ~/.agents/skills，pi 无条件自动发现该目录，
+                // 技能写入 SSOT 即对 pi 可见（共享感知的预期行为）；CcSwitch 模式不变。
+                let mut expected_apps = installed.apps.clone();
+                if matches!(location, SkillStorageLocation::Unified) {
+                    expected_apps.pi = true;
+                }
+                assert_eq!(updated.apps, expected_apps);
                 assert_eq!(
                     SkillService::read_skill_name_desc(&local.join("SKILL.md"), directory).0,
                     "renamed-skill"

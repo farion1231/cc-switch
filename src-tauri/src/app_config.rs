@@ -254,6 +254,29 @@ pub struct InstalledSkill {
     /// 最近更新时间（Unix 时间戳，0 = 从未更新）
     #[serde(default)]
     pub updated_at: i64,
+    /// 对 pi 的可见性详情（动态计算，不入 DB；None = 未计算）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pi_visibility: Option<PiVisibilityInfo>,
+}
+
+/// `InstalledSkill.piVisibility` 的载荷（方案 §2.4，由 pi_shared 判定引擎填充）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PiVisibilityInfo {
+    /// "inactive" | "inactive-excluded" | "native" | "shared" | "native-shared"
+    pub state: String,
+    /// 生效的共享根（posix 路径）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared_roots: Vec<String>,
+    /// 任一生效共享副本与 SSOT 一致（None = SSOT 无该技能，未比对）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub same_content_as_ssot: Option<bool>,
+    /// 原生投影目标路径被 pi 排除规则命中
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub excluded_by_pattern: bool,
+    /// 解析含不支持语法/失败，结果近似
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub approximate: bool,
 }
 
 /// 未管理的 Skill（在应用目录中发现但未被 CC Switch 管理）

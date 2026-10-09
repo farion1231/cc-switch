@@ -80,7 +80,6 @@ pub(crate) enum PiVisState {
 }
 
 /// 单个技能对 pi 的可见性结果
-#[expect(dead_code)] // S6 消费后移除
 pub(crate) struct PiVisibility {
     pub state: PiVisState,
     /// 生效的共享根（仅 #4/#5 非空）
@@ -95,7 +94,6 @@ pub(crate) struct PiVisibility {
 
 impl PiVisibility {
     /// pi 是否实际加载该技能（apps.pi 取值依据）
-    #[expect(dead_code)] // S6 消费后移除
     pub(crate) fn is_active(&self) -> bool {
         matches!(
             self.state,
@@ -112,7 +110,6 @@ pub(crate) struct PiVisibilityContext {
 }
 
 /// 构建判定上下文（内部容错，不报错）
-#[expect(dead_code)] // S6 消费后移除
 pub(crate) fn build_context() -> PiVisibilityContext {
     PiVisibilityContext {
         sources: resolve_pi_skill_sources(),
@@ -124,7 +121,6 @@ pub(crate) fn build_context() -> PiVisibilityContext {
 /// 五态判定（方案 §2.1/§2.2，每次现算）：
 /// N/S 存在性均要求含 SKILL.md；N_excluded 对假设路径判定；
 /// S 按来源分两类语义与 baseDir；状态由重扫得出，无硬编码转移。
-#[expect(dead_code)] // S6 消费后移除
 pub(crate) fn pi_skill_visibility(directory: &str, ctx: &PiVisibilityContext) -> PiVisibility {
     let patterns = &ctx.sources.patterns;
 
@@ -187,6 +183,29 @@ pub(crate) fn pi_skill_visibility(directory: &str, ctx: &PiVisibilityContext) ->
         same_content_as_ssot: same_content,
         excluded_by_pattern: n_excluded && matches!(state, PiVisState::InactiveExcluded),
         approximate: ctx.sources.approximate,
+    }
+}
+
+impl From<PiVisibility> for crate::app_config::PiVisibilityInfo {
+    fn from(v: PiVisibility) -> Self {
+        let state = match v.state {
+            PiVisState::Inactive => "inactive",
+            PiVisState::InactiveExcluded => "inactive-excluded",
+            PiVisState::Native => "native",
+            PiVisState::Shared => "shared",
+            PiVisState::NativeShared => "native-shared",
+        };
+        Self {
+            state: state.to_string(),
+            shared_roots: v
+                .shared_roots
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+            same_content_as_ssot: v.same_content_as_ssot,
+            excluded_by_pattern: v.excluded_by_pattern,
+            approximate: v.approximate,
+        }
     }
 }
 
