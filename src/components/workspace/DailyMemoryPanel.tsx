@@ -49,6 +49,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
   // List state
   const [files, setFiles] = useState<DailyMemoryFileInfo[]>([]);
   const [loadingList, setLoadingList] = useState(false);
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
 
   // Edit state
   const [editingFile, setEditingFile] = useState<string | null>(null);
@@ -177,6 +178,24 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let cancelled = false;
+    void workspaceApi
+      .getRootDirectory()
+      .then((root) => {
+        if (!cancelled) setWorkspaceRoot(root);
+      })
+      .catch((error) => {
+        if (!cancelled) setWorkspaceRoot(null);
+        console.error("Failed to resolve workspace directory:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   // Load file list
   const loadFiles = useCallback(async () => {
@@ -358,7 +377,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
                 className="text-sm text-fg-2 shrink-0 cursor-pointer hover:text-fg-1 transition-colors inline-flex items-center gap-1"
                 onClick={() => workspaceApi.openDirectory("memory")}
               >
-                ~/.openclaw/workspace/memory/
+                {workspaceRoot ? `${workspaceRoot}/memory/` : "…"}
                 <FolderOpen className="w-3.5 h-3.5" />
               </p>
             </HoverTip>

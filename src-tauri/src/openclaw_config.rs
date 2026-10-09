@@ -30,21 +30,84 @@ const OPENCLAW_TOOLS_PROFILES: &[&str] = &["minimal", "coding", "messaging", "fu
 
 /// 获取 OpenClaw 配置目录
 ///
-/// 默认路径: `~/.openclaw/`
-/// 可通过 settings.openclaw_config_dir 覆盖
+/// 默认路径: `~/.openclaw/`，非默认 profile 使用 `~/.openclaw-<profile>/`。
+/// settings.openclaw_config_dir 优先，其次是 OPENCLAW_STATE_DIR。
 pub fn get_openclaw_dir() -> PathBuf {
-    if let Some(override_dir) = get_openclaw_override_dir() {
-        return override_dir;
-    }
-
-    crate::config::get_home_dir().join(".openclaw")
+    resolve_openclaw_dir(
+        &crate::config::get_home_dir(),
+        get_openclaw_override_dir(),
+        std::env::var("OPENCLAW_STATE_DIR").ok().as_deref(),
+        std::env::var("OPENCLAW_PROFILE").ok().as_deref(),
+    )
 }
 
 /// 获取 OpenClaw 配置文件路径
 ///
-/// 返回 `~/.openclaw/openclaw.json`
+/// 返回当前 OpenClaw 配置目录下的 `openclaw.json`
 pub fn get_openclaw_config_path() -> PathBuf {
     get_openclaw_dir().join("openclaw.json")
+}
+
+fn non_empty_path(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn resolve_openclaw_dir(
+    home: &Path,
+    override_dir: Option<PathBuf>,
+    state_dir: Option<&str>,
+    profile: Option<&str>,
+) -> PathBuf {
+    if let Some(dir) = override_dir {
+        return dir;
+    }
+    if let Some(dir) = non_empty_path(state_dir) {
+        return expand_workspace_path(dir, home);
+    }
+    match non_empty_path(profile).filter(|value| !value.eq_ignore_ascii_case("default")) {
+        Some(profile) => home.join(format!(".openclaw-{profile}")),
+        None => home.join(".openclaw"),
+    }
+}
+
+/// Resolve the shared OpenClaw workspace from the official configuration.
+///
+/// `agents.defaults.workspace` takes precedence over `OPENCLAW_WORKSPACE_DIR`,
+/// then defaults to `<OpenClaw state directory>/workspace` (including profiles).
+/// Propagate configuration errors so writes never silently target a fallback.
+pub fn get_openclaw_workspace_dir() -> Result<PathBuf, AppError> {
+    let config = read_openclaw_config()?;
+    Ok(resolve_openclaw_workspace_dir(
+        &config,
+        &get_openclaw_dir(),
+        &crate::config::get_home_dir(),
+        std::env::var("OPENCLAW_WORKSPACE_DIR").ok().as_deref(),
+    ))
+}
+
+fn resolve_openclaw_workspace_dir(
+    config: &Value,
+    state_dir: &Path,
+    home: &Path,
+    workspace_env: Option<&str>,
+) -> PathBuf {
+    let configured = config
+        .pointer("/agents/defaults/workspace")
+        .and_then(Value::as_str);
+    match non_empty_path(configured).or_else(|| non_empty_path(workspace_env)) {
+        Some(path) => expand_workspace_path(path, home),
+        None => state_dir.join("workspace"),
+    }
+}
+
+fn expand_workspace_path(path: &str, home: &Path) -> PathBuf {
+    if path == "~" {
+        home.to_path_buf()
+    } else if let Some(relative) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        home.join(relative)
+    } else {
+        PathBuf::from(path)
+    }
 }
 
 fn default_openclaw_config_value() -> Value {
@@ -945,6 +1008,124 @@ mod tests {
             None => std::env::remove_var("HOME"),
         }
         result
+    }
+
+    #[test]
+    fn workspace_dir_uses_official_precedence() {
+        let home = tempfile::tempdir().unwrap();
+        let state = home.path().join(".openclaw");
+        let configured = home.path().join("configured");
+        let environment = home.path().join("environment");
+        let config = json!({"agents": {"defaults": {"workspace": configured}}});
+        assert_eq!(
+            resolve_openclaw_workspace_dir(&config, &state, home.path(), environment.to_str()),
+            configured
+        );
+        assert_eq!(
+            resolve_openclaw_workspace_dir(&json!({}), &state, home.path(), environment.to_str()),
+            environment
+        );
+        assert_eq!(
+            resolve_openclaw_workspace_dir(&json!({}), &state, home.path(), None),
+            state.join("workspace")
+        );
+    }
+
+    #[test]
+    fn workspace_dir_ignores_unsupported_keys_and_empty_values() {
+        let home = tempfile::tempdir().unwrap();
+        let state = home.path().join(".openclaw");
+        for workspace in [json!(null), json!("  "), json!(123)] {
+            let config = json!({
+                "agents": {"defaults": {"workspace": workspace}},
+                "agent": {"workspace": "wrong-agent-dir"},
+                "workspace": {"path": "wrong-legacy-dir"}
+            });
+            assert_eq!(
+                resolve_openclaw_workspace_dir(&config, &state, home.path(), Some("  ")),
+                state.join("workspace")
+            );
+            assert_eq!(
+                resolve_openclaw_workspace_dir(&config, &state, home.path(), Some(" ~/from-env ")),
+                home.path().join("from-env")
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_dir_expands_home_without_rebasing_relative_paths() {
+        let home = tempfile::tempdir().unwrap();
+        let state = home.path().join(".openclaw");
+        for (value, expected) in [
+            ("~", home.path().to_path_buf()),
+            (" ~/custom ", home.path().join("custom")),
+            ("relative-workspace", PathBuf::from("relative-workspace")),
+        ] {
+            assert_eq!(
+                resolve_openclaw_workspace_dir(
+                    &json!({"agents": {"defaults": {"workspace": value}}}),
+                    &state,
+                    home.path(),
+                    None
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_dir_profile_changes_the_state_directory() {
+        let home = tempfile::tempdir().unwrap();
+        for profile in [None, Some(""), Some(" default "), Some("DEFAULT")] {
+            assert_eq!(
+                resolve_openclaw_dir(home.path(), None, None, profile),
+                home.path().join(".openclaw")
+            );
+        }
+        let state = resolve_openclaw_dir(home.path(), None, None, Some(" work "));
+        assert_eq!(state, home.path().join(".openclaw-work"));
+        assert_eq!(
+            resolve_openclaw_workspace_dir(&json!({}), &state, home.path(), None),
+            home.path().join(".openclaw-work").join("workspace")
+        );
+    }
+
+    #[test]
+    fn workspace_dir_respects_state_and_settings_overrides() {
+        let home = tempfile::tempdir().unwrap();
+        let custom = home.path().join("custom-state");
+        assert_eq!(
+            resolve_openclaw_dir(home.path(), None, Some("~/state"), Some("work")),
+            home.path().join("state")
+        );
+        let state = resolve_openclaw_dir(
+            home.path(),
+            Some(custom.clone()),
+            Some("~/state"),
+            Some("work"),
+        );
+        assert_eq!(state, custom);
+        assert_eq!(
+            resolve_openclaw_workspace_dir(&json!({}), &state, home.path(), None),
+            custom.join("workspace")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_dir_reads_json5_and_propagates_parse_errors() {
+        with_test_paths(
+            "{ agents: { defaults: { workspace: '~/custom', }, }, }",
+            |_| {
+                assert_eq!(
+                    get_openclaw_workspace_dir().unwrap(),
+                    crate::config::get_home_dir().join("custom")
+                );
+            },
+        );
+        with_test_paths("{ invalid config", |_| {
+            assert!(get_openclaw_workspace_dir().is_err());
+        });
     }
 
     #[test]
