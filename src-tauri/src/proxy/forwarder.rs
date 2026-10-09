@@ -6323,6 +6323,7 @@ mod tests {
                 context_window: Some(400_000),
                 supported_endpoints: endpoints.into_iter().map(str::to_string).collect(),
                 supports_parallel_tool_calls: None,
+                supports_vision: None,
                 reasoning_effort: None,
             }];
             let mut body = json!({"model": "GPT-5.6", "input": "Hello"});

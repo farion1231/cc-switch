@@ -4259,6 +4259,43 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
+    fn copilot_catalog_uses_declared_vision_capabilities_and_infers_unknowns() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol", "inputModalities": ["text", "image"] },
+                    { "model": "gpt-5.6-terra", "inputModalities": ["text"] },
+                    { "model": "copilot-unknown" },
+                    { "model": "qwen3-coder-plus", "inputModalities": ["text", "image"] }
+                ]
+            }
+        });
+        let template = json!({
+            "input_modalities": ["text"],
+            "supports_image_detail_original": true
+        });
+        let specs = codex_catalog_model_specs(&settings);
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::Copilot,
+            128_000,
+        );
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models.len(), 4);
+        for (model, expected) in [
+            ("gpt-5.6-sol", json!(["text", "image"])),
+            ("gpt-5.6-terra", json!(["text"])),
+            ("copilot-unknown", json!(["text", "image"])),
+            ("qwen3-coder-plus", json!(["text", "image"])),
+        ] {
+            let entry = models.iter().find(|entry| entry["slug"] == model).unwrap();
+            assert_eq!(entry["input_modalities"], expected, "{model}");
+            assert_eq!(entry["supports_image_detail_original"], json!(false));
+        }
+    }
+
+    #[test]
     fn native_responses_catalog_always_carries_base_instructions() {
         // Regression guard for the "missing field `base_instructions`" parse
         // error: Codex refuses to load a model catalog whose entries lack

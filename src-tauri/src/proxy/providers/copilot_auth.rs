@@ -274,6 +274,9 @@ pub struct CopilotModel {
     /// Whether the model supports parallel tool calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_parallel_tool_calls: Option<bool>,
+    /// Copilot-reported image-input support; absence means unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_vision: Option<bool>,
     /// Copilot-reported reasoning effort levels supported by this model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<Vec<CopilotReasoningEffort>>,
@@ -328,6 +331,10 @@ fn extract_copilot_parallel_tool_calls(capabilities: Option<&Value>) -> Option<b
     capabilities?
         .pointer("/supports/parallel_tool_calls")?
         .as_bool()
+}
+
+fn extract_copilot_vision(capabilities: Option<&Value>) -> Option<bool> {
+    capabilities?.pointer("/supports/vision")?.as_bool()
 }
 
 fn extract_copilot_reasoning_effort(
@@ -1021,6 +1028,7 @@ impl CopilotAuthManager {
                 supports_parallel_tool_calls: extract_copilot_parallel_tool_calls(
                     m.capabilities.as_ref(),
                 ),
+                supports_vision: extract_copilot_vision(m.capabilities.as_ref()),
                 reasoning_effort: extract_copilot_reasoning_effort(m.capabilities.as_ref()),
             })
             .collect();
@@ -1713,6 +1721,7 @@ mod tests {
                 },
                 "supports": {
                     "parallel_tool_calls": true,
+                    "vision": true,
                     "reasoning_effort": ["none", "low", "turbo", "max", 7]
                 }
             }
@@ -1728,6 +1737,10 @@ mod tests {
             Some(true)
         );
         assert_eq!(
+            extract_copilot_vision(item.capabilities.as_ref()),
+            Some(true)
+        );
+        assert_eq!(
             extract_copilot_reasoning_effort(item.capabilities.as_ref()),
             Some(vec![
                 CopilotReasoningEffort::None,
@@ -1739,6 +1752,36 @@ mod tests {
             item.supported_endpoints,
             vec!["/responses", "/chat/completions"]
         );
+    }
+
+    #[test]
+    fn vision_capability_preserves_false_and_unknown() {
+        assert_eq!(extract_copilot_vision(None), None);
+        for (capabilities, expected) in [
+            (serde_json::json!({}), None),
+            (serde_json::json!({ "supports": {} }), None),
+            (
+                serde_json::json!({ "supports": { "vision": true } }),
+                Some(true),
+            ),
+            (
+                serde_json::json!({ "supports": { "vision": false } }),
+                Some(false),
+            ),
+            (serde_json::json!({ "supports": { "vision": null } }), None),
+            (
+                serde_json::json!({ "supports": { "vision": "true" } }),
+                None,
+            ),
+            (serde_json::json!({ "supports": { "vision": 1 } }), None),
+            (serde_json::json!({ "supports": { "vision": [] } }), None),
+        ] {
+            assert_eq!(
+                extract_copilot_vision(Some(&capabilities)),
+                expected,
+                "{capabilities}"
+            );
+        }
     }
 
     #[test]
@@ -1777,6 +1820,7 @@ mod tests {
             context_window: Some(922_000),
             supported_endpoints: vec!["/responses".to_string()],
             supports_parallel_tool_calls: Some(true),
+            supports_vision: Some(true),
             reasoning_effort: Some(vec![
                 CopilotReasoningEffort::None,
                 CopilotReasoningEffort::Xhigh,
@@ -1794,8 +1838,35 @@ mod tests {
                 "context_window": 922000,
                 "supported_endpoints": ["/responses"],
                 "supports_parallel_tool_calls": true,
+                "supports_vision": true,
                 "reasoning_effort": ["none", "xhigh", "max"]
             })
+        );
+    }
+
+    #[test]
+    fn vision_capability_serialization_preserves_false_and_unknown() {
+        let mut model: CopilotModel = serde_json::from_value(serde_json::json!({
+            "id": "copilot-model",
+            "name": "Copilot Model",
+            "vendor": "OpenAI",
+            "model_picker_enabled": true
+        }))
+        .unwrap();
+        assert_eq!(model.supports_vision, None);
+        assert!(serde_json::to_value(&model)
+            .unwrap()
+            .get("supports_vision")
+            .is_none());
+
+        model.supports_vision = Some(false);
+        let serialized = serde_json::to_value(model).unwrap();
+        assert_eq!(serialized["supports_vision"], serde_json::json!(false));
+        assert_eq!(
+            serde_json::from_value::<CopilotModel>(serialized)
+                .unwrap()
+                .supports_vision,
+            Some(false)
         );
     }
 
@@ -2043,6 +2114,7 @@ mod tests {
                         context_window: None,
                         supported_endpoints: Vec::new(),
                         supports_parallel_tool_calls: None,
+                        supports_vision: None,
                         reasoning_effort: None,
                     },
                     CopilotModel {
@@ -2053,6 +2125,7 @@ mod tests {
                         context_window: None,
                         supported_endpoints: Vec::new(),
                         supports_parallel_tool_calls: None,
+                        supports_vision: None,
                         reasoning_effort: None,
                     },
                     CopilotModel {
@@ -2066,6 +2139,7 @@ mod tests {
                             "/responses".to_string(),
                         ],
                         supports_parallel_tool_calls: None,
+                        supports_vision: None,
                         reasoning_effort: None,
                     },
                 ],
@@ -2149,6 +2223,7 @@ mod tests {
                 .map(|endpoint| endpoint.to_string())
                 .collect(),
             supports_parallel_tool_calls: None,
+            supports_vision: None,
             reasoning_effort: None,
         };
         manager.copilot_models.write().await.extend([
