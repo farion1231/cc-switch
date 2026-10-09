@@ -1225,7 +1225,6 @@ pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<
         view.stale_clients = codex_direct::off_runtime(move || {
             codex_client_catalog::stale_clients(&DeviceStore::for_device(), check_catalog)
         })
-        })
         .await
         .map_err(err)?;
     }
