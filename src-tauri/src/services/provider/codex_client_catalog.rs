@@ -442,10 +442,20 @@ enum Role {
 }
 
 /// `…/codex [-c 键=值 …] app-server …` 是 app-server；`app-server daemon …`、`app-server proxy`
-/// 是管理守护进程的子命令，不读模型目录。命令行是 `ps` 用空格拼起来的，分不出路径里的空格，
-/// 所以先找可执行文件名 `codex`，再看它后面的参数。
+/// 是管理守护进程的子命令，不读模型目录。Windows CIM 返回原始命令行，参数边界要按 Windows
+/// 的引号规则恢复；Unix `ps` 输出则继续按空格处理。
 fn app_server_role(command: &str) -> Option<Role> {
-    let mut words = after_codex_executable(command)?.split_whitespace();
+    let rest = after_codex_executable(command)?;
+    let windows = command_is_windows(command);
+    let arguments;
+    let mut unix_words = rest.split_whitespace();
+    let windows_words = windows_command_line_args(rest).into_iter();
+    let mut words: Box<dyn Iterator<Item = &str>> = if windows {
+        arguments = windows_words.collect::<Vec<_>>();
+        Box::new(arguments.iter().map(String::as_str))
+    } else {
+        Box::new(unix_words.by_ref())
+    };
     let subcommand = loop {
         match words.next()? {
             "-c" | "--config" => {
@@ -467,6 +477,63 @@ fn app_server_role(command: &str) -> Option<Role> {
     } else {
         Role::Other
     })
+}
+
+fn command_is_windows(command: &str) -> bool {
+    let command = command.trim_start();
+    command.starts_with('"')
+        || command.as_bytes().get(1) == Some(&b':')
+        || command.starts_with("\\\\")
+        || command
+            .split_whitespace()
+            .next()
+            .is_some_and(|word| word.to_ascii_lowercase().ends_with(".exe"))
+}
+
+/// 按 Windows 命令行规则拆分参数。CIM 返回的是原始命令行，因此不能直接按空格切分带引号的值。
+fn windows_command_line_args(command: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut backslashes = 0;
+    let mut started = false;
+
+    for ch in command.chars() {
+        if ch == '\\' {
+            backslashes += 1;
+            continue;
+        }
+
+        if ch == '"' {
+            current.extend(std::iter::repeat_n('\\', backslashes / 2));
+            if backslashes % 2 == 1 {
+                current.push('"');
+            } else {
+                in_quotes = !in_quotes;
+                started = true;
+            }
+            backslashes = 0;
+            continue;
+        }
+
+        current.extend(std::iter::repeat_n('\\', backslashes));
+        backslashes = 0;
+        if ch.is_whitespace() && !in_quotes {
+            if started {
+                args.push(std::mem::take(&mut current));
+                started = false;
+            }
+        } else {
+            current.push(ch);
+            started = true;
+        }
+    }
+
+    current.extend(std::iter::repeat_n('\\', backslashes));
+    if started {
+        args.push(current);
+    }
+    args
 }
 
 /// 命令行里可执行文件 `codex` 或 `codex.exe` 之后的部分。
@@ -740,8 +807,30 @@ mod tests {
             Some(Role::Other)
         );
         assert_eq!(
+            app_server_role(r#""C:\Program Files\Codex\codex.exe" "app-server""#),
+            Some(Role::Other)
+        );
+        assert_eq!(
             app_server_role(r"C:\Program Files\Codex\codex.exe app-server --managed-daemon"),
             Some(Role::Daemon)
+        );
+        assert_eq!(
+            app_server_role(
+                r#""C:\Program Files\Codex\codex.exe" -c "model_reasoning_effort = 'high'" app-server"#
+            ),
+            Some(Role::Other)
+        );
+        assert_eq!(
+            app_server_role(r#""C:\Program Files\Codex\codex.exe" app-server "--managed-daemon""#),
+            Some(Role::Daemon)
+        );
+        assert_eq!(
+            app_server_role(r#""C:\Program Files\Codex\codex.exe" app-server "daemon" restart"#),
+            None
+        );
+        assert_eq!(
+            app_server_role(r#""C:\Program Files\Codex\codex.exe" app-server "proxy""#),
+            None
         );
         assert_eq!(app_server_role("codex.exe app-server"), Some(Role::Other));
         assert_eq!(
@@ -760,6 +849,22 @@ mod tests {
         assert_eq!(
             app_server_role("/usr/bin/codex app-server -c tool=/tools/test.exe"),
             Some(Role::Other)
+        );
+    }
+
+    #[test]
+    fn windows_command_line_parser_preserves_quoted_values() {
+        assert_eq!(
+            windows_command_line_args(r#"-c "model_reasoning_effort = 'high'" app-server"#),
+            vec![
+                "-c".to_string(),
+                "model_reasoning_effort = 'high'".to_string(),
+                "app-server".to_string()
+            ]
+        );
+        assert_eq!(
+            windows_command_line_args(r#"app-server "--managed-daemon""#),
+            vec!["app-server".to_string(), "--managed-daemon".to_string()]
         );
     }
 
