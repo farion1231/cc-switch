@@ -392,6 +392,19 @@ impl TokenUsage {
         None
     }
 
+/// 从 Gemini `usageMetadata` 读取单个 token 计数字段。
+///
+/// 原生 Gemini API 通常返回 JSON 数字，但 Vertex AI 侧把 protobuf 的
+/// int64 映射为字符串（例如 `"promptTokenCount": "163766"`）。经 New API
+/// 等中转转发 Vertex 模型时两种形状都会出现，统一兼容，否则 usage 解析
+/// 整体失败、token 统计塌成全零。
+fn gemini_token_count(value: &Value) -> Option<u64> {
+    if let Some(n) = value.as_u64() {
+        return Some(n);
+    }
+    value.as_str().and_then(|s| s.trim().parse().ok())
+}
+
     /// 从 Gemini API 非流式响应解析
     pub fn from_gemini_response(body: &Value) -> Option<Self> {
         let usage = body.get("usageMetadata")?;
@@ -401,8 +414,12 @@ impl TokenUsage {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let prompt_tokens = usage.get("promptTokenCount")?.as_u64()? as u32;
-        let total_tokens = usage.get("totalTokenCount")?.as_u64()? as u32;
+        let prompt_tokens = usage
+            .get("promptTokenCount")
+            .and_then(gemini_token_count)? as u32;
+        let total_tokens = usage
+            .get("totalTokenCount")
+            .and_then(gemini_token_count)? as u32;
 
         // 输出 tokens = 总 tokens - 输入 tokens
         // 这包含了 candidatesTokenCount + thoughtsTokenCount
@@ -413,7 +430,7 @@ impl TokenUsage {
             output_tokens,
             cache_read_tokens: usage
                 .get("cachedContentTokenCount")
-                .and_then(|v| v.as_u64())
+                .and_then(gemini_token_count)
                 .unwrap_or(0) as u32,
             cache_creation_tokens: 0,
             model,
@@ -432,22 +449,22 @@ impl TokenUsage {
 
         for chunk in chunks {
             if let Some(usage) = chunk.get("usageMetadata") {
-                // 输入 tokens (通常在所有 chunk 中保持不变)
+                // 输入 tokens (通常在所有 chunk 中保持不变；Vertex 侧为字符串)
                 total_input = usage
                     .get("promptTokenCount")
-                    .and_then(|v| v.as_u64())
+                    .and_then(gemini_token_count)
                     .unwrap_or(0) as u32;
 
-                // 总 tokens (包含输入 + 输出 + 思考)
+                // 总 tokens (包含输入 + 输出 + 思考；Vertex 侧为字符串)
                 total_tokens = usage
                     .get("totalTokenCount")
-                    .and_then(|v| v.as_u64())
+                    .and_then(gemini_token_count)
                     .unwrap_or(0) as u32;
 
                 // 缓存读取 tokens
                 total_cache_read = usage
                     .get("cachedContentTokenCount")
-                    .and_then(|v| v.as_u64())
+                    .and_then(gemini_token_count)
                     .unwrap_or(0) as u32;
             }
 
@@ -742,6 +759,58 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 20);
         assert_eq!(usage.cache_creation_tokens, 0);
         assert_eq!(usage.model, Some("gemini-3-pro-high".to_string()));
+    }
+
+    #[test]
+    fn test_gemini_response_vertex_string_token_counts() {
+        // Vertex AI 侧把 protobuf int64 映射为字符串返回（经 New API 等中转
+        // 转发 Vertex 模型时真实形状，数值取自 issue #7738 中上游记账 163766）。
+        let response = json!({
+            "modelVersion": "gemini-3.5-flash",
+            "usageMetadata": {
+                "promptTokenCount": "163766",
+                "candidatesTokenCount": "142",
+                "thoughtsTokenCount": "160660",
+                "totalTokenCount": "324568",
+                "cachedContentTokenCount": "233584"
+            }
+        });
+
+        let usage = TokenUsage::from_gemini_response(&response).expect(
+            "Vertex 字符串 token 计数形状必须解析成功",
+        );
+        assert_eq!(usage.input_tokens, 163766);
+        assert_eq!(usage.cache_read_tokens, 233584);
+        // output_tokens = totalTokenCount - promptTokenCount = 324568 - 163766
+        assert_eq!(usage.output_tokens, 160802);
+        assert_eq!(usage.model, Some("gemini-3.5-flash".to_string()));
+    }
+
+    #[test]
+    fn test_gemini_stream_chunks_vertex_string_token_counts() {
+        // 流式 alt=sse：首 chunk 回显 modelVersion，尾 chunk 带 usageMetadata。
+        // 两个缺陷修复的回归：
+        //   1) 过滤器需放行首 chunk（modelVersion），否则模型归因退化；
+        //   2) token 计数字段为字符串（Vertex），必须解析成功。
+        let chunks = vec![
+            json!({"modelVersion": "gemini-3.5-flash"}),
+            json!({"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}),
+            json!({
+                "candidates": [{"content": {"parts": [{"text": "!"}], "finishReason": "STOP"}}],
+                "usageMetadata": {
+                    "promptTokenCount": "42",
+                    "totalTokenCount": "57"
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_gemini_stream_chunks(&chunks).expect(
+            "带 Vertex 字符串 usageMetadata 的流式 chunk 列表必须解析成功",
+        );
+        assert_eq!(usage.input_tokens, 42);
+        // output_tokens = totalTokenCount - promptTokenCount = 57 - 42
+        assert_eq!(usage.output_tokens, 15);
+        assert_eq!(usage.model, Some("gemini-3.5-flash".to_string()));
     }
 
     #[test]
