@@ -1072,7 +1072,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "OpenCode Go",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     category: "third_party",
     baseUrl: "https://opencode.ai/zen/go",

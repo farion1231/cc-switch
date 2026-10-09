@@ -12,6 +12,11 @@ name: WSL2 Nightly
 # which all create the app database, are not run. Tests run under cargo-nextest
 # one at a time, so a hung test is killed by the per-test timeout in
 # src-tauri/.config/nextest.toml instead of eating the whole job.
+#
+# The tests are built once into a nextest archive with the native TEMP, and the
+# run steps execute that archive. Invoking cargo with TEMP on \\wsl.localhost
+# can re-link the crate, and link.exe/mt.exe cannot create manifest temp files
+# there (LNK1327).
 on:
   schedule:
     - cron: "23 18 * * *" # 02:23 Beijing time
@@ -82,32 +87,37 @@ jobs:
           "CC_SWITCH_WSL_TEST_DIR=$testRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CC_SWITCH_WSL_TEST_TEMP=$testTemp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Compile backend tests with native temp
-        # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path.
-        run: cargo test --lib --manifest-path src-tauri/Cargo.toml --no-run
+      # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path,
+      # so build here with the native TEMP and only run the archive below.
+      - name: Archive backend lib tests with native temp
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "cc-switch-lib-tests.tar.zst"
+          $extractDir = Join-Path $env:RUNNER_TEMP "cc-switch-lib-tests"
+          # --extract-to requires an existing directory
+          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+          cargo nextest archive --lib --manifest-path src-tauri/Cargo.toml --archive-file $archive
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          "NEXTEST_ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NEXTEST_EXTRACT_DIR=$extractDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      # Running from the archive never invokes the build. The binaries are
+      # extracted to the native runner temp, not to TEMP on \\wsl.localhost.
+      # --no-tests fail turns a renamed or cfg'd-out contract test into a failure.
       - name: Run Windows-to-WSL2 filesystem contract
         shell: pwsh
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
-          $testList = cargo test --lib --manifest-path src-tauri/Cargo.toml -- --ignored --list
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-          $expected = "${testName}: test"
-          if ($testList -notcontains $expected) {
-            throw "Expected ignored test was not discovered: $testName"
-          }
-          cargo test --lib --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
+          cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --no-tests fail --no-capture --run-ignored only -E 'test(=config::tests::atomic_write_replaces_existing_wsl_unc_file)'
 
+      # The 9P share sometimes aborts a write mid-test (os error 995). Retry here
+      # only, not in the ci profile; nextest still reports such tests as FLAKY.
       - name: Run lib tests against WSL2-backed home
         shell: pwsh
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          cargo nextest run --lib --manifest-path src-tauri/Cargo.toml --profile ci --test-threads 1 -E 'not test(/database::/)'
+          cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --test-threads 1 --retries 2 -E 'not test(/database::/)'

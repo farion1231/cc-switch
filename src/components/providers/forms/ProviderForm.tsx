@@ -14,7 +14,10 @@ import {
 } from "@/lib/requestOverrides";
 import { providersApi, type AppId, type ManagedAuthProvider } from "@/lib/api";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
-import { overlayClaudeProviderFields } from "@/utils/claudeEditorOverlay";
+import {
+  overlayClaudeProviderFields,
+  withClaudeGatewayDefaults,
+} from "@/utils/claudeEditorOverlay";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
   ProviderCategory,
@@ -22,6 +25,7 @@ import type {
   ClaudeApiFormat,
   ClaudeStackModel,
   CodexApiFormat,
+  CodexCopilotApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
   PromptCacheRoutingMode,
@@ -124,6 +128,8 @@ import {
   GEMINI_DEFAULT_CONFIG,
   OPENCODE_DEFAULT_CONFIG,
   OPENCLAW_DEFAULT_CONFIG,
+  hasNativeOpencodeDefinition,
+  isNativeOpencodeConfig,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
@@ -450,11 +456,14 @@ function ProviderFormFull({
       notes: initialData?.notes ?? "",
       settingsConfig: initialData?.settingsConfig
         ? JSON.stringify(initialData.settingsConfig, null, 2)
-        : appId === "claude" && claudeLiveBase
+        : appId === "claude"
           ? JSON.stringify(
               overlayClaudeProviderFields(
-                claudeLiveBase,
-                JSON.parse(CLAUDE_DEFAULT_CONFIG) as Record<string, unknown>,
+                claudeLiveBase ?? {},
+                withClaudeGatewayDefaults(
+                  JSON.parse(CLAUDE_DEFAULT_CONFIG) as Record<string, unknown>,
+                  "custom",
+                ),
               ),
               null,
               2,
@@ -707,22 +716,35 @@ function ProviderFormFull({
   } = useCodexConfigState({ initialData });
 
   const initialCodexApiFormat: CodexApiFormat =
-    initialData?.meta?.apiFormat === "openai_chat"
-      ? "openai_chat"
-      : initialData?.meta?.apiFormat === "anthropic"
-        ? "anthropic"
-        : initialData?.meta?.apiFormat === "openai_responses"
-          ? "openai_responses"
-          : (codexApiFormatFromWireApi(
-              extractCodexWireApi(
-                typeof initialData?.settingsConfig?.config === "string"
-                  ? initialData.settingsConfig.config
-                  : "",
-              ),
-            ) ?? "openai_responses");
+    initialData?.meta?.providerType === "github_copilot"
+      ? "openai_responses"
+      : initialData?.meta?.apiFormat === "openai_chat"
+        ? "openai_chat"
+        : initialData?.meta?.apiFormat === "anthropic"
+          ? "anthropic"
+          : initialData?.meta?.apiFormat === "openai_responses"
+            ? "openai_responses"
+            : (codexApiFormatFromWireApi(
+                extractCodexWireApi(
+                  typeof initialData?.settingsConfig?.config === "string"
+                    ? initialData.settingsConfig.config
+                    : "",
+                ),
+              ) ?? "openai_responses");
 
+  const initialCodexCopilotApiFormat =
+    initialData?.meta?.codexCopilotApiFormat ?? "auto";
   const [localCodexApiFormat, setLocalCodexApiFormat] =
     useState<CodexApiFormat>(initialCodexApiFormat);
+  // Preserve future selections verbatim unless the user changes the format.
+  const [codexCopilotApiFormat, setCodexCopilotApiFormat] = useState(
+    initialCodexCopilotApiFormat,
+  );
+  const effectiveCodexCopilotApiFormat: CodexCopilotApiFormat =
+    codexCopilotApiFormat === "openai_chat" ||
+    codexCopilotApiFormat === "openai_responses"
+      ? codexCopilotApiFormat
+      : "auto";
 
   // Auth-field choice for the Anthropic Messages upstream (defaults to the Bearer form)
   const initialCodexAnthropicAuthField: ClaudeApiKeyField =
@@ -757,26 +779,47 @@ function ProviderFormFull({
     [originalHandleCodexConfigChange, debouncedValidate],
   );
 
+  // Codex always speaks Responses to the proxy, regardless of upstream selection.
+  const ensureCodexResponsesWireApi = useCallback(() => {
+    setCodexConfig((prev) => {
+      const updated = setCodexWireApi(prev, "responses");
+      debouncedValidate(updated);
+      return updated;
+    });
+  }, [setCodexConfig, debouncedValidate]);
+
   const handleCodexApiFormatChange = useCallback(
     (format: CodexApiFormat) => {
       setLocalCodexApiFormat(format);
-      // wire_api is always "responses" for Codex; format controls proxy-layer conversion
-      setCodexConfig((prev) => {
-        const updated = setCodexWireApi(prev, "responses");
-        debouncedValidate(updated);
-        return updated;
-      });
+      ensureCodexResponsesWireApi();
     },
-    [setCodexConfig, debouncedValidate],
+    [ensureCodexResponsesWireApi],
+  );
+
+  const handleCodexCopilotApiFormatChange = useCallback(
+    (format: CodexCopilotApiFormat) => {
+      setCodexCopilotApiFormat(format);
+      ensureCodexResponsesWireApi();
+    },
+    [ensureCodexResponsesWireApi],
   );
 
   // 新增：预设或模板投影到当前配置文件上显示。每次重置显示内容都要重新投影，否则保存时
   // 三方比较的底和显示内容对不上。
   const { projectDraft } = useDraftEditorProjection(appId, onEditorBaseChange);
   const projectCodexDraft = useCallback(
-    (auth: Record<string, unknown>, config: string, category?: string) =>
-      projectDraft({ auth, config }, category, (shown) =>
-        setCodexConfig(typeof shown.config === "string" ? shown.config : ""),
+    (
+      auth: Record<string, unknown>,
+      config: string,
+      category?: string,
+      meta?: ProviderMeta,
+    ) =>
+      projectDraft(
+        { auth, config },
+        category,
+        (shown) =>
+          setCodexConfig(typeof shown.config === "string" ? shown.config : ""),
+        meta,
       ),
     [projectDraft, setCodexConfig],
   );
@@ -864,11 +907,17 @@ function ProviderFormFull({
   );
   const presetProviderType = getPresetProviderType(selectedPresetEntry?.preset);
   const initialProviderType = initialData?.meta?.providerType;
+  const hasManagedCopilotIdentity =
+    presetProviderType === "github_copilot" ||
+    initialProviderType === "github_copilot";
   const isCopilotProvider =
-    appId === "claude" &&
-    (presetProviderType === "github_copilot" ||
-      initialProviderType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com"));
+    (appId === "codex" && hasManagedCopilotIdentity) ||
+    (appId === "claude" &&
+      (hasManagedCopilotIdentity || baseUrl.includes("githubcopilot.com")));
+  // Auto can select Chat per request, so retain Chat-only options for that path.
+  const isCodexChatFormat = isCopilotProvider
+    ? effectiveCodexCopilotApiFormat !== "openai_responses"
+    : localCodexApiFormat === "openai_chat";
   const isClaudeCodexOauthProvider =
     appId === "claude" &&
     (presetProviderType === "codex_oauth" ||
@@ -1028,13 +1077,36 @@ function ProviderFormFull({
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
+  const isNativeOpencode =
+    appId === "opencode" &&
+    !isAnyOmoCategory &&
+    isNativeOpencodeConfig(
+      form.watch("settingsConfig"),
+      initialData?.meta?.opencodeConfigFormat,
+    );
+  const isExistingNativeOpencodeKey =
+    isNativeOpencode && providerId === opencodeForm.opencodeProviderKey;
+  // Existing native IDs are kept exactly as OpenCode accepted them.
+  const isOpencodeProviderKeyInvalid =
+    opencodeForm.opencodeProviderKey.trim() !== "" &&
+    !isExistingNativeOpencodeKey &&
+    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeForm.opencodeProviderKey);
 
-  const canKeepExistingOpencodeOverride =
+  const keepsOpencodeProviderId =
     isEditMode &&
     !!providerId &&
-    opencodeForm.opencodeProviderKey === providerId &&
+    opencodeForm.opencodeProviderKey === providerId;
+  const canKeepExistingOpencodeOverride =
+    keepsOpencodeProviderId &&
     isOpencodeLiveProviderIdsSuccess &&
-    opencodeLiveProviderIds.includes(providerId);
+    opencodeLiveProviderIds.includes(opencodeForm.opencodeProviderKey);
+  // Unlike V1, no older version copied native rows without their definition
+  // (copies now require one), so a stored native row keeping its ID may stay
+  // package-less after removal from the live config.
+  const canInheritOpencodeDefinition =
+    canKeepExistingOpencodeOverride ||
+    (keepsOpencodeProviderId &&
+      initialData?.meta?.opencodeConfigFormat === "v2");
 
   const initialOmoSettings =
     appId === "opencode" &&
@@ -1217,7 +1289,7 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyRequired"));
         return;
       }
-      if (!keyPattern.test(opencodeForm.opencodeProviderKey)) {
+      if (isOpencodeProviderKeyInvalid) {
         toast.error(t("opencode.providerKeyInvalid"));
         return;
       }
@@ -1236,14 +1308,26 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyDuplicate"));
         return;
       }
-      // Only an unchanged ID already in the live config may inherit defaults.
-      if (
-        !canKeepExistingOpencodeOverride &&
-        (!opencodeForm.opencodeNpm.trim() ||
-          Object.keys(opencodeForm.opencodeModels).length === 0)
-      ) {
-        toast.error(t("opencode.customProviderRequired"));
-        return;
+      // Only an existing override keeping its ID may inherit defaults.
+      // Native V2 declarations name their package in `package`, not `npm`.
+      if (!canInheritOpencodeDefinition) {
+        const hasDefinition = isNativeOpencode
+          ? hasNativeOpencodeDefinition(
+              form.getValues("settingsConfig"),
+              opencodeForm.opencodeProviderKey,
+            )
+          : !!opencodeForm.opencodeNpm.trim() &&
+            Object.keys(opencodeForm.opencodeModels).length > 0;
+        if (!hasDefinition) {
+          toast.error(
+            t(
+              isNativeOpencode
+                ? "opencode.nativeCustomProviderRequired"
+                : "opencode.customProviderRequired",
+            ),
+          );
+          return;
+        }
       }
     }
 
@@ -1483,16 +1567,16 @@ function ProviderFormFull({
           );
         }
       } else if (appId === "codex") {
-        // 托管 OAuth 预设（xAI）：端点由 adapter 硬定向、token 由代理注入，
+        // 托管 OAuth 预设（Copilot/xAI）：端点由 adapter 硬定向、token 由代理注入，
         // 两项都不需要用户填写
-        if (!isXaiOauthProvider && !codexBaseUrl.trim()) {
+        if (!isCopilotProvider && !isXaiOauthProvider && !codexBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!isXaiOauthProvider && !codexApiKey.trim()) {
+        if (!isCopilotProvider && !isXaiOauthProvider && !codexApiKey.trim()) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1782,6 +1866,7 @@ function ProviderFormFull({
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
+      opencodeConfigFormat: isNativeOpencode ? "v2" : undefined,
       // Claude Code、Codex、Gemini CLI 的通用配置片段已冻结：沿用行里原有的标记，新增时
       // 由后端写 true（兼容旧版）。
       commonConfigEnabled:
@@ -1824,15 +1909,13 @@ function ProviderFormFull({
           : undefined,
       codexFastMode: isClaudeCodexOauthProvider ? codexFastMode : undefined,
       codexChatReasoning:
-        appId === "codex" &&
-        category !== "official" &&
-        localCodexApiFormat === "openai_chat"
+        appId === "codex" && category !== "official" && isCodexChatFormat
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
       promptCacheRouting:
         appId === "codex" &&
         category !== "official" &&
-        localCodexApiFormat === "openai_chat" &&
+        isCodexChatFormat &&
         promptCacheRouting !== "auto"
           ? promptCacheRouting
           : undefined,
@@ -1848,11 +1931,17 @@ function ProviderFormFull({
           ? isXaiOauthProvider
             ? "openai_responses"
             : localApiFormat
-          : appId === "codex" && category !== "official"
+          : appId === "codex" && category !== "official" && !isCopilotProvider
             ? isXaiOauthProvider
               ? "openai_responses"
               : localCodexApiFormat
             : undefined,
+      codexCopilotApiFormat:
+        appId === "codex" &&
+        isCopilotProvider &&
+        codexCopilotApiFormat !== "auto"
+          ? codexCopilotApiFormat
+          : undefined,
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&
@@ -1884,6 +1973,7 @@ function ProviderFormFull({
       isFullUrl:
         supportsFullUrl &&
         category !== "official" &&
+        !isCopilotProvider &&
         !isXaiOauthProvider &&
         localIsFullUrl
           ? true
@@ -1891,6 +1981,10 @@ function ProviderFormFull({
       stackModels,
     };
 
+    // Remove the legacy representative value, including on existing Copilot cards.
+    if (appId === "codex" && isCopilotProvider) {
+      delete nextMeta.apiFormat;
+    }
     if (!isClaudeCodexOauthProvider && "codexFastMode" in nextMeta) {
       delete nextMeta.codexFastMode;
     }
@@ -2015,6 +2109,7 @@ function ProviderFormFull({
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
         setPromptCacheRouting("auto");
+        setCodexCopilotApiFormat("auto");
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
@@ -2059,6 +2154,7 @@ function ProviderFormFull({
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
       setPromptCacheRouting(preset.promptCacheRouting ?? "auto");
+      setCodexCopilotApiFormat("auto");
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -2072,7 +2168,15 @@ function ProviderFormFull({
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
       });
-      projectCodexDraft(auth, config, preset.category);
+      // Preset selection resets Copilot to auto; do not reuse the previous render's metadata.
+      projectCodexDraft(
+        auth,
+        config,
+        preset.category,
+        preset.providerType === "github_copilot"
+          ? { providerType: preset.providerType }
+          : undefined,
+      );
       return;
     }
 
@@ -2173,10 +2277,13 @@ function ProviderFormFull({
     );
     // 预设只带关键字段和独有字段，套在当前 live 上显示（和切换的结果一致）。
     const config =
-      appId === "claude" && claudeLiveBase
+      appId === "claude"
         ? overlayClaudeProviderFields(
-            claudeLiveBase,
-            templated as Record<string, unknown>,
+            claudeLiveBase ?? {},
+            withClaudeGatewayDefaults(
+              templated as Record<string, unknown>,
+              preset.category,
+            ),
           )
         : templated;
 
@@ -2253,10 +2360,7 @@ function ProviderFormFull({
                         opencodeForm.opencodeProviderKey,
                       ) &&
                         !isProviderKeyLocked) ||
-                      (opencodeForm.opencodeProviderKey.trim() !== "" &&
-                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                          opencodeForm.opencodeProviderKey,
-                        ))
+                      isOpencodeProviderKeyInvalid
                         ? "border-destructive"
                         : ""
                     }
@@ -2269,23 +2373,17 @@ function ProviderFormFull({
                         {t("opencode.providerKeyDuplicate")}
                       </p>
                     )}
-                  {opencodeForm.opencodeProviderKey.trim() !== "" &&
-                    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                      opencodeForm.opencodeProviderKey,
-                    ) && (
-                      <p className="text-xs text-destructive">
-                        {t("opencode.providerKeyInvalid")}
-                      </p>
-                    )}
+                  {isOpencodeProviderKeyInvalid && (
+                    <p className="text-xs text-destructive">
+                      {t("opencode.providerKeyInvalid")}
+                    </p>
+                  )}
                   {!(
                     additiveExistingProviderKeys.includes(
                       opencodeForm.opencodeProviderKey,
                     ) && !isProviderKeyLocked
                   ) &&
-                    (opencodeForm.opencodeProviderKey.trim() === "" ||
-                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                        opencodeForm.opencodeProviderKey,
-                      )) && (
+                    !isOpencodeProviderKeyInvalid && (
                       <p className="text-xs text-fg-2">
                         {isProviderKeyLocked
                           ? t("opencode.providerKeyLockedHint", {
@@ -2518,6 +2616,10 @@ function ProviderFormFull({
           {appId === "codex" && (
             <CodexFormFields
               providerId={providerId}
+              isCopilotPreset={isCopilotProvider}
+              isCopilotAuthenticated={isCopilotAuthenticated}
+              selectedGitHubAccountId={selectedGitHubAccountId}
+              onGitHubAccountSelect={setSelectedGitHubAccountId}
               isXaiOauthPreset={
                 presetProviderType === "xai_oauth" ||
                 initialData?.meta?.providerType === "xai_oauth"
@@ -2568,6 +2670,8 @@ function ProviderFormFull({
               onModelChange={handleCodexModelChange}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
+              copilotApiFormat={effectiveCodexCopilotApiFormat}
+              onCopilotApiFormatChange={handleCodexCopilotApiFormatChange}
               anthropicAuthField={localCodexAnthropicAuthField}
               onAnthropicAuthFieldChange={setLocalCodexAnthropicAuthField}
               impersonateClaudeCode={localCodexImpersonateClaudeCode}
@@ -2620,7 +2724,7 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "opencode" && !isAnyOmoCategory && (
+          {appId === "opencode" && !isAnyOmoCategory && !isNativeOpencode && (
             <OpenCodeFormFields
               allowBuiltinDefaults={canKeepExistingOpencodeOverride}
               npm={opencodeForm.opencodeNpm}
@@ -2762,17 +2866,26 @@ function ProviderFormFull({
                 <Label htmlFor="settingsConfig">
                   {t("provider.configJson")}
                 </Label>
+                {isNativeOpencode && (
+                  <p className="text-sm text-fg-2">
+                    {t("opencode.nativeConfigHint")}
+                  </p>
+                )}
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
                   onChange={(config) => form.setValue("settingsConfig", config)}
-                  placeholder={`{
+                  placeholder={
+                    isNativeOpencode
+                      ? "{}"
+                      : `{
   "npm": "@ai-sdk/openai-compatible",
   "options": {
     "baseURL": "https://your-api-endpoint.com",
     "apiKey": "your-api-key-here"
   },
   "models": {}
-}`}
+}`
+                  }
                   rows={3}
                   showValidation={true}
                   language="json"

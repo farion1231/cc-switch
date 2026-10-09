@@ -112,6 +112,11 @@ impl Provider {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
 
+    /// The stored OpenCode source format; only native declarations record one.
+    pub fn opencode_config_format(&self) -> Option<OpenCodeConfigFormat> {
+        self.meta.as_ref().and_then(|m| m.opencode_config_format)
+    }
+
     fn claude_base_url_contains(&self, needle: &str) -> bool {
         self.settings_config
             .pointer("/env/ANTHROPIC_BASE_URL")
@@ -398,6 +403,29 @@ pub struct ClaudeDesktopModelRoute {
     pub supports_1m: Option<bool>,
 }
 
+/// Codex Copilot protocol selection; independent of legacy `apiFormat` metadata.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexCopilotApiFormat {
+    #[default]
+    Auto,
+    OpenaiResponses,
+    OpenaiChat,
+}
+
+impl CodexCopilotApiFormat {
+    /// Read the stored selection. The meta field stays a plain string so a value
+    /// written by a newer version survives sync round-trips here instead of
+    /// failing the whole `ProviderMeta` parse; unknown values fall back to auto.
+    pub fn from_meta(meta: Option<&ProviderMeta>) -> Self {
+        match meta.and_then(|meta| meta.codex_copilot_api_format.as_deref()) {
+            Some("openai_responses") => Self::OpenaiResponses,
+            Some("openai_chat") => Self::OpenaiChat,
+            _ => Self::Auto,
+        }
+    }
+}
+
 /// Codex Responses -> Chat Completions 的 reasoning 能力描述。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct CodexChatReasoningConfig {
@@ -495,6 +523,13 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// Codex Copilot only: absent or auto prefers advertised Responses, then Chat.
+    /// Legacy `apiFormat` does not imply an explicit Copilot protocol override.
+    #[serde(
+        rename = "codexCopilotApiFormat",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub codex_copilot_api_format: Option<String>,
     /// 通用认证绑定（provider_config / managed_account）
     ///
     /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。
@@ -555,6 +590,13 @@ pub struct ProviderMeta {
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
     pub live_config_managed: Option<bool>,
+    /// Source format for OpenCode entries whose fields alone are ambiguous
+    /// (for example, a native V2 built-in provider containing only models).
+    #[serde(
+        rename = "opencodeConfigFormat",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_config_format: Option<OpenCodeConfigFormat>,
     /// 供应商类型标识（用于特殊供应商检测）
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
@@ -943,6 +985,13 @@ requires_openai_auth = true"#
 // OpenCode 供应商配置结构
 // ============================================================================
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenCodeConfigFormat {
+    V1,
+    V2,
+}
+
 /// OpenCode 供应商的 settings_config 结构
 ///
 /// OpenCode 使用 AI SDK 包名来指定供应商类型，与其他应用的配置格式不同。
@@ -1042,8 +1091,9 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, LocalProxyRequestOverrides,
-        OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
+        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderManager,
+        ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1120,6 +1170,65 @@ mod tests {
     fn provider_meta_omits_max_output_tokens_when_none() {
         let value = serde_json::to_value(ProviderMeta::default()).expect("serialize ProviderMeta");
         assert!(value.get("maxOutputTokens").is_none());
+    }
+
+    #[test]
+    fn codex_copilot_api_format_roundtrips_supported_values() {
+        for (wire, expected) in [
+            ("auto", CodexCopilotApiFormat::Auto),
+            ("openai_responses", CodexCopilotApiFormat::OpenaiResponses),
+            ("openai_chat", CodexCopilotApiFormat::OpenaiChat),
+        ] {
+            let value = json!({
+                "apiFormat": "openai_chat",
+                "codexCopilotApiFormat": wire
+            });
+            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(CodexCopilotApiFormat::from_meta(Some(&meta)), expected);
+            assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
+            assert_eq!(serde_json::to_value(meta).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn codex_copilot_api_format_preserves_legacy_absence() {
+        for value in [
+            json!({}),
+            json!({"apiFormat": "openai_chat"}),
+            json!({"apiFormat": "openai_responses"}),
+        ] {
+            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(meta.codex_copilot_api_format, None);
+            assert_eq!(
+                CodexCopilotApiFormat::from_meta(Some(&meta)),
+                CodexCopilotApiFormat::Auto
+            );
+            assert_eq!(serde_json::to_value(meta).unwrap(), value);
+        }
+        assert_eq!(
+            CodexCopilotApiFormat::from_meta(None),
+            CodexCopilotApiFormat::Auto
+        );
+    }
+
+    /// A value from a newer version must not fail the whole meta parse (the DAO
+    /// would fall back to an empty meta and drop the account binding); it is read
+    /// as auto and written back unchanged.
+    #[test]
+    fn codex_copilot_api_format_keeps_unknown_values_without_losing_meta() {
+        for wire in ["anthropic", "messages", "openai", "unknown", ""] {
+            let value = json!({
+                "providerType": "github_copilot",
+                "codexCopilotApiFormat": wire
+            });
+            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(meta.provider_type.as_deref(), Some("github_copilot"));
+            assert_eq!(
+                CodexCopilotApiFormat::from_meta(Some(&meta)),
+                CodexCopilotApiFormat::Auto
+            );
+            assert_eq!(serde_json::to_value(meta).unwrap(), value);
+        }
     }
 
     #[test]

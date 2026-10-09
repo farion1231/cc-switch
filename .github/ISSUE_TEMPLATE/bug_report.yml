@@ -22,9 +22,9 @@ body:
     attributes:
       label: CC Switch Version / 版本号
       description: |
-        See the Settings page in the app.
-        查看应用设置页面中的版本号。
-      placeholder: "e.g. 3.11.1"
+        See Settings → About in the app.
+        在应用的「设置 → 关于」中查看版本号。
+      placeholder: "e.g. 4.0.4"
     validations:
       required: true
 
@@ -48,10 +48,15 @@ body:
       multiple: true
       options:
         - Claude Code
+        - Claude Desktop
         - Codex
         - Gemini CLI
+        - Grok Build
         - OpenCode
         - OpenClaw
+        - Hermes
+        - Pi
+        - MiniMax Code
         - Other / 其他
     validations:
       required: true

@@ -26,6 +26,11 @@ export const PRESET_FAMILIES = {
     planOrder: ["payg", "coding"],
   },
   minimax: { name: "MiniMax" },
+  // Go 是编程订阅、Zen 是按量付费，同一个工作区 Key
+  opencode: {
+    name: "OpenCode",
+    planOrder: ["coding", "payg"],
+  },
   qianwen: { name: "千问AI平台" },
   qwencloud: { name: "QwenCloud" },
   siliconflow: { name: "SiliconFlow" },

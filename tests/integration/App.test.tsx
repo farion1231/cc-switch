@@ -550,6 +550,81 @@ describe("App integration with MSW", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { settingsConfig: { settings: { baseURL: "https://native.example" } } },
+    {
+      settingsConfig: { models: { "glm-5": { name: "GLM 5" } } },
+      meta: { opencodeConfigFormat: "v2" as const },
+    },
+  ])(
+    "blocks incomplete native OpenCode copies with a V2 message: %j",
+    async ({ settingsConfig, meta }) => {
+      localStorage.setItem("cc-switch-last-app", "opencode");
+      setProviders("opencode", {
+        native: {
+          id: "native",
+          name: "Native",
+          settingsConfig,
+          meta,
+          sortIndex: 0,
+        },
+      });
+      setCurrentProviderId("opencode", "native");
+      setLiveProviderIds("opencode", ["native"]);
+      const add = vi.spyOn(providersApi, "add");
+      try {
+        const { default: App } = await import("@/App");
+        renderApp(App);
+        await waitFor(() =>
+          expect(screen.getByTestId("provider-list").textContent).toContain(
+            "native",
+          ),
+        );
+        fireEvent.click(screen.getByText("duplicate"));
+        await waitFor(() =>
+          expect(toastErrorMock).toHaveBeenCalledWith(
+            "opencode.duplicateRequiresNativeDefinition",
+          ),
+        );
+        expect(add).not.toHaveBeenCalled();
+      } finally {
+        add.mockRestore();
+      }
+    },
+  );
+
+  it("duplicates complete native OpenCode providers using an unused ID", async () => {
+    localStorage.setItem("cc-switch-last-app", "opencode");
+    setProviders("opencode", {
+      native: {
+        id: "native",
+        name: "Native",
+        sortIndex: 0,
+        settingsConfig: {
+          package: "@opencode/ai/providers/openai",
+          models: { "gpt-5": { name: "GPT 5" } },
+        },
+        meta: { opencodeConfigFormat: "v2" },
+      },
+    });
+    setCurrentProviderId("opencode", "native");
+    setLiveProviderIds("opencode", ["native-copy"]);
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "native",
+      ),
+    );
+    fireEvent.click(screen.getByText("duplicate"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "native-copy-2",
+      ),
+    );
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
   it("duplicates MiniMax Code providers under a generated unused key", async () => {
     localStorage.setItem("cc-switch-last-app", "mcode");
     const provider = (id: string, name: string) => ({

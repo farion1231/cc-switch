@@ -2,11 +2,12 @@ import type { TFunction } from "i18next";
 import type { QuotaTier, ResetCredits } from "@/types/subscription";
 
 /**
- * 额度的文字和颜色（v7 QuotaSpec）：一律写「剩余」，平时灰色；任一档剩余不到 10% 加深加粗
- * （不用橙色，见 TONE_TEXT；余额不算，见 balanceLine）；用完 / 过期 / 没查到红色。卡片最多两行：
+ * 额度的文字和颜色（v7 QuotaSpec）：一律写「剩余」，只给数值上色（见 emphasis）：平时绿色；
+ * 任一档剩余不到 20% 橙色（余额不算，见 balanceLine）；用完 / 过期 / 没查到整句红色。卡片最多两行：
  * 档数更多时，第一行固定写窗口最短的那档，其余并成一行（见 cardRows）。
  */
-export type QuotaTone = "normal" | "warning" | "danger" | "muted";
+/** plain：数值不表示额度好坏（「已用 $3.20」），不上色 */
+export type QuotaTone = "normal" | "warning" | "danger" | "muted" | "plain";
 
 export interface QuotaLine {
   key: string;
@@ -14,6 +15,8 @@ export interface QuotaLine {
   /** 不带档名的值（「剩余 62%」），额度条里档名单独一列 */
   value?: string;
   tone: QuotaTone;
+  /** 句子里按 tone 上色的那段数值（「62%」「¥82.10」），其余字保持灰色；没有时整句上色 */
+  emphasis?: string;
   /** 剩余百分比；余额没有总额时是 Infinity，失败 / 过期是负数（排在最前） */
   left: number;
   /** 悬停时补充的一句（套餐名、失败原因）；重置时间不写这里，见 resetsAt */
@@ -37,6 +40,8 @@ export interface QuotaBreakdown {
   /** 点开按钮的无障碍名字 */
   openLabel: string;
   items: QuotaBreakdownItem[];
+  /** 分隔线下面另列的几条（卡片上点开重置次数时，附带 Credits 余额） */
+  footer?: QuotaBreakdownItem[];
 }
 
 export interface QuotaBreakdownItem {
@@ -50,7 +55,7 @@ export interface QuotaBreakdownItem {
   tone: QuotaTone;
 }
 
-export const WARN_BELOW_PERCENT = 10;
+export const WARN_BELOW_PERCENT = 20;
 
 export function toneForLeft(left: number): QuotaTone {
   if (left <= 0) return "danger";
@@ -112,6 +117,7 @@ export function tierLine(
     key: tier.name,
     left,
     tone: toneForLeft(left),
+    emphasis: left <= 0 ? undefined : `${left}%`,
     text:
       left <= 0
         ? t("quota.tierUsedUp", params)
@@ -175,7 +181,11 @@ function shortDate(iso: string, locale: string): string {
 export function resetCreditsLine(
   t: TFunction,
   credits: ResetCredits | null | undefined,
-  { now = Date.now(), locale }: { now?: number; locale: string },
+  {
+    now = Date.now(),
+    locale,
+    footer,
+  }: { now?: number; locale: string; footer?: QuotaBreakdownItem[] },
 ): QuotaLine | null {
   const expiries = (credits?.expiresAt ?? []).filter((at) => {
     if (!at) return true;
@@ -197,6 +207,7 @@ export function resetCreditsLine(
     key: "reset_credits",
     left: Infinity,
     tone: expiringSoon ? "warning" : "normal",
+    emphasis: String(count),
     text: t("quota.resetCredits.left", { count }),
     value: t("quota.resetCredits.value", { count }),
     short: t("quota.resetCredits.short", { count }),
@@ -207,15 +218,76 @@ export function resetCreditsLine(
       ? t("quota.resetCredits.detail", { count, date })
       : t("quota.resetCredits.detailNoExpiry", { count }),
     window: RESET_CREDITS_WINDOW,
-    // 只有一次时行里已经写全了，不用再点开
+    // 只有一次时行里已经写全了，不用再点开；除非还要附带别的（footer）
     breakdown:
-      count > 1
+      count > 1 || footer?.length
         ? {
             title: t("quota.resetCredits.title"),
             openLabel: t("quota.resetCredits.showAll", { count }),
             items: resetCreditGroups(t, expiries, { now, locale }),
+            footer: footer?.length ? footer : undefined,
           }
         : undefined,
+  };
+}
+
+/**
+ * Codex Credits 按 API 价计量：官方价目表每百万 token 的 Credits 数 = API 美元价 × 25
+ * （GPT-6 Astra 输入 250 Credits ↔ $10，Sol、Luna 同比），即 1 Credit = $0.04。
+ * 接口不给这个比例，OpenAI 改价时只改这里
+ */
+export const CODEX_USD_PER_CREDIT = 0.04;
+
+/** 排在重置次数之后 */
+const CREDITS_WINDOW = RESET_CREDITS_WINDOW + 1;
+
+/**
+ * ChatGPT 订阅买的 Codex Credits 余额 → 额度行；没有时不显示（null）。
+ * 展开时额度条位置写 Credits 数、数值写约合美元（钱在最后）；卡片上只用美元（short / text）
+ */
+export function creditsLine(
+  t: TFunction,
+  balance: number | null | undefined,
+  { locale }: { locale: string },
+): QuotaLine | null {
+  if (typeof balance !== "number" || !Number.isFinite(balance) || balance <= 0)
+    return null;
+  const usd = Math.round(balance * CODEX_USD_PER_CREDIT);
+  // 美元取整、不加千位分隔（「约 $2500」）；不到 $1 时写「< $1」
+  const dollars = usd >= 1 ? `$${usd}` : "<$1";
+  let count: string;
+  try {
+    count = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(
+      balance,
+    );
+  } catch {
+    count = String(balance);
+  }
+  return {
+    key: "credits_balance",
+    left: Infinity,
+    tone: "normal",
+    emphasis: dollars,
+    text: t("quota.credits.text", { usd: dollars }),
+    value: t("quota.credits.usd", { usd: dollars }),
+    short: dollars,
+    caption: count,
+    detail: t("quota.credits.detail", { balance: count, usd: dollars }),
+    window: CREDITS_WINDOW,
+  };
+}
+
+/** Credits 余额写成下拉里的一条（「Credits  62,500  约 $2500」），钱在最后 */
+export function creditsBreakdownItem(
+  t: TFunction,
+  line: QuotaLine,
+): QuotaBreakdownItem {
+  return {
+    key: line.key,
+    label: t("quota.credits.label"),
+    hint: line.caption,
+    value: line.value ?? line.text,
+    tone: line.tone,
   };
 }
 
@@ -280,6 +352,7 @@ export function balanceLine(
     key,
     left,
     tone: remaining <= 0 ? "danger" : "normal",
+    emphasis: remaining <= 0 ? undefined : value,
     text:
       remaining <= 0 ? t("quota.balanceUsedUp") : t("quota.balance", { value }),
     detail,

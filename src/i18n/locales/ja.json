@@ -71,11 +71,15 @@
     "configLabel": "Claude Code settings.json (JSON) *",
     "fullSettingsHint": "Claude Code の settings.json 全文",
     "hideAttribution": "AI署名を非表示",
-    "enableTeammates": "Teammates モード",
+    "hideAttributionHelp": "Claude Code が作成するコミットと PR に Co-Authored-By 署名とセッションリンクを付けません。グローバル設定で、すべてのプロバイダーに適用されます。",
     "enableToolSearch": "Tool Search を有効化",
-    "effortMax": "最大強度思考",
+    "enableToolSearchHelp": "MCP ツールが多いとき、ツール定義を必要に応じて読み込みコンテキストを節約します。サードパーティのエンドポイントでは既定でオフ。上流が tool_reference に対応している場合のみオンにしてください。プロバイダーに従って切り替わります。",
     "disableAutoUpgrade": "自動アップグレードを無効化",
+    "disableAutoUpgradeHelp": "Claude Code を現在のバージョンのままにし、自動更新しません。必要なときは claude update を手動で実行します。グローバル設定。",
     "disableArtifact": "Artifact ツールを無効化",
+    "disableArtifactHelp": "Artifact ツールをリクエストに含めません。一部のサードパーティゲートウェイはそのスキーマを拒否し、すべてのリクエストで 400 を返します。プロバイダーに従って切り替わります。",
+    "disableAutoModeServer": "auto mode のサーバー側チェックを無効化",
+    "disableAutoModeServerHelp": "ゲートウェイはサーバー側チェックに対応していないため、auto mode はセッションごとに一度「対象外」の通知で止まり、Enter を押すとローカルチェックに切り替わります。オンにすると最初からローカルチェックを使い、通知は出ません。公式エンドポイントではオンにしないでください。",
     "keyFieldsHint": "エンドポイント、キー、モデル、コンテキストウィンドウ、互換スイッチはプロバイダーの切り替えに従います。それ以外のフィールドは Claude Code のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
     "inactiveFieldsHint": "このプロバイダーには、切り替えても反映されないフィールドが {{count}} 件保存されています。クリックすると上のグローバル設定に追加され、保存時に設定ファイルへ書き込まれます。プロバイダーに保存された元の値は削除されません。",
     "addToGlobalSettings": "グローバル設定に追加"
@@ -122,6 +126,7 @@
     "stackDefaultHint": "デフォルトのプロバイダーです：一覧の先頭のモデルが Claude Code の起動時とバックグラウンドタスクを担当します",
     "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
     "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、集約したモデルは現在使用できません",
+    "officialModelsOutdated": "このコンピューターの Codex が古いため、公式モデル一覧を完全に取得できません。Codex（CLI を含む）を最新版に更新してください",
     "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、集約したモデルは Codex に表示されません",
     "adoptCatalog": "CC Switch のモデルカタログを使う",
     "adoptCatalogDone": "CC Switch のモデルカタログに切り替えました。Codex を再起動すると反映されます",
@@ -153,7 +158,8 @@
     "dragHandle": "ドラッグで並べ替え",
     "searchPlaceholder": "名前・メモ・URLで検索...",
     "searchAriaLabel": "プロバイダーを検索",
-    "searchScopeHint": "名前・メモ・URL を対象に検索します。",
+    "searchScopeHint": "名前・メモ・公式サイト・API アドレスを対象に検索します。",
+    "searchButtonTip": "プロバイダーを検索（{{shortcut}}）",
     "searchCloseHint": "Esc で閉じる",
     "searchCloseAriaLabel": "検索を閉じる",
     "noSearchResults": "一致するプロバイダーがありません。",
@@ -525,6 +531,80 @@
       "deleteConfirmTitle": "バックアップの削除を確認",
       "deleteConfirmMessage": "このバックアップは完全に削除されます。この操作は取り消せません。"
     },
+    "backupStorage": {
+      "title": "その他のバックアップ",
+      "total": "合計 {{size}}",
+      "itemCount": "{{count}} 件",
+      "reveal": "ファイルマネージャーで表示",
+      "delete": "削除",
+      "deleting": "削除中...",
+      "managedAbove": "上のリストで管理",
+      "legacy": "旧バージョン",
+      "loadFailed": "バックアップ使用量の読み込みに失敗しました",
+      "revealFailed": "フォルダを開けませんでした",
+      "deleteConfirmTitle": "「{{name}}」を削除しますか？",
+      "deleteConfirmMessage": "{{path}} 内の {{size}} のバックアップを完全に削除します。元に戻せません。",
+      "deleteSuccess": "削除しました（{{size}} 解放）",
+      "deleteFailed": "削除に失敗しました",
+      "items": {
+        "database": {
+          "name": "データベースのバックアップ",
+          "hint": "自動・手動で作成したデータベースのスナップショット。"
+        },
+        "skills": {
+          "name": "Skill アンインストール時のバックアップ",
+          "hint": "Skill をアンインストールする前のコピーで、Skills ページから復元できます。削除すると、それらの Skill は復元できなくなります。"
+        },
+        "codexHistoryUnify": {
+          "name": "Codex セッション統合の移行バックアップ",
+          "hint": "「Codex のセッション履歴を統合」で既存セッションを移行したときのコピー。このスイッチをオフにする際の「バックアップから復元」はこれに依存します。削除すると、移行した公式セッションを元のグループに戻せなくなります。"
+        },
+        "codexHistoryUnifyRestore": {
+          "name": "Codex セッション統合の復元バックアップ",
+          "hint": "「バックアップから復元」を実行する前のコピー。CC Switch が再び読み込むことはありません。"
+        },
+        "codexHistoryProviderMigration": {
+          "name": "Codex セッショングループ移行バックアップ",
+          "hint": "サードパーティのセッショングループを移行する前のコピー。CC Switch が再び読み込むことはありません。"
+        },
+        "liveFirstWrite": {
+          "name": "設定ファイル初回書き込みバックアップ",
+          "hint": "CC Switch が各クライアントの設定ファイルを初めて書き換える前の元ファイル。削除すると元のファイルは取り戻せません。次回の書き込み時にその時点のファイルが改めてバックアップされます。"
+        },
+        "hermes": {
+          "name": "Hermes 設定のバックアップ",
+          "hint": "Hermes の設定を保存する前のコピー。「バックアップ保持数」に従って自動で整理されます。"
+        },
+        "openclaw": {
+          "name": "OpenClaw 設定のバックアップ",
+          "hint": "OpenClaw の設定を保存する前のコピー。「バックアップ保持数」に従って自動で整理されます。"
+        },
+        "proxyLiveBackup": {
+          "name": "旧ルーティング引き継ぎバックアップ",
+          "hint": "アップグレード時に旧ルーティング引き継ぎバックアップから移した設定のコピー。CC Switch が再び読み込むことはありません。"
+        },
+        "envVars": {
+          "name": "環境変数クリーンアップのバックアップ",
+          "hint": "競合する環境変数を削除する前に記録した元の値。削除すると元の値を確認できなくなります。"
+        },
+        "legacyConfigBackups": {
+          "name": "旧 config.json のバックアップ",
+          "hint": "旧バージョンが残したファイル。現在のバージョンは読み込みません。"
+        },
+        "legacyConfigArchive": {
+          "name": "旧 config.json のアーカイブ",
+          "hint": "データベース移行前の旧設定ファイル。現在のバージョンは読み込みません。"
+        },
+        "legacyDbUpgrade": {
+          "name": "旧データベースアップグレードのバックアップ",
+          "hint": "旧バージョンがデータベースをアップグレードした際のコピー。現在のバージョンは読み込みません。"
+        },
+        "legacyToolSearch": {
+          "name": "旧 Tool Search パッチのバックアップ",
+          "hint": "削除済みの Tool Search パッチ機能が残したファイル。現在のバージョンは読み込みません。"
+        }
+      }
+    },
     "webdavSync": {
       "title": "WebDAV クラウド同期",
       "description": "WebDAV を使ってデバイス間でデータベースとスキル設定を同期します。",
@@ -733,6 +813,9 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",
     "unifyCodexSessionHistoryDescription": "オンにすると、公式サブスクリプションも共有の custom プロバイダー ID で動作し、公式とサードパーティのセッションが同じ履歴リストに表示されます。既存の公式セッションの移行も選択できます（移行前に自動バックアップ）。オフにする際はバックアップから復元できます。注意：プロバイダーをまたいで古いセッションを再開すると、encrypted_content の推論内容を相手のバックエンドが復号できず、再開に失敗する場合があります。",
+    "codexStackClassicSubagents": "集約モードでサブエージェントにクラシックツールを使う",
+    "codexStackClassicSubagentsDescription": "Codex の集約モードで、メインエージェントとサブエージェントが別のプロバイダーのモデルを使うと、サブエージェントがタスクを読めないことがあります。新しい Codex のサブエージェントツールはタスクをメインエージェント側のプロバイダーで暗号化させるため、別のプロバイダーでは復号できません。オンにすると、集約されたすべてのモデルが Codex のクラシックなサブエージェントツールを使い、タスクを平文で渡します。その代わり followup_task や interrupt_agent などの新機能は使えません。集約モードにのみ影響し、変更後は Codex の再起動が必要です。",
+    "codexStackClassicSubagentsForcedV2": "Codex の config.toml で [features] multi_agent_v2 がオンになっています。こちらが優先されるため、この設定は効きません。",
     "unifyCodexHistoryRestoreCompleted": "バックアップから公式セッション履歴を復元しました（セッションファイル {{files}} 件、インデックス {{rows}} 行）",
     "unifyCodexHistoryRestoreFailed": "公式セッション履歴の復元に失敗しました。もう一度お試しください",
     "unifyCodexHistoryRestoreNothing": "現在の Codex ディレクトリに復元可能な移行バックアップはありません",
@@ -745,7 +828,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "プロジェクト切り替えを表示",
-      "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します"
+      "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します",
+      "showProviderSearch": "プロバイダー検索を表示",
+      "showProviderSearchDescription": "プロバイダー画面の上部に検索ボタンを表示し、名前・メモ・公式サイト・API アドレスで検索できます。非表示にしても ⌘F / Ctrl+F で検索を開けます"
     },
     "terminal": {
       "title": "優先ターミナル",
@@ -827,6 +912,7 @@
     "officialWebsite": "公式サイト",
     "github": "GitHub",
     "starPrompt": "CC Switch がお役に立てたなら、GitHub でスターをお願いします。私たちにとって大きな励みになります",
+    "starOnGithub": "GitHub でスター",
     "manualInstallCommands": "手動インストールコマンド",
     "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code をインストールまたは更新",
     "localEnvCheck": "ローカル環境チェック",
@@ -1771,6 +1857,9 @@
     "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます",
     "modelName": "モデル名",
     "upstreamFormatLabel": "上流フォーマット",
+    "upstreamFormatAuto": "自動（モデルの対応状況）",
+    "upstreamFormatCopilotResponses": "Responses（ルーティング必須）",
+    "upstreamFormatCopilotHint": "自動モードでは、モデルが対応していれば Responses を優先し、それ以外は Chat Completions を使用します。プロトコルを指定することもできますが、非対応のモデルではエラーになります。すべてのモードで Copilot アカウントの認証情報を付与するために Codex のルーティング引き継ぎが必要です。",
     "upstreamFormatHint": "プロバイダーがネイティブ Responses API なら Responses を選択（直結、フォーマット変換なし）。Chat Completions プロトコルなら Chat を選択。ネイティブ Anthropic Messages プロトコルのみ提供する場合は Anthropic Messages を選択。Chat と Anthropic Messages はどちらも Responses への変換にルーティング引き継ぎの有効化が必要です。",
     "upstreamFormatChat": "Chat Completions（ルーティング必須）",
     "upstreamFormatResponses": "Responses（ネイティブ）",
@@ -1850,11 +1939,14 @@
   },
   "opencode": {
     "npmPackage": "API フォーマット",
+    "nativeConfigHint": "OpenCode V2 ネイティブ設定は下の JSON で編集します。保存時にプロバイダーとモデルのフィールドを保持します。",
     "selectPackage": "API フォーマットを選択",
     "npmPackageHint": "AI サービスの API フォーマットを選択",
     "builtinDefaults": "OpenCode 組み込みプロバイダーの既定値を使用",
     "customProviderRequired": "新しいプロバイダー ID には npm パッケージと少なくとも1つのモデルが必要です。設定に既に存在する同じ ID のプロバイダーのみ既定の定義を継承できます。",
     "duplicateRequiresDefinition": "npm パッケージまたはモデル定義が不足しているため、そのまま複製できません。npm パッケージと少なくとも1つのモデルを指定してから、カスタムプロバイダーとして複製してください。",
+    "duplicateRequiresNativeDefinition": "この V2 ネイティブプロバイダーには package またはモデル定義が不足しているため、そのまま複製できません。package と少なくとも1つのモデルを指定してから、新しい ID で複製してください。",
+    "nativeCustomProviderRequired": "新しいプロバイダー ID には package と少なくとも1つのモデルが必要です。設定に既に存在する同じ ID のプロバイダーのみ既定の定義を継承できます。",
     "baseUrl": "Base URL",
     "baseUrlHint": "カスタム API エンドポイント URL",
     "models": "モデル設定",
@@ -2023,6 +2115,11 @@
     "responseModel": "レスポンスモデル",
     "noData": "データなし",
     "unknownProvider": "不明なプロバイダー",
+    "sessionProvider": {
+      "short": "セッションログ",
+      "label": "{{app}} · セッションログ",
+      "hint": "ルーティングがオフの間はクライアントのセッションログから読み取るため、どのプロバイダーかは区別できません"
+    },
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
     "source": "ソース",
@@ -2227,7 +2324,10 @@
     },
     "heatmap": {
       "title": "使用量ヒートマップ",
-      "subtitle": "過去 53 週間の日別使用量",
+      "subtitle": "過去 53 週間の日別使用量。展開すると 53 週間ずつさかのぼり、色の濃さは期間をまたいで比較できます",
+      "spanSummary": "{{tokens}} トークン · {{requests}} リクエスト · {{cost}}",
+      "showMore": "もっと見る",
+      "showLess": "折りたたむ",
       "less": "少",
       "more": "多"
     },
@@ -3052,7 +3152,6 @@
     "checkUpdates": "更新を確認",
     "checkingUpdates": "確認中...",
     "noUpdates": "すべてのスキルは最新です",
-    "updatesFound": "{{count}} 個のスキルに更新があります",
     "updateAll": "すべて更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "{{count}} 個のスキルを更新しました",
@@ -3477,15 +3576,16 @@
       "ariaLabel": "{{appLabel}} の集約モード",
       "failoverUnavailable": "{{appLabel}} は集約モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります",
       "codexStale": {
+        "authTitle": "Codex が以前のアカウントをキャッシュしている可能性があります。新しいログインを読み込むにはバックグラウンドサーバーを再起動してください",
         "title": "Codex が古いモデル一覧を使っているため、集約したモデルが表示されません",
         "daemon": "CLI：codex を開き直すだけでは反映されません。バックグラウンドのデーモンを再起動する必要があります。",
         "others": "デスクトップ版：完全に終了してから開き直してください（macOS では ⌘Q。ウィンドウを閉じるだけでは不十分です）。エディター拡張：エディターのウィンドウを開き直してください。",
         "restart": "Codex デーモンを再起動",
         "confirmTitle": "Codex デーモンを再起動しますか？",
-        "confirmMessage": "ターミナルで動いているすべての codex がこのデーモンを共有しているため、実行中のタスクは中断されます。再起動後に codex を開き直すと集約したモデルが表示されます。",
+        "confirmMessage": "ターミナルで動いているすべての codex がこのデーモンを共有しているため、実行中のタスクは中断されます。再起動後に codex を開き直して現在のアカウントとモデル一覧を読み込んでください。",
         "confirm": "再起動",
-        "restarted": "Codex デーモンを再起動しました。codex を開き直すと集約したモデルが表示されます",
-        "notRunning": "Codex デーモンは動いていません。次に codex を起動したときに新しいモデル一覧が読み込まれます",
+        "restarted": "Codex デーモンを再起動しました。codex を開き直して現在のアカウントとモデル一覧を読み込んでください",
+        "notRunning": "Codex デーモンは動いていません。次に起動したときに現在のログインとモデル一覧が読み込まれます",
         "failed": "Codex デーモンの再起動に失敗しました：{{error}}"
       }
     },
@@ -4150,6 +4250,12 @@
       "times": "{{count}} 回",
       "inTime": "{{time}}後",
       "showAll": "{{count}} 回分のリセットの期限を表示"
+    },
+    "credits": {
+      "label": "Credits",
+      "text": "Credits 約 {{usd}}",
+      "usd": "約 {{usd}}",
+      "detail": "Credits 残高 {{balance}} · API 価格換算で約 {{usd}} · 上限に達した後にのみ消費"
     }
   },
   "appMatrix": {
@@ -4393,6 +4499,7 @@
       "showAll": "すべての Skill を表示"
     },
     "selectAria": "{{name}} を選択",
+    "selectAllAria": "表示中をすべて選択",
     "rowFail": "{{app}} での有効化に失敗：{{error}}",
     "fixSync": "同期方法を変更",
     "rowMoreAria": "{{name}} のその他の操作",
@@ -4415,7 +4522,8 @@
       "uninstallManyButton": "{{count}} 件をアンインストール",
       "updateAll": "{{count}} 件の Skill を更新しますか？",
       "updateBody": "更新するとローカルのフォルダーをリポジトリの内容で置き換えます。ローカルの変更はバックアップ（{{path}}）にだけ残ります。",
-      "updateAllButton": "{{count}} 件を更新"
+      "updateAllButton": "{{count}} 件を更新",
+      "updateListAria": "更新する Skill"
     },
     "toast": {
       "installed": "{{name}} をインストールし、{{apps}} で有効にしました",
@@ -4504,7 +4612,8 @@
     "headerUpdates": "{{count}} 件の更新",
     "headerUpdatesShow": "更新がある Skill だけを表示",
     "headerUpdatesClear": "すべての Skill を表示",
-    "updateAllCount": "すべて更新（{{count}} 件）"
+    "updateAllCount": "すべて更新（{{count}} 件）",
+    "updatingProgress": "更新中 {{done}}/{{total}}…"
   },
   "newLayoutNotice": {
     "title": "画面が新しくなりました",

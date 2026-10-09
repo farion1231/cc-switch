@@ -120,9 +120,20 @@ export function GeneralSection({
               title: t("settings.appVisibility.showProfileSwitcher"),
               body: t("settings.appVisibility.showProfileSwitcherDescription"),
             }}
-            checked={settings.showProfileSwitcher ?? true}
+            checked={settings.showProfileSwitcher ?? false}
             onCheckedChange={(value) =>
               void onAutoSave({ showProfileSwitcher: value })
+            }
+          />
+          <SettingsSwitchRow
+            label={t("settings.appVisibility.showProviderSearch")}
+            help={{
+              title: t("settings.appVisibility.showProviderSearch"),
+              body: t("settings.appVisibility.showProviderSearchDescription"),
+            }}
+            checked={settings.showProviderSearch ?? true}
+            onCheckedChange={(value) =>
+              void onAutoSave({ showProviderSearch: value })
             }
           />
         </SettingsCard>

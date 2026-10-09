@@ -44,6 +44,11 @@ export const settingsApi = {
     return await invoke("has_codex_unify_history_backup");
   },
 
+  /** Codex 的 config.toml 是否用 [features] multi_agent_v2 强制了新版子 agent 工具 */
+  async codexForcesMultiAgentV2(): Promise<boolean> {
+    return await invoke("codex_forces_multi_agent_v2");
+  },
+
   /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
   async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
     return await invoke("restore_codex_unified_history");
@@ -355,6 +360,15 @@ export interface BackupEntry {
   createdAt: string;
 }
 
+export interface BackupLocation {
+  id: string;
+  path: string;
+  sizeBytes: number;
+  itemCount: number;
+  lastModified?: string | null;
+  deletable: boolean;
+}
+
 export const backupsApi = {
   async createDbBackup(): Promise<string> {
     return await invoke("create_db_backup");
@@ -374,5 +388,18 @@ export const backupsApi = {
 
   async deleteDbBackup(filename: string): Promise<void> {
     await invoke("delete_db_backup", { filename });
+  },
+
+  async listBackupLocations(): Promise<BackupLocation[]> {
+    return await invoke("list_backup_locations");
+  },
+
+  /** 删除一类备份，返回释放的字节数 */
+  async deleteBackupLocation(id: string): Promise<number> {
+    return await invoke("delete_backup_location", { id });
+  },
+
+  async revealBackupLocation(id: string): Promise<boolean> {
+    return await invoke("reveal_backup_location", { id });
   },
 };

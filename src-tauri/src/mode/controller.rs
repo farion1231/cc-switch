@@ -247,6 +247,24 @@ fn settled_stack(app: &AppType) -> Result<StackState, String> {
     super::state::stack(&DeviceStore::for_device(), app.as_str()).map_err(err)
 }
 
+/// 日志里的模式名。
+fn mode_label(proxy: bool, stack: bool) -> &'static str {
+    match (proxy, stack) {
+        (false, _) => "直连",
+        (true, false) => "路由",
+        (true, true) => "聚合",
+    }
+}
+
+/// 日志里写没写客户端文件。
+fn rewrite_label(rewritten: bool) -> &'static str {
+    if rewritten {
+        "已重写"
+    } else {
+        "没变，未重写"
+    }
+}
+
 /// 发布 Stack 模型的成员（见 [`stack::published_members`]）。
 fn published_members(
     state: &AppState,
@@ -263,7 +281,7 @@ fn commit_state(state: &AppState, app: &AppType, target: &PendingTarget) -> Resu
         .map_err(err)
 }
 
-/// 写代理契约。`target` 的 `contract` 由这里填好。契约没变时不碰客户端文件；接上
+/// 写代理契约。`target` 的 `contract` 由这里填好。契约没变时不碰客户端文件（返回假）；接上
 /// （启动时）一律重写：顺带核对路由供应商还能用（比如托管账号还在），并修正 CC Switch
 /// 没运行期间客户端文件里的漂移。
 ///
@@ -277,7 +295,7 @@ async fn write_proxy(
     live_now: &LiveNow,
     mut target: ModeState,
     next_stack: Option<StackState>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let (proxy_url, codex_base_url) = state.proxy_service.build_proxy_urls().await?;
     // 改用 CC Switch 的目录时契约可能没变（指针只在 live 里），也要重写。
     let force = op_name == op::ATTACH || op_name == op::CATALOG;
@@ -291,7 +309,7 @@ async fn write_proxy(
         stack: next_stack.clone(),
         ..PendingTarget::default()
     };
-    match app {
+    let unchanged = match app {
         AppType::Claude => {
             let members = published_members(state, app, &stack, route)?;
             let published = stack::claude_published(&members);
@@ -308,6 +326,7 @@ async fn write_proxy(
                 pending(target),
             )
             .map_err(err)?;
+            unchanged
         }
         AppType::Gemini => {
             let projection = GeminiProjection::proxy_contract(
@@ -325,6 +344,7 @@ async fn write_proxy(
                 pending(target),
             )
             .map_err(err)?;
+            unchanged
         }
         AppType::Codex => {
             let owner = live_now.codex_owner();
@@ -349,6 +369,7 @@ async fn write_proxy(
             } else {
                 codex_direct::run(&state.db, op_name, planned, &prepared, pending).map_err(err)?;
             }
+            unchanged
         }
         AppType::GrokBuild => {
             let base_url = format!("{}/grokbuild/v1", proxy_url.trim_end_matches('/'));
@@ -369,10 +390,11 @@ async fn write_proxy(
                 pending(target),
             )
             .map_err(err)?;
+            unchanged
         }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
-    }
-    Ok(())
+    };
+    Ok(!unchanged)
 }
 
 /// 写回直连投影（直连指针的供应商）。
@@ -566,6 +588,25 @@ pub async fn enter_with_route(
     stack_mode: bool,
     route: Option<&str>,
 ) -> Result<(), String> {
+    let result = try_enter_with_route(state, app, stack_mode, route).await;
+    if let Err(error) = &result {
+        log::error!(
+            "[MODE] {} 进入{}模式失败（路由目标 {}）: {}",
+            app.as_str(),
+            mode_label(true, stack_mode),
+            route.unwrap_or("沿用上次"),
+            crate::error_for_log(error)
+        );
+    }
+    result
+}
+
+async fn try_enter_with_route(
+    state: &AppState,
+    app: &AppType,
+    stack_mode: bool,
+    route: Option<&str>,
+) -> Result<(), String> {
     require_proxy_app(app)?;
     if stack_mode && !stack::supports_stack(app) {
         return Err(format!(
@@ -631,8 +672,11 @@ async fn enter_locked(
         }
         None => None,
     };
+    // 只给日志用，读不到不拦着进入。
+    let was_stack = settled_stack(app).is_ok_and(|stack| stack.enabled);
+    let stack_on = stack_mode.unwrap_or(was_stack);
     let live_now = LiveNow::of(state, app, &mode)?;
-    write_proxy(
+    let rewritten = write_proxy(
         state,
         app,
         op_name,
@@ -647,6 +691,14 @@ async fn enter_locked(
         next_stack,
     )
     .await?;
+    log::info!(
+        "[MODE] {} {op_name}：{} → {}，路由 {}，客户端配置{}",
+        app.as_str(),
+        mode_label(mode.is_proxy(), was_stack),
+        mode_label(true, stack_on),
+        route.id,
+        rewrite_label(rewritten)
+    );
     state.proxy_service.set_active_target(app, &route).await;
     warn_if_official_route(state, app, &route).await;
     Ok(())
@@ -712,13 +764,48 @@ fn exit_locked(state: &AppState, app: &AppType, keep_mode: bool) -> Result<(), S
         return Ok(());
     }
     if !keep_mode && !mode.is_proxy() && !mode.attached {
+        log::debug!("[MODE] {} 已经是直连，不用退出", app.as_str());
         return Ok(());
     }
-    let live_now = LiveNow::of(state, app, &mode)?;
+    let op_name = if keep_mode { op::DETACH } else { op::EXIT };
+    let was_stack = settled_stack(app).is_ok_and(|stack| stack.enabled);
+    let result = write_direct_for_exit(state, app, op_name, keep_mode, &mode);
+    match &result {
+        Ok(()) => log::info!(
+            "[MODE] {} {op_name}：{} → {}，客户端配置写回直连供应商 {}",
+            app.as_str(),
+            mode_label(mode.is_proxy(), was_stack),
+            if keep_mode {
+                "客户端指回直连，模式保留"
+            } else {
+                "直连"
+            },
+            direct_provider(state, app)
+                .ok()
+                .flatten()
+                .map_or_else(|| "（无）".to_string(), |provider| provider.id)
+        ),
+        Err(error) => log::error!(
+            "[MODE] {} {op_name} 失败: {}",
+            app.as_str(),
+            crate::error_for_log(error)
+        ),
+    }
+    result
+}
+
+fn write_direct_for_exit(
+    state: &AppState,
+    app: &AppType,
+    op_name: &str,
+    keep_mode: bool,
+    mode: &ModeState,
+) -> Result<(), String> {
+    let live_now = LiveNow::of(state, app, mode)?;
     write_direct(
         state,
         app,
-        if keep_mode { op::DETACH } else { op::EXIT },
+        op_name,
         &live_now,
         ModeState {
             mode: Some(if keep_mode && mode.is_proxy() {
@@ -727,7 +814,7 @@ fn exit_locked(state: &AppState, app: &AppType, keep_mode: bool) -> Result<(), S
                 Mode::Direct
             }),
             attached: false,
-            proxy_route: mode.proxy_route,
+            proxy_route: mode.proxy_route.clone(),
             contract: None,
         },
     )
@@ -837,7 +924,7 @@ pub async fn switch_route_locked(
         add_default(app, &mut next, target);
     }
     let next_stack = (next != current).then_some(next);
-    if !mode.attached {
+    let rewritten = if !mode.attached {
         commit_state(
             state,
             app,
@@ -847,6 +934,7 @@ pub async fn switch_route_locked(
                 ..PendingTarget::default()
             },
         )?;
+        false
     } else {
         let live_now = LiveNow::of(state, app, &mode)?;
         write_proxy(
@@ -858,7 +946,19 @@ pub async fn switch_route_locked(
             new_state,
             next_stack,
         )
-        .await?;
+        .await?
+    };
+    // 编辑路由那家之后也走这里重算契约：路由没换、文件也没动的不记。
+    if rewritten || !mode.routes_to(&target.id) {
+        log::info!(
+            "[MODE] {} {}：{}模式路由 {} → {}，客户端配置{}",
+            app.as_str(),
+            op::ROUTE,
+            mode_label(true, current.enabled),
+            mode.proxy_route.as_deref().unwrap_or("（无）"),
+            target.id,
+            rewrite_label(rewritten)
+        );
     }
     state.proxy_service.set_active_target(app, target).await;
     Ok(())
@@ -918,6 +1018,7 @@ pub async fn set_route(state: &AppState, app: &AppType, provider_id: &str) -> Re
     if mode.proxy_route.as_deref() == Some(provider_id) {
         return Ok(());
     }
+    let previous = mode.proxy_route.clone();
     commit_state(
         state,
         app,
@@ -928,7 +1029,14 @@ pub async fn set_route(state: &AppState, app: &AppType, provider_id: &str) -> Re
             }),
             ..PendingTarget::default()
         },
-    )
+    )?;
+    log::info!(
+        "[MODE] {} 直连模式下记下路由 {} → {}，下次进入路由 / 聚合模式时用",
+        app.as_str(),
+        previous.as_deref().unwrap_or("（无）"),
+        provider_id
+    );
+    Ok(())
 }
 
 /// 代理模式下不能切到不支持代理的官方供应商（Codex 官方账号走客户端自己的登录，除外）。
@@ -1070,7 +1178,9 @@ async fn set_stack_member_locked(
     match attached_route(state, app)? {
         Some((mode, route)) => {
             let live_now = LiveNow::of(state, app, &mode)?;
-            write_proxy(state, app, op::STACK, &route, &live_now, mode, Some(next)).await
+            write_proxy(state, app, op::STACK, &route, &live_now, mode, Some(next))
+                .await
+                .map(|_| ())
         }
         None => commit_state(
             state,
@@ -1104,18 +1214,16 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
     })
 }
 
-/// [`stack_views`] 再加上 Codex 客户端是不是还在用旧的模型列表（要读进程表，放到阻塞线程池
-/// 里）。路由那家自己管理目录时，Stack 模型本来就不发布，重启也看不到，已经有 `notice` 说明，
-/// 不再查。
+/// [`stack_views`] 再加上 Codex 客户端是否可能缓存旧登录或模型列表（阻塞线程里读进程表）。
+/// 账号在所有模式下检查；目录仅在发布 Stack 模型且未使用外部目录时检查。
 pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<StackView, String> {
     let mut view = stack_views(state, app)?;
-    if matches!(app, AppType::Codex)
-        && view.active
-        && view.notice != Some("routeOwnsCatalog")
-        && codex_publishes_stack_models(state, &settled_stack(app)?)
-    {
-        view.stale_clients = codex_direct::off_runtime(|| {
-            codex_client_catalog::stale_clients(&DeviceStore::for_device())
+    if matches!(app, AppType::Codex) {
+        let check_catalog = view.active
+            && view.notice != Some("routeOwnsCatalog")
+            && codex_publishes_stack_models(state, &settled_stack(app)?);
+        view.stale_clients = codex_direct::off_runtime(move || {
+            codex_client_catalog::stale_clients(&DeviceStore::for_device(), check_catalog)
         })
         .await
         .map_err(err)?;
@@ -1135,7 +1243,8 @@ fn codex_publishes_stack_models(state: &AppState, stack: &StackState) -> bool {
 }
 
 /// Codex 在 Stack 模式下有要发布的 Stack 模型，客户端却看不到或看不全：路由那家自己管理模型
-/// 目录文件（Stack 模型不发布）；或者官方做默认、最近一次写目录时没拿到官方列表。
+/// 目录文件（Stack 模型不发布）；或者官方做默认、最近一次写目录时没拿到官方列表，或者拿到的
+/// 列表里没有能选的模型（本机 Codex 太旧）。
 fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static str> {
     let (_, route) = attached_route(state, &AppType::Codex).ok()??;
     let published =
@@ -1153,6 +1262,7 @@ fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static s
         codex_official_models::NativeSource::Fetched => None,
         codex_official_models::NativeSource::Bundled => Some("officialModelsBundled"),
         codex_official_models::NativeSource::Unavailable => Some("officialModelsUnavailable"),
+        codex_official_models::NativeSource::Outdated => Some("officialModelsOutdated"),
     }
 }
 
@@ -1181,6 +1291,24 @@ pub async fn adopt_codex_stack_catalog(state: &AppState) -> Result<Option<&'stat
         .and_then(|stack| codex_stack_notice(state, &stack)))
 }
 
+/// 「经典子 agent」开关（`codex_stack_classic_subagents`）变了：Codex 在 Stack 模式下按新的
+/// 合并目录重写客户端（契约里有目录，没变就什么都不做）。不在 Stack 模式时目录里没有这个开关
+/// 管的行，等进 Stack 时自然按开关写。
+pub async fn resync_codex_stack_catalog(state: &AppState) -> Result<(), String> {
+    let app = AppType::Codex;
+    let _guard = lock_settled(state, &app).await.map_err(err)?;
+    if !settled_stack(&app)?.enabled {
+        return Ok(());
+    }
+    let Some((mode, route)) = attached_route(state, &app)? else {
+        return Ok(());
+    };
+    let live_now = LiveNow::of(state, &app, &mode)?;
+    write_proxy(state, &app, op::APPLY, &route, &live_now, mode, None)
+        .await
+        .map(|_| ())
+}
+
 /// 路由供应商的行或代理地址变了：按新契约重写客户端（契约没变就什么都不做）。调用方
 /// 持有切换锁。
 pub async fn resync_route_locked(state: &AppState, app: &AppType) -> Result<(), String> {
@@ -1207,6 +1335,7 @@ pub(crate) async fn reapply_codex_history_locked(state: &AppState) -> Result<(),
         None,
     )
     .await
+    .map(|_| ())
 }
 
 /// 代理模式下存好了 `provider` 的行：它是代理路由时按新行重写代理契约；在 Stack 名单里时，
@@ -5857,6 +5986,66 @@ model_provider = "c"
             .live_has_proxy_placeholder(&AppType::Codex));
     }
 
+    fn set_classic_subagents(enabled: bool) {
+        crate::settings::update_settings(crate::settings::AppSettings {
+            codex_stack_classic_subagents: enabled,
+            ..crate::settings::get_settings()
+        })
+        .unwrap();
+    }
+
+    fn catalog_agent_versions() -> Vec<Value> {
+        codex_catalog()["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|model| model["multi_agent_version"].clone())
+            .collect()
+    }
+
+    /// 「经典子 agent」开关：Stack 模式下立刻按开关重写合并目录，关掉后回到原来的目录；
+    /// 不在 Stack 模式时什么都不写。
+    #[tokio::test]
+    #[serial]
+    async fn classic_subagents_toggle_rewrites_the_stack_catalog() {
+        let _home = Home::new();
+        seed_codex("approval_policy = \"on-request\"\n", None);
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
+
+        // 还没进 Stack：开关只存设置，不碰客户端文件。
+        set_classic_subagents(true);
+        let before = codex_text();
+        resync_codex_stack_catalog(&state).await.expect("no-op");
+        assert_eq!(codex_text(), before);
+        set_classic_subagents(false);
+
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        let native_catalog = codex_catalog();
+        let native_contract = mode(&AppType::Codex).contract.unwrap();
+        assert!(catalog_agent_versions().iter().all(|v| v != "v1"));
+
+        set_classic_subagents(true);
+        resync_codex_stack_catalog(&state).await.expect("classic");
+        assert_eq!(catalog_agent_versions(), vec![json!("v1"), json!("v1")]);
+        assert_ne!(mode(&AppType::Codex).contract.unwrap(), native_contract);
+
+        // 之后增删 Stack 模型照样按开关写。
+        set_codex_member(&state, "zhipu", true).await;
+        assert_eq!(
+            catalog_agent_versions(),
+            vec![json!("v1"), json!("v1"), json!("v1")]
+        );
+        set_codex_member(&state, "zhipu", false).await;
+
+        set_classic_subagents(false);
+        resync_codex_stack_catalog(&state).await.expect("native");
+        assert_eq!(codex_catalog(), native_catalog);
+        assert_eq!(mode(&AppType::Codex).contract.unwrap(), native_contract);
+
+        exit(&state, &AppType::Codex).await.expect("exit");
+    }
+
     /// 路由那家自己管理模型目录文件：Stack 模型发布不了，名单照存，结果带提示而不是静默成功。
     #[tokio::test]
     #[serial]
@@ -5939,8 +6128,44 @@ model_provider = "c"
             .stale_clients
     }
 
-    /// 桌面版在目录变化之前启动：Stack 视图带上 `staleClients`；之后启动的不算旧。路由模式、
-    /// 路由那家自己管理目录（Stack 模型本来就不发布）时不查。
+    /// 直连切号也提示可能缓存旧登录，不要求生成模型目录。
+    #[tokio::test]
+    #[serial]
+    async fn codex_direct_account_switch_reports_the_cached_login() {
+        let _home = Home::new();
+        let clients = FakeClients::install();
+        seed_codex("", Some(&chatgpt_login("acct-a")));
+        let official = |id: &str| {
+            let mut row = Provider::with_id(
+                id.to_string(),
+                id.to_uppercase(),
+                json!({ "auth": chatgpt_login(id), "config": "" }),
+                None,
+            );
+            row.category = Some("official".to_string());
+            row
+        };
+        let state = state_with(
+            AppType::Codex,
+            &[official("acct-a"), official("acct-b")],
+            "acct-a",
+        )
+        .await;
+        ProviderService::switch(&state, AppType::Codex, "acct-a").unwrap();
+        clients.advance(10_000);
+        clients.desktop_running_for("00:05");
+        assert_eq!(stale_clients_of(&state).await, None);
+        clients.advance(10_000);
+        ProviderService::switch(&state, AppType::Codex, "acct-b").unwrap();
+        clients.desktop_running_for("00:15");
+        assert_eq!(codex_login_on_disk()["tokens"]["account_id"], "acct-b");
+        assert!(stale_clients_of(&state).await.is_some());
+        clients.advance(10_000);
+        clients.desktop_running_for("00:05");
+        assert_eq!(stale_clients_of(&state).await, None);
+    }
+
+    /// 桌面版在目录变化之前启动：Stack 视图带上 `staleClients`；之后启动的不算旧。
     #[tokio::test]
     #[serial]
     async fn codex_stack_view_reports_clients_on_an_old_catalog() {
@@ -5955,7 +6180,8 @@ model_provider = "c"
             stale_clients_of(&state).await,
             Some(codex_client_catalog::StaleClients {
                 daemon: false,
-                others: true
+                others: true,
+                auth: false
             })
         );
         // 普通的 Stack 视图不读进程表。
@@ -6251,6 +6477,34 @@ model_provider = "c"
         );
     }
 
+    /// 行里的 TOML 坏在密钥那一行：解析诊断会带上这行原文，失败日志不能把它写进日志文件。
+    #[tokio::test]
+    #[serial]
+    async fn failure_logs_drop_the_config_line_a_broken_row_quotes() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let secret = "sk-review-only-secret";
+        let mut rows = codex_stack_rows().to_vec();
+        let mut broken = codex_native("broken", "https://b.example/v1", "", None);
+        broken.settings_config["config"] =
+            json!(format!("experimental_bearer_token = \"{secret}\" !\n"));
+        rows.push(broken);
+        let state = state_with(AppType::Codex, &rows, "a").await;
+
+        let switch_error = ProviderService::switch(&state, AppType::Codex, "broken")
+            .unwrap_err()
+            .to_string();
+        let enter_error = enter_with_route(&state, &AppType::Codex, false, Some("broken"))
+            .await
+            .unwrap_err();
+        for error in [switch_error, enter_error] {
+            assert!(error.contains(secret), "前提：错误里带配置原文 {error}");
+            let logged = crate::error_for_log(&error);
+            assert!(!logged.contains(secret), "{logged}");
+            assert!(logged.contains("line 1"), "{logged}");
+        }
+    }
+
     #[tokio::test]
     #[serial]
     async fn codex_official_accounts_cannot_be_stacked() {
@@ -6475,6 +6729,33 @@ model_provider = "c"
         let calls = fake.calls.lock().unwrap();
         assert_eq!(calls.len(), 2, "the second toggle reuses Bob's model cache");
         assert_eq!(calls[1].0, "ws|sub:bob");
+    }
+
+    /// #8014：本机 Codex 太旧时服务端只回隐藏条目。照写的话官方模型在选择器里一个都
+    /// 看不到、只剩 Stack 模型；不写这种目录，并提示升级。
+    #[tokio::test]
+    #[serial]
+    async fn codex_official_list_without_a_listed_model_is_not_published() {
+        let _home = Home::new();
+        seed_codex("", Some(&chatgpt("ws", "alice")));
+        let mut models = native_models(&[("gpt-5.5", 1), ("codex-auto-review", 2)]);
+        for model in &mut models {
+            model["visibility"] = serde_json::json!("hide");
+        }
+        let _fake = fake_models(
+            vec![Fetch::Models { models, etag: None }],
+            CodexKeychainLogin::Missing,
+            None,
+        );
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert!(codex_doc().get("model_catalog_json").is_none());
+        assert_eq!(
+            stack_views(&state, &AppType::Codex).unwrap().notice,
+            Some("officialModelsOutdated")
+        );
     }
 
     /// 列表变了而重写失败（这里是 config.toml 恰好解析不了）：缓存已经是新的，下一次检查

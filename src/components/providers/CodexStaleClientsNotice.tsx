@@ -13,7 +13,7 @@ interface CodexStaleClientsNoticeProps {
 }
 
 /**
- * Stack 模式下 Codex 客户端还在用旧的模型列表（它们只在启动时读模型目录）。命令行连的守护
+ * Codex 客户端可能缓存着旧账号或模型列表。命令行连的守护
  * 进程确认后一键重启；桌面版、编辑器插件只提示用户彻底退出再开。重启会中断守护进程里正在
  * 运行的任务，执行期间确认框保持打开。
  */
@@ -29,7 +29,11 @@ export function CodexStaleClientsNotice({
     <>
       <Notice
         tone="warning"
-        title={t("proxy.stackMode.codexStale.title")}
+        title={t(
+          staleClients.auth
+            ? "proxy.stackMode.codexStale.authTitle"
+            : "proxy.stackMode.codexStale.title",
+        )}
         onDismiss={onDismiss}
         dismissLabel={t("common.close")}
         actions={

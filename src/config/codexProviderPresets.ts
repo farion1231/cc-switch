@@ -39,8 +39,8 @@ export interface CodexProviderPreset extends PresetFamilyFields {
   iconColor?: string; // 图标颜色
   // Codex API 格式
   apiFormat?: CodexApiFormat;
-  // 仅用于区分预设来源；ChatGPT/Codex 与 xAI/Grok 的认证流程彼此独立。
-  providerType?: "codex_oauth" | "xai_oauth";
+  // 仅用于区分托管认证来源；各 OAuth provider 的认证流程彼此独立。
+  providerType?: "codex_oauth" | "xai_oauth" | "github_copilot";
   // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
   requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
@@ -146,6 +146,67 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     },
     icon: "openai",
     iconColor: "#00A67E",
+  },
+  {
+    name: "GitHub Copilot",
+    websiteUrl: "https://github.com/features/copilot",
+    auth: {},
+    // Codex talks Responses to the local proxy. The proxy selects Copilot's
+    // native Responses or Chat Completions transport from model capabilities.
+    config: generateThirdPartyConfig(
+      "github-copilot",
+      "https://api.githubcopilot.com",
+      "gpt-6-astra",
+      { requiresOpenAiAuth: false },
+    ),
+    endpointCandidates: ["https://api.githubcopilot.com"],
+    providerType: "github_copilot",
+    requiresOAuth: true,
+    modelCatalog: modelCatalog([
+      {
+        model: "gpt-6-astra",
+        displayName: "GPT-6 Astra",
+        contextWindow: 272000,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.6-sol",
+        displayName: "GPT-5.6 Sol",
+        contextWindow: 272000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.6-terra",
+        displayName: "GPT-5.6 Terra",
+        contextWindow: 272000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.6-luna",
+        displayName: "GPT-5.6 Luna",
+        contextWindow: 200000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.5",
+        displayName: "GPT-5.5",
+        contextWindow: 272000,
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+      },
+    ]),
+    category: "third_party",
+    icon: "github",
+    iconColor: "#000000",
   },
   // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
@@ -3260,8 +3321,10 @@ requires_openai_auth = true`,
   },
   {
     name: "OpenCode Go",
+    family: "opencode",
+    planKey: "coding",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
@@ -3328,6 +3391,27 @@ requires_openai_auth = true`,
       },
     ]),
     category: "third_party",
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
+    // Zen 按量网关：GPT 模型原生走 /v1/responses，直连不需要路由；
+    // 免费模型只能在 OpenCode 里用（外部调用 403 FreeTierError），默认不用。
+    // 默认不用全仓通用的 gpt-5.6-sol：Zen 上游对它返回 403「Model access is
+    // disabled」（2026-10-06 真 Key 实测），gpt-6-sol 经 Codex 跑通工具调用。
+    name: "OpenCode Zen",
+    family: "opencode",
+    planKey: "payg",
+    websiteUrl: "https://opencode.ai/zen",
+    apiKeyUrl: "https://opencode.ai/auth",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "opencode_zen",
+      "https://opencode.ai/zen/v1",
+      "gpt-6-sol",
+    ),
+    endpointCandidates: ["https://opencode.ai/zen/v1"],
+    category: "aggregator",
     icon: "opencode",
     iconColor: "#211E1E",
   },
@@ -3522,5 +3606,91 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ]),
     category: "third_party",
     icon: "commandcode",
+  },
+  {
+    name: "模力方舟",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    auth: generateThirdPartyAuth(""),
+    // 官方文档（CC Switch 快速配置）：Codex 走 /v1 的 Responses 原生协议
+    config: generateThirdPartyConfig(
+      "moark",
+      "https://moark.com/v1",
+      "deepseek-v4-flash-0731",
+    ),
+    endpointCandidates: ["https://moark.com/v1"],
+    // 显式写出协议，让预设自身信息完整、不必依赖表单推导：表单在预设缺少
+    // apiFormat 时会用 codexApiFormatFromWireApi(extractCodexWireApi(...)) 从上面
+    // 的 wire_api = "responses" 推出 openai_responses 再写进供应商 meta（推导失败
+    // 也兜底成它），所以经表单新增的配置本来就拿到 NativeResponses 目录档案。
+    // 真正会落成 ProxyChat 的是缺少格式信息的存量记录：moark.com 不在 codex.rs 的
+    // CODEX_NATIVE_RESPONSES_HOSTS 兜底名单里，而 ProxyChat 会克隆 Codex 的
+    // gpt-5.5 模板（GPT-5 harness + 自由格式 apply_patch）——该档案的前提是
+    // "代理接管并改写 custom→function"，这条路径没有代理，聚合平台也未必兑现
+    // 官方目录 GRANT 的能力（codex_config.rs 对聚合平台给出的安全方向是中性模板）。
+    // 实测 MoArk 接受 type=="custom" 工具，所以这不是拒收问题。
+    apiFormat: "openai_responses",
+    // 档位口径按 codexReasoningLevelPresets.test.ts：优先取**平台自己声明的**
+    // 枚举（非法 reasoning_effort 触发 400 时厂商返回的明文），平台不声明则退回
+    // 模型厂商官方档位，两者皆无则不写。2026-10-08 用真实 key 对
+    // https://moark.com/v1/responses 实测（非法值各采样 3 次）：
+    // - DeepSeek-V4-Pro / GLM-5.3 的枚举稳定；Kimi-K2.7-Code 3 次里 2 次对非法
+    //   值返回 200，以厂商明文那次为准；
+    // - deepseek-v4-flash-0731 与 qwen3-coder-plus 对非法值也返回 200（平台不
+    //   自证）→ flash 退回 DeepSeek 官方目录的 low/high/max；qwen3-coder-plus
+    //   实测 effort 完全不生效（none 与 ultra 的 reasoning_tokens 同为 0）→ 单档
+    //   none，理由见该条目注释。
+    // 四个支持思考的模型每档都含 high，后端保留模板默认 high，与上面 config 的
+    // model_reasoning_effort = "high" 一致，故无需 defaultReasoningLevel；
+    // qwen3-coder-plus 只有单档 none，默认随之回落 none。
+    // 首行 = 默认模型，须与 config 的 model 一致。
+    modelCatalog: modelCatalog([
+      {
+        model: "deepseek-v4-flash-0731",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "DeepSeek-V4-Pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        // MoArk 400 明文：'low', 'medium', 'high', 'xhigh', 'max'
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+      },
+      {
+        model: "GLM-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        // MoArk 400 明文：none or low or medium or high or xhigh or max
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+      },
+      {
+        model: "Kimi-K2.7-Code",
+        displayName: "Kimi K2.7 Code",
+        contextWindow: 262144,
+        inputModalities: ["text", "image"],
+        // MoArk 400 明文：'none', 'minimal', 'low', 'medium', 'high', 'xhigh'
+        reasoningLevels: ["none", "minimal", "low", "medium", "high", "xhigh"],
+      },
+      {
+        model: "qwen3-coder-plus",
+        displayName: "Qwen3 Coder Plus",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        // 实测 effort 完全不生效（none 与 ultra 的 reasoning_tokens 同为 0）。
+        // 不能留空：留空等于沿用原生模板的 none/high 两档、默认 high，Codex 仍会
+        // 给出一个不改变任何行为的"关闭/开启思考"选择器。声明单档 none 让
+        // apply_codex_reasoning_level_override 生成单档、默认回落 none；Codex 在
+        // 只有一个普通档位时直接应用、不显示选择界面。（空数组同样走保留模板的
+        // 早退分支，解决不了。）
+        reasoningLevels: ["none"],
+      },
+    ]),
+    category: "aggregator",
+    icon: "moark",
   },
 ];

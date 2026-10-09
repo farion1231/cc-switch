@@ -71,11 +71,15 @@
     "configLabel": "Claude Code settings.json (JSON) *",
     "fullSettingsHint": "Full Claude Code settings.json content",
     "hideAttribution": "Hide AI Attribution",
-    "enableTeammates": "Teammates Mode",
+    "hideAttributionHelp": "Commits and PRs created by Claude Code no longer carry the Co-Authored-By trailer or the session link. Global: applies to every provider.",
     "enableToolSearch": "Enable Tool Search",
-    "effortMax": "Max Effort Thinking",
+    "enableToolSearchHelp": "Loads MCP tool definitions on demand to save context. Off by default on third-party endpoints; enable it only if the upstream supports tool_reference. Switches with the provider.",
     "disableAutoUpgrade": "Disable Auto-Upgrade",
+    "disableAutoUpgradeHelp": "Keeps Claude Code on its current version instead of updating automatically; run claude update yourself when needed. Global.",
     "disableArtifact": "Disable Artifact Tool",
+    "disableArtifactHelp": "Leaves the Artifact tool out of requests. Some third-party gateways reject its schema and return 400 on every request. Switches with the provider.",
+    "disableAutoModeServer": "Disable Auto Mode Server Checks",
+    "disableAutoModeServerHelp": "Gateways can't run the server-side check, so auto mode pauses once per session with a \"not eligible\" notice, then falls back to the local check after you press Enter. Checked, it uses the local check right away with no notice. Leave it unchecked on official endpoints.",
     "keyFieldsHint": "Endpoint, key, models, context window and compatibility switches follow the provider; everything else is a global Claude Code setting and applies to every provider once saved.",
     "inactiveFieldsHint": "This provider still stores {{count}} field(s) that do not take effect when switching. Click one to add it to the global settings above; it is written to the config file on save, and the value stored in the provider is kept.",
     "addToGlobalSettings": "Add to global settings"
@@ -122,6 +126,7 @@
     "stackDefaultHint": "This is the default provider: the first model in its list handles Claude Code's startup and background tasks",
     "officialModelsBundled": "The official model list isn't available yet, so Codex's built-in list is used for now and account-specific models may be missing",
     "officialModelsUnavailable": "Aggregated models are unavailable for now: the Codex model list can't be read",
+    "officialModelsOutdated": "Codex on this computer is too old to get the full official model list: update Codex (including the CLI) to the latest version",
     "routeOwnsCatalog": "Aggregated models won't show up in Codex: the routed provider uses its own model catalog file (model_catalog_json)",
     "adoptCatalog": "Use CC Switch's model catalog",
     "adoptCatalogDone": "Now using CC Switch's model catalog. Restart Codex to apply",
@@ -153,7 +158,8 @@
     "dragHandle": "Drag to reorder",
     "searchPlaceholder": "Search name, notes, or URL...",
     "searchAriaLabel": "Search providers",
-    "searchScopeHint": "Matches provider name, notes, and URL.",
+    "searchScopeHint": "Matches provider name, notes, website, and API address.",
+    "searchButtonTip": "Search providers ({{shortcut}})",
     "searchCloseHint": "Press Esc to close",
     "searchCloseAriaLabel": "Close provider search",
     "noSearchResults": "No providers match your search.",
@@ -525,6 +531,80 @@
       "deleteConfirmTitle": "Confirm Delete",
       "deleteConfirmMessage": "This backup will be permanently deleted. This action cannot be undone."
     },
+    "backupStorage": {
+      "title": "Other Backups",
+      "total": "{{size}} total",
+      "itemCount": "Items: {{count}}",
+      "reveal": "Show in file manager",
+      "delete": "Delete",
+      "deleting": "Deleting...",
+      "managedAbove": "Managed in the list above",
+      "legacy": "Legacy",
+      "loadFailed": "Failed to read backup usage",
+      "revealFailed": "Failed to open folder",
+      "deleteConfirmTitle": "Delete \"{{name}}\"?",
+      "deleteConfirmMessage": "{{size}} of backups in {{path}} will be permanently deleted. This cannot be undone.",
+      "deleteSuccess": "Deleted, freed {{size}}",
+      "deleteFailed": "Delete failed",
+      "items": {
+        "database": {
+          "name": "Database backups",
+          "hint": "Automatic and manual database snapshots."
+        },
+        "skills": {
+          "name": "Skill uninstall backups",
+          "hint": "Copies kept when uninstalling skills, restorable from the Skills page. After deleting, those uninstalled skills can no longer be restored."
+        },
+        "codexHistoryUnify": {
+          "name": "Codex session unify migration backups",
+          "hint": "Session copies kept when \"Unify Codex session history\" migrated existing sessions. \"Restore backup\" when turning that switch off depends on them; after deleting, migrated official sessions can no longer be moved back to their original group."
+        },
+        "codexHistoryUnifyRestore": {
+          "name": "Codex session unify restore backups",
+          "hint": "Session copies kept before \"Restore backup\" ran. CC Switch never reads them again."
+        },
+        "codexHistoryProviderMigration": {
+          "name": "Codex session group migration backups",
+          "hint": "Copies kept before third-party session groups were migrated. CC Switch never reads them again."
+        },
+        "liveFirstWrite": {
+          "name": "Config first-write backups",
+          "hint": "Original client config files from before CC Switch first rewrote them. After deleting, those originals are gone; the next write backs up the file as it is then."
+        },
+        "hermes": {
+          "name": "Hermes config backups",
+          "hint": "Copies kept before saving Hermes config, pruned by Backup Retention."
+        },
+        "openclaw": {
+          "name": "OpenClaw config backups",
+          "hint": "Copies kept before saving OpenClaw config, pruned by Backup Retention."
+        },
+        "proxyLiveBackup": {
+          "name": "Legacy routing takeover backups",
+          "hint": "Config copies moved out of the old routing takeover backups during upgrade. CC Switch never reads them again."
+        },
+        "envVars": {
+          "name": "Environment variable cleanup backups",
+          "hint": "Original values recorded before conflicting environment variables were removed. After deleting, those values can no longer be looked up."
+        },
+        "legacyConfigBackups": {
+          "name": "Legacy config.json backups",
+          "hint": "Left by older versions; the current version no longer reads them."
+        },
+        "legacyConfigArchive": {
+          "name": "Legacy config.json archive",
+          "hint": "The old config file from before the database migration; the current version no longer reads it."
+        },
+        "legacyDbUpgrade": {
+          "name": "Legacy database upgrade backups",
+          "hint": "Copies made by older versions when upgrading the database; the current version no longer reads them."
+        },
+        "legacyToolSearch": {
+          "name": "Legacy Tool Search patch backups",
+          "hint": "Left by the removed Tool Search patch feature; the current version no longer reads them."
+        }
+      }
+    },
     "webdavSync": {
       "title": "WebDAV Cloud Sync",
       "description": "Sync database and skill configurations across devices via WebDAV.",
@@ -733,6 +813,9 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
     "unifyCodexSessionHistoryDescription": "When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one history list, optionally migrating existing official sessions in (backed up first). When turning it off, the migrated sessions can be restored from backup. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
+    "codexStackClassicSubagentsDescription": "In Codex aggregation mode, a sub-agent whose model comes from a different provider than the main agent may not be able to read its task: the newer Codex sub-agent tools have the main agent's provider encrypt the task, and no other provider can decrypt it. When enabled, every aggregated model uses the classic Codex sub-agent tools, which pass the task as plain text; the trade-off is losing newer features such as followup_task and interrupt_agent. Only affects aggregation mode; restart Codex for the change to take effect.",
+    "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
     "unifyCodexHistoryRestoreCompleted": "Official session history restored from backup ({{files}} session files, {{rows}} index rows)",
     "unifyCodexHistoryRestoreFailed": "Failed to restore official session history, please try again",
     "unifyCodexHistoryRestoreNothing": "No restorable migration backup for the current Codex directory",
@@ -745,7 +828,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "Show project switcher",
-      "showProfileSwitcherDescription": "Show the project switcher in the main page header"
+      "showProfileSwitcherDescription": "Show the project switcher in the main page header",
+      "showProviderSearch": "Show provider search",
+      "showProviderSearchDescription": "Show a search button at the top of the provider page to find providers by name, notes, website, or API address. When hidden, ⌘F / Ctrl+F still opens search"
     },
     "terminal": {
       "title": "Preferred Terminal",
@@ -827,6 +912,7 @@
     "officialWebsite": "Official Website",
     "github": "GitHub",
     "starPrompt": "If CC Switch has helped you, please star us on GitHub — it means a lot to us",
+    "starOnGithub": "Star on GitHub",
     "manualInstallCommands": "Manual Install Commands",
     "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
     "localEnvCheck": "Local environment check",
@@ -1771,6 +1857,9 @@
     "modelNameHint": "Specify the model to use, will be auto-updated in config.toml",
     "modelName": "Model Name",
     "upstreamFormatLabel": "Upstream Format",
+    "upstreamFormatAuto": "Automatic (model capabilities)",
+    "upstreamFormatCopilotResponses": "Responses (routing required)",
+    "upstreamFormatCopilotHint": "Automatic mode prefers Responses when supported by the model, otherwise Chat Completions. You can also select a protocol explicitly; models that do not support it will return an error. All modes require Codex routing takeover to inject Copilot account credentials.",
     "upstreamFormatHint": "Pick Responses when your provider is natively a Responses API (direct, no format conversion); pick Chat when it uses the Chat Completions protocol; pick Anthropic Messages when it only offers the native Anthropic Messages protocol. Chat and Anthropic Messages both require routing takeover to convert to Responses.",
     "upstreamFormatChat": "Chat Completions (routing required)",
     "upstreamFormatResponses": "Responses (native)",
@@ -1850,11 +1939,14 @@
   },
   "opencode": {
     "npmPackage": "API Format",
+    "nativeConfigHint": "Edit native OpenCode V2 configuration as JSON below. Provider and model fields are preserved when saving.",
     "selectPackage": "Select API format",
     "npmPackageHint": "Select the API format for the AI service",
     "builtinDefaults": "Use OpenCode built-in provider defaults",
     "customProviderRequired": "A new provider ID requires an npm package and at least one model. Only an existing ID in the live config may inherit defaults.",
     "duplicateRequiresDefinition": "This provider is missing an npm package or model definitions and cannot be duplicated directly. Specify an npm package and at least one model before copying it as a custom provider.",
+    "duplicateRequiresNativeDefinition": "This native V2 provider is missing a package or model definitions and cannot be duplicated directly. Add a package and at least one model before copying it under a new ID.",
+    "nativeCustomProviderRequired": "A new provider ID requires a package and at least one model. Only an existing ID in the live config may inherit defaults.",
     "baseUrl": "Base URL",
     "baseUrlHint": "Custom API endpoint URL",
     "models": "Models",
@@ -2023,6 +2115,11 @@
     "responseModel": "Response Model",
     "noData": "No data",
     "unknownProvider": "Unknown Provider",
+    "sessionProvider": {
+      "short": "Session logs",
+      "label": "{{app}} · Session logs",
+      "hint": "Read from the client's session logs while routing is off, so the provider can't be told apart"
+    },
     "stream": "Stream",
     "nonStream": "Non-stream",
     "source": "Source",
@@ -2227,7 +2324,10 @@
     },
     "heatmap": {
       "title": "Usage heatmap",
-      "subtitle": "Daily usage over the last 53 weeks",
+      "subtitle": "Daily usage over the last 53 weeks; earlier usage continues in 53-week spans, with shading comparable across spans",
+      "spanSummary": "{{tokens}} tokens · {{requests}} requests · {{cost}}",
+      "showMore": "Show more",
+      "showLess": "Show less",
       "less": "Less",
       "more": "More"
     },
@@ -3052,7 +3152,6 @@
     "checkUpdates": "Check Updates",
     "checkingUpdates": "Checking...",
     "noUpdates": "All skills are up to date",
-    "updatesFound": "{{count}} skill(s) have updates available",
     "updateAll": "Update All ({{count}})",
     "updatingAll": "Updating...",
     "updateAllSuccess": "Successfully updated {{count}} skill(s)",
@@ -3477,15 +3576,16 @@
       "ariaLabel": "{{appLabel}} Aggregation mode",
       "failoverUnavailable": "{{appLabel}} is in Aggregation mode, which has no failover. The queue and settings are kept and apply again in routing mode",
       "codexStale": {
+        "authTitle": "Codex may still cache the previous account; restart its background server to load the new login",
         "title": "Codex is still using an old model list, so aggregated models won't show",
         "daemon": "CLI: reopening codex isn't enough; its background daemon needs a restart.",
         "others": "Desktop app: quit it completely and reopen it (⌘Q on macOS; closing the window isn't enough). Editor extensions: reopen the editor window.",
         "restart": "Restart Codex daemon",
         "confirmTitle": "Restart the Codex daemon?",
-        "confirmMessage": "Every codex session in your terminals shares this daemon, so running tasks will be interrupted. Reopen codex afterwards to see the aggregated models.",
+        "confirmMessage": "Every codex session in your terminals shares this daemon, so running tasks will be interrupted. Reopen codex afterwards to load the current account and model list.",
         "confirm": "Restart",
-        "restarted": "Codex daemon restarted. Reopen codex to see the aggregated models",
-        "notRunning": "The Codex daemon isn't running. codex will load the new model list the next time it starts",
+        "restarted": "Codex daemon restarted. Reopen codex to load the current account and model list",
+        "notRunning": "The Codex daemon isn't running. It will load the current login and model list the next time it starts",
         "failed": "Failed to restart the Codex daemon: {{error}}"
       }
     },
@@ -4150,6 +4250,12 @@
       "times": "×{{count}}",
       "inTime": "in {{time}}",
       "showAll": "Show when each of the {{count}} resets expires"
+    },
+    "credits": {
+      "label": "Credits",
+      "text": "Credits ≈ {{usd}}",
+      "usd": "≈ {{usd}}",
+      "detail": "Credits balance {{balance}} · ≈ {{usd}} at API prices · used only after your limits run out"
     }
   },
   "appMatrix": {
@@ -4393,6 +4499,7 @@
       "showAll": "Show all Skills"
     },
     "selectAria": "Select {{name}}",
+    "selectAllAria": "Select all shown",
     "rowFail": "Enabling in {{app}} failed: {{error}}",
     "fixSync": "Change sync method",
     "rowMoreAria": "More actions for {{name}}",
@@ -4415,7 +4522,8 @@
       "uninstallManyButton": "Uninstall {{count}}",
       "updateAll": "Update {{count}} Skills?",
       "updateBody": "Updating replaces the local folder with the repository's content. Local edits are kept only in the backup ({{path}}).",
-      "updateAllButton": "Update {{count}}"
+      "updateAllButton": "Update {{count}}",
+      "updateListAria": "Skills to update"
     },
     "toast": {
       "installed": "Installed {{name}} and enabled it in {{apps}}",
@@ -4504,7 +4612,8 @@
     "headerUpdates": "{{count}} updates",
     "headerUpdatesShow": "Show only Skills with updates",
     "headerUpdatesClear": "Show all Skills",
-    "updateAllCount": "Update all ({{count}})"
+    "updateAllCount": "Update all ({{count}})",
+    "updatingProgress": "Updating {{done}}/{{total}}…"
   },
   "newLayoutNotice": {
     "title": "CC Switch has a new look",

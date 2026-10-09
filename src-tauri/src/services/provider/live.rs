@@ -562,27 +562,24 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::OpenCode => {
             // OpenCode uses additive mode - write provider to config
             use crate::opencode_config;
-            use crate::provider::OpenCodeProviderConfig;
+            use crate::provider::{OpenCodeConfigFormat, OpenCodeProviderConfig};
+            use serde::Deserialize;
 
-            // Defensive check: if settings_config is a full config structure, extract provider fragment
-            let config_to_write = if let Some(obj) = provider.settings_config.as_object() {
-                // Detect full config structure (has $schema or top-level provider field)
-                if obj.contains_key("$schema") || obj.contains_key("provider") {
-                    log::warn!(
-                        "OpenCode provider '{}' has full config structure in settings_config, attempting to extract fragment",
-                        provider.id
-                    );
-                    // Try to extract from provider.{id}
-                    obj.get("provider")
-                        .and_then(|p| p.get(&provider.id))
-                        .cloned()
-                        .unwrap_or_else(|| provider.settings_config.clone())
-                } else {
-                    provider.settings_config.clone()
-                }
-            } else {
-                provider.settings_config.clone()
-            };
+            // Native declarations may rely on a built-in definition without a package:
+            // a stored override must stay re-addable after removal from live. The UI
+            // still requires a definition for a new or renamed ID, as it does for V1.
+            let (config_to_write, format) = opencode_config::provider_fragment(
+                &provider.id,
+                &provider.settings_config,
+                provider.opencode_config_format(),
+            )?;
+            if format == OpenCodeConfigFormat::V2 {
+                return opencode_config::set_provider_with_format(
+                    &provider.id,
+                    config_to_write.clone(),
+                    format,
+                );
+            }
 
             // A new ID cannot inherit an existing provider's built-in definition.
             // Check at the write boundary as well as in the UI, including old copies.
@@ -606,12 +603,15 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 
             // Validate with the existing type, but persist the original fragment:
             // the type does not describe every OpenCode provider/model field.
-            let opencode_config_result =
-                serde_json::from_value::<OpenCodeProviderConfig>(config_to_write.clone());
+            let opencode_config_result = OpenCodeProviderConfig::deserialize(config_to_write);
 
             match opencode_config_result {
                 Ok(_) => {
-                    opencode_config::set_provider(&provider.id, config_to_write)?;
+                    opencode_config::set_provider_with_format(
+                        &provider.id,
+                        config_to_write.clone(),
+                        format,
+                    )?;
                     log::info!("OpenCode provider '{}' written to live config", provider.id);
                 }
                 Err(e) => {
@@ -624,7 +624,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                     if config_to_write.get("npm").is_some()
                         || config_to_write.get("options").is_some()
                     {
-                        opencode_config::set_provider(&provider.id, config_to_write)?;
+                        opencode_config::set_provider_with_format(
+                            &provider.id,
+                            config_to_write.clone(),
+                            format,
+                        )?;
                         log::info!(
                             "OpenCode provider '{}' written as raw JSON to live config",
                             provider.id
@@ -1189,9 +1193,10 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
 /// database with is_current set to false.
 pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::opencode_config;
-    use crate::provider::OpenCodeProviderConfig;
+    use crate::provider::{OpenCodeConfigFormat, OpenCodeProviderConfig};
+    use serde::Deserialize;
 
-    let providers = opencode_config::get_providers()?;
+    let providers = opencode_config::get_providers_with_format()?;
     if providers.is_empty() {
         return Ok(0);
     }
@@ -1200,28 +1205,43 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("opencode")?;
 
-    for (id, settings_config) in providers {
+    for (id, (settings_config, format)) in providers {
         // Keep validation and display-name extraction separate from persistence.
         // Serializing this partial type would discard fields such as api, env,
         // and models.<id>.limit.input before they ever reach the database.
-        let config = match serde_json::from_value::<OpenCodeProviderConfig>(settings_config.clone())
-        {
-            Ok(config) => config,
-            Err(e) => {
-                log::warn!("Failed to parse provider '{id}': {e}");
-                continue;
+        let name = match format {
+            OpenCodeConfigFormat::V1 => {
+                match OpenCodeProviderConfig::deserialize(&settings_config) {
+                    Ok(config) => config.name,
+                    Err(e) => {
+                        log::warn!("Failed to parse provider '{id}': {e}");
+                        continue;
+                    }
+                }
             }
+            OpenCodeConfigFormat::V2 => settings_config
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
         };
+        let native_format =
+            (format == OpenCodeConfigFormat::V2).then_some(OpenCodeConfigFormat::V2);
 
         if existing_ids.contains(&id) {
             match state.db.get_provider_by_id(&id, "opencode") {
                 Ok(Some(existing)) => {
-                    let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
-                    if existing.settings_config != settings_config || existing.name != display_name
+                    let display_name = name.clone().unwrap_or_else(|| existing.name.clone());
+                    if existing.settings_config != settings_config
+                        || existing.name != display_name
+                        || existing.opencode_config_format() != native_format
                     {
                         let mut provider = existing;
                         provider.name = display_name;
                         provider.settings_config = settings_config;
+                        provider
+                            .meta
+                            .get_or_insert_with(Default::default)
+                            .opencode_config_format = native_format;
                         if let Err(e) = state.db.save_provider("opencode", &provider) {
                             log::warn!(
                                 "Failed to update OpenCode provider '{id}' from live config: {e}"
@@ -1241,10 +1261,11 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         }
 
         // Create provider
-        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
+        let display_name = name.unwrap_or_else(|| id.clone());
         let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
         provider.meta = Some(crate::provider::ProviderMeta {
             live_config_managed: Some(true),
+            opencode_config_format: native_format,
             ..Default::default()
         });
 
