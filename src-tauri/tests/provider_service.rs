@@ -3106,7 +3106,7 @@ fn save_claude_editor(
     base: &serde_json::Value,
     edited: serde_json::Value,
     on_conflict: &str,
-) -> Result<bool, AppError> {
+) -> Result<cc_switch_lib::SwitchResult, AppError> {
     let mut provider = row.clone();
     provider.settings_config = edited;
     ProviderService::update_from_editor(

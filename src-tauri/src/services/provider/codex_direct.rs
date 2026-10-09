@@ -90,6 +90,12 @@ pub(crate) fn routes_official_to_proxy(db: &Database, config_text: &str) -> bool
     })
 }
 
+/// `url`（去掉末尾 `/`）是不是这台设备上本地代理给 Codex 的地址（端口按 DB 配置）。
+pub(crate) fn is_local_proxy_base_url(db: &Database, url: &str) -> bool {
+    let (address, port) = db.get_proxy_listen_sync();
+    is_proxy_base_url(url.trim().trim_end_matches('/'), &address, port)
+}
+
 /// `url`（去掉末尾 `/`）是不是本地代理给 Codex 的地址。端口配成 0 时代理用系统分配的
 /// 端口，只核对主机和路径。
 fn is_proxy_base_url(url: &str, address: &str, port: u16) -> bool {
@@ -1139,7 +1145,7 @@ pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppErr
 
 #[cfg(test)]
 mod tests {
-    use super::is_proxy_base_url;
+    use super::{is_local_proxy_base_url, is_proxy_base_url};
 
     #[test]
     fn the_proxy_base_url_matches_the_listen_address() {
@@ -1176,5 +1182,17 @@ mod tests {
             "127.0.0.1",
             0
         ));
+    }
+
+    /// 固定端口的命中与不命中（issue #7948 外审顺手补）：DB 没配置监听时默认
+    /// 127.0.0.1:15721，地址必须精确匹配（含 `/v1`），别的端口 / 主机 / 少 `/v1` 都不认。
+    #[test]
+    fn is_local_proxy_base_url_matches_a_fixed_port_exactly() {
+        let db = crate::database::Database::memory().expect("memory db");
+        assert!(is_local_proxy_base_url(&db, "http://127.0.0.1:15721/v1"));
+        assert!(is_local_proxy_base_url(&db, "http://127.0.0.1:15721/v1/"));
+        assert!(!is_local_proxy_base_url(&db, "http://127.0.0.1:15722/v1"));
+        assert!(!is_local_proxy_base_url(&db, "http://127.0.0.1:15721"));
+        assert!(!is_local_proxy_base_url(&db, "http://localhost:15721/v1"));
     }
 }

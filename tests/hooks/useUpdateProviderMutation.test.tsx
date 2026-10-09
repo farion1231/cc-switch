@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import type { ReactNode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -39,6 +40,7 @@ vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
+    warning: vi.fn(),
   },
 }));
 
@@ -68,7 +70,9 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
 }
 
 beforeEach(() => {
-  apiMocks.update.mockReset().mockResolvedValue(true);
+  apiMocks.update.mockReset().mockResolvedValue({ warnings: [] });
+  vi.mocked(toast.success).mockClear();
+  vi.mocked(toast.warning).mockClear();
 });
 
 describe("useUpdateProviderMutation", () => {
@@ -151,5 +155,40 @@ describe("useUpdateProviderMutation", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["providers", "pi"],
     });
+  });
+
+  it("warns when key-field edits only land in the saved row", async () => {
+    apiMocks.update.mockResolvedValueOnce({
+      warnings: ["codex_keyfields_pending_switch"],
+    });
+    const { wrapper } = createWrapper();
+    const provider = createProvider({ id: "provider-1" });
+    const { result } = renderHook(() => useUpdateProviderMutation("codex"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ provider });
+    });
+
+    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(toast.warning).toHaveBeenCalledWith(
+      "notifications.providerSavedNotLive",
+      { closeButton: true, duration: 10000 },
+    );
+  });
+
+  it("does not warn when the backend reports no warnings", async () => {
+    const { wrapper } = createWrapper();
+    const provider = createProvider({ id: "provider-1" });
+    const { result } = renderHook(() => useUpdateProviderMutation("codex"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ provider });
+    });
+
+    expect(toast.warning).not.toHaveBeenCalled();
   });
 });

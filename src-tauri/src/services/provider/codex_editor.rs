@@ -36,7 +36,7 @@ use crate::store::AppState;
 
 use super::claude_editor::{ConflictPolicy, EditorView, InactiveField};
 use super::codex_direct::{self, Owner, Prepared, Target};
-use super::editor_toml::{self, config_text, insert_at, render, Entry, TomlEdits};
+use super::editor_toml::{self, config_text, insert_at, item_at, render, Entry, TomlEdits};
 
 fn app() -> &'static str {
     AppType::Codex.as_str()
@@ -100,6 +100,175 @@ fn selected_route(doc: &DocumentMut) -> Option<&str> {
     doc.get("model_provider").and_then(Item::as_str)
 }
 
+/// 选中的路由表（`model_provider` 指的那张）；选不上（没选 / 表不存在）为 `None`。
+fn selected_table(doc: &DocumentMut) -> Option<(&str, &dyn toml_edit::TableLike)> {
+    let id = selected_route(doc)?;
+    doc.get("model_providers")?
+        .as_table_like()?
+        .get(id)?
+        .as_table_like()
+        .map(|table| (id, table))
+}
+
+/// 一次编辑器保存里关键字段改动的**类别**，按「证明过会当场生效」的口径划分
+///（issue #7948 三审：只豁免证实即时生效的字段，未证实的一律保留提醒）：
+/// - `endpoint_or_key`：代理**逐请求**消费的路由表键（`base_url`、`wire_api`、
+///   `experimental_bearer_token`，见 `proxy/providers/codex.rs` 的读取点）和行的 Key
+///   （`auth`）。直连当前卡当场进 live；代理路由随契约重写；活跃 Stack 成员的请求按
+///   最新行直达那家——都即时。
+/// - `route_table_other`：路由表里代理不消费的其余键（`stream_max_retries`、表 `name`、
+///   `requires_openai_auth` 这类，只有 Codex CLI 自己读）。
+/// - `catalog_entries`：目录**条目**类改动——顶层 `model`（没配模型目录时它就是发布的
+///   模型名，`codex_published_specs`）和 `modelCatalog` 列表（表单字段，不在 TOML 里）。
+///   活跃 Stack 成员的条目进合并目录、随契约当场重算；删掉最后一个条目同样当场发布
+///   （目录里少一条）。**前提是目录发布**（默认路由行没带自己的 `model_catalog_json`，
+///   `codex_direct::stack_catalog` 的跳过条件）。
+/// - `catalog_windows`：目录生成器消费的窗口/压缩阈值键（`model_context_window` /
+///   `model_auto_compact_token_limit`，`RowWindows::of` 总读、不受显式目录影响）。
+///   只有成员**保存后仍有可发布条目**才有消费者即时读它——目录生成器对无条目成员
+///   早退，删光条目的同次窗口改动只进 DB 行（外审 P2 二轮）。
+/// - `top_exclusive_other`：其余顶层/独有字段（`review_model`、`model_verbosity`、推理
+///   档位这类）——目录生成器不消费，`config.toml` 里只来自路由那家。
+/// - `nested`：嵌在用户表里的模型名（`[agents].default_subagent_model`），同上只来自
+///   路由那家。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct KeyFieldChanges {
+    pub endpoint_or_key: bool,
+    pub route_table_other: bool,
+    pub catalog_entries: bool,
+    pub catalog_windows: bool,
+    pub top_exclusive_other: bool,
+    pub nested: bool,
+}
+
+impl KeyFieldChanges {
+    pub(crate) fn any(self) -> bool {
+        self.endpoint_or_key
+            || self.route_table_other
+            || self.catalog_entries
+            || self.catalog_windows
+            || self.top_exclusive_other
+            || self.nested
+    }
+}
+
+/// 代理逐请求读取的路由表键（`proxy/providers/codex.rs`：上游地址、协议选择、凭据）。
+const ENDPOINT_TABLE_KEYS: &[&str] = &["base_url", "wire_api", "experimental_bearer_token"];
+/// 目录生成器消费的窗口/压缩阈值键（`RowWindows::of` 总读，不受显式模型目录影响）。
+const CATALOG_WINDOW_KEYS: &[&str] = &["model_context_window", "model_auto_compact_token_limit"];
+
+/// 比较打开编辑器时的投影（`base`）和表单保存的内容（`edited`），得出各类关键字的
+/// 改动（issue #7948）。`immediate_exclusive`：这次保存里**立即写进 live** 的独有字段
+///（从 live 带进来、被用户删掉的那些——删除是全局改动，当场生效）：不算延迟。
+pub(crate) fn key_fields_changed(
+    base: &Value,
+    edited: &Value,
+    immediate_exclusive: &[String],
+) -> KeyFieldChanges {
+    let (Ok(base_doc), Ok(edited_doc)) = (
+        config_text(base).parse::<DocumentMut>(),
+        config_text(edited).parse::<DocumentMut>(),
+    ) else {
+        // 解析不了的按全改过算：宁可多提醒一次，不要静默吞掉。
+        return KeyFieldChanges {
+            endpoint_or_key: true,
+            route_table_other: true,
+            catalog_entries: true,
+            catalog_windows: true,
+            top_exclusive_other: true,
+            nested: true,
+        };
+    };
+    let top = |doc: &DocumentMut, key: &str| doc.get(key).map(render);
+    let mut changes = KeyFieldChanges::default();
+    let immediate_delete = |key: &str| {
+        edited_doc.get(key).is_none()
+            && immediate_exclusive.iter().any(|immediate| immediate == key)
+    };
+    for key in floor::CODEX_FLOOR_TOP
+        .iter()
+        .chain(floor::CODEX_EXCLUSIVE_TOP.iter())
+    {
+        if top(&base_doc, key) == top(&edited_doc, key) || immediate_delete(key) {
+            continue;
+        }
+        if *key == "model" {
+            // 顶层 `model` 只在没有显式模型目录时才进目录（`codex_published_specs` 的
+            // 早退）；配了目录的行改 `model` 目录不变——不算条目类改动。
+            if crate::codex_config::codex_has_explicit_catalog(base)
+                || crate::codex_config::codex_has_explicit_catalog(edited)
+            {
+                changes.top_exclusive_other = true;
+            } else {
+                changes.catalog_entries = true;
+            }
+        } else if CATALOG_WINDOW_KEYS.contains(key) {
+            // 窗口键不受显式目录影响（`RowWindows::of` 总读），但和条目类分开：
+            // 它要成员保存后仍有条目才有人消费。
+            changes.catalog_windows = true;
+        } else {
+            changes.top_exclusive_other = true;
+        }
+    }
+    changes.nested |= floor::CODEX_FLOOR_NESTED.iter().any(|segments| {
+        let path: Vec<String> = segments.iter().map(|segment| segment.to_string()).collect();
+        item_at(&base_doc, &path).map(render) != item_at(&edited_doc, &path).map(render)
+    });
+    // 选中的路由表按**键**比较：代理消费的键（地址 / 协议 / 凭据）即时，其余键（只有
+    // Codex CLI 读）不即时。选了别的表、或哪边选不上表：保守按两类都改了算。
+    let selected = selected_table;
+    match (selected(&base_doc), selected(&edited_doc)) {
+        (Some((base_id, base_table)), Some((edited_id, edited_table))) => {
+            let mut keys: Vec<&str> = base_table.iter().map(|(key, _)| key).collect();
+            for key in edited_table.iter().map(|(key, _)| key) {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+            if base_id != edited_id {
+                changes.route_table_other = true;
+            }
+            for key in keys {
+                let differs = base_table.get(key).map(render) != edited_table.get(key).map(render);
+                if !differs {
+                    continue;
+                }
+                if ENDPOINT_TABLE_KEYS.contains(&key) {
+                    changes.endpoint_or_key = true;
+                } else {
+                    changes.route_table_other = true;
+                }
+            }
+        }
+        // 一边有一边没有（删掉整张表 / 新加表）：保守按两类都改了算。
+        _ => {
+            changes.endpoint_or_key = true;
+            changes.route_table_other = true;
+        }
+    }
+    // 两边都没有选中的路由表（原生官方配置常态）：不算路由表变化——selector 的增删由
+    // 顶层比较负责，别把官方卡的普通保存误报成关键字段改动（issue #7948 四审 Minor 1）。
+    if selected(&base_doc).is_none() && selected(&edited_doc).is_none() {
+        changes.endpoint_or_key &= false;
+        changes.route_table_other &= false;
+    }
+    // 行的 Key（API Key 输入框）：在 `auth` 里，不在 TOML 里。
+    let row_key = |settings: &Value| {
+        settings
+            .get("auth")
+            .and_then(crate::codex_config::extract_codex_auth_api_key)
+    };
+    changes.endpoint_or_key |= row_key(base) != row_key(edited);
+    // 模型目录列表（`settings.modelCatalog`，不在 TOML 里）：目录条目进合并目录 / 契约，
+    // 按**条目类**算——非当前卡片改列表同样延迟生效，要提醒（issue #7948 四审自查）；
+    // 删掉最后一个条目是即时发布（目录里少一条）。比较用消费端解析后的规范化条目：
+    // 表单保存会规范化学段名，raw JSON 相同不作数（issue #7948 五审 2）。
+    if !crate::codex_config::codex_catalog_specs_equal(base, edited) {
+        changes.catalog_entries = true;
+    }
+    changes
+}
+
 /// 编辑器显示的内容。`settings_config` 是这个供应商的行（新增时是空对象）。
 pub fn view(
     state: &AppState,
@@ -156,6 +325,9 @@ pub fn view(
 /// 还没填 Key 的行按「填了 Key」投影时用的占位 Key。只出现在内存里的投影中：显示前、存行
 /// 前都去掉，从不写盘。
 const PENDING_KEY: &str = "cc-switch-editor-pending-key";
+/// 保存只存进行、没写进 live 的关键字段改动（代理模式、或直连下编辑的不是当前供应
+/// 商）在返回里带的警告码：前端按它提示用户改动何时生效，别当成保存失败（issue #7948）。
+pub(crate) const KEYFIELDS_PENDING_SWITCH: &str = "codex_keyfields_pending_switch";
 
 /// `settings` 换上占位 Key（没有 `auth` 就补一个）。
 fn with_pending_key(settings: &Value) -> Option<Value> {
@@ -243,6 +415,8 @@ fn inactive_fields(row_text: &str, display: &DocumentMut) -> Vec<InactiveField> 
 pub(crate) struct CodexEditorPlan {
     pub row_settings: Value,
     pub edits: TomlEdits,
+    /// 有只存进行、切换 / 重写契约时才进 live 的关键字段改动（issue #7948 的提醒用）。
+    pub key_field_changes: KeyFieldChanges,
 }
 
 /// live 现在归谁：接上代理时是契约，否则是直连指针那家。
@@ -357,6 +531,11 @@ pub(crate) fn plan_save(
         !from_live.iter().any(|entry| entry.path[0] == *key)
             || rendered(&edited_doc, key) != rendered(&base_doc, key)
     });
+    let immediate_exclusive: Vec<String> = from_live
+        .iter()
+        .filter(|entry| edited_doc.get(&entry.path[0]).is_none())
+        .map(|entry| entry.path[0].clone())
+        .collect();
     let removed_from_live = from_live
         .into_iter()
         .filter(|entry| edited_doc.get(&entry.path[0]).is_none());
@@ -372,6 +551,7 @@ pub(crate) fn plan_save(
     Ok(CodexEditorPlan {
         row_settings: store_into_row(stored_row, edited, &projection)?,
         edits: TomlEdits::between(&base_entries, &entries(&edited_doc, &routes), on_conflict),
+        key_field_changes: key_fields_changed(base, edited, &immediate_exclusive),
     })
 }
 
@@ -610,6 +790,275 @@ mod tests {
         assert!(
             !text.contains("approval_policy"),
             "global settings go to live, not the row: {text}"
+        );
+    }
+
+    const VIEW: &str = "approval_policy = \"on-request\"\nmodel_provider = \"custom\"\nmodel = \"gpt-a\"\n\n[model_providers.custom]\nname = \"a\"\nbase_url = \"https://a.example/v1\"\nwire_api = \"responses\"\n";
+
+    fn settings(config: &str, key: &str) -> Value {
+        json!({ "auth": { "OPENAI_API_KEY": key }, "config": config })
+    }
+    #[test]
+    fn key_fields_changed_spots_key_edits_and_ignores_global_only_edits() {
+        let base = settings(VIEW, "sk-a");
+        let changed = |base: &Value, edited: &Value, immediate: &[String]| {
+            key_fields_changed(base, edited, immediate)
+        };
+        assert!(
+            changed(
+                &base,
+                &settings(
+                    &VIEW.replace("https://a.example/v1", "https://a2.example/v1"),
+                    "sk-a"
+                ),
+                &[]
+            )
+            .endpoint_or_key,
+            "route table (base_url) edit"
+        );
+        assert!(
+            changed(
+                &base,
+                &settings(&VIEW.replace("\"gpt-a\"", "\"gpt-b\""), "sk-a"),
+                &[]
+            )
+            .catalog_entries,
+            "top-level model edit (consumed by the catalog generator)"
+        );
+        assert!(
+            changed(
+                &base,
+                &settings(
+                    &VIEW
+                        .replace("model_provider = \"custom\"", "model_provider = \"relay\"")
+                        .replace("[model_providers.custom]", "[model_providers.relay]"),
+                    "sk-a"
+                ),
+                &[]
+            )
+            .route_table_other
+                && !changed(
+                    &base,
+                    &settings(
+                        &VIEW
+                            .replace("model_provider = \"custom\"", "model_provider = \"relay\"")
+                            .replace("[model_providers.custom]", "[model_providers.relay]"),
+                        "sk-a",
+                    ),
+                    &[]
+                )
+                .endpoint_or_key,
+            "a pure table rename does not touch the request path"
+        );
+        assert!(
+            changed(&base, &settings(VIEW, "sk-b"), &[]).endpoint_or_key,
+            "api key edit"
+        );
+        assert!(
+            !changed(
+                &base,
+                &settings(&VIEW.replace("on-request", "never"), "sk-a"),
+                &[]
+            )
+            .any(),
+            "global-only edit"
+        );
+        assert!(
+            !changed(&base, &settings(VIEW, "sk-a"), &[]).any(),
+            "no edit"
+        );
+    }
+
+    #[test]
+    fn key_fields_changed_skips_exclusive_fields_deleted_from_live() {
+        // live 带进来的独有字段（编辑器显示里有、行里没有）：用户删掉它是立即生效的
+        // 全局改动（removed_from_live），不算延迟生效的关键字段（issue #7948 外审 Minor 4）。
+        // 注意 `model_verbosity` 要放在 `[model_providers.custom]` 之前才是顶层键。
+        let with_verbosity = VIEW.replace(
+            "model = \"gpt-a\"\n",
+            "model = \"gpt-a\"\nmodel_verbosity = \"high\"\n",
+        );
+        let base = settings(&with_verbosity, "sk-a");
+        let deleted = settings(VIEW, "sk-a");
+        assert!(
+            !key_fields_changed(&base, &deleted, &["model_verbosity".to_string()]).any(),
+            "deleting a live-brought exclusive field applies immediately"
+        );
+        // 修改（不是删除）仍算关键字段改动：值进供应商行，切换时才生效。
+        let modified =
+            with_verbosity.replace("model_verbosity = \"high\"", "model_verbosity = \"low\"");
+        assert!(
+            key_fields_changed(&base, &settings(&modified, "sk-a"), &[]).top_exclusive_other,
+            "modifying an exclusive field goes to the row"
+        );
+    }
+
+    #[test]
+    fn key_fields_changed_reports_nested_model_names_as_their_own_category() {
+        // 嵌套模型名（[agents].default_subagent_model 这类）单列一类：活跃 Stack 成员
+        // 改它仍延迟生效（config.toml 里只来自路由那家的投影），二审 Minor 1+2。
+        let with_nested = VIEW.replace(
+            "\n[model_providers.custom]",
+            "\n[agents]\ndefault_subagent_model = \"gpt-a-mini\"\n\n[model_providers.custom]",
+        );
+        let base = settings(&with_nested, "sk-a");
+        let edited = settings(&with_nested.replace("gpt-a-mini", "gpt-b-mini"), "sk-a");
+        let changes = key_fields_changed(&base, &edited, &[]);
+        assert!(changes.nested, "{changes:?}");
+        assert!(
+            !changes.endpoint_or_key
+                && !changes.route_table_other
+                && !changes.catalog_entries
+                && !changes.catalog_windows
+                && !changes.top_exclusive_other,
+            "{changes:?}"
+        );
+    }
+
+    #[test]
+    fn key_fields_changed_splits_endpoint_keys_from_unconsumed_table_keys() {
+        // 三审反例 3：`stream_max_retries` 只有 Codex CLI 读，代理不消费——不是即时字段。
+        let with_retries = VIEW.replace(
+            "wire_api = \"responses\"",
+            "wire_api = \"responses\"\nstream_max_retries = 5",
+        );
+        let base = settings(&with_retries, "sk-a");
+        let edited = settings(
+            &with_retries.replace("stream_max_retries = 5", "stream_max_retries = 9"),
+            "sk-a",
+        );
+        let changes = key_fields_changed(&base, &edited, &[]);
+        assert!(
+            changes.route_table_other && !changes.endpoint_or_key,
+            "{changes:?}"
+        );
+        // 改 wire_api（协议选择，代理逐请求消费）是即时字段。
+        let edited = settings(
+            &with_retries.replace("wire_api = \"responses\"", "wire_api = \"chat\""),
+            "sk-a",
+        );
+        let changes = key_fields_changed(&base, &edited, &[]);
+        assert!(
+            changes.endpoint_or_key && !changes.route_table_other,
+            "{changes:?}"
+        );
+    }
+
+    #[test]
+    fn key_fields_changed_splits_catalog_consumed_fields_from_the_rest() {
+        // 三审反例 1：`review_model` / `model_verbosity` 目录生成器不消费——不是即时字段。
+        let with_review = VIEW.replace(
+            "model = \"gpt-a\"\n",
+            "model = \"gpt-a\"\nreview_model = \"gpt-a-review\"\n",
+        );
+        let base = settings(&with_review, "sk-a");
+        let edited = settings(&with_review.replace("gpt-a-review", "gpt-b-review"), "sk-a");
+        let changes = key_fields_changed(&base, &edited, &[]);
+        assert!(
+            changes.top_exclusive_other && !changes.catalog_entries && !changes.catalog_windows,
+            "{changes:?}"
+        );
+        // 窗口键目录生成器消费（RowWindows::of），且和条目类分开成旗。
+        let with_window = VIEW.replace(
+            "model = \"gpt-a\"\n",
+            "model = \"gpt-a\"\nmodel_context_window = 200000\n",
+        );
+        let base = settings(&with_window, "sk-a");
+        let edited = settings(&with_window.replace("200000", "1000000"), "sk-a");
+        let changes = key_fields_changed(&base, &edited, &[]);
+        assert!(
+            changes.catalog_windows && !changes.catalog_entries && !changes.top_exclusive_other,
+            "{changes:?}"
+        );
+    }
+    /// 原生官方配置（没有 `model_provider`、没有自定义表）的保存不算路由表变化：
+    /// 原样保存、只改全局设置都不该有关键字段改动（issue #7948 四审 Minor 1）。
+    #[test]
+    fn key_fields_changed_leaves_tableless_native_configs_alone() {
+        const NATIVE: &str =
+            "approval_policy = \"on-request\"\nmodel = \"gpt-official\"\nmodel_reasoning_effort = \"high\"\n";
+        let base = settings(NATIVE, "sk-a");
+        assert!(
+            !key_fields_changed(&base, &settings(NATIVE, "sk-a"), &[]).any(),
+            "no edit"
+        );
+        assert!(
+            !key_fields_changed(
+                &base,
+                &settings(&NATIVE.replace("on-request", "never"), "sk-a"),
+                &[]
+            )
+            .any(),
+            "global-only edit"
+        );
+        // 官方卡改 Key 仍是关键字段改动（进行、延迟生效）。
+        assert!(
+            key_fields_changed(&base, &settings(NATIVE, "sk-b"), &[]).endpoint_or_key,
+            "api key edit"
+        );
+    }
+
+    /// 行里配了显式模型目录时，目录生成器不读顶层 `model`（`codex_published_specs` 早退）：
+    /// 只改 `model` 目录不变，不算目录消费；窗口键仍被 `RowWindows::of` 消费
+    ///（issue #7948 四审 Minor 3）。
+    #[test]
+    fn key_fields_changed_demotes_model_with_an_explicit_catalog() {
+        let explicit = |config: &str| {
+            let mut value = settings(config, "sk-a");
+            value["modelCatalog"] = json!({ "models": [{ "model": "relay-x" }] });
+            value
+        };
+        let base = explicit(VIEW);
+        let edited = explicit(&VIEW.replace("\"gpt-a\"", "\"gpt-b\""));
+        let changes = key_fields_changed(&base, &edited, &[]);
+        assert!(
+            changes.top_exclusive_other && !changes.catalog_entries && !changes.catalog_windows,
+            "model is not consumed with an explicit catalog: {changes:?}"
+        );
+        let with_window = VIEW.replace(
+            "model = \"gpt-a\"\n",
+            "model = \"gpt-a\"\nmodel_context_window = 200000\n",
+        );
+        let base = explicit(&with_window);
+        let edited = explicit(&with_window.replace("200000", "1000000"));
+        let changes = key_fields_changed(&base, &edited, &[]);
+        assert!(
+            changes.catalog_windows && !changes.top_exclusive_other,
+            "window keys are still consumed: {changes:?}"
+        );
+    }
+    /// 模型目录列表（`modelCatalog.models`，表单字段不在 TOML 里）也算目录消费类：
+    /// 非当前卡片改列表延迟生效要提醒；活跃成员改列表契约当场重算（issue #7948 四审自查）。
+    #[test]
+    fn key_fields_changed_counts_explicit_catalog_list_edits() {
+        let base = settings(VIEW, "sk-a");
+        let mut edited = settings(VIEW, "sk-a");
+        edited["modelCatalog"] = json!({ "models": [{ "model": "relay-x" }] });
+        let changes = key_fields_changed(&base, &edited, &[]);
+        assert!(
+            changes.catalog_entries && !changes.endpoint_or_key,
+            "{changes:?}"
+        );
+    }
+    /// 目录列表比较按消费端解析后的规范化条目：snake_case 与 camelCase 同义不算改动，
+    /// 实质不同才算（issue #7948 五审 2）。
+    #[test]
+    fn key_fields_changed_compares_catalog_lists_by_parsed_specs() {
+        let with_catalog = |raw: &str| {
+            let mut value = settings(VIEW, "sk-a");
+            value["modelCatalog"] = serde_json::from_str::<Value>(raw).expect("catalog json");
+            value
+        };
+        let snake = with_catalog(r#"{"models":[{"model":"relay-x","reasoning_levels":["low"]}]}"#);
+        let camel = with_catalog(r#"{"models":[{"model":"relay-x","reasoningLevels":["low"]}]}"#);
+        assert!(
+            !key_fields_changed(&snake, &camel, &[]).any(),
+            "semantically identical catalogs are not a change"
+        );
+        let other = with_catalog(r#"{"models":[{"model":"relay-y"}]}"#);
+        assert!(
+            key_fields_changed(&snake, &other, &[]).catalog_entries,
+            "a real list edit is a catalog change"
         );
     }
 }
