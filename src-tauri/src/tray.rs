@@ -2394,7 +2394,7 @@ pub fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {
-            crate::linux_fix::nudge_main_window(window.clone());
+            crate::linux_fix::nudge_main_window(window.clone(), "tray-show-main");
         }
         #[cfg(target_os = "macos")]
         {

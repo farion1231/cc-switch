@@ -5,6 +5,42 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.5] - 2026-10-08
+
+The first patch release on the 4.0 stable line. Codex can use a GitHub Copilot account, and the all-time usage heatmap reaches back to the first recorded day. Fixes cover Claude Code sub-agents routed through Responses being forced into worktrees, GLM models hidden from the Codex aggregation picker, Linux deb/rpm auto-updates, Wayland title-bar buttons, blank Windows taskbar pins after an MSI upgrade, and Claude Code npm installs under npm 12.
+
+**Stats**: 18 commits | 187 files changed | +10009 insertions | -4785 deletions
+
+### Added
+
+- **GitHub Copilot for Codex** (#7157): A GitHub Copilot preset for Codex that uses a managed GitHub account from the Accounts page. The local route resolves each request's model against the account's live Copilot `/models` catalogue and picks the transport the model advertises (native Responses first, Chat Completions as fallback in auto mode); the editor also offers an explicit protocol override. Response handling, the opaque-state rectifier and Stack `web_search` stripping follow the transport actually used for each request rather than the stored `apiFormat`. Fetching models fills the catalogue from the account's live prompt limit (`max_prompt_tokens`, falling back to `max_context_window_tokens`), parallel tool calls and reasoning levels; the preset keeps conservative fallbacks (272000, 200000 for luna). Codex only treats a card as managed Copilot by `providerType`, so self-hosted relays at the same host keep their own key and endpoint. The Copilot request identity headers are now shared between the Claude and Codex paths, and `codexCopilotApiFormat` is stored as a string so an unknown future value reads as auto and round-trips instead of dropping the whole meta.
+- **All-time Heatmap Shows the Full History**: The heatmap only covered the last 53 weeks. It keeps that as the default view and adds a "Show more" toggle that lists earlier history in contiguous 53-week spans back to the first recorded day, each titled with its date range and totals; shading is bucketed across all spans so they stay comparable. A new `get_usage_first_date` command returns the earliest local day across `proxy_request_logs` and `usage_daily_rollups`, honoring the dashboard's app, provider and model filters.
+
+### Fixed
+
+- **Claude Code Sub-agents Forced Into Worktrees Through Responses** (#7717, fixes #7713): The Responses API strictifies a function tool when `strict` is omitted, so optional attributes land in `required` and the model filled Claude Code's optional Agent `isolation` (and `model`) on every call, sending sub-agents to a worktree that fails outside a git repo or overriding the agent's model. `anthropic_to_responses` now sets `strict: false` on converted function tools, matching what Codex CLI itself always sends; `parameters` still pass through `clean_schema` unchanged and the hosted web-search branch is untouched. Covers both plain Responses providers and the Codex OAuth backend.
+- **Codex Aggregation Hid GLM and Other Configured Models** (#7925, fixes #7924): Generated catalog entries cloned the cached gpt-5.5 template without touching `visibility`, so once the official backend marked the template `hide`, every explicitly configured third-party model disappeared from `/model` while aggregation still counted it. Generated entries now pin `visibility: "list"`, matching the official mirror path; native official rows keep their own visibility.
+- **MoArk Codex Preset Listed Only One Model** (#7940): The preset had no `modelCatalog`, so Codex fell back to generic metadata and `/model` showed only `deepseek-v4-flash-0731`. It now declares all five models with windows, image input and measured reasoning levels (Qwen3 Coder Plus a single `none` level), plus an explicit `apiFormat: "openai_responses"`. Existing MoArk cards keep their old catalog until the preset is applied again.
+- **Linux deb/rpm Auto-update Failed With a Permission Error** (#7620, fixes #4060): tauri-bundler 2.6.1 patched the bundle type by symbol lookup, which broke with `strip = "symbols"`, so deb/rpm binaries reported `UNK`, fell back to the AppImage path and tried to write into `/usr/bin`. The Tauri CLI and the frontend `@tauri-apps/*` packages are aligned with the Rust crates (bundler 2.8 patches the string in place), Linux releases now carry deb/rpm updater signatures, and `latest.json` publishes `linux-<arch>-deb` / `linux-<arch>-rpm` entries; the release check requires all four signatures (#7943). Existing deb/rpm installs still carry `UNK` and need one manual install of this version.
+- **Wayland Title-bar Buttons Did Not Respond** (#7947, fixes #7405, #2736, #7499): tao 0.34 wraps the HeaderBar in an `EventBox` with `above_child=true`, whose input window could stack above the minimize/maximize/close buttons after the first map or a tray hide/show. `above_child` is cleared on the GTK main thread whenever the main window is shown (a no-op once Tauri ships tao 0.36+). The input-region nudge now bumps one logical pixel instead of one physical pixel, skips maximized windows, and runs one at a time so the bumped size is always restored.
+- **Windows Taskbar Pins Turned Blank After an MSI Upgrade** (#5952, fixes #5949): The desktop and Start Menu shortcuts pointed their icon at `ProductIcon`, which Windows Installer caches under a ProductCode directory that each major upgrade deletes; taskbar pins kept the dead path. The shortcuts now take their icon from the target exe. The `Icon` table and `ARPPRODUCTICON` stay for Programs and Features. Pins created before this fix still carry the dead path and need to be unpinned and pinned again once.
+- **Claude Code npm Installs Left a Placeholder Binary Under npm 12** (#7929): npm 12 blocks Claude Code's postinstall by default and still exits 0, leaving the 500-byte placeholder at `bin/claude.exe`. Every Claude npm install and update fallback, and the copyable install command on the Apps page, now pass `--ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code`.
+- **Grok Build Session Usage Took 10 Minutes to Appear**: The settle window that delays Grok Build session imports reused the ±10-minute takeover guard window. It is now 60 seconds (the guard window is unchanged), with a compile-time assertion keeping it below the guard window.
+
+### Docs
+
+- The four READMEs, the issue templates (all ten apps) and the three-language user manual are updated for the 4.0 interface.
+
+### Internal
+
+- **WSL2 Nightly Runs From a nextest Archive**: The nightly had failed since 10-05 with LNK1327, because the contract step re-invoked cargo with `TEMP` on `\\wsl.localhost` and `mt.exe` cannot write its manifest temp file to a UNC path. The lib tests are now built once into a nextest archive with the native `TEMP`, and both the contract test and the lib suite run from it. Three lib tests the 9P share cannot host (symlink fixtures, a 13,248-file extraction) skip only when their temp dir is on a WSL share, and the nightly alone retries flaky tests up to twice (os error 995 on 9P); the PR `ci` profile still fails on the first error.
+
+### Upgrade notes
+
+- **No database schema change** (still 20).
+- **Linux deb/rpm**: install 4.0.5 manually once; auto-update works from then on.
+- **Windows**: if a taskbar pin turns blank after this upgrade, unpin and pin it again once; later upgrades keep the icon.
+
 ## [4.0.4] - 2026-10-07
 
 The first stable release of 4.0. On top of 4.0.3, macOS restarts after an in-app update or a config-directory change bring the new window to the front, new installs hide the project switcher until it is turned on in Settings, the request log's speed column stays visible in a narrow window, and the About card's star prompt gets its own dismissible strip. See the 4.0.0 to 4.0.3 sections below for everything else in 4.0.

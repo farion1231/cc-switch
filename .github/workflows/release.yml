@@ -868,6 +868,10 @@ jobs:
           [ -n "$win_arm64_sig" ] || missing="$missing windows-aarch64"
           [ -n "$linux_x64_sig" ] || missing="$missing linux-x86_64"
           [ -n "$linux_arm64_sig" ] || missing="$missing linux-aarch64"
+          [ -n "$linux_x64_deb_sig" ] || missing="$missing linux-x86_64-deb"
+          [ -n "$linux_arm64_deb_sig" ] || missing="$missing linux-aarch64-deb"
+          [ -n "$linux_x64_rpm_sig" ] || missing="$missing linux-x86_64-rpm"
+          [ -n "$linux_arm64_rpm_sig" ] || missing="$missing linux-aarch64-rpm"
           if [ -n "$missing" ]; then
             echo "❌ Missing updater signatures for:$missing" >&2
             exit 1

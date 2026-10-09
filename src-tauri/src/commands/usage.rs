@@ -96,6 +96,24 @@ pub async fn get_usage_trends(
     .await
 }
 
+/// 获取最早有用量记录的日期（本地 `YYYY-MM-DD`），没有记录时为 null
+#[tauri::command]
+pub async fn get_usage_first_date(
+    state: State<'_, AppState>,
+    app_type: Option<String>,
+    provider_name: Option<String>,
+    model: Option<String>,
+) -> Result<Option<String>, AppError> {
+    run_db_query(&state, move |db| {
+        db.get_first_usage_date(
+            app_type.as_deref(),
+            provider_name.as_deref(),
+            model.as_deref(),
+        )
+    })
+    .await
+}
+
 /// 获取 Provider 统计
 #[tauri::command]
 pub async fn get_provider_stats(
