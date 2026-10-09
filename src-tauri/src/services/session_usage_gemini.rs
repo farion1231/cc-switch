@@ -1774,4 +1774,233 @@ mod tests {
 
         Ok(())
     }
+    #[test]
+    fn antigravity_future_flash_versions_require_only_price_entries() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million,
+            output_cost_per_million, cache_read_cost_per_million, cache_creation_cost_per_million)
+            VALUES ('gemini-9.12-flash', 'Future fixture', '7', '8', '1', '0')",
+            [],
+        )?;
+        for model in [
+            "9.12flash",
+            "9.12-flash",
+            "flash-9.12",
+            "gemini-9.12-flash-high",
+            "gemini-9.12-flash-tiered",
+            "gemini-9.12-flash-thinking",
+        ] {
+            let (price, resolved) = resolve_antigravity_pricing(&conn, model);
+            assert_eq!(resolved, "gemini-9.12-flash", "{model}");
+            assert_eq!(price.unwrap().input_cost_per_million, Decimal::from(7));
+        }
+        for model in [
+            "9.12",
+            "gemini-9.12",
+            "gemini-9.12-flash-preview",
+            "gemini-9.12-flash-a",
+            "gemini-9.12-flash-pro",
+            "gemini-9.12-flash-fast",
+            "gemini-9.13-flash-high",
+            "gemini-9-flash-high",
+        ] {
+            assert!(
+                resolve_antigravity_pricing(&conn, model).0.is_none(),
+                "{model}"
+            );
+        }
+        conn.execute(
+            "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million,
+            output_cost_per_million, cache_read_cost_per_million, cache_creation_cost_per_million)
+            VALUES ('gemini-9.12-flash-high', 'Custom variant', '11', '8', '1', '0')",
+            [],
+        )?;
+        let (price, resolved) = resolve_antigravity_pricing(&conn, "gemini-9.12-flash-high");
+        assert_eq!(resolved, "gemini-9.12-flash-high");
+        assert_eq!(price.unwrap().input_cost_per_million, Decimal::from(11));
+        Ok(())
+    }
+    fn antigravity_sync_fixture(
+        path: &Path,
+        status: i64,
+    ) -> Result<rusqlite::Connection, AppError> {
+        let conn = rusqlite::Connection::open(path)?;
+        conn.execute_batch(
+            "CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB, size INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE steps (status INTEGER, metadata BLOB);",
+        )?;
+        conn.execute(
+            "INSERT INTO gen_metadata (idx, data) VALUES (0, ?1)",
+            [antigravity_gen_metadata(80, 50, 20, 50, 0)],
+        )?;
+        conn.execute(
+            "INSERT INTO steps VALUES (?1, ?2)",
+            rusqlite::params![status, step_metadata(0, 10_000)],
+        )?;
+        Ok(conn)
+    }
+
+    fn antigravity_rollup_totals(db: &Database) -> Result<(i64, f64), AppError> {
+        let conn = lock_conn!(db.conn);
+        Ok(conn.query_row(
+            "SELECT COALESCE(SUM(request_count), 0),
+            COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) FROM usage_daily_rollups",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
+    }
+
+    #[test]
+    fn antigravity_running_sync_final_tokens_and_real_rollup_are_idempotent() -> Result<(), AppError>
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("running.db");
+        let source = antigravity_sync_fixture(&path, 2)?;
+        let db = Database::memory()?;
+        let key = path.to_string_lossy();
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (1, 0));
+        assert_eq!(get_sync_state(&db, &key)?, (0, 0));
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (0, 1));
+        source.execute(
+            "UPDATE gen_metadata SET data = ?1 WHERE idx = 0",
+            [antigravity_gen_metadata(120, 70, 30, 70, 0)],
+        )?;
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (1, 0));
+        {
+            let conn = lock_conn!(db.conn);
+            let tokens: (i64, i64, i64) = conn.query_row(
+                "SELECT input_tokens, output_tokens, cache_read_tokens FROM proxy_request_logs",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            assert_eq!(tokens, (150, 70, 30));
+        }
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+        let totals = antigravity_rollup_totals(&db)?;
+        assert_eq!(totals.0, 1);
+        assert!(totals.1 > 0.0);
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (0, 1));
+        assert_eq!(db.rollup_and_prune(30)?, 0);
+        assert_eq!(antigravity_rollup_totals(&db)?, totals);
+        source.execute("UPDATE steps SET status = 3", [])?;
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (0, 1));
+        let (modified, offset) = get_sync_state(&db, &key)?;
+        assert!(modified > 0);
+        assert_eq!(offset, 1);
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (0, 0));
+        assert_eq!(antigravity_rollup_totals(&db)?, totals);
+        Ok(())
+    }
+
+    #[test]
+    fn antigravity_failed_ledger_write_rolls_back_detail_and_retries_sync() -> Result<(), AppError>
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("retry.db");
+        let _source = antigravity_sync_fixture(&path, 3)?;
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER fail_agy_ledger BEFORE INSERT ON session_usage_dedup
+                BEGIN SELECT RAISE(FAIL, 'injected ledger failure'); END;",
+            )?;
+        }
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (0, 1));
+        assert_eq!(get_sync_state(&db, &path.to_string_lossy())?, (0, 0));
+        {
+            let conn = lock_conn!(db.conn);
+            for table in ["proxy_request_logs", "session_usage_dedup"] {
+                let count: i64 =
+                    conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?;
+                assert_eq!(count, 0, "transaction must roll back {table}");
+            }
+            conn.execute_batch("DROP TRIGGER fail_agy_ledger")?;
+        }
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (1, 0));
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (0, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn antigravity_late_proxy_real_rollup_does_not_double_count() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("late-proxy.db");
+        let _source = antigravity_sync_fixture(&path, 2)?;
+        let db = Database::memory()?;
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (1, 0));
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (request_id, provider_id, app_type,
+                model, request_model, pricing_model, input_tokens, output_tokens, cache_read_tokens,
+                total_cost_usd, latency_ms, status_code, created_at, data_source)
+                VALUES ('late-proxy', 'google', 'gemini', 'gemini-3.5-flash', 'gemini-3.5-flash',
+                'gemini-3.5-flash', 100, 50, 20, '0.05', 200, 200, 10000, 'proxy')",
+                [],
+            )?;
+        }
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (0, 1));
+        assert_eq!(db.rollup_and_prune(30)?, 2);
+        assert_eq!(antigravity_rollup_totals(&db)?, (1, 0.05));
+        assert_eq!(sync_single_antigravity_db(&db, &path)?, (0, 1));
+        assert_eq!(db.rollup_and_prune(30)?, 0);
+        assert_eq!(antigravity_rollup_totals(&db)?, (1, 0.05));
+        Ok(())
+    }
+
+    #[test]
+    fn antigravity_first_import_after_v4_0_4_upgrade_preserves_other_sources(
+    ) -> Result<(), AppError> {
+        // v4.0.4 and this release both use schema 20; their schema.rs is identical.
+        // Reopen an on-disk fixture with existing usage and checkpoints, then run
+        // the same create/migrate/seed sequence without touching user state.
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("cc-switch.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path)?;
+            Database::create_tables_on_conn(&conn)?;
+            conn.execute_batch("PRAGMA user_version = 20;")?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (request_id, provider_id, app_type,
+                model, input_tokens, output_tokens, total_cost_usd, latency_ms, status_code,
+                created_at, data_source) VALUES ('existing-codex', 'codex', 'codex', 'gpt-5',
+                123, 45, '1.25', 100, 200, 10000, 'codex_session')",
+                [],
+            )?;
+        }
+        let db = Database {
+            conn: std::sync::Mutex::new(rusqlite::Connection::open(&db_path)?),
+            log_count_cache: std::sync::Mutex::new(None),
+        };
+        update_sync_state(&db, "existing-codex-file", 123456, 789)?;
+        db.create_tables()?;
+        db.apply_schema_migrations()?;
+        db.ensure_model_pricing_seeded()?;
+        let source_path = temp.path().join("first-import.db");
+        let _source = antigravity_sync_fixture(&source_path, 3)?;
+        assert_eq!(sync_single_antigravity_db(&db, &source_path)?, (1, 0));
+        assert_eq!(sync_single_antigravity_db(&db, &source_path)?, (0, 0));
+        assert_eq!(get_sync_state(&db, "existing-codex-file")?, (123456, 789));
+        let conn = lock_conn!(db.conn);
+        assert_eq!(Database::get_user_version(&conn)?, 20);
+        let old: (i64, String, String) = conn.query_row(
+            "SELECT input_tokens, total_cost_usd,
+            data_source FROM proxy_request_logs WHERE request_id = 'existing-codex'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        assert_eq!(old, (123, "1.25".into(), "codex_session".into()));
+        let counts: (i64, i64) = conn.query_row(
+            "SELECT
+            (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'antigravity_session'),
+            (SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'antigravity_session')",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        assert_eq!(counts, (1, 1));
+        Ok(())
+    }
 }

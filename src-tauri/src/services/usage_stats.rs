@@ -2469,6 +2469,36 @@ pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<Mo
         })
 }
 
+// Only names that identify Flash can generalize to future versions. Bare
+// versions and preview/experiment labels retain the established legacy scope.
+fn antigravity_flash_candidate(model: &str) -> Option<String> {
+    let name = model.strip_prefix("gemini-").unwrap_or(model);
+    let (version, suffix) = if let Some((version, suffix)) = name.split_once("-flash") {
+        (version, Some(suffix))
+    } else if let Some(version) = name.strip_prefix("flash-") {
+        (version, Some(""))
+    } else if let Some(version) = name.strip_suffix("flash") {
+        (version, Some(""))
+    } else {
+        (name, None)
+    };
+    let (major, minor) = version.split_once('.')?;
+    if major.is_empty()
+        || minor.is_empty()
+        || !major.bytes().all(|b| b.is_ascii_digit())
+        || !minor.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let legacy = matches!(version, "3.6" | "3.7" | "3.8");
+    match suffix {
+        Some("" | "-low" | "-medium" | "-high" | "-tiered") => {}
+        None | Some("-a" | "-b" | "-exp-a" | "-exp-b" | "-preview") if legacy => {}
+        _ => return None,
+    }
+    Some(format!("gemini-{version}-flash"))
+}
+
 pub(crate) fn resolve_antigravity_pricing(
     conn: &Connection,
     raw_model: &str,
@@ -2520,57 +2550,12 @@ pub(crate) fn resolve_antigravity_pricing(
         }
     }
 
-    // 3b. Proved Gemini flash variants
+    // 3b. Same-version Flash syntax; ambiguous legacy labels stay bounded.
     let without_thinking = normalized.strip_suffix("-thinking").unwrap_or(&normalized);
-    let gemini_variant = match without_thinking {
-        "3.8"
-        | "3.8flash"
-        | "3.8-flash"
-        | "flash-3.8"
-        | "gemini-3.8"
-        | "gemini-3.8-flash-a"
-        | "gemini-3.8-flash-b"
-        | "gemini-3.8-flash-exp-a"
-        | "gemini-3.8-flash-exp-b"
-        | "gemini-3.8-flash-low"
-        | "gemini-3.8-flash-medium"
-        | "gemini-3.8-flash-high"
-        | "gemini-3.8-flash-preview"
-        | "gemini-3.8-flash-tiered" => Some("gemini-3.8-flash"),
-        "3.7"
-        | "3.7flash"
-        | "3.7-flash"
-        | "flash-3.7"
-        | "gemini-3.7"
-        | "gemini-3.7-flash-a"
-        | "gemini-3.7-flash-b"
-        | "gemini-3.7-flash-exp-a"
-        | "gemini-3.7-flash-exp-b"
-        | "gemini-3.7-flash-low"
-        | "gemini-3.7-flash-medium"
-        | "gemini-3.7-flash-high"
-        | "gemini-3.7-flash-preview"
-        | "gemini-3.7-flash-tiered" => Some("gemini-3.7-flash"),
-        "3.6"
-        | "3.6flash"
-        | "3.6-flash"
-        | "flash-3.6"
-        | "gemini-3.6"
-        | "gemini-3.6-flash-a"
-        | "gemini-3.6-flash-b"
-        | "gemini-3.6-flash-exp-a"
-        | "gemini-3.6-flash-exp-b"
-        | "gemini-3.6-flash-low"
-        | "gemini-3.6-flash-medium"
-        | "gemini-3.6-flash-high"
-        | "gemini-3.6-flash-preview"
-        | "gemini-3.6-flash-tiered" => Some("gemini-3.6-flash"),
-        _ => None,
-    };
-    if let Some(target) = gemini_variant {
-        if let Ok(Some(row)) = query_model_pricing_exact(conn, target) {
+    if let Some(target) = antigravity_flash_candidate(without_thinking) {
+        if let Ok(Some(row)) = query_model_pricing_exact(conn, &target) {
             if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
-                return (Some(pricing), target.to_string());
+                return (Some(pricing), target);
             }
         }
     }
