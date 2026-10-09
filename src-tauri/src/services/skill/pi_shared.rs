@@ -6,8 +6,13 @@
 //! 行为由 `testdata/glob-oracle.json` 锁定
 //! （`scripts/glob-oracle/gen.mjs` 用与 pi 相同版本的 minimatch 生成）。
 
+use anyhow::{Context, Result};
 use regex::Regex;
+use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::app_config::AppType;
 
 /// minimatch@10（默认选项）glob 子集匹配。pattern 与 target 均为 posix 路径。
 /// 不支持花括号展开与 extglob（调用方先经 [`is_supported_pattern`] 过滤）。
@@ -56,8 +61,215 @@ pub(crate) struct PiSharedRoot {
     /// 规范化后的绝对路径（canonicalize）
     pub path: PathBuf,
     /// 来源
-    #[expect(dead_code)] // S5 判定 baseDir 时消费
     pub origin: PiSharedRootOrigin,
+}
+
+/// 五态可见性（方案 §2.2）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PiVisState {
+    /// #1 未启用（普通）
+    Inactive,
+    /// #2 未启用 · 原生路径被排除规则命中
+    InactiveExcluded,
+    /// #3 已启用 · 原生副本生效
+    Native,
+    /// #4 已启用 · 共享副本生效
+    Shared,
+    /// #5 已启用 · 双来源
+    NativeShared,
+}
+
+/// 单个技能对 pi 的可见性结果
+#[expect(dead_code)] // S6 消费后移除
+pub(crate) struct PiVisibility {
+    pub state: PiVisState,
+    /// 生效的共享根（仅 #4/#5 非空）
+    pub shared_roots: Vec<PathBuf>,
+    /// 任一生效共享副本与 SSOT 内容一致（None = SSOT 无该技能，未比对）
+    pub same_content_as_ssot: Option<bool>,
+    /// 原生投影目标路径被排除（#2 依据）
+    pub excluded_by_pattern: bool,
+    /// 解析含不支持语法/失败，结果近似
+    pub approximate: bool,
+}
+
+impl PiVisibility {
+    /// pi 是否实际加载该技能（apps.pi 取值依据）
+    #[expect(dead_code)] // S6 消费后移除
+    pub(crate) fn is_active(&self) -> bool {
+        matches!(
+            self.state,
+            PiVisState::Native | PiVisState::Shared | PiVisState::NativeShared
+        )
+    }
+}
+
+/// 一次解析、多次判定的上下文（get_all_installed 循环外构建一次）
+pub(crate) struct PiVisibilityContext {
+    sources: PiSkillSources,
+    ssot_dir: Option<PathBuf>,
+    native_dir: Option<PathBuf>,
+}
+
+/// 构建判定上下文（内部容错，不报错）
+#[expect(dead_code)] // S6 消费后移除
+pub(crate) fn build_context() -> PiVisibilityContext {
+    PiVisibilityContext {
+        sources: resolve_pi_skill_sources(),
+        ssot_dir: super::SkillService::get_ssot_dir().ok(),
+        native_dir: super::SkillService::get_app_skills_dir(&AppType::Pi).ok(),
+    }
+}
+
+/// 五态判定（方案 §2.1/§2.2，每次现算）：
+/// N/S 存在性均要求含 SKILL.md；N_excluded 对假设路径判定；
+/// S 按来源分两类语义与 baseDir；状态由重扫得出，无硬编码转移。
+#[expect(dead_code)] // S6 消费后移除
+pub(crate) fn pi_skill_visibility(directory: &str, ctx: &PiVisibilityContext) -> PiVisibility {
+    let patterns = &ctx.sources.patterns;
+
+    // 原生副本
+    let native_dir = ctx.native_dir.as_deref();
+    let n_exists = native_dir.is_some_and(|d| skill_dir_exists(&d.join(directory)));
+    // 原生路径被排除（假设路径即可判定，无需副本存在）
+    let n_excluded = match (native_dir, ctx.sources.agent_dir.as_deref()) {
+        (Some(native), Some(agent)) => {
+            !is_autodiscovered_enabled(&native.join(directory).join("SKILL.md"), agent, patterns)
+        }
+        _ => false,
+    };
+    let n_active = n_exists && !n_excluded;
+
+    // 共享副本（仅收生效根）
+    let mut shared_roots = Vec::new();
+    for root in &ctx.sources.roots {
+        let s_dir = root.path.join(directory);
+        if !skill_dir_exists(&s_dir) {
+            continue;
+        }
+        let excluded = match root.origin {
+            PiSharedRootOrigin::AgentsDir => {
+                // baseDir = ~/.agents（根的父目录）
+                !is_autodiscovered_enabled(
+                    &s_dir.join("SKILL.md"),
+                    root.path.parent().unwrap_or(Path::new("/")),
+                    patterns,
+                )
+            }
+            PiSharedRootOrigin::SettingsEntry { .. } => match ctx.sources.agent_dir.as_deref() {
+                Some(agent) => !is_scanned_enabled(&s_dir.join("SKILL.md"), agent, patterns),
+                None => false,
+            },
+        };
+        if !excluded {
+            shared_roots.push(root.path.clone());
+        }
+    }
+    let s_active = !shared_roots.is_empty();
+
+    let state = match (n_active, s_active) {
+        (true, true) => PiVisState::NativeShared,
+        (true, false) => PiVisState::Native,
+        (false, true) => PiVisState::Shared,
+        (false, false) if n_excluded => PiVisState::InactiveExcluded,
+        (false, false) => PiVisState::Inactive,
+    };
+
+    let same_content = if s_active {
+        same_content_as_ssot(&shared_roots, directory, ctx)
+    } else {
+        None
+    };
+
+    PiVisibility {
+        state,
+        shared_roots,
+        same_content_as_ssot: same_content,
+        excluded_by_pattern: n_excluded && matches!(state, PiVisState::InactiveExcluded),
+        approximate: ctx.sources.approximate,
+    }
+}
+
+/// 目录存在（目录或 symlink）且含 SKILL.md
+fn skill_dir_exists(dir: &Path) -> bool {
+    dir.is_dir() && dir.join("SKILL.md").exists()
+}
+
+/// 任一生效共享副本与 SSOT 内容一致（方案 §2.1）：
+/// 共享根 == SSOT 目录（Unified 模式）短路为 true；否则树哈希比对（带缓存）。
+fn same_content_as_ssot(
+    shared_roots: &[PathBuf],
+    directory: &str,
+    ctx: &PiVisibilityContext,
+) -> Option<bool> {
+    let ssot_dir = ctx.ssot_dir.as_deref()?;
+    let ssot_skill = ssot_dir.join(directory);
+    if !skill_dir_exists(&ssot_skill) {
+        return None; // SSOT 无该技能，未比对
+    }
+    let ssot_canonical = ssot_dir.canonicalize().ok()?;
+    let ssot_hash = cached_deployment_hash(&ssot_skill).ok()?;
+    for root in shared_roots {
+        if *root == ssot_canonical {
+            return Some(true); // 短路：同一目录
+        }
+        if cached_deployment_hash(&root.join(directory)).ok()? == ssot_hash {
+            return Some(true);
+        }
+    }
+    Some(false)
+}
+
+/// 内容哈希缓存：键=目录，值=(元数据指纹, 哈希)。指纹未变复用，避免重读文件字节。
+static HASH_CACHE: std::sync::LazyLock<std::sync::Mutex<HashMap<PathBuf, (u64, String)>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+fn cached_deployment_hash(dir: &Path) -> Result<String> {
+    let fingerprint = tree_fingerprint(dir)?;
+    if let Some((cached_fp, cached_hash)) = HASH_CACHE.lock().expect("锁哈希缓存").get(dir) {
+        if *cached_fp == fingerprint {
+            return Ok(cached_hash.clone());
+        }
+    }
+    let hash = super::SkillService::compute_pi_deployment_hash(dir)?;
+    HASH_CACHE
+        .lock()
+        .expect("锁哈希缓存")
+        .insert(dir.to_path_buf(), (fingerprint, hash.clone()));
+    Ok(hash)
+}
+
+/// 树元数据指纹：各文件 (相对路径, 大小, mtime) 的哈希，只读元数据不读内容
+fn tree_fingerprint(dir: &Path) -> Result<u64> {
+    use std::hash::{Hash, Hasher};
+
+    fn walk(current: &Path, root: &Path, hasher: &mut impl std::hash::Hasher) -> Result<()> {
+        for entry in
+            fs::read_dir(current).with_context(|| format!("读取目录失败: {}", current.display()))?
+        {
+            let path = entry?.path();
+            let relative = path.strip_prefix(root).unwrap_or(&path);
+            relative.to_string_lossy().hash(hasher);
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_dir() {
+                walk(&path, root, hasher)?;
+            } else {
+                metadata.len().hash(hasher);
+                metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+                    .hash(hasher);
+            }
+        }
+        Ok(())
+    }
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    walk(dir, dir, &mut hasher)?;
+    Ok(hasher.finish())
 }
 
 pub(crate) enum PiSharedRootOrigin {
@@ -85,7 +297,6 @@ pub(crate) struct PiSkillSources {
 /// 解析 pi 的全部共享技能根与模式（方案 §3.1）。
 /// 固定追加 `~/.agents/skills`；settings 条目分类按 §1.1；
 /// 任何失败路径均不报错，降级为近似结果 + warning。
-#[expect(dead_code)] // S5 消费后移除
 pub(crate) fn resolve_pi_skill_sources() -> PiSkillSources {
     let mut sources = PiSkillSources {
         roots: Vec::new(),
@@ -225,7 +436,6 @@ fn push_root(roots: &mut Vec<PiSharedRoot>, path: PathBuf, origin: PiSharedRootO
 /// （pi `isEnabledByOverrides`）：
 /// 默认启用 → `!glob` 命中→禁用 → `+exact` 命中→启用 → `-exact` 命中→禁用。
 /// 无前缀条目（include 白名单）不参与本判定。
-#[expect(dead_code)] // S5 消费后移除
 pub(crate) fn is_autodiscovered_enabled(md_path: &Path, base_dir: &Path, p: &PiPatternSet) -> bool {
     let mut enabled = true;
     if !p.excludes.is_empty() && matches_any_pattern(md_path, base_dir, &p.excludes) {
@@ -242,7 +452,6 @@ pub(crate) fn is_autodiscovered_enabled(md_path: &Path, base_dir: &Path, p: &PiP
 
 /// §1.2.A：settings 扫描根的启用判定（pi `applyPatterns`，作用于该根收集的全部文件）：
 /// include 白名单（存在时仅保留匹配）→ `!glob` 排除 → `+exact` 从全量加回 → `-exact` 终局排除。
-#[expect(dead_code)] // S5 消费后移除
 pub(crate) fn is_scanned_enabled(md_path: &Path, base_dir: &Path, p: &PiPatternSet) -> bool {
     let mut result = p.includes.is_empty() || matches_any_pattern(md_path, base_dir, &p.includes);
     if result && !p.excludes.is_empty() && matches_any_pattern(md_path, base_dir, &p.excludes) {
@@ -959,7 +1168,7 @@ mod tests {
     #[serial]
     fn unsupported_syntax_marks_global_approximate() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _home = TestHomeGuard::set(temp.path());
         let _agent = crate::pi_config::test_support::TestAgentDir::new();
         _agent.write_settings(r#"{ "skills": ["!{a,b}"] }"#);
 
@@ -968,5 +1177,236 @@ mod tests {
         assert!(!sources.warnings.is_empty());
         // 模式仍被收集（供展示），但结果全部近似
         assert_eq!(sources.patterns.excludes, vec!["{a,b}"]);
+    }
+
+    // ===== S5：五态判定引擎 =====
+
+    use super::{build_context, pi_skill_visibility, PiVisState};
+
+    /// 测试环境：home = temp，agent = 独立 temp，可选预写 settings
+    /// （home guard 必须存活于整个测试，存于结构体内）
+    struct VisEnv {
+        temp: tempfile::TempDir,
+        _home: TestHomeGuard,
+        _agent: crate::pi_config::test_support::TestAgentDir,
+    }
+
+    impl VisEnv {
+        fn new(settings: Option<&str>) -> Self {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let _home = TestHomeGuard::set(temp.path());
+            let _agent = crate::pi_config::test_support::TestAgentDir::new();
+            if let Some(s) = settings {
+                _agent.write_settings(s);
+            }
+            Self {
+                temp,
+                _home,
+                _agent,
+            }
+        }
+
+        fn home(&self) -> &Path {
+            self.temp.path()
+        }
+
+        fn agent(&self) -> PathBuf {
+            crate::pi_config::get_pi_agent_dir().expect("agent dir")
+        }
+
+        fn native(&self, skill: &str) -> PathBuf {
+            self.agent().join("skills").join(skill)
+        }
+
+        fn write_settings(&self, s: &str) {
+            self._agent.write_settings(s);
+        }
+
+        fn vis(&self, skill: &str) -> super::PiVisibility {
+            let ctx = build_context();
+            pi_skill_visibility(skill, &ctx)
+        }
+    }
+
+    fn make_skill(dir: &Path, content: &str) {
+        fs::create_dir_all(dir).expect("mkdir skill");
+        fs::write(dir.join("SKILL.md"), content).expect("write SKILL.md");
+    }
+
+    const SKILL_MD: &str = "---\nname: x\ndescription: d\n---\nbody";
+
+    #[test]
+    #[serial]
+    fn five_state_matrix() {
+        // #1 无任何副本
+        let env = VisEnv::new(None);
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Inactive);
+        assert!(!v.is_active());
+
+        // #3 仅原生副本
+        make_skill(&env.native("pdf"), SKILL_MD);
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Native);
+        assert!(v.is_active());
+
+        // #4 仅共享副本（~/.agents/skills 自动发现）
+        let env = VisEnv::new(None);
+        make_skill(
+            &env.home().join(".agents").join("skills").join("pdf"),
+            SKILL_MD,
+        );
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Shared);
+        assert!(v.is_active());
+        assert_eq!(v.shared_roots.len(), 1);
+        // SSOT 无该技能 → 未比对
+        assert_eq!(v.same_content_as_ssot, None);
+
+        // #4 经 settings 扫描根（~/.claude/skills）
+        let env = VisEnv::new(Some(r#"{ "skills": ["~/.claude/skills"] }"#));
+        make_skill(
+            &env.home().join(".claude").join("skills").join("pdf"),
+            SKILL_MD,
+        );
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Shared);
+
+        // #5 双来源
+        let env = VisEnv::new(None);
+        make_skill(&env.native("pdf"), SKILL_MD);
+        make_skill(
+            &env.home().join(".agents").join("skills").join("pdf"),
+            SKILL_MD,
+        );
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::NativeShared);
+        assert!(v.is_active());
+    }
+
+    #[test]
+    #[serial]
+    fn exclusion_states() {
+        // #2：!pdf 按父目录名命中原生路径，无任何副本 → 预判"启用也无效"
+        let env = VisEnv::new(Some(r#"{ "skills": ["!pdf"] }"#));
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::InactiveExcluded);
+        assert!(!v.is_active());
+        assert!(v.excluded_by_pattern);
+
+        // #2：原生副本存在但被排除
+        make_skill(&env.native("pdf"), SKILL_MD);
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::InactiveExcluded);
+
+        // #1：排除仅命中共享路径（绝对路径模式指向 agents 目录），原生路径未命中
+        let env = VisEnv::new(None);
+        env.write_settings(&format!(
+            r#"{{ "skills": ["!{}/.agents/skills/pdf/SKILL.md"] }}"#,
+            env.home().display()
+        ));
+        make_skill(
+            &env.home().join(".agents").join("skills").join("pdf"),
+            SKILL_MD,
+        );
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Inactive);
+        assert!(!v.excluded_by_pattern);
+        // 勾选后投影即生效：投影到原生目录后变 #3
+        make_skill(&env.native("pdf"), SKILL_MD);
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Native);
+    }
+
+    #[test]
+    #[serial]
+    fn empty_shell_dir_without_skill_md_is_ignored() {
+        let env = VisEnv::new(None);
+        let shell = env.home().join(".agents").join("skills").join("pdf");
+        fs::create_dir_all(&shell).expect("mkdir 空壳目录");
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Inactive);
+    }
+
+    #[test]
+    #[serial]
+    fn same_content_comparison_and_cache() {
+        let env = VisEnv::new(None);
+        // SSOT 副本 + 共享副本内容一致
+        let ssot = crate::services::skill::SkillService::get_ssot_dir().expect("ssot");
+        make_skill(&ssot.join("pdf"), SKILL_MD);
+        make_skill(
+            &env.home().join(".agents").join("skills").join("pdf"),
+            SKILL_MD,
+        );
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Shared);
+        assert_eq!(v.same_content_as_ssot, Some(true));
+
+        // 修改共享副本（指纹变化 → 缓存失效 → 重新哈希）→ 不一致
+        fs::write(
+            env.home()
+                .join(".agents")
+                .join("skills")
+                .join("pdf")
+                .join("SKILL.md"),
+            "---\nname: x\n---\nchanged",
+        )
+        .expect("write changed");
+        let v = env.vis("pdf");
+        assert_eq!(v.same_content_as_ssot, Some(false));
+    }
+
+    #[test]
+    #[serial]
+    fn same_content_short_circuits_when_root_equals_ssot() {
+        // 扫描根直接指向 SSOT 目录（同一目录）→ 恒 true，跳过哈希
+        let env = VisEnv::new(Some(r#"{ "skills": ["~/.cc-switch/skills"] }"#));
+        let ssot = crate::services::skill::SkillService::get_ssot_dir().expect("ssot");
+        assert!(ssot.ends_with(".cc-switch/skills"));
+        make_skill(&ssot.join("pdf"), SKILL_MD);
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Shared);
+        assert_eq!(v.same_content_as_ssot, Some(true));
+    }
+
+    #[test]
+    #[serial]
+    fn symlink_shared_copy_matches_ssot() {
+        let env = VisEnv::new(None);
+        let ssot = crate::services::skill::SkillService::get_ssot_dir().expect("ssot");
+        make_skill(&ssot.join("pdf"), SKILL_MD);
+        let agents = env.home().join(".agents").join("skills");
+        fs::create_dir_all(&agents).expect("mkdir agents");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&ssot.join("pdf"), agents.join("pdf")).expect("symlink");
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Shared);
+        assert_eq!(v.same_content_as_ssot, Some(true));
+    }
+
+    #[test]
+    #[serial]
+    fn multiple_roots_partial_effect() {
+        // 两个共享根：一个技能被排除、另一个生效 → shared_roots 只收生效根
+        let env = VisEnv::new(None);
+        env.write_settings(&format!(
+            r#"{{ "skills": ["~/.claude/skills", "!{}/.claude/skills/doc"] }}"#,
+            env.home().display()
+        ));
+        make_skill(
+            &env.home().join(".claude").join("skills").join("doc"),
+            SKILL_MD,
+        );
+        make_skill(
+            &env.home().join(".agents").join("skills").join("pdf"),
+            SKILL_MD,
+        );
+
+        let v = env.vis("doc");
+        assert_eq!(v.state, PiVisState::Inactive); // 唯一副本被排除
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Shared);
+        assert_eq!(v.shared_roots.len(), 1);
     }
 }

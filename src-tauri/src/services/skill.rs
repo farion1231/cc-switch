@@ -1239,7 +1239,7 @@ impl SkillService {
 
     /// Pi copy 部署的破坏性操作需要比较完整目录树，不能沿用更新检测哈希：
     /// 隐藏文件、空目录或文件类型变化都意味着用户已修改原生目录。
-    fn compute_pi_deployment_hash(dir: &Path) -> Result<String> {
+    pub(crate) fn compute_pi_deployment_hash(dir: &Path) -> Result<String> {
         use sha2::{Digest, Sha256};
 
         let mut entries = Vec::new();
