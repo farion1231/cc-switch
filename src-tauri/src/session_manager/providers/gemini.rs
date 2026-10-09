@@ -1835,7 +1835,36 @@ mod tests {
         transcript
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
+    fn create_test_directory_link(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+
+        #[cfg(windows)]
+        {
+            // Junctions cover Windows directory reparse points without
+            // requiring Developer Mode or symbolic-link privileges on CI.
+            let target = if target.is_absolute() {
+                target.to_path_buf()
+            } else {
+                link.parent().unwrap().join(target)
+            };
+            let result = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .expect("create Windows directory junction");
+            assert!(
+                result.status.success(),
+                "failed to create junction: {} {}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+    }
+
+    #[cfg(any(unix, windows))]
     #[test]
     fn delete_antigravity_session_rejects_external_and_dangling_conversation_directories() {
         for target_kind in ["existing", "empty", "dangling"] {
@@ -1852,7 +1881,7 @@ mod tests {
             } else {
                 outside.path().to_path_buf()
             };
-            std::os::unix::fs::symlink(target, root.path().join("conversations")).unwrap();
+            create_test_directory_link(&target, &root.path().join("conversations"));
 
             assert!(delete_antigravity_session(root.path(), &transcript, session_id).is_err());
             assert!(
@@ -1897,7 +1926,35 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(windows)]
+    #[test]
+    fn delete_antigravity_session_validates_late_junctions_before_deleting_any_files() {
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let session_id = "agy-session-123";
+        let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+        let conversations = root.path().join("conversations");
+        std::fs::create_dir(&conversations).unwrap();
+        let db = conversations.join(format!("{session_id}.db"));
+        std::fs::write(&db, "session database").unwrap();
+        let external_meta = outside.path().join("metadata");
+        std::fs::write(&external_meta, "external metadata").unwrap();
+        create_test_directory_link(
+            outside.path(),
+            &conversations.join(format!("{session_id}.meta")),
+        );
+
+        let error = delete_antigravity_session(root.path(), &transcript, session_id).unwrap_err();
+        assert!(error.contains("outside the session root"));
+        assert!(transcript.exists());
+        assert_eq!(std::fs::read_to_string(db).unwrap(), "session database");
+        assert_eq!(
+            std::fs::read_to_string(external_meta).unwrap(),
+            "external metadata"
+        );
+    }
+
+    #[cfg(any(unix, windows))]
     #[test]
     fn delete_antigravity_session_accepts_conversation_symlinks_inside_the_root() {
         let root = tempdir().unwrap();
@@ -1907,8 +1964,10 @@ mod tests {
         std::fs::create_dir(&conversations).unwrap();
         let db = conversations.join(format!("{session_id}.db"));
         std::fs::write(&db, "session database").unwrap();
-        std::os::unix::fs::symlink("stored-conversations", root.path().join("conversations"))
-            .unwrap();
+        create_test_directory_link(
+            Path::new("stored-conversations"),
+            &root.path().join("conversations"),
+        );
 
         assert!(delete_antigravity_session(root.path(), &transcript, session_id).unwrap());
         assert!(!transcript.exists());
@@ -1927,6 +1986,43 @@ mod tests {
         assert!(delete_antigravity_session(root.path(), &other_transcript, session_id).is_err());
         assert!(transcript.exists());
         assert!(other_transcript.exists());
+    }
+
+    #[test]
+    fn delete_antigravity_session_handles_unicode_paths_without_conversation_files() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("Antigravity sessions 中文");
+        let session_id = "会话 session-123";
+        let transcript = write_antigravity_delete_fixture(&root, session_id);
+        let other = write_antigravity_delete_fixture(&root, "other-session");
+
+        assert!(delete_antigravity_session(&root, &transcript, session_id).unwrap());
+        assert!(!transcript.exists());
+        assert!(other.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn delete_antigravity_session_preserves_brain_when_database_is_locked() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let root = tempdir().unwrap();
+        let session_id = "agy-session-123";
+        let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+        let conversations = root.path().join("conversations");
+        std::fs::create_dir(&conversations).unwrap();
+        let db = conversations.join(format!("{session_id}.db"));
+        std::fs::write(&db, "locked database").unwrap();
+        let locked = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&db)
+            .unwrap();
+
+        assert!(delete_antigravity_session(root.path(), &transcript, session_id).is_err());
+        assert!(transcript.exists());
+        drop(locked);
+        assert_eq!(std::fs::read_to_string(db).unwrap(), "locked database");
     }
 
     #[test]
