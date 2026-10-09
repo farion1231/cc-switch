@@ -126,6 +126,7 @@
     "stackDefaultHint": "デフォルトのプロバイダーです：一覧の先頭のモデルが Claude Code の起動時とバックグラウンドタスクを担当します",
     "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
     "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、集約したモデルは現在使用できません",
+    "officialModelsOutdated": "このコンピューターの Codex が古いため、公式モデル一覧を完全に取得できません。Codex（CLI を含む）を最新版に更新してください",
     "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、集約したモデルは Codex に表示されません",
     "adoptCatalog": "CC Switch のモデルカタログを使う",
     "adoptCatalogDone": "CC Switch のモデルカタログに切り替えました。Codex を再起動すると反映されます",

@@ -126,6 +126,7 @@
     "stackDefaultHint": "This is the default provider: the first model in its list handles Claude Code's startup and background tasks",
     "officialModelsBundled": "The official model list isn't available yet, so Codex's built-in list is used for now and account-specific models may be missing",
     "officialModelsUnavailable": "Aggregated models are unavailable for now: the Codex model list can't be read",
+    "officialModelsOutdated": "Codex on this computer is too old to get the full official model list: update Codex (including the CLI) to the latest version",
     "routeOwnsCatalog": "Aggregated models won't show up in Codex: the routed provider uses its own model catalog file (model_catalog_json)",
     "adoptCatalog": "Use CC Switch's model catalog",
     "adoptCatalogDone": "Now using CC Switch's model catalog. Restart Codex to apply",

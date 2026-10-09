@@ -126,6 +126,7 @@
     "stackDefaultHint": "它是預設供應商：列表裡的第一個模型負責 Claude Code 啟動和背景任務",
     "officialModelsBundled": "官方模型列表暫未取得，暫用 Codex 內建列表，可能缺少帳號專屬模型",
     "officialModelsUnavailable": "聚合的模型暫不可用：讀取不到 Codex 模型列表",
+    "officialModelsOutdated": "本機 Codex 版本過舊，無法取得完整的官方模型列表：請把 Codex（包括命令列）升級到最新版",
     "routeOwnsCatalog": "聚合的模型不會出現在 Codex 中：路由供應商使用自己的模型目錄檔案（model_catalog_json）",
     "adoptCatalog": "改用 CC Switch 的模型目錄",
     "adoptCatalogDone": "已改用 CC Switch 的模型目錄，重新啟動 Codex 後生效",

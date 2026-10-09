@@ -1242,7 +1242,8 @@ fn codex_publishes_stack_models(state: &AppState, stack: &StackState) -> bool {
 }
 
 /// Codex 在 Stack 模式下有要发布的 Stack 模型，客户端却看不到或看不全：路由那家自己管理模型
-/// 目录文件（Stack 模型不发布）；或者官方做默认、最近一次写目录时没拿到官方列表。
+/// 目录文件（Stack 模型不发布）；或者官方做默认、最近一次写目录时没拿到官方列表，或者拿到的
+/// 列表里没有能选的模型（本机 Codex 太旧）。
 fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static str> {
     let (_, route) = attached_route(state, &AppType::Codex).ok()??;
     let published =
@@ -1260,6 +1261,7 @@ fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static s
         codex_official_models::NativeSource::Fetched => None,
         codex_official_models::NativeSource::Bundled => Some("officialModelsBundled"),
         codex_official_models::NativeSource::Unavailable => Some("officialModelsUnavailable"),
+        codex_official_models::NativeSource::Outdated => Some("officialModelsOutdated"),
     }
 }
 
@@ -6654,6 +6656,33 @@ model_provider = "c"
         assert!(codex_doc().get("model_catalog_json").is_none());
         exit(&state, &AppType::Codex).await.expect("exit");
         assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
+    }
+
+    /// #8014：本机 Codex 太旧时服务端只回隐藏条目。照写的话官方模型在选择器里一个都
+    /// 看不到、只剩 Stack 模型；不写这种目录，并提示升级。
+    #[tokio::test]
+    #[serial]
+    async fn codex_official_list_without_a_listed_model_is_not_published() {
+        let _home = Home::new();
+        seed_codex("", Some(&chatgpt("ws", "alice")));
+        let mut models = native_models(&[("gpt-5.5", 1), ("codex-auto-review", 2)]);
+        for model in &mut models {
+            model["visibility"] = serde_json::json!("hide");
+        }
+        let _fake = fake_models(
+            vec![Fetch::Models { models, etag: None }],
+            CodexKeychainLogin::Missing,
+            None,
+        );
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert!(codex_doc().get("model_catalog_json").is_none());
+        assert_eq!(
+            stack_views(&state, &AppType::Codex).unwrap().notice,
+            Some("officialModelsOutdated")
+        );
     }
 
     /// 列表变了而重写失败（这里是 config.toml 恰好解析不了）：缓存已经是新的，下一次检查
