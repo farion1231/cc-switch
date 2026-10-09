@@ -61,6 +61,7 @@ import {
   type View,
 } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { useUpdate } from "@/contexts/UpdateContext";
 import { NewLayoutDialog } from "@/components/shell/NewLayoutDialog";
 import {
   AppPageHeader,
@@ -150,6 +151,7 @@ const getInitialApp = (): AppId => {
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { hasUpdate } = useUpdate();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
   const sharedFeatureApp = sharedFeatureAppOf(activeApp);
@@ -697,6 +699,11 @@ function App() {
 
   // 侧栏、⌘K 进用量统计看全部应用；只有应用页 ⋯ 进来时带应用筛选
   const openPageFromNav = (page: GlobalPage | "settings") => {
+    // 「设置」上的绿点说的是 CC Switch 有新版本，点进去直接到「关于」里的更新按钮
+    if (page === "settings" && hasUpdate) {
+      openSettings("about");
+      return;
+    }
     if (page === "usage") setUsageAppFilter("all");
     openPage(page);
   };
