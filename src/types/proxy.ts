@@ -98,6 +98,8 @@ export type ProxyStackNotice =
 export interface CodexStaleClients {
   daemon: boolean;
   others: boolean;
+  /** File-store account changed after startup; the process may cache the old login. */
+  auth?: boolean;
 }
 
 /** Stack 模式的状态、名单和提示。 */
