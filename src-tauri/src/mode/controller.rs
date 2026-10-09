@@ -2903,6 +2903,12 @@ mod mode_tests {
             "backfilling on enter must not copy the ChatGPT login into a third-party row: {}",
             relay_row.settings_config
         );
+        // The proxy contract records the model it wrote into config.toml; the native
+        // Responses passthrough substitutes only that one (#7547).
+        assert_eq!(
+            mode(&AppType::Codex).contract.unwrap().model,
+            Some("gpt-5.4".to_string())
+        );
 
         ProviderService::switch(&state, AppType::Codex, &official.id).expect("route to official");
         let official_contract = fs::read_to_string(&config_path).unwrap();

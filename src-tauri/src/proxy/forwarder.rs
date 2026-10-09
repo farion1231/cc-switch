@@ -372,6 +372,10 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+    /// Codex 代理契约写进客户端 `config.toml` 的模型（#7547）：挂在结构体上，故障转移
+    /// 换了路由行、整流器重试再次调用 `forward()` 时，客户端发来的模型名不变，比对基准
+    /// 也不该变。`None`＝没有记录（直连、其它应用、旧版状态），原生直通不做模型替换。
+    contract_model: Option<String>,
 }
 
 impl RequestForwarder {
@@ -487,12 +491,20 @@ impl RequestForwarder {
             ),
             max_attempts,
             stack_request: false,
+            contract_model: None,
         }
     }
 
     /// 标记为 Stack 模型的请求。
     pub fn stack_request(mut self, stack_request: bool) -> Self {
         self.stack_request = stack_request;
+        self
+    }
+
+    /// 记录 Codex 代理契约写进客户端 `config.toml` 的模型（#7547）：原生 Responses 直通
+    /// 只替换请求里的这个模型（故障转移后客户端还在发它），其余模型原样透传。
+    pub fn contract_model(mut self, contract_model: Option<String>) -> Self {
+        self.contract_model = contract_model;
         self
     }
 
@@ -1462,6 +1474,24 @@ impl RequestForwarder {
         // the optional Responses -> Chat/Anthropic bridge.
         if matches!(app_type, AppType::GrokBuild) {
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+        } else if matches!(app_type, AppType::Codex)
+            && super::providers::is_codex_responses_endpoint(endpoint)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && !codex_official_auth_passthrough
+            && !self.keeps_resolved_model()
+        {
+            // Native Responses passthrough substitutes only the model the proxy
+            // contract wrote into config.toml (#7547): after a failover the
+            // client keeps sending the previous provider's id and the new
+            // gateway rejects it. Everything else — an explicit model pick, a
+            // model listed in this provider's catalog, or a non-Responses
+            // endpoint such as /images/generations — goes through unchanged.
+            super::providers::apply_codex_native_responses_upstream_model(
+                provider,
+                self.contract_model.as_deref(),
+                &mut mapped_body,
+            );
         }
 
         if is_copilot_claude_body {
@@ -4551,6 +4581,7 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+            contract_model: None,
         }
     }
 
@@ -6795,6 +6826,40 @@ mod tests {
             provider
         }
 
+        /// 一家原生 Responses 第三方：行里的模型和目录按参数定制（provider() 的可变形，
+        /// `config_model` 为空时行里不写 model）。基座 provider() 的行模型是 `row-model`、
+        /// 目录只有 `listed`，正好扮演「上一家」。
+        fn native_provider(
+            upstream: &Upstream,
+            id: &str,
+            config_model: &str,
+            catalog: &[&str],
+        ) -> Provider {
+            let mut provider = test_provider_with_type(None);
+            provider.id = id.to_string();
+            let model_line = if config_model.is_empty() {
+                String::new()
+            } else {
+                format!("model = \"{config_model}\"\n")
+            };
+            provider.settings_config = json!({
+                "auth": { "OPENAI_API_KEY": "sk-third-party" },
+                "config": format!(
+                    "model_provider = \"custom\"\n{model_line}\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"{}/v1\"\nwire_api = \"responses\"\n",
+                    upstream.base_url
+                ),
+                "modelCatalog": { "models": catalog
+                    .iter()
+                    .map(|model| json!({ "model": model }))
+                    .collect::<Vec<_>>() },
+            });
+            provider.meta = Some(crate::provider::ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            });
+            provider
+        }
+
         fn forwarder(stack: bool) -> RequestForwarder {
             let _ = rustls::crypto::ring::default_provider().install_default();
             test_forwarder(Duration::from_secs(5), Duration::from_secs(5)).stack_request(stack)
@@ -7357,6 +7422,162 @@ mod tests {
                     .is_err()
             );
             assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
+        /// 故障转移到原生 Responses 的备用供应商：请求体还带着上一家的模型 id（契约写进
+        /// `config.toml` 的那个），原生网关不认识。换成这家的上游模型；第一跳（契约属于
+        /// 它）收到的还是原模型名，字节不变。
+        #[tokio::test]
+        async fn native_responses_failover_substitutes_the_backup_provider_model() {
+            let primary = scripted_upstream(vec![(
+                500,
+                json!({ "error": { "message": "primary unavailable" } }),
+            )])
+            .await;
+            let backup = scripted_upstream(vec![response_ok()]).await;
+            let mut forwarder = forwarder(false).contract_model(Some("row-model".to_string()));
+            forwarder.max_attempts = 2;
+
+            let result = forwarder
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    body("row-model", json!([])),
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![
+                        provider(&primary, "openai_responses"),
+                        native_provider(&backup, "p-backup", "backup-model", &[]),
+                    ],
+                )
+                .await;
+
+            assert!(result.is_ok());
+            let primary_seen = primary.seen.lock().await;
+            assert_eq!(primary_seen.len(), 1);
+            assert_eq!(primary_seen[0].body["model"], "row-model");
+            drop(primary_seen);
+            let seen = backup.seen.lock().await;
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].body["model"], "backup-model");
+        }
+
+        /// 用户在 Codex 里显式选的模型（≠ 契约写进 `config.toml` 的模型）：不换。单供应商、
+        /// 没开故障转移也一样——显式选择被静默改写等于换模型付费。
+        #[tokio::test]
+        async fn native_responses_explicit_picks_are_not_rewritten() {
+            let upstream = scripted_upstream(vec![response_ok()]).await;
+            let provider = native_provider(&upstream, "p-native", "gpt-5.5", &[]);
+
+            let seen = send(
+                &forwarder(false).contract_model(Some("gpt-5.5".to_string())),
+                &upstream,
+                provider,
+                "/responses",
+                body("gpt-5.4-mini", json!([])),
+            )
+            .await;
+
+            assert_eq!(seen.body["model"], "gpt-5.4-mini");
+        }
+
+        /// 行在契约之后被编辑（客户端文件还写着旧模型）：请求带着契约模型时照样换成行里
+        /// 的新模型——替换不止救故障转移，也跟进行内改配置。
+        #[tokio::test]
+        async fn native_responses_contract_model_follows_the_edited_row_model() {
+            let upstream = scripted_upstream(vec![response_ok()]).await;
+            let provider = native_provider(&upstream, "p-native", "row-model", &[]);
+
+            let seen = send(
+                &forwarder(false).contract_model(Some("stale-model".to_string())),
+                &upstream,
+                provider,
+                "/responses",
+                body("stale-model", json!([])),
+            )
+            .await;
+
+            assert_eq!(seen.body["model"], "row-model");
+        }
+
+        /// Images 走同一条转发路径但不是 Responses 请求：`gpt-image-1` 不在任何目录里，
+        /// 也不能被换成行里的文本模型（带不带查询串都一样）。
+        #[tokio::test]
+        async fn native_responses_image_endpoints_keep_the_requested_model() {
+            let upstream = scripted_upstream(vec![response_ok(), response_ok()]).await;
+            let provider = native_provider(&upstream, "p-native", "gpt-5.5", &[]);
+            let forwarder = forwarder(false).contract_model(Some("gpt-5.5".to_string()));
+
+            for endpoint in [
+                "/images/generations",
+                "/images/edits?client_version=0.159.0",
+            ] {
+                let seen = send(
+                    &forwarder,
+                    &upstream,
+                    provider.clone(),
+                    endpoint,
+                    body("gpt-image-1", json!([])),
+                )
+                .await;
+                assert_eq!(seen.body["model"], "gpt-image-1", "{endpoint}");
+            }
+        }
+
+        /// 目录里列出的模型是用户在这家的目录里挑的：就算它恰好就是契约写进 `config.toml`
+        /// 的模型，也原样透传，不换成行里的默认模型。
+        #[tokio::test]
+        async fn native_responses_catalog_models_keep_the_requested_id() {
+            let upstream = scripted_upstream(vec![response_ok()]).await;
+            let provider = native_provider(&upstream, "p-native", "backup-model", &["listed"]);
+
+            let seen = send(
+                &forwarder(false).contract_model(Some("listed".to_string())),
+                &upstream,
+                provider,
+                "/responses",
+                body("listed", json!([])),
+            )
+            .await;
+
+            assert_eq!(seen.body["model"], "listed");
+        }
+
+        /// 行里没配模型（也没目录可白名单）：没有可换的目标，请求模型原样发出。
+        #[tokio::test]
+        async fn native_responses_without_a_configured_model_keeps_the_request_model() {
+            let upstream = scripted_upstream(vec![response_ok()]).await;
+            let provider = native_provider(&upstream, "p-bare", "", &[]);
+
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider,
+                "/responses",
+                body("row-model", json!([])),
+            )
+            .await;
+
+            assert_eq!(seen.body["model"], "row-model");
+        }
+
+        /// Stack 请求的模型已经是这家的上游名（keeps_resolved_model 契约）：原生直通也不换。
+        #[tokio::test]
+        async fn native_responses_stack_requests_keep_the_resolved_model() {
+            let upstream = scripted_upstream(vec![response_ok()]).await;
+            let provider = native_provider(&upstream, "p-stack", "backup-model", &[]);
+
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider,
+                "/responses",
+                body("resolved-model", json!([])),
+            )
+            .await;
+
+            assert_eq!(seen.body["model"], "resolved-model");
         }
     }
 

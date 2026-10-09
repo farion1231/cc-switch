@@ -73,6 +73,9 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         .unwrap_or(false)
 }
 
+/// Codex 的 Responses 端点（`/responses`、`/responses/compact`，带不带 `/v1` 前缀、
+/// 查询串无关）。请求体改写（桥转换、模型替换）只对这些端点做：`/images/generations`
+/// 这类独立端点虽走同一条转发路径，但不是 Responses 请求。
 pub fn is_codex_responses_endpoint(endpoint: &str) -> bool {
     let path = endpoint
         .split_once('?')
@@ -200,14 +203,7 @@ pub fn codex_provider_uses_anthropic(provider: &Provider) -> bool {
 }
 
 pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint: &str) -> bool {
-    let path = endpoint
-        .split_once('?')
-        .map_or(endpoint, |(path, _query)| path);
-
-    matches!(
-        path,
-        "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
-    ) && codex_provider_uses_anthropic(provider)
+    is_codex_responses_endpoint(endpoint) && codex_provider_uses_anthropic(provider)
 }
 
 /// Whether a native-Responses Codex upstream needs Codex `namespace`/plugin
@@ -528,6 +524,38 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     }
 
     let upstream_model = codex_provider_upstream_model(provider)?;
+    body["model"] = JsonValue::String(upstream_model.clone());
+    Some(upstream_model)
+}
+
+/// Native Responses passthrough（不经 Chat/Anthropic 桥）的模型替换：只替换「代理契约
+/// 写进客户端 `config.toml` 的那个模型」（#7547：故障转移后客户端仍带着上一家的模型 id，
+/// 新网关不认识）。与 [`apply_codex_upstream_model`] 不同，这条路径没有转换语义兜底，
+/// 其它一切模型——用户显式选的（Codex 界面 / `-m`）、目录里列的、或行里没配模型时——
+/// 都原样发出；没有记录的契约模型（`None`）时也不动请求。
+pub fn apply_codex_native_responses_upstream_model(
+    provider: &Provider,
+    contract_model: Option<&str>,
+    body: &mut JsonValue,
+) -> Option<String> {
+    let contract_model = contract_model
+        .map(str::trim)
+        .filter(|model| !model.is_empty())?;
+    let request_model = body
+        .get("model")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|model| !model.is_empty())?;
+    if request_model != contract_model {
+        return None;
+    }
+    if codex_provider_catalog_model_ids(provider).contains(request_model) {
+        return Some(request_model.to_string());
+    }
+    let upstream_model = codex_provider_upstream_model(provider)?;
+    if upstream_model == request_model {
+        return Some(upstream_model);
+    }
     body["model"] = JsonValue::String(upstream_model.clone());
     Some(upstream_model)
 }
@@ -2491,5 +2519,27 @@ wire_api = "responses"
 "#
         }));
         assert!(!provider_needs_responses_namespace_flatten(&other));
+    }
+
+    #[test]
+    fn responses_endpoint_check_covers_only_the_responses_paths() {
+        for endpoint in [
+            "/responses",
+            "/v1/responses",
+            "/responses/compact",
+            "/v1/responses/compact",
+            "/responses?beta=true",
+        ] {
+            assert!(is_codex_responses_endpoint(endpoint), "{endpoint}");
+        }
+        // 与 Responses 走同一条转发路径、但不是 Responses 请求的端点。
+        for endpoint in [
+            "/images/generations",
+            "/images/edits?client_version=0.159.0",
+            "/models",
+            "/alpha/search",
+        ] {
+            assert!(!is_codex_responses_endpoint(endpoint), "{endpoint}");
+        }
     }
 }

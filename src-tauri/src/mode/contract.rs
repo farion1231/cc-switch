@@ -34,6 +34,7 @@ pub fn claude(projection: &ClaudeProjection) -> Contract {
     Contract {
         version: CONTRACT_VERSION,
         key: key_of(&parts),
+        model: None,
         exclusive: projection.exclusive.clone(),
     }
 }
@@ -47,6 +48,7 @@ pub fn gemini(projection: &GeminiProjection) -> Contract {
             "version": CONTRACT_VERSION,
             "projection": projection.to_value(),
         })),
+        model: None,
         exclusive: Map::new(),
     }
 }
@@ -61,6 +63,7 @@ pub fn grok(projection: &GrokProjection) -> Contract {
             "version": CONTRACT_VERSION,
             "projection": projection.to_value(),
         })),
+        model: None,
         exclusive: Map::new(),
     }
 }
