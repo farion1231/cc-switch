@@ -2003,4 +2003,78 @@ mod tests {
         assert_eq!(counts, (1, 1));
         Ok(())
     }
+    #[test]
+    #[ignore = "requires copied AGY databases under CC_SWITCH_TEST_HOME"]
+    fn validate_platform_usage_database_copy() -> Result<(), AppError> {
+        assert!(std::env::var_os("CC_SWITCH_TEST_HOME").is_some());
+        let discovered = collect_antigravity_db_files(&get_gemini_dir());
+        assert!(
+            !discovered.is_empty(),
+            "fixture must contain conversation databases"
+        );
+        let mut files = Vec::new();
+        let mut empty = 0;
+        for path in discovered {
+            let conn = rusqlite::Connection::open_with_flags(
+                &path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )?;
+            let tables: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                [],
+                |r| r.get(0),
+            )?;
+            if tables == 0 {
+                empty += 1;
+            } else {
+                files.push(path);
+            }
+        }
+        let db = Database::memory()?;
+        let mut imported = 0;
+        for path in &files {
+            imported += sync_single_antigravity_db(&db, path)?.0;
+        }
+        assert!(imported > 0, "fixture must contain usage");
+        let totals = {
+            let conn = lock_conn!(db.conn);
+            conn.query_row(
+                "SELECT COUNT(*), SUM(input_tokens), SUM(output_tokens),
+                SUM(CAST(total_cost_usd AS REAL)) FROM proxy_request_logs",
+                [],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, f64>(3)?,
+                    ))
+                },
+            )?
+        };
+        for path in &files {
+            assert_eq!(sync_single_antigravity_db(&db, path)?.0, 0);
+        }
+        let conn = lock_conn!(db.conn);
+        let again = conn.query_row(
+            "SELECT COUNT(*), SUM(input_tokens), SUM(output_tokens),
+            SUM(CAST(total_cost_usd AS REAL)) FROM proxy_request_logs",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, f64>(3)?,
+                ))
+            },
+        )?;
+        assert_eq!(totals, again);
+        println!(
+            "platform usage: databases={}, imported={imported}, rows={}, repeat_unchanged=true, empty_databases={empty}",
+            files.len(),
+            totals.0
+        );
+        Ok(())
+    }
 }

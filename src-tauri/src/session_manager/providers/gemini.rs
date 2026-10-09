@@ -688,23 +688,7 @@ fn normalize_workspace_path(raw: &str) -> Option<String> {
         let raw_path = if let Ok(file_path) = url.to_file_path() {
             file_path.to_string_lossy().to_string()
         } else {
-            let path_str = url.path();
-            if path_str.len() >= 3
-                && path_str.as_bytes()[0] == b'/'
-                && path_str.as_bytes()[1].is_ascii_alphabetic()
-                && path_str.as_bytes()[2] == b':'
-            {
-                url_decode_simple(&path_str[1..])
-            } else if let Some(host) = url.host_str() {
-                if !host.is_empty() {
-                    let decoded_path = url_decode_simple(url.path());
-                    format!(r"\\{host}{decoded_path}")
-                } else {
-                    return None;
-                }
-            } else {
-                return None;
-            }
+            portable_file_workspace_path(&url)?
         };
 
         // If the path looks like "/C:/...", strip the leading slash for Windows drive compatibility
@@ -736,6 +720,24 @@ fn normalize_workspace_path(raw: &str) -> Option<String> {
 
     if is_abs {
         Some(normalize_workspace_separators(raw))
+    } else {
+        None
+    }
+}
+
+// Mirrors file URI semantics when the host OS cannot represent this path.
+fn portable_file_workspace_path(url: &url::Url) -> Option<String> {
+    let path = url_decode_simple(url.path());
+    if let Some(host) = url.host_str().filter(|host| !host.is_empty()) {
+        Some(format!(r"\\{host}{path}"))
+    } else if path.len() >= 3
+        && path.as_bytes()[0] == b'/'
+        && path.as_bytes()[1].is_ascii_alphabetic()
+        && path.as_bytes()[2] == b':'
+    {
+        Some(path[1..].to_string())
+    } else if path.starts_with('/') {
+        Some(path)
     } else {
         None
     }
@@ -1778,6 +1780,30 @@ mod tests {
     }
 
     #[test]
+    fn file_uri_fallback_is_portable_across_windows_and_unix() {
+        for (uri, expected) in [
+            ("file:///", "/"),
+            (
+                "file:///Users/example/Project%20A/",
+                "/Users/example/Project A",
+            ),
+            (
+                "file:///home/example/%E4%B8%AD%E6%96%87/",
+                "/home/example/中文",
+            ),
+            ("file:///C:/", "C:/"),
+            ("file:///C%3A/Work/", "C:/Work"),
+            ("file://server/share/", r"\\server\share"),
+            ("file://server/C:/Work/", "C:/Work"),
+        ] {
+            let url = url::Url::parse(uri).unwrap();
+            let fallback = portable_file_workspace_path(&url).unwrap();
+            assert_eq!(normalize_workspace_separators(&fallback), expected);
+            assert_eq!(normalize_workspace_path(uri).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
     fn workspace_metadata_sources_use_the_same_directory_key() {
         for (uri, local, expected) in [
             ("file:///work/p/", "/work/p", "/work/p"),
@@ -1967,5 +1993,40 @@ mod tests {
         let meta = parse_antigravity_session(&transcript).expect("parse session");
         assert_eq!(meta.session_id, session_id);
         assert_eq!(meta.title.as_deref(), Some("Direct test message"));
+    }
+    // Opt-in validation of copied client metadata; never runs against user data in CI.
+    #[test]
+    #[ignore = "requires copied AGY metadata under CC_SWITCH_TEST_HOME"]
+    fn validate_platform_workspace_metadata_copy() {
+        assert!(std::env::var_os("CC_SWITCH_TEST_HOME").is_some());
+        let base = crate::gemini_config::get_gemini_dir();
+        let mut cache = HashMap::new();
+        let mut total = 0;
+        let mut resolved = 0;
+        let mut blobs = 0;
+        for name in crate::gemini_config::ANTIGRAVITY_ROOTS {
+            let root = base.join(name);
+            let summaries = load_root_conversation_summaries(&root);
+            for (id, summary) in &summaries {
+                total += 1;
+                if let Some(path) =
+                    resolve_antigravity_workspace_dir(&root, id, Some(summary), &mut cache)
+                {
+                    assert_eq!(
+                        normalize_workspace_path(&path).as_deref(),
+                        Some(path.as_str())
+                    );
+                    resolved += 1;
+                }
+                if read_trajectory_metadata_workspace(&root, id).is_some() {
+                    blobs += 1;
+                }
+            }
+        }
+        assert!(total > 0, "fixture must contain summaries");
+        assert!(resolved > 0, "fixture must contain a resolvable workspace");
+        println!(
+            "platform metadata: summaries={total}, resolved={resolved}, blob_workspaces={blobs}"
+        );
     }
 }
