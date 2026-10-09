@@ -99,6 +99,40 @@ pub(crate) fn read_pi_native_defaults() -> Result<PiNativeDefaults, AppError> {
     })
 }
 
+/// 读取 pi settings.json 的 `skills` 数组（共享技能扫描路径与排除/强制规则）。
+/// - `Ok(None)`：文件不存在或无 `skills` 键；
+/// - `Ok(Some)`：数组内容（跳过非字符串条目）；
+/// - `Err`：文件存在但解析失败，或 `skills` 存在但不是数组。
+#[expect(dead_code)] // pi_shared 模块（S4）消费后移除
+pub(crate) fn read_pi_settings_skills_array() -> Result<Option<Vec<String>>, AppError> {
+    let path = get_pi_settings_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let value = read_json5_value(&path, "Pi settings")?;
+    let object = value.as_object().ok_or_else(|| {
+        AppError::Config(format!(
+            "Pi settings root must be an object: {}",
+            path.display()
+        ))
+    })?;
+    let Some(skills) = object.get("skills") else {
+        return Ok(None);
+    };
+    let array = skills.as_array().ok_or_else(|| {
+        AppError::Config(format!(
+            "Pi settings \"skills\" must be an array: {}",
+            path.display()
+        ))
+    })?;
+    Ok(Some(
+        array
+            .iter()
+            .filter_map(|entry| entry.as_str().map(str::to_string))
+            .collect(),
+    ))
+}
+
 pub(crate) fn read_pi_native_providers() -> Result<IndexMap<String, Value>, AppError> {
     let _guard = lock_models_file()?;
     read_pi_native_providers_locked(&get_pi_models_path()?)
@@ -481,6 +515,17 @@ pub(crate) mod test_support {
     }
 
     impl TestAgentDir {
+        /// 写入测试用 settings.json（JSON5 内容原样落盘），返回文件路径。
+        pub(crate) fn write_settings(&self, json5: &str) -> PathBuf {
+            let path = super::get_pi_settings_path().expect("resolve Pi settings path");
+            std::fs::create_dir_all(path.parent().expect("agent directory"))
+                .expect("create Pi agent directory");
+            std::fs::write(&path, json5).expect("write Pi settings");
+            path
+        }
+    }
+
+    impl TestAgentDir {
         pub(crate) fn new() -> Self {
             let dir = tempfile::tempdir().expect("create Pi test directory");
             let agent_dir = dir.path().join("agent");
@@ -574,6 +619,52 @@ mod tests {
             .expect("resolve Pi directory"),
             settings_dir
         );
+    }
+
+    #[test]
+    #[serial]
+    fn skills_array_is_none_without_file_or_key() {
+        let _agent = test_support::TestAgentDir::new();
+        assert_eq!(read_pi_settings_skills_array().expect("missing file"), None);
+
+        _agent.write_settings(r#"{ "defaultProvider": "anthropic" }"#);
+        assert_eq!(read_pi_settings_skills_array().expect("missing key"), None);
+    }
+
+    #[test]
+    #[serial]
+    fn skills_array_reads_entries_tolerantly() {
+        let _agent = test_support::TestAgentDir::new();
+        _agent.write_settings(
+            r#"{
+              // 共享扫描目录
+              "skills": ["~/.claude/skills", "!pdf", 42, "+~/.agents/skills",]
+            }"#,
+        );
+
+        let skills = read_pi_settings_skills_array()
+            .expect("parse settings")
+            .expect("skills array");
+        assert_eq!(
+            skills,
+            vec![
+                "~/.claude/skills".to_string(),
+                "!pdf".to_string(),
+                "+~/.agents/skills".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn skills_array_rejects_broken_settings() {
+        let _agent = test_support::TestAgentDir::new();
+
+        _agent.write_settings(r#"{ "skills": "~/.claude/skills" }"#);
+        assert!(read_pi_settings_skills_array().is_err());
+
+        _agent.write_settings("{ broken");
+        assert!(read_pi_settings_skills_array().is_err());
     }
 
     #[test]
