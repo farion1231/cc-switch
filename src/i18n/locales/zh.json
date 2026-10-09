@@ -4484,9 +4484,9 @@
       "disableAria": "在这个应用里停用选中的 {{count}} 个 Skill",
       "uninstall": "卸载"
     },
-    "piColumnTitle": "Pi 按 ~/.pi/agent/skills 里有没有这个目录来判断",
+    "piColumnTitle": "Pi 按实际加载判定（原生目录 / 共享目录，含排除规则）",
     "piHelpTitle": "Pi 怎么算启用",
-    "piHelp": "看 ~/.pi/agent/skills 里有没有这个目录。",
+    "piHelp": "依据 Pi 实际加载判定：原生目录 ~/.pi/agent/skills、共享目录（~/.agents/skills 与 Pi settings.json 的 skills 数组）。共享目录提供的技能无法在此开关；项目级配置与部分复杂 glob 语法不感知。",
     "pop": {
       "onlyApp": "只看在 {{app}} 启用的",
       "showAll": "显示全部 Skill"
@@ -4604,7 +4604,16 @@
     "headerUpdates": "{{count}} 个可更新",
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "显示全部 Skill",
-    "updateAllCount": "全部更新（{{count}} 个）"
+    "updateAllCount": "全部更新（{{count}} 个）",
+    "piState": {
+      "sharedTooltip": "{{name}} 由共享目录提供：\n{{roots}}\n无法在此开关，请到来源应用调整或修改 Pi 的 skills 配置。",
+      "sharedInconsistent": "共享副本与 CC Switch 中的内容不一致。\n",
+      "dualTooltip": "{{name}} 同时被原生目录与共享目录加载（{{roots}}），Pi 按其内部规则取其一。",
+      "dualConsistent": " 内容一致，冗余但无冲突。",
+      "dualInconsistent": " 内容不一致，建议移除其中一份。",
+      "excludedTooltip": "{{name}} 的 Pi 投影路径被排除规则命中，即使启用也不会被 Pi 加载，请调整 Pi settings.json 的 skills 配置。",
+      "approximateSuffix": "（含 Pi 无法精确解析的配置，实际以 Pi 加载结果为准）"
+    }
   },
   "newLayoutNotice": {
     "title": "界面改版了",

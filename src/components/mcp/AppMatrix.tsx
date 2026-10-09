@@ -97,6 +97,10 @@ interface MatrixCellProps {
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  /** 锁定态：视觉同禁用但保留 aria 语义（Pi 共享态不可开关） */
+  locked?: boolean;
+  /** 角标：叠在勾选框右上角的小图标（Pi 共享/双来源/排除标记） */
+  badge?: React.ReactNode;
 }
 
 /**
@@ -109,8 +113,11 @@ export function MatrixCell({
   label,
   onClick,
   disabled,
+  locked = false,
+  badge,
 }: MatrixCellProps) {
   const tracking = useColumnTracking(app);
+  const inert = disabled || locked;
   return (
     <span className="flex w-9 shrink-0 justify-center" {...tracking}>
       <HoverTip content={label}>
@@ -118,13 +125,13 @@ export function MatrixCell({
           type="button"
           aria-pressed={state === "on"}
           aria-label={label}
-          disabled={disabled}
+          disabled={inert}
           data-state={state}
           onClick={(event) => {
             event.stopPropagation();
             onClick();
           }}
-          className="group/cell flex h-7 w-7 items-center justify-center rounded-control outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45"
+          className="group/cell relative flex h-7 w-7 items-center justify-center rounded-control outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45"
         >
           <span
             aria-hidden="true"
@@ -151,6 +158,14 @@ export function MatrixCell({
               />
             )}
           </span>
+          {badge && (
+            <span
+              aria-hidden="true"
+              className="absolute -end-1 -top-1 flex h-3 w-3 items-center justify-center rounded-full border border-border bg-surface"
+            >
+              {badge}
+            </span>
+          )}
         </button>
       </HoverTip>
     </span>

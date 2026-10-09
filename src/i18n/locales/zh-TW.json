@@ -4485,9 +4485,9 @@
       "disableAria": "在這個應用裡停用選中的 {{count}} 個 Skill",
       "uninstall": "解除安裝"
     },
-    "piColumnTitle": "Pi 按 ~/.pi/agent/skills 裡有沒有這個目錄來判斷",
+    "piColumnTitle": "Pi 按實際載入判定（原生目錄 / 共享目錄，含排除規則）",
     "piHelpTitle": "Pi 怎麼算啟用",
-    "piHelp": "看 ~/.pi/agent/skills 裡有沒有這個目錄。",
+    "piHelp": "依據 Pi 實際載入判定：原生目錄 ~/.pi/agent/skills、共享目錄（~/.agents/skills 與 Pi settings.json 的 skills 陣列）。共享目錄提供的技能無法在此開關；專案級設定與部分複雜 glob 語法不感知。",
     "pop": {
       "onlyApp": "只看在 {{app}} 啟用的",
       "showAll": "顯示全部 Skill"
@@ -4605,7 +4605,16 @@
     "headerUpdates": "{{count}} 個可更新",
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "顯示全部 Skill",
-    "updateAllCount": "全部更新（{{count}} 個）"
+    "updateAllCount": "全部更新（{{count}} 個）",
+    "piState": {
+      "sharedTooltip": "{{name}} 由共享目錄提供：\n{{roots}}\n無法在此開關，請到來源應用調整或修改 Pi 的 skills 設定。",
+      "sharedInconsistent": "共享副本與 CC Switch 中的內容不一致。\n",
+      "dualTooltip": "{{name}} 同時被原生目錄與共享目錄載入（{{roots}}），Pi 按其內部規則取其一。",
+      "dualConsistent": " 內容一致，冗餘但無衝突。",
+      "dualInconsistent": " 內容不一致，建議移除其中一份。",
+      "excludedTooltip": "{{name}} 的 Pi 投影路徑被排除規則命中，即使啟用也不會被 Pi 載入，請調整 Pi settings.json 的 skills 設定。",
+      "approximateSuffix": "（含 Pi 無法精確解析的設定，實際以 Pi 載入結果為準）"
+    }
   },
   "newLayoutNotice": {
     "title": "介面改版了",

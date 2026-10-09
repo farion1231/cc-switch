@@ -3,12 +3,15 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { useTranslation } from "react-i18next";
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
+  Link2,
   Loader2,
   MoreHorizontal,
   Plus,
   RefreshCw,
+  SquareStack,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
@@ -1682,6 +1685,76 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
+// ─── Pi 列五态单元格（方案 §2.2/§3.2）────────────────────────────────────
+// 控制层二值（勾选框开/关 = pi 是否实际加载），来源与排除信息走角标 + 悬浮。
+interface PiCellProps {
+  skill: InstalledSkill;
+  fail: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}
+
+function PiCell({ skill, fail, disabled, onClick }: PiCellProps) {
+  const { t } = useTranslation();
+  const vis = skill.piVisibility;
+  if (!vis) return null;
+  const state = fail ? "fail" : vis.state === "native" || vis.state === "shared" || vis.state === "native-shared" ? "on" : "off";
+  const roots = vis.sharedRoots?.join("\n") ?? "";
+  const approximate = vis.approximate
+    ? t("skillsPage.piState.approximateSuffix")
+    : "";
+
+  // 角标与悬浮按五态组装
+  let badge: React.ReactNode = null;
+  let locked = false;
+  let label = t(`appMatrix.cell.${state}`, {
+    name: skill.name,
+    app: APP_DISPLAY_NAME.pi,
+  });
+  if (!fail) {
+    if (vis.state === "shared") {
+      badge = <Link2 className="h-2 w-2 text-fg-2" strokeWidth={2.5} />;
+      locked = true;
+      label =
+        t("skillsPage.piState.sharedTooltip", {
+          name: skill.name,
+          roots,
+        }) + approximate;
+      if (vis.sameContentAsSsot === false) {
+        label = t("skillsPage.piState.sharedInconsistent") + label;
+      }
+    } else if (vis.state === "native-shared") {
+      badge = <SquareStack className="h-2 w-2 text-fg-2" strokeWidth={2.5} />;
+      label =
+        t("skillsPage.piState.dualTooltip", {
+          name: skill.name,
+          roots,
+        }) + approximate;
+      label +=
+        vis.sameContentAsSsot === false
+          ? t("skillsPage.piState.dualInconsistent")
+          : t("skillsPage.piState.dualConsistent");
+    } else if (vis.state === "inactive-excluded") {
+      badge = <AlertTriangle className="h-2 w-2 text-warning-text" strokeWidth={2.5} />;
+      label =
+        t("skillsPage.piState.excludedTooltip", { name: skill.name }) +
+        approximate;
+    }
+  }
+
+  return (
+    <MatrixCell
+      app="pi"
+      state={state}
+      disabled={disabled}
+      locked={locked}
+      badge={badge}
+      label={label}
+      onClick={onClick}
+    />
+  );
+}
+
 // ─── 已安装的一行 ────────────────────────────────────────────────────────
 interface InstalledRowProps {
   skill: InstalledSkill;
@@ -1828,6 +1901,17 @@ function InstalledRow({
           const fail = fails[failKey(skill.id, app)];
           const on = Boolean(skill.apps[app]);
           const state = fail ? "fail" : on ? "on" : "off";
+          if (app === "pi" && skill.piVisibility) {
+            return (
+              <PiCell
+                key={app}
+                skill={skill}
+                fail={Boolean(fail)}
+                disabled={disabled}
+                onClick={() => onCell(app)}
+              />
+            );
+          }
           return (
             <MatrixCell
               key={app}

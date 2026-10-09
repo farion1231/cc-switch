@@ -4484,9 +4484,9 @@
       "disableAria": "選択した {{count}} 件の Skill をこのアプリでオフ",
       "uninstall": "アンインストール"
     },
-    "piColumnTitle": "Pi は ~/.pi/agent/skills にそのフォルダーがあるかで判定します",
+    "piColumnTitle": "Pi は実際に読み込むかで判定します（ネイティブディレクトリ / 共有ディレクトリ、除外ルールを含む）",
     "piHelpTitle": "Pi の有効の判定",
-    "piHelp": "~/.pi/agent/skills にそのフォルダーがあるかどうかです。",
+    "piHelp": "Pi が実際に読み込むかで判定します：ネイティブディレクトリ ~/.pi/agent/skills、共有ディレクトリ（~/.agents/skills と pi settings.json の skills 配列）。共有ディレクトリ由来のスキルはここで切り替えできません。プロジェクト単位の設定や一部の複雑な glob 構文は追跡しません。",
     "pop": {
       "onlyApp": "{{app}} で有効なものだけ表示",
       "showAll": "すべての Skill を表示"
@@ -4604,7 +4604,16 @@
     "headerUpdates": "{{count}} 件の更新",
     "headerUpdatesShow": "更新がある Skill だけを表示",
     "headerUpdatesClear": "すべての Skill を表示",
-    "updateAllCount": "すべて更新（{{count}} 件）"
+    "updateAllCount": "すべて更新（{{count}} 件）",
+    "piState": {
+      "sharedTooltip": "{{name}} は共有ディレクトリから提供されています：\n{{roots}}\nここでは切り替えできません。元アプリまたは pi の skills 設定で調整してください。",
+      "sharedInconsistent": "共有コピーは CC Switch 側の内容と一致しません。\n",
+      "dualTooltip": "{{name}} はネイティブディレクトリと共有ディレクトリの両方から読み込まれます（{{roots}}）。Pi は自身の規則でどちらかを採用します。",
+      "dualConsistent": " 内容は同一のため、重複していますが問題ありません。",
+      "dualInconsistent": " 内容が異なるため、どちらかの削除を検討してください。",
+      "excludedTooltip": "{{name}} の Pi 投影パスは除外ルールに該当します。有効化しても Pi には読み込まれません。pi settings.json の skills 設定を調整してください。",
+      "approximateSuffix": "（正確に解析できない pi 側の設定を含みます。実際の Pi の読み込み結果が優先されます）"
+    }
   },
   "newLayoutNotice": {
     "title": "画面が新しくなりました",

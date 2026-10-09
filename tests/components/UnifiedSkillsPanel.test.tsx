@@ -205,6 +205,69 @@ describe("UnifiedSkillsPanel", () => {
     }
   });
 
+  it("renders the five Pi visibility states with badges and locked shared cells", async () => {
+    m.installed = [
+      makeSkill({
+        apps: { pi: true },
+        piVisibility: { state: "shared", sharedRoots: ["/home/u/.claude/skills"] },
+      }),
+      makeSkill({
+        id: "local:excluded",
+        name: "Excluded",
+        directory: "excluded",
+        piVisibility: { state: "inactive-excluded", excludedByPattern: true },
+      }),
+      makeSkill({
+        id: "local:dual",
+        name: "Dual",
+        directory: "dual",
+        apps: { pi: true },
+        piVisibility: {
+          state: "native-shared",
+          sharedRoots: ["/home/u/.agents/skills"],
+          sameContentAsSsot: false,
+        },
+      }),
+    ];
+    renderPanel();
+
+    // shared：on + 锁定（disabled）+ 链条角标 + 指引悬浮
+    const cells = screen.getAllByRole("button");
+    const shared = cells.find((el) =>
+      (el.getAttribute("aria-label") ?? "").includes("skillsPage.piState.sharedTooltip"),
+    );
+    expect(shared).toBeDefined();
+    expect(shared).toHaveAttribute("aria-pressed", "true");
+    expect(shared).toBeDisabled();
+    await userEvent.hover(shared!);
+    expect(
+      (await screen.findAllByText(/piState.sharedTooltip/)).length,
+    ).toBeGreaterThan(0);
+
+    // excluded：off + 可点击 + 排除角标悬浮
+    const excluded = cells.find((el) =>
+      (el.getAttribute("aria-label") ?? "").includes(
+        "skillsPage.piState.excludedTooltip",
+      ),
+    );
+    expect(excluded).toBeDefined();
+    expect(excluded).toHaveAttribute("aria-pressed", "false");
+    expect(excluded).not.toBeDisabled();
+
+    // native-shared：on + 可点击关闭 + 内容不一致分档文案
+    const dual = cells.find((el) =>
+      (el.getAttribute("aria-label") ?? "").includes(
+        "skillsPage.piState.dualTooltip",
+      ),
+    );
+    expect(dual).toBeDefined();
+    expect(dual).toHaveAttribute("aria-pressed", "true");
+    expect(dual).not.toBeDisabled();
+    expect(dual!.getAttribute("aria-label")).toContain(
+      "skillsPage.piState.dualInconsistent",
+    );
+  });
+
   it("always shows the Pi column and toggles it like the other apps", async () => {
     m.installed = [makeSkill({ apps: { claude: true, pi: true } })];
     renderPanel();

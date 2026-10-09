@@ -4484,9 +4484,9 @@
       "disableAria": "Turn off the {{count}} selected Skills in",
       "uninstall": "Uninstall"
     },
-    "piColumnTitle": "Pi counts a Skill as enabled when its folder exists in ~/.pi/agent/skills",
+    "piColumnTitle": "Pi is judged by what it actually loads (native dir / shared dirs, incl. exclusions)",
     "piHelpTitle": "How Pi counts as enabled",
-    "piHelp": "Whether the folder exists in ~/.pi/agent/skills.",
+    "piHelp": "Based on what Pi actually loads: the native directory ~/.pi/agent/skills plus shared directories (~/.agents/skills and the skills array in pi's settings.json). Skills provided by shared directories cannot be toggled here; project-level configs and some complex glob syntax are not tracked.",
     "pop": {
       "onlyApp": "Show only ones enabled in {{app}}",
       "showAll": "Show all Skills"
@@ -4604,7 +4604,16 @@
     "headerUpdates": "{{count}} updates",
     "headerUpdatesShow": "Show only Skills with updates",
     "headerUpdatesClear": "Show all Skills",
-    "updateAllCount": "Update all ({{count}})"
+    "updateAllCount": "Update all ({{count}})",
+    "piState": {
+      "sharedTooltip": "{{name}} is provided by a shared directory:\n{{roots}}\nIt cannot be toggled here; adjust it in the source app or pi's skills config.",
+      "sharedInconsistent": "The shared copy differs from the one in CC Switch.\n",
+      "dualTooltip": "{{name}} is loaded from both the native directory and shared directories ({{roots}}); Pi picks one by its own rules.",
+      "dualConsistent": " Contents are identical — redundant but harmless.",
+      "dualInconsistent": " Contents differ — consider removing one of the copies.",
+      "excludedTooltip": "{{name}}'s Pi projection path is hit by an exclusion rule. Enabling it will not make Pi load it; adjust the skills config in pi's settings.json.",
+      "approximateSuffix": " (Contains config Pi-side that cannot be parsed precisely; actual Pi loading takes precedence.)"
+    }
   },
   "newLayoutNotice": {
     "title": "CC Switch has a new look",
