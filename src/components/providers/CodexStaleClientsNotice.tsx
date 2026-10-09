@@ -52,6 +52,9 @@ export function CodexStaleClientsNotice({
           ) : undefined
         }
       >
+        {staleClients.auth && staleClients.catalog && (
+          <span className="block">{t("proxy.stackMode.codexStale.title")}</span>
+        )}
         {staleClients.daemon && (
           <span className="block">
             {t("proxy.stackMode.codexStale.daemon")}

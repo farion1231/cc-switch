@@ -56,6 +56,21 @@ describe("CodexStaleClientsNotice", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows both reasons when the account and model list are stale", () => {
+    renderNotice({ daemon: true, others: true, auth: true, catalog: true });
+    expect(
+      screen.getByText("proxy.stackMode.codexStale.authTitle"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", {
+        name: "proxy.stackMode.codexStale.restart",
+      }),
+    ).toHaveLength(1);
+  });
+
   it("restarts the daemon only after the user confirms", async () => {
     let restarts = 0;
     server.use(

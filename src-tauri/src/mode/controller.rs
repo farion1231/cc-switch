@@ -6035,10 +6035,12 @@ model_provider = "c"
         let clients = FakeClients::install();
         seed_codex("", Some(&chatgpt_login("acct-a")));
         let official = |id: &str| {
+            let mut login = chatgpt_login(id);
+            login["tokens"]["id_token"] = json!(crate::codex_config::test_codex_id_token(id));
             let mut row = Provider::with_id(
                 id.to_string(),
                 id.to_uppercase(),
-                json!({ "auth": chatgpt_login(id), "config": "" }),
+                json!({ "auth": login, "config": "" }),
                 None,
             );
             row.category = Some("official".to_string());
@@ -6080,7 +6082,8 @@ model_provider = "c"
             Some(codex_client_catalog::StaleClients {
                 daemon: false,
                 others: true,
-                auth: false
+                auth: false,
+                catalog: true,
             })
         );
         // 普通的 Stack 视图不读进程表。
@@ -6130,6 +6133,45 @@ model_provider = "c"
             .unwrap();
         assert_eq!(view.notice, Some("routeOwnsCatalog"));
         assert_eq!(view.stale_clients, None);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_route_catalog_notice_does_not_hide_a_cached_account() {
+        let _home = Home::new();
+        let clients = FakeClients::install();
+        let login = |account: &str| {
+            let mut auth = chatgpt_login(account);
+            auth["tokens"]["id_token"] = json!(crate::codex_config::test_codex_id_token(account));
+            auth
+        };
+        seed_codex("", Some(&login("acct-a")));
+        let [_, deepseek, zhipu] = codex_stack_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "model_catalog_json = \"/opt/team/models.json\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        clients.advance(10_000);
+        clients.desktop_running_for("00:05");
+        assert_eq!(stale_clients_of(&state).await, None);
+        clients.advance(10_000);
+        std::fs::write(
+            crate::codex_config::get_codex_auth_path(),
+            login("acct-b").to_string(),
+        )
+        .unwrap();
+        clients.desktop_running_for("00:15");
+        let view = stack_view_with_clients(&state, &AppType::Codex)
+            .await
+            .unwrap();
+        assert_eq!(view.notice, Some("routeOwnsCatalog"));
+        let stale = view.stale_clients.expect("cached account notice");
+        assert!(stale.auth && stale.others && !stale.daemon && !stale.catalog);
     }
 
     /// 用户直接在 config.toml 里指定的模型目录：写入时照留，生成的目录不生效，同样要提示。

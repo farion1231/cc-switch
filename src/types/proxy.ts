@@ -100,6 +100,8 @@ export interface CodexStaleClients {
   others: boolean;
   /** File-store account changed after startup; the process may cache the old login. */
   auth?: boolean;
+  /** Model catalog changed after startup. */
+  catalog?: boolean;
 }
 
 /** Stack 模式的状态、名单和提示。 */

@@ -66,6 +66,9 @@ pub struct StaleClients {
     /// 文件登录的身份变了，进程可能还缓存着旧账号。不是查询进程内存得到的确认。
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub auth: bool,
+    /// 当前模型目录与客户端启动时的目录不同。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub catalog: bool,
 }
 
 /// 重启守护进程的结果（给前端）。
@@ -256,24 +259,32 @@ fn current_login_fingerprint() -> Option<String> {
     if account.trim().is_empty() {
         return None;
     }
-    let user = extract_codex_auth_user_identity(&auth);
+    let user = extract_codex_auth_user_identity(&auth)?;
+    // 缺少 sub 时不观察，首次补全不算切号。
     Some(sha256_hex(&serde_json::to_vec(&(account, user)).ok()?))
 }
 
 /// 可能缓存旧账号或目录的客户端。`check_catalog` 只影响目录，账号检查不受模式限制。
 /// 要读进程表，放到阻塞线程池里调；不查询进程的实际认证，也不自动重启。
 pub(crate) fn stale_clients(store: &DeviceStore, check_catalog: bool) -> Option<StaleClients> {
+    let login = current_login_fingerprint();
+    if !check_catalog && login.is_none() {
+        return None;
+    }
     let env = env();
     let current = current_fingerprint();
     // 顺手记一次：兜住在 CC Switch 之外改了目录的情况。
     let history = record(store, &current, (env.now_ms)());
     let servers = probe(&env);
     let mut stale = if check_catalog && current != NO_CATALOG {
-        judge(&history, &current, &servers)
+        judge(&history, &current, &servers).map(|mut clients| {
+            clients.catalog = true;
+            clients
+        })
     } else {
         None
     };
-    if let Some(login) = current_login_fingerprint() {
+    if let Some(login) = login {
         let history = record_history(store, LOGIN_HISTORY_FILENAME, &login, (env.now_ms)());
         // 首次观察不是切号；不能因进程早于安装 CC Switch 就声称它缓存了别的账号。
         if history.len() > 1 {
@@ -282,6 +293,7 @@ pub(crate) fn stale_clients(store: &DeviceStore, check_catalog: bool) -> Option<
                     daemon: false,
                     others: false,
                     auth: false,
+                    catalog: false,
                 });
                 clients.daemon |= auth_stale.daemon;
                 clients.others |= auth_stale.others;
@@ -304,6 +316,7 @@ fn judge(history: &[Generation], current: &str, servers: &AppServers) -> Option<
         daemon,
         others,
         auth: false,
+        catalog: false,
     })
 }
 
@@ -733,7 +746,8 @@ mod tests {
             Some(StaleClients {
                 daemon: true,
                 others: false,
-                auth: false
+                auth: false,
+                catalog: true,
             })
         );
 
@@ -751,7 +765,8 @@ mod tests {
             Some(StaleClients {
                 daemon: true,
                 others: false,
-                auth: false
+                auth: false,
+                catalog: true,
             })
         );
     }
@@ -782,7 +797,8 @@ mod tests {
             Some(StaleClients {
                 daemon: false,
                 others: true,
-                auth: false
+                auth: false,
+                catalog: true,
             })
         );
         // 撤掉指针之后不提示（新启动的 Codex 也不读 CC Switch 的目录）。
@@ -803,8 +819,12 @@ mod tests {
         let auth = |account: &str, token: &str| {
             std::fs::write(
                 get_codex_config_dir().join("auth.json"),
-                serde_json::json!({"tokens": {"account_id": account, "access_token": token}})
-                    .to_string(),
+                serde_json::json!({"tokens": {
+                    "account_id": account,
+                    "access_token": token,
+                    "id_token": crate::codex_config::test_codex_id_token(account)
+                }})
+                .to_string(),
             )
             .unwrap();
         };
@@ -897,6 +917,125 @@ mod tests {
         let history = std::fs::read_to_string(scope.store().file(LOGIN_HISTORY_FILENAME)).unwrap();
         assert!(!history.contains("not-persisted"));
         assert!(!history.contains("shared-workspace"));
+    }
+
+    #[test]
+    #[serial]
+    fn completing_a_legacy_login_subject_is_not_an_account_switch() {
+        let scope = Scope::new();
+        let store = scope.store();
+        let clock = Arc::new(AtomicU64::new(1_000_000));
+        let table = Arc::new(Mutex::new(String::new()));
+        fake_env(
+            clock.clone(),
+            table.clone(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        point_at_catalog(None);
+        std::fs::write(
+            get_codex_auth_path(),
+            r#"{"tokens":{"account_id":"legacy","access_token":"old"}}"#,
+        )
+        .unwrap();
+        observe(&store);
+        assert_eq!(current_login_fingerprint(), None);
+        assert!(!store.file(LOGIN_HISTORY_FILENAME).exists());
+
+        clock.store(1_100_000, Ordering::SeqCst);
+        *table.lock().unwrap() = "62347 01:30 /opt/bin/codex app-server".to_string();
+        std::fs::write(
+            get_codex_auth_path(),
+            r#"{"tokens":{"account_id":"legacy","access_token":"refreshed","id_token":"eyJhbGciOiJub25lIn0.eyJzdWIiOiJsZWdhY3kifQ.synthetic"}}"#,
+        ).unwrap();
+        observe(&store);
+        assert!(current_login_fingerprint().is_some());
+        assert_eq!(read_history(&store, LOGIN_HISTORY_FILENAME).len(), 1);
+        assert_eq!(stale_clients(&store, false), None);
+    }
+
+    #[test]
+    #[serial]
+    fn skips_process_scan_without_a_detectable_login_or_catalog_check() {
+        let scope = Scope::new();
+        let store = scope.store();
+        let scans = Arc::new(AtomicU64::new(0));
+        let counter = scans.clone();
+        set_test_env(Env {
+            process_table: Box::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Some("62347 01:30 /opt/bin/codex app-server".to_string())
+            }),
+            now_ms: Box::new(|| 1_100_000),
+            restart: Box::new(|_| panic!("must not restart")),
+        });
+        point_at_catalog(None);
+        assert_eq!(stale_clients(&store, false), None);
+        for auth in [
+            "null",
+            r#"{"OPENAI_API_KEY":"synthetic"}"#,
+            r#"{"tokens":{"account_id":"legacy"}}"#,
+            r#"{"tokens":{"account_id":"legacy","id_token":"malformed"}}"#,
+            r#"{"tokens":{"account_id":"legacy","id_token":"eyJhbGciOiJub25lIn0.eyJzdWIiOiIgIn0.synthetic"}}"#,
+        ] {
+            std::fs::write(get_codex_auth_path(), auth).unwrap();
+            assert_eq!(stale_clients(&store, false), None);
+        }
+        std::fs::write(get_codex_auth_path(),
+            r#"{"tokens":{"account_id":"legacy","id_token":"eyJhbGciOiJub25lIn0.eyJzdWIiOiJsZWdhY3kifQ.synthetic"}}"#,
+        ).unwrap();
+        for mode in ["keyring", "auto", "ephemeral"] {
+            std::fs::write(
+                get_codex_config_dir().join("config.toml"),
+                format!("cli_auth_credentials_store = \"{mode}\"\n"),
+            )
+            .unwrap();
+            assert_eq!(stale_clients(&store, false), None);
+        }
+        assert_eq!(scans.load(Ordering::SeqCst), 0);
+        // 没有可检测账号不影响模型目录检查。
+        std::fs::remove_file(get_codex_auth_path()).unwrap();
+        point_at_catalog(Some("current"));
+        assert_eq!(stale_clients(&store, false), None);
+        assert_eq!(scans.load(Ordering::SeqCst), 0);
+        assert!(stale_clients(&store, true).is_some());
+        assert_eq!(scans.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    #[serial]
+    fn reports_both_account_and_catalog_changes() {
+        let scope = Scope::new();
+        let store = scope.store();
+        let clock = Arc::new(AtomicU64::new(1_000_000));
+        let table = Arc::new(Mutex::new(String::new()));
+        fake_env(
+            clock.clone(),
+            table.clone(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let login = |account: &str| {
+            std::fs::write(
+                get_codex_auth_path(),
+                serde_json::json!({"tokens": {
+                    "account_id": account,
+                    "id_token": crate::codex_config::test_codex_id_token(account),
+                }})
+                .to_string(),
+            )
+            .unwrap();
+        };
+        point_at_catalog(Some("old"));
+        login("a");
+        observe(&store);
+        clock.store(1_100_000, Ordering::SeqCst);
+        point_at_catalog(Some("new"));
+        login("b");
+        observe(&store);
+        *table.lock().unwrap() = "62347 01:30 /opt/bin/codex app-server".to_string();
+        let notice = serde_json::to_value(stale_clients(&store, true).unwrap()).unwrap();
+        assert_eq!(notice["auth"], true);
+        assert_eq!(notice["catalog"], true);
+        assert_eq!(notice["others"], true);
     }
 
     #[test]
