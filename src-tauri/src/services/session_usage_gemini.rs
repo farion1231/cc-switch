@@ -1822,6 +1822,63 @@ mod tests {
         assert_eq!(price.unwrap().input_cost_per_million, Decimal::from(11));
         Ok(())
     }
+    #[test]
+    fn antigravity_unpriced_aliases_can_be_backfilled_after_prices_are_added(
+    ) -> Result<(), AppError> {
+        for (raw_model, canonical_model) in [
+            ("9.12flash", "gemini-9.12-flash"),
+            ("model_placeholder_m187", "gemini-3.5-flash"),
+        ] {
+            let db = Database::memory()?;
+            {
+                let conn = lock_conn!(db.conn);
+                conn.execute(
+                    "DELETE FROM model_pricing WHERE model_id = ?1",
+                    [canonical_model],
+                )?;
+            }
+            let tokens = AntigravityTokenData {
+                input_tokens: 80,
+                output_tokens: 50,
+                cached_tokens: 20,
+                model: raw_model.to_string(),
+            };
+            assert!(insert_antigravity_session_entry(
+                &db,
+                "unpriced-request",
+                &tokens,
+                Some("unpriced-session"),
+                10_000,
+            )?);
+            {
+                let conn = lock_conn!(db.conn);
+                conn.execute(
+                    "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million,
+                     output_cost_per_million, cache_read_cost_per_million, cache_creation_cost_per_million)
+                     VALUES (?1, 'Added later', '7', '8', '1', '0')",
+                    [canonical_model],
+                )?;
+            }
+            assert_eq!(
+                db.backfill_missing_usage_costs_for_model(canonical_model)?,
+                1,
+                "{raw_model}"
+            );
+            let conn = lock_conn!(db.conn);
+            let (pricing_model, cost): (String, String) = conn.query_row(
+                "SELECT pricing_model, total_cost_usd FROM proxy_request_logs WHERE request_id = 'unpriced-request'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(pricing_model, canonical_model);
+            assert_eq!(
+                Decimal::from_str_exact(&cost).unwrap(),
+                Decimal::from_str_exact("0.00098").unwrap()
+            );
+        }
+        Ok(())
+    }
+
     fn antigravity_sync_fixture(
         path: &Path,
         status: i64,

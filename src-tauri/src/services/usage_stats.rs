@@ -2558,6 +2558,9 @@ pub(crate) fn resolve_antigravity_pricing(
                 return (Some(pricing), target);
             }
         }
+        // Keep the established identity even before a price is available, so
+        // adding that price can backfill already finalized session imports.
+        return (None, target);
     }
 
     // 4. Verified opaque placeholder exceptions
@@ -2581,6 +2584,7 @@ pub(crate) fn resolve_antigravity_pricing(
                 return (Some(pricing), target.to_string());
             }
         }
+        return (None, target.to_string());
     }
 
     // 5. Unpriced: normalize formatting (e.g. dot to dash for Claude) but preserve original ID without guessing
