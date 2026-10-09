@@ -293,6 +293,7 @@
     "skipClaudeOnboardingFailed": "Failed to skip Claude Code first-run confirmation",
     "clearClaudeOnboardingSkipFailed": "Failed to restore Claude Code first-run confirmation",
     "updateSuccess": "Provider updated successfully",
+    "providerSavedNotLive": "Saved to the provider card. It takes effect when you switch to it or the proxy contract is rewritten (this key-field change did not update the currently active config)",
     "updateFailed": "Failed to update provider: {{error}}",
     "deleteSuccess": "Provider deleted",
     "deleteFailed": "Failed to delete provider: {{error}}",

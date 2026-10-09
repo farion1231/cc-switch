@@ -181,10 +181,15 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       originalId?: string;
       editorSave?: ProviderEditorSave;
     }) => {
-      await providersApi.update(provider, appId, originalId, editorSave);
-      return provider;
+      const result = await providersApi.update(
+        provider,
+        appId,
+        originalId,
+        editorSave,
+      );
+      return { provider, result };
     },
-    onSuccess: async (provider, variables) => {
+    onSuccess: async ({ provider, result }, variables) => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
       await queryClient.invalidateQueries({
         queryKey: usageKeys.script(provider.id, appId),
@@ -210,6 +215,16 @@ export const useUpdateProviderMutation = (appId: AppId) => {
           closeButton: true,
         },
       );
+      // 关键字段的改动只存进了卡片（代理模式、或编辑的不是当前卡片）：切换 / 重写代理
+      // 契约时才进 live，提醒用户，别当成保存失败（issue #7948）。
+      for (const warning of result?.warnings ?? []) {
+        if (warning.startsWith("codex_keyfields_pending_switch")) {
+          toast.warning(t("notifications.providerSavedNotLive"), {
+            closeButton: true,
+            duration: 10000,
+          });
+        }
+      }
     },
     onError: (error: Error) => {
       if (parseLiveEditConflict(error)) return;

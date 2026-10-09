@@ -294,7 +294,7 @@ fn codex_config_text_routes_custom(config_text: &str) -> bool {
 
 /// 目录的规范化字符串形式，用作 marker / 备份代际的目录身份。
 /// canonicalize 失败（目录尚不存在等）时退回原始路径字符串。
-fn canonical_dir_string(dir: &Path) -> String {
+pub(crate) fn canonical_dir_string(dir: &Path) -> String {
     fs::canonicalize(dir)
         .unwrap_or_else(|_| dir.to_path_buf())
         .to_string_lossy()
