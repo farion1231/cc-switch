@@ -719,7 +719,7 @@ fn normalize_workspace_path(raw: &str) -> Option<String> {
             raw_path
         };
 
-        return Some(path);
+        return Some(normalize_workspace_separators(&path));
     }
 
     if raw.contains("://") {
@@ -735,9 +735,35 @@ fn normalize_workspace_path(raw: &str) -> Option<String> {
             && (raw.as_bytes()[2] == b'/' || raw.as_bytes()[2] == b'\\'));
 
     if is_abs {
-        Some(raw.to_string())
+        Some(normalize_workspace_separators(raw))
     } else {
         None
+    }
+}
+
+// Normalize lexically: metadata may refer to projects that no longer exist.
+fn normalize_workspace_separators(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let drive = bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    let unc = path.starts_with(r"\\") || path.starts_with("//");
+    let normalized = if drive {
+        path.replace('\\', "/")
+    } else if unc {
+        path.replace('/', r"\")
+    } else {
+        path.to_string()
+    };
+    let trimmed = if drive || unc {
+        normalized.trim_end_matches(['/', '\\'])
+    } else {
+        normalized.trim_end_matches('/')
+    };
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else if drive && trimmed.len() == 2 {
+        format!("{trimmed}/")
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -904,18 +930,17 @@ fn read_acp_meta_cwd(root: &Path, session_id: &str) -> Option<String> {
 }
 
 fn read_proto_varint(buf: &[u8], offset: &mut usize) -> Option<u64> {
-    let mut val: u64 = 0;
-    let mut shift: u32 = 0;
-    while *offset < buf.len() {
-        let b = buf[*offset];
+    let mut value = 0u64;
+    for index in 0..10 {
+        let byte = *buf.get(*offset)?;
         *offset += 1;
-        val = val.checked_add(((b & 0x7f) as u64).checked_shl(shift)?)?;
-        if (b & 0x80) == 0 {
-            return Some(val);
-        }
-        shift = shift.checked_add(7)?;
-        if shift > 64 {
+        // A u64 has only one remaining bit in its tenth protobuf byte.
+        if index == 9 && byte > 1 {
             return None;
+        }
+        value |= u64::from(byte & 0x7f) << (index * 7);
+        if byte & 0x80 == 0 {
+            return Some(value);
         }
     }
     None
@@ -1723,7 +1748,7 @@ mod tests {
     fn test_normalize_workspace_path_handles_uris_and_local_paths() {
         assert_eq!(
             normalize_workspace_path("file:///home/example/Documents/Lab%20report/"),
-            Some("/home/example/Documents/Lab report/".to_string())
+            Some("/home/example/Documents/Lab report".to_string())
         );
         assert_eq!(normalize_workspace_path("file:///"), Some("/".to_string()));
         assert_eq!(
@@ -1750,6 +1775,50 @@ mod tests {
         assert_eq!(normalize_workspace_path("relative/path/to/folder"), None);
         assert_eq!(normalize_workspace_path(""), None);
         assert_eq!(normalize_workspace_path("   "), None);
+    }
+
+    #[test]
+    fn workspace_metadata_sources_use_the_same_directory_key() {
+        for (uri, local, expected) in [
+            ("file:///work/p/", "/work/p", "/work/p"),
+            ("file:///C:/Work/p/", r"C:\Work\p\", "C:/Work/p"),
+            (
+                "file://server/share/p/",
+                r"\\server\share\p\",
+                r"\\server\share\p",
+            ),
+            ("file:///", "/", "/"),
+            ("file:///C:/", r"C:\", "C:/"),
+            ("file://server/share/", r"\\server\share", r"\\server\share"),
+        ] {
+            assert_eq!(normalize_workspace_path(uri).as_deref(), Some(expected));
+            assert_eq!(normalize_workspace_path(local).as_deref(), Some(expected));
+        }
+        // Backslashes can be literal characters in POSIX directory names.
+        assert_eq!(
+            normalize_workspace_path("/work/p\\"),
+            Some("/work/p\\".into())
+        );
+    }
+
+    #[test]
+    fn workspace_varints_reject_overflow_and_truncation() {
+        for value in [0, 127, 128, u64::MAX] {
+            let bytes = encode_proto_varint_test(value);
+            let mut offset = 0;
+            assert_eq!(read_proto_varint(&bytes, &mut offset), Some(value));
+            assert_eq!(offset, bytes.len());
+        }
+        for bytes in [
+            vec![0xff; 9],
+            [vec![0xff; 9], vec![2]].concat(),
+            [vec![0x80; 10], vec![0]].concat(),
+        ] {
+            assert_eq!(read_proto_varint(&bytes, &mut 0), None);
+            let mut blob = vec![0x0a];
+            blob.extend(bytes);
+            assert_eq!(parse_workspace_from_trajectory_metadata_blob(&blob), None);
+        }
     }
 
     #[test]
