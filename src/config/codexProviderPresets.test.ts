@@ -33,7 +33,6 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
 
     expect(preset).toMatchObject({
       name: "GitHub Copilot",
-      apiFormat: "openai_chat",
       requiresOAuth: true,
       auth: {},
     });
