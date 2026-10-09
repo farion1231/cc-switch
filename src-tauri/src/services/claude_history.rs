@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::config::get_claude_settings_path;
+use crate::config::get_claude_config_dir;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::live::engine::{read_current, LiveFile};
@@ -46,7 +46,7 @@ fn read_at(path: &Path) -> Result<ClaudeHistoryRetention, AppError> {
 }
 
 pub fn get() -> Result<ClaudeHistoryRetention, AppError> {
-    read_at(&get_claude_settings_path())
+    read_at(&get_claude_config_dir().join("settings.json"))
 }
 
 struct RetentionPatch {
@@ -97,7 +97,7 @@ pub fn set(
         ));
     }
     let write = AppWrite::begin(db, "claude")?;
-    let path = get_claude_settings_path();
+    let path = get_claude_config_dir().join("settings.json");
     if path.to_string_lossy() != expected.config_path {
         return Err(AppError::Conflict(
             "Claude configuration directory changed".into(),
@@ -124,7 +124,94 @@ mod tests {
     use crate::live::engine::{lock_app, DeviceStore};
     use crate::mode::operation::{self, failpoint};
     use serde_json::json;
+    use serial_test::serial;
     use std::fs;
+
+    struct TestHome(Option<std::ffi::OsString>);
+
+    impl TestHome {
+        fn at(home: &Path) -> Self {
+            let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
+            std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            crate::settings::reload_settings().unwrap();
+            guard
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(previous) => std::env::set_var("CC_SWITCH_TEST_HOME", previous),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn public_service_uses_standard_settings_and_preserves_legacy_file() {
+        let home = tempfile::tempdir().unwrap();
+        let _home = TestHome::at(home.path());
+        let dir = get_claude_config_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let legacy = dir.join("claude.json");
+        let legacy_bytes = b"{\"cleanupPeriodDays\":730,\"custom\":true}";
+        fs::write(&legacy, legacy_bytes).unwrap();
+        let path = dir.join("settings.json");
+        let expected = get().unwrap();
+        assert_eq!(expected.config_path, path.to_string_lossy());
+        assert_eq!(expected.days, None);
+        assert!(!path.exists());
+
+        let db = Database::memory().unwrap();
+        let saved = set(&db, expected, Some(90)).unwrap();
+        assert_eq!(saved.days, Some(90));
+        assert_eq!(get().unwrap(), saved);
+        assert_eq!(fs::read(&legacy).unwrap(), legacy_bytes);
+        let reset = set(&db, saved, None).unwrap();
+        assert_eq!(reset.days, None);
+        assert_eq!(fs::read(&legacy).unwrap(), legacy_bytes);
+        assert!(serde_json::from_slice::<Value>(&fs::read(path).unwrap())
+            .unwrap()
+            .get("cleanupPeriodDays")
+            .is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn public_service_rejects_saved_path_after_directory_changes() {
+        let home = tempfile::tempdir().unwrap();
+        let _home = TestHome::at(home.path());
+        let a = home.path().join("a");
+        let b = home.path().join("b");
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        let original_a = b"{\"cleanupPeriodDays\":730,\"custom\":true}";
+        let original_b = b"{\"cleanupPeriodDays\":365,\"hooks\":{}}";
+        fs::write(a.join("settings.json"), original_a).unwrap();
+        fs::write(b.join("settings.json"), original_b).unwrap();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            claude_config_dir: Some(a.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+        let stale = get().unwrap();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            claude_config_dir: Some(b.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let db = Database::memory().unwrap();
+        assert!(matches!(
+            set(&db, stale, Some(90)),
+            Err(AppError::Conflict(_))
+        ));
+        assert_eq!(fs::read(a.join("settings.json")).unwrap(), original_a);
+        assert_eq!(fs::read(b.join("settings.json")).unwrap(), original_b);
+        assert_eq!(get().unwrap().days, Some(365));
+    }
 
     fn update(path: &Path, expected: Option<u64>, days: Option<u64>) -> Result<(), AppError> {
         let store = DeviceStore::at(path.parent().unwrap().join("device"));

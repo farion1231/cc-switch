@@ -6,7 +6,9 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 import { ClaudeHistorySettings } from "@/components/settings/ClaudeHistorySettings";
+import { AppConfigSection } from "@/components/settings/sections/AppConfigSection";
 import { settingsApi, type ClaudeHistoryRetention } from "@/lib/api/settings";
 
 vi.mock("react-i18next", () => ({
@@ -17,6 +19,9 @@ vi.mock("@/lib/api/settings", () => ({
     getClaudeHistoryRetention: vi.fn(),
     setClaudeHistoryRetention: vi.fn(),
   },
+}));
+vi.mock("@/components/settings/CodexAuthSettings", () => ({
+  CodexAuthSettings: () => null,
 }));
 
 const get = vi.mocked(settingsApi.getClaudeHistoryRetention);
@@ -29,6 +34,42 @@ const input = () => screen.getByRole("spinbutton");
 const save = () => screen.getByRole("button", { name: /^common.sav/ });
 const reset = () =>
   screen.getByRole("button", { name: "settings.claudeHistoryRetention.reset" });
+
+const section = (dir: string): ComponentProps<typeof AppConfigSection> => ({
+  settings: {
+    showInTray: true,
+    minimizeToTrayOnClose: false,
+    language: "en",
+    claudeConfigDir: dir,
+  },
+  savedSettings: {
+    showInTray: true,
+    minimizeToTrayOnClose: false,
+    claudeConfigDir: dir,
+  },
+  resolvedDirs: {
+    appConfig: "/test/cc-switch",
+    claude: dir,
+    codex: "/test/codex",
+    gemini: "/test/gemini",
+    grokbuild: "/test/grok",
+    opencode: "/test/opencode",
+    openclaw: "/test/openclaw",
+    hermes: "/test/hermes",
+    pi: "/test/pi",
+  },
+  isSaving: false,
+  onAutoSave: vi.fn().mockResolvedValue(true),
+  onDirectoryChange: vi.fn(),
+  onBrowseDirectory: vi.fn().mockResolvedValue(undefined),
+  onResetDirectory: vi.fn().mockResolvedValue(undefined),
+  onSaveDirectories: vi.fn().mockResolvedValue(undefined),
+});
+
+const at = (dir: string, days: number): ClaudeHistoryRetention => ({
+  configPath: `${dir}/settings.json`,
+  days,
+});
 
 beforeEach(() => {
   get.mockReset().mockResolvedValue(saved(730));
@@ -178,5 +219,48 @@ describe("ClaudeHistorySettings", () => {
     unmount();
     await act(async () => resolve(saved(90)));
     expect(set).not.toHaveBeenCalled();
+  });
+
+  it("keeps the new directory visible when an old read resolves late", async () => {
+    let resolveOld!: (value: ClaudeHistoryRetention) => void;
+    get
+      .mockReturnValueOnce(
+        new Promise((done) => {
+          resolveOld = done;
+        }),
+      )
+      .mockResolvedValueOnce(at("/test/b", 365));
+    const { rerender } = render(<AppConfigSection {...section("/test/a")} />);
+    expect(input()).toBeDisabled();
+    rerender(<AppConfigSection {...section("/test/b")} />);
+    await waitFor(() => expect(input()).toHaveValue(365));
+    await act(async () => resolveOld(at("/test/a", 730)));
+    expect(input()).toHaveValue(365);
+    expect(screen.getByText("/test/b/settings.json")).toBeInTheDocument();
+    expect(screen.queryByText("/test/a/settings.json")).not.toBeInTheDocument();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("does not apply an old save result to a newly selected directory", async () => {
+    let resolveOld!: (value: ClaudeHistoryRetention) => void;
+    get
+      .mockResolvedValueOnce(at("/test/a", 730))
+      .mockResolvedValueOnce(at("/test/b", 365));
+    set.mockReturnValueOnce(
+      new Promise((done) => {
+        resolveOld = done;
+      }),
+    );
+    const { rerender } = render(<AppConfigSection {...section("/test/a")} />);
+    await waitFor(() => expect(input()).toHaveValue(730));
+    fireEvent.change(input(), { target: { value: "90" } });
+    fireEvent.click(save());
+    expect(set).toHaveBeenCalledWith(at("/test/a", 730), 90);
+    rerender(<AppConfigSection {...section("/test/b")} />);
+    await waitFor(() => expect(input()).toHaveValue(365));
+    await act(async () => resolveOld(at("/test/a", 90)));
+    expect(input()).toHaveValue(365);
+    expect(screen.getByText("/test/b/settings.json")).toBeInTheDocument();
+    expect(set).toHaveBeenCalledTimes(1);
   });
 });
