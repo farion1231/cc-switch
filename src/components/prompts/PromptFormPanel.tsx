@@ -1,12 +1,23 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import MarkdownEditor from "@/components/MarkdownEditor";
-import { FullScreenPanel } from "@/components/common/FullScreenPanel";
-import { useDarkMode } from "@/hooks/useDarkMode";
+import {
+  Sheet,
+  SheetDescription,
+  SheetPageContent,
+} from "@/components/ui/sheet";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { Prompt, AppId } from "@/lib/api";
+import { fieldClass } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import {
+  MCODE_PROMPT_LIMIT,
+  charCount,
+  formatSize,
+  promptFileName,
+  utf8Bytes,
+} from "./promptUtils";
 
 interface PromptFormPanelProps {
   appId: AppId;
@@ -16,6 +27,29 @@ interface PromptFormPanelProps {
   onClose: () => void;
 }
 
+/** 和 Input / Textarea 同一套外观（ui/input.tsx 的 fieldClass） */
+export const promptFieldClass = fieldClass;
+
+export function FieldError({ id, children }: { id: string; children: string }) {
+  return (
+    <span
+      id={id}
+      className="flex items-start gap-1 text-caption text-danger-text"
+    >
+      <CircleAlert
+        aria-hidden="true"
+        strokeWidth={1.5}
+        className="mt-0.5 h-3.5 w-3.5 shrink-0"
+      />
+      <span>{children}</span>
+    </span>
+  );
+}
+
+/**
+ * 添加 / 编辑提示词的抽屉（宽 560，PromptsEdit.dc.html）。
+ * 启用中的那条：保存按钮写明会覆盖哪个文件；删除照样画出来但不能点，原因挂在按钮上。
+ */
 const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   appId,
   editingId,
@@ -24,26 +58,20 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   onClose,
 }) => {
   const { t } = useTranslation();
-  const appName = t(`apps.${appId}`);
-  const filenameMap: Record<AppId, string> = {
-    claude: "CLAUDE.md",
-    "claude-desktop": "CLAUDE.md",
-    codex: "AGENTS.md",
-    gemini: "GEMINI.md",
-    grokbuild: "AGENTS.md",
-    opencode: "AGENTS.md",
-    openclaw: "AGENTS.md",
-    hermes: "SOUL.md",
-    pi: "AGENTS.md",
-    mcode: "~/.minimax/AGENTS.md",
-  };
-  const filename = filenameMap[appId];
+  const baseId = useId();
+  const appName = APP_DISPLAY_NAME[appId];
+  const fileName = promptFileName(appId);
+  const isHermes = appId === "hermes";
+  const isPi = appId === "pi";
+  const isActive = Boolean(editingId && initialData?.enabled);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
+  const [attempted, setAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const isDarkMode = useDarkMode();
+  const nameRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (initialData) {
@@ -53,8 +81,23 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
     }
   }, [initialData]);
 
+  const bodyBytes = utf8Bytes(content);
+  const limit = appId === "mcode" ? MCODE_PROMPT_LIMIT : undefined;
+  const overLimit = limit !== undefined && bodyBytes > limit;
+  const nameError = !name.trim()
+    ? t(isHermes ? "prompts.nameRequiredHermes" : "prompts.nameRequired")
+    : "";
+  const bodyError = overLimit
+    ? t("prompts.mcodeTooLarge", { size: formatSize(bodyBytes) })
+    : "";
+  const showNameError = attempted && Boolean(nameError);
+  const showBodyError = attempted && Boolean(bodyError);
+
   const handleSave = async () => {
-    if (savingRef.current || !name.trim()) {
+    if (savingRef.current) return;
+    if (nameError || bodyError) {
+      setAttempted(true);
+      (nameError ? nameRef : bodyRef).current?.focus();
       return;
     }
 
@@ -67,7 +110,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
         id,
         name: name.trim(),
         description: description.trim() || undefined,
-        content: appId === "pi" ? content : content.trim(),
+        content: isPi ? content : content.trim(),
         enabled: initialData?.enabled || false,
         createdAt: initialData?.createdAt || timestamp,
         updatedAt: timestamp,
@@ -76,7 +119,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
       if (saved !== false) {
         onClose();
       }
-    } catch (error) {
+    } catch {
       // Error handled by hook
     } finally {
       savingRef.current = false;
@@ -89,69 +132,172 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   };
 
   const title = editingId
-    ? t("prompts.editTitle", { appName })
+    ? t("prompts.editTitle")
     : t("prompts.addTitle", { appName });
 
+  const submitLabel = !editingId
+    ? t("prompts.addSubmit")
+    : isActive
+      ? isPi
+        ? t("prompts.saveAndWritePi")
+        : t("prompts.saveAndOverwrite", { file: fileName })
+      : t("common.save");
+
+  const countText = limit
+    ? `${formatSize(bodyBytes)} / 32 KB`
+    : t("prompts.charCount", {
+        chars: charCount(content).toLocaleString(),
+        size: formatSize(bodyBytes),
+      });
+
+  const nameHintId = `${baseId}-name-hint`;
+  const bodyHintId = `${baseId}-body-hint`;
+  const countId = `${baseId}-count`;
+
   return (
-    <FullScreenPanel
-      isOpen={true}
-      title={title}
-      onClose={handleClose}
-      footer={
-        <Button
-          type="button"
-          onClick={handleSave}
-          disabled={!name.trim() || saving}
-          className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {saving ? t("common.saving") : t("common.save")}
-        </Button>
-      }
+    <Sheet
+      open
+      modal={false}
+      onOpenChange={(open) => {
+        if (!open) handleClose();
+      }}
     >
-      <div className="glass rounded-xl p-6 border border-white/10 space-y-6">
-        <div>
-          <Label htmlFor="name" className="text-foreground">
-            {t("prompts.name")}
-          </Label>
-          <Input
-            id="name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={saving}
-            placeholder={t("prompts.namePlaceholder")}
-            className="mt-2"
-          />
+      <SheetPageContent
+        title={title}
+        closeLabel={t("common.back")}
+        onEscapeKeyDown={(event) => {
+          if (savingRef.current) event.preventDefault();
+        }}
+      >
+        <SheetDescription className="sr-only">
+          {t("prompts.formDescription", { file: fileName })}
+        </SheetDescription>
+
+        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5">
+          <div className="flex shrink-0 flex-col gap-1.5">
+            <label
+              htmlFor={`${baseId}-name`}
+              className="text-body font-medium text-fg-1"
+            >
+              {t("prompts.name")}
+              <span aria-hidden="true" className="ms-0.5 text-danger-text">
+                *
+              </span>
+              <span className="sr-only">{t("prompts.requiredMark")}</span>
+            </label>
+            <input
+              ref={nameRef}
+              id={`${baseId}-name`}
+              type="text"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              disabled={saving}
+              placeholder={t(
+                isHermes
+                  ? "prompts.namePlaceholderHermes"
+                  : "prompts.namePlaceholder",
+              )}
+              aria-required="true"
+              aria-invalid={showNameError}
+              aria-describedby={showNameError ? nameHintId : undefined}
+              autoComplete="off"
+              className={cn(promptFieldClass, "h-8")}
+            />
+            {showNameError ? (
+              <FieldError id={nameHintId}>{nameError}</FieldError>
+            ) : null}
+          </div>
+
+          <div className="flex shrink-0 flex-col gap-1.5">
+            <label
+              htmlFor={`${baseId}-desc`}
+              className="text-body font-medium text-fg-1"
+            >
+              {t("prompts.description")}
+            </label>
+            <input
+              id={`${baseId}-desc`}
+              type="text"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              disabled={saving}
+              placeholder={t("prompts.descriptionPlaceholder")}
+              autoComplete="off"
+              className={cn(promptFieldClass, "h-8")}
+            />
+          </div>
+
+          <div className="flex min-h-[220px] flex-1 flex-col gap-1.5">
+            <label
+              htmlFor={`${baseId}-body`}
+              className="text-body font-medium text-fg-1"
+            >
+              {t("prompts.content")}
+            </label>
+            <textarea
+              ref={bodyRef}
+              id={`${baseId}-body`}
+              value={content}
+              onChange={(event) => setContent(event.target.value)}
+              disabled={saving}
+              spellCheck={false}
+              placeholder={
+                isHermes
+                  ? t("prompts.contentPlaceholderHermes")
+                  : t("prompts.contentPlaceholder", {
+                      filename: fileName,
+                      appName,
+                    })
+              }
+              aria-invalid={showBodyError}
+              aria-describedby={
+                showBodyError ? `${bodyHintId} ${countId}` : countId
+              }
+              className={cn(
+                promptFieldClass,
+                "min-h-[180px] flex-1 resize-none px-3 py-2.5 font-mono text-caption leading-[18px]",
+              )}
+            />
+            <div className="flex items-start gap-3">
+              {showBodyError ? (
+                <FieldError id={bodyHintId}>{bodyError}</FieldError>
+              ) : null}
+              <span
+                id={countId}
+                className={cn(
+                  "ms-auto shrink-0 whitespace-nowrap text-caption tabular-nums",
+                  overLimit ? "text-danger-text" : "text-fg-2",
+                )}
+              >
+                {countText}
+              </span>
+            </div>
+          </div>
         </div>
 
-        <div>
-          <Label htmlFor="description" className="text-foreground">
-            {t("prompts.description")}
-          </Label>
-          <Input
-            id="description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
+        <div className="flex h-14 shrink-0 items-center gap-2 border-t border-border px-6">
+          <div className="flex-1" />
+          <Button
+            type="button"
+            variant="neutral"
+            size="regular"
+            onClick={handleClose}
             disabled={saving}
-            placeholder={t("prompts.descriptionPlaceholder")}
-            className="mt-2"
-          />
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button
+            type="button"
+            variant="solid"
+            size="regular"
+            onClick={() => void handleSave()}
+            disabled={saving}
+          >
+            {saving ? t("common.saving") : submitLabel}
+          </Button>
         </div>
-
-        <div>
-          <Label htmlFor="content" className="block mb-2 text-foreground">
-            {t("prompts.content")}
-          </Label>
-          <MarkdownEditor
-            value={content}
-            onChange={setContent}
-            placeholder={t("prompts.contentPlaceholder", { filename })}
-            darkMode={isDarkMode}
-            readOnly={saving}
-            minHeight="167px"
-          />
-        </div>
-      </div>
-    </FullScreenPanel>
+      </SheetPageContent>
+    </Sheet>
   );
 };
 

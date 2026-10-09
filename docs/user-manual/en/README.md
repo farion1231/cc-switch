@@ -1,11 +1,11 @@
 # CC Switch User Manual
 
-> All-in-One Assistant for Claude Code / Claude Desktop / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes
+> All-in-One Assistant for Claude Code / Claude Desktop / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code
 
 ## Table of Contents
 
 ```
-CC Switch User Manual
+📚 CC Switch User Manual
 │
 ├── 1. Getting Started
 │   ├── 1.1 Introduction
@@ -29,12 +29,13 @@ CC Switch User Manual
 │   ├── 3.4 Session Manager
 │   └── 3.5 Workspace & Memory
 │
-├── 4. Proxy & High Availability
-│   ├── 4.1 Proxy Service
-│   ├── 4.2 App Takeover
+├── 4. Local Routing & High Availability
+│   ├── 4.1 Local Routing Service
+│   ├── 4.2 App Routing
 │   ├── 4.3 Failover
 │   ├── 4.4 Usage Statistics
-│   └── 4.5 Model Test
+│   ├── 4.5 Connectivity Check
+│   └── 4.6 Aggregation Mode
 │
 └── 5. FAQ
     ├── 5.1 Configuration Files
@@ -51,17 +52,17 @@ CC Switch User Manual
 |------|-------------|
 | [1.1-introduction.md](./1-getting-started/1.1-introduction.md) | Introduction, core features, supported platforms |
 | [1.2-installation.md](./1-getting-started/1.2-installation.md) | Windows/macOS/Linux installation guide |
-| [1.3-interface.md](./1-getting-started/1.3-interface.md) | Interface layout, navigation bar, provider cards |
+| [1.3-interface.md](./1-getting-started/1.3-interface.md) | Sidebar layout, connection mode tabs, provider cards |
 | [1.4-quickstart.md](./1-getting-started/1.4-quickstart.md) | 5-minute quick start tutorial |
-| [1.5-settings.md](./1-getting-started/1.5-settings.md) | Language, theme, directories, cloud sync settings |
+| [1.5-settings.md](./1-getting-started/1.5-settings.md) | The six Settings groups: General, App config, Local routing, Network, Data, About |
 
 ### 2. Provider Management
 
 | File | Description |
 |------|-------------|
 | [2.1-add.md](./2-providers/2.1-add.md) | Using presets, custom configuration, universal providers |
-| [2.2-switch.md](./2-providers/2.2-switch.md) | Main UI switching, tray switching, activation methods |
-| [2.3-edit.md](./2-providers/2.3-edit.md) | Edit configuration, modify API Key, backfill mechanism |
+| [2.2-switch.md](./2-providers/2.2-switch.md) | Direct / Routing / Aggregation, tray switching, activation methods |
+| [2.3-edit.md](./2-providers/2.3-edit.md) | Edit configuration, modify API Key, global settings and edit conflicts |
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | Drag-to-reorder, duplicate provider, delete |
 | [2.5-usage-query.md](./2-providers/2.5-usage-query.md) | Usage query, remaining balance, multi-plan display |
 | [2.6-claude-desktop.md](./2-providers/2.6-claude-desktop.md) | Claude Desktop third-party providers, direct mode, and model mapping |
@@ -71,20 +72,21 @@ CC Switch User Manual
 | File | Description |
 |------|-------------|
 | [3.1-mcp.md](./3-extensions/3.1-mcp.md) | MCP protocol, add servers, app binding |
-| [3.2-prompts.md](./3-extensions/3.2-prompts.md) | Create presets, activate/switch, smart backfill |
+| [3.2-prompts.md](./3-extensions/3.2-prompts.md) | Create prompts, enable/switch, target files |
 | [3.3-skills.md](./3-extensions/3.3-skills.md) | Discover skills, install/uninstall, repository management |
 | [3.4-sessions.md](./3-extensions/3.4-sessions.md) | Session Manager: browse, search, resume, delete sessions |
 | [3.5-workspace.md](./3-extensions/3.5-workspace.md) | Workspace files and daily memory (OpenClaw) |
 
-### 4. Proxy & High Availability
+### 4. Local Routing & High Availability
 
 | File | Description |
 |------|-------------|
-| [4.1-service.md](./4-proxy/4.1-service.md) | Start proxy, configuration, running status |
+| [4.1-service.md](./4-proxy/4.1-service.md) | Start local routing, configuration, API format conversion |
 | [4.2-routing.md](./4-proxy/4.2-routing.md) | App routing, configuration changes, status indicators |
 | [4.3-failover.md](./4-proxy/4.3-failover.md) | Failover queue, circuit breaker, health status |
 | [4.4-usage.md](./4-proxy/4.4-usage.md) | Usage statistics, trend charts, pricing configuration |
-| [4.5-model-test.md](./4-proxy/4.5-model-test.md) | Model test, health check, latency testing |
+| [4.5-model-test.md](./4-proxy/4.5-model-test.md) | Connectivity check, check parameters |
+| [4.6-aggregation.md](./4-proxy/4.6-aggregation.md) | Aggregation mode, default provider, `ccs-` prefix, Codex restart |
 
 ### 5. FAQ
 
@@ -101,30 +103,24 @@ CC Switch User Manual
 - **Installation issues**: See [1.2 Installation Guide](./1-getting-started/1.2-installation.md)
 - **Configure providers**: See [2.1 Add Provider](./2-providers/2.1-add.md)
 - **Use Claude Desktop**: See [2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md)
-- **Using proxy**: See [4.1 Proxy Service](./4-proxy/4.1-service.md)
+- **Use local routing**: See [4.1 Local Routing Service](./4-proxy/4.1-service.md)
 - **Having trouble**: See [5.2 FAQ](./5-faq/5.2-questions.md)
 
 ## Version Information
 
-- Documentation version: v3.16.0
-- Last updated: 2026-05-29
-- Applicable to CC Switch v3.16.0+
+- Documentation version: v4.0.4
+- Last updated: 2026-10-07
+- Applicable to CC Switch v4.0.4+
 
-### v3.16.0 Highlights
+### Recent Major Changes (v4.0)
 
-- **Codex Chat Completions routing**: route Chat-only providers such as Baidu Qianfan Coding Plan, StepFun Step Plan, and SiliconFlow through Codex. See [2.1 Add Provider](./2-providers/2.1-add.md)
-- **Managed CLI tool lifecycle**: install, update, update all, and diagnose Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes from Settings / About. See [1.5 Personalization](./1-getting-started/1.5-settings.md)
-- **Provider and model refresh**: new partner presets, refreshed default models and pricing, Claude Opus 4.8 defaults, and GPT 5.5 defaults where applicable
-- **Routing support badges**: Claude Code / Codex provider cards indicate whether a provider can be served through Local Routing
-- **Codex OAuth live model discovery**: ChatGPT Codex providers fetch available models from the ChatGPT backend on demand
-- **Filter-driven Usage Hero**: shows cache-normalized real total tokens and cache hit rate, updating with date / provider / model filters — see [4.4 Usage Statistics](./4-proxy/4.4-usage.md)
-- **Lightweight Mode**: Destroys the main window when minimizing to tray — near-zero idle footprint. See [1.5 Personalization](./1-getting-started/1.5-settings.md)
-- **Quota & Balance Display**: Official subscriptions (Claude/Codex/Gemini/Copilot/Codex OAuth) auto-display quotas; Token Plan and third-party balances use built-in templates with one-click enable — see [2.5 Usage Query](./2-providers/2.5-usage-query.md)
-- **Codex OAuth Reverse Proxy**: Reuse your ChatGPT account's Codex service inside Claude Code — see [2.1 Add Provider](./2-providers/2.1-add.md)
-- **Per-App Tray Submenus**: Claude / Codex / Gemini submenus show the current provider and available usage summaries — see [2.2 Switch Provider](./2-providers/2.2-switch.md)
-- **Skills Discovery & Batch Updates**: SHA-256 update detection, batch updates, skills.sh public registry search — see [3.3 Skills Management](./3-extensions/3.3-skills.md)
-- **Full URL Endpoint Mode**: Advanced option to treat `base_url` as the full upstream endpoint — see [2.1 Add Provider](./2-providers/2.1-add.md)
-- **OpenCode / OpenClaw / Hermes Stream Check Coverage**: Stream Check covers Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes — see [4.5 Model Test](./4-proxy/4.5-model-test.md)
+- **Redesigned interface**: the top navigation is replaced by a left sidebar, with separate pages for Usage, Accounts, MCP, Skills, Prompts, Sessions, and Apps; Settings is split into six groups: General, App config, Local routing, Network, Data, About — see [1.3 Interface Overview](./1-getting-started/1.3-interface.md) and [1.5 Personalization](./1-getting-started/1.5-settings.md)
+- **Three connection modes: Direct / Routing / Aggregation**: chosen at the top of each app page; going back to direct is one step — see [2.2 Switch Provider](./2-providers/2.2-switch.md)
+- **New Aggregation mode**: Claude Code and Codex can mix models from several providers in one session — see [4.6 Aggregation Mode](./4-proxy/4.6-aggregation.md)
+- **Switching only changes key fields**: everything other than the address, key, model, and other key fields is left as is; common config snippets are no longer used — see [2.3 Edit Provider](./2-providers/2.3-edit.md)
+- **Accounts**: ChatGPT, GitHub Copilot, xAI, and other sign-ins are managed in one place under **Accounts** in the sidebar — see [1.5 Personalization](./1-getting-started/1.5-settings.md)
+- **Apps page**: install and upgrade each CLI tool, and choose which apps show in the sidebar — see [1.2 Installation Guide](./1-getting-started/1.2-installation.md)
+- For the full list of changes, see the [v4.0 release notes](../../release-notes/v4.0.4-en.md)
 
 ## Contributing
 

@@ -11,6 +11,7 @@ import type { Provider } from "@/types";
 
 const apiMocks = vi.hoisted(() => ({
   getCurrent: vi.fn(),
+  getEditorView: vi.fn(),
   getLiveProviderSettings: vi.fn(),
   getOpenClawLiveProvider: vi.fn(),
 }));
@@ -21,6 +22,7 @@ let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 vi.mock("@/lib/api", () => ({
   providersApi: {
     getCurrent: apiMocks.getCurrent,
+    getEditorView: apiMocks.getEditorView,
   },
   vscodeApi: {
     getLiveProviderSettings: apiMocks.getLiveProviderSettings,
@@ -141,98 +143,39 @@ describe("EditProviderDialog", () => {
     mockCodexManagedAccountSelected = false;
     submitReadyCallbacks = [];
     apiMocks.getCurrent.mockReset();
+    apiMocks.getEditorView.mockReset();
+    apiMocks.getEditorView.mockImplementation(
+      async (_app: string, settingsConfig: Record<string, unknown>) => ({
+        settings: settingsConfig,
+        inactive: [],
+      }),
+    );
     apiMocks.getLiveProviderSettings.mockReset();
     apiMocks.getOpenClawLiveProvider.mockReset();
   });
 
-  it("保留 Codex 数据库中的 modelCatalog，避免 live 配置缺字段时清空模型映射", async () => {
-    const dbModelCatalog = {
-      models: [
-        {
-          model: "deepseek-v4-flash",
-          displayName: "DeepSeek V4 Flash",
-          contextWindow: 1000000,
-        },
-      ],
+  it("Codex 显示后端算出的切换投影，并把它作为保存时三方比较的基准", async () => {
+    const modelCatalog = {
+      models: [{ model: "deepseek-v4-flash", contextWindow: 1000000 }],
     };
     const provider: Provider = {
       id: "deepseek",
       name: "DeepSeek",
       category: "aggregator",
       settingsConfig: {
-        auth: {
-          OPENAI_API_KEY: "db-key",
-        },
+        auth: { OPENAI_API_KEY: "db-key" },
         config: 'model_provider = "custom"\nmodel = "deepseek-v4-flash"\n',
-        modelCatalog: dbModelCatalog,
+        modelCatalog,
       },
     };
-    const liveSettings = {
-      auth: {
-        OPENAI_API_KEY: "live-key",
-      },
-      config: 'model_provider = "custom"\nmodel = "deepseek-v4-pro"\n',
-    };
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
-    apiMocks.getCurrent.mockResolvedValue(provider.id);
-    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
-
-    render(
-      <EditProviderDialog
-        open
-        provider={provider}
-        onOpenChange={vi.fn()}
-        onSubmit={handleSubmit}
-        appId="codex"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(
-        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
-      ).toEqual({
-        ...liveSettings,
-        modelCatalog: dbModelCatalog,
-      });
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
-
-    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual({
-      ...liveSettings,
-      modelCatalog: dbModelCatalog,
-    });
-  });
-
-  it("uses the current Codex live bearer with the stored provider auth template", async () => {
-    const provider: Provider = {
-      id: "provider-a",
-      name: "Provider A",
-      category: "custom",
-      settingsConfig: {
-        auth: {
-          OPENAI_API_KEY: "sk-db-stale",
-          provider_note: "keep-me",
-        },
-        config:
-          'model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://proxy.example/v1"\n',
-      },
-    };
-    const liveSettings = {
-      // Shared auth.json belongs to another provider / official login cache.
-      auth: {
-        OPENAI_API_KEY: "sk-shared-other-provider",
-        tokens: { account_id: "shared-account" },
-      },
+    const view = {
+      auth: { OPENAI_API_KEY: "db-key" },
       config:
-        'model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://proxy.example/v1"\nexperimental_bearer_token = "sk-provider-a"\n',
+        'approval_policy = "never"\nmodel_provider = "custom"\nmodel = "deepseek-v4-flash"\n',
+      modelCatalog,
     };
+    apiMocks.getEditorView.mockResolvedValue({ settings: view, inactive: [] });
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
-    apiMocks.getCurrent.mockResolvedValue(provider.id);
-    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
 
     render(
       <EditProviderDialog
@@ -244,50 +187,52 @@ describe("EditProviderDialog", () => {
       />,
     );
 
-    const expectedSettings = {
-      ...liveSettings,
-      auth: {
-        OPENAI_API_KEY: "sk-provider-a",
-        provider_note: "keep-me",
-      },
-    };
-
     await waitFor(() => {
       expect(
         JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
-      ).toEqual(expectedSettings);
+      ).toEqual(view);
     });
+    expect(apiMocks.getEditorView).toHaveBeenCalledWith(
+      "codex",
+      provider.settingsConfig,
+      "aggregator",
+      provider.id,
+      undefined,
+    );
+    expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
 
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual(
-      expectedSettings,
-    );
+    const payload = handleSubmit.mock.calls[0][0];
+    expect(payload.provider.settingsConfig).toEqual(view);
+    expect(payload.editorSave).toEqual({ base: view, onConflict: "refuse" });
   });
 
-  it.each([
-    { description: "missing auth.json", auth: {} },
-    { description: "a logout marker", auth: { auth_mode: "chatgpt" } },
-  ])(
-    "preserves $description for a category-less official Codex provider",
-    async ({ auth }) => {
+  it.each([undefined, "openai_responses"] as const)(
+    "passes stored Copilot metadata to the edit projection (%s)",
+    async (format) => {
       const provider: Provider = {
-        id: "codex-official",
-        name: "OpenAI Official",
+        id: "copilot-card",
+        name: "GitHub Copilot",
+        category: "third_party",
         settingsConfig: {
-          auth: {
-            auth_mode: "chatgpt",
-            tokens: { refresh_token: "old-refresh-token" },
+          auth: {},
+          config:
+            'model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://api.githubcopilot.com"\nrequires_openai_auth = true\n',
+        },
+        meta: {
+          providerType: "github_copilot",
+          apiFormat: format ?? "openai_chat",
+          ...(format ? { codexCopilotApiFormat: format } : {}),
+          authBinding: {
+            source: "managed_account",
+            authProvider: "github_copilot",
+            accountId: "copilot-account",
           },
-          config: 'model = "old-model"\n',
         },
       };
-      const liveSettings = { auth, config: 'model = "live-model"\n' };
       const handleSubmit = vi.fn().mockResolvedValue(undefined);
-      apiMocks.getCurrent.mockResolvedValue(provider.id);
-      apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
-
       render(
         <EditProviderDialog
           open
@@ -297,53 +242,55 @@ describe("EditProviderDialog", () => {
           appId="codex"
         />,
       );
-
-      await waitFor(() => {
-        expect(
-          JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
-        ).toEqual(liveSettings);
-      });
-
+      await waitFor(() =>
+        expect(apiMocks.getEditorView).toHaveBeenCalledWith(
+          "codex",
+          provider.settingsConfig,
+          provider.category,
+          provider.id,
+          provider.meta,
+        ),
+      );
       fireEvent.click(screen.getByRole("button", { name: "common.save" }));
       await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-      expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual(
-        liveSettings,
-      );
+      const payload = handleSubmit.mock.calls[0][0];
+      expect(payload.originalId).toBe(provider.id);
+      expect(payload.provider.meta).toEqual(provider.meta);
+      expect(payload.editorSave.base).toEqual(provider.settingsConfig);
     },
   );
 
   it.each([
-    { id: "header-auth", category: "custom" as const },
-    { id: "codex-official", category: undefined },
-  ])(
-    "keeps stored Codex auth for $id when Live has no auth.json",
-    async ({ id, category }) => {
-      // Repro of #7433: the provider table declares its own credential source
-      // (Authorization header), so a switch injects no bearer token into
-      // config.toml, and default mode deletes the shared auth.json. Live is then
-      // `{ auth: {}, config }` while the DB row holds the only copy of the key —
-      // opening the edit dialog and saving must not erase it. Live still owns
-      // the config text, so the two snapshots differ there.
-      const storedConfig =
-        'model_provider = "custom"\nmodel = "old-model"\n[model_providers.custom]\nname = "Custom"\nbase_url = "https://api.example.com/v1"\nhttp_headers = { Authorization = "Bearer sk-db-only" }\n';
-      const liveConfig = storedConfig.replace(
-        'model = "old-model"',
-        'model = "live-model"',
-      );
+    [
+      "gemini",
+      {
+        env: { GEMINI_API_KEY: "db-key", GEMINI_MODEL: "m" },
+        config: {},
+      },
+      {
+        env: { GEMINI_SANDBOX: "docker", GEMINI_API_KEY: "db-key" },
+        config: { ui: { theme: "dark" } },
+      },
+    ],
+    [
+      "grokbuild",
+      { config: '[models]\ndefault = "grok-4.5"\n' },
+      { config: '[ui]\ntheme = "dark"\n\n[models]\ndefault = "grok-4.5"\n' },
+    ],
+  ] as const)(
+    "%s 也显示切换投影，并把它作为保存时三方比较的基准",
+    async (appId, settingsConfig, view) => {
       const provider: Provider = {
-        id,
-        name: "Header Auth",
-        category,
-        settingsConfig: {
-          auth: { OPENAI_API_KEY: "sk-db-only" },
-          config: storedConfig,
-        },
+        id: "p",
+        name: "P",
+        category: "custom",
+        settingsConfig: settingsConfig as Record<string, unknown>,
       };
-      const liveSettings = { auth: {}, config: liveConfig };
+      apiMocks.getEditorView.mockResolvedValue({
+        settings: view,
+        inactive: [],
+      });
       const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
-      apiMocks.getCurrent.mockResolvedValue(provider.id);
-      apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
 
       render(
         <EditProviderDialog
@@ -351,126 +298,46 @@ describe("EditProviderDialog", () => {
           provider={provider}
           onOpenChange={vi.fn()}
           onSubmit={handleSubmit}
-          appId="codex"
+          appId={appId}
         />,
       );
-
-      const expectedSettings = {
-        ...liveSettings,
-        auth: { OPENAI_API_KEY: "sk-db-only" },
-      };
 
       await waitFor(() => {
         expect(
           JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
-        ).toEqual(expectedSettings);
+        ).toEqual(view);
       });
+      expect(apiMocks.getEditorView).toHaveBeenCalledWith(
+        appId,
+        provider.settingsConfig,
+        "custom",
+        provider.id,
+        undefined,
+      );
+      expect(apiMocks.getCurrent).not.toHaveBeenCalled();
+      expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
 
       fireEvent.click(screen.getByRole("button", { name: "common.save" }));
-
       await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-      expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual(
-        expectedSettings,
-      );
+      expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({
+        base: view,
+        onConflict: "refuse",
+      });
     },
   );
 
-  it("keeps the stored Codex auth when Live is only a logout marker", async () => {
-    // `{ auth_mode: "chatgpt" }` with no tokens is Codex's logged-out shape,
-    // not an authorization for the provider row to drop its own key.
+  it("Codex 读不了配置文件时退回显示保存的供应商配置", async () => {
     const provider: Provider = {
-      id: "header-auth",
-      name: "Header Auth",
+      id: "relay",
+      name: "Relay",
       category: "custom",
       settingsConfig: {
-        auth: { OPENAI_API_KEY: "sk-db-only" },
-        config: 'model_provider = "custom"\nmodel = "old-model"\n',
-      },
-    };
-    const liveSettings = {
-      auth: { auth_mode: "chatgpt" },
-      config: 'model_provider = "custom"\nmodel = "live-model"\n',
-    };
-
-    apiMocks.getCurrent.mockResolvedValue(provider.id);
-    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
-
-    render(
-      <EditProviderDialog
-        open
-        provider={provider}
-        onOpenChange={vi.fn()}
-        onSubmit={vi.fn()}
-        appId="codex"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(
-        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
-      ).toEqual({
-        ...liveSettings,
-        auth: { OPENAI_API_KEY: "sk-db-only" },
-      });
-    });
-  });
-
-  it("does not convert an OAuth-only Codex provider into an API-key provider", async () => {
-    const provider: Provider = {
-      id: "oauth-provider",
-      name: "OAuth Provider",
-      category: "custom",
-      settingsConfig: {
-        auth: {
-          auth_mode: "chatgpt",
-          tokens: { account_id: "stored-account" },
-        },
+        auth: { OPENAI_API_KEY: "db-key" },
         config: 'model_provider = "custom"\n',
       },
     };
-    const liveSettings = {
-      auth: {
-        auth_mode: "chatgpt",
-        tokens: { account_id: "live-account" },
-      },
-      config:
-        'model_provider = "custom"\nexperimental_bearer_token = "sk-route-only"\n',
-    };
-
-    apiMocks.getCurrent.mockResolvedValue(provider.id);
-    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
-
-    render(
-      <EditProviderDialog
-        open
-        provider={provider}
-        onOpenChange={vi.fn()}
-        onSubmit={vi.fn()}
-        appId="codex"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(
-        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
-      ).toEqual(liveSettings);
-    });
-  });
-
-  it("does not let a stored bearer override a non-current Codex provider auth", async () => {
-    const provider: Provider = {
-      id: "provider-a",
-      name: "Provider A",
-      category: "custom",
-      settingsConfig: {
-        auth: { OPENAI_API_KEY: "sk-db-authoritative" },
-        config:
-          'model_provider = "custom"\nexperimental_bearer_token = "sk-leftover-live"\n',
-      },
-    };
+    apiMocks.getEditorView.mockRejectedValue(new Error("broken config.toml"));
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
-    apiMocks.getCurrent.mockResolvedValue("provider-b");
 
     render(
       <EditProviderDialog
@@ -482,21 +349,17 @@ describe("EditProviderDialog", () => {
       />,
     );
 
-    await waitFor(() => expect(apiMocks.getCurrent).toHaveBeenCalledTimes(1));
-    expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
-    expect(
-      JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
-    ).toEqual(provider.settingsConfig);
-
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual(provider.settingsConfig);
+    });
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
-
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual(
-      provider.settingsConfig,
-    );
+    expect(handleSubmit.mock.calls[0][0].editorSave).toBeUndefined();
   });
 
-  it("代理接管中编辑 Codex 供应商时展示数据库配置而不是读取 live 代理配置", async () => {
+  it("代理模式下编辑 Codex 供应商也显示它自己的关键字段，不读 live 里的代理契约", async () => {
     const provider: Provider = {
       id: "deepseek",
       name: "DeepSeek",
@@ -509,15 +372,6 @@ describe("EditProviderDialog", () => {
           'model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://api.deepseek.com/v1"\n',
       },
     };
-
-    apiMocks.getCurrent.mockResolvedValue(provider.id);
-    apiMocks.getLiveProviderSettings.mockResolvedValue({
-      auth: {
-        OPENAI_API_KEY: "PROXY_MANAGED",
-      },
-      config:
-        'model_provider = "custom"\n[model_providers.custom]\nbase_url = "http://127.0.0.1:15721/v1"\nexperimental_bearer_token = "PROXY_MANAGED"\n',
-    });
 
     render(
       <EditProviderDialog
@@ -535,9 +389,18 @@ describe("EditProviderDialog", () => {
     });
 
     expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
-    expect(
-      JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
-    ).toEqual(provider.settingsConfig);
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual(provider.settingsConfig);
+    });
+    expect(apiMocks.getEditorView).toHaveBeenCalledWith(
+      "codex",
+      provider.settingsConfig,
+      "custom",
+      provider.id,
+      undefined,
+    );
   });
 
   it("clears the nested auth panel before the dialog reopens", async () => {
@@ -554,7 +417,7 @@ describe("EditProviderDialog", () => {
     };
     const { rerender } = render(<EditProviderDialog open {...props} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "manage-auth" }));
+    fireEvent.click(await screen.findByRole("button", { name: "manage-auth" }));
     expect(screen.getByTestId("auth-settings-panel")).toHaveTextContent(
       "codex_oauth",
     );
@@ -589,6 +452,7 @@ describe("EditProviderDialog", () => {
       />,
     );
 
+    await screen.findByTestId("settings-config");
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -621,6 +485,7 @@ describe("EditProviderDialog", () => {
       />,
     );
 
+    await screen.findByTestId("settings-config");
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));

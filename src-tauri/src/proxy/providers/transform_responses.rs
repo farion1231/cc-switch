@@ -1905,6 +1905,12 @@ pub fn anthropic_to_responses(
                 }
                 let mut response_tool = json!({
                     "type": "function",
+                    // Anthropic 工具 schema 允许可选参数（required 是任意子集），而
+                    // Responses 后端把省略的 `strict` 按 true 处理：可选属性会被
+                    // 严格化进 required，模型被迫输出它本应能省略的字段（#7713 中
+                    // Claude Code Agent 的可选 isolation 被强制输出即此形态）。
+                    // 显式 false 保留客户端 schema 的可选语义。
+                    "strict": false,
                     "name": tool.get("name").and_then(Value::as_str).unwrap_or(""),
                 });
                 // 同 transform.rs：缺失的 description 省略而非输出 null，
@@ -3341,6 +3347,8 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
+        // 省略 strict 会被 Responses 后端按 true 严格化，可选参数被强制输出（#7713）
+        assert_eq!(result["tools"][0]["strict"], json!(false));
         assert_eq!(result["tools"][0]["name"], "get_weather");
         assert!(result["tools"][0].get("parameters").is_some());
         assert_eq!(result["tools"][0]["parameters"]["type"], json!("object"));
@@ -3350,6 +3358,46 @@ mod tests {
         );
         // input_schema should not appear
         assert!(result["tools"][0].get("input_schema").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_marks_function_tools_not_strict() {
+        // #7713：可选参数（required 是任意子集）必须保留可选语义。
+        // 省略 strict 时 Responses 后端按 true 严格化，模型被迫输出 isolation。
+        let input = json!({
+            "model": "gpt-5.6-luna",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Call the agent"}],
+            "tools": [{
+                "name": "Agent",
+                "description": "Launch a sub-agent",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string"},
+                        "prompt": {"type": "string"},
+                        "isolation": {"type": "string", "enum": ["worktree", "remote"]}
+                    },
+                    "required": ["description", "prompt"]
+                }
+            }]
+        });
+
+        let plain = anthropic_to_responses(input.clone(), None, false, false).unwrap();
+        assert_eq!(plain["tools"][0]["strict"], json!(false));
+        // required 保持为原有子集，strict 语义交由后端保留
+        assert_eq!(
+            plain["tools"][0]["parameters"]["required"],
+            json!(["description", "prompt"])
+        );
+
+        // 同一转换分支也服务 Codex OAuth 后端
+        let oauth = anthropic_to_responses(input, None, true, false).unwrap();
+        assert_eq!(oauth["tools"][0]["strict"], json!(false));
+        assert_eq!(
+            oauth["tools"][0]["parameters"]["required"],
+            json!(["description", "prompt"])
+        );
     }
 
     #[test]
@@ -4621,6 +4669,61 @@ mod tests {
     }
 
     #[test]
+    fn test_replayed_legacy_envelope_omits_output_only_fields() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+        // A pre-whitelist envelope keeps the backend output item verbatim,
+        // including the `status` field the official Codex backend started
+        // emitting on 2026-10-03 and rejects as an unknown input parameter.
+        let legacy = json!({
+            "id": "rs_legacy",
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "prior turn"}],
+            "encrypted_content": "opaque",
+            "status": "completed"
+        });
+        let signature = format!(
+            "ccswitch-openai-reasoning-v1:{}",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&legacy).unwrap())
+        );
+        let replay = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6",
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": [
+                        {"type": "thinking", "thinking": "prior turn", "signature": signature},
+                        {"type": "tool_use", "id": "call_9", "name": "lookup", "input": {}}
+                    ]},
+                    {"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": "call_9", "content": "ok"}
+                    ]}
+                ]
+            }),
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+        let reasoning_items: Vec<&Value> = replay["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("reasoning"))
+            .collect();
+        assert_eq!(reasoning_items.len(), 1);
+        assert_eq!(
+            reasoning_items[0],
+            &json!({
+                "id": "rs_legacy",
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "prior turn"}],
+                "encrypted_content": "opaque"
+            })
+        );
+    }
+
+    #[test]
     fn test_reasoning_only_assistant_turn_is_not_replayed() {
         let item = json!({
             "type": "reasoning",
@@ -4855,6 +4958,7 @@ mod tests {
         let input = json!({
             "model": "gpt-5.4",
             "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
             "output_config": {"effort": "max"},
             "messages": [{"role": "user", "content": "Hello"}]
         });
@@ -4871,10 +4975,13 @@ mod tests {
             "gpt-5.6-terra",
             "gpt-5.6-luna",
             "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-luna",
         ] {
             let input = json!({
                 "model": model,
                 "max_tokens": 1024,
+                "thinking": {"type": "adaptive"},
                 "output_config": {"effort": "max"},
                 "messages": [{"role": "user", "content": "Hello"}]
             });
@@ -4891,6 +4998,7 @@ mod tests {
         let input = json!({
             "model": "gpt-5.4",
             "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
             "output_config": {"effort": "xhigh"},
             "messages": [{"role": "user", "content": "Hello"}]
         });
@@ -4906,12 +5014,27 @@ mod tests {
         let input = json!({
             "model": "grok-4.6-build",
             "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
             "output_config": {"effort": "xhigh"},
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_responses_thinking_off_clamps_effort_to_low() {
+        // Thinking turned off in Claude Code: no `thinking`, effort still "high".
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "output_config": {"effort": "high"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "low");
     }
 
     #[test]
