@@ -3202,7 +3202,14 @@
       "addFailed": "新增失敗",
       "removeSuccess": "儲存庫 {{owner}}/{{name}} 已刪除",
       "removeFailed": "刪除失敗",
-      "skillCount": "識別到 {{count}} 個技能"
+      "skillCount": "識別到 {{count}} 個技能",
+      "downloadSettings": "下載設定",
+      "downloadTimeout": "下載逾時（秒）",
+      "downloadTimeoutHelp": "預設 60 秒，可設定 1～3600 秒。適用於所有儲存庫的探索、安裝和更新下載，儲存後從下次下載起生效。",
+      "timeoutInvalid": "請輸入 1～3600 秒的整數。",
+      "timeoutLoadFailed": "無法讀取逾時設定，請重試。",
+      "timeoutSaveFailed": "儲存失敗，請重試。",
+      "timeoutSaved": "逾時設定已儲存"
     },
     "search": "搜尋技能",
     "searchPlaceholder": "搜尋技能名稱或儲存庫名稱...",
@@ -3316,7 +3323,14 @@
       "syncCopyDesc": "佔用更多空間，更新後會重新複製",
       "moveHint": "切換位置會把 {{count}} 個 Skill 移動過去。"
     },
-    "updatesIncomplete": "沒有發現更新，但有 {{count}} 個倉庫沒有讀到"
+    "updatesIncomplete": "沒有發現更新，但有 {{count}} 個倉庫沒有讀到",
+    "installProgress": {
+      "preparing": "準備下載",
+      "downloading": "下載中",
+      "extracting": "解壓縮中",
+      "installing": "安裝與同步中",
+      "completed": "安裝完成"
+    }
   },
   "deeplink": {
     "confirmImport": "確認匯入供應商設定",

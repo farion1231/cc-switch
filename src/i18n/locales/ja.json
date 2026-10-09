@@ -3201,7 +3201,14 @@
       "addFailed": "追加に失敗しました",
       "removeSuccess": "リポジトリ {{owner}}/{{name}} を削除しました",
       "removeFailed": "削除に失敗しました",
-      "skillCount": "{{count}} 件のスキルを検出"
+      "skillCount": "{{count}} 件のスキルを検出",
+      "downloadSettings": "ダウンロード設定",
+      "downloadTimeout": "ダウンロードのタイムアウト（秒）",
+      "downloadTimeoutHelp": "既定は60秒、設定範囲は1～3600秒です。すべてのリポジトリの検出・インストール・更新に適用され、保存後の次のダウンロードから有効になります。",
+      "timeoutInvalid": "1～3600秒の整数を入力してください。",
+      "timeoutLoadFailed": "設定を読み込めませんでした。再試行してください。",
+      "timeoutSaveFailed": "保存できませんでした。再試行してください。",
+      "timeoutSaved": "タイムアウトを保存しました"
     },
     "search": "スキルを検索",
     "searchPlaceholder": "スキル名またはリポジトリで検索...",
@@ -3315,7 +3322,14 @@
       "syncCopyDesc": "ディスク容量を多く使い、更新のたびにコピーし直します",
       "moveHint": "場所を切り替えると {{count}} 個の Skill を移動します。"
     },
-    "updatesIncomplete": "更新は見つかりませんでしたが、{{count}} 個のリポジトリを読み込めませんでした"
+    "updatesIncomplete": "更新は見つかりませんでしたが、{{count}} 個のリポジトリを読み込めませんでした",
+    "installProgress": {
+      "preparing": "ダウンロード準備中",
+      "downloading": "ダウンロード中",
+      "extracting": "展開中",
+      "installing": "インストール・同期中",
+      "completed": "インストール完了"
+    }
   },
   "deeplink": {
     "confirmImport": "プロバイダーのインポートを確認",

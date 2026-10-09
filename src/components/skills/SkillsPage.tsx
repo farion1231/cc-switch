@@ -33,6 +33,7 @@ import type {
   SkillRepo,
   SkillRepoFailure,
   SkillsShDiscoverableSkill,
+  SkillInstallProgress as InstallProgress,
 } from "@/lib/api/skills";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
 import {
@@ -43,6 +44,7 @@ import { cn } from "@/lib/utils";
 import { MatrixSearch, NeutralBadge } from "@/components/mcp/AppMatrix";
 import { CHECKBOX_CLASS } from "@/components/mcp/formBits";
 import { countRepoSkills } from "./RepoManagerPanel";
+import { SkillInstallProgress } from "./SkillInstallProgress";
 import { describeRepoFailures, repoFailureKey } from "./repoFailures";
 
 /** 发现列表每行高度（h-14），虚拟化按这个算 */
@@ -177,6 +179,9 @@ export function SkillsPage({
     [],
   );
   const [installing, setInstalling] = useState<Set<string>>(new Set());
+  const [installProgress, setInstallProgress] = useState<
+    Record<string, InstallProgress>
+  >({});
   const [failed, setFailed] = useState<Record<string, string>>({});
 
   const {
@@ -365,6 +370,8 @@ export function SkillsPage({
         await installMutation.mutateAsync({
           skill: row.skill,
           currentApp: firstApp,
+          onProgress: (progress) =>
+            setInstallProgress((prev) => ({ ...prev, [row.key]: progress })),
         }),
       ]);
       toast.success(
@@ -392,6 +399,11 @@ export function SkillsPage({
       );
       setFailed((prev) => ({ ...prev, [row.key]: description || title }));
     } finally {
+      setInstallProgress((prev) => {
+        const next = { ...prev };
+        delete next[row.key];
+        return next;
+      });
       setInstalling((prev) => {
         const next = new Set(prev);
         next.delete(row.key);
@@ -732,7 +744,12 @@ export function SkillsPage({
                       </span>
                     </div>
                     <div className="flex w-[180px] shrink-0 justify-end">
-                      {status.kind === "installed" ? (
+                      {isInstalling ? (
+                        <SkillInstallProgress
+                          progress={installProgress[row.key]}
+                          name={row.name}
+                        />
+                      ) : status.kind === "installed" ? (
                         <button
                           type="button"
                           onClick={() => onShowInstalled(status.skill.id)}
@@ -767,20 +784,6 @@ export function SkillsPage({
                             strokeWidth={2}
                           />
                         </button>
-                      ) : isInstalling ? (
-                        <Button
-                          type="button"
-                          variant="neutral"
-                          size="compact"
-                          aria-disabled="true"
-                          aria-label={t("skillsPage.discover.installingAria", {
-                            name: row.name,
-                          })}
-                          className="cursor-not-allowed ps-2.5"
-                        >
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          {t("skillsPage.discover.installing")}
-                        </Button>
                       ) : (
                         <Button
                           type="button"

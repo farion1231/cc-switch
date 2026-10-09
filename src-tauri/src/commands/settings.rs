@@ -48,7 +48,65 @@ fn merge_settings_for_save(
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
     incoming.local_migrations = existing.local_migrations.clone();
+    // 此项由仓库管理的专用命令保存，避免其他设置页的旧快照覆盖它。
+    incoming.skill_download_timeout_seconds = existing.skill_download_timeout_seconds;
     incoming
+}
+
+fn persist_settings_for_save(
+    incoming: crate::settings::AppSettings,
+) -> Result<(crate::settings::AppSettings, crate::settings::AppSettings), crate::error::AppError> {
+    // 在专用 setter 使用的写锁内读取最新值，避免旧快照撤销刚保存的下载超时。
+    crate::settings::update_settings_with(|current| Ok(merge_settings_for_save(incoming, current)))
+}
+
+fn rollback_settings_for_save(
+    previous: &crate::settings::AppSettings,
+    saved: &crate::settings::AppSettings,
+) -> Result<(), crate::error::AppError> {
+    crate::settings::update_settings_with(|current| {
+        let to_value = |settings| {
+            serde_json::to_value(settings)
+                .map_err(|source| crate::error::AppError::JsonSerialize { source })
+        };
+        let previous = to_value(previous)?;
+        let saved = to_value(saved)?;
+        let mut current = to_value(current)?;
+        let fields = current
+            .as_object_mut()
+            .expect("settings serialize to an object");
+        let keys: std::collections::BTreeSet<_> = previous
+            .as_object()
+            .expect("settings serialize to an object")
+            .keys()
+            .chain(
+                saved
+                    .as_object()
+                    .expect("settings serialize to an object")
+                    .keys(),
+            )
+            .collect();
+
+        // 仅撤销本次保存改动且仍保持本次值的字段；保留期间成功的并发修改。
+        // 同时比较缺失字段，处理 skip_serializing_if 导致的新增或移除。
+        for key in keys {
+            if previous.get(key) != saved.get(key) && fields.get(key) == saved.get(key) {
+                match previous.get(key) {
+                    Some(value) => {
+                        fields.insert(key.clone(), value.clone());
+                    }
+                    None => {
+                        fields.remove(key);
+                    }
+                }
+            }
+        }
+        serde_json::from_value(current).map_err(|source| crate::error::AppError::Json {
+            path: "settings rollback".to_string(),
+            source,
+        })
+    })
+    .map(|_| ())
 }
 
 /// 获取设置
@@ -63,12 +121,10 @@ pub async fn save_settings(
     state: tauri::State<'_, crate::store::AppState>,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
-    let existing = crate::settings::get_settings();
-    let merged = merge_settings_for_save(settings, &existing);
+    let (existing, saved) = persist_settings_for_save(settings).map_err(|e| e.to_string())?;
     let unify_codex_changed =
-        merged.unify_codex_session_history != existing.unify_codex_session_history;
-    let unify_codex_enabled = merged.unify_codex_session_history;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+        saved.unify_codex_session_history != existing.unify_codex_session_history;
+    let unify_codex_enabled = saved.unify_codex_session_history;
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
@@ -76,13 +132,12 @@ pub async fn save_settings(
         // live 重写失败时回滚设置并把保存整体报失败：若设置保持已切换状态，
         // live 仍跑旧桶，后续的历史迁移/还原会让会话再次分裂（开启=历史
         // 迁走而新会话仍写 openai 桶；关闭=会话还原而 live 仍写 custom）。
-        // 报错让前端 saved=false 短路还原；回滚是整次保存的事务语义
-        // （本开关的保存只携带开关相关字段）。
+        // 报错让前端 saved=false 短路还原；回滚只撤销本次改动，保留期间的并发保存。
         if let Err(err) =
             crate::services::provider::reapply_current_codex_official_live(state.inner())
         {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
-            if let Err(rollback_err) = crate::settings::update_settings(existing) {
+            if let Err(rollback_err) = rollback_settings_for_save(&existing, &saved) {
                 log::error!("回滚统一会话开关设置失败: {rollback_err}");
             }
             return Err(format!(
@@ -315,12 +370,97 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::merge_settings_for_save;
+    use super::{merge_settings_for_save, persist_settings_for_save, rollback_settings_for_save};
     use crate::settings::{
         AppSettings, CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    #[serial_test::serial]
+    fn full_save_preserves_a_dedicated_timeout_completed_after_the_frontend_snapshot() {
+        use std::sync::Barrier;
+
+        let guard = crate::settings::test_support::TestSettingsGuard::new();
+        let mut incoming = crate::settings::get_settings_for_frontend();
+        incoming.language = Some("zh".into());
+        let timeout_saved = Barrier::new(2);
+        std::thread::scope(|scope| {
+            let setter = scope.spawn(|| {
+                crate::settings::set_skill_download_timeout_seconds(900).unwrap();
+                timeout_saved.wait();
+            });
+            timeout_saved.wait();
+            persist_settings_for_save(incoming).expect("persist stale frontend snapshot");
+            setter.join().unwrap();
+        });
+        assert_eq!(
+            crate::settings::get_settings().skill_download_timeout_seconds,
+            900
+        );
+        assert_eq!(guard.persisted().skill_download_timeout_seconds, 900);
+        assert_eq!(guard.persisted().language.as_deref(), Some("zh"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn failed_save_rollback_preserves_timeout_and_other_concurrent_changes() {
+        let guard = crate::settings::test_support::TestSettingsGuard::new();
+        let incoming = AppSettings {
+            unify_codex_session_history: true,
+            language: Some("zh".into()),
+            usage_confirmed: Some(true),
+            ..AppSettings::default()
+        };
+        let (previous, saved) = persist_settings_for_save(incoming).unwrap();
+        crate::settings::set_skill_download_timeout_seconds(900).unwrap();
+        crate::settings::update_settings_with(|current| {
+            let mut next = current.clone();
+            next.language = Some("ja".into());
+            Ok(next)
+        })
+        .unwrap();
+
+        rollback_settings_for_save(&previous, &saved).expect("rollback failed live rewrite");
+        let cached = crate::settings::get_settings();
+        let persisted = guard.persisted();
+        for settings in [cached, persisted] {
+            assert!(!settings.unify_codex_session_history);
+            assert_eq!(settings.skill_download_timeout_seconds, 900);
+            assert_eq!(settings.language.as_deref(), Some("ja"));
+            assert_eq!(settings.usage_confirmed, None);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rollback_restores_optional_fields_removed_by_the_failed_save() {
+        let guard = crate::settings::test_support::TestSettingsGuard::new();
+        crate::settings::update_settings(AppSettings {
+            usage_confirmed: Some(false),
+            ..AppSettings::default()
+        })
+        .unwrap();
+        let (previous, saved) = persist_settings_for_save(AppSettings::default()).unwrap();
+        crate::settings::set_skill_download_timeout_seconds(900).unwrap();
+        rollback_settings_for_save(&previous, &saved).unwrap();
+        assert_eq!(guard.persisted().usage_confirmed, Some(false));
+        assert_eq!(guard.persisted().skill_download_timeout_seconds, 900);
+    }
+
+    #[test]
+    fn other_settings_saves_do_not_overwrite_repository_download_timeout() {
+        let existing = AppSettings {
+            skill_download_timeout_seconds: 900,
+            ..AppSettings::default()
+        };
+        let incoming = AppSettings::default();
+        assert_eq!(
+            merge_settings_for_save(incoming, &existing).skill_download_timeout_seconds,
+            900
+        );
+    }
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {

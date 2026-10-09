@@ -14,6 +14,7 @@ import {
   type SkillUpdateCheckResult,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
+  type SkillInstallProgress,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
@@ -110,10 +111,12 @@ export function useInstallSkill() {
     mutationFn: ({
       skill,
       currentApp,
+      onProgress,
     }: {
       skill: DiscoverableSkill;
       currentApp: AppId;
-    }) => skillsApi.installUnified(skill, currentApp),
+      onProgress?: (progress: SkillInstallProgress) => void;
+    }) => skillsApi.installUnified(skill, currentApp, onProgress),
     onSuccess: (installedSkill) => {
       queryClient.setQueryData<InstalledSkill[]>(
         ["skills", "installed"],

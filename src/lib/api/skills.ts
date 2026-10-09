@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 import type { AppId } from "@/lib/api/types";
 
@@ -175,6 +175,13 @@ export interface SkillsShSearchResult {
   query: string;
 }
 
+/** Skill 安装下载进度 */
+export interface SkillInstallProgress {
+  phase: "downloading" | "extracting" | "installing" | "completed";
+  downloadedBytes: number;
+  totalBytes: number | null;
+}
+
 /** 仓库配置 */
 export interface SkillRepo {
   owner: string;
@@ -207,8 +214,22 @@ export const skillsApi = {
   async installUnified(
     skill: DiscoverableSkill,
     currentApp: AppId,
+    onProgress?: (progress: SkillInstallProgress) => void,
   ): Promise<InstalledSkill> {
-    return await invoke("install_skill_unified", { skill, currentApp });
+    if (!onProgress)
+      return await invoke("install_skill_unified", { skill, currentApp });
+    const channel = new Channel<SkillInstallProgress>();
+    channel.onmessage = onProgress;
+    try {
+      return await invoke("install_skill_unified", {
+        skill,
+        currentApp,
+        onProgress: channel,
+      });
+    } finally {
+      // 忽略命令结束后仍在队列中的消息，防止重试时旧进度覆盖新进度。
+      channel.onmessage = () => {};
+    }
   },
 
   /** 卸载 Skill（统一卸载） */
@@ -317,6 +338,16 @@ export const skillsApi = {
   },
 
   // ========== 仓库管理 ==========
+
+  /** 获取本机仓库下载超时（秒） */
+  async getDownloadTimeout(): Promise<number> {
+    return await invoke("get_skill_download_timeout");
+  },
+
+  /** 通过专用命令保存超时，避免被其他设置页的旧快照覆盖 */
+  async setDownloadTimeout(seconds: number): Promise<void> {
+    await invoke("set_skill_download_timeout", { seconds });
+  },
 
   /** 获取仓库列表 */
   async getRepos(): Promise<SkillRepo[]> {
