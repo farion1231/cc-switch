@@ -72,10 +72,6 @@ impl WindowsSystemProxyConfig {
             }
         };
 
-        config
-            .bypass
-            .extend(ProxyBypassMatcher::from_no_proxy_env());
-
         if !config.has_proxy() {
             return Ok(None);
         }
@@ -140,10 +136,6 @@ impl ProxyBypassMatcher {
             matcher.push_no_proxy_rule(entry);
         }
         matcher
-    }
-
-    pub(crate) fn extend(&mut self, other: Self) {
-        self.rules.extend(other.rules);
     }
 
     pub(crate) fn matches_url(&self, url: &Url) -> bool {
@@ -480,6 +472,25 @@ mod tests {
     }
 
     #[test]
+    fn https_target_mapping_uses_plain_http_proxy_unless_scheme_is_explicit() {
+        let config = WindowsSystemProxyConfig::parse("https=proxy.local:8080", "")
+            .expect("parse")
+            .expect("config");
+        assert_eq!(
+            Url::parse(config.https_proxy().unwrap()).unwrap().scheme(),
+            "http"
+        );
+
+        let config = WindowsSystemProxyConfig::parse("https=https://secure.proxy.local:8443", "")
+            .expect("parse")
+            .expect("config");
+        assert_eq!(
+            Url::parse(config.https_proxy().unwrap()).unwrap().scheme(),
+            "https"
+        );
+    }
+
+    #[test]
     fn parse_windows_proxy_server_uses_fallback_for_all_protocols() {
         let config = WindowsSystemProxyConfig::parse("172.171.16.221:7890", "")
             .expect("parse")
@@ -499,5 +510,18 @@ mod tests {
         assert!(!matcher.matches_host("192.168.137.163"));
         assert!(!matcher.matches_host("10.0.0.4"));
         assert!(!matcher.matches_host("api.example.com"));
+    }
+
+    #[test]
+    fn no_proxy_ipv6_matches_expanded_compressed_and_embedded_ipv4_forms() {
+        let mut matcher = ProxyBypassMatcher::default();
+        matcher.push_no_proxy_rule("0:0:0:0:0:0:0:1");
+        matcher.push_no_proxy_rule("0:0:0:0:0:ffff:c000:201");
+
+        assert!(matcher.matches_url(&Url::parse("http://[::1]").unwrap()));
+        assert!(matcher.matches_url(&Url::parse("http://[0:0:0:0:0:0:0:1]").unwrap()));
+        assert!(matcher.matches_url(&Url::parse("http://[::ffff:192.0.2.1]").unwrap()));
+        assert!(matcher.matches_url(&Url::parse("http://[::ffff:c000:201]").unwrap()));
+        assert!(!matcher.matches_url(&Url::parse("http://[::2]").unwrap()));
     }
 }

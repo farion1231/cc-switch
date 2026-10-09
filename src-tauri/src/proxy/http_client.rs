@@ -3,7 +3,7 @@
 //! 提供支持全局代理配置的 HTTP 客户端。
 //! 所有需要发送 HTTP 请求的模块都应使用此模块提供的客户端。
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 use super::windows_proxy;
 use once_cell::sync::OnceCell;
 use reqwest::Client;
@@ -206,8 +206,9 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
                     let masked_https = https_proxy.map(mask_url);
 
                     let bypass = config.bypass().clone();
-                    let bypass_rule_count = config.bypass_rule_count();
-                    let bypasses_local = config.bypasses_local();
+                    let env_bypass = windows_proxy::ProxyBypassMatcher::from_no_proxy_env();
+                    let bypass_rule_count = config.bypass_rule_count() + env_bypass.rule_count();
+                    let bypasses_local = config.bypasses_local() || env_bypass.bypasses_local();
                     let mut applied = false;
                     builder = builder.no_proxy();
 
@@ -217,6 +218,7 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
                             env_http_proxy.as_deref(),
                             config.http_proxy(),
                             bypass.clone(),
+                            env_bypass.clone(),
                         ));
                         applied = true;
                     }
@@ -226,6 +228,7 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
                             env_https_proxy.as_deref(),
                             config.https_proxy(),
                             bypass.clone(),
+                            env_bypass.clone(),
                         ));
                         applied = true;
                     }
@@ -264,7 +267,7 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn env_proxy_for_scheme(scheme: &str) -> Option<String> {
     let keys: &[&str] = match scheme {
         "http" => &["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"],
@@ -275,15 +278,16 @@ fn env_proxy_for_scheme(scheme: &str) -> Option<String> {
     keys.iter()
         .filter_map(|key| env::var(key).ok())
         .map(|value| value.trim().to_string())
-        .find(|value| !value.is_empty())
+        .find(|value| !value.is_empty() && reqwest::Proxy::all(value).is_ok())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn custom_windows_proxy(
     scheme: &'static str,
     env_proxy_url: Option<&str>,
     manual_proxy_url: Option<&str>,
     bypass: windows_proxy::ProxyBypassMatcher,
+    env_bypass: windows_proxy::ProxyBypassMatcher,
 ) -> reqwest::Proxy {
     let env_proxy_url = env_proxy_url.map(str::to_owned);
     let manual_proxy_url = manual_proxy_url.map(str::to_owned);
@@ -294,30 +298,59 @@ fn custom_windows_proxy(
         .unwrap_or_else(|| "none".to_string());
 
     reqwest::Proxy::custom(move |url| {
-        if url.scheme() != scheme {
-            return None;
-        }
-
         let host = url.host_str().unwrap_or_default();
-        if bypass.matches_url(url) {
-            log::debug!(
-                "[GlobalProxy] Windows system proxy bypass matched for {}://{}",
-                scheme,
-                host
-            );
-            None
-        } else if let Some(proxy_url) = env_proxy_url.as_ref().or(manual_proxy_url.as_ref()) {
+        if let Some(proxy_url) = select_windows_proxy(
+            scheme,
+            url,
+            env_proxy_url.as_deref(),
+            manual_proxy_url.as_deref(),
+            &bypass,
+            &env_bypass,
+        ) {
             log::debug!(
                 "[GlobalProxy] Windows system proxy routing {}://{} via {}",
                 scheme,
                 host,
                 masked_proxy
             );
-            Some(proxy_url.clone())
+            Some(proxy_url)
+        } else if url.scheme() == scheme
+            && (env_bypass.matches_url(url) || (env_proxy_url.is_none() && bypass.matches_url(url)))
+        {
+            log::debug!(
+                "[GlobalProxy] Windows system proxy bypass matched for {}://{}",
+                scheme,
+                host
+            );
+            None
         } else {
             None
         }
     })
+}
+
+#[cfg(any(windows, test))]
+fn select_windows_proxy(
+    scheme: &str,
+    url: &url::Url,
+    env_proxy_url: Option<&str>,
+    manual_proxy_url: Option<&str>,
+    bypass: &windows_proxy::ProxyBypassMatcher,
+    env_bypass: &windows_proxy::ProxyBypassMatcher,
+) -> Option<String> {
+    if url.scheme() != scheme {
+        return None;
+    }
+
+    if let Some(proxy_url) = env_proxy_url {
+        return (!env_bypass.matches_url(url)).then(|| proxy_url.to_owned());
+    }
+
+    if bypass.matches_url(url) || env_bypass.matches_url(url) {
+        return None;
+    }
+
+    manual_proxy_url.map(str::to_owned)
 }
 
 fn system_proxy_points_to_loopback() -> bool {
@@ -389,6 +422,8 @@ pub fn mask_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> &'static Mutex<()> {
@@ -483,10 +518,111 @@ mod tests {
     #[test]
     fn environment_proxy_has_priority_over_manual_proxy() {
         let _guard = env_lock().lock().unwrap();
+        let keys = [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ];
+        let previous = keys
+            .iter()
+            .map(|key| (*key, env::var_os(key)))
+            .collect::<Vec<_>>();
+
         env::set_var("HTTP_PROXY", "http://env.proxy:8080");
         env::remove_var("HTTPS_PROXY");
         env::remove_var("ALL_PROXY");
-        assert_eq!(env_proxy_for_scheme("http").as_deref(), Some("http://env.proxy:8080"));
-        env::remove_var("HTTP_PROXY");
+        assert_eq!(
+            env_proxy_for_scheme("http").as_deref(),
+            Some("http://env.proxy:8080")
+        );
+        env::set_var("HTTP_PROXY", "invalid proxy URL");
+        env::set_var("http_proxy", "http://lowercase.proxy:8080");
+        assert_eq!(
+            env_proxy_for_scheme("http").as_deref(),
+            Some("http://lowercase.proxy:8080")
+        );
+
+        for (key, value) in previous {
+            if let Some(value) = value {
+                env::set_var(key, value);
+            } else {
+                env::remove_var(key);
+            }
+        }
+    }
+
+    #[test]
+    fn environment_proxy_wins_over_registry_proxy_and_registry_bypass() {
+        let url = url::Url::parse("http://service.example").unwrap();
+        let windows_bypass =
+            windows_proxy::ProxyBypassMatcher::from_windows_override("service.example");
+        let env_bypass = windows_proxy::ProxyBypassMatcher::default();
+
+        assert_eq!(
+            select_windows_proxy(
+                "http",
+                &url,
+                Some("http://127.0.0.1:18080"),
+                Some("http://127.0.0.1:18081"),
+                &windows_bypass,
+                &env_bypass,
+            )
+            .as_deref(),
+            Some("http://127.0.0.1:18080")
+        );
+    }
+
+    #[test]
+    fn environment_no_proxy_still_bypasses_environment_proxy() {
+        let url = url::Url::parse("http://service.example").unwrap();
+        let windows_bypass = windows_proxy::ProxyBypassMatcher::default();
+        let env_bypass =
+            windows_proxy::ProxyBypassMatcher::from_windows_override("service.example");
+
+        assert_eq!(
+            select_windows_proxy(
+                "http",
+                &url,
+                Some("http://127.0.0.1:18080"),
+                Some("http://127.0.0.1:18081"),
+                &windows_bypass,
+                &env_bypass,
+            ),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn https_target_uses_plain_http_connect_proxy_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy_address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            reader
+                .get_mut()
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+            request_line
+        });
+
+        let config =
+            windows_proxy::WindowsSystemProxyConfig::parse(&format!("https={proxy_address}"), "")
+                .unwrap()
+                .unwrap();
+        let proxy = reqwest::Proxy::all(config.https_proxy().unwrap()).unwrap();
+        let client = Client::builder().no_proxy().proxy(proxy).build().unwrap();
+        let _ = client.get("https://example.invalid/").send().await;
+
+        let request_line = server.join().unwrap();
+        assert_eq!(request_line, "CONNECT example.invalid:443 HTTP/1.1\r\n");
     }
 }

@@ -34,7 +34,7 @@ pub mod thinking_rectifier;
 pub(crate) mod tool_media;
 pub(crate) mod types;
 pub mod usage;
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 pub(crate) mod windows_proxy;
 
 // 公开导出给外部使用（commands, services等模块需要）
