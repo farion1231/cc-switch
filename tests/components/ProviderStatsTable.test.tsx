@@ -22,6 +22,7 @@ vi.mock("@/lib/query/usage", () => ({
 
 const stat = (overrides: Partial<ProviderStats>): ProviderStats => ({
   providerId: "p",
+  appType: "claude",
   providerName: "P",
   requestCount: 1,
   totalTokens: 1_000,
@@ -118,5 +119,36 @@ describe("ProviderStatsTable", () => {
     expect(rows[0].lastElementChild).toHaveTextContent("92tok/s");
     expect(rows[1]).toHaveTextContent("Kimi For Coding");
     expect(rows[1].lastElementChild).toHaveTextContent("—");
+  });
+
+  it("renders separate rows for the same provider id across different apps without key collisions", () => {
+    useProviderStatsMock.mockReturnValue({
+      isLoading: false,
+      data: [
+        stat({
+          providerId: "shared-provider",
+          appType: "claude-desktop",
+          providerName: "Shared Provider",
+          requestCount: 42,
+        }),
+        stat({
+          providerId: "shared-provider",
+          appType: "claude",
+          providerName: "Shared Provider",
+          requestCount: 7,
+        }),
+      ],
+    });
+
+    render(
+      <ProviderStatsTable range={{ preset: "7d" }} refreshIntervalMs={0} />,
+    );
+
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Shared Provider");
+    expect(rows[0]).toHaveTextContent("42");
+    expect(rows[1]).toHaveTextContent("Shared Provider");
+    expect(rows[1]).toHaveTextContent("7");
   });
 });
