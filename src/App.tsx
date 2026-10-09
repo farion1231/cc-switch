@@ -10,7 +10,13 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, KeyRound, MoreHorizontal, Plus } from "lucide-react";
+import {
+  ExternalLink,
+  KeyRound,
+  MoreHorizontal,
+  Plus,
+  Search,
+} from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
@@ -48,7 +54,7 @@ import {
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
-import { isLinux, isWindows } from "@/lib/platform";
+import { isLinux, isMac, isWindows } from "@/lib/platform";
 import {
   APP_STORAGE_KEY,
   appPageBelongsTo,
@@ -61,6 +67,7 @@ import {
   type View,
 } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { useUpdate } from "@/contexts/UpdateContext";
 import { NewLayoutDialog } from "@/components/shell/NewLayoutDialog";
 import {
   AppPageHeader,
@@ -150,6 +157,7 @@ const getInitialApp = (): AppId => {
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { hasUpdate } = useUpdate();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
   const sharedFeatureApp = sharedFeatureAppOf(activeApp);
@@ -164,6 +172,11 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
+  const [providerSearchOpen, setProviderSearchOpen] = useState(false);
+  useEffect(() => {
+    setProviderSearchOpen(false);
+  }, [activeApp, currentView]);
   // 供应商页顶部正在看的那格（直连 / 路由 / 聚合），由 SwitchModePanel 报上来。打开新增、
   // 编辑时记下当时那格，表单按它选布局：在聚合那格打开就是聚合的简化表单。
   const [providerModeView, setProviderModeView] = useState<{
@@ -697,6 +710,11 @@ function App() {
 
   // 侧栏、⌘K 进用量统计看全部应用；只有应用页 ⋯ 进来时带应用筛选
   const openPageFromNav = (page: GlobalPage | "settings") => {
+    // 「设置」上的绿点说的是 CC Switch 有新版本，点进去直接到「关于」里的更新按钮
+    if (page === "settings" && hasUpdate) {
+      openSettings("about");
+      return;
+    }
     if (page === "usage") setUsageAppFilter("all");
     openPage(page);
   };
@@ -1167,6 +1185,25 @@ function App() {
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
+          {currentView === "providers" &&
+            (settingsData?.showProviderSearch ?? true) && (
+              <HoverTip
+                content={t("provider.searchButtonTip", {
+                  shortcut: isMac() ? "⌘F" : "Ctrl+F",
+                })}
+              >
+                <Button
+                  variant="quiet"
+                  size="icon-compact"
+                  className="h-8 w-8"
+                  aria-label={t("provider.searchAriaLabel")}
+                  aria-pressed={providerSearchOpen}
+                  onClick={() => setProviderSearchOpen((open) => !open)}
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
+              </HoverTip>
+            )}
           {currentView === "providers" && (
             <Button
               variant="solid"
@@ -1235,6 +1272,8 @@ function App() {
     onOpenWebsite: handleOpenWebsite,
     onOpenTerminal: activeApp === "claude" ? handleOpenTerminal : undefined,
     onCreate: () => openAddProvider(currentModeView),
+    searchOpen: providerSearchOpen,
+    onSearchOpenChange: setProviderSearchOpen,
   };
 
   const renderProviderList = () => {

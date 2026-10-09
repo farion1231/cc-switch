@@ -126,6 +126,7 @@
     "stackDefaultHint": "它是預設供應商：列表裡的第一個模型負責 Claude Code 啟動和背景任務",
     "officialModelsBundled": "官方模型列表暫未取得，暫用 Codex 內建列表，可能缺少帳號專屬模型",
     "officialModelsUnavailable": "聚合的模型暫不可用：讀取不到 Codex 模型列表",
+    "officialModelsOutdated": "本機 Codex 版本過舊，無法取得完整的官方模型列表：請把 Codex（包括命令列）升級到最新版",
     "routeOwnsCatalog": "聚合的模型不會出現在 Codex 中：路由供應商使用自己的模型目錄檔案（model_catalog_json）",
     "adoptCatalog": "改用 CC Switch 的模型目錄",
     "adoptCatalogDone": "已改用 CC Switch 的模型目錄，重新啟動 Codex 後生效",
@@ -157,7 +158,8 @@
     "dragHandle": "拖曳排序",
     "searchPlaceholder": "依名稱/備註/網址搜尋供應商...",
     "searchAriaLabel": "搜尋供應商",
-    "searchScopeHint": "根據名稱、備註和官網連結比對結果。",
+    "searchScopeHint": "根據名稱、備註、官網和請求位址比對結果。",
+    "searchButtonTip": "搜尋供應商（{{shortcut}}）",
     "searchCloseHint": "按 Esc 關閉",
     "searchCloseAriaLabel": "關閉供應商搜尋",
     "noSearchResults": "沒有符合搜尋條件的供應商。",
@@ -811,6 +813,9 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",
     "unifyCodexSessionHistoryDescription": "開啟後，官方訂閱將以共享的 custom 供應商標識執行，官方與第三方會話出現在同一歷史清單中，並可選擇把現有官方會話一併遷入（遷移前自動備份）。關閉開關時可按備份恢復遷入的會話。注意：跨供應商繼續舊會話時，對方後端可能無法解密會話中的 encrypted_content 推理內容，導致繼續失敗",
+    "codexStackClassicSubagents": "聚合模式下子 agent 用經典工具",
+    "codexStackClassicSubagentsDescription": "Codex 聚合模式下，主 agent 和子 agent 用不同供應商的模型時，子 agent 可能讀不到任務：Codex 新版的子 agent 工具會把任務交給主 agent 那家加密，換一家就解不開。開啟後聚合的所有模型改用 Codex 經典的子 agent 工具，任務以明文傳遞；代價是沒有 followup_task、interrupt_agent 等新版功能。只影響聚合模式，改完要重新啟動 Codex 才生效",
+    "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 裡開啟了 [features] multi_agent_v2，它比這個開關優先，開關不會生效",
     "unifyCodexHistoryRestoreCompleted": "已按備份還原官方會話歷史（{{files}} 個會話檔案、{{rows}} 條索引記錄）",
     "unifyCodexHistoryRestoreFailed": "還原官方會話歷史失敗，請重試",
     "unifyCodexHistoryRestoreNothing": "目前 Codex 目錄沒有可恢復的遷移備份",
@@ -823,7 +828,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "顯示專案切換",
-      "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口"
+      "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口",
+      "showProviderSearch": "顯示供應商搜尋",
+      "showProviderSearchDescription": "在供應商頁頂部顯示搜尋按鈕，可依名稱、備註、官網和請求位址查找。關閉後仍可用 ⌘F / Ctrl+F 開啟搜尋"
     },
     "terminal": {
       "title": "首選終端機",
@@ -3146,7 +3153,6 @@
     "checkUpdates": "檢查更新",
     "checkingUpdates": "檢查中...",
     "noUpdates": "所有技能已是最新版本",
-    "updatesFound": "發現 {{count}} 個技能有可用更新",
     "updateAll": "全部更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "已成功更新 {{count}} 個技能",
@@ -4517,7 +4523,8 @@
       "uninstallManyButton": "解除安裝 {{count}} 個",
       "updateAll": "更新 {{count}} 個 Skill？",
       "updateBody": "更新會用倉庫裡的內容取代本機目錄。本機改過的地方只保留在備份裡（{{path}}）。",
-      "updateAllButton": "更新 {{count}} 個"
+      "updateAllButton": "更新 {{count}} 個",
+      "updateListAria": "將要更新的 Skill"
     },
     "toast": {
       "installed": "已安裝 {{name}}，並在 {{apps}} 啟用",
@@ -4606,7 +4613,8 @@
     "headerUpdates": "{{count}} 個可更新",
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "顯示全部 Skill",
-    "updateAllCount": "全部更新（{{count}} 個）"
+    "updateAllCount": "全部更新（{{count}} 個）",
+    "updatingProgress": "正在更新 {{done}}/{{total}}…"
   },
   "newLayoutNotice": {
     "title": "介面改版了",

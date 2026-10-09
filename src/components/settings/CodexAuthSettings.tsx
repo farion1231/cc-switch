@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import type { SettingsFormState } from "@/hooks/useSettings";
@@ -22,6 +22,26 @@ export function CodexAuthSettings({
   const [showEnableConfirm, setShowEnableConfirm] = useState(false);
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
   const [hasUnifyBackup, setHasUnifyBackup] = useState(false);
+  const classicSubagents = settings.codexStackClassicSubagents ?? false;
+  // config.toml 用 [features] multi_agent_v2 强制了新版工具时，开关不生效
+  const [forcesMultiAgentV2, setForcesMultiAgentV2] = useState(false);
+
+  useEffect(() => {
+    if (!classicSubagents) {
+      setForcesMultiAgentV2(false);
+      return;
+    }
+    let cancelled = false;
+    void settingsApi
+      .codexForcesMultiAgentV2()
+      .catch(() => false)
+      .then((forced) => {
+        if (!cancelled) setForcesMultiAgentV2(forced);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [classicSubagents]);
 
   const handleUnifyHistoryChange = (checked: boolean) => {
     if (checked) {
@@ -87,7 +107,7 @@ export function CodexAuthSettings({
     }
   };
 
-  // 设置 → 应用配置 → Codex 卡片里的两行
+  // 设置 → 应用配置 → Codex 卡片里的三行
   return (
     <>
       <SettingsSwitchRow
@@ -110,6 +130,25 @@ export function CodexAuthSettings({
         }}
         checked={settings.unifyCodexSessionHistory ?? false}
         onCheckedChange={handleUnifyHistoryChange}
+      />
+
+      <SettingsSwitchRow
+        label={t("settings.codexStackClassicSubagents")}
+        help={{
+          title: t("settings.codexStackClassicSubagents"),
+          body: t("settings.codexStackClassicSubagentsDescription"),
+        }}
+        description={
+          forcesMultiAgentV2 ? (
+            <span className="text-warning-text">
+              {t("settings.codexStackClassicSubagentsForcedV2")}
+            </span>
+          ) : undefined
+        }
+        checked={classicSubagents}
+        onCheckedChange={(value) =>
+          onChange({ codexStackClassicSubagents: value })
+        }
       />
 
       <ConfirmDialog

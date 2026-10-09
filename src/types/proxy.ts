@@ -84,12 +84,14 @@ export interface ProxyStackMember {
 /**
  * Codex Stack 模型客户端看不到或看不全：`routeOwnsCatalog` 路由供应商使用自己的模型目录文件，
  * Stack 模型不发布；官方做路由时官方模型列表暂未取到：`officialModelsBundled` 暂用 Codex
- * 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` Stack 模型暂不可用。
+ * 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` Stack 模型暂不可用；
+ * `officialModelsOutdated` 本机 Codex 太旧，拉到的官方列表里没有能选的模型。
  */
 export type ProxyStackNotice =
   | "routeOwnsCatalog"
   | "officialModelsBundled"
-  | "officialModelsUnavailable";
+  | "officialModelsUnavailable"
+  | "officialModelsOutdated";
 
 /**
  * 还在用旧模型列表的 Codex 客户端（它们只在启动时读模型目录）：`daemon` 是 `codex` 命令行连的

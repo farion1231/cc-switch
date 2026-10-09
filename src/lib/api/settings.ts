@@ -44,6 +44,11 @@ export const settingsApi = {
     return await invoke("has_codex_unify_history_backup");
   },
 
+  /** Codex 的 config.toml 是否用 [features] multi_agent_v2 强制了新版子 agent 工具 */
+  async codexForcesMultiAgentV2(): Promise<boolean> {
+    return await invoke("codex_forces_multi_agent_v2");
+  },
+
   /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
   async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
     return await invoke("restore_codex_unified_history");
