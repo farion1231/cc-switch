@@ -9,12 +9,23 @@ import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { Loader2, TestTube2, Search, Eye, EyeOff, X } from "lucide-react";
+import { ToggleRow } from "@/components/ui/toggle-row";
+import {
+  Loader2,
+  TestTube2,
+  Search,
+  Eye,
+  EyeOff,
+  X,
+  Network,
+} from "lucide-react";
 import {
   useGlobalProxyUrl,
   useSetGlobalProxyUrl,
   useTestProxy,
   useScanProxies,
+  useFollowSystemProxy,
+  useSetFollowSystemProxy,
   type DetectedProxy,
 } from "@/hooks/useGlobalProxy";
 
@@ -76,6 +87,9 @@ export function GlobalProxySettings() {
   const setMutation = useSetGlobalProxyUrl();
   const testMutation = useTestProxy();
   const scanMutation = useScanProxies();
+  const { data: followSystemProxy } = useFollowSystemProxy();
+  const followMutation = useSetFollowSystemProxy();
+  const hasSavedProxy = Boolean(savedUrl?.trim());
 
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
@@ -150,6 +164,36 @@ export function GlobalProxySettings() {
 
   return (
     <div className="space-y-3">
+      <ToggleRow
+        icon={<Network className="h-4 w-4 text-fg-2" />}
+        title={t("settings.globalProxy.followSystemProxy")}
+        description={t(
+          hasSavedProxy
+            ? "settings.globalProxy.explicitProxyHint"
+            : "settings.globalProxy.followSystemProxyDescription",
+        )}
+        checked={followSystemProxy ?? true}
+        onCheckedChange={(checked) => {
+          void followMutation.mutateAsync(checked).catch(() => {});
+        }}
+        disabled={
+          hasSavedProxy ||
+          followSystemProxy === undefined ||
+          followMutation.isPending ||
+          setMutation.isPending
+        }
+      />
+      {(hasSavedProxy || followSystemProxy !== undefined) && (
+        <p role="status" className="text-sm font-medium text-fg-1">
+          {t(
+            hasSavedProxy
+              ? "settings.globalProxy.explicitStatus"
+              : followSystemProxy
+                ? "settings.globalProxy.followStatus"
+                : "settings.globalProxy.directStatus",
+          )}
+        </p>
+      )}
       {/* 描述 */}
       <p className="text-sm text-fg-2">{t("settings.globalProxy.hint")}</p>
 

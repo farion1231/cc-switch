@@ -10,11 +10,14 @@ use std::net::IpAddr;
 use std::sync::RwLock;
 use std::time::Duration;
 
-/// 全局 HTTP 客户端实例
-static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
+struct ClientState {
+    client: Client,
+    proxy_url: Option<String>,
+    follow_system_proxy: bool,
+}
 
-/// 当前代理 URL（用于日志和状态查询）
-static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
+// 客户端与策略在同一把锁内更新，避免并发切换后状态与实际请求路径不一致。
+static GLOBAL_CLIENT: RwLock<Option<ClientState>> = RwLock::new(None);
 
 /// CC Switch 代理服务器当前监听的端口
 static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
@@ -43,177 +46,122 @@ fn get_proxy_port() -> u16 {
         .unwrap_or(15721) // 默认端口作为回退
 }
 
-/// 初始化全局 HTTP 客户端
-///
-/// 应在应用启动时调用一次。
-///
-/// # Arguments
-/// * `proxy_url` - 代理 URL，如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080`
-///   传入 None 或空字符串表示直连
+/// 初始化全局客户端，默认保留跟随系统代理的历史行为。
+#[cfg(test)]
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
+    apply_proxy(proxy_url)
+}
+
+/// 启动时同时应用持久化的代理地址和跟随策略。
+pub fn init_with_policy(proxy_url: Option<&str>, follow: bool) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let client = build_client(effective_url)?;
-
-    // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
-    if GLOBAL_CLIENT.set(RwLock::new(client.clone())).is_err() {
-        log::warn!(
-            "[GlobalProxy] [GP-003] Already initialized, updating instead: {}",
-            effective_url
-                .map(mask_url)
-                .unwrap_or_else(|| "direct connection".to_string())
-        );
-        // 已初始化，改用 apply_proxy 更新
-        return apply_proxy(proxy_url);
-    }
-
-    // 初始化代理 URL 记录
-    let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
-
+    let client = build_client(effective_url, follow)?;
+    let mut state = GLOBAL_CLIENT.write().map_err(|e| e.to_string())?;
+    *state = Some(ClientState {
+        client,
+        proxy_url: effective_url.map(str::to_string),
+        follow_system_proxy: follow,
+    });
     log::info!(
         "[GlobalProxy] Initialized: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
+        proxy_policy_label(effective_url, follow)
     );
-
     Ok(())
 }
 
-/// 验证代理配置（不应用）
-///
-/// 只验证代理 URL 是否有效，不实际更新全局客户端。
-/// 用于在持久化之前验证配置的有效性。
-///
-/// # Arguments
-/// * `proxy_url` - 代理 URL，None 或空字符串表示直连
-///
-/// # Returns
-/// 验证成功返回 Ok(())，失败返回错误信息
 pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    // 只调用 build_client 来验证，但不应用
-    build_client(effective_url)?;
+    build_client(effective_url, proxy_policy().1)?;
     Ok(())
 }
 
-/// 应用代理配置（假设已验证）
-///
-/// 直接应用代理配置到全局客户端，不做额外验证。
-/// 应在 validate_proxy 成功后调用。
-///
-/// # Arguments
-/// * `proxy_url` - 代理 URL，None 或空字符串表示直连
+/// 应用显式代理，保留当前跟随策略。新客户端构建失败时不改变运行态。
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
-
-    // 更新客户端
-    if let Some(lock) = GLOBAL_CLIENT.get() {
-        let mut client = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
-            "Failed to update proxy: lock poisoned".to_string()
-        })?;
-        *client = new_client;
-    } else {
-        // 如果还没初始化，则初始化
-        return init(proxy_url);
-    }
-
-    // 更新代理 URL 记录
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        let mut url = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
-            "Failed to update proxy URL record: lock poisoned".to_string()
-        })?;
-        *url = effective_url.map(|s| s.to_string());
-    }
-
+    let mut state = GLOBAL_CLIENT.write().map_err(|e| e.to_string())?;
+    let follow = state
+        .as_ref()
+        .map(|s| s.follow_system_proxy)
+        .unwrap_or(true);
+    let client = build_client(effective_url, follow)?;
+    *state = Some(ClientState {
+        client,
+        proxy_url: effective_url.map(str::to_string),
+        follow_system_proxy: follow,
+    });
     log::info!(
         "[GlobalProxy] Applied: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
+        proxy_policy_label(effective_url, follow)
     );
-
     Ok(())
 }
 
-/// 更新代理配置（热更新）
-///
-/// 可在运行时调用以更改代理设置，无需重启应用。
-/// 注意：此函数同时验证和应用，如果需要先验证后持久化再应用，
-/// 请使用 validate_proxy + apply_proxy 组合。
-///
-/// # Arguments
-/// * `proxy_url` - 新的代理 URL，None 或空字符串表示直连
+/// 更新跟随策略，并立即替换缓存客户端；显式代理始终优先。
+pub fn set_follow_system_proxy(follow: bool) -> Result<(), String> {
+    let mut state = GLOBAL_CLIENT.write().map_err(|e| e.to_string())?;
+    let proxy_url = state.as_ref().and_then(|s| s.proxy_url.clone());
+    let client = build_client(proxy_url.as_deref(), follow)?;
+    *state = Some(ClientState {
+        client,
+        proxy_url,
+        follow_system_proxy: follow,
+    });
+    log::info!("[GlobalProxy] Follow system proxy: {follow}");
+    Ok(())
+}
+
 #[allow(dead_code)]
 pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
-    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
-
-    // 更新客户端
-    if let Some(lock) = GLOBAL_CLIENT.get() {
-        let mut client = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
-            "Failed to update proxy: lock poisoned".to_string()
-        })?;
-        *client = new_client;
-    } else {
-        // 如果还没初始化，则初始化
-        return init(proxy_url);
-    }
-
-    // 更新代理 URL 记录
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        let mut url = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
-            "Failed to update proxy URL record: lock poisoned".to_string()
-        })?;
-        *url = effective_url.map(|s| s.to_string());
-    }
-
-    log::info!(
-        "[GlobalProxy] Updated: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
-    );
-
-    Ok(())
+    apply_proxy(proxy_url)
 }
 
-/// 获取全局 HTTP 客户端
-///
-/// 返回配置了代理的客户端（如果已配置代理），否则返回跟随系统代理的客户端。
+/// 获取当前策略构建的客户端。
 pub fn get() -> Client {
     GLOBAL_CLIENT
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .map(|c| c.clone())
+        .read()
+        .ok()
+        .and_then(|state| state.as_ref().map(|s| s.client.clone()))
         .unwrap_or_else(|| {
             log::warn!("[GlobalProxy] [GP-004] Client not initialized, using fallback");
-            build_client(None).unwrap_or_default()
+            build_client(None, true).unwrap_or_default()
         })
 }
 
-/// 获取当前代理 URL
-///
-/// 返回当前配置的代理 URL，None 表示直连。
-pub fn get_current_proxy_url() -> Option<String> {
-    CURRENT_PROXY_URL
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .and_then(|url| url.clone())
+/// 一次读取显式代理与跟随策略；None 不再被误报为必然直连。
+pub fn proxy_policy() -> (Option<String>, bool) {
+    GLOBAL_CLIENT
+        .read()
+        .ok()
+        .and_then(|state| {
+            state
+                .as_ref()
+                .map(|s| (s.proxy_url.clone(), s.follow_system_proxy))
+        })
+        .unwrap_or((None, true))
 }
 
-/// 检查是否正在使用代理
+pub fn get_current_proxy_url() -> Option<String> {
+    proxy_policy().0
+}
+
 #[allow(dead_code)]
 pub fn is_proxy_enabled() -> bool {
     get_current_proxy_url().is_some()
 }
 
+fn proxy_policy_label(proxy_url: Option<&str>, follow: bool) -> String {
+    proxy_url.map(mask_url).unwrap_or_else(|| {
+        if follow {
+            "follow system proxy"
+        } else {
+            "direct connection"
+        }
+        .to_string()
+    })
+}
+
 /// 构建 HTTP 客户端
-fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
+fn build_client(proxy_url: Option<&str>, follow_system_proxy: bool) -> Result<Client, String> {
     let mut builder = Client::builder()
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(30))
@@ -226,7 +174,7 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
         .no_deflate()
         .no_zstd();
 
-    // 有代理地址则使用代理，否则跟随系统代理
+    // 显式代理优先；关闭跟随时严格直连，不读取环境变量或系统代理。
     if let Some(url) = proxy_url {
         // 先验证 URL 格式和 scheme
         let parsed = url::Url::parse(url)
@@ -245,6 +193,8 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
             .map_err(|e| format!("Invalid proxy URL '{}': {}", mask_url(url), e))?;
         builder = builder.proxy(proxy);
         log::debug!("[GlobalProxy] Proxy configured: {}", mask_url(url));
+    } else if !follow_system_proxy {
+        builder = builder.no_proxy();
     } else {
         // 未设置全局代理时，让 reqwest 自动检测系统代理（环境变量）
         // 若系统代理指向本机，禁用系统代理避免自环
@@ -383,19 +333,19 @@ mod tests {
 
     #[test]
     fn test_build_client_direct() {
-        let result = build_client(None);
+        let result = build_client(None, true);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_build_client_with_http_proxy() {
-        let result = build_client(Some("http://127.0.0.1:7890"));
+        let result = build_client(Some("http://127.0.0.1:7890"), true);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_build_client_with_socks5_proxy() {
-        let result = build_client(Some("socks5://127.0.0.1:1080"));
+        let result = build_client(Some("socks5://127.0.0.1:1080"), true);
         assert!(result.is_ok());
     }
 
@@ -403,7 +353,7 @@ mod tests {
     fn test_build_client_invalid_url() {
         // reqwest::Proxy::all 对某些无效 URL 不会立即报错
         // 使用明确无效的 scheme 来触发错误
-        let result = build_client(Some("invalid-scheme://127.0.0.1:7890"));
+        let result = build_client(Some("invalid-scheme://127.0.0.1:7890"), true);
         assert!(result.is_err(), "Should reject invalid proxy scheme");
     }
 
