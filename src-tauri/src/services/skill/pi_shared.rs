@@ -7,10 +7,10 @@
 //! （`scripts/glob-oracle/gen.mjs` 用与 pi 相同版本的 minimatch 生成）。
 
 use regex::Regex;
+use std::path::Path;
 
 /// minimatch@10（默认选项）glob 子集匹配。pattern 与 target 均为 posix 路径。
 /// 不支持花括号展开与 extglob（调用方先经 [`is_supported_pattern`] 过滤）。
-#[expect(dead_code)] // S4 消费后移除
 pub(crate) fn glob_match(pattern: &str, target: &str) -> bool {
     // minimatch 默认 nocomment：'#' 开头的 pattern 匹配不到任何东西
     if pattern.starts_with('#') {
@@ -36,6 +36,140 @@ pub(crate) fn is_supported_pattern(pattern: &str) -> bool {
         .chars()
         .zip(pattern.chars().skip(1))
         .all(|(a, b)| !(matches!(a, '+' | '?' | '*' | '@' | '!') && b == '('))
+}
+
+/// settings `skills` 数组的模式集合（前缀已剥离，均 posix 化）。
+/// 语义依据 pi `applyPatterns` / `isEnabledByOverrides`。
+#[derive(Default)]
+pub(crate) struct PiPatternSet {
+    /// 无前缀 glob 条目：白名单，仅作用于扫描根
+    pub includes: Vec<String>,
+    /// `!pattern`：glob 排除
+    pub excludes: Vec<String>,
+    /// `+path`：精确强制启用
+    pub force_includes: Vec<String>,
+    /// `-path`：精确强制排除（赢过 +）
+    pub force_excludes: Vec<String>,
+}
+
+/// §1.2.B：自动发现目录（`~/.pi/agent/skills`、`~/.agents/skills`）的启用判定
+/// （pi `isEnabledByOverrides`）：
+/// 默认启用 → `!glob` 命中→禁用 → `+exact` 命中→启用 → `-exact` 命中→禁用。
+/// 无前缀条目（include 白名单）不参与本判定。
+#[expect(dead_code)] // S5 消费后移除
+pub(crate) fn is_autodiscovered_enabled(md_path: &Path, base_dir: &Path, p: &PiPatternSet) -> bool {
+    let mut enabled = true;
+    if !p.excludes.is_empty() && matches_any_pattern(md_path, base_dir, &p.excludes) {
+        enabled = false;
+    }
+    if !p.force_includes.is_empty() && matches_any_exact(md_path, base_dir, &p.force_includes) {
+        enabled = true;
+    }
+    if !p.force_excludes.is_empty() && matches_any_exact(md_path, base_dir, &p.force_excludes) {
+        enabled = false;
+    }
+    enabled
+}
+
+/// §1.2.A：settings 扫描根的启用判定（pi `applyPatterns`，作用于该根收集的全部文件）：
+/// include 白名单（存在时仅保留匹配）→ `!glob` 排除 → `+exact` 从全量加回 → `-exact` 终局排除。
+#[expect(dead_code)] // S5 消费后移除
+pub(crate) fn is_scanned_enabled(md_path: &Path, base_dir: &Path, p: &PiPatternSet) -> bool {
+    let mut result = p.includes.is_empty() || matches_any_pattern(md_path, base_dir, &p.includes);
+    if result && !p.excludes.is_empty() && matches_any_pattern(md_path, base_dir, &p.excludes) {
+        result = false;
+    }
+    if !result
+        && !p.force_includes.is_empty()
+        && matches_any_exact(md_path, base_dir, &p.force_includes)
+    {
+        result = true;
+    }
+    if result
+        && !p.force_excludes.is_empty()
+        && matches_any_exact(md_path, base_dir, &p.force_excludes)
+    {
+        result = false;
+    }
+    result
+}
+
+/// pi `matchesAnyPattern`：glob 匹配，SKILL.md 文件时 6 种目标逐一尝试：
+/// rel(P,B)、basename(P)、P posix、rel(D,B)、basename(D)（即技能目录名）、D posix。
+fn matches_any_pattern(md_path: &Path, base_dir: &Path, patterns: &[String]) -> bool {
+    let is_skill_file = md_path.file_name().is_some_and(|n| n == "SKILL.md");
+    let path_posix = to_posix(md_path);
+    let rel = relative_posix(md_path, base_dir);
+    let name = md_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let parent_rel = md_path
+        .parent()
+        .map(|d| relative_posix(d, base_dir))
+        .unwrap_or_default();
+    let parent_name = md_path
+        .parent()
+        .and_then(|d| d.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let parent_posix = md_path.parent().map(to_posix).unwrap_or_default();
+    patterns.iter().any(|pattern| {
+        let pat = to_posix_str(pattern);
+        glob_match(&pat, &rel)
+            || glob_match(&pat, &name)
+            || glob_match(&pat, &path_posix)
+            || (is_skill_file
+                && (glob_match(&pat, &parent_rel)
+                    || glob_match(&pat, &parent_name)
+                    || glob_match(&pat, &parent_posix)))
+    })
+}
+
+/// pi `matchesAnyExactPattern`：精确匹配（去开头 `./` 后全等），4 种目标：
+/// rel(P,B)、P posix、rel(D,B)、D posix（不含 basename 与父目录名）。
+fn matches_any_exact(md_path: &Path, base_dir: &Path, patterns: &[String]) -> bool {
+    let is_skill_file = md_path.file_name().is_some_and(|n| n == "SKILL.md");
+    let path_posix = to_posix(md_path);
+    let rel = relative_posix(md_path, base_dir);
+    let parent_rel = md_path
+        .parent()
+        .map(|d| relative_posix(d, base_dir))
+        .unwrap_or_default();
+    let parent_posix = md_path.parent().map(to_posix).unwrap_or_default();
+    patterns.iter().any(|pattern| {
+        let normalized = pattern.strip_prefix("./").unwrap_or(pattern);
+        normalized == rel
+            || normalized == path_posix
+            || (is_skill_file && (normalized == parent_rel || normalized == parent_posix))
+    })
+}
+
+/// 路径 posix 化（对齐 pi 的 toPosixPath，Windows 兼容）
+fn to_posix(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn to_posix_str(s: &str) -> String {
+    s.replace('\\', "/")
+}
+
+/// 相对路径（posix）：base_dir 不含 path 时向上攀升（对齐 node path.relative）
+fn relative_posix(path: &Path, base_dir: &Path) -> String {
+    let p: Vec<_> = path.components().collect();
+    let b: Vec<_> = base_dir.components().collect();
+    let mut common = 0;
+    while common < p.len() && common < b.len() && p[common] == b[common] {
+        common += 1;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for _ in common..b.len() {
+        parts.push("..".to_string());
+    }
+    for c in &p[common..] {
+        parts.push(c.as_os_str().to_string_lossy().into_owned());
+    }
+    parts.join("/")
 }
 
 /// minimatch 段匹配：pattern 按段编译，file 按段对齐
@@ -428,5 +562,143 @@ mod tests {
         for pattern in ["*", "**/x", "[a-z]?.md", "a\\b", "a+b", "plain/path"] {
             assert!(is_supported_pattern(pattern), "应判为支持: {pattern:?}");
         }
+    }
+
+    // ===== S3：模式引擎两类语义（依 pi applyPatterns / isEnabledByOverrides）=====
+
+    use super::{is_autodiscovered_enabled, is_scanned_enabled, PiPatternSet};
+    use std::path::PathBuf;
+
+    fn md(base: &str, skill: &str) -> PathBuf {
+        PathBuf::from(base).join(skill).join("SKILL.md")
+    }
+
+    fn patterns(
+        includes: &[&str],
+        excludes: &[&str],
+        force_includes: &[&str],
+        force_excludes: &[&str],
+    ) -> PiPatternSet {
+        PiPatternSet {
+            includes: includes.iter().map(|s| s.to_string()).collect(),
+            excludes: excludes.iter().map(|s| s.to_string()).collect(),
+            force_includes: force_includes.iter().map(|s| s.to_string()).collect(),
+            force_excludes: force_excludes.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    const AGENT: &str = "/home/u/.pi/agent";
+    const AGENTS: &str = "/home/u/.agents";
+
+    #[test]
+    fn include_whitelist_only_affects_scanned_roots() {
+        let p = patterns(&["pdf*"], &[], &[], &[]);
+        // 扫描根：非白名单命中 → 禁用
+        assert!(!is_scanned_enabled(
+            &md("/home/u/.claude/skills", "doc"),
+            Path::new(AGENT),
+            &p
+        ));
+        assert!(is_scanned_enabled(
+            &md("/home/u/.claude/skills", "pdf-tools"),
+            Path::new(AGENT),
+            &p
+        ));
+        // 自动发现目录：include 白名单不参与 → 默认启用
+        assert!(is_autodiscovered_enabled(
+            &md("/home/u/.pi/agent/skills", "doc"),
+            Path::new(AGENT),
+            &p
+        ));
+    }
+
+    #[test]
+    fn force_exclude_wins_over_force_include() {
+        // - 赢 +：同时命中时禁用
+        let p = patterns(&[], &[], &["skills/pdf"], &["skills/pdf"]);
+        assert!(!is_autodiscovered_enabled(
+            &md("/home/u/.pi/agent/skills", "pdf"),
+            Path::new(AGENT),
+            &p
+        ));
+        // 仅 +：从 ！ 排除中加回
+        let p = patterns(&[], &["pdf"], &["skills/pdf"], &[]);
+        assert!(is_autodiscovered_enabled(
+            &md("/home/u/.pi/agent/skills", "pdf"),
+            Path::new(AGENT),
+            &p
+        ));
+        // 仅 ！：按父目录名 glob 命中 → 禁用
+        let p = patterns(&[], &["pdf"], &[], &[]);
+        assert!(!is_autodiscovered_enabled(
+            &md("/home/u/.pi/agent/skills", "pdf"),
+            Path::new(AGENT),
+            &p
+        ));
+    }
+
+    #[test]
+    fn exact_match_ignores_basename_and_parent_name() {
+        // +pdf（父目录名）不是精确匹配目标 → 无法加回
+        let p = patterns(&[], &["pdf"], &["pdf"], &[]);
+        assert!(!is_autodiscovered_enabled(
+            &md("/home/u/.pi/agent/skills", "pdf"),
+            Path::new(AGENT),
+            &p
+        ));
+        // +skills/pdf（父目录相对路径）是精确目标 → 加回
+        let p = patterns(&[], &["pdf"], &["skills/pdf"], &[]);
+        assert!(is_autodiscovered_enabled(
+            &md("/home/u/.pi/agent/skills", "pdf"),
+            Path::new(AGENT),
+            &p
+        ));
+    }
+
+    #[test]
+    fn base_dir_semantics() {
+        // B=agent 与 B=~/.agents 的相对结构同为 skills/<dir>，
+        // 相对路径模式（!skills/pdf）在两处均命中（父目录相对路径目标）
+        let p = patterns(&[], &["skills/pdf"], &[], &[]);
+        assert!(!is_autodiscovered_enabled(
+            &md("/home/u/.pi/agent/skills", "pdf"),
+            Path::new(AGENT),
+            &p
+        ));
+        assert!(!is_autodiscovered_enabled(
+            &md("/home/u/.agents/skills", "pdf"),
+            Path::new(AGENTS),
+            &p
+        ));
+        // 绝对路径模式仅命中对应来源（全路径目标不同）
+        let p = patterns(&[], &["/home/u/.pi/agent/skills/pdf/SKILL.md"], &[], &[]);
+        assert!(!is_autodiscovered_enabled(
+            &md("/home/u/.pi/agent/skills", "pdf"),
+            Path::new(AGENT),
+            &p
+        ));
+        assert!(is_autodiscovered_enabled(
+            &md("/home/u/.agents/skills", "pdf"),
+            Path::new(AGENTS),
+            &p
+        ));
+        // 扫描根的 B=agentDir：非 agent 目录下的技能相对路径会向上攀升
+        let p = patterns(&[], &["../../.claude/skills/pdf"], &[], &[]);
+        assert!(!is_scanned_enabled(
+            &md("/home/u/.claude/skills", "pdf"),
+            Path::new(AGENT),
+            &p
+        ));
+    }
+
+    #[test]
+    fn scanned_force_include_adds_back_beyond_whitelist() {
+        // + 从全量加回：即使 include 白名单未命中
+        let p = patterns(&["pdf*"], &[], &["skills/doc"], &[]);
+        assert!(is_scanned_enabled(
+            &md("/home/u/.pi/agent/skills", "doc"),
+            Path::new(AGENT),
+            &p
+        ));
     }
 }
