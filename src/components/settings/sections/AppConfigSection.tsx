@@ -11,6 +11,7 @@ import {
   type DirectoryAppId,
 } from "@/components/settings/DirectorySettings";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
+import { ClaudeHistorySettings } from "@/components/settings/ClaudeHistorySettings";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import {
   SettingsBlock,
@@ -170,6 +171,9 @@ export function AppConfigSection({
                   onCheckedChange={(value) =>
                     void onAutoSave({ skipClaudeOnboarding: value })
                   }
+                />
+                <ClaudeHistorySettings
+                  key={savedSettings?.claudeConfigDir ?? "default"}
                 />
               </>
             )}

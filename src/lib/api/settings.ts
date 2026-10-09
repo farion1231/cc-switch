@@ -14,6 +14,11 @@ export interface ConfigTransferResult {
   backupId?: string;
 }
 
+export interface ClaudeHistoryRetention {
+  configPath: string;
+  days: number | null;
+}
+
 export interface WebDavTestResult {
   success: boolean;
   message?: string;
@@ -114,6 +119,17 @@ export const settingsApi = {
 
   async clearClaudeOnboardingSkip(): Promise<boolean> {
     return await invoke("clear_claude_onboarding_skip");
+  },
+
+  async getClaudeHistoryRetention(): Promise<ClaudeHistoryRetention> {
+    return await invoke("get_claude_history_retention");
+  },
+
+  async setClaudeHistoryRetention(
+    expected: ClaudeHistoryRetention,
+    days: number | null,
+  ): Promise<ClaudeHistoryRetention> {
+    return await invoke("set_claude_history_retention", { expected, days });
   },
 
   async saveFileDialog(defaultName: string): Promise<string | null> {

@@ -1452,6 +1452,8 @@ pub fn run() {
             commands::is_claude_plugin_applied,
             commands::apply_claude_onboarding_skip,
             commands::clear_claude_onboarding_skip,
+            commands::get_claude_history_retention,
+            commands::set_claude_history_retention,
             // Claude MCP management
             commands::get_claude_mcp_status,
             commands::read_claude_mcp_config,

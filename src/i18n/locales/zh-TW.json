@@ -805,6 +805,14 @@
     "enableClaudePluginIntegration": "套用至 Claude Code 外掛程式",
     "enableClaudePluginIntegrationDescription": "開啟後 VS Code Claude Code 外掛程式的供應商將隨本軟體切換",
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
+    "claudeHistoryRetention": {
+      "label": "Claude Code 歷史保留天數",
+      "help": "Claude Code 預設保留對話紀錄及其他應用程式資料 30 天。長期保留可填入較大的值，例如 99999。此處修改下方設定檔中的 cleanupPeriodDays，專案或受管理設定可能覆蓋此值，不取代備份。",
+      "days": "天",
+      "reset": "恢復預設（30 天）",
+      "invalid": "請輸入正整數天數。",
+      "error": "讀取或儲存保留設定失敗。設定可能已被修改，請重新讀取後再試。"
+    },
     "skipClaudeOnboardingDescription": "Claude Code 第一次啟動時會先走一遍引導流程，要求選擇主題並登入 Anthropic 帳號。如果你用的是第三方供應商，不需要登入官方帳號，開啟後就能略過這一步直接使用。原理是在 ~/.claude.json 中寫入 hasCompletedOnboarding: true；關閉時刪除該欄位，下次啟動會重新出現引導。",
     "codexAuth": "Codex 應用增強",
     "preserveCodexOfficialAuthOnSwitch": "非接管切換時保留官方登入",

@@ -46,3 +46,19 @@ pub async fn apply_claude_onboarding_skip() -> Result<bool, String> {
 pub async fn clear_claude_onboarding_skip() -> Result<bool, String> {
     crate::claude_mcp::clear_has_completed_onboarding().map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn get_claude_history_retention(
+) -> Result<crate::services::claude_history::ClaudeHistoryRetention, String> {
+    crate::services::claude_history::get().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_claude_history_retention(
+    state: tauri::State<'_, crate::store::AppState>,
+    expected: crate::services::claude_history::ClaudeHistoryRetention,
+    days: Option<u64>,
+) -> Result<crate::services::claude_history::ClaudeHistoryRetention, String> {
+    crate::services::claude_history::set(state.db.as_ref(), expected, days)
+        .map_err(|e| e.to_string())
+}
