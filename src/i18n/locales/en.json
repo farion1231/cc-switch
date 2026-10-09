@@ -3570,15 +3570,16 @@
       "ariaLabel": "{{appLabel}} Aggregation mode",
       "failoverUnavailable": "{{appLabel}} is in Aggregation mode, which has no failover. The queue and settings are kept and apply again in routing mode",
       "codexStale": {
+        "authTitle": "Codex may still cache the previous account; restart its background server to load the new login",
         "title": "Codex is still using an old model list, so aggregated models won't show",
         "daemon": "CLI: reopening codex isn't enough; its background daemon needs a restart.",
         "others": "Desktop app: quit it completely and reopen it (⌘Q on macOS; closing the window isn't enough). Editor extensions: reopen the editor window.",
         "restart": "Restart Codex daemon",
         "confirmTitle": "Restart the Codex daemon?",
-        "confirmMessage": "Every codex session in your terminals shares this daemon, so running tasks will be interrupted. Reopen codex afterwards to see the aggregated models.",
+        "confirmMessage": "Every codex session in your terminals shares this daemon, so running tasks will be interrupted. Reopen codex afterwards to load the current account and model list.",
         "confirm": "Restart",
-        "restarted": "Codex daemon restarted. Reopen codex to see the aggregated models",
-        "notRunning": "The Codex daemon isn't running. codex will load the new model list the next time it starts",
+        "restarted": "Codex daemon restarted. Reopen codex to load the current account and model list",
+        "notRunning": "The Codex daemon isn't running. It will load the current login and model list the next time it starts",
         "failed": "Failed to restart the Codex daemon: {{error}}"
       }
     },

@@ -46,6 +46,16 @@ describe("CodexStaleClientsNotice", () => {
     vi.clearAllMocks();
   });
 
+  it("explains a potentially cached account without claiming models are missing", () => {
+    renderNotice({ daemon: true, others: false, auth: true });
+    expect(
+      screen.getByText("proxy.stackMode.codexStale.authTitle"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("proxy.stackMode.codexStale.title"),
+    ).not.toBeInTheDocument();
+  });
+
   it("restarts the daemon only after the user confirms", async () => {
     let restarts = 0;
     server.use(

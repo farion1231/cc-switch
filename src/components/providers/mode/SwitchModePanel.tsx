@@ -130,6 +130,9 @@ export function SwitchModePanel({
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
   const [confirmFailover, setConfirmFailover] = useState(false);
   const [staleDismissed, setStaleDismissed] = useState(false);
+  useEffect(() => {
+    setStaleDismissed(false);
+  }, [app, active, directId, routeId, stack?.staleClients?.auth]);
 
   // 供应商还没加载完时先等着，到了再弹
   useEffect(() => {
@@ -447,10 +450,9 @@ export function SwitchModePanel({
     );
   }
   if (
-    view === "stack" &&
-    active === "stack" &&
     app === "codex" &&
     stack?.staleClients &&
+    (stack.staleClients.auth || (view === "stack" && active === "stack")) &&
     (stack.staleClients.daemon || stack.staleClients.others) &&
     !staleDismissed
   ) {
