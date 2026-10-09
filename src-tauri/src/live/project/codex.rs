@@ -768,8 +768,11 @@ impl CodexConfigPatch {
         }
 
         // 不是这次选路的表：旧版按别的 id 写的（含旧版代理官方路由表）、残留的代理
-        // 占位表，以及统一会话历史关着时上一次选路留下的表（里面可能有真实 Key）。
-        // 被 profile 引用的不动；custom 另算，没人选它时改成休眠形态而不是删。
+        // 占位表，以及能证明是 CC Switch 写过的表（`retired`：id 和地址都对得上某个
+        // 供应商行，或编辑前的那张路由表）。被 profile 引用的不动。
+        // 只凭「带了 experimental_bearer_token」不能删：用户自己维护、没导入 CC Switch
+        // 的表也有这个字段，切换时整张删掉会丢配置。
+        // custom 另算，没人选它时改成休眠形态而不是删。
         let selected = self.route.selector().unwrap_or("");
         let doomed: Vec<String> = providers
             .iter()
@@ -779,10 +782,7 @@ impl CodexConfigPatch {
                     && !referenced.iter().any(|name| name == id)
                     && (*id == OFFICIAL_PROXY_ROUTE_ID
                         || holds_placeholder(item)
-                        || self.is_retired(id, item)
-                        || item
-                            .as_table_like()
-                            .is_some_and(|table| table.get("experimental_bearer_token").is_some()))
+                        || self.is_retired(id, item))
             })
             .map(|(id, _)| id.to_string())
             .collect();
@@ -824,19 +824,23 @@ impl CodexConfigPatch {
                 let id = id.as_deref().unwrap_or(ROUTE_ID);
                 put_table(providers, id, table.clone(), container_inline);
                 // 选路不在 custom 上时，之前统一会话历史留下的 custom 表不能留着真实
-                // Key。代理契约里它是休眠表（切回官方路由时还要在），直连下没人用它，
-                // 只把 Key 去掉。
-                if id != ROUTE_ID {
-                    if self.dormant_base_url.is_empty() {
-                        if let Some(table) = providers
-                            .get_mut(ROUTE_ID)
-                            .and_then(Item::as_table_like_mut)
-                        {
-                            table.remove("experimental_bearer_token");
-                        }
-                    } else if providers.contains_key(ROUTE_ID) {
-                        let dormant = proxy_route_table(ROUTE_ID, &self.dormant_base_url, false);
-                        put_table(providers, ROUTE_ID, dormant, container_inline);
+                // Key，也不能留 requires_openai_auth：第三方地址配上它又没有自己的凭据，
+                // 之后经 profile 或手动选中 custom 会回退把官方登录发给第三方。
+                // 代理契约里改成指向本地代理的休眠表（切回官方路由时还要在）；直连下没人
+                // 用它，占位 Key 也没有意义，只摘掉 Key 和官方认证回退。
+                if id != ROUTE_ID
+                    && !self.dormant_base_url.is_empty()
+                    && providers.contains_key(ROUTE_ID)
+                {
+                    let dormant = proxy_route_table(ROUTE_ID, &self.dormant_base_url, false);
+                    put_table(providers, ROUTE_ID, dormant, container_inline);
+                } else if id != ROUTE_ID {
+                    if let Some(table) = providers
+                        .get_mut(ROUTE_ID)
+                        .and_then(Item::as_table_like_mut)
+                    {
+                        table.remove("experimental_bearer_token");
+                        table.remove("requires_openai_auth");
                     }
                 }
             }

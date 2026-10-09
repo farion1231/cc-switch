@@ -3180,12 +3180,24 @@ command = "fs-server"
         let route = &doc["model_providers"]["b"];
         assert_eq!(route["base_url"].as_str(), Some("https://b.example/v1"));
         assert_eq!(route["experimental_bearer_token"].as_str(), Some("sk-b"));
-        assert!(!on_b.contains("sk-a"), "A's key is gone: {on_b}");
         // A 带进来的独有字段（值没被改过）删掉；嵌在 [agents] 里的模型名只删那一个键。
         assert!(doc.get("model_context_window").is_none(), "{on_b}");
         assert!(doc["agents"].get("default_subagent_model").is_none());
         assert_eq!(doc["agents"]["max_threads"].as_integer(), Some(4));
         assert_eq!(codex_user_parts(&on_b).len(), 6, "{on_b}");
+        // 统一历史留下的 custom 表不再被选中：直连下不留真实 Key，也不留
+        // requires_openai_auth，免得之后被选中回退用官方登录访问第三方。
+        let leftover = &doc["model_providers"]["custom"];
+        assert!(
+            leftover.get("experimental_bearer_token").is_none(),
+            "{on_b}"
+        );
+        assert!(leftover.get("requires_openai_auth").is_none(), "{on_b}");
+        assert_eq!(
+            leftover["base_url"].as_str(),
+            Some("https://a.example/v1"),
+            "the table itself stays so the old custom bucket can still resolve"
+        );
 
         ProviderService::switch(&state, AppType::Codex, "a").expect("back to a");
         let on_a = codex_text();
@@ -3203,6 +3215,37 @@ command = "fs-server"
         assert_eq!(codex_text(), on_b);
         ProviderService::switch(&state, AppType::Codex, "a").expect("to a again");
         assert_eq!(codex_text(), on_a);
+    }
+
+    /// 用户自己维护、没导入 CC Switch 的路由表（带 bearer）不归 CC Switch：切换任何
+    /// 供应商都不能因为它带 Key 就整张删掉。
+    #[tokio::test]
+    #[serial]
+    async fn codex_switch_keeps_a_user_owned_route_table_it_never_wrote() {
+        let _home = Home::new();
+        set_preservation(true);
+        let manual = r#"
+[model_providers.manual]
+name = "Manual"
+base_url = "https://manual.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "sk-manual"
+"#;
+        seed_codex(&format!("{CODEX_USER_LIVE}{manual}"), None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+
+        ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
+        let text = codex_text();
+        let manual = &codex_doc()["model_providers"]["manual"];
+        assert_eq!(
+            manual["base_url"].as_str(),
+            Some("https://manual.example/v1")
+        );
+        assert_eq!(
+            manual["experimental_bearer_token"].as_str(),
+            Some("sk-manual"),
+            "a table CC Switch never wrote survives the switch: {text}"
+        );
     }
 
     /// 开了「统一 Codex 会话历史」：第三方选路收成共享的 custom 桶，官方和第三方会话
