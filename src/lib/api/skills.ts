@@ -42,6 +42,21 @@ export interface InstalledSkill {
   installedAt: number;
   contentHash?: string;
   updatedAt: number;
+  /** 对 pi 的可见性详情（动态计算，不入 DB；仅后端填充） */
+  piVisibility?: PiVisibility;
+}
+
+/** 对 pi 的可见性五态（方案 §2.2/§2.4） */
+export interface PiVisibility {
+  state: "inactive" | "inactive-excluded" | "native" | "shared" | "native-shared";
+  /** 生效的共享根（posix 路径） */
+  sharedRoots?: string[];
+  /** 任一生效共享副本与 SSOT 一致（缺省 = SSOT 无该技能，未比对） */
+  sameContentAsSsot?: boolean;
+  /** 原生投影目标路径被 pi 排除规则命中（启用也无效） */
+  excludedByPattern?: boolean;
+  /** 解析含不支持语法/失败，结果近似 */
+  approximate?: boolean;
 }
 
 export interface SkillUninstallResult {
