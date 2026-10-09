@@ -1294,6 +1294,9 @@ fn clean_antigravity_content(content: String) -> String {
 }
 
 fn delete_antigravity_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    if !is_safe_id_component(session_id) {
+        return Err("Invalid Antigravity session ID".to_string());
+    }
     let parsed_id = antigravity_session_id_from_transcript(path).ok_or_else(|| {
         format!(
             "Failed to parse Antigravity session ID from {}",
@@ -1306,9 +1309,34 @@ fn delete_antigravity_session(root: &Path, path: &Path, session_id: &str) -> Res
         ));
     }
 
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve Antigravity session root: {e}"))?;
+    let brain_dir = root.join("brain").join(session_id);
+    let expected_source = brain_dir.join(".system_generated/logs/transcript.jsonl");
+    let source = path
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve Antigravity transcript: {e}"))?;
+    let expected_source = expected_source
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve expected Antigravity transcript: {e}"))?;
+    if source != expected_source || !source.starts_with(&root) {
+        return Err("Antigravity transcript does not belong to the selected session root".into());
+    }
+
     let conversation_base = root.join("conversations");
-    for suffix in ["db", "db-shm", "db-wal", "db-journal", "pb", "meta"] {
-        let file = conversation_base.join(format!("{session_id}.{suffix}"));
+    let files: Vec<_> = ["db", "db-shm", "db-wal", "db-journal", "pb", "meta"]
+        .iter()
+        .map(|suffix| conversation_base.join(format!("{session_id}.{suffix}")))
+        .collect();
+
+    // Check every target before deleting anything, including absent sidecars:
+    // their existing parent directories may be symlinks outside this root.
+    for target in files.iter().chain(std::iter::once(&brain_dir)) {
+        validate_antigravity_delete_target(&root, target)?;
+    }
+
+    for file in files {
         remove_file_if_exists(&file).map_err(|e| {
             format!(
                 "Failed to delete Antigravity conversation file {}: {e}",
@@ -1317,7 +1345,6 @@ fn delete_antigravity_session(root: &Path, path: &Path, session_id: &str) -> Res
         })?;
     }
 
-    let brain_dir = root.join("brain").join(session_id);
     remove_dir_all_if_exists(&brain_dir).map_err(|e| {
         format!(
             "Failed to delete Antigravity brain directory {}: {e}",
@@ -1326,6 +1353,43 @@ fn delete_antigravity_session(root: &Path, path: &Path, session_id: &str) -> Res
     })?;
 
     Ok(true)
+}
+
+fn validate_antigravity_delete_target(root: &Path, target: &Path) -> Result<(), String> {
+    let mut existing = target;
+    loop {
+        match std::fs::symlink_metadata(existing) {
+            Ok(_) => {
+                let resolved = existing.canonicalize().map_err(|e| {
+                    format!(
+                        "Failed to resolve Antigravity deletion target {}: {e}",
+                        target.display()
+                    )
+                })?;
+                if !resolved.starts_with(root) {
+                    return Err(format!(
+                        "Antigravity deletion target is outside the session root: {}",
+                        target.display()
+                    ));
+                }
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                existing = existing.parent().ok_or_else(|| {
+                    format!(
+                        "Cannot resolve Antigravity deletion target: {}",
+                        target.display()
+                    )
+                })?;
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Failed to inspect Antigravity deletion target {}: {e}",
+                    target.display()
+                ));
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1759,6 +1823,110 @@ mod tests {
             transcript.is_file(),
             "brain transcript must remain retryable"
         );
+    }
+
+    fn write_antigravity_delete_fixture(root: &Path, session_id: &str) -> PathBuf {
+        let transcript = root
+            .join("brain")
+            .join(session_id)
+            .join(".system_generated/logs/transcript.jsonl");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, "{}\n").unwrap();
+        transcript
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_antigravity_session_rejects_external_and_dangling_conversation_directories() {
+        for target_kind in ["existing", "empty", "dangling"] {
+            let root = tempdir().unwrap();
+            let outside = tempdir().unwrap();
+            let session_id = "agy-session-123";
+            let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+            let external_db = outside.path().join(format!("{session_id}.db"));
+            if target_kind == "existing" {
+                std::fs::write(&external_db, "outside database").unwrap();
+            }
+            let target = if target_kind == "dangling" {
+                outside.path().join("missing")
+            } else {
+                outside.path().to_path_buf()
+            };
+            std::os::unix::fs::symlink(target, root.path().join("conversations")).unwrap();
+
+            assert!(delete_antigravity_session(root.path(), &transcript, session_id).is_err());
+            assert!(
+                transcript.exists(),
+                "validation must preserve the transcript"
+            );
+            if target_kind == "existing" {
+                assert_eq!(
+                    std::fs::read_to_string(external_db).unwrap(),
+                    "outside database"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_antigravity_session_validates_late_targets_before_deleting_any_files() {
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let session_id = "agy-session-123";
+        let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+        let conversations = root.path().join("conversations");
+        std::fs::create_dir(&conversations).unwrap();
+        let db = conversations.join(format!("{session_id}.db"));
+        std::fs::write(&db, "session database").unwrap();
+        let external_meta = outside.path().join("metadata");
+        std::fs::write(&external_meta, "external metadata").unwrap();
+        std::os::unix::fs::symlink(
+            &external_meta,
+            conversations.join(format!("{session_id}.meta")),
+        )
+        .unwrap();
+
+        let error = delete_antigravity_session(root.path(), &transcript, session_id).unwrap_err();
+        assert!(error.contains("outside the session root"));
+        assert!(transcript.exists());
+        assert_eq!(std::fs::read_to_string(db).unwrap(), "session database");
+        assert_eq!(
+            std::fs::read_to_string(external_meta).unwrap(),
+            "external metadata"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_antigravity_session_accepts_conversation_symlinks_inside_the_root() {
+        let root = tempdir().unwrap();
+        let session_id = "agy-session-123";
+        let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+        let conversations = root.path().join("stored-conversations");
+        std::fs::create_dir(&conversations).unwrap();
+        let db = conversations.join(format!("{session_id}.db"));
+        std::fs::write(&db, "session database").unwrap();
+        std::os::unix::fs::symlink("stored-conversations", root.path().join("conversations"))
+            .unwrap();
+
+        assert!(delete_antigravity_session(root.path(), &transcript, session_id).unwrap());
+        assert!(!transcript.exists());
+        assert!(!db.exists());
+        assert!(conversations.is_dir());
+    }
+
+    #[test]
+    fn delete_antigravity_session_rejects_a_transcript_from_another_root() {
+        let root = tempdir().unwrap();
+        let other_root = tempdir().unwrap();
+        let session_id = "agy-session-123";
+        let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+        let other_transcript = write_antigravity_delete_fixture(other_root.path(), session_id);
+
+        assert!(delete_antigravity_session(root.path(), &other_transcript, session_id).is_err());
+        assert!(transcript.exists());
+        assert!(other_transcript.exists());
     }
 
     #[test]
