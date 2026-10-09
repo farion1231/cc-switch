@@ -26,7 +26,7 @@ use crate::error::AppError;
 use crate::live::engine::DeviceStore;
 use crate::live::project::claude::{
     direct_patch, proxy_projection, ClaudeProjection, ProxyAuth, StackRoleModel,
-    PROXY_TOKEN_PLACEHOLDER,
+    StackScenarioModels, PROXY_TOKEN_PLACEHOLDER,
 };
 use crate::live::project::gemini::GeminiProjection;
 use crate::live::project::grok::GrokProjection;
@@ -40,8 +40,8 @@ use crate::store::AppState;
 use super::contract;
 use super::current::{self, Purpose};
 use super::operation;
-use super::stack::{self, StackModel, StackView};
-use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
+use super::stack::{self, ClaudeScenarioModelView, ClaudeScenarioView, StackModel, StackView};
+use super::state::{op, ClaudeScenarios, Contract, Mode, ModeState, PendingTarget, StackState};
 
 /// 支持代理模式的应用。
 pub const PROXY_APPS: [AppType; 4] = [
@@ -178,13 +178,15 @@ fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
     }
 }
 
-/// `stack` 是发布的 Stack 模型，`stack_default` 是四档别名指向的模型（Stack 模式下默认那家
-/// 列表里的第一个，见 [`stack::claude_route_default`]；路由模式为 `None`）。
+/// `stack` 是发布的 Stack 模型，`stack_default` 是四档别名默认指向的模型（Stack 模式下默认
+/// 那家列表里的第一个，见 [`stack::claude_route_default`]；路由模式为 `None`），`scenarios`
+/// 是绑定了场景的档位 / 子代理（#7889，见 [`stack::claude_scenario_models`]）。
 fn claude_contract(
     route: &Provider,
     proxy_url: &str,
     stack: &[StackModel],
     stack_default: Option<&StackModel>,
+    scenarios: StackScenarioModels<'_>,
 ) -> (ClaudeProjection, Contract) {
     let mut projection = proxy_projection(
         &ClaudeProjection::of(&route.settings_config),
@@ -194,6 +196,7 @@ fn claude_contract(
             id: &model.id,
             name: &model.name,
         }),
+        scenarios,
     );
     with_stack_models(&mut projection, stack);
     let contract = contract::claude(&projection);
@@ -314,8 +317,14 @@ async fn write_proxy(
             let members = published_members(state, app, &stack, route)?;
             let published = stack::claude_published(&members);
             let stack_default = stack::claude_route_default(&members);
-            let (projection, contract) =
-                claude_contract(route, &proxy_url, &published, stack_default.as_ref());
+            let scenarios = stack::claude_scenario_models(&stack.claude_scenarios, &published);
+            let (projection, contract) = claude_contract(
+                route,
+                &proxy_url,
+                &published,
+                stack_default.as_ref(),
+                scenarios,
+            );
             let unchanged = !force && live_now.has_contract(&contract.key);
             let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
             target.contract = Some(contract);
@@ -1192,6 +1201,81 @@ async fn set_stack_member_locked(
     }
 }
 
+/// 保存 Claude Code 的场景绑定（#7889）：四档别名和子代理写进 `settings.json` 的投影，辅助 /
+/// 压缩请求由代理按请求类别分流。和增删成员一样：代理模式且已接上时新绑定参与契约计算，和
+/// 客户端文件在同一个操作里提交（契约没变就只落定绑定）；否则只落定绑定，下次进入代理模式
+/// 时生效。绑定的模型不在发布列表里时投影按没绑处理（值留着）。
+pub async fn set_claude_stack_scenarios(
+    state: &AppState,
+    app: &AppType,
+    scenarios: ClaudeScenarios,
+) -> Result<(), StackWriteError> {
+    if !matches!(app, AppType::Claude) {
+        return Err(StackWriteError::unchanged(format!(
+            "{} 没有场景绑定 ({} has no scenario bindings)",
+            app.as_str(),
+            app.as_str()
+        )));
+    }
+    let _guard = lock_settled(state, app)
+        .await
+        .map_err(|error| StackWriteError::unchanged(error.to_string()))?;
+    if let Err(message) = set_claude_stack_scenarios_locked(state, app, scenarios).await {
+        let partial = operation::pending_published(&DeviceStore::for_device(), app.as_str())
+            .unwrap_or_else(|error| {
+                log::warn!("读取 {} 的写前意图失败: {error}", app.as_str());
+                None
+            })
+            == Some(true);
+        return Err(StackWriteError { partial, message });
+    }
+    Ok(())
+}
+
+async fn set_claude_stack_scenarios_locked(
+    state: &AppState,
+    app: &AppType,
+    scenarios: ClaudeScenarios,
+) -> Result<(), String> {
+    let current = settled_stack(app)?;
+    if current.claude_scenarios == scenarios {
+        return Ok(());
+    }
+    let mut next = current;
+    next.claude_scenarios = scenarios;
+    match attached_route(state, app)? {
+        Some((mode, route)) => {
+            let live_now = LiveNow::of(state, app, &mode)?;
+            write_proxy(state, app, op::STACK, &route, &live_now, mode, Some(next)).await
+        }
+        None => commit_state(
+            state,
+            app,
+            &PendingTarget {
+                stack: Some(next),
+                ..PendingTarget::default()
+            },
+        ),
+    }
+}
+
+/// 给前端的场景绑定：当前绑定（原样，失效的对不上 `models`，前端自己标出来）和能绑定的
+/// 模型（已发布给客户端的 Stack 模型）。
+pub fn claude_scenario_view(state: &AppState) -> Result<ClaudeScenarioView, String> {
+    let stack = settled_stack(&AppType::Claude)?;
+    let models = stack::claude_published_now(&DeviceStore::for_device(), &state.db).map_err(err)?;
+    Ok(ClaudeScenarioView {
+        scenarios: stack.claude_scenarios,
+        models: models
+            .into_iter()
+            .map(|model| ClaudeScenarioModelView {
+                id: model.id,
+                label: model.display_name,
+            })
+            .collect(),
+    })
+}
+
 /// Stack 模式的状态、名单里的每一家和它发布的模型 id（给前端）。
 pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String> {
     if !stack::supports_stack(app) {
@@ -1214,15 +1298,10 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
 }
 
 /// [`stack_views`] 再加上 Codex 客户端是不是还在用旧的模型列表（要读进程表，放到阻塞线程池
-/// 里）。路由那家自己管理目录时，Stack 模型本来就不发布，重启也看不到，已经有 `notice` 说明，
-/// 不再查。
+/// 里）。
 pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<StackView, String> {
     let mut view = stack_views(state, app)?;
-    if matches!(app, AppType::Codex)
-        && view.active
-        && view.notice != Some("routeOwnsCatalog")
-        && codex_publishes_stack_models(state, &settled_stack(app)?)
-    {
+    if matches!(app, AppType::Codex) && codex_needs_stale_client_check(state, &view)? {
         view.stale_clients = codex_direct::off_runtime(|| {
             codex_client_catalog::stale_clients(&DeviceStore::for_device())
         })
@@ -1230,6 +1309,28 @@ pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<
         .map_err(err)?;
     }
     Ok(view)
+}
+
+/// Codex 客户端是不是要查「还在用旧的模型列表」。
+///
+/// Stack 生效：要发布的 Stack 模型，客户端得看得到；路由那家自己管理目录时 Stack 模型本来
+/// 就不发布、重启也看不到，已经有 `notice` 说明，不查。
+///
+/// 路由、直连视图：进出路由会写 / 撤 `model_catalog_json`，已经开着的客户端手里还是上一份
+/// 目录（进路由前的那份，或者路由那家那份）。两个方向都要查；路由那家自管目录时沿用上面
+/// 同样的取舍。
+fn codex_needs_stale_client_check(state: &AppState, view: &StackView) -> Result<bool, String> {
+    if view.active {
+        return Ok(view.notice != Some("routeOwnsCatalog")
+            && codex_publishes_stack_models(state, &settled_stack(&AppType::Codex)?));
+    }
+    // 读不出路由按「查」算：查不出结果只是没有提示，别把视图也弄失败。
+    Ok(
+        match attached_route(state, &AppType::Codex).ok().flatten() {
+            Some((_, route)) => !codex_direct::route_owns_catalog(&route),
+            None => true,
+        },
+    )
 }
 
 /// Codex 接着代理，名单里有要发布的 Stack 模型。
@@ -1687,7 +1788,13 @@ mod tests {
 
     /// 以 `live` 为底写入 `provider` 的代理契约，和进入代理时的补丁相同。
     fn takeover(live: &Value, provider: &Provider) -> Value {
-        let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721", &[], None);
+        let (projection, _) = claude_contract(
+            provider,
+            "http://127.0.0.1:15721",
+            &[],
+            None,
+            StackScenarioModels::default(),
+        );
         let mut doc = live.clone();
         direct_patch(None, &projection)
             .apply_to(Path::new("settings.json"), &mut doc)
@@ -5205,6 +5312,82 @@ model_provider = "c"
         assert_back_to_user_settings();
     }
 
+    /// #7889：场景绑定把四档别名和子代理指向绑定的模型（写进 `settings.json`）；没绑的档位
+    /// 还是默认那家的第一个模型；绑定失效（成员移除）时按没绑处理，值留着。
+    #[tokio::test]
+    #[serial]
+    async fn claude_scenarios_bind_roles_and_subagent_in_the_projection() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        set_member(&state, "kimi", true).await;
+        set_member(&state, "zhipu", true).await;
+
+        // 默认：四档都指向默认那家（a）的第一个模型，不写子代理。
+        let env = || settings()["env"].clone();
+        for role in ["HAIKU", "SONNET", "OPUS", "FABLE"] {
+            assert_eq!(
+                env()[format!("ANTHROPIC_DEFAULT_{role}_MODEL")],
+                "ccs-claude-a--claude-sonnet-4-6"
+            );
+        }
+        assert!(env().get("CLAUDE_CODE_SUBAGENT_MODEL").is_none());
+
+        // 绑定：haiku → zhipu 的 1M 模型（haiku 档照旧不带 1M 标记），子代理 → kimi 的模型。
+        let bindings = ClaudeScenarios {
+            haiku: Some("ccs-claude-zhipu--glm-5.2[1M]".to_string()),
+            subagent: Some("ccs-claude-kimi--kimi-k3".to_string()),
+            ..Default::default()
+        };
+        set_claude_stack_scenarios(&state, &AppType::Claude, bindings.clone())
+            .await
+            .expect("save");
+        assert_eq!(
+            env()["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+            "ccs-claude-zhipu--glm-5.2"
+        );
+        assert_eq!(env()["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"], "glm-5.2");
+        assert_eq!(
+            env()["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            "ccs-claude-a--claude-sonnet-4-6",
+            "没绑的档位还是默认模型"
+        );
+        assert_eq!(
+            env()["CLAUDE_CODE_SUBAGENT_MODEL"],
+            "ccs-claude-kimi--kimi-k3"
+        );
+        assert_eq!(
+            stack_state().claude_scenarios.haiku.as_deref(),
+            Some("ccs-claude-zhipu--glm-5.2[1M]")
+        );
+
+        // zhipu 移出名单：绑定的模型不再发布，投影按没绑处理，绑定值留着。
+        set_member(&state, "zhipu", false).await;
+        assert_eq!(
+            env()["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+            "ccs-claude-a--claude-sonnet-4-6"
+        );
+        assert_eq!(
+            stack_state().claude_scenarios.haiku.as_deref(),
+            Some("ccs-claude-zhipu--glm-5.2[1M]"),
+            "成员加回来就恢复"
+        );
+
+        // 清掉绑定：回到原来的投影。
+        set_claude_stack_scenarios(&state, &AppType::Claude, ClaudeScenarios::default())
+            .await
+            .expect("clear");
+        assert!(env().get("CLAUDE_CODE_SUBAGENT_MODEL").is_none());
+        assert_eq!(
+            env()["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+            "ccs-claude-a--claude-sonnet-4-6"
+        );
+
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_back_to_user_settings();
+    }
+
     #[tokio::test]
     #[serial]
     async fn stack_models_leave_the_client_file_on_exit_and_come_back_on_enter() {
@@ -6010,6 +6193,16 @@ model_provider = "c"
             );
         }
 
+        /// 命令行连的托管守护进程，已经跑了 `etime`。
+        fn daemon_running_for(&self, etime: &str) {
+            let dir = crate::codex_config::get_codex_config_dir().join("app-server-daemon");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("daemon.pid"), r#"{"pid":59013}"#).unwrap();
+            *self.table.lock().unwrap() = format!(
+                "59013 {etime} /Users/me/.codex/packages/app-server-daemon/releases/0.159.2-aarch64-apple-darwin/bin/codex app-server --listen unix:// --managed-daemon"
+            );
+        }
+
         fn advance(&self, ms: u64) {
             self.now_ms
                 .fetch_add(ms, std::sync::atomic::Ordering::SeqCst);
@@ -6029,8 +6222,8 @@ model_provider = "c"
             .stale_clients
     }
 
-    /// 桌面版在目录变化之前启动：Stack 视图带上 `staleClients`；之后启动的不算旧。路由模式、
-    /// 路由那家自己管理目录（Stack 模型本来就不发布）时不查。
+    /// 桌面版在目录变化之前启动：视图带上 `staleClients`；之后启动的不算旧。路由模式同样要查：
+    /// 进路由会重写目录，更早启动的客户端读到的还是上一份（#7885）。
     #[tokio::test]
     #[serial]
     async fn codex_stack_view_reports_clients_on_an_old_catalog() {
@@ -6065,14 +6258,89 @@ model_provider = "c"
         clients.desktop_running_for("00:15");
         assert!(stale_clients_of(&state).await.is_some());
 
-        // 换成路由模式：不是 Stack 模式，不查。
+        // 换成路由模式：路由那家没有自己的目录，指针被撤掉；Stack 时代启动的客户端手里还是
+        // 那份目录，撤了之后照样要提示。
+        clients.advance(10_000);
+        clients.desktop_running_for("00:05");
         enter(&state, &AppType::Codex, false)
             .await
             .expect("routing");
-        clients.desktop_running_for("10:00");
+        clients.advance(10_000);
+        clients.desktop_running_for("00:15");
+        assert_eq!(
+            stale_clients_of(&state).await,
+            Some(codex_client_catalog::StaleClients {
+                daemon: false,
+                others: true
+            })
+        );
+    }
+
+    /// #7885：直连 ↔ 路由双向切换都会换模型目录（直连（官方）没有目录指针，路由那份是
+    /// CC Switch 写的），已经开着的客户端读到的是上一份，两个方向都要报出来。
+    #[tokio::test]
+    #[serial]
+    async fn codex_route_switches_report_clients_on_an_old_catalog() {
+        let _home = Home::new();
+        let clients = FakeClients::install();
+        crate::codex_config::write_codex_live_atomic(
+            &chatgpt_login("native"),
+            Some("model = \"gpt-6-luna\"\n"),
+        )
+        .unwrap();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut rows = codex_stack_rows().to_vec();
+        rows.push(codex_official());
+        let state = state_with(
+            AppType::Codex,
+            &rows,
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID,
+        )
+        .await;
+
+        // 直连（官方）→ 路由（第三方，带模型目录）：守护进程在直连时启动，读的是内置目录，
+        // 进路由写了新目录。
+        clients.daemon_running_for("10:00");
+        enter_with_route(&state, &AppType::Codex, false, Some("deepseek"))
+            .await
+            .expect("route");
+        assert_eq!(
+            stale_clients_of(&state).await,
+            Some(codex_client_catalog::StaleClients {
+                daemon: true,
+                others: false
+            })
+        );
+
+        // 守护进程重启（比如 Codex 升级）之后读到路由这份，不再提示。
+        clients.advance(10_000);
+        clients.daemon_running_for("00:05");
+        assert_eq!(stale_clients_of(&state).await, None);
+
+        // 路由 → 直连：目录指针被撤掉，路由里启动的守护进程还拿着那份。
+        exit(&state, &AppType::Codex).await.expect("exit");
+        clients.advance(10_000);
+        clients.daemon_running_for("00:15");
+        assert_eq!(
+            stale_clients_of(&state).await,
+            Some(codex_client_catalog::StaleClients {
+                daemon: true,
+                others: false
+            })
+        );
+
+        // 再重启一次，读到直连这份。
+        clients.advance(10_000);
+        clients.daemon_running_for("00:05");
         assert_eq!(stale_clients_of(&state).await, None);
     }
 
+    /// 路由那家自己管理模型目录文件（Stack 模型不发布；重启也读不到我们的目录）：Stack 和
+    /// 路由模式都沿用「不查」的取舍。
     #[tokio::test]
     #[serial]
     async fn codex_route_with_its_own_catalog_skips_the_client_check() {
@@ -6094,6 +6362,14 @@ model_provider = "c"
             .await
             .unwrap();
         assert_eq!(view.notice, Some("routeOwnsCatalog"));
+        assert_eq!(view.stale_clients, None);
+
+        exit(&state, &AppType::Codex).await.expect("exit");
+        enter(&state, &AppType::Codex, false).await.expect("route");
+        let view = stack_view_with_clients(&state, &AppType::Codex)
+            .await
+            .unwrap();
+        assert!(!view.active);
         assert_eq!(view.stale_clients, None);
     }
 

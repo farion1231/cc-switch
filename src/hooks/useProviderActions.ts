@@ -223,22 +223,38 @@ export function useProviderActions(
         // message for an auth-cleanup warning would point the user at the
         // wrong problem entirely.
         if (result?.warnings?.length) {
-          const authCleanupFailed = result.warnings.some((warning) =>
-            warning.startsWith("codex_auth_cleanup_failed"),
-          );
-          const hasOtherWarnings = result.warnings.some(
-            (warning) => !warning.startsWith("codex_auth_cleanup_failed"),
-          );
-          if (authCleanupFailed) {
-            toast.warning(
-              t("notifications.codexAuthCleanupFailed", {
-                defaultValue:
-                  "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
-              }),
-              { duration: 6000 },
+          const known: Array<{
+            prefix: string;
+            key: string;
+            fallback: string;
+          }> = [
+            {
+              prefix: "codex_auth_cleanup_failed",
+              key: "notifications.codexAuthCleanupFailed",
+              fallback:
+                "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
+            },
+            {
+              // #7884：非接管切第三方时保留官方登录，Codex 桌面端会按登录态压缩请求体，
+              // 直连的第三方地址可能解析不了。
+              prefix: "codex_preserved_login_body_compression",
+              key: "notifications.codexPreservedLoginBodyCompression",
+              fallback:
+                "已按设置保留 Codex 官方登录：未开启路由接管时，Codex 桌面端会把请求体压缩（zstd）直连第三方地址，上游可能报「Failed to parse the request body as JSON」。请开启本地路由接管，或关闭「非接管切换时保留官方登录」",
+            },
+          ];
+          const unmatched = [...result.warnings];
+          for (const { prefix, key, fallback } of known) {
+            const index = unmatched.findIndex((warning) =>
+              warning.startsWith(prefix),
             );
+            if (index < 0) continue;
+            unmatched.splice(index, 1);
+            toast.warning(t(key, { defaultValue: fallback }), {
+              duration: 8000,
+            });
           }
-          if (hasOtherWarnings) {
+          if (unmatched.length) {
             toast.warning(
               t("notifications.backfillWarning", {
                 defaultValue:

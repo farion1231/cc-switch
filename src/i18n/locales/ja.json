@@ -318,7 +318,8 @@
     "codexAuthCleanupFailed": "切り替えは成功しましたが、auth.json を削除できませんでした。公式ログイン資格情報がディスクに残っています。完全に削除するには Codex 設定ディレクトリの auth.json を手動で削除してください",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
-    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。"
+    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
+    "codexPreservedLoginBodyCompression": "設定どおり Codex の公式ログインを保持しました：ルーティング接管が無効のとき、Codex デスクトップ版はリクエスト本文を zstd 圧縮して第三者アドレスへ直接送るため、上流が「Failed to parse the request body as JSON」を返すことがあります。ローカルルーティング接管を有効にするか、「非接管切替時に公式ログインを保持」をオフにしてください"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -3570,14 +3571,14 @@
       "ariaLabel": "{{appLabel}} の集約モード",
       "failoverUnavailable": "{{appLabel}} は集約モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります",
       "codexStale": {
-        "title": "Codex が古いモデル一覧を使っているため、集約したモデルが表示されません",
+        "title": "Codex が古いモデル一覧を使っています",
         "daemon": "CLI：codex を開き直すだけでは反映されません。バックグラウンドのデーモンを再起動する必要があります。",
         "others": "デスクトップ版：完全に終了してから開き直してください（macOS では ⌘Q。ウィンドウを閉じるだけでは不十分です）。エディター拡張：エディターのウィンドウを開き直してください。",
         "restart": "Codex デーモンを再起動",
         "confirmTitle": "Codex デーモンを再起動しますか？",
-        "confirmMessage": "ターミナルで動いているすべての codex がこのデーモンを共有しているため、実行中のタスクは中断されます。再起動後に codex を開き直すと集約したモデルが表示されます。",
+        "confirmMessage": "ターミナルで動いているすべての codex がこのデーモンを共有しているため、実行中のタスクは中断されます。再起動後に codex を開き直すと現在のモデル一覧が読み込まれます。",
         "confirm": "再起動",
-        "restarted": "Codex デーモンを再起動しました。codex を開き直すと集約したモデルが表示されます",
+        "restarted": "Codex デーモンを再起動しました。codex を開き直すと現在のモデル一覧が読み込まれます",
         "notRunning": "Codex デーモンは動いていません。次に codex を起動したときに新しいモデル一覧が読み込まれます",
         "failed": "Codex デーモンの再起動に失敗しました：{{error}}"
       }
@@ -4041,6 +4042,24 @@
     "routeSettings": "ルーティング設定",
     "routeSettingsTitle": "ルーティング設定",
     "moreRouteSettings": "その他のルーティング設定",
+    "scenarios": {
+      "button": "シナリオ割り当て",
+      "title": "シナリオ割り当て",
+      "description": "4 つのティア別名・サブエージェント・補助 / 圧縮リクエストを、リスト内の公開済みモデルにそれぞれ割り当てます。未指定のものは既定の動作に従います。保存後すぐに反映されます。",
+      "haiku": "Haiku ティア（小さいリクエスト・バックグラウンド処理）",
+      "sonnet": "Sonnet ティア",
+      "opus": "Opus ティア",
+      "fable": "Fable ティア",
+      "subagent": "サブエージェント（Subagent / Task）",
+      "auxiliary": "補助リクエスト（Auto Mode 分類器を含む）",
+      "compaction": "コンテキスト圧縮",
+      "followDefault": "既定のモデルに従う",
+      "followMain": "メインモデルに従う",
+      "empty": "割り当て可能なモデルがまだありません：プロバイダーをリストに追加し、モデルを 1 つ以上設定してください。",
+      "stale": "公開リストにないモデルのため、既定の動作になります",
+      "saved": "シナリオ割り当てを保存しました",
+      "saveFailed": "シナリオ割り当ての保存に失敗しました：{{error}}"
+    },
     "queueMoved": "{{name}} を {{position}} 番目に移動しました。",
     "status": {
       "directLead": "直接接続が有効 · 接続先",

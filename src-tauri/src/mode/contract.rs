@@ -79,7 +79,7 @@ fn sorted(map: &Map<String, Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::live::project::claude::{proxy_projection, ProxyAuth};
+    use crate::live::project::claude::{proxy_projection, ProxyAuth, StackScenarioModels};
 
     fn contract_for(row: Value, url: &str) -> Contract {
         claude(&proxy_projection(
@@ -87,6 +87,7 @@ mod tests {
             url,
             ProxyAuth::FollowRow,
             None,
+            StackScenarioModels::default(),
         ))
     }
 

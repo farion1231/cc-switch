@@ -136,6 +136,7 @@ pub fn get_direct_provider(
 }
 
 /// Stack 模型：名单里的每一家和它发布的模型 id，以及还在用旧模型列表的 Codex 客户端
+/// （路由 / 直连视图同样会带上，见 `stack_view_with_clients`）
 #[tauri::command]
 pub async fn get_proxy_stack(
     state: tauri::State<'_, AppState>,
@@ -175,6 +176,28 @@ pub async fn set_proxy_stack_member(
     // 不重建的话，托盘里还列着刚移出的那家，点一下会把它重新加回并设为默认
     crate::tray::refresh_tray_menu(&app_handle);
     result
+}
+
+/// Claude Code 的场景绑定（#7889）：当前绑定和能绑定的模型（已发布的 Stack 模型）。
+#[tauri::command]
+pub fn get_claude_stack_scenarios(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::mode::stack::ClaudeScenarioView, String> {
+    crate::mode::controller::claude_scenario_view(state.inner())
+}
+
+/// 保存 Claude Code 的场景绑定（#7889）：四档别名 / 子代理写进 `settings.json`，辅助 / 压缩
+/// 请求由代理按请求类别分流。失败时 `partial` 为真表示已部分写入，下次操作或重启 CC Switch
+/// 时补完。
+#[tauri::command]
+pub async fn set_claude_stack_scenarios(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    scenarios: crate::mode::state::ClaudeScenarios,
+) -> Result<(), crate::mode::controller::StackWriteError> {
+    let app = require_proxy_app(&app_type)
+        .map_err(crate::mode::controller::StackWriteError::unchanged)?;
+    crate::mode::controller::set_claude_stack_scenarios(state.inner(), &app, scenarios).await
 }
 
 /// Codex 聚合的模型被别的模型目录挡住时，改用 CC Switch 生成的目录（去掉指向别的文件的

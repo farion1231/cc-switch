@@ -38,6 +38,7 @@ import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { ModeTabs } from "./ModeTabs";
 import { ModeDialog, type ModeDialogState } from "./ModeDialog";
 import { RouteSettingsSheet } from "./RouteSettingsSheet";
+import { ClaudeScenarioSheet } from "./ClaudeScenarioSheet";
 
 type ListCallbacks = Pick<
   React.ComponentProps<typeof ProviderList>,
@@ -128,6 +129,7 @@ export function SwitchModePanel({
 
   const [dialog, setDialog] = useState<ModeDialogState | null>(null);
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
+  const [scenariosOpen, setScenariosOpen] = useState(false);
   const [confirmFailover, setConfirmFailover] = useState(false);
   const [staleDismissed, setStaleDismissed] = useState(false);
 
@@ -446,9 +448,9 @@ export function SwitchModePanel({
       />,
     );
   }
+  // 进出路由 / 聚合都会换模型目录，已经开着的 Codex 客户端手里的还是上一份（#7885）：
+  // 不在聚合模式下也提示。
   if (
-    view === "stack" &&
-    active === "stack" &&
     app === "codex" &&
     stack?.staleClients &&
     (stack.staleClients.daemon || stack.staleClients.others) &&
@@ -522,6 +524,11 @@ export function SwitchModePanel({
             ? () => setRouteSettingsOpen(true)
             : undefined
         }
+        onOpenStackScenarios={
+          view === "stack" && active === "stack" && app === "claude"
+            ? () => setScenariosOpen(true)
+            : undefined
+        }
       />
       <div
         ref={scrollRef}
@@ -569,6 +576,13 @@ export function SwitchModePanel({
         open={routeSettingsOpen}
         onOpenChange={setRouteSettingsOpen}
         onOpenSettings={onOpenRoutingSettings}
+      />
+
+      {/* 场景绑定（#7889）：只对 Claude Code 的聚合模式有意义 */}
+      <ClaudeScenarioSheet
+        app={app}
+        open={scenariosOpen}
+        onOpenChange={setScenariosOpen}
       />
 
       <ConfirmDialog

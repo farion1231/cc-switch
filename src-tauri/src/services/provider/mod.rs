@@ -4783,6 +4783,76 @@ wire_api = "responses"
         }
     }
 
+    /// #7884：非接管切到第三方、保留官方登录且盘上还有原生 ChatGPT 登录时，带一条
+    /// 「桌面端会压缩请求体」的提示；关掉保留登录（登录被清掉）后不再提示。
+    #[test]
+    #[serial]
+    fn a_preserved_chatgpt_login_on_a_direct_third_party_switch_warns() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            let preserve = |on: bool| {
+                crate::settings::update_settings(crate::settings::AppSettings {
+                    preserve_codex_official_auth_on_switch: on,
+                    ..Default::default()
+                })
+                .unwrap();
+            };
+            // 原生 ChatGPT 登录（用户自己在 Codex 里登的，没有托管账号标记）：保留开关保护
+            // 的就是它。
+            let id_token = crate::codex_config::test_codex_id_token("user");
+            write_json_file(
+                &crate::codex_config::get_codex_auth_path(),
+                &crate::codex_config::codex_managed_oauth_auth_value(
+                    "acct",
+                    "access",
+                    Some(&id_token),
+                    "refresh",
+                    "2099-09-01T00:00:00Z",
+                ),
+            )
+            .unwrap();
+            assert!(ProviderService::auth_has_chatgpt_login());
+
+            let third_party = |id: &str| {
+                Provider::with_id(
+                    id.into(),
+                    format!("Third {id}"),
+                    codex_settings("https://example.test/v1", "sk-target"),
+                    None,
+                )
+            };
+            for id in ["third-a", "third-b"] {
+                state.db.save_provider("codex", &third_party(id)).unwrap();
+            }
+
+            // 保留登录：登录留在 disk 上，切到第三方要提示。
+            preserve(true);
+            let warnings = |state: &AppState, id: &str| {
+                ProviderService::switch(state, AppType::Codex, id)
+                    .unwrap()
+                    .warnings
+            };
+            let first = warnings(state, "third-a");
+            assert!(
+                first.contains(&"codex_preserved_login_body_compression".to_string()),
+                "保留官方登录的直连第三方切换要提示: {first:?}"
+            );
+            assert!(
+                ProviderService::auth_has_chatgpt_login(),
+                "保留登录时 auth.json 里的登录还在"
+            );
+
+            // 关掉保留登录：登录被清掉，不再提示。
+            preserve(false);
+            let second = warnings(state, "third-b");
+            assert!(
+                !second.contains(&"codex_preserved_login_body_compression".to_string()),
+                "关掉保留登录后不提示: {second:?}"
+            );
+            assert!(!ProviderService::auth_has_chatgpt_login());
+        });
+    }
+
     #[test]
     #[serial]
     fn managed_codex_switch_db_current_failure_rolls_forward_on_recovery() {
@@ -6550,7 +6620,31 @@ impl ProviderService {
                 .warnings
                 .push("codex_auth_cleanup_failed".to_string());
         }
+        // #7884：非接管切到第三方时保留官方登录，客户端仍算登录态。Codex 桌面端会按登录态把
+        // 请求体压缩（zstd）发出去，直连的第三方地址多半解析不了（Failed to parse the
+        // request body as JSON）。路由接管模式下本地代理会先解压，所以只在这条直连路径提示。
+        if !codex_direct::is_official(provider)
+            && crate::settings::preserve_codex_official_auth_on_switch()
+            && Self::auth_has_chatgpt_login()
+        {
+            log::warn!(
+                "Codex official login preserved on a direct third-party switch; the desktop app may zstd-compress request bodies the upstream cannot parse"
+            );
+            result
+                .warnings
+                .push("codex_preserved_login_body_compression".to_string());
+        }
         Ok(result)
+    }
+
+    /// `auth.json` 里现在有 ChatGPT 登录（保留登录开启时切到第三方后仍留着）。
+    fn auth_has_chatgpt_login() -> bool {
+        crate::config::read_json_file::<serde_json::Value>(
+            &crate::codex_config::get_codex_auth_path(),
+        )
+        .ok()
+        .and_then(|auth| codex_official_models::OfficialLogin::of(&auth))
+        .is_some()
     }
 
     /// Grok Build 直连切换：`models.default` 和模型表换成目标的，按写入记录删掉上一家

@@ -1,5 +1,12 @@
 import { useTranslation } from "react-i18next";
-import { Layers, Plug, Route, Settings2, Shuffle } from "lucide-react";
+import {
+  Layers,
+  ListTree,
+  Plug,
+  Route,
+  Settings2,
+  Shuffle,
+} from "lucide-react";
 import type { AppMode } from "@/types/proxy";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -51,6 +58,8 @@ interface ModeTabsProps {
     onChange: (enabled: boolean) => void;
   };
   onOpenRouteSettings?: () => void;
+  /** 聚合页签上的「场景绑定 ›」（#7889）：四档、子代理和辅助请求分别指向哪个 Stack 模型。 */
+  onOpenStackScenarios?: () => void;
 }
 
 /**
@@ -66,6 +75,7 @@ export function ModeTabs({
   status,
   failover,
   onOpenRouteSettings,
+  onOpenStackScenarios,
 }: ModeTabsProps) {
   const { t } = useTranslation();
   const indicator = useSlidingIndicator<HTMLDivElement>(
@@ -171,6 +181,19 @@ export function ModeTabs({
             onClick={onOpenRouteSettings}
           >
             <Settings2 className="h-4 w-4" strokeWidth={1.75} />
+          </Button>
+        </HoverTip>
+      )}
+      {onOpenStackScenarios && (
+        <HoverTip content={t("mode.scenarios.button")}>
+          <Button
+            variant="quiet"
+            size="compact"
+            className="h-8 w-8 shrink-0 px-0"
+            aria-label={t("mode.scenarios.button")}
+            onClick={onOpenStackScenarios}
+          >
+            <ListTree className="h-4 w-4" strokeWidth={1.75} />
           </Button>
         </HoverTip>
       )}

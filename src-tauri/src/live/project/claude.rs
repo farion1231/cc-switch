@@ -231,19 +231,33 @@ pub struct StackRoleModel<'a> {
     pub name: &'a str,
 }
 
+/// Stack 模式各场景绑定的模型（#7889）：没绑的场景没有，按 [`stack_model_fields`] 的默认行为。
+/// 由 `mode::stack::claude_scenario_models` 从落定的绑定里挑出仍然发布的那些。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StackScenarioModels<'a> {
+    pub haiku: Option<StackRoleModel<'a>>,
+    pub sonnet: Option<StackRoleModel<'a>>,
+    pub opus: Option<StackRoleModel<'a>>,
+    pub fable: Option<StackRoleModel<'a>>,
+    /// `CLAUDE_CODE_SUBAGENT_MODEL`；没绑时不写，子代理跟随主模型。
+    pub subagent: Option<StackRoleModel<'a>>,
+}
+
 /// 代理契约：代理模式下 `settings.json` 的关键字段和独有字段。
 ///
 /// - 关键字段：本地代理地址、占位凭据、按角色写的模型；其余关键字段（协议选择器、云凭据、
 ///   `/model` 的选择等）一律清空，否则 Claude Code 会绕过代理；
 ///   - 路由模式（`stack_default` 为 `None`）：稳定的 `claude-*` 别名，显示名跟着路由供应商，
-///     真实模型由代理映射；
-///   - Stack 模式：四档都写 `stack_default` 的 Stack id，请求直达默认那家的这个模型；
+///     真实模型由代理映射；`scenarios` 不生效（路由模式没有 Stack 模型）；
+///   - Stack 模式：四档默认都写 `stack_default` 的 Stack id，绑了场景的档位写各自绑定的
+///     模型（#7889）；请求直达对应那家的那个模型；
 /// - 独有字段：路由供应商的。它们在客户端发请求时生效，代理不能替它补上。
 pub fn proxy_projection(
     route: &ClaudeProjection,
     proxy_url: &str,
     auth: ProxyAuth,
     stack_default: Option<StackRoleModel<'_>>,
+    scenarios: StackScenarioModels<'_>,
 ) -> ClaudeProjection {
     let mut env = Map::new();
     env.insert(
@@ -251,7 +265,7 @@ pub fn proxy_projection(
         Value::String(proxy_url.to_string()),
     );
     let fields = match stack_default {
-        Some(model) => stack_model_fields(model),
+        Some(model) => stack_model_fields(model, scenarios),
         None => proxy_model_fields(&route.env),
     };
     for (key, value) in fields {
@@ -364,43 +378,58 @@ fn proxy_model_fields(env: &Map<String, Value>) -> Vec<(&'static str, String)> {
     fields
 }
 
-/// Stack 模式的四档：都写同一个 Stack id，显示名也一样。haiku 档不带 1M 标记（和路由契约
-/// 一样，haiku 别名不写 1M；去掉标记的 id 解析到同一个模型）。不写
-/// `CLAUDE_CODE_SUBAGENT_MODEL`：子代理跟随主模型，也就是用户在 `/model` 里选的。
-fn stack_model_fields(model: StackRoleModel<'_>) -> Vec<(&'static str, String)> {
-    let haiku = model
-        .id
-        .strip_suffix(ONE_M_MARKER_FOR_CLIENT)
-        .unwrap_or(model.id);
+/// Stack 模式的四档：默认都写同一个 Stack id（默认那家列表里的第一个），绑了场景的档位写
+/// 绑定的模型。haiku 档不带 1M 标记（和路由契约一样，haiku 别名不写 1M；去掉标记的 id 解析
+/// 到同一个模型）。子代理绑定时写 `CLAUDE_CODE_SUBAGENT_MODEL`；不写时跟随主模型，也就是
+/// 用户在 `/model` 里选的。
+fn stack_model_fields(
+    default: StackRoleModel<'_>,
+    scenarios: StackScenarioModels<'_>,
+) -> Vec<(&'static str, String)> {
     let roles = [
         (
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
-            haiku,
+            scenarios.haiku.unwrap_or(default),
+            true,
         ),
         (
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
-            model.id,
+            scenarios.sonnet.unwrap_or(default),
+            false,
         ),
         (
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
-            model.id,
+            scenarios.opus.unwrap_or(default),
+            false,
         ),
         (
             "ANTHROPIC_DEFAULT_FABLE_MODEL",
             "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
-            model.id,
+            scenarios.fable.unwrap_or(default),
+            false,
         ),
     ];
-    let name = model.name.trim();
-    let mut fields = Vec::with_capacity(roles.len() * 2);
-    for (model_key, name_key, id) in roles {
+    let mut fields = Vec::with_capacity(roles.len() * 2 + 1);
+    for (model_key, name_key, model, strip_one_m) in roles {
+        let id = if strip_one_m {
+            model
+                .id
+                .strip_suffix(ONE_M_MARKER_FOR_CLIENT)
+                .unwrap_or(model.id)
+        } else {
+            model.id
+        };
         fields.push((model_key, id.to_string()));
+        let name = model.name.trim();
         if !name.is_empty() {
             fields.push((name_key, name.to_string()));
         }
+    }
+    if let Some(subagent) = scenarios.subagent {
+        fields.push(("CLAUDE_CODE_SUBAGENT_MODEL", subagent.id.to_string()));
     }
     fields
 }
@@ -727,6 +756,7 @@ mod tests {
                 id: "ccs-claude-z--glm-5.2[1M]",
                 name: "GLM 5.2",
             }),
+            StackScenarioModels::default(),
         );
         let env = |key: &str| stacked.env.get(key).and_then(Value::as_str);
         for role in ["SONNET", "OPUS", "FABLE"] {
@@ -749,11 +779,77 @@ mod tests {
         assert_eq!(env("ANTHROPIC_AUTH_TOKEN"), Some(PROXY_TOKEN_PLACEHOLDER));
 
         // 路由模式照旧写 `claude-*` 别名和行里的子代理模型。
-        let routed = proxy_projection(&route, "http://127.0.0.1:15721", ProxyAuth::FollowRow, None);
+        let routed = proxy_projection(
+            &route,
+            "http://127.0.0.1:15721",
+            ProxyAuth::FollowRow,
+            None,
+            StackScenarioModels::default(),
+        );
         assert_eq!(
             routed.env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
             "claude-sonnet-5[1M]"
         );
         assert_eq!(routed.env["CLAUDE_CODE_SUBAGENT_MODEL"], "glm-4.7-air");
+    }
+
+    /// #7889：绑了场景的档位写各自绑定的模型（id 和显示名），其余档位还是默认模型；haiku 档
+    /// 照旧去掉 1M 标记；子代理绑定后写 `CLAUDE_CODE_SUBAGENT_MODEL`。
+    #[test]
+    fn stack_scenarios_bind_their_own_models() {
+        let row = json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "sk" } });
+        let route = ClaudeProjection::of(&row);
+        let default = StackRoleModel {
+            id: "ccs-claude-k--k3[1M]",
+            name: "K3",
+        };
+        let stacked = proxy_projection(
+            &route,
+            "http://127.0.0.1:15721",
+            ProxyAuth::FollowRow,
+            Some(default),
+            StackScenarioModels {
+                haiku: Some(StackRoleModel {
+                    id: "ccs-claude-z--air[1M]",
+                    name: "Air",
+                }),
+                sonnet: Some(StackRoleModel {
+                    id: "ccs-claude-o--sol[1M]",
+                    name: "Sol",
+                }),
+                subagent: Some(StackRoleModel {
+                    id: "ccs-claude-z--air",
+                    name: "Air",
+                }),
+                ..Default::default()
+            },
+        );
+        let env = |key: &str| stacked.env.get(key).and_then(Value::as_str);
+        assert_eq!(
+            env("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+            Some("ccs-claude-z--air")
+        );
+        assert_eq!(
+            env("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"),
+            Some("Air"),
+            "绑定的档位用自己的显示名"
+        );
+        assert_eq!(
+            env("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+            Some("ccs-claude-o--sol[1M]")
+        );
+        assert_eq!(env("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"), Some("Sol"));
+        // 没绑的档位还是默认模型。
+        for role in ["OPUS", "FABLE"] {
+            assert_eq!(
+                env(&format!("ANTHROPIC_DEFAULT_{role}_MODEL")),
+                Some("ccs-claude-k--k3[1M]")
+            );
+            assert_eq!(
+                env(&format!("ANTHROPIC_DEFAULT_{role}_MODEL_NAME")),
+                Some("K3")
+            );
+        }
+        assert_eq!(env("CLAUDE_CODE_SUBAGENT_MODEL"), Some("ccs-claude-z--air"));
     }
 }

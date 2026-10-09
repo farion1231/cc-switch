@@ -93,7 +93,8 @@ export type ProxyStackNotice =
 
 /**
  * 还在用旧模型列表的 Codex 客户端（它们只在启动时读模型目录）：`daemon` 是 `codex` 命令行连的
- * 托管守护进程，可以一键重启；`others` 是桌面版、编辑器插件，要用户自己彻底退出再开。
+ * 托管守护进程，可以一键重启；`others` 是桌面版、编辑器插件，要用户自己彻底退出再开。进出
+ * 路由 / 聚合、增删 Stack 模型、退出路由都会换模型目录，这些之后都可能出现。
  */
 export interface CodexStaleClients {
   daemon: boolean;
@@ -107,6 +108,38 @@ export interface ProxyStack {
   members: ProxyStackMember[];
   notice?: ProxyStackNotice;
   staleClients?: CodexStaleClients;
+}
+
+/**
+ * Claude Code 的场景绑定（#7889）：某个场景指向哪个已发布的 Stack 模型 id；空 / 缺省 = 跟随
+ * 默认行为（四档用默认那家列表里的第一个模型、子代理跟随主模型、辅助 / 压缩请求不分流）。
+ */
+export interface ClaudeStackScenarios {
+  haiku?: string | null;
+  sonnet?: string | null;
+  opus?: string | null;
+  fable?: string | null;
+  /** 子代理（`CLAUDE_CODE_SUBAGENT_MODEL`）。 */
+  subagent?: string | null;
+  /** 辅助请求，含 Auto Mode 分类器（请求头 `x-claude-code-request-class: auxiliary`）。 */
+  auxiliary?: string | null;
+  /** 上下文压缩请求（同头 `compaction`）。 */
+  compaction?: string | null;
+}
+
+/** 能绑定到场景的 Stack 模型。 */
+export interface ClaudeScenarioModel {
+  id: string;
+  /** 选择器里显示的名字：`<显示名>（<供应商名>）`。 */
+  label: string;
+}
+
+/** Claude Code 的场景绑定和能绑定的模型。 */
+export interface ClaudeScenarioView {
+  /** 当前绑定，原样：对不上 `models` 的是失效的绑定。 */
+  scenarios: ClaudeStackScenarios;
+  /** 能选的模型：已发布给客户端的 Stack 模型；空 = 还没有能绑的模型。 */
+  models: ClaudeScenarioModel[];
 }
 
 /** 重启 Codex 守护进程的结果：`notRunning` 表示它没在运行，什么都没做。 */

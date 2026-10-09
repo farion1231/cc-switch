@@ -149,7 +149,7 @@ describe("SwitchModePanel — Stack mode", () => {
     ]);
   });
 
-  it("warns about Codex clients on an old model list only in Stack mode", async () => {
+  it("warns about Codex clients on an old model list in every mode", async () => {
     const stack = (active: boolean) =>
       http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({
@@ -161,19 +161,28 @@ describe("SwitchModePanel — Stack mode", () => {
 
     mockMode("stack", "route");
     server.use(stack(true));
-    const view = renderPanel("codex", { route: provider("route") });
+    const stackView = renderPanel("codex", { route: provider("route") });
     expect(
       await screen.findByText("proxy.stackMode.codexStale.title"),
     ).toBeInTheDocument();
-    view.unmount();
+    stackView.unmount();
 
+    // 路由模式（#7885）：进出路由也会写 / 撤模型目录，切换前启动的客户端读到的还是旧的。
     mockMode("route", "route");
     server.use(stack(false));
-    renderPanel("codex", { route: provider("route") });
-    await screen.findByTestId("card-route");
+    const routeView = renderPanel("codex", { route: provider("route") });
     expect(
-      screen.queryByText("proxy.stackMode.codexStale.title"),
-    ).not.toBeInTheDocument();
+      await screen.findByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
+    routeView.unmount();
+
+    // 退出路由回直连之后同样提示。
+    mockMode("direct", null);
+    server.use(stack(false));
+    renderPanel("codex", { route: provider("route") });
+    expect(
+      await screen.findByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
   });
 
   it("does not read the Stack list for apps without Stack mode", async () => {
@@ -192,6 +201,34 @@ describe("SwitchModePanel — Stack mode", () => {
     expect(
       screen.queryByRole("tab", { name: /mode\.stack/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it("offers scenario bindings for Claude Code only, on the active Stack tab", async () => {
+    const stack = () =>
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: true,
+          members: [{ providerId: "route", modelIds: [], route: true }],
+        }),
+      );
+
+    // 聚合生效的 Claude Code：场景绑定入口在。
+    mockMode("stack", "route");
+    server.use(stack());
+    const view = renderPanel("claude", { route: provider("route") });
+    expect(
+      await screen.findByRole("button", { name: "mode.scenarios.button" }),
+    ).toBeInTheDocument();
+    view.unmount();
+
+    // Codex 的聚合没有这些别名：没有入口。
+    server.use(stack());
+    const codexView = renderPanel("codex", { route: provider("codex") });
+    await screen.findByTestId("card-codex");
+    expect(
+      screen.queryByRole("button", { name: "mode.scenarios.button" }),
+    ).not.toBeInTheDocument();
+    codexView.unmount();
   });
 });
 
@@ -279,7 +316,11 @@ describe("SwitchModePanel — mode layer", () => {
     );
     const takeover = captureTakeover();
     const onSwitch = vi.fn();
-    renderPanel("claude", { a: provider("a"), kimi: provider("kimi") }, onSwitch);
+    renderPanel(
+      "claude",
+      { a: provider("a"), kimi: provider("kimi") },
+      onSwitch,
+    );
 
     await user.click(
       await screen.findByRole("button", { name: /mode\.names\.stack/ }),
@@ -300,7 +341,9 @@ describe("SwitchModePanel — mode layer", () => {
     );
     // 记下的那家成了「切换后的默认」：自己不再有「设为默认」，原来那家有了
     await screen.findByTestId("menu-setDefault-a");
-    expect(screen.queryByTestId("menu-setDefault-kimi")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("menu-setDefault-kimi"),
+    ).not.toBeInTheDocument();
 
     // 确认框预选它
     await user.click(
@@ -338,7 +381,9 @@ describe("SwitchModePanel — mode layer", () => {
     fireEvent.click(await screen.findByTestId("menu-setDefault-kimi"));
     fireEvent.click(screen.getByTestId("menu-setDefault-other"));
     expect(onSwitch.mock.calls.map(([p]) => p)).toEqual([kimi, other]);
-    expect(screen.queryByTestId("menu-setDefault-route")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("menu-setDefault-route"),
+    ).not.toBeInTheDocument();
     expect(routeCalls).toEqual([]);
   });
 

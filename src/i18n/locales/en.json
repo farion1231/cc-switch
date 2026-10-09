@@ -318,7 +318,8 @@
     "codexAuthCleanupFailed": "Switched successfully, but auth.json could not be removed — the official login credentials are still on disk; delete auth.json from the Codex config directory to remove them",
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
-    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
+    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
+    "codexPreservedLoginBodyCompression": "The Codex official login was preserved as configured: without routing takeover, the Codex desktop app zstd-compresses request bodies sent straight to a third-party address, and the upstream may answer \"Failed to parse the request body as JSON\". Enable local routing takeover, or turn off \"Preserve the official login on non-takeover switches\""
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -3570,14 +3571,14 @@
       "ariaLabel": "{{appLabel}} Aggregation mode",
       "failoverUnavailable": "{{appLabel}} is in Aggregation mode, which has no failover. The queue and settings are kept and apply again in routing mode",
       "codexStale": {
-        "title": "Codex is still using an old model list, so aggregated models won't show",
+        "title": "Codex is still using an old model list",
         "daemon": "CLI: reopening codex isn't enough; its background daemon needs a restart.",
         "others": "Desktop app: quit it completely and reopen it (⌘Q on macOS; closing the window isn't enough). Editor extensions: reopen the editor window.",
         "restart": "Restart Codex daemon",
         "confirmTitle": "Restart the Codex daemon?",
-        "confirmMessage": "Every codex session in your terminals shares this daemon, so running tasks will be interrupted. Reopen codex afterwards to see the aggregated models.",
+        "confirmMessage": "Every codex session in your terminals shares this daemon, so running tasks will be interrupted. Reopen codex afterwards to load the current model list.",
         "confirm": "Restart",
-        "restarted": "Codex daemon restarted. Reopen codex to see the aggregated models",
+        "restarted": "Codex daemon restarted. Reopen codex to load the current model list",
         "notRunning": "The Codex daemon isn't running. codex will load the new model list the next time it starts",
         "failed": "Failed to restart the Codex daemon: {{error}}"
       }
@@ -4041,6 +4042,24 @@
     "routeSettings": "Routing settings",
     "routeSettingsTitle": "Routing settings",
     "moreRouteSettings": "More routing settings",
+    "scenarios": {
+      "button": "Scenario bindings",
+      "title": "Scenario bindings",
+      "description": "Point each tier alias, subagent, and auxiliary / compaction request at a published model from the list; unset ones follow the default behavior. Changes apply right away.",
+      "haiku": "Haiku tier (small requests, background tasks)",
+      "sonnet": "Sonnet tier",
+      "opus": "Opus tier",
+      "fable": "Fable tier",
+      "subagent": "Subagent (Task)",
+      "auxiliary": "Auxiliary requests (incl. Auto Mode classifier)",
+      "compaction": "Context compaction",
+      "followDefault": "Follow the default model",
+      "followMain": "Follow the main model",
+      "empty": "No bindable models yet: add a provider to the list and give it at least one model.",
+      "stale": "No longer published; falls back to the default behavior",
+      "saved": "Scenario bindings saved",
+      "saveFailed": "Failed to save scenario bindings: {{error}}"
+    },
     "queueMoved": "{{name}} moved to position {{position}}.",
     "status": {
       "directLead": "Direct is active · connected to",

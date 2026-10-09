@@ -5,7 +5,8 @@
 //! 模型以带保留前缀的 id 发布给客户端，选中后请求直达那一家；不带前缀的请求发往「默认」
 //! 那家（代理路由），不做故障转移。Claude Code 的四档别名（启动默认、后台任务、子代理别名）
 //! 都指向默认那家列表里的第一个模型（[`claude_route_default`]），平时用哪个由用户在
-//! `/model` 里选。
+//! `/model` 里选；每个场景也可以绑定到任意已发布的 Stack 模型（#7889，见
+//! [`claude_scenario_models`]、[`claude_scenario_target`]），没绑的按原来的行为。
 //!
 //! - 名单和 key 登记簿存在 `live-state.json`（[`StackState`]），增删和客户端文件在同一个
 //!   操作里提交（`controller::set_stack_member`）；默认那家也在名单里，不能移除；
@@ -23,12 +24,14 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::live::engine::DeviceStore;
-use crate::live::project::claude::{env_string, has_one_m_marker, ONE_M_MARKER_FOR_CLIENT};
+use crate::live::project::claude::{
+    env_string, has_one_m_marker, StackRoleModel, StackScenarioModels, ONE_M_MARKER_FOR_CLIENT,
+};
 use crate::provider::{ClaudeStackModel, Provider};
 use crate::proxy::model_mapper::strip_one_m_suffix_for_upstream;
 use crate::services::provider::codex_client_catalog::StaleClients;
 
-use super::state::{self, StackState};
+use super::state::{self, ClaudeScenarios, Scenario, StackState};
 
 /// Claude Code 的 Stack 模型 id：`ccs-claude-<key>--<model>`。id 里要有 `claude` 才进
 /// `/model` 选择器，不以 `claude-` 开头 MAX 窗口才生效。
@@ -453,6 +456,56 @@ pub fn claude_route_default(members: &[Member]) -> Option<StackModel> {
         .next()
 }
 
+/// 场景绑定解析（#7889）：绑定 id 还在发布列表里时给出对应模型，否则该场景没有（按原来的
+/// 行为）。绑定的值留着不删：成员加回来、行里把模型加回来就恢复。
+pub fn claude_scenario_models<'a>(
+    scenarios: &ClaudeScenarios,
+    published: &'a [StackModel],
+) -> StackScenarioModels<'a> {
+    let find = |slot: Scenario| {
+        scenarios
+            .slot(slot)
+            .and_then(|id| published.iter().find(|model| model.id == id))
+            .map(|model| StackRoleModel {
+                id: &model.id,
+                name: &model.name,
+            })
+    };
+    StackScenarioModels {
+        haiku: find(Scenario::Haiku),
+        sonnet: find(Scenario::Sonnet),
+        opus: find(Scenario::Opus),
+        fable: find(Scenario::Fable),
+        subagent: find(Scenario::Subagent),
+    }
+}
+
+/// 辅助 / 压缩请求要改用的模型：Stack 模式下该场景绑定的模型还在发布列表里时给出。绑定
+/// 失效、没有绑、或者不在 Stack 模式时没有：请求保持原样（跟随主模型），分类器这类请求
+/// 不能因为绑定失效被拒（#7889）。
+pub fn claude_scenario_target(
+    db: &Database,
+    store: &DeviceStore,
+    request_class: &str,
+) -> Result<Option<StackModel>, AppError> {
+    let Some(slot) = Scenario::from_request_class(request_class) else {
+        return Ok(None);
+    };
+    if !state::stack_mode(store, AppType::Claude.as_str())? {
+        return Ok(None);
+    }
+    let Some(id) = state::stack(store, AppType::Claude.as_str())?
+        .claude_scenarios
+        .slot(slot)
+        .map(str::to_string)
+    else {
+        return Ok(None);
+    };
+    Ok(claude_published_now(store, db)?
+        .into_iter()
+        .find(|model| model.id == id))
+}
+
 /// 这个应用在 Stack 模式（代理模式且 Stack 模式开着）。读不出状态按不在处理。
 pub fn stack_mode_now(app: &AppType) -> bool {
     if !supports_stack(app) {
@@ -476,14 +529,16 @@ pub fn is_member(app: &AppType, provider_id: &str) -> Result<bool, AppError> {
 }
 
 /// Claude Code 现在发布的 Stack 模型：代理模式下按已落定的名单和路由算，不在代理模式时没有。
-pub fn claude_published_now(db: &Database) -> Result<Vec<StackModel>, AppError> {
+pub fn claude_published_now(
+    store: &DeviceStore,
+    db: &Database,
+) -> Result<Vec<StackModel>, AppError> {
     let app = AppType::Claude;
-    let store = DeviceStore::for_device();
-    let mode = state::mode_state(&store, app.as_str())?;
+    let mode = state::mode_state(store, app.as_str())?;
     if !mode.is_proxy() {
         return Ok(Vec::new());
     }
-    let stack = state::stack(&store, app.as_str())?;
+    let stack = state::stack(store, app.as_str())?;
     Ok(claude_published(&published_members(
         db,
         &app,
@@ -635,6 +690,25 @@ pub fn member_views(members: &[Member]) -> Vec<StackMemberView> {
             route: member.route,
         })
         .collect()
+}
+
+/// 给前端：一个可以绑定到场景的 Stack 模型。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeScenarioModelView {
+    pub id: String,
+    /// 选择器里显示的名字：`<显示名>（<供应商名>）`。
+    pub label: String,
+}
+
+/// 给前端：Claude Code 的场景绑定和可以绑定的模型（#7889）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeScenarioView {
+    /// 当前绑定，原样（失效的值也在：对不上 `models` 的由前端标成已失效）。
+    pub scenarios: ClaudeScenarios,
+    /// 能选的模型：已发布给客户端的 Stack 模型；空 = 还没有能绑的模型。
+    pub models: Vec<ClaudeScenarioModelView>,
 }
 
 #[cfg(test)]
@@ -1046,6 +1120,108 @@ mod tests {
                 "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
             ]
         );
+    }
+
+    /// #7889：场景绑定只认还在发布列表里的 id；失效的（成员移除、行里删了模型）按没绑处理。
+    #[test]
+    fn scenario_bindings_resolve_only_published_models() {
+        let fx = fixture();
+        let stack = state::stack(&fx.store, "claude").unwrap();
+        let published = claude_published(
+            &published_members(&fx.db, &AppType::Claude, &stack, Some("kimi")).unwrap(),
+        );
+        let scenarios = ClaudeScenarios {
+            haiku: Some("ccs-claude-zhipu--glm-5.2[1M]".to_string()),
+            sonnet: Some("ccs-claude-kimi--kimi-k3".to_string()),
+            subagent: Some("ccs-claude-gone--g-1".to_string()),
+            auxiliary: Some("ccs-claude-kimi--kimi-k3".to_string()),
+            ..Default::default()
+        };
+        let resolved = claude_scenario_models(&scenarios, &published);
+        let haiku = resolved.haiku.expect("haiku");
+        assert_eq!(
+            (haiku.id, haiku.name),
+            ("ccs-claude-zhipu--glm-5.2[1M]", "glm-5.2")
+        );
+        let sonnet = resolved.sonnet.expect("sonnet");
+        assert_eq!(
+            (sonnet.id, sonnet.name),
+            ("ccs-claude-kimi--kimi-k3", "kimi-k3")
+        );
+        assert!(resolved.opus.is_none() && resolved.fable.is_none());
+        assert!(resolved.subagent.is_none(), "失效的绑定按没绑处理");
+    }
+
+    /// 请求类别头只认 auxiliary / compaction；其余（main / subagent / workflow）不分流。
+    #[test]
+    fn request_classes_map_to_their_scenarios() {
+        assert_eq!(
+            Scenario::from_request_class("auxiliary"),
+            Some(Scenario::Auxiliary)
+        );
+        assert_eq!(
+            Scenario::from_request_class(" Compaction "),
+            Some(Scenario::Compaction)
+        );
+        for class in ["main", "subagent", "workflow", ""] {
+            assert_eq!(Scenario::from_request_class(class), None, "{class}");
+        }
+    }
+
+    /// #7889：辅助 / 压缩请求改用的模型：Stack 模式 + 绑定的模型还在发布列表里时给出；没绑、
+    /// 失效、不在 Stack 模式、别的请求类别时没有（请求保持原样）。
+    #[test]
+    fn auxiliary_and_compaction_requests_target_the_bound_model() {
+        let fx = fixture();
+        let bind = |slot: Scenario, value: Option<&str>| {
+            state::update(&fx.store, |live| {
+                let scenarios = &mut live.apps.get_mut("claude").unwrap().stack.claude_scenarios;
+                *match slot {
+                    Scenario::Auxiliary => &mut scenarios.auxiliary,
+                    Scenario::Compaction => &mut scenarios.compaction,
+                    other => panic!("unexpected slot {other:?}"),
+                } = value.map(str::to_string);
+            })
+            .unwrap();
+        };
+
+        // 没绑：不分流。
+        assert!(claude_scenario_target(&fx.db, &fx.store, "auxiliary")
+            .unwrap()
+            .is_none());
+
+        bind(Scenario::Auxiliary, Some("ccs-claude-zhipu--glm-5.2[1M]"));
+        let target = claude_scenario_target(&fx.db, &fx.store, "auxiliary")
+            .unwrap()
+            .expect("auxiliary target");
+        assert_eq!(target.id, "ccs-claude-zhipu--glm-5.2[1M]");
+        // 另一个类别没绑：没有。
+        assert!(claude_scenario_target(&fx.db, &fx.store, "compaction")
+            .unwrap()
+            .is_none());
+        // 别的请求类别（main / subagent）不分流。
+        assert!(claude_scenario_target(&fx.db, &fx.store, "main")
+            .unwrap()
+            .is_none());
+        assert!(claude_scenario_target(&fx.db, &fx.store, "subagent")
+            .unwrap()
+            .is_none());
+
+        // 绑定失效：按没绑处理（请求跟随主模型，不能把分类器请求拒掉）。
+        bind(Scenario::Auxiliary, Some("ccs-claude-gone--g-1"));
+        assert!(claude_scenario_target(&fx.db, &fx.store, "auxiliary")
+            .unwrap()
+            .is_none());
+
+        // 不在 Stack 模式（退回路由）：不分流。
+        bind(Scenario::Auxiliary, Some("ccs-claude-zhipu--glm-5.2[1M]"));
+        state::update(&fx.store, |live| {
+            live.apps.get_mut("claude").unwrap().stack.enabled = false;
+        })
+        .unwrap();
+        assert!(claude_scenario_target(&fx.db, &fx.store, "auxiliary")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
