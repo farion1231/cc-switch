@@ -8,6 +8,7 @@ import {
   ResetSlot,
   TONE_FILL,
   TONE_TEXT,
+  TonedText,
   useNow,
 } from "@/components/quota/QuotaLines";
 import {
@@ -53,7 +54,7 @@ interface AccountQuotaColumnProps {
 
 /**
  * 授权中心账号行右侧的额度（v7 Auth 画板）：212 宽的额度条（条和数字都按「剩余」画，
- * 平时 --chart-1；不到 10% 换 warning，用完换 danger）+ 84 宽的「x 分钟前 ↻」。
+ * 平时 --chart-1；不到 20% 换 warning，用完换 danger）+ 84 宽的「x 分钟前 ↻」。
  * 打开页面时查一次，不轮询；↻ 手动重查。
  */
 export function AccountQuotaColumn({
@@ -217,13 +218,13 @@ function QuotaRowCells({
           />
         </span>
       )}
-      <span
-        className={cn(
-          "w-14 shrink-0 whitespace-nowrap text-end tabular-nums",
-          line.tone === "normal" ? "text-fg-1" : TONE_TEXT[line.tone],
-        )}
-      >
-        {value}
+      {/* 旁边已有额度条，正常时数值不上色 */}
+      <span className="w-14 shrink-0 whitespace-nowrap text-end tabular-nums text-fg-1">
+        <TonedText
+          text={value}
+          line={line}
+          className={line.tone === "normal" ? "" : TONE_TEXT[line.tone]}
+        />
       </span>
     </>
   );

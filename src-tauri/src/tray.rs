@@ -65,7 +65,7 @@ const MAX_NAME_CHARS: usize = 32;
 /// 问题区里切换失败的原因最多几个字。
 const MAX_REASON_CHARS: usize = 60;
 /// 额度剩余不到这个百分比算「快用完」（和前端 `quotaRules.WARN_BELOW_PERCENT` 一致）。
-const WARN_BELOW_PERCENT: f64 = 10.0;
+const WARN_BELOW_PERCENT: f64 = 20.0;
 
 /// 每个应用行的子菜单句柄，额度更新时就地改标题而不是整菜单重建（整建会关掉 macOS 上
 /// 正开着的菜单）。`create_tray_menu` 每次重建都整表覆盖写入。
@@ -727,22 +727,6 @@ fn format_script_result(
     (!lines.is_empty()).then_some(QuotaView::Lines(lines))
 }
 
-/// 标题里最多留两行：留剩余最少的，再按原顺序排回去（同卡片 `pickLines`）。
-fn pick_lines(lines: &[QuotaLine], max: usize) -> Vec<&QuotaLine> {
-    let mut order: Vec<usize> = (0..lines.len()).collect();
-    if lines.len() > max {
-        order.sort_by(|a, b| {
-            lines[*a]
-                .left
-                .partial_cmp(&lines[*b].left)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        order.truncate(max);
-        order.sort_unstable();
-    }
-    order.into_iter().map(|index| &lines[index]).collect()
-}
-
 fn worst_left(lines: &[QuotaLine]) -> f64 {
     lines
         .iter()
@@ -750,12 +734,13 @@ fn worst_left(lines: &[QuotaLine]) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
-/// 应用行标题里的额度：`(文字, 快用完)`。查询失败时标题不写额度，原因写在子菜单里。
+/// 应用行标题里的额度：`(文字, 快用完)`。每档都写（#8011：只留剩余最少的两档时，
+/// 5 小时 / 周 / 月三档的 5 小时几乎总被挤掉）。查询失败时标题不写额度，原因写在子菜单里。
 fn quota_title(view: &QuotaView) -> Option<(String, bool)> {
     let QuotaView::Lines(lines) = view else {
         return None;
     };
-    let text = pick_lines(lines, 2)
+    let text = lines
         .iter()
         .map(|line| line.text.as_str())
         .collect::<Vec<_>>()
@@ -3040,7 +3025,7 @@ mod tests {
     }
 
     #[test]
-    fn almost_out_only_below_ten_percent_left_and_not_when_used_up() {
+    fn almost_out_only_below_twenty_percent_left_and_not_when_used_up() {
         let at = |used: f64| {
             title(format_subscription_quota(
                 &zh(),
@@ -3048,8 +3033,8 @@ mod tests {
             ))
             .unwrap()
         };
-        assert_eq!(at(85.0), ("5 小时剩余 15%".to_string(), false));
-        assert_eq!(at(91.0), ("5 小时剩余 9%".to_string(), true));
+        assert_eq!(at(80.0), ("5 小时剩余 20%".to_string(), false));
+        assert_eq!(at(85.0), ("5 小时剩余 15%".to_string(), true));
         // 用完时额度本身写「已用完」，不再加「快用完」。
         assert_eq!(at(100.0), ("5 小时已用完".to_string(), false));
     }
@@ -3068,7 +3053,7 @@ mod tests {
     }
 
     #[test]
-    fn title_keeps_the_two_tiers_with_least_left_in_original_order() {
+    fn title_writes_every_tier_in_original_order() {
         let quota = make_quota(
             "gemini",
             true,
@@ -3080,7 +3065,7 @@ mod tests {
         );
         assert_eq!(
             sub_title(&en(), &quota).as_deref(),
-            Some("Flash 58% left · Flash Lite 20% left")
+            Some("Pro 95% left · Flash 58% left · Flash Lite 20% left")
         );
     }
 
@@ -3891,6 +3876,29 @@ mod tests {
         assert_eq!(
             app_row_title(&zh(), &app),
             "Claude Code · Claude Official · 5 小时剩余 69% · 每周剩余 5% · 快用完"
+        );
+    }
+
+    #[test]
+    fn app_row_title_writes_every_tier_including_the_roomy_five_hour_one() {
+        // #8011：火山三档里 5 小时剩得最多，只留剩余最少两档时它总被挤掉。
+        let mut app = snapshot(
+            AppType::Claude,
+            TrayMode::Direct,
+            vec![entry("volc", "火山方舟")],
+        );
+        let volcengine = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 10.0),
+                usage_data(Some(TIER_WEEKLY_LIMIT), 60.0),
+                usage_data(Some(TIER_MONTHLY), 70.0),
+            ],
+        );
+        app.quota = format_script_result(&zh(), &volcengine);
+        assert_eq!(
+            app_row_title(&zh(), &app),
+            "Claude Code · 火山方舟 · 5 小时剩余 90% · 每周剩余 40% · 每月剩余 30%"
         );
     }
 

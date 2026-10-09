@@ -285,16 +285,52 @@ describe("Skills install and import mutation hooks", () => {
     });
   });
 
-  it("keeps a rejected import pending until all affected caches refresh", async () => {
-    let releaseInvalidation: (() => void) | undefined;
-    const invalidationPending = new Promise<void>((resolve) => {
-      releaseInvalidation = resolve;
+  // #7994：「发现」重拉要从 GitHub 下载仓库，可能很久都不返回；导入只等
+  // installed / unmanaged，不能因为它一直 pending、把导入弹窗锁住
+  function spyImportInvalidations(queryClient: QueryClient) {
+    let releaseLocal: (() => void) | undefined;
+    const localPending = new Promise<void>((resolve) => {
+      releaseLocal = resolve;
     });
+    const spy = vi
+      .spyOn(queryClient, "invalidateQueries")
+      .mockImplementation((filters) => {
+        const scope = filters?.queryKey?.[1];
+        return scope === "installed" || scope === "unmanaged"
+          ? localPending
+          : new Promise<void>(() => undefined);
+      });
+    return { spy, releaseLocal: () => releaseLocal?.() };
+  }
+
+  it("finishes an import without waiting for repos or discover to refetch", async () => {
+    const queryClient = createQueryClient();
+    const imported = makeSkill({ name: "Imported Skill" });
+    apiMocks.importFromApps.mockResolvedValueOnce([imported]);
+    const { spy, releaseLocal } = spyImportInvalidations(queryClient);
+    const { result } = renderHook(() => useImportSkillsFromApps(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    let mutation!: Promise<InstalledSkill[]>;
+    act(() => {
+      mutation = result.current.mutateAsync([]);
+    });
+
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(4));
+    expect(result.current.isPending).toBe(true);
+
+    releaseLocal();
+    await act(async () => {
+      await expect(mutation).resolves.toEqual([imported]);
+    });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+  });
+
+  it("keeps a rejected import pending only until installed and unmanaged refresh", async () => {
     const queryClient = createQueryClient();
     apiMocks.importFromApps.mockRejectedValueOnce(new Error("import failed"));
-    const invalidateSpy = vi
-      .spyOn(queryClient, "invalidateQueries")
-      .mockImplementation(() => invalidationPending);
+    const { spy, releaseLocal } = spyImportInvalidations(queryClient);
     const { result } = renderHook(() => useImportSkillsFromApps(), {
       wrapper: createWrapper(queryClient),
     });
@@ -305,7 +341,7 @@ describe("Skills install and import mutation hooks", () => {
       void mutation.catch(() => undefined);
     });
 
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(4));
     expect(result.current.isPending).toBe(true);
     for (const queryKey of [
       ["skills", "installed"],
@@ -313,10 +349,10 @@ describe("Skills install and import mutation hooks", () => {
       ["skills", "repos"],
       ["skills", "discoverable"],
     ]) {
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey });
+      expect(spy).toHaveBeenCalledWith({ queryKey });
     }
 
-    releaseInvalidation?.();
+    releaseLocal();
     await act(async () => {
       await expect(mutation).rejects.toThrow("import failed");
     });
