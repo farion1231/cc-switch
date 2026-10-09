@@ -29,7 +29,7 @@ use serde_json::Value;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::provider::{Provider, UsageResult};
+use crate::provider::{Provider, ProviderMeta, UsageResult};
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -312,6 +312,132 @@ mod tests {
                  wire_api = \"chat\"\n"
             )
         })
+    }
+
+    #[test]
+    #[serial]
+    fn codex_editor_view_preserves_draft_and_stored_copilot_metadata() {
+        with_test_home(|state, _home| {
+            crate::settings::reload_settings().expect("reload settings");
+            let settings = json!({
+                "auth": {},
+                "apiFormat": "openai_chat",
+                "config": "model = \"claude-sonnet-5\"\nmodel_provider = \"copilot\"\nmodel_context_window = 400000\n\n[model_providers.copilot]\nbase_url = \"https://api.githubcopilot.com\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+            });
+            let meta = ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                api_format: Some("openai_chat".to_string()),
+                auth_binding: Some(AuthBinding {
+                    source: AuthBindingSource::ManagedAccount,
+                    auth_provider: Some("github_copilot".to_string()),
+                    account_id: Some("copilot-editor-account".to_string()),
+                }),
+                ..Default::default()
+            };
+            let mut stored = Provider::with_id(
+                "copilot-editor".to_string(),
+                "Copilot".to_string(),
+                settings.clone(),
+                None,
+            );
+            stored.meta = Some(meta.clone());
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &stored)
+                .expect("store Copilot provider");
+
+            for (provider_id, draft_meta) in [(None, Some(&meta)), (Some(stored.id.as_str()), None)]
+            {
+                let view = ProviderService::editor_view_with_meta(
+                    state,
+                    AppType::Codex,
+                    &settings,
+                    None,
+                    provider_id,
+                    draft_meta,
+                )
+                .expect("keyless managed Copilot preview");
+                let text = view.settings["config"].as_str().expect("config text");
+                let parsed: toml::Value = toml::from_str(text).expect("preview TOML");
+                let route = &parsed["model_providers"]["custom"];
+                assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+                assert_eq!(route["wire_api"].as_str(), Some("responses"));
+                assert!(route.get("requires_openai_auth").is_none());
+                assert!(route.get("experimental_bearer_token").is_none());
+                assert_eq!(view.settings["auth"], json!({}));
+                assert!(!text.contains("copilot-editor-account"));
+                assert_eq!(parsed["model_context_window"].as_integer(), Some(400000));
+                assert_eq!(
+                    parsed["web_search"].as_str(),
+                    Some("disabled"),
+                    "Copilot must not inherit the generic ProxyChat search policy"
+                );
+            }
+
+            let cleared_meta = ProviderMeta::default();
+            let cleared = ProviderService::editor_view_with_meta(
+                state,
+                AppType::Codex,
+                &settings,
+                None,
+                Some(&stored.id),
+                Some(&cleared_meta),
+            )
+            .expect("generic keyless preview with explicitly cleared metadata");
+            let generic = ProviderService::editor_view(state, AppType::Codex, &settings, None)
+                .expect("generic keyless preview without managed metadata");
+            // 普通空 Key 草稿也允许预览，不能再用报错区分身份；检查 Copilot 专属策略。
+            for (view, reason) in [
+                (
+                    cleared,
+                    "explicit draft metadata must not fall back to the stored Copilot type",
+                ),
+                (
+                    generic,
+                    "the compatibility wrapper must not infer managed auth from the URL",
+                ),
+            ] {
+                let text = view.settings["config"].as_str().expect("config text");
+                let parsed: toml::Value = toml::from_str(text).expect("preview TOML");
+                assert!(parsed.get("web_search").is_none(), "{reason}");
+                assert_eq!(view.settings["auth"], json!({}));
+                assert!(!text.contains("cc-switch-editor-pending-key"));
+            }
+            assert!(!crate::codex_config::get_codex_config_path().exists());
+            assert!(!crate::codex_config::get_codex_model_catalog_path().exists());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn codex_editor_metadata_does_not_change_other_app_previews() {
+        with_test_home(|state, _home| {
+            crate::settings::reload_settings().expect("reload settings");
+            let settings = json!({"env": {
+                "ANTHROPIC_BASE_URL": "https://relay.example",
+                "ANTHROPIC_AUTH_TOKEN": "editor-key",
+                "ANTHROPIC_MODEL": "claude-sonnet-5"
+            }});
+            let expected =
+                ProviderService::editor_view(state, AppType::Claude, &settings, None).unwrap();
+            let meta = ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            };
+            let actual = ProviderService::editor_view_with_meta(
+                state,
+                AppType::Claude,
+                &settings,
+                None,
+                Some("absent-provider"),
+                Some(&meta),
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(actual).unwrap(),
+                serde_json::to_value(expected).unwrap()
+            );
+        });
     }
 
     fn usage_script_with_credentials(
@@ -5314,9 +5440,36 @@ impl ProviderService {
         settings_config: &Value,
         category: Option<&str>,
     ) -> Result<EditorView, AppError> {
+        Self::editor_view_with_meta(state, app_type, settings_config, category, None, None)
+    }
+
+    /// Codex previews retain managed-provider identity. Explicit draft metadata,
+    /// including an empty value, takes precedence over the stored card's metadata.
+    pub fn editor_view_with_meta(
+        state: &AppState,
+        app_type: AppType,
+        settings_config: &Value,
+        category: Option<&str>,
+        provider_id: Option<&str>,
+        meta: Option<&ProviderMeta>,
+    ) -> Result<EditorView, AppError> {
         match app_type {
             AppType::Claude => claude_editor::view(state, settings_config),
-            AppType::Codex => codex_editor::view(state, settings_config, category),
+            AppType::Codex => {
+                let stored_meta = match (meta, provider_id) {
+                    (None, Some(id)) => state
+                        .db
+                        .get_provider_by_id(id, AppType::Codex.as_str())?
+                        .and_then(|provider| provider.meta),
+                    _ => None,
+                };
+                codex_editor::view(
+                    state,
+                    settings_config,
+                    category,
+                    meta.or(stored_meta.as_ref()),
+                )
+            }
             AppType::Gemini => gemini_editor::view(state, settings_config, category),
             AppType::GrokBuild => grok_editor::view(state, settings_config, category),
             other => Err(AppError::InvalidInput(format!(

@@ -176,6 +176,29 @@ describe("SwitchModePanel — Stack mode", () => {
     ).not.toBeInTheDocument();
   });
 
+  it.each(["direct", "route", "stack"] as const)(
+    "shows a cached account notice in %s mode",
+    async (mode) => {
+      mockMode(mode, "route");
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+          HttpResponse.json({
+            active: mode === "stack",
+            members: [],
+            staleClients: { daemon: true, others: false, auth: true },
+          }),
+        ),
+      );
+      renderPanel("codex", { route: provider("route") });
+      expect(
+        await screen.findByText("proxy.stackMode.codexStale.authTitle"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("proxy.stackMode.codexStale.title"),
+      ).not.toBeInTheDocument();
+    },
+  );
+
   it("does not read the Stack list for apps without Stack mode", async () => {
     mockMode("route", "a");
     let stackReads = 0;
