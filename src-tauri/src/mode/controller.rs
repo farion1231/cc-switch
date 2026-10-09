@@ -1213,18 +1213,16 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
     })
 }
 
-/// [`stack_views`] 再加上 Codex 客户端是不是还在用旧的模型列表（要读进程表，放到阻塞线程池
-/// 里）。路由那家自己管理目录时，Stack 模型本来就不发布，重启也看不到，已经有 `notice` 说明，
-/// 不再查。
+/// [`stack_views`] 再加上 Codex 客户端是否可能缓存旧登录或模型列表（阻塞线程里读进程表）。
+/// 账号在所有模式下检查；目录仅在发布 Stack 模型且未使用外部目录时检查。
 pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<StackView, String> {
     let mut view = stack_views(state, app)?;
-    if matches!(app, AppType::Codex)
-        && view.active
-        && view.notice != Some("routeOwnsCatalog")
-        && codex_publishes_stack_models(state, &settled_stack(app)?)
-    {
-        view.stale_clients = codex_direct::off_runtime(|| {
-            codex_client_catalog::stale_clients(&DeviceStore::for_device())
+    if matches!(app, AppType::Codex) {
+        let check_catalog = view.active
+            && view.notice != Some("routeOwnsCatalog")
+            && codex_publishes_stack_models(state, &settled_stack(app)?);
+        view.stale_clients = codex_direct::off_runtime(move || {
+            codex_client_catalog::stale_clients(&DeviceStore::for_device(), check_catalog)
         })
         .await
         .map_err(err)?;
@@ -6029,8 +6027,44 @@ model_provider = "c"
             .stale_clients
     }
 
-    /// 桌面版在目录变化之前启动：Stack 视图带上 `staleClients`；之后启动的不算旧。路由模式、
-    /// 路由那家自己管理目录（Stack 模型本来就不发布）时不查。
+    /// 直连切号也提示可能缓存旧登录，不要求生成模型目录。
+    #[tokio::test]
+    #[serial]
+    async fn codex_direct_account_switch_reports_the_cached_login() {
+        let _home = Home::new();
+        let clients = FakeClients::install();
+        seed_codex("", Some(&chatgpt_login("acct-a")));
+        let official = |id: &str| {
+            let mut row = Provider::with_id(
+                id.to_string(),
+                id.to_uppercase(),
+                json!({ "auth": chatgpt_login(id), "config": "" }),
+                None,
+            );
+            row.category = Some("official".to_string());
+            row
+        };
+        let state = state_with(
+            AppType::Codex,
+            &[official("acct-a"), official("acct-b")],
+            "acct-a",
+        )
+        .await;
+        ProviderService::switch(&state, AppType::Codex, "acct-a").unwrap();
+        clients.advance(10_000);
+        clients.desktop_running_for("00:05");
+        assert_eq!(stale_clients_of(&state).await, None);
+        clients.advance(10_000);
+        ProviderService::switch(&state, AppType::Codex, "acct-b").unwrap();
+        clients.desktop_running_for("00:15");
+        assert_eq!(codex_login_on_disk()["tokens"]["account_id"], "acct-b");
+        assert!(stale_clients_of(&state).await.is_some());
+        clients.advance(10_000);
+        clients.desktop_running_for("00:05");
+        assert_eq!(stale_clients_of(&state).await, None);
+    }
+
+    /// 桌面版在目录变化之前启动：Stack 视图带上 `staleClients`；之后启动的不算旧。
     #[tokio::test]
     #[serial]
     async fn codex_stack_view_reports_clients_on_an_old_catalog() {
@@ -6045,7 +6079,8 @@ model_provider = "c"
             stale_clients_of(&state).await,
             Some(codex_client_catalog::StaleClients {
                 daemon: false,
-                others: true
+                others: true,
+                auth: false
             })
         );
         // 普通的 Stack 视图不读进程表。
