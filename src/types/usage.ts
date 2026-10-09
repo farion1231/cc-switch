@@ -113,6 +113,8 @@ export interface DailyStats {
 
 export interface ProviderStats {
   providerId: string;
+  /** 与 providerId 共同构成唯一身份：providers 主键是 (id, app_type)。 */
+  appType: string;
   providerName: string;
   requestCount: number;
   /** 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径 */
