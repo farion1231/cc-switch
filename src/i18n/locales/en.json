@@ -4587,6 +4587,7 @@
       "selectNone": "Select none",
       "foundIn": "Found in: {{places}}",
       "foundCcSwitch": "CC Switch folder",
+      "foundPiShared": "Pi shared directory",
       "appsTitle": "Enable in these apps after importing",
       "appsHelpTitle": "Which apps are ticked by default",
       "appsHelp": "Apps listed under “Found in” are ticked and only enable the Skills found there; any other app you tick enables every imported Skill. Pi is decided by its folder, so it isn't listed.",

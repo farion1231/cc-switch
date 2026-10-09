@@ -4587,6 +4587,7 @@
       "selectNone": "全不选",
       "foundIn": "发现于：{{places}}",
       "foundCcSwitch": "CC Switch 目录",
+      "foundPiShared": "Pi 共享目录",
       "appsTitle": "导入后在这些应用里启用",
       "appsHelpTitle": "默认勾选哪些应用",
       "appsHelp": "默认勾选「发现于」里的应用，只在发现它的应用里启用；另外勾选的应用，所有导入的 Skill 都会启用。Pi 按目录判断，不在这里选。",

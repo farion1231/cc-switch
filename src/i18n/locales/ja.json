@@ -4587,6 +4587,7 @@
       "selectNone": "選択を解除",
       "foundIn": "見つかった場所：{{places}}",
       "foundCcSwitch": "CC Switch のフォルダー",
+      "foundPiShared": "Pi 共有ディレクトリ",
       "appsTitle": "取り込み後に有効にするアプリ",
       "appsHelpTitle": "既定でチェックされるアプリ",
       "appsHelp": "「見つかった場所」のアプリは既定でチェックされ、そこで見つかった Skill だけを有効にします。追加でチェックしたアプリでは取り込むすべての Skill を有効にします。Pi はフォルダーで判定するためここにはありません。",

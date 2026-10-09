@@ -56,6 +56,7 @@ export function SkillImportDialog({
   const foundLabel = (found: string) => {
     if (isAppId(found)) return APP_DISPLAY_NAME[found];
     if (found === "agents") return "~/.agents/skills";
+    if (found === "pi-shared") return t("skillsPage.import.foundPiShared");
     if (found === "cc-switch") return t("skillsPage.import.foundCcSwitch");
     return found;
   };

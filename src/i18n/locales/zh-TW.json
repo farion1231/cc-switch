@@ -4588,6 +4588,7 @@
       "selectNone": "全不選",
       "foundIn": "發現於：{{places}}",
       "foundCcSwitch": "CC Switch 目錄",
+      "foundPiShared": "Pi 共享目錄",
       "appsTitle": "匯入後在這些應用裡啟用",
       "appsHelpTitle": "預設勾選哪些應用",
       "appsHelp": "預設勾選「發現於」裡的應用，只在發現它的應用裡啟用；另外勾選的應用，所有匯入的 Skill 都會啟用。Pi 按目錄判斷，不在這裡選。",
