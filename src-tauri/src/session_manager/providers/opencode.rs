@@ -404,28 +404,50 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
                 .unwrap_or(false);
 
             if in_session_v2 {
-                let prefer_v1 = if sqlite_table_exists(&conn, "session")
-                    && sqlite_table_exists(&conn, "message")
-                {
-                    let v1_updated: Option<i64> = conn
-                        .query_row(
-                            "SELECT time_updated FROM session WHERE id = ?1",
+                let prefer_v1 = if sqlite_table_exists(&conn, "message") {
+                    let v1_msg_ts: Option<i64> = if sqlite_table_exists(&conn, "part") {
+                        conn.query_row(
+                            "SELECT MAX(ts) FROM ( \
+                                 SELECT MAX(time_created) AS ts FROM message WHERE session_id = ?1 \
+                                 UNION ALL \
+                                 SELECT MAX(time_created) AS ts FROM part WHERE session_id = ?1 \
+                             )",
                             [&session_id],
                             |row| row.get(0),
                         )
-                        .ok();
-                    let v2_active: Option<i64> = conn
-                        .query_row(
-                            "SELECT MAX(s.time_updated, COALESCE(MAX(m.time_updated), s.time_updated)) \
-                             FROM session_v2 s \
-                             LEFT JOIN session_message m ON m.session_id = s.id \
-                             WHERE s.id = ?1 \
-                             GROUP BY s.id",
+                        .ok()
+                        .flatten()
+                    } else {
+                        conn.query_row(
+                            "SELECT MAX(time_created) FROM message WHERE session_id = ?1",
                             [&session_id],
                             |row| row.get(0),
                         )
-                        .ok();
-                    matches!((v1_updated, v2_active), (Some(v1), Some(v2)) if v1 > v2)
+                        .ok()
+                        .flatten()
+                    };
+
+                    let v2_msg_ts: Option<i64> = if sqlite_table_exists(&conn, "session_message") {
+                        conn.query_row(
+                            "SELECT MAX(ts) FROM ( \
+                                 SELECT MAX(time_updated) AS ts FROM session_message WHERE session_id = ?1 \
+                                 UNION ALL \
+                                 SELECT MAX(time_created) AS ts FROM session_message WHERE session_id = ?1 \
+                             )",
+                            [&session_id],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                        .flatten()
+                    } else {
+                        None
+                    };
+
+                    match (v1_msg_ts, v2_msg_ts) {
+                        (Some(v1), Some(v2)) => v1 > v2,
+                        (Some(_), None) => true,
+                        _ => false,
+                    }
                 } else {
                     false
                 };
@@ -1811,6 +1833,105 @@ mod tests {
         let messages = load_messages_sqlite(&source).expect("load messages");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "Continued in V1");
+
+        if let Some(value) = original_xdg {
+            std::env::set_var("XDG_DATA_HOME", value);
+        } else {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn session_in_both_tables_v1_metadata_update_only_preserves_newer_v2_messages() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let _guard = opencode_env_lock().lock().expect("lock");
+        let temp = tempdir().expect("tempdir");
+        let original_xdg = std::env::var_os("XDG_DATA_HOME");
+        std::env::set_var("XDG_DATA_HOME", temp.path());
+
+        let base_dir = temp.path().join("opencode");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        let db_path = base_dir.join("opencode.db");
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        create_sqlite_schema(&conn);
+        create_sqlite_schema_v2(&conn);
+
+        conn.execute_batch(
+            "CREATE TABLE kv (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL
+            );",
+        )
+        .expect("create kv table");
+
+        // Migration completed at t = 2000
+        conn.execute(
+            "INSERT INTO kv (key, value, time_created, time_updated) VALUES (?1, ?2, ?3, ?4)",
+            (
+                "migration.v1-v2",
+                r#"{"phase":"completed"}"#,
+                1900_i64,
+                2000_i64,
+            ),
+        )
+        .expect("insert migration marker");
+
+        // Session created in V1 at t = 1000
+        conn.execute(
+            "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_perm_update", "Original Session Title", "/tmp/project", 1000_i64, 1000_i64),
+        )
+        .expect("insert v1 session");
+
+        // V1 has old snapshot messages stopping at t = 1000
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            ("msg_v1", "ses_perm_update", 1000_i64, r#"{"role":"user"}"#),
+        )
+        .expect("insert v1 message");
+        conn.execute(
+            "INSERT INTO part (id, session_id, message_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("prt_v1", "ses_perm_update", "msg_v1", 1000_i64, r#"{"type":"text","text":"Old V1 message"}"#),
+        )
+        .expect("insert v1 part");
+
+        // Migrated to V2 with newer message at t = 2000
+        conn.execute(
+            "INSERT INTO session_v2 (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_perm_update", "V2 Active Session", "/tmp/project", 1000_i64, 2000_i64),
+        )
+        .expect("insert v2 session");
+        conn.execute(
+            "INSERT INTO session_message (id, session_id, type, seq, data, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            ("msg_v2", "ses_perm_update", "user", 1_i64, r#"{"text":"Newer V2 message"}"#, 2000_i64, 2000_i64),
+        )
+        .expect("insert v2 message");
+
+        // User later updates permission in a V1 client (Session.setPermission updates permission and time_updated only)
+        // V1 session time_updated becomes 3000, but message/part stay at 1000.
+        conn.execute(
+            "UPDATE session SET time_updated = 3000 WHERE id = 'ses_perm_update'",
+            [],
+        )
+        .expect("update v1 session time_updated");
+        drop(conn);
+
+        // 1. scan_sessions_sqlite reports the newer metadata timestamp (3000)
+        let sessions = scan_sessions_sqlite();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "ses_perm_update");
+        assert_eq!(sessions[0].last_active_at, Some(3000));
+
+        // 2. load_messages_sqlite must NOT roll back to V1 old snapshot; it must load newer V2 messages
+        let source = format!("sqlite:{}:ses_perm_update", db_path.display());
+        let messages = load_messages_sqlite(&source).expect("load messages");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "Newer V2 message");
 
         if let Some(value) = original_xdg {
             std::env::set_var("XDG_DATA_HOME", value);
