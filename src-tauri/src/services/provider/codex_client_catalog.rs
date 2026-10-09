@@ -12,8 +12,8 @@
 //! 一个进程读到的，是它启动之前开始的最后一代。
 //!
 //! 进程只看不动：用户在界面上确认之后，才调 Codex 自己的 `codex app-server daemon restart`。
-//! 桌面版和编辑器插件不替用户重启，只提示彻底退出再开。进程表只在 macOS、Linux 上读（`ps`），
-//! Windows 上看不到进程，不出提示。
+//! 桌面版和编辑器插件不替用户重启，只提示彻底退出再开。macOS、Linux 用 `ps`；Windows
+//! 查询同一用户的原生进程，不把 WSL 配置与 Windows 进程混用。
 
 use std::process::Output;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -86,7 +86,7 @@ struct AppServers {
 
 /// 外部依赖：进程表、时钟、重启命令。测试里换成假的。
 pub(crate) struct Env {
-    /// `ps -Ao pid=,etime=,command=` 的输出；读不到（或在 Windows 上）是 `None`。
+    /// `pid etime command` 的进程表；读不到时是 `None`。
     pub process_table: Box<dyn Fn() -> Option<String> + Send + Sync>,
     /// Unix 毫秒。
     pub now_ms: Box<dyn Fn() -> u64 + Send + Sync>,
@@ -151,7 +151,50 @@ fn read_process_table() -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn read_process_table() -> Option<String> {
+    if crate::commands::wsl_distro_for_tool("codex").is_some() {
+        return None;
+    }
+    let output = crate::commands::query_windows_codex_processes(Duration::from_secs(5))
+        .map_err(|error| log::debug!("读取 Codex 进程失败: {error}"))
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
+    windows_process_rows(&output.stdout, now_ms)
+}
+
+/// 把 Windows 的绝对启动时间转为公共分类器使用的进程表，不接受缺失字段或未来启动时间。
+#[cfg(any(windows, test))]
+fn windows_process_rows(bytes: &[u8], now_ms: u64) -> Option<String> {
+    let rows: Value = serde_json::from_slice(bytes).ok()?;
+    let table = rows
+        .as_array()?
+        .iter()
+        .filter_map(|row| {
+            let pid = u32::try_from(row.get("pid")?.as_u64()?).ok()?;
+            let started = row.get("startedMs")?.as_u64()?;
+            let command = row.get("command")?.as_str()?;
+            if pid == 0 || command.is_empty() || command.contains(['\r', '\n']) {
+                return None;
+            }
+            let elapsed = now_ms.checked_sub(started)? / 1000;
+            Some(format!(
+                "{pid} {}:{:02} {command}",
+                elapsed / 60,
+                elapsed % 60
+            ))
+        })
+        .collect::<Vec<_>>();
+    Some(table.join("\n"))
+}
+
+#[cfg(not(any(unix, windows)))]
 fn read_process_table() -> Option<String> {
     None
 }
@@ -353,7 +396,15 @@ fn classify(table: &str, daemon_pid: Option<u32>, plugins_dir: &str, now_ms: u64
         match role {
             Role::Daemon if Some(pid) == daemon_pid => servers.daemon = Some(started),
             Role::Daemon => {}
-            Role::Other if command.starts_with(plugins_dir) => {}
+            Role::Other
+                if command.starts_with(plugins_dir)
+                    || (command.to_ascii_lowercase().contains("codex.exe")
+                        && command
+                            .trim_start_matches('"')
+                            .replace('\\', "/")
+                            .to_ascii_lowercase()
+                            .starts_with(&plugins_dir.replace('\\', "/").to_ascii_lowercase())) => {
+            }
             Role::Other => servers.others.push(started),
         }
     }
@@ -418,8 +469,36 @@ fn app_server_role(command: &str) -> Option<Role> {
     })
 }
 
-/// 命令行里可执行文件 `codex`（`codex` 或 `…/codex`）之后的部分。
+/// 命令行里可执行文件 `codex` 或 `codex.exe` 之后的部分。
 fn after_codex_executable(command: &str) -> Option<&str> {
+    let command = command.trim_start();
+    // Windows 的可执行路径可带空格、引号；只检查可执行文件，不能命中其他程序的参数。
+    let first = command.split_whitespace().next()?;
+    if command.starts_with('"')
+        || command.as_bytes().get(1) == Some(&b':')
+        || command.starts_with("\\\\")
+        || first.to_ascii_lowercase().ends_with(".exe")
+    {
+        let (executable, rest) = if let Some(quoted) = command.strip_prefix('"') {
+            let (executable, rest) = quoted.split_once('"')?;
+            (executable, rest)
+        } else {
+            let lower = command.to_ascii_lowercase();
+            let end = lower.match_indices(".exe").find_map(|(index, _)| {
+                let end = index + 4;
+                let rest = &command[end..];
+                (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(end)
+            })?;
+            command.split_at(end)
+        };
+        let name = executable.rsplit(['/', '\\']).next()?;
+        if (name == "codex" || name.eq_ignore_ascii_case("codex.exe"))
+            && (rest.is_empty() || rest.starts_with(char::is_whitespace))
+        {
+            return Some(rest.trim_start());
+        }
+        return None;
+    }
     const NAME: &str = "codex";
     let mut from = 0;
     while let Some(found) = command[from..].find(NAME) {
@@ -629,6 +708,189 @@ mod tests {
             classify(&table, Some(62347), "/Users/me/.codex/plugins/", now).daemon,
             None
         );
+    }
+
+    #[test]
+    fn windows_classifies_executable_paths_and_excludes_plugin_servers() {
+        let table = [
+            r#"11 01:00 "C:\Program Files\Codex\codex.exe" app-server --managed-daemon"#,
+            r#"12 01:00 C:\Codex\codex.exe app-server --managed-daemon"#,
+            r#"13 00:30 "C:\Program Files\Codex\CODEX.EXE" -c features.code_mode_host=true app-server"#,
+            r#"14 00:20 C:\Codex\codex.exe app-server"#,
+            r#"15 00:10 "c:\users\me\.codex\plugins\host\codex.exe" app-server"#,
+            r#"16 00:10 "C:/Users/me/.codex/plugins/host/codex.exe" app-server"#,
+            r#"17 00:05 C:\Codex\codex.exe app-server daemon restart"#,
+            r#"18 00:05 C:\Codex\codex.exe app-server proxy"#,
+            r#"19 00:05 C:\Codex\codex-helper.exe app-server"#,
+            r#"20 00:05 C:\Other\runner.exe -c C:\Codex\codex.exe app-server"#,
+        ].join("\n");
+        let servers = classify(&table, Some(11), r"C:\Users\me\.codex\plugins/", 1_000_000);
+        assert_eq!(servers.daemon, Some(940_000));
+        assert_eq!(servers.others, vec![970_000, 980_000]);
+        assert_eq!(
+            classify(&table, Some(13), r"C:\Users\me\.codex\plugins/", 1_000_000).daemon,
+            None
+        );
+    }
+
+    #[test]
+    fn windows_executable_parser_handles_quotes_without_matching_arguments() {
+        assert_eq!(
+            app_server_role(r#""C:\Program Files\Codex\codex.exe" app-server"#),
+            Some(Role::Other)
+        );
+        assert_eq!(
+            app_server_role(r"C:\Program Files\Codex\codex.exe app-server --managed-daemon"),
+            Some(Role::Daemon)
+        );
+        assert_eq!(app_server_role("codex.exe app-server"), Some(Role::Other));
+        assert_eq!(
+            app_server_role(r"C:\tools.exe\codex.exe app-server"),
+            Some(Role::Other)
+        );
+        assert_eq!(
+            app_server_role(r"C:\Codex\codex.exe.backup app-server"),
+            None
+        );
+        assert_eq!(app_server_role(r#""C:\Codex\codex.exe app-server""#), None);
+        assert_eq!(
+            app_server_role(r"C:\tools\python.exe C:\Codex\codex.exe app-server"),
+            None
+        );
+        assert_eq!(
+            app_server_role("/usr/bin/codex app-server -c tool=/tools/test.exe"),
+            Some(Role::Other)
+        );
+    }
+
+    #[test]
+    fn windows_query_rows_skip_unreadable_and_invalid_processes() {
+        let rows = serde_json::json!([
+            {"pid":1,"startedMs":40_000,"command":"codex.exe app-server"},
+            {"pid":2,"startedMs":55_000,"command":null},
+            {"pid":3,"startedMs":100_001,"command":"codex.exe app-server"},
+            {"pid":4,"command":"codex.exe app-server"},
+            {"pid":0,"startedMs":40_000,"command":"codex.exe app-server"},
+            {"pid":5,"startedMs":40_000,"command":"codex.exe app-server\n6 00:00 codex.exe app-server"},
+        ]);
+        assert_eq!(
+            windows_process_rows(rows.to_string().as_bytes(), 100_000),
+            Some("1 1:00 codex.exe app-server".to_string())
+        );
+        assert_eq!(windows_process_rows(b"[]", 100_000), Some(String::new()));
+        assert_eq!(windows_process_rows(b"not json", 100_000), None);
+    }
+
+    /// Manual runtime check: the fixture is a sleeping synthetic codex.exe, never an installed Codex.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires CC_SWITCH_TEST_CODEX_EXE pointing to an isolated synthetic executable"]
+    #[serial]
+    fn windows_native_query_detects_an_isolated_process() {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+        let _scope = Scope::new();
+        let path = std::env::var_os("CC_SWITCH_TEST_CODEX_EXE").expect("synthetic fixture path");
+        struct Fixture(std::process::Child);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let fixture = Fixture(
+            Command::new(path)
+                .arg("app-server")
+                .env("CODEX_HOME", get_codex_config_dir())
+                .creation_flags(0x08000000)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("start synthetic fixture"),
+        );
+        let table = read_process_table().expect("native process query");
+        let row = table
+            .lines()
+            .find(|line| split_row(line).is_some_and(|(pid, _, _)| pid == fixture.0.id()))
+            .expect("fixture appears in real query");
+        assert_eq!(
+            classify(row, None, "not-a-plugin/", (env().now_ms)())
+                .others
+                .len(),
+            1
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_process_query_has_a_deadline() {
+        let started = std::time::Instant::now();
+        assert!(crate::commands::query_windows_codex_processes(Duration::from_millis(1)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    #[serial]
+    fn windows_process_rows_detect_stale_login_and_new_servers() {
+        let scope = Scope::new();
+        let store = scope.store();
+        let clock = Arc::new(AtomicU64::new(1_000_000));
+        let table = Arc::new(Mutex::new(String::new()));
+        fake_env(
+            clock.clone(),
+            table.clone(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        point_at_catalog(None);
+        let login = |account: &str| {
+            std::fs::write(
+                get_codex_auth_path(),
+                serde_json::json!({"tokens": {
+                    "account_id": account,
+                    "id_token": crate::codex_config::test_codex_id_token(account),
+                }})
+                .to_string(),
+            )
+            .unwrap();
+        };
+        login("a");
+        observe(&store);
+        clock.store(1_100_000, Ordering::SeqCst);
+        login("b");
+        observe(&store);
+        *table.lock().unwrap() =
+            r#"11 01:30 "C:\Program Files\Codex\codex.exe" app-server"#.to_string();
+        let notice = stale_clients(&store, false).expect("old Windows server");
+        assert!(notice.auth && notice.others && !notice.daemon);
+        clock.store(1_200_000, Ordering::SeqCst);
+        *table.lock().unwrap() =
+            r#"11 00:30 "C:\Program Files\Codex\codex.exe" app-server"#.to_string();
+        assert_eq!(stale_clients(&store, false), None);
+        *table.lock().unwrap() = String::new();
+        assert_eq!(stale_clients(&store, false), None);
+    }
+
+    #[test]
+    #[serial]
+    fn windows_daemon_is_only_restarted_explicitly_and_when_pid_matches() {
+        let scope = Scope::new();
+        let clock = Arc::new(AtomicU64::new(1_000_000));
+        let table = Arc::new(Mutex::new(
+            r#"11 01:00 "C:\Codex\codex.exe" app-server --managed-daemon"#.to_string(),
+        ));
+        let restarted = Arc::new(AtomicBool::new(false));
+        fake_env(clock, table, restarted.clone());
+        point_at_catalog(Some("current"));
+        write_daemon_pid(12);
+        assert_eq!(stale_clients(&scope.store(), true), None);
+        assert_eq!(restart_daemon(), Ok(RestartOutcome::NotRunning));
+        assert!(!restarted.load(Ordering::SeqCst));
+        write_daemon_pid(11);
+        assert!(stale_clients(&scope.store(), true).unwrap().daemon);
+        assert!(!restarted.load(Ordering::SeqCst));
+        assert_eq!(restart_daemon(), Ok(RestartOutcome::Restarted));
+        assert!(restarted.load(Ordering::SeqCst));
     }
 
     #[test]
