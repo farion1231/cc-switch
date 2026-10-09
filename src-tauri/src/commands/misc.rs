@@ -3444,12 +3444,11 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         // npm-installed Claude delegates updates to npm. Keep the npm 12
         // postinstall and optional dependency settings scoped to this process
         // tree; other installation sources retain their own update policy.
-        if tool == "claude"
-            && matches!(
-                infer_install_source(Path::new(bin_path)),
-                "nvm" | "fnm" | "mise" | "homebrew"
-            )
-        {
+        // Gate on the real target rather than the launcher's source so npm
+        // prefixes classified as `system` (Intel Homebrew node, nodejs.org pkg,
+        // ~/.npm-global, distro node) are covered too: they have no sibling-npm
+        // fallback, so a false-success update there could never self-heal.
+        if tool == "claude" && real_lower.contains("/node_modules/@anthropic-ai/claude-code/") {
             update = format!(
                 "npm_config_allow_scripts={} npm_config_ignore_scripts=false npm_config_include=optional {update}",
                 npm_package_for(tool)?
@@ -7382,7 +7381,12 @@ mod tests {
                 ),
                 ("/opt/homebrew/bin/claude", "/opt/homebrew/bin"),
             ] {
-                let command = installs_anchored_command("claude", &[inst(path, true)]).unwrap();
+                let mut install = inst(path, true);
+                install.real = PathBuf::from(format!(
+                    "{}/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+                    dir.trim_end_matches("/bin")
+                ));
+                let command = installs_anchored_command("claude", &[install]).unwrap();
                 let (primary, fallback) = command.split_once(" || ").unwrap();
                 assert_eq!(
                     primary,
@@ -7395,6 +7399,33 @@ mod tests {
                     format!(
                         "PATH='{dir}':\"$PATH\" {dir}/npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
                     )
+                );
+            }
+        }
+
+        #[test]
+        fn claude_system_npm_prefixes_scope_postinstall_settings_without_fallback() {
+            // Launchers classified as `system` have no sibling-npm fallback, so the
+            // primary update is their only chance to keep npm 12 from breaking Claude.
+            for (path, real) in [
+                (
+                    "/usr/local/bin/claude",
+                    "/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+                ),
+                (
+                    "/Users/me/.npm-global/bin/claude",
+                    "/Users/me/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+                ),
+                (
+                    "/usr/bin/claude",
+                    "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+                ),
+            ] {
+                assert_eq!(
+                    anchored_command_from_paths("claude", path, real),
+                    Some(format!(
+                        "npm_config_allow_scripts=@anthropic-ai/claude-code npm_config_ignore_scripts=false npm_config_include=optional {path} update"
+                    ))
                 );
             }
         }
@@ -7460,16 +7491,23 @@ mod tests {
                     .unwrap();
             }
 
-            let command =
-                installs_anchored_command("claude", &[inst(&claude.to_string_lossy(), true)])
-                    .unwrap();
+            let mut install = inst(&claude.to_string_lossy(), true);
+            install.real = temp.path().join(
+                "home dir/.nvm/versions/node/v22/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+            );
+            let command = installs_anchored_command("claude", &[install]).unwrap();
             let script = format!(
                 "set -e\n{command}\nprintf 'after|%s|%s|%s\n' \"$npm_config_allow_scripts\" \"$npm_config_ignore_scripts\" \"$npm_config_include\""
             );
             let primary = "@anthropic-ai/claude-code|false|optional|install -g @anthropic-ai/claude-code@latest\n";
             let fallback = "previous-package|true|prod|i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code\n";
             for (primary_exit, fallback_exit, expected_code, expected_output) in [
-                ("0", "0", 0, format!("{primary}after|previous-package|true|prod\n")),
+                (
+                    "0",
+                    "0",
+                    0,
+                    format!("{primary}after|previous-package|true|prod\n"),
+                ),
                 (
                     "1",
                     "0",
