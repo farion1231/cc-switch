@@ -416,17 +416,15 @@ impl<'a> ProtoParser<'a> {
 
     fn decode_varint(&mut self) -> Option<u64> {
         let mut result = 0u64;
-        let mut shift = 0u32;
-        while self.offset < self.data.len() {
-            let byte = self.data[self.offset];
+        for index in 0..10 {
+            let byte = *self.data.get(self.offset)?;
             self.offset += 1;
-            result |= ((byte & 0x7f) as u64) << shift;
+            if index == 9 && byte > 1 {
+                return None;
+            }
+            result |= u64::from(byte & 0x7f) << (index * 7);
             if byte & 0x80 == 0 {
                 return Some(result);
-            }
-            shift += 7;
-            if shift >= 64 {
-                return None;
             }
         }
         None
@@ -434,9 +432,12 @@ impl<'a> ProtoParser<'a> {
 
     fn next_field(&mut self) -> Option<(u32, ProtoValue)> {
         while self.offset < self.data.len() {
-            let tag = self.decode_varint()?;
-            let field_num = (tag >> 3) as u32;
-            let wire_type = (tag & 0x7) as u32;
+            let tag = u32::try_from(self.decode_varint()?).ok()?;
+            let field_num = tag >> 3;
+            let wire_type = tag & 0x7;
+            if field_num == 0 {
+                return None;
+            }
 
             match wire_type {
                 0 => {
@@ -451,7 +452,7 @@ impl<'a> ProtoParser<'a> {
                     self.offset += 8;
                 }
                 2 => {
-                    let length = self.decode_varint()? as usize;
+                    let length = usize::try_from(self.decode_varint()?).ok()?;
                     let end = match self.offset.checked_add(length) {
                         Some(end) if end <= self.data.len() => end,
                         _ => return None,
@@ -1221,6 +1222,30 @@ mod tests {
         out.extend(proto_varint(payload.len() as u64));
         out.extend(payload);
         out
+    }
+
+    #[test]
+    fn antigravity_usage_parser_rejects_overflowing_varints_and_tags() {
+        for value in [0, 127, 128, u64::MAX] {
+            let bytes = proto_varint(value);
+            assert_eq!(ProtoParser::new(&bytes).decode_varint(), Some(value));
+        }
+        for bytes in [
+            vec![0xff; 9],
+            [vec![0xff; 9], vec![2]].concat(),
+            [vec![0x80; 10], vec![0]].concat(),
+        ] {
+            assert!(ProtoParser::new(&bytes).decode_varint().is_none());
+        }
+        // An oversized tag must not wrap into field 2 (the input token field).
+        let mut oversized_tag = proto_varint((u64::from(u32::MAX) + 3) << 3);
+        oversized_tag.extend(proto_varint(10));
+        assert!(ProtoParser::new(&oversized_tag).next_field().is_none());
+        assert!(ProtoParser::new(&[0, 10]).next_field().is_none());
+
+        let mut oversized_length = vec![0x0a];
+        oversized_length.extend(proto_varint(u64::MAX));
+        assert!(ProtoParser::new(&oversized_length).next_field().is_none());
     }
 
     fn antigravity_gen_metadata(
