@@ -16,6 +16,8 @@
 //! entry points so they cannot be mistaken for "just delete a field". Gated on
 //! [`super::codex::provider_needs_responses_namespace_flatten`], which covers
 //! xAI OAuth *and* API-key cards whose live upstream is `api.x.ai` Responses.
+//! Copilot's native Responses path also reuses these rewrites for resolved
+//! Grok models, without the direct-xAI model fallback.
 //!
 //! Run request sanitizers *after* namespace flattening: by then Codex's
 //! `namespace` tools are already lifted to top-level `function` tools, so the
