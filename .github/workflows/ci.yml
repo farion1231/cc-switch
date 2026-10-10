@@ -225,6 +225,8 @@ jobs:
       - name: Prepare WSL2-backed test environment
         shell: pwsh
         run: |
+          wsl.exe -d Ubuntu-24.04 -u root --exec sh -c "apt-get update -qq && apt-get install -y -qq fish"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           wsl.exe -d Ubuntu-24.04 -- bash -lc "rm -rf /tmp/cc-switch-windows-test-root && mkdir -p /tmp/cc-switch-windows-test-root/{home,temp} && chmod -R 0777 /tmp/cc-switch-windows-test-root"
           $testRoot = "\\wsl.localhost\Ubuntu-24.04\tmp\cc-switch-windows-test-root"
           $testHome = Join-Path $testRoot "home"

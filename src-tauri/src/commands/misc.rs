@@ -889,6 +889,34 @@ fn wsl_claude_update_command() -> String {
     )
 }
 
+/// Initialize the distro user's shell before running a POSIX lifecycle payload.
+/// Both the primary and fallback inherit its PATH; npm settings remain scoped
+/// inside the primary helper. Encode both layers to keep cmd.exe and fish from
+/// interpreting POSIX variables or quotes during transport.
+#[cfg(any(target_os = "windows", test))]
+fn wsl_auto_shell_command(command: &str, flag: Option<&str>) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let payload = format!(
+        "sh -c 'ccs_payload=$(echo {} | base64 -d) || exit 1; set -f; IFS=; exec sh -c $ccs_payload'",
+        STANDARD.encode(command)
+    );
+    let select_flag = match flag {
+        Some(flag) => format!("ccs_flag={}; ", shell_single_quote(flag)),
+        None => "case ${ccs_shell##*/} in sh|dash) ccs_flag=-c ;; fish) ccs_flag=-lc ;; *) ccs_flag=-lic ;; esac; ".to_string(),
+    };
+    // passwd is authoritative for WSL's default user shell. SHELL is a fallback
+    // for distros without getent; do not retry the update on a nonzero exit.
+    let bootstrap = format!(
+        "ccs_entry=$(getent passwd \"$(id -u)\" 2>/dev/null) || ccs_entry=; ccs_shell=${{ccs_entry##*:}}; [ -n \"$ccs_shell\" ] || ccs_shell=${{SHELL:-/bin/sh}}; {select_flag}exec \"$ccs_shell\" \"$ccs_flag\" {}",
+        shell_single_quote(&payload)
+    );
+    format!(
+        "sh -c 'ccs_bootstrap=$(echo {} | base64 -d) || exit 1; set -f; IFS=; exec sh -c $ccs_bootstrap'",
+        STANDARD.encode(bootstrap)
+    )
+}
+
 /// Windows host 上的 WSL 分支专用:`tool_action_shell_command` 在 Windows target 编译
 /// 出的版本会包含 Windows batch 语义(例如 `|| call npm ...`)且 hermes 会返回
 /// Windows PowerShell installer,但跨 `wsl.exe` 边界后跑的是 Linux。这个 wrapper
@@ -1040,6 +1068,12 @@ fn build_wsl_tool_action_line_with_exec(
     // expand variables in the Claude source probe before the chosen shell runs.
     // Keep legacy invocation for other tool actions until they have coverage.
     let execution = if execute_directly { "--exec" } else { "--" };
+    if execute_directly && force_shell.is_none() {
+        return Ok(format!(
+            "wsl.exe -d {distro} --exec sh -c {}",
+            windows_cmd_double_quote_arg(&wsl_auto_shell_command(command, force_shell_flag))
+        ));
+    }
     Ok(format!(
         "wsl.exe -d {distro} {execution} {shell} {flag} {}",
         windows_cmd_double_quote_arg(command)
@@ -7744,6 +7778,96 @@ fi"#
             );
         }
 
+        fn auto_fish_fixture_script(mock_passwd: bool) -> String {
+            let fixture = fixture_script();
+            let (setup, _) = fixture.split_once("run_update() {").unwrap();
+            let mock = if mock_passwd {
+                r#"cat > "$tools/getent" <<'GETENT'
+#!/bin/sh
+printf 'fixture:x:1000:1000::%s:%s\n' "$HOME" "$CC_SWITCH_TEST_FISH"
+GETENT
+chmod +x "$tools/getent"
+"#
+            } else {
+                ""
+            };
+            format!(
+                "{setup}\n{}\n{mock}\n{}",
+                r#"home="$fixture/fish-home"
+mkdir -p "$home/.config/fish"
+# Only fish configuration exposes the custom npm prefix. The initial PATH has
+# neither Claude nor npm, and a misleading SHELL tests passwd-based selection.
+printf 'fish_add_path --path %s %s\n' "\"$npm_bin\"" "\"$tools\"" > "$home/.config/fish/config.fish"
+ln -s "$tools/npm" "$npm_bin/npm"
+trap '"$tools/rm" -rf "$fixture"' EXIT HUP INT TERM
+bootstrap_tools="$fixture/bootstrap-tools"
+mkdir -p "$bootstrap_tools"
+for utility in sh base64 id getent; do
+  ln -s "$(command -v "$utility")" "$bootstrap_tools/$utility"
+done
+"#,
+                r#"export HOME="$home" XDG_CONFIG_HOME="$home/.config"
+if [ -f "$tools/getent" ]; then
+  ln -sf "$tools/getent" "$bootstrap_tools/getent"
+fi
+export PATH="$bootstrap_tools" SHELL=/bin/sh
+export npm_config_allow_scripts=previous-package npm_config_ignore_scripts=true npm_config_include=prod
+parent='previous-package|true|prod'
+primary='primary|@anthropic-ai/claude-code|false|optional
+child|@anthropic-ai/claude-code|false|optional|install -g @anthropic-ai/claude-code@latest'
+fallback='fallback|previous-package|true|prod|i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code'
+for exits in '0 42 0' '1 0 0' '1 42 42'; do
+  set -- $exits
+  export CC_SWITCH_TEST_CLAUDE_EXIT=$1 CC_SWITCH_TEST_FALLBACK_EXIT=$2
+  command -v claude >/dev/null && exit 91
+  command -v npm >/dev/null && exit 91
+  if actual=$(__AUTO_COMMAND__); then status=0; else status=$?; fi
+  expected=$primary
+  [ "$1" = 0 ] || expected="$primary
+$fallback"
+  [ "$status" = "$3" ] && [ "$actual" = "$expected" ] || {
+    printf 'auto fish failed: status %s expected %s\n%s\n' "$status" "$3" "$actual" >&2
+    exit 92
+  }
+  [ "$npm_config_allow_scripts|$npm_config_ignore_scripts|$npm_config_include" = "$parent" ] || exit 93
+  [ "$PATH" = "$bootstrap_tools" ] || exit 94
+  case "$-" in *f*) exit 95 ;; esac
+done
+printf 'all automatic fish update cases passed\n'
+"#
+                .replace(
+                    "__AUTO_COMMAND__",
+                    &wsl_auto_shell_command(&wsl_claude_update_command(), None)
+                )
+            )
+        }
+
+        #[cfg(unix)]
+        #[test]
+        #[ignore = "Requires fish; exercises actual fish initialization with a mocked passwd entry"]
+        fn wsl_auto_fish_initializes_custom_prefix() {
+            let fish = Command::new("sh")
+                .args(["-c", "command -v fish"])
+                .output()
+                .expect("fish lookup should start");
+            assert!(fish.status.success(), "install fish to run this regression");
+            let output = Command::new("sh")
+                .args(["-c", &auto_fish_fixture_script(true)])
+                .env(
+                    "CC_SWITCH_TEST_FISH",
+                    String::from_utf8_lossy(&fish.stdout).trim(),
+                )
+                .output()
+                .expect("auto fish fixture should start");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout)
+                .contains("all automatic fish update cases passed"));
+        }
+
         #[test]
         fn wsl_claude_update_uses_posix_chain() {
             let command = wsl_claude_update_command();
@@ -7776,6 +7900,12 @@ fi"#
                 let legacy =
                     build_wsl_tool_action_line("Ubuntu", &command, Some("fish"), None).unwrap();
                 assert!(legacy.starts_with("wsl.exe -d Ubuntu -- fish -lc "));
+                let automatic =
+                    build_wsl_tool_action_line_with_exec("Ubuntu", &command, None, None, true)
+                        .unwrap();
+                assert!(automatic.starts_with("wsl.exe -d Ubuntu --exec sh -c \"sh -c '"));
+                assert_eq!(automatic.matches('"').count(), 2);
+                assert!(automatic.len() < 8191, "cmd.exe command length limit");
             }
         }
 
@@ -7791,12 +7921,22 @@ fi"#
 
         #[cfg(target_os = "windows")]
         fn run_wsl_script(distro: &str, script: &str) -> Output {
+            run_wsl_script_as(distro, script, None)
+        }
+
+        #[cfg(target_os = "windows")]
+        fn run_wsl_script_as(distro: &str, script: &str, user: Option<&str>) -> Output {
             use std::io::Write;
             use std::os::windows::process::CommandExt;
             use std::process::Stdio;
 
-            let mut child = Command::new("wsl.exe")
-                .args(["-d", distro, "--", "sh", "-s"])
+            let mut command = Command::new("wsl.exe");
+            command.args(["-d", distro]);
+            if let Some(user) = user {
+                command.args(["-u", user]);
+            }
+            let mut child = command
+                .args(["--exec", "sh", "-s"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
@@ -7927,6 +8067,67 @@ fi"#
         }
 
         #[cfg(target_os = "windows")]
+        fn assert_wsl_auto_fish_batch_roundtrip(distro: &str) {
+            use std::os::windows::process::CommandExt;
+
+            // Use an isolated account rather than changing the distro's default
+            // user's shell or configuration. Its real passwd shell is fish.
+            let user = format!("ccs-fish-{}", std::process::id());
+            let home = format!("/tmp/{user}");
+            let fixture_path = format!("{home}/fixture.sh");
+            let setup = run_wsl_script_as(
+                distro,
+                &format!(
+                    "set -e\ncommand -v fish >/dev/null\nmkdir {home}\nuseradd -M -d {home} -s /usr/bin/fish {user}\nchown {user} {home}\ncat > {fixture_path} <<'CCS_AUTO_FISH_FIXTURE'\n{}\nCCS_AUTO_FISH_FIXTURE\nchmod 644 {fixture_path}\n",
+                    auto_fish_fixture_script(false)
+                ),
+                Some("root"),
+            );
+            assert!(
+                setup.status.success(),
+                "{}",
+                String::from_utf8_lossy(&setup.stderr)
+            );
+            let script_dir = tempfile::tempdir().expect("native batch tempdir should exist");
+            let bat = script_dir.path().join("claude-wsl-auto-fish.bat");
+            // Stage multiline source over stdin so the batch command remains
+            // below cmd.exe's length limit. No target PATH is injected here.
+            let payload = format!("sh {}", shell_single_quote(&fixture_path));
+            let line = build_wsl_tool_action_line_with_exec(distro, &payload, None, None, true)
+                .expect("automatic WSL batch line should build")
+                .replacen(
+                    &format!("wsl.exe -d {distro} "),
+                    &format!("wsl.exe -d {distro} -u {user} "),
+                    1,
+                );
+            std::fs::write(
+                &bat,
+                format!("@echo off\r\n{line}\r\nexit /b %errorlevel%\r\n"),
+            )
+            .expect("automatic batch fixture should be written");
+            let output = Command::new("cmd")
+                .arg("/C")
+                .arg(&bat)
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            let cleanup = run_wsl_script_as(
+                distro,
+                &format!("set -e\nuserdel {user}\nrm -rf {home}\n"),
+                Some("root"),
+            );
+            assert!(cleanup.status.success(), "test account should be removed");
+            let output = output.expect("real cmd should start the automatic WSL fixture");
+            assert!(
+                output.status.success(),
+                "stdout: {}; stderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout)
+                .contains("all automatic fish update cases passed"));
+        }
+
+        #[cfg(target_os = "windows")]
         #[test]
         #[ignore = "Requires real Windows/WSL and CC_SWITCH_WSL_DISTRO"]
         fn wsl_claude_update_preserves_scope_and_fallback() {
@@ -7935,6 +8136,7 @@ fi"#
             assert!(is_valid_wsl_distro_name(&distro), "invalid WSL distro");
             assert_fixture_passed(run_wsl_script(&distro, &fixture_script()));
             assert_wsl_batch_roundtrip(&distro);
+            assert_wsl_auto_fish_batch_roundtrip(&distro);
         }
     }
 
