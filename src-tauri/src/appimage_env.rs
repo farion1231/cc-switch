@@ -63,16 +63,14 @@ fn scrub_with(
     );
 
     for (key, value) in effective {
-        // 挂载目录是 UTF-8 路径，非 UTF-8 的值不可能包含它。
-        let Some(value) = value.to_str() else {
-            continue;
-        };
-        let Some(kept) = strip_mount_segments(value, mount) else {
+        // 按字节处理：AppRun 把挂载路径拼在用户原值前面，原值里可能有非 UTF-8 的
+        // 目录名，整条按字符串解析会失败，挂载路径也就漏了下来。
+        let Some(kept) = strip_mount_segments(value.as_encoded_bytes(), mount.as_bytes()) else {
             continue;
         };
         if kept.is_empty() {
             cmd.env_remove(&key);
-        } else {
+        } else if let Some(kept) = os_string_from_bytes(kept) {
             cmd.env(&key, kept);
         }
     }
@@ -80,22 +78,34 @@ fn scrub_with(
 
 /// 去掉 `value` 里位于 `mount` 下的 `:` 分隔路径段。没有这样的路径段时返回 `None`，
 /// 否则返回剩下的部分（可能为空）。
-fn strip_mount_segments(value: &str, mount: &str) -> Option<String> {
-    let under_mount = |segment: &str| {
+fn strip_mount_segments(value: &[u8], mount: &[u8]) -> Option<Vec<u8>> {
+    let under_mount = |segment: &[u8]| {
         segment
             .strip_prefix(mount)
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(b"/"))
     };
-    if !value.split(':').any(under_mount) {
+    let segments = || value.split(|&byte| byte == b':');
+    if !segments().any(under_mount) {
         return None;
     }
     Some(
-        value
-            .split(':')
+        segments()
             .filter(|segment| !under_mount(segment))
             .collect::<Vec<_>>()
-            .join(":"),
+            .join(&b':'),
     )
+}
+
+#[cfg(unix)]
+fn os_string_from_bytes(bytes: Vec<u8>) -> Option<OsString> {
+    use std::os::unix::ffi::OsStringExt;
+    Some(OsString::from_vec(bytes))
+}
+
+/// 只有 Linux 上会真正清理，其他平台仅为编译和单元测试保留 UTF-8 的情况。
+#[cfg(not(unix))]
+fn os_string_from_bytes(bytes: Vec<u8>) -> Option<OsString> {
+    String::from_utf8(bytes).ok().map(OsString::from)
 }
 
 #[cfg(test)]
@@ -133,21 +143,23 @@ mod tests {
         value
     }
 
+    fn strip(value: &str) -> Option<String> {
+        strip_mount_segments(value.as_bytes(), MOUNT.as_bytes())
+            .map(|kept| String::from_utf8(kept).expect("UTF-8 in, UTF-8 out"))
+    }
+
     #[test]
     fn strips_apprun_segments_back_to_the_original_value() {
         assert_eq!(
-            strip_mount_segments(&apprun_ld_library_path("/opt/cuda/lib64"), MOUNT).as_deref(),
+            strip(&apprun_ld_library_path("/opt/cuda/lib64")).as_deref(),
             Some("/opt/cuda/lib64")
         );
         assert_eq!(
-            strip_mount_segments(
-                &format!(
-                    "{}:{}:/usr/local/bin:/usr/bin",
-                    mounted("/usr/bin/"),
-                    mounted("/usr/sbin/")
-                ),
-                MOUNT
-            )
+            strip(&format!(
+                "{}:{}:/usr/local/bin:/usr/bin",
+                mounted("/usr/bin/"),
+                mounted("/usr/sbin/")
+            ))
             .as_deref(),
             Some("/usr/local/bin:/usr/bin")
         );
@@ -155,25 +167,26 @@ mod tests {
 
     #[test]
     fn values_that_only_come_from_the_appimage_become_empty() {
-        assert_eq!(
-            strip_mount_segments(&apprun_ld_library_path(""), MOUNT).as_deref(),
-            Some("")
-        );
-        assert_eq!(
-            strip_mount_segments(&mounted("/usr/"), MOUNT).as_deref(),
-            Some("")
-        );
-        assert_eq!(strip_mount_segments(MOUNT, MOUNT).as_deref(), Some(""));
+        assert_eq!(strip(&apprun_ld_library_path("")).as_deref(), Some(""));
+        assert_eq!(strip(&mounted("/usr/")).as_deref(), Some(""));
+        assert_eq!(strip(MOUNT).as_deref(), Some(""));
     }
 
     #[test]
     fn values_outside_the_mount_are_left_alone() {
-        assert_eq!(strip_mount_segments("/usr/local/bin:/usr/bin", MOUNT), None);
-        assert_eq!(strip_mount_segments("", MOUNT), None);
+        assert_eq!(strip("/usr/local/bin:/usr/bin"), None);
+        assert_eq!(strip(""), None);
         // 同一前缀的其他目录不在挂载目录下。
+        assert_eq!(strip(&format!("{MOUNT}2/usr/lib")), None);
+    }
+
+    #[test]
+    fn non_utf8_original_values_keep_their_bytes() {
+        let mut value = format!("{}:", mounted("/usr/lib/")).into_bytes();
+        value.extend_from_slice(b"/opt/caf\xe9/lib");
         assert_eq!(
-            strip_mount_segments(&format!("{MOUNT}2/usr/lib"), MOUNT),
-            None
+            strip_mount_segments(&value, MOUNT.as_bytes()),
+            Some(b"/opt/caf\xe9/lib".to_vec())
         );
     }
 
@@ -250,5 +263,28 @@ mod tests {
         let output = cmd.output().expect("run /bin/sh");
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "/opt/lib|unset");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scrubs_non_utf8_values_on_unix() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let mut value = format!("{}:", mounted("/usr/bin/")).into_bytes();
+        value.extend_from_slice(b"/opt/caf\xe9/bin");
+        let mut cmd = Command::new("tool");
+        scrub_with(
+            &mut cmd,
+            MOUNT,
+            [(OsString::from("PATH"), OsString::from_vec(value))],
+        );
+
+        let path = cmd
+            .get_envs()
+            .find_map(|(key, value)| (key == "PATH").then_some(value).flatten());
+        assert_eq!(
+            path.map(|value| value.as_bytes()),
+            Some(&b"/opt/caf\xe9/bin"[..])
+        );
     }
 }
