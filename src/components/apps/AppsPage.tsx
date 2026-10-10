@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowUpCircle,
+  BookOpen,
   ChevronDown,
   Copy,
   Download,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
+import { settingsApi } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
@@ -594,11 +596,27 @@ function ToolRow({
     ) : null;
 
   const footer =
-    wslControls || errorLine || conflictList ? (
+    wslControls || errorLine || conflictList || tool === "omp" ? (
       <div className="space-y-2">
         {errorLine}
         {wslControls}
         {conflictList}
+        {tool === "omp" && (
+          <button
+            type="button"
+            onClick={() =>
+              void settingsApi
+                .openExternal(
+                  "https://github.com/can1357/oh-my-pi/blob/main/docs/context-files.md#disabling-discovery-providers",
+                )
+                .catch(() => undefined)
+            }
+            className="inline-flex items-center gap-1 text-caption text-fg-2 underline-offset-2 hover:text-fg-1 hover:underline"
+          >
+            <BookOpen className="h-3 w-3" />
+            {t("appsPage.ompDiscoveryDocsLink")}
+          </button>
+        )}
       </div>
     ) : undefined;
 
@@ -608,6 +626,11 @@ function ToolRow({
       name={
         <>
           <span className="truncate">{toolDisplayName(tool)}</span>
+          {tool === "omp" && (
+            <HelpTip title={t("appsPage.ompDiscoveryHelpTitle")}>
+              {t("appsPage.ompDiscoveryHelp")}
+            </HelpTip>
+          )}
           {sourceLabel && <Pill>{sourceLabel}</Pill>}
           {envBadge && <Pill>{envBadge}</Pill>}
         </>

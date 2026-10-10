@@ -4026,8 +4026,12 @@
       "openclaw": "透過 npm 安裝",
       "hermes": "安裝時執行官方安裝腳本",
       "pi": "透過 npm 安裝",
-      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm"
-    }
+      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
+      "omp": "透過 Bun 安裝（需 Bun 1.3.14+）"
+    },
+    "ompDiscoveryHelpTitle": "Oh My Pi 的實際載入範圍",
+    "ompDiscoveryHelp": "Oh My Pi 除了 ~/.omp/agent 自己的設定，還會從其他 Agent 的目錄發現 MCP 伺服器、技能、命令、鉤子、規則和設定（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要讓 Oh My Pi 的實際生效內容與 CC Switch 介面一致，請在 ~/.omp/agent/config.yml 用 disabledProviders 停用不需要的發現來源（id 與文件一致，如 claude、codex、gemini、opencode、github、agents）。",
+    "ompDiscoveryDocsLink": "參考文件：context-files（disabledProviders）"
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
@@ -4728,8 +4732,7 @@
       "reasoning": "支援擴展思考",
       "removeCompatibilityOption": "移除相容性選項",
       "removeModel": "移除模型",
-      "toggleModelDetails": "展開或收合模型詳細資料",
-      "advancedHint": "包含其他設定欄位（YAML，原樣保留）。"
+      "toggleModelDetails": "展開或收合模型詳細資料"
     },
     "provider": {
       "enabled": "已在 Oh My Pi 中啟用",

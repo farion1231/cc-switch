@@ -4026,8 +4026,12 @@
       "openclaw": "Installs with npm",
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
-      "mcode": "Installs with the official script, falls back to npm"
-    }
+      "mcode": "Installs with the official script, falls back to npm",
+      "omp": "Installs with Bun (requires Bun 1.3.14+)"
+    },
+    "ompDiscoveryHelpTitle": "What Oh My Pi actually loads",
+    "ompDiscoveryHelp": "Beyond its own ~/.omp/agent config, Oh My Pi discovers MCP servers, skills, commands, hooks, rules, and settings from other agents' directories (e.g. Claude's ~/.claude, Codex's ~/.codex). To keep what Oh My Pi actually loads in sync with the CC Switch UI, disable unneeded discovery sources via disabledProviders in ~/.omp/agent/config.yml (ids match the docs, e.g. claude, codex, gemini, opencode, github, agents).",
+    "ompDiscoveryDocsLink": "Docs: context-files (disabledProviders)"
   },
   "appPage": {
     "moreActions": "More actions for {{name}}",
@@ -4728,8 +4732,7 @@
       "reasoning": "Supports extended thinking",
       "removeCompatibilityOption": "Remove compatibility option",
       "removeModel": "Remove model",
-      "toggleModelDetails": "Toggle model details",
-      "advancedHint": "Contains other configuration fields (YAML, preserved verbatim)."
+      "toggleModelDetails": "Toggle model details"
     },
     "provider": {
       "enabled": "Enabled in Oh My Pi",

@@ -7,11 +7,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
   Form,
   FormField,
   FormItem,
@@ -21,7 +16,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
+import JsonEditor from "@/components/JsonEditor";
+import { useDarkMode } from "@/hooks/useDarkMode";
 import {
   Select,
   SelectContent,
@@ -434,7 +430,7 @@ export function OhMyPiProviderForm({
   );
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const modelFetchGenerationRef = useRef(0);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const isDarkMode = useDarkMode();
   const [formError, setFormError] = useState<string | null>(null);
 
   const form = useForm<ProviderFormData>({
@@ -1369,66 +1365,34 @@ export function OhMyPiProviderForm({
         )}
 
         {hasConfigurationSelection && (
-          <Collapsible
-            open={showAdvanced}
-            onOpenChange={setShowAdvanced}
-            className="rounded-lg border border-border p-4"
-          >
-            <CollapsibleTrigger asChild>
-              <Button
-                type="button"
-                variant={null}
-                size="sm"
-                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
-                aria-expanded={showAdvanced}
-              >
-                <ChevronRight
-                  className={`h-4 w-4 shrink-0 transition-transform motion-reduce:transition-none ${
-                    showAdvanced ? "rotate-90" : ""
-                  }`}
+          <FormField
+            control={form.control}
+            name="settingsConfig"
+            render={() => (
+              <FormItem className="space-y-2">
+                <Label htmlFor="ohmypi-settings-config">
+                  {t("ohmypi.form.passthroughLabel", {
+                    defaultValue: "其他字段（YAML，原样保留）",
+                  })}
+                </Label>
+                <JsonEditor
+                  id="ohmypi-settings-config"
+                  ariaLabel={t("ohmypi.form.passthroughLabel", {
+                    defaultValue: "其他字段（YAML，原样保留）",
+                  })}
+                  value={passthroughText}
+                  onChange={handlePassthroughChange}
+                  height={
+                    Math.max(1, passthroughText.split("\n").length) * 20 + 20
+                  }
+                  showValidation={false}
+                  language="yaml"
+                  darkMode={isDarkMode}
                 />
-                {t("providerForm.advancedOptionsToggle", {
-                  defaultValue: "高级选项",
-                })}
-              </Button>
-            </CollapsibleTrigger>
-            {!showAdvanced && (
-              <p className="text-xs text-fg-2 mt-1 ml-1">
-                {t("ohmypi.form.advancedHint", {
-                  defaultValue: "包含其他配置字段（YAML，原样保留）。",
-                })}
-              </p>
+                <FormMessage />
+              </FormItem>
             )}
-            <CollapsibleContent className="space-y-2 pt-2">
-              <FormField
-                control={form.control}
-                name="settingsConfig"
-                render={() => (
-                  <FormItem className="space-y-2">
-                    <FormLabel>
-                      {t("ohmypi.form.passthroughLabel", {
-                        defaultValue: "其他字段（YAML，原样保留）",
-                      })}
-                    </FormLabel>
-                    <Textarea
-                      className="min-h-32 resize-y font-mono text-xs"
-                      value={passthroughText}
-                      onChange={(event) =>
-                        handlePassthroughChange(event.target.value)
-                      }
-                      placeholder="disableStrictTools: false
-discovery:
-  type: proxy"
-                      aria-label={t("ohmypi.form.passthroughLabel", {
-                        defaultValue: "其他字段（YAML，原样保留）",
-                      })}
-                    />
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </CollapsibleContent>
-          </Collapsible>
+          />
         )}
 
         {showButtons && (

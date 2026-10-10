@@ -4026,8 +4026,12 @@
       "openclaw": "npm でインストール",
       "hermes": "公式インストールスクリプトでインストール",
       "pi": "npm でインストール",
-      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います"
-    }
+      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
+      "omp": "Bun でインストール（Bun 1.3.14+ が必要）"
+    },
+    "ompDiscoveryHelpTitle": "Oh My Pi が実際に読み込む範囲",
+    "ompDiscoveryHelp": "Oh My Pi は ~/.omp/agent 自身の設定に加え、他の Agent のディレクトリ（Claude の ~/.claude、Codex の ~/.codex など）からも MCP サーバー、スキル、コマンド、フック、ルール、設定を発見します。Oh My Pi の実際の読み込み内容を CC Switch の表示と一致させるには、~/.omp/agent/config.yml の disabledProviders で不要な発行元を無効化してください（id はドキュメント準拠：claude、codex、gemini、opencode、github、agents など）。",
+    "ompDiscoveryDocsLink": "ドキュメント：context-files（disabledProviders）"
   },
   "appPage": {
     "moreActions": "{{name}} のその他の操作",
@@ -4728,8 +4732,7 @@
       "reasoning": "拡張思考に対応",
       "removeCompatibilityOption": "互換性オプションを削除",
       "removeModel": "モデルを削除",
-      "toggleModelDetails": "モデル詳細を開閉",
-      "advancedHint": "その他の設定フィールド（YAML、そのまま保持）。"
+      "toggleModelDetails": "モデル詳細を開閉"
     },
     "provider": {
       "enabled": "Oh My Pi で有効化しました",
