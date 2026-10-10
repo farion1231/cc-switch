@@ -62,6 +62,18 @@ fn response_id(body: &Value, field: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// 读取 Gemini usageMetadata 的 token 计数字段。
+///
+/// Generative Language API 序列化为 JSON 数字，而 Vertex AI 遵循 protobuf 的
+/// int64→JSON string 映射返回字符串；两种形状都要认，否则 Vertex 形状的
+/// usage 会被整体丢弃。
+fn gemini_token_count(value: &Value) -> Option<u32> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        .map(|n| n as u32)
+}
+
 /// Token 使用量统计
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
@@ -420,8 +432,8 @@ impl TokenUsage {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let prompt_tokens = usage.get("promptTokenCount")?.as_u64()? as u32;
-        let total_tokens = usage.get("totalTokenCount")?.as_u64()? as u32;
+        let prompt_tokens = usage.get("promptTokenCount").and_then(gemini_token_count)?;
+        let total_tokens = usage.get("totalTokenCount").and_then(gemini_token_count)?;
 
         // 输出 tokens = 总 tokens - 输入 tokens
         // 这包含了 candidatesTokenCount + thoughtsTokenCount
@@ -432,8 +444,8 @@ impl TokenUsage {
             output_tokens,
             cache_read_tokens: usage
                 .get("cachedContentTokenCount")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+                .and_then(gemini_token_count)
+                .unwrap_or(0),
             cache_creation_tokens: 0,
             cache_creation_1h_tokens: 0,
             model,
@@ -442,7 +454,6 @@ impl TokenUsage {
     }
 
     /// 从 Gemini API 流式响应解析
-    #[allow(dead_code)]
     pub fn from_gemini_stream_chunks(chunks: &[Value]) -> Option<Self> {
         let mut total_input = 0u32;
         let mut total_tokens = 0u32;
@@ -455,20 +466,20 @@ impl TokenUsage {
                 // 输入 tokens (通常在所有 chunk 中保持不变)
                 total_input = usage
                     .get("promptTokenCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
+                    .and_then(gemini_token_count)
+                    .unwrap_or(0);
 
                 // 总 tokens (包含输入 + 输出 + 思考)
                 total_tokens = usage
                     .get("totalTokenCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
+                    .and_then(gemini_token_count)
+                    .unwrap_or(0);
 
                 // 缓存读取 tokens
                 total_cache_read = usage
                     .get("cachedContentTokenCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
+                    .and_then(gemini_token_count)
+                    .unwrap_or(0);
             }
 
             // 提取实际使用的模型名称（modelVersion 字段）
@@ -783,6 +794,44 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 20);
         assert_eq!(usage.cache_creation_tokens, 0);
         assert_eq!(usage.model, None);
+    }
+
+    #[test]
+    fn test_gemini_response_accepts_vertex_string_token_counts() {
+        // Vertex AI 遵循 protobuf int64→JSON string 映射返回 token 计数
+        let response = json!({
+            "modelVersion": "gemini-3.8-flash",
+            "usageMetadata": {
+                "promptTokenCount": "8383",
+                "totalTokenCount": "8547",
+                "cachedContentTokenCount": "20"
+            }
+        });
+
+        let usage = TokenUsage::from_gemini_response(&response).unwrap();
+        assert_eq!(usage.input_tokens, 8383);
+        // output_tokens = totalTokenCount - promptTokenCount = 8547 - 8383 = 164
+        assert_eq!(usage.output_tokens, 164);
+        assert_eq!(usage.cache_read_tokens, 20);
+        assert_eq!(usage.model.as_deref(), Some("gemini-3.8-flash"));
+    }
+
+    #[test]
+    fn test_gemini_stream_chunks_accept_vertex_string_token_counts() {
+        let chunks = vec![json!({
+            "responseId": "resp_vertex",
+            "usageMetadata": {
+                "promptTokenCount": "163766",
+                "totalTokenCount": "163908",
+                "cachedContentTokenCount": "160660"
+            }
+        })];
+
+        let usage = TokenUsage::from_gemini_stream_chunks(&chunks).unwrap();
+        assert_eq!(usage.input_tokens, 163766);
+        assert_eq!(usage.output_tokens, 142);
+        assert_eq!(usage.cache_read_tokens, 160660);
+        assert_eq!(usage.message_id.as_deref(), Some("resp_vertex"));
     }
 
     #[test]
