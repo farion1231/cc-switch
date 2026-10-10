@@ -123,6 +123,13 @@ impl GeminiAdapter {
 
     /// 从 Provider 配置中提取原始 API Key
     fn extract_key_raw(&self, provider: &Provider) -> Option<String> {
+        // `{{NAME}}` 变量引用换成当前值；无法解析时视为没有 Key，绝不发给上游
+        self.extract_key_raw_literal(provider)
+            .and_then(|key| crate::services::api_key_vars::resolve::resolve_key_for_use(&key))
+            .filter(|key| !key.is_empty())
+    }
+
+    fn extract_key_raw_literal(&self, provider: &Provider) -> Option<String> {
         if let Some(env) = provider.settings_config.get("env") {
             // 使用 GEMINI_API_KEY
             if let Some(key) = env

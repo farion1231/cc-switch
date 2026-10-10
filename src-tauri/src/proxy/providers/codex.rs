@@ -952,6 +952,13 @@ impl CodexAdapter {
 
     /// 从 Provider 配置中提取 API Key
     fn extract_key(&self, provider: &Provider) -> Option<String> {
+        // `{{NAME}}` 变量引用换成当前值；无法解析时视为没有 Key，绝不发给上游
+        self.extract_key_literal(provider)
+            .and_then(|key| crate::services::api_key_vars::resolve::resolve_key_for_use(&key))
+            .filter(|key| !key.is_empty())
+    }
+
+    fn extract_key_literal(&self, provider: &Provider) -> Option<String> {
         // 1. 尝试从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
             if let Some(key) = env

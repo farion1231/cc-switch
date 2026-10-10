@@ -4469,7 +4469,13 @@ pub async fn open_provider_terminal(
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
     // 从提供商配置中提取环境变量
-    let config = &provider.settings_config;
+    // `{{NAME}}` 变量引用换成当前值；无法解析时不启动终端
+    let resolved = crate::services::api_key_vars::resolve::resolve_settings(
+        &app_type,
+        &provider.settings_config,
+    )
+    .map_err(|e| e.to_string())?;
+    let config: &serde_json::Value = &resolved;
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名

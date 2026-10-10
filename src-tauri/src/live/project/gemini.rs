@@ -42,6 +42,12 @@ impl GeminiProjection {
     /// 从供应商行（或编辑器里的完整配置）取出关键字段。`official` 由调用方按供应商
     /// 类型判定（`detect_gemini_auth_type`）。
     pub fn of(settings: &Value, official: bool) -> Self {
+        // Key 字段里的 `{{NAME}}` 变量引用在这里换成当前值
+        let resolved = crate::services::api_key_vars::resolve::resolve_settings_lossy(
+            &crate::app_config::AppType::Gemini,
+            settings,
+        );
+        let settings: &Value = &resolved;
         let env = settings
             .get("env")
             .and_then(Value::as_object)

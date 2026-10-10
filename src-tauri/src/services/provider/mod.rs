@@ -6557,6 +6557,11 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        // 引用了无法解析的 API Key 变量（未定义 / 已停用 / 尚无值）时拒绝切换
+        crate::services::api_key_vars::ensure_provider_resolvable(
+            &app_type,
+            &_provider.settings_config,
+        )?;
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {

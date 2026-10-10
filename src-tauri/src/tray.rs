@@ -108,6 +108,8 @@ pub struct TrayTexts {
     pub problem_service_down: &'static str,
     pub problem_attach_failed: &'static str,
     pub problem_switch_failed: &'static str,
+    /// API Key 变量刷新失败：`{name}`、`{reason}`。
+    pub problem_api_key_var_failed: &'static str,
     pub problem_more: &'static str,
     pub desktop_unavailable: &'static str,
     /// 出问题时托盘图标的悬停提示：`{problem}` 是问题区第一条
@@ -212,6 +214,7 @@ impl TrayTexts {
                 problem_attach_failed:
                     "{app}: {mode} couldn't reconnect at startup; back to direct",
                 problem_switch_failed: "{app} didn't switch: {reason}",
+                problem_api_key_var_failed: "API key variable {name} failed to refresh: {reason}",
                 problem_more: "{count} more issues — open CC Switch to see them",
                 desktop_unavailable:
                     "The routing service isn't running; {name} is unavailable for now",
@@ -272,6 +275,7 @@ impl TrayTexts {
                 problem_service_down: "ルーティングサービスが動いていません（ポート {port}）",
                 problem_attach_failed: "{app}：前回の{mode}に再接続できず、直接接続に戻りました",
                 problem_switch_failed: "{app} を切り替えられませんでした：{reason}",
+                problem_api_key_var_failed: "API キー変数 {name} の更新に失敗しました：{reason}",
                 problem_more:
                     "ほかに {count} 件の問題があります。CC Switch を開いて確認してください",
                 desktop_unavailable:
@@ -333,6 +337,7 @@ impl TrayTexts {
                 problem_service_down: "路由服務沒在執行（連接埠 {port}）",
                 problem_attach_failed: "{app}：上次的{mode}沒能接上，已回到直連",
                 problem_switch_failed: "{app} 沒切換成功：{reason}",
+                problem_api_key_var_failed: "API Key 變數 {name} 重新整理失敗：{reason}",
                 problem_more: "還有 {count} 個問題，開啟 CC Switch 查看",
                 desktop_unavailable: "路由服務沒在執行，{name} 暫時無法使用",
                 tooltip_problem: "CC Switch · 需要處理：{problem}",
@@ -391,6 +396,7 @@ impl TrayTexts {
                 problem_service_down: "路由服务没在运行（端口 {port}）",
                 problem_attach_failed: "{app}：上次的{mode}没能接上，已回到直连",
                 problem_switch_failed: "{app} 没切换成功：{reason}",
+                problem_api_key_var_failed: "API Key 变量 {name} 刷新失败：{reason}",
                 problem_more: "还有 {count} 个问题，打开 CC Switch 查看",
                 desktop_unavailable: "路由服务没在运行，{name} 暂时不可用",
                 tooltip_problem: "CC Switch · 需要处理：{problem}",
@@ -1091,6 +1097,8 @@ enum TrayProblem {
     AttachFailed { app: AppType, stack: bool },
     /// 托盘里的切换没成功。
     SwitchFailed { app: AppType, reason: String },
+    /// API Key 变量自动刷新失败。
+    ApiKeyVarFailed { name: String, reason: String },
 }
 
 /// 对供应商列表排序：sort_index → created_at → name
@@ -1577,6 +1585,13 @@ fn problem_text(texts: &TrayTexts, problem: &TrayProblem) -> String {
                 ("reason", &truncate_chars(reason, MAX_REASON_CHARS)),
             ],
         ),
+        TrayProblem::ApiKeyVarFailed { name, reason } => fill(
+            texts.problem_api_key_var_failed,
+            &[
+                ("name", name),
+                ("reason", &truncate_chars(reason, MAX_REASON_CHARS)),
+            ],
+        ),
     }
 }
 
@@ -1585,6 +1600,7 @@ fn problem_id(problem: &TrayProblem) -> String {
         TrayProblem::ServiceDown { .. } => "nav:settings:routing".to_string(),
         TrayProblem::AttachFailed { app, .. } => format!("nav:app:{}:attach", app.as_str()),
         TrayProblem::SwitchFailed { app, .. } => format!("nav:app:{}:failed", app.as_str()),
+        TrayProblem::ApiKeyVarFailed { name, .. } => format!("nav:settings:apiKeyVars:{name}"),
     }
 }
 
@@ -1961,7 +1977,12 @@ fn collect_snapshots(
         .iter()
         .map(|snapshot| (snapshot.app.clone(), snapshot.mode == TrayMode::Direct))
         .collect();
-    let problems = collect_problems(port, &visible);
+    let mut problems = collect_problems(port, &visible);
+    problems.extend(
+        crate::services::api_key_vars::failing_vars(&app_state.db)
+            .into_iter()
+            .map(|(name, reason)| TrayProblem::ApiKeyVarFailed { name, reason }),
+    );
     mark_attention(&mut snapshots, &problems);
     Ok((snapshots, problems))
 }
@@ -2570,6 +2591,28 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
     true
 }
 
+/// 托盘切换是同步路径，不能先等待刷新：切换后若引用的 API Key 变量已过期/即将过期，
+/// 后台刷新一次（成功后会重写 live 配置，因为此时它已是当前供应商）。无法解析的变量
+/// 在切换流程里已被拒绝。
+fn spawn_api_key_refresh_after_switch(
+    app: &tauri::AppHandle,
+    app_type: &AppType,
+    provider_id: &str,
+) {
+    use crate::services::api_key_vars as refresh;
+    if !refresh::resolve::supports_app(app_type) {
+        return;
+    }
+    let app = app.clone();
+    let app_type = app_type.clone();
+    let id = provider_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        if let Some(warning) = refresh::refresh_before_switch(&app, &app_type, &id).await {
+            log::warn!("[ApiKeyVars] 托盘切换后刷新失败: {warning}");
+        }
+    });
+}
+
 enum ClickOutcome {
     /// 切过去了；`mode` 是点击时的模式，决定要不要出反馈行。
     Switched { mode: TrayMode, name: String },
@@ -2614,6 +2657,7 @@ fn handle_provider_click(
         return Ok(ClickOutcome::NeedsRoute);
     }
     crate::services::ProviderService::switch(state, app_type.clone(), provider_id)?;
+    spawn_api_key_refresh_after_switch(app, app_type, provider_id);
     Ok(ClickOutcome::Switched {
         mode,
         name: provider.name,

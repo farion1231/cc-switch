@@ -39,6 +39,12 @@ impl GrokProjection {
         if official {
             return Ok(Self { table: None });
         }
+        // Key 字段里的 `{{NAME}}` 变量引用在这里换成当前值
+        let resolved = crate::services::api_key_vars::resolve::resolve_settings_lossy(
+            &crate::app_config::AppType::GrokBuild,
+            settings,
+        );
+        let settings: &Value = &resolved;
         let text = settings
             .get("config")
             .and_then(Value::as_str)

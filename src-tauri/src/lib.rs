@@ -65,6 +65,7 @@ pub use mcp::{
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
+pub use services::api_key_vars;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::{reapply_current_codex_official_live, EditorSave, EditorView},
@@ -1193,6 +1194,7 @@ pub fn run() {
                 app_state.db.clone(),
                 app.handle().clone(),
             );
+            crate::services::api_key_vars::start_worker(app.handle().clone());
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
@@ -1434,6 +1436,14 @@ pub fn run() {
             commands::delete_provider,
             commands::remove_provider_from_live_config,
             commands::switch_provider,
+            commands::list_api_key_vars,
+            commands::upsert_api_key_var,
+            commands::delete_api_key_var,
+            commands::resolve_api_key_var_script,
+            commands::test_api_key_var,
+            commands::refresh_api_key_var,
+            commands::check_api_key_ref,
+            commands::check_api_key_refs,
             commands::import_default_config,
             commands::get_claude_desktop_status,
             commands::get_claude_desktop_default_routes,

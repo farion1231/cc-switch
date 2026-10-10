@@ -12,6 +12,9 @@ pub async fn get_coding_plan_quota(
     team_organization_id: Option<String>,
     team_project_id: Option<String>,
 ) -> Result<SubscriptionQuota, String> {
+    let api_key = crate::services::api_key_vars::resolve::resolve_value(&api_key)
+        .map_err(|e| e.to_string())?
+        .into_owned();
     crate::services::coding_plan::get_coding_plan_quota(
         &base_url,
         &api_key,
