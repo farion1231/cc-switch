@@ -2,6 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- 声明本地化语言，使 WKWebView 右键菜单跟随系统语言 -->
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>ja</string>
+    <string>zh</string>
+    <string>zh-Hant</string>
+  </array>
   <!-- 注册 ccswitch:// 自定义 URL 协议，用于深链接导入 -->
   <key>CFBundleURLTypes</key>
   <array>
@@ -16,4 +26,3 @@
   </array>
 </dict>
 </plist>
-
