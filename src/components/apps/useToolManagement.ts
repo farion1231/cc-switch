@@ -143,7 +143,7 @@ npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
 ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
 # Oh My Pi
-bun install -g @oh-my-pi/pi-coding-agent`;
+bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -164,7 +164,7 @@ npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
 ${MCODE_WINDOWS_INSTALL_COMMAND}
 # Oh My Pi
-bun install -g @oh-my-pi/pi-coding-agent`;
+bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS

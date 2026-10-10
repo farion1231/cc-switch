@@ -24,50 +24,6 @@ static FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 static TEST_AGENT_DIR: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex::new(None));
 
 // ============================================================================
-// Agent discovery providers (omp config.yml `disabledProviders`)
-// ============================================================================
-
-/// omp provider ids that auto-discover MCP servers and skills from *other*
-/// agents. Disabling all of these in omp's `config.yml` `disabledProviders`
-/// (array, exact-id match via `filterProviders`) stops omp from loading
-/// MCP/skills inherited from those agents, aligning cc-switch's per-app
-/// enable flags with omp's actual loaded set.
-pub(crate) const AGENT_DISCOVERY_PROVIDER_IDS: [&str; 12] = [
-    "claude",
-    "claude-plugins",
-    "agents",
-    "codex",
-    "gemini",
-    "opencode",
-    "cursor",
-    "vscode",
-    "cline",
-    "windsurf",
-    "github",
-    "agent-plugins",
-];
-
-/// Display name for each discovery provider id, shown in the confirm dialog.
-/// Order matches `AGENT_DISCOVERY_PROVIDER_IDS`.
-pub(crate) fn agent_discovery_provider_display_name(id: &str) -> &'static str {
-    match id {
-        "claude" => "Claude Code",
-        "claude-plugins" => "Claude Code 插件市场",
-        "agents" => "Agent 目录 (.agent/.agents)",
-        "codex" => "OpenAI Codex",
-        "gemini" => "Gemini CLI",
-        "opencode" => "OpenCode",
-        "cursor" => "Cursor",
-        "vscode" => "VS Code",
-        "cline" => "Cline",
-        "windsurf" => "Windsurf",
-        "github" => "GitHub Copilot",
-        "agent-plugins" => "Agent Plugins",
-        _ => "",
-    }
-}
-
-// ============================================================================
 // Path resolution
 // ============================================================================
 
@@ -606,24 +562,6 @@ pub(crate) fn read_ohmypi_settings() -> Result<Value, AppError> {
     read_yaml_value(&path, "Oh My Pi settings")
 }
 
-fn read_ohmypi_settings_with_revision() -> Result<(Value, String), AppError> {
-    let _guard = lock_files()?;
-    let path = get_ohmypi_settings_path()?;
-    read_document_with_revision(&path, "Oh My Pi settings", true)
-}
-
-fn write_ohmypi_settings(document: &Value, expected_revision: &str) -> Result<(), AppError> {
-    let _guard = lock_files()?;
-    let path = get_ohmypi_settings_path()?;
-    write_document(
-        &path,
-        document,
-        expected_revision,
-        "Oh My Pi settings",
-        true,
-    )
-}
-
 /// Read `modelRoles.default` (the full `<provider>/<model>` selector, if set).
 pub(crate) fn read_ohmypi_default_model() -> Result<Option<String>, AppError> {
     let document = read_ohmypi_settings()?;
@@ -640,105 +578,12 @@ pub(crate) fn read_ohmypi_default_model() -> Result<Option<String>, AppError> {
     optional_string(roles, "default", &path)
 }
 
-/// Write `modelRoles.default` to `<selector>`. No-op when `selector` is `None`.
-/// Part 1 keeps cc-switch read-only here (decision D3: enable = add only);
-/// retained for the state service and future "set as default" frontend work,
-/// and exercised by unit tests.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn write_ohmypi_default_model(selector: Option<&str>) -> Result<(), AppError> {
-    let Some(selector) = selector else {
-        return Ok(());
-    };
-    let (mut document, expected_revision) = read_ohmypi_settings_with_revision()?;
-    set_nested(
-        &mut document,
-        &["modelRoles", "default"],
-        Value::String(selector.to_string()),
-    );
-    write_ohmypi_settings(&document, &expected_revision)
-}
-
-/// Read omp `config.yml` `disabledProviders` as a list of provider id strings.
-///
-/// Missing key → empty vector. Non-array or non-string elements → `AppError::Config`.
-/// The returned ids preserve file order and duplicates (callers that need a
-/// set deduplicate as required).
-pub(crate) fn read_ohmypi_disabled_providers() -> Result<Vec<String>, AppError> {
-    let document = read_ohmypi_settings()?;
-    read_disabled_providers_from(&document)
-}
-
-/// Write a union of `ids` into `disabledProviders`, preserving existing
-/// entries (deduplicated, stable order: existing entries first in their
-/// original order, then new ids in `AGENT_DISCOVERY_PROVIDER_IDS` order) and
-/// leaving every other config key untouched. Reuses the file lock +
-/// revision guard + atomic write used by the rest of config.yml I/O.
-///
-/// Idempotent: writing the same ids twice is a no-op on the file. Returns the
-/// updated `disabledProviders` list.
-pub(crate) fn set_ohmypi_disabled_providers_union(ids: &[&str]) -> Result<Vec<String>, AppError> {
-    let (mut document, expected_revision) = read_ohmypi_settings_with_revision()?;
-    let mut existing = read_disabled_providers_from(&document)?;
-    let have: std::collections::HashSet<&str> = existing.iter().map(String::as_str).collect();
-    let to_add: Vec<String> = ids
-        .iter()
-        .copied()
-        .filter(|id| !have.contains(*id))
-        .map(String::from)
-        .collect();
-    existing.extend(to_add);
-    let new_value: Value = existing.iter().cloned().map(Value::String).collect();
-    set_nested(&mut document, &["disabledProviders"], new_value);
-    write_ohmypi_settings(&document, &expected_revision)?;
-    Ok(existing)
-}
-
-fn read_disabled_providers_from(document: &Value) -> Result<Vec<String>, AppError> {
-    let Some(array) = document.get("disabledProviders") else {
-        return Ok(Vec::new());
-    };
-    let Some(items) = array.as_array() else {
-        return Err(AppError::Config(
-            "Oh My Pi settings 'disabledProviders' must be an array".to_string(),
-        ));
-    };
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        let Some(s) = item.as_str() else {
-            return Err(AppError::Config(
-                "Oh My Pi settings 'disabledProviders' entries must be strings".to_string(),
-            ));
-        };
-        out.push(s.to_string());
-    }
-    Ok(out)
-}
-
 /// Split a `<provider>/<model>` selector on the first `/` and return the provider id.
 pub(crate) fn provider_from_selector(selector: &str) -> &str {
     selector
         .split_once('/')
         .map(|(provider, _)| provider)
         .unwrap_or(selector)
-}
-
-fn set_nested(value: &mut Value, path: &[&str], new_value: Value) {
-    match path.split_first() {
-        None => *value = new_value,
-        Some((segment, rest)) => {
-            let object = value
-                .as_object_mut()
-                .expect("settings path must be an object");
-            if rest.is_empty() {
-                object.insert(segment.to_string(), new_value);
-            } else {
-                let child = object
-                    .entry(segment.to_string())
-                    .or_insert_with(|| Value::Object(Map::new()));
-                set_nested(child, rest, new_value);
-            }
-        }
-    }
 }
 
 // ============================================================================
@@ -925,31 +770,12 @@ mod tests {
 
     #[test]
     #[serial]
-    fn model_roles_default_write_and_read() {
+    fn read_default_model_and_selector_split() {
         let _agent = TestAgentDir::new();
         write_agent_file("config.yml", "modelRoles:\n  smol: openai/gpt-4o-mini\n");
 
-        write_ohmypi_default_model(Some("example/example-model")).expect("write default");
-        let source = read_agent_file("config.yml");
-        assert!(source.contains("default: example/example-model"));
-        // unrelated role key preserved
-        assert!(source.contains("smol: openai/gpt-4o-mini"));
-
-        assert_eq!(
-            read_ohmypi_default_model()
-                .expect("read default")
-                .as_deref(),
-            Some("example/example-model")
-        );
+        assert_eq!(read_ohmypi_default_model().expect("read default"), None);
         assert_eq!(provider_from_selector("example/example-model"), "example");
-    }
-
-    #[test]
-    #[serial]
-    fn write_default_model_with_none_is_noop() {
-        let _agent = TestAgentDir::new();
-        write_ohmypi_default_model(None).expect("noop write with None");
-        assert!(!get_ohmypi_settings_path().expect("settings path").exists());
     }
 
     #[test]
@@ -999,117 +825,5 @@ mod tests {
             provider_base_url(&config).expect("base url"),
             "https://model.example"
         );
-    }
-
-    #[test]
-    #[serial]
-    fn read_disabled_providers_missing_key_is_empty() {
-        let _agent = TestAgentDir::new();
-        write_agent_file("config.yml", "modelRoles:\n  default: openai/gpt-4o\n");
-        let ids = read_ohmypi_disabled_providers().expect("read disabled providers");
-        assert!(ids.is_empty());
-    }
-
-    #[test]
-    #[serial]
-    fn read_disabled_providers_reads_array() {
-        let _agent = TestAgentDir::new();
-        write_agent_file(
-            "config.yml",
-            "modelRoles:\n  default: openai/gpt-4o\ndisabledProviders:\n  - claude\n  - codex\n",
-        );
-        let ids = read_ohmypi_disabled_providers().expect("read disabled providers");
-        assert_eq!(ids, vec!["claude".to_string(), "codex".to_string()]);
-    }
-
-    #[test]
-    #[serial]
-    fn read_disabled_providers_rejects_non_array() {
-        let _agent = TestAgentDir::new();
-        write_agent_file("config.yml", "disabledProviders: not-an-array\n");
-        let err = read_ohmypi_disabled_providers().expect_err("non-array should fail");
-        assert!(matches!(err, AppError::Config(_)));
-    }
-
-    #[test]
-    #[serial]
-    fn set_disabled_providers_union_is_idempotent_and_preserves_existing() {
-        let _agent = TestAgentDir::new();
-        write_agent_file(
-            "config.yml",
-            "modelRoles:\n  default: openai/gpt-4o\ndisabledProviders:\n  - claude\n  - custom-src\n",
-        );
-
-        let result = set_ohmypi_disabled_providers_union(&AGENT_DISCOVERY_PROVIDER_IDS)
-            .expect("union write");
-        // existing entries preserved first, then missing ids in const order
-        assert_eq!(result.len(), AGENT_DISCOVERY_PROVIDER_IDS.len() + 1);
-        assert_eq!(result[0], "claude");
-        assert_eq!(result[1], "custom-src");
-        // remaining are the 11 missing discovery ids in const order
-        assert_eq!(result[2], "claude-plugins");
-
-        // idempotent: second write yields the same set, no duplication
-        let result2 = set_ohmypi_disabled_providers_union(&AGENT_DISCOVERY_PROVIDER_IDS)
-            .expect("idempotent union write");
-        assert_eq!(result, result2);
-
-        // other keys preserved
-        let source = read_agent_file("config.yml");
-        assert!(source.contains("default: openai/gpt-4o"));
-    }
-
-    #[test]
-    #[serial]
-    fn set_disabled_providers_union_preserves_other_keys() {
-        let _agent = TestAgentDir::new();
-        write_agent_file(
-            "config.yml",
-            "modelRoles:\n  default: openai/gpt-4o\nskills:\n  enableClaudeUser: true\n",
-        );
-        set_ohmypi_disabled_providers_union(&AGENT_DISCOVERY_PROVIDER_IDS).expect("union write");
-        let source = read_agent_file("config.yml");
-        assert!(source.contains("default: openai/gpt-4o"));
-        assert!(source.contains("enableClaudeUser: true"));
-        assert!(source.contains("disabledProviders"));
-    }
-
-    #[test]
-    #[serial]
-    fn set_disabled_providers_union_conflict_on_concurrent_write() {
-        let _agent = TestAgentDir::new();
-        write_agent_file("config.yml", "modelRoles:\n  default: openai/gpt-4o\n");
-        // Read with a revision, then mutate the file on disk to change its
-        // revision before attempting the union write through the public API
-        // (which re-reads internally). Simulate by writing a stale revision
-        // via the private writer path through the public function — instead,
-        // verify the guard fires by racing: write, union-write (ok), then
-        // tamper and union-write again reading a captured stale revision.
-        set_ohmypi_disabled_providers_union(&["claude"]).expect("first write");
-        // Tamper on disk so the next internal read sees a different revision.
-        write_agent_file(
-            "config.yml",
-            "modelRoles:\n  default: openai/gpt-4o\ndisabledProviders:\n  - claude\n",
-        );
-        // Public API re-reads fresh revision; to force a conflict we must use
-        // the internal writer with a deliberately stale revision.
-        let stale = "0000000000000000000000000000000000000000000000000000000000000000";
-        let err = write_ohmypi_settings(&json!({"disabledProviders": ["claude"]}), stale);
-        assert!(matches!(err, Err(AppError::Conflict(_))));
-    }
-
-    #[test]
-    fn agent_discovery_provider_ids_are_unique_and_complete() {
-        let ids: std::collections::HashSet<&str> =
-            AGENT_DISCOVERY_PROVIDER_IDS.iter().copied().collect();
-        assert_eq!(
-            ids.len(),
-            AGENT_DISCOVERY_PROVIDER_IDS.len(),
-            "ids must be unique"
-        );
-        assert_eq!(AGENT_DISCOVERY_PROVIDER_IDS.len(), 12);
-        for id in AGENT_DISCOVERY_PROVIDER_IDS {
-            assert!(!agent_discovery_provider_display_name(id).is_empty());
-        }
     }
 }

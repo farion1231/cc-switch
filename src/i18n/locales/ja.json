@@ -917,7 +917,7 @@
     "starPrompt": "CC Switch がお役に立てたなら、GitHub でスターをお願いします。私たちにとって大きな励みになります",
     "starOnGithub": "GitHub でスター",
     "manualInstallCommands": "手動インストールコマンド",
-    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code をインストールまたは更新",
+    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi をインストールまたは更新",
     "localEnvCheck": "ローカル環境チェック",
     "updateAllTools": "すべて更新（{{count}}）",
     "currentVersion": "現在のバージョン",

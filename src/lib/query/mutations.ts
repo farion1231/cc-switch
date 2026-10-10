@@ -17,6 +17,7 @@ import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
+import { invalidateOhMyPiProviderCaches } from "@/lib/query/ohmypi";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 export const useAddProviderMutation = (appId: AppId) => {
@@ -164,6 +165,9 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
       }
+      if (appId === "ohmypi") {
+        await invalidateOhMyPiProviderCaches(queryClient);
+      }
     },
   });
 };
@@ -231,6 +235,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      }
+      if (appId === "ohmypi") {
+        await invalidateOhMyPiProviderCaches(queryClient);
       }
     },
   });
@@ -307,6 +314,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      }
+      if (appId === "ohmypi") {
+        await invalidateOhMyPiProviderCaches(queryClient);
       }
     },
   });
@@ -390,6 +400,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      }
+      if (appId === "ohmypi") {
+        await invalidateOhMyPiProviderCaches(queryClient);
       }
     },
   });

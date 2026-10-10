@@ -724,7 +724,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
-        "omp" => Some("bun install -g @oh-my-pi/pi-coding-agent"),
+        "omp" => Some("bun install -g @oh-my-pi/pi-coding-agent@latest"),
         _ => None,
     }
 }
@@ -1094,9 +1094,7 @@ async fn get_single_tool_version_impl(
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
-        "omp" => {
-            fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await
-        }
+        "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         _ => None,
     };
 

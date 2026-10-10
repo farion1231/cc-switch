@@ -1511,10 +1511,6 @@ pub fn run() {
             // Oh My Pi native provider and session views
             commands::get_ohmypi_current_state,
             commands::update_ohmypi_provider_usage_script,
-            // Oh My Pi agent auto-discovery guard
-            commands::get_ohmypi_agent_discovery_state,
-            commands::get_ohmypi_agent_discovery_providers,
-            commands::disable_ohmypi_agent_auto_discovery,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,
