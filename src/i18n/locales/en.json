@@ -1018,7 +1018,10 @@
     },
     "data": {
       "location": "Location"
-    }
+    },
+    "browsePlaceholderZcode": "e.g., /home/<your-username>/.zcode",
+    "zcodeConfigDir": "ZCode Config Directory",
+    "zcodeConfigDirDescription": "Override the ZCode config directory (default: ~/.zcode)"
   },
   "apps": {
     "claude": "Claude",
@@ -1189,7 +1192,8 @@
     }
   },
   "appSwitcher": {
-    "more": "More apps"
+    "more": "More apps",
+    "zcode": "ZCode"
   },
   "grokBuild": {
     "apiBackend": "API backend",
@@ -2142,7 +2146,8 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
-      "label": "Filter by app"
+      "label": "Filter by app",
+      "zcode": "ZCode"
     },
     "rawInputLabel": "Raw",
     "sessionSync": {
@@ -2581,7 +2586,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "zcode": "ZCode"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -4696,5 +4702,43 @@
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}"
     }
+  },
+  "zcode": {
+    "addExtraOption": "Add",
+    "addModel": "Add Model",
+    "apiKeyRequired": "API Key is required",
+    "baseUrl": "Base URL",
+    "baseUrlHint": "Custom API endpoint URL",
+    "baseUrlRequired": "Base URL is required",
+    "extraOptionKey": "Key",
+    "extraOptionKeyPlaceholder": "timeout",
+    "extraOptionValue": "Value",
+    "extraOptionValuePlaceholder": "600000",
+    "extraOptions": "Extra Options",
+    "extraOptionsHint": "Configure extra provider options. Values are auto-parsed to appropriate types (number, boolean, etc.).",
+    "kind": "Provider Kind",
+    "kindHint": "API protocol format used by this provider",
+    "kindPlaceholder": "Select provider kind",
+    "limitContext": "Context",
+    "limitOutput": "Output",
+    "modelId": "Model ID",
+    "modelLimits": "Token Limits",
+    "modelName": "Display Name",
+    "models": "Models",
+    "modelsHint": "Configure available models and their display names",
+    "noExtraOptions": "No extra options configured",
+    "noModels": "No models configured",
+    "providerKey": "Provider Key",
+    "providerKeyDuplicate": "This key is already in use",
+    "providerKeyHint": "Unique identifier in ~/.zcode/v2/config.json. Use lowercase letters, numbers, colons, and hyphens only.",
+    "providerKeyInvalid": "Invalid format. Use lowercase letters, numbers, colons, and hyphens only.",
+    "providerKeyLockedHint": "This provider has already been added to the ZCode config, so its key can no longer be changed.",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyRequired": "Provider key is required",
+    "providerKeyStatusLoading": "Loading provider key status, please try again later",
+    "providerName": "Provider Name",
+    "providerNameHint": "Display name shown in ZCode",
+    "providerNamePlaceholder": "My Provider",
+    "toggleModelDetails": "Toggle model details"
   }
 }

@@ -37,6 +37,7 @@ import _teamorouter from "./TeamoRouter-icon-dark.png";
 import _tuzi from "./tuzi.png";
 import _unity2 from "./unity2.png";
 import _xycai from "./xycai-icon.png";
+import _zcode from "./zcode.png";
 import _zetaapi from "./zetaapi-icon.png";
 
 export const icons: Record<string, string> = {
@@ -162,6 +163,7 @@ export const iconUrls: Record<string, string> = {
   tuzi: _tuzi,
   unity2: _unity2,
   xycai: _xycai,
+  zcode: _zcode,
   zetaapi: _zetaapi,
 };
 

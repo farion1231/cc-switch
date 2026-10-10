@@ -689,6 +689,11 @@ impl SkillService {
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
+            AppType::ZCode => {
+                if let Some(custom) = crate::settings::get_zcode_override_dir() {
+                    return Ok(custom.join("skills"));
+                }
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置。
@@ -707,6 +712,7 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
+            AppType::ZCode => crate::zcode_config::get_zcode_dir().join("skills"),
         })
     }
 

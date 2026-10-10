@@ -1018,7 +1018,10 @@
     },
     "data": {
       "location": "保存場所"
-    }
+    },
+    "browsePlaceholderZcode": "例：/home/<ユーザー名>/.zcode",
+    "zcodeConfigDir": "ZCode 設定ディレクトリ",
+    "zcodeConfigDirDescription": "ZCode 設定ディレクトリを上書き（デフォルト：~/.zcode）"
   },
   "apps": {
     "claude": "Claude",
@@ -1189,7 +1192,8 @@
     }
   },
   "appSwitcher": {
-    "more": "その他のアプリ"
+    "more": "その他のアプリ",
+    "zcode": "ZCode"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -2142,7 +2146,8 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
-      "label": "アプリで絞り込み"
+      "label": "アプリで絞り込み",
+      "zcode": "ZCode"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
@@ -2581,7 +2586,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "zcode": "ZCode"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -4696,5 +4702,43 @@
       "refresh": "残量を更新",
       "refreshAria": "{{login}} の残量を更新"
     }
+  },
+  "zcode": {
+    "addExtraOption": "追加",
+    "addModel": "モデルを追加",
+    "apiKeyRequired": "API Key は必須です",
+    "baseUrl": "ベース URL",
+    "baseUrlHint": "カスタム API エンドポイント URL",
+    "baseUrlRequired": "ベース URL は必須です",
+    "extraOptionKey": "キー",
+    "extraOptionKeyPlaceholder": "timeout",
+    "extraOptionValue": "値",
+    "extraOptionValuePlaceholder": "600000",
+    "extraOptions": "追加オプション",
+    "extraOptionsHint": "追加のプロバイダーオプションを設定します。値は適切な型（数値、真偽値など）に自動解析されます。",
+    "kind": "プロバイダーの種類",
+    "kindHint": "このプロバイダーが使用する API プロトコル形式",
+    "kindPlaceholder": "プロバイダーの種類を選択",
+    "limitContext": "コンテキスト",
+    "limitOutput": "出力",
+    "modelId": "モデル ID",
+    "modelLimits": "トークン制限",
+    "modelName": "表示名",
+    "models": "モデル",
+    "modelsHint": "利用可能なモデルと表示名を設定します",
+    "noExtraOptions": "追加オプションは設定されていません",
+    "noModels": "モデルが設定されていません",
+    "providerKey": "プロバイダーキー",
+    "providerKeyDuplicate": "このキーは既に使用されています",
+    "providerKeyHint": "~/.zcode/v2/config.json 内の固有識別子。小文字、数字、コロン、ハイフンのみ使用できます。",
+    "providerKeyInvalid": "無効な形式です。小文字、数字、コロン、ハイフンのみ使用できます。",
+    "providerKeyLockedHint": "このプロバイダーは既に ZCode 設定に追加されているため、キーを変更できません。",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyRequired": "プロバイダーキーは必須です",
+    "providerKeyStatusLoading": "プロバイダーキーの状態を読み込んでいます。後でもう一度お試しください",
+    "providerName": "プロバイダー名",
+    "providerNameHint": "ZCode に表示される名前",
+    "providerNamePlaceholder": "マイプロバイダー",
+    "toggleModelDetails": "モデルの詳細を切り替え"
   }
 }
