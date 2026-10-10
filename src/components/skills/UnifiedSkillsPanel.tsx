@@ -1731,10 +1731,13 @@ function PiCell({ skill, fail, disabled, onClick }: PiCellProps) {
           native: vis.nativeRoot ?? "",
           roots,
         }) + approximate;
-      label +=
-        vis.sameContentAsSsot === false
-          ? t("skillsPage.piState.dualInconsistent")
-          : t("skillsPage.piState.dualConsistent");
+      // 分档优先用"全部生效副本互相一致"（含原生副本）；缺省回退共享 vs SSOT
+      const inconsistent =
+        vis.dualConsistent === false ||
+        (vis.dualConsistent === undefined && vis.sameContentAsSsot === false);
+      label += inconsistent
+        ? t("skillsPage.piState.dualInconsistent")
+        : t("skillsPage.piState.dualConsistent");
     } else if (vis.state === "inactive-excluded") {
       badge = <AlertTriangle className="h-2 w-2 text-warning-text" strokeWidth={2.5} />;
       label =

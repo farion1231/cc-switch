@@ -90,6 +90,8 @@ pub(crate) struct PiVisibility {
     pub excluded_by_pattern: bool,
     /// 原生副本所在目录（实际解析路径，含 override；仅原生副本存在时）
     pub native_root: Option<PathBuf>,
+    /// #5 时：全部生效副本（原生 + 各生效共享根）内容是否一致（None = 无法判定）
+    pub dual_consistent: Option<bool>,
     /// 解析含不支持语法/失败，结果近似
     pub approximate: bool,
 }
@@ -178,6 +180,11 @@ pub(crate) fn pi_skill_visibility(directory: &str, ctx: &PiVisibilityContext) ->
     } else {
         None
     };
+    let dual_consistent = if state == PiVisState::NativeShared {
+        native_dir.and_then(|native| dual_copies_consistent(native, &shared_roots, directory))
+    } else {
+        None
+    };
 
     PiVisibility {
         state,
@@ -186,6 +193,7 @@ pub(crate) fn pi_skill_visibility(directory: &str, ctx: &PiVisibilityContext) ->
         excluded_by_pattern: n_excluded && matches!(state, PiVisState::InactiveExcluded),
         approximate: ctx.sources.approximate,
         native_root: n_exists.then(|| native_dir.expect("n_exists 蕴含 native_dir").to_path_buf()),
+        dual_consistent,
     }
 }
 
@@ -209,6 +217,7 @@ impl From<PiVisibility> for crate::app_config::PiVisibilityInfo {
             excluded_by_pattern: v.excluded_by_pattern,
             approximate: v.approximate,
             native_root: v.native_root.map(|p| p.to_string_lossy().into_owned()),
+            dual_consistent: v.dual_consistent,
         }
     }
 }
@@ -241,6 +250,26 @@ fn same_content_as_ssot(
         }
     }
     Some(false)
+}
+
+/// #5 双来源时：全部生效副本（原生 + 各生效共享根）内容是否一致。
+/// 与 same_content_as_ssot（共享 vs SSOT）不同，这里比较的是用户关心的
+/// "实际生效的几份副本互相之间"是否一致（典型场景：手动改过原生副本）。
+fn dual_copies_consistent(
+    native_dir: &Path,
+    shared_roots: &[PathBuf],
+    directory: &str,
+) -> Option<bool> {
+    let native_hash = cached_deployment_hash(&native_dir.join(directory)).ok()?;
+    let mut consistent = true;
+    for root in shared_roots {
+        match cached_deployment_hash(&root.join(directory)) {
+            Ok(hash) if hash != native_hash => consistent = false,
+            Ok(_) => {}
+            Err(_) => continue, // 读不了的副本跳过比较，不误报
+        }
+    }
+    Some(consistent)
 }
 
 /// 内容哈希缓存：键=目录，值=(元数据指纹, 哈希)。指纹未变复用，避免重读文件字节。

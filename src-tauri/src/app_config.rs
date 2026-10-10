@@ -277,6 +277,9 @@ pub struct PiVisibilityInfo {
     /// 原生副本所在目录（实际解析路径，仅原生副本存在时）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_root: Option<String>,
+    /// #5 时：全部生效副本（原生 + 各生效共享根）内容一致
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dual_consistent: Option<bool>,
     /// 解析含不支持语法/失败，结果近似
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub approximate: bool,

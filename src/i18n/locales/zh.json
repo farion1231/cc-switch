@@ -4609,7 +4609,7 @@
     "piState": {
       "sharedTooltip": "{{name}} 由{{roots}}提供。\n请修改 Pi 的 setting.json。",
       "sharedInconsistent": "共享副本与 CC Switch 中的内容不一致。\n",
-      "dualTooltip": "{{name}} 同时被原生目录 {{native}} 与共享目录（{{roots}}）加载，Pi 按其内部规则取其一。",
+      "dualTooltip": "{{name}} 同时被 {{native}} 与 {{roots}} 加载，Pi 按其内部规则选择。",
       "dualConsistent": " 内容一致，冗余但无冲突。",
       "dualInconsistent": " 内容不一致，建议移除其中一份。",
       "excludedTooltip": "{{name}} 的 Pi 投影路径被排除规则命中，即使启用也不会被 Pi 加载，请调整 Pi settings.json 的 skills 配置。",

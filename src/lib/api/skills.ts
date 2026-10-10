@@ -53,6 +53,8 @@ export interface PiVisibility {
   sharedRoots?: string[];
   /** 原生副本所在目录（实际解析路径，仅原生副本存在时） */
   nativeRoot?: string;
+  /** #5 时：全部生效副本（原生 + 各生效共享根）内容一致（缺省 = 无法判定） */
+  dualConsistent?: boolean;
   /** 任一生效共享副本与 SSOT 一致（缺省 = SSOT 无该技能，未比对） */
   sameContentAsSsot?: boolean;
   /** 原生投影目标路径被 pi 排除规则命中（启用也无效） */
