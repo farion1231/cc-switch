@@ -262,6 +262,10 @@ const TOML_WIRE_API_PATTERN =
   /^\s*wire_api\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_MODEL_PROVIDER_LINE_PATTERN =
   /^\s*model_provider\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+// 任意值（含空串、非字符串）的顶层 model_provider 行：改选路时整行替换，免得写出重复键
+const TOML_ANY_MODEL_PROVIDER_LINE_PATTERN = /^\s*model_provider\s*=/;
+// 后端写 live 时用的路由表 id（ROUTE_ID）
+const CODEX_CUSTOM_ROUTE_ID = "custom";
 const TOML_PROVIDER_NAME_PATTERN =
   /^\s*name\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_PROVIDER_NAME_REPLACE_PATTERN =
@@ -1094,6 +1098,98 @@ export const extractProviderBaseUrl = (
   return undefined;
 };
 
+// 解析后的 TOML 值转成可比较的普通值：键排序，日期按文本比
+const comparableTomlValue = (value: unknown): unknown => {
+  if (value instanceof Date) return { $date: String(value) };
+  if (Array.isArray(value)) return value.map(comparableTomlValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [
+          key,
+          comparableTomlValue((value as Record<string, unknown>)[key]),
+        ]),
+    );
+  }
+  return value;
+};
+
+// 没有选路时把地址写进选中的 custom 表：Codex 不认顶层 base_url（#8039）。逐行改写认不全
+// TOML 的写法（内联表、带注释的表头、多行字符串里像赋值的行），所以改完按解析结果核对：
+// 除了选路、地址和收进表里的顶层 wire_api，其余值都没变才采用；否则返回 undefined，由
+// 调用方照旧写顶层 base_url（后端会把这种旧形态归一成 custom 表）。
+const moveCodexBaseUrlIntoCustomTable = (
+  text: string,
+  url: string,
+): string | undefined => {
+  let before: Record<string, unknown>;
+  try {
+    before = parseToml(text) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+
+  const lines = text ? text.split("\n") : [];
+  const topLevelEndIndex = getTopLevelEndIndex(lines);
+  const topLevelWireApi = findTomlAssignmentInRange(
+    lines,
+    TOML_WIRE_API_PATTERN,
+    0,
+    topLevelEndIndex,
+  )?.value;
+  for (let index = topLevelEndIndex - 1; index >= 0; index -= 1) {
+    if (
+      TOML_BASE_URL_PATTERN.test(lines[index]) ||
+      TOML_WIRE_API_PATTERN.test(lines[index]) ||
+      TOML_ANY_MODEL_PROVIDER_LINE_PATTERN.test(lines[index])
+    ) {
+      lines.splice(index, 1);
+    }
+  }
+  lines.unshift(`model_provider = "${CODEX_CUSTOM_ROUTE_ID}"`);
+
+  const sectionName = `model_providers.${CODEX_CUSTOM_ROUTE_ID}`;
+  const hadSection = Boolean(getTomlSectionRange(lines, sectionName));
+  if (!hadSection) {
+    if (lines[lines.length - 1].trim() !== "") {
+      lines.push("");
+    }
+    lines.push(
+      `[${sectionName}]`,
+      `name = "${CODEX_CUSTOM_ROUTE_ID}"`,
+      `wire_api = ${tomlBasicString(topLevelWireApi ?? "responses")}`,
+    );
+  }
+  const candidate = setCodexBaseUrl(finalizeTomlText(lines), url);
+
+  let after: unknown;
+  try {
+    after = parseToml(candidate);
+  } catch {
+    return undefined;
+  }
+  const expected = comparableTomlValue(before) as Record<string, any>;
+  delete expected.base_url;
+  delete expected.wire_api;
+  expected.model_provider = CODEX_CUSTOM_ROUTE_ID;
+  expected.model_providers ??= {};
+  if (!hadSection) {
+    expected.model_providers[CODEX_CUSTOM_ROUTE_ID] = {
+      name: CODEX_CUSTOM_ROUTE_ID,
+      wire_api: topLevelWireApi ?? "responses",
+    };
+  }
+  if (typeof expected.model_providers[CODEX_CUSTOM_ROUTE_ID] !== "object") {
+    return undefined;
+  }
+  expected.model_providers[CODEX_CUSTOM_ROUTE_ID].base_url = url;
+  return JSON.stringify(comparableTomlValue(expected)) ===
+    JSON.stringify(comparableTomlValue(after))
+    ? candidate
+    : undefined;
+};
+
 // 在 Codex 的 TOML 配置文本中写入或更新 base_url 字段
 export const setCodexBaseUrl = (
   configText: string,
@@ -1181,6 +1277,9 @@ export const setCodexBaseUrl = (
     lines.push(`[${targetSectionName}]`, replacementLine);
     return finalizeTomlText(lines);
   }
+
+  const moved = moveCodexBaseUrlIntoCustomTable(normalizedText, normalizedUrl);
+  if (moved !== undefined) return moved;
 
   const topLevelEndIndex = getTopLevelEndIndex(lines);
   const topLevelMatches = findTomlAssignmentsInRange(
