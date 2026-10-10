@@ -459,6 +459,205 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
 }
 
 #[test]
+fn migration_v10_to_v11_preserves_an_already_migrated_rollup_table() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    // Simulate an interrupted v10 -> v11 migration: the rollup table already
+    // has the v11 primary key, but user_version was not advanced. Distinct
+    // model-dimension rows must not be projected back to the legacy dimensions.
+    conn.execute_batch(
+        r#"
+        CREATE TABLE proxy_request_logs (
+            request_id TEXT PRIMARY KEY,
+            model TEXT NOT NULL,
+            request_model TEXT
+        );
+        CREATE TABLE usage_daily_rollups (
+            date TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            request_model TEXT NOT NULL DEFAULT '',
+            pricing_model TEXT NOT NULL DEFAULT '',
+            request_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            total_cost_usd TEXT NOT NULL DEFAULT '0',
+            avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
+        );
+        INSERT INTO usage_daily_rollups
+            (date, app_type, provider_id, model, request_model, pricing_model,
+             request_count, success_count, input_tokens, output_tokens,
+             cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms)
+        VALUES
+            ('2026-05-09', 'claude', '_session', 'deepseek-v4-pro', '', '',
+             77, 70, 7700, 700, 70, 7, '0.77', 120),
+            ('2026-05-09', 'claude', '_session', 'deepseek-v4-pro',
+             'deepseek-v4-pro', 'deepseek-chat', 10, 9, 1000, 100, 90, 10, '0.10', 90);
+        "#,
+    )
+    .expect("seed already-migrated v11 rollup table");
+
+    Database::set_user_version(&conn, 10).expect("set user_version=10");
+    Database::apply_schema_migrations_on_conn(&conn).expect("resume migrations");
+
+    let rows = conn
+        .prepare(
+            "SELECT request_model, pricing_model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, total_cost_usd, avg_latency_ms
+             FROM usage_daily_rollups
+             ORDER BY request_model",
+        )
+        .expect("prepare preserved rollup query")
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, i64>(9)?,
+            ))
+        })
+        .expect("query preserved rollups")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect preserved rollups");
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "".to_string(),
+                "".to_string(),
+                77,
+                70,
+                7700,
+                700,
+                70,
+                7,
+                "0.77".to_string(),
+                120,
+            ),
+            (
+                "deepseek-v4-pro".to_string(),
+                "deepseek-chat".to_string(),
+                10,
+                9,
+                1000,
+                100,
+                90,
+                10,
+                "0.10".to_string(),
+                90,
+            ),
+        ]
+    );
+    assert!(
+        Database::has_column(&conn, "proxy_request_logs", "pricing_model")
+            .expect("inspect proxy_request_logs")
+    );
+    assert!(
+        Database::has_column(&conn, "usage_daily_rollups", "input_token_semantics")
+            .expect("inspect usage_daily_rollups")
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after resumed migration"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn migration_v10_to_v11_rejects_a_partially_migrated_rollup_key() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE proxy_request_logs (
+            request_id TEXT PRIMARY KEY,
+            model TEXT NOT NULL,
+            request_model TEXT
+        );
+        CREATE TABLE usage_daily_rollups (
+            date TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            request_model TEXT NOT NULL DEFAULT '',
+            pricing_model TEXT NOT NULL DEFAULT '',
+            request_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            total_cost_usd TEXT NOT NULL DEFAULT '0',
+            avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (date, app_type, provider_id, model, request_model)
+        );
+        INSERT INTO usage_daily_rollups
+            (date, app_type, provider_id, model, request_model, pricing_model,
+             request_count)
+        VALUES
+            ('2026-05-09', 'claude', '_session', 'deepseek-v4-pro',
+             'client-alias', 'deepseek-chat', 1);
+        "#,
+    )
+    .expect("seed partially migrated rollup table");
+
+    Database::set_user_version(&conn, 10).expect("set user_version=10");
+    let error = Database::apply_schema_migrations_on_conn(&conn)
+        .expect_err("reject an unsafe rollup rebuild");
+    assert!(
+        error.to_string().contains("已停止迁移以避免丢失模型维度"),
+        "unexpected error: {error}"
+    );
+
+    let preserved: (String, String, i64) = conn
+        .query_row(
+            "SELECT request_model, pricing_model, request_count
+             FROM usage_daily_rollups",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("query preserved partial-migration row");
+    assert_eq!(
+        preserved,
+        ("client-alias".to_string(), "deepseek-chat".to_string(), 1)
+    );
+
+    let primary_key = conn
+        .prepare(
+            "SELECT name FROM pragma_table_info('usage_daily_rollups')
+             WHERE pk > 0 ORDER BY pk",
+        )
+        .expect("prepare primary key query")
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query primary key")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect primary key");
+    assert_eq!(
+        primary_key,
+        vec!["date", "app_type", "provider_id", "model", "request_model"]
+    );
+    assert!(
+        !Database::has_column(&conn, "proxy_request_logs", "pricing_model")
+            .expect("inspect rolled-back proxy_request_logs")
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after rejected migration"),
+        10
+    );
+}
+
+#[test]
 fn schema_create_tables_repairs_dev_global_profile_marker() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
