@@ -1728,6 +1728,7 @@ function PiCell({ skill, fail, disabled, onClick }: PiCellProps) {
       label =
         t("skillsPage.piState.dualTooltip", {
           name: skill.name,
+          native: vis.nativeRoot ?? "",
           roots,
         }) + approximate;
       label +=

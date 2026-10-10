@@ -4609,7 +4609,7 @@
     "piState": {
       "sharedTooltip": "{{name}} is provided by a shared directory:\n{{roots}}\nIt cannot be toggled here; adjust it in the source app or pi's skills config.",
       "sharedInconsistent": "The shared copy differs from the one in CC Switch.\n",
-      "dualTooltip": "{{name}} is loaded from both the native directory and shared directories ({{roots}}); Pi picks one by its own rules.",
+      "dualTooltip": "{{name}} is loaded from both the native directory {{native}} and shared directories ({{roots}}); Pi picks one by its own rules.",
       "dualConsistent": " Contents are identical — redundant but harmless.",
       "dualInconsistent": " Contents differ — consider removing one of the copies.",
       "excludedTooltip": "{{name}}'s Pi projection path is hit by an exclusion rule. Enabling it will not make Pi load it; adjust the skills config in pi's settings.json.",

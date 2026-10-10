@@ -274,6 +274,9 @@ pub struct PiVisibilityInfo {
     /// 原生投影目标路径被 pi 排除规则命中
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub excluded_by_pattern: bool,
+    /// 原生副本所在目录（实际解析路径，仅原生副本存在时）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_root: Option<String>,
     /// 解析含不支持语法/失败，结果近似
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub approximate: bool,

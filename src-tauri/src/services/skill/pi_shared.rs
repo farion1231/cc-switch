@@ -88,6 +88,8 @@ pub(crate) struct PiVisibility {
     pub same_content_as_ssot: Option<bool>,
     /// 原生投影目标路径被排除（#2 依据）
     pub excluded_by_pattern: bool,
+    /// 原生副本所在目录（实际解析路径，含 override；仅原生副本存在时）
+    pub native_root: Option<PathBuf>,
     /// 解析含不支持语法/失败，结果近似
     pub approximate: bool,
 }
@@ -183,6 +185,7 @@ pub(crate) fn pi_skill_visibility(directory: &str, ctx: &PiVisibilityContext) ->
         same_content_as_ssot: same_content,
         excluded_by_pattern: n_excluded && matches!(state, PiVisState::InactiveExcluded),
         approximate: ctx.sources.approximate,
+        native_root: n_exists.then(|| native_dir.expect("n_exists 蕴含 native_dir").to_path_buf()),
     }
 }
 
@@ -205,6 +208,7 @@ impl From<PiVisibility> for crate::app_config::PiVisibilityInfo {
             same_content_as_ssot: v.same_content_as_ssot,
             excluded_by_pattern: v.excluded_by_pattern,
             approximate: v.approximate,
+            native_root: v.native_root.map(|p| p.to_string_lossy().into_owned()),
         }
     }
 }

@@ -225,6 +225,7 @@ describe("UnifiedSkillsPanel", () => {
         piVisibility: {
           state: "native-shared",
           sharedRoots: ["/home/u/.agents/skills"],
+          nativeRoot: "/home/u/.pi/agent/skills",
           sameContentAsSsot: false,
         },
       }),

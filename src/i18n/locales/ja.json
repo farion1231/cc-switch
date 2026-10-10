@@ -4609,7 +4609,7 @@
     "piState": {
       "sharedTooltip": "{{name}} は共有ディレクトリから提供されています：\n{{roots}}\nここでは切り替えできません。元アプリまたは pi の skills 設定で調整してください。",
       "sharedInconsistent": "共有コピーは CC Switch 側の内容と一致しません。\n",
-      "dualTooltip": "{{name}} はネイティブディレクトリと共有ディレクトリの両方から読み込まれます（{{roots}}）。Pi は自身の規則でどちらかを採用します。",
+      "dualTooltip": "{{name}} はネイティブディレクトリ {{native}} と共有ディレクトリ（{{roots}}）の両方から読み込まれます。Pi は自身の規則でどちらかを採用します。",
       "dualConsistent": " 内容は同一のため、重複していますが問題ありません。",
       "dualInconsistent": " 内容が異なるため、どちらかの削除を検討してください。",
       "excludedTooltip": "{{name}} の Pi 投影パスは除外ルールに該当します。有効化しても Pi には読み込まれません。pi settings.json の skills 設定を調整してください。",

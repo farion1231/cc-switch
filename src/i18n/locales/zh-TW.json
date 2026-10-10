@@ -4610,7 +4610,7 @@
     "piState": {
       "sharedTooltip": "{{name}} 由共享目錄提供：\n{{roots}}\n無法在此開關，請到來源應用調整或修改 Pi 的 skills 設定。",
       "sharedInconsistent": "共享副本與 CC Switch 中的內容不一致。\n",
-      "dualTooltip": "{{name}} 同時被原生目錄與共享目錄載入（{{roots}}），Pi 按其內部規則取其一。",
+      "dualTooltip": "{{name}} 同時被原生目錄 {{native}} 與共享目錄（{{roots}}）載入，Pi 按其內部規則取其一。",
       "dualConsistent": " 內容一致，冗餘但無衝突。",
       "dualInconsistent": " 內容不一致，建議移除其中一份。",
       "excludedTooltip": "{{name}} 的 Pi 投影路徑被排除規則命中，即使啟用也不會被 Pi 載入，請調整 Pi settings.json 的 skills 設定。",
