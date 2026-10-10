@@ -1,7 +1,16 @@
-import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { WindowControlsContext } from "@/components/shell/AppPageHeader";
 import { DRAG_REGION_ENABLED } from "@/lib/platform";
+
+// 模拟 Linux 默认禁用拖动区域，避免依赖测试运行机器的平台。
+vi.mock("@/lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/platform")>()),
+  DRAG_REGION_ENABLED: false,
+  DRAG_REGION_ATTR: {},
+  DRAG_REGION_STYLE: {},
+}));
 
 const Panels = ({ innerOpen }: { innerOpen: boolean }) => (
   <>
@@ -34,6 +43,40 @@ describe("FullScreenPanel body scroll locking", () => {
 });
 
 describe("FullScreenPanel header", () => {
+  it("enables dragging with app window controls and updates through the portal", () => {
+    const onBack = vi.fn();
+    const onMinimize = vi.fn();
+    const panel = (enabled: boolean) => (
+      <WindowControlsContext.Provider
+        value={enabled ? <button onClick={onMinimize}>Minimize</button> : null}
+      >
+        <FullScreenPanel isOpen title="Edit MCP" onClose={onBack}>
+          body
+        </FullScreenPanel>
+      </WindowControlsContext.Provider>
+    );
+    const view = render(panel(false));
+    const title = screen.getByRole("heading", { name: "Edit MCP" });
+    expect(view.container).not.toContainElement(title);
+    const dragRegions = [title, title.parentElement!, title.closest("header")!];
+    for (const enabled of [false, true, false]) {
+      view.rerender(panel(enabled));
+      for (const element of dragRegions) {
+        expect(element.hasAttribute("data-tauri-drag-region")).toBe(enabled);
+      }
+      if (enabled) {
+        const back = screen.getByRole("button", { name: "common.back" });
+        const minimize = screen.getByRole("button", { name: "Minimize" });
+        for (const button of [back, minimize]) {
+          expect(button).not.toHaveAttribute("data-tauri-drag-region");
+          fireEvent.click(button);
+        }
+      }
+    }
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(onMinimize).toHaveBeenCalledOnce();
+  });
+
   it("lets a long title shrink and truncate instead of pushing the window controls away", () => {
     const title = "Edit " + "a-very-long-user-provided-name-".repeat(8);
     render(
