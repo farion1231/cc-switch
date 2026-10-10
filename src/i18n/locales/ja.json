@@ -1855,6 +1855,8 @@
     "proxyTakeoverStorageNotice": "💡 このアプリはルーティングモードです。ここで編集しているのは保存済みのプロバイダー設定で、実際の live 設定は一時的にルーティングサービスが管理しています。",
     "enableRemoteCompaction": "リモート圧縮を有効化",
     "remoteCompactionHint": "有効にすると、現在の model_providers エントリの name を OpenAI に設定し、Codex がリモート圧縮を試行できるようにします。",
+    "officialCompatibleLabel": "ネイティブ OpenAI プロトコル互換",
+    "officialCompatibleHint": "OpenAI のネイティブリモート圧縮に対応する Responses サービスでのみ有効にしてください。公式 GPT モデルと一致する場合は Fast オプションと圧縮の互換性を保持します。ルーティングモードでは、引き続き「リモート圧縮を有効化」でリモート圧縮の利用を切り替えます。優先サービスとアカウント間の圧縮互換性は上流サービスに依存します。",
     "apiUrlLabel": "API リクエスト URL",
     "extractFailed": "抽出に失敗しました: {{error}}",
     "saveFailed": "保存に失敗しました: {{error}}",

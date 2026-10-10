@@ -215,6 +215,9 @@ export interface ProviderMeta {
   promptCacheRouting?: PromptCacheRoutingMode;
   // Codex OAuth FAST mode: injects service_tier="priority" on ChatGPT Codex requests
   codexFastMode?: boolean;
+  // Opt-in for third-party Responses gateways supporting native OpenAI compaction.
+  // Retains matching GPT speed/compaction metadata; upstream priority support varies.
+  codexOfficialCompatible?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
   // Codex → Anthropic path: emulate the Claude Code client (disabled by default; only an explicit true enables it)

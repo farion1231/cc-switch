@@ -225,6 +225,9 @@ pub enum CodexCatalogToolProfile {
     /// hosted web-search endpoint, which Copilot does not expose.
     Copilot,
     NativeResponses,
+    /// An opted-in Responses gateway: exact official GPT models retain their
+    /// speed tiers and compaction marker, using this gateway's own credentials.
+    OfficialResponses,
     /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
     /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
     /// tools — the Responses→Anthropic transform keeps only `function` tools.
@@ -1338,6 +1341,13 @@ fn codex_catalog_model_entry(
     entry_obj.insert("service_tiers".to_string(), json!([]));
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
+    if profile == CodexCatalogToolProfile::OfficialResponses {
+        // This is the fallback for a model that did not match an official GPT
+        // entry exactly. Never let a template grant native compaction identity
+        // or optional wire protocols to an unknown model.
+        entry_obj.insert("comp_hash".to_string(), json!(CODEX_STACK_COMP_HASH));
+        entry_obj.insert("use_responses_lite".to_string(), Value::Bool(false));
+    }
 
     // Image support is a model capability, not a tool-profile capability.
     // Trust hidden preset metadata first, then the confirmed text-only registry;
@@ -2127,6 +2137,18 @@ fn find_codex_official_model<'a>(model: &str, candidates: &'a [Value]) -> Option
     })
 }
 
+/// Native OpenAI compatibility is an explicit capability contract. Unlike
+/// Codex's general longest-prefix metadata lookup, aliases and namespaced
+/// models must not inherit an official model's compaction identity or tiers.
+fn find_codex_official_gpt_model<'a>(model: &str, candidates: &'a [Value]) -> Option<&'a Value> {
+    if !model.starts_with("gpt-") {
+        return None;
+    }
+    candidates
+        .iter()
+        .find(|candidate| candidate.get("slug").and_then(Value::as_str) == Some(model))
+}
+
 /// 第三方供应商上命中官方的 GPT 行：官方条目整条照搬（提示词、工具、档位、窗口都以官方
 /// 为准，不接受行里的覆盖值；窗口不同时在 `config.toml` 里设 `model_context_window`），
 /// 只改掉属于官方账号或官方后端的字段。
@@ -2148,13 +2170,22 @@ fn codex_official_model_entry(
     obj.insert("priority".to_string(), json!(1000 + priority));
     // 官方隐藏的条目用户明确写了，也要出现在选择器里。
     obj.insert("visibility".to_string(), json!("list"));
-    // 速度档、升级提示归官方账号。
-    obj.insert("service_tiers".to_string(), json!([]));
-    obj.insert("additional_speed_tiers".to_string(), json!([]));
+    // Only an exact official GPT match on an opted-in gateway keeps Fast
+    // metadata and the corresponding official compaction identity.
+    let native_gpt = profile == CodexCatalogToolProfile::OfficialResponses
+        && model.starts_with("gpt-")
+        && official.get("slug").and_then(Value::as_str) == Some(model);
+    if !native_gpt {
+        obj.insert("service_tiers".to_string(), json!([]));
+        obj.insert("additional_speed_tiers".to_string(), json!([]));
+        if profile == CodexCatalogToolProfile::OfficialResponses {
+            obj.insert("comp_hash".to_string(), json!(CODEX_STACK_COMP_HASH));
+        }
+    }
+    // Remote compaction compatibility does not imply Responses Lite support.
+    obj.insert("use_responses_lite".to_string(), Value::Bool(false));
     obj.insert("availability_nux".to_string(), Value::Null);
     obj.insert("upgrade".to_string(), Value::Null);
-    // 第三方不支持 Responses Lite 协议。
-    obj.insert("use_responses_lite".to_string(), Value::Bool(false));
     if profile == CodexCatalogToolProfile::ProxyChat {
         // 同 `codex_catalog_model_entry`：严格的 Chat 网关拒收 `original` 精度的图片。
         obj.insert("supports_image_detail_original".to_string(), json!(false));
@@ -2205,9 +2236,9 @@ fn codex_catalog_from_specs_for_row(
     // ProxyChat and Copilot clone the bundled classic tool template so their
     // proxy paths retain custom<->function tool support.
     let template = match profile {
-        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
-            load_codex_native_responses_template()
-        }
+        CodexCatalogToolProfile::NativeResponses
+        | CodexCatalogToolProfile::OfficialResponses
+        | CodexCatalogToolProfile::Anthropic => load_codex_native_responses_template(),
         CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot => {
             load_codex_classic_tool_template()
         }
@@ -2218,15 +2249,20 @@ fn codex_catalog_from_specs_for_row(
     // 保留账号模型的上下文窗口和并行工具能力，而不是套用官方 GPT 的能力。
     let official = match profile {
         CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => Vec::new(),
-        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::ProxyChat => {
-            codex_openai_official_models()
-        }
+        CodexCatalogToolProfile::NativeResponses
+        | CodexCatalogToolProfile::OfficialResponses
+        | CodexCatalogToolProfile::ProxyChat => codex_openai_official_models(),
     };
     let entries: Vec<Value> = specs
         .iter()
         .enumerate()
-        .map(
-            |(index, spec)| match find_codex_official_model(&spec.model, &official) {
+        .map(|(index, spec)| {
+            let found = if profile == CodexCatalogToolProfile::OfficialResponses {
+                find_codex_official_gpt_model(&spec.model, &official)
+            } else {
+                find_codex_official_model(&spec.model, &official)
+            };
+            match found {
                 Some(found) => codex_official_model_entry(found, &spec.model, index, profile),
                 None => codex_catalog_model_entry(
                     &template,
@@ -2235,8 +2271,8 @@ fn codex_catalog_from_specs_for_row(
                     profile,
                     default_context_window,
                 ),
-            },
-        )
+            }
+        })
         .collect();
     Ok(json!({ "models": entries }))
 }
@@ -2258,7 +2294,7 @@ pub(crate) fn codex_disables_web_search(
 ) -> bool {
     match profile {
         CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => true,
-        CodexCatalogToolProfile::NativeResponses => {
+        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::OfficialResponses => {
             !codex_catalog_model_specs(settings).is_empty()
                 && codex_native_gateway_rejects_web_search(config_text)
         }
@@ -2331,10 +2367,11 @@ pub(crate) enum CodexStackRoute<'a> {
     },
 }
 
-/// 合并目录里 Stack 行统一的 `comp_hash`。Codex 在一个会话记下的值变了时会压缩一次；
+/// 普通 Stack 行统一的 `comp_hash`。Codex 在一个会话记下的值变了时会压缩一次；
 /// 模板带来的值会随来源漂移（DeepSeek 官方目录是 "3000"，从 Codex 缓存克隆的 gpt-5.5
-/// 跟着缓存变），固定值才稳定。路由那家的行不改：它的值要和名单为空时的目录一致，否则
-/// 加进第一家、移除最后一家都会让路由上的会话恢复时被压缩一次。
+/// 跟着缓存变），固定值才稳定。声明原生兼容且精确匹配官方的 GPT 行保留官方值，方便在
+/// 同一压缩协议间切换。路由那家的行不改：它的值要和名单为空时的目录一致，否则加进
+/// 第一家、移除最后一家都会让路由上的会话恢复时被压缩一次。
 const CODEX_STACK_COMP_HASH: &str = "cc-switch";
 
 /// Stack 名单非空时的模型目录：路由那家的行在前，各 Stack 供应商的行按名单顺序在后，
@@ -2374,7 +2411,11 @@ pub(crate) fn plan_codex_stack_catalog(
             let Some(obj) = entry.as_object_mut() else {
                 continue;
             };
-            obj.insert("comp_hash".to_string(), json!(CODEX_STACK_COMP_HASH));
+            if member.row.profile != CodexCatalogToolProfile::OfficialResponses
+                || obj.get("comp_hash").and_then(Value::as_str).is_none()
+            {
+                obj.insert("comp_hash".to_string(), json!(CODEX_STACK_COMP_HASH));
+            }
             let Some(model) = obj.get("slug").and_then(Value::as_str).map(str::to_string) else {
                 continue;
             };
@@ -2450,8 +2491,19 @@ fn codex_stack_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>,
         _ => Vec::new(),
     };
     let windows = RowWindows::of(row.config_text);
+    let official = if row.profile == CodexCatalogToolProfile::OfficialResponses {
+        codex_openai_official_models()
+    } else {
+        Vec::new()
+    };
     for entry in &mut entries {
-        sink_row_windows(entry, &windows, true);
+        let native_gpt = entry
+            .get("slug")
+            .and_then(Value::as_str)
+            .is_some_and(|model| find_codex_official_gpt_model(model, &official).is_some());
+        // Compatible GPT rows keep official window/compaction defaults unless
+        // the user explicitly overrides them. Generic rows keep the 90% rule.
+        sink_row_windows(entry, &windows, !native_gpt);
     }
     Ok(entries)
 }
@@ -5234,6 +5286,185 @@ wire_api = "responses"
         assert_eq!(models[0]["slug"], "gpt-6-sol");
         assert_eq!(models[0]["multi_agent_version"], "v2");
         assert!(models[1].get("multi_agent_version").is_none());
+    }
+
+    #[test]
+    fn compatible_stack_preserves_exact_gpt_protocol_capabilities() {
+        let mut official = official_gpt_row("gpt-6.1-sol", "native Codex instructions");
+        official["input_modalities"] = json!(["text", "image"]);
+        official["auto_compact_token_limit"] = json!(200_000);
+        official["multi_agent_version"] = json!("v2");
+        let plan = |classic| {
+            with_official_models(vec![official.clone()], || {
+                let settings =
+                    json!({ "modelCatalog": { "models": [{ "model": "gpt-6.1-sol" }] } });
+                let config = "model = \"gpt-6.1-sol\"\n";
+                plan_codex_stack_catalog(
+                    CodexStackRoute::Official {
+                        native: vec![official.clone()],
+                        config_text: "",
+                    },
+                    &[
+                        CodexStackCatalogMember {
+                            key: "native",
+                            provider_name: "Native relay",
+                            row: CodexCatalogRow {
+                                settings: &settings,
+                                config_text: config,
+                                profile: CodexCatalogToolProfile::OfficialResponses,
+                            },
+                        },
+                        CodexStackCatalogMember {
+                            key: "generic",
+                            provider_name: "Generic",
+                            row: CodexCatalogRow {
+                                settings: &settings,
+                                config_text: config,
+                                profile: CodexCatalogToolProfile::NativeResponses,
+                            },
+                        },
+                    ],
+                    classic,
+                )
+                .unwrap()
+            })
+        };
+        for classic in [false, true] {
+            let catalog = plan(classic);
+            let models = catalog["models"].as_array().unwrap();
+            assert_eq!(models[1]["slug"], "ccs-native/gpt-6.1-sol");
+            for key in [
+                "comp_hash",
+                "service_tiers",
+                "additional_speed_tiers",
+                "context_window",
+                "max_context_window",
+                "auto_compact_token_limit",
+                "apply_patch_tool_type",
+                "model_messages",
+                "supported_reasoning_levels",
+                "input_modalities",
+                "supports_parallel_tool_calls",
+            ] {
+                assert_eq!(models[1][key], models[0][key], "native capability {key}");
+            }
+            assert_eq!(models[0]["use_responses_lite"], true);
+            assert_eq!(models[1]["use_responses_lite"], false);
+            assert!(models[1]["availability_nux"].is_null());
+            assert!(models[1]["upgrade"].is_null());
+            assert_eq!(models[2]["comp_hash"], "cc-switch");
+            assert_eq!(models[2]["service_tiers"], json!([]));
+            assert_eq!(models[2]["additional_speed_tiers"], json!([]));
+            assert_eq!(models[2]["use_responses_lite"], false);
+            for model in models.iter().take(2) {
+                assert_eq!(
+                    model["multi_agent_version"],
+                    if classic { "v1" } else { "v2" }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compatible_gpt_windows_accept_explicit_provider_overrides() {
+        let models = with_official_models(official_gpt_rows(), || {
+            let settings = json!({ "modelCatalog": { "models": [{ "model": "gpt-6-sol" }] } });
+            codex_stack_third_party_rows(&CodexCatalogRow {
+                settings: &settings,
+                config_text:
+                    "model_context_window = 1000000\nmodel_auto_compact_token_limit = 900000\n",
+                profile: CodexCatalogToolProfile::OfficialResponses,
+            })
+            .unwrap()
+        });
+        assert_eq!(models[0]["context_window"], 1_000_000);
+        assert_eq!(models[0]["max_context_window"], 1_000_000);
+        assert_eq!(models[0]["auto_compact_token_limit"], 900_000);
+        assert_eq!(models[0]["comp_hash"], "3000");
+    }
+
+    #[test]
+    fn compatible_catalog_does_not_grant_native_capabilities_to_aliases_or_non_gpt_models() {
+        let official = vec![
+            official_gpt_row("gpt-6.1-sol", "GPT native instructions"),
+            official_gpt_row("o4-mini", "non-GPT native instructions"),
+        ];
+        let models = with_official_models(official, || {
+            catalog_for(
+                json!([
+                    { "model": "gpt-6.1-sol-high" },
+                    { "model": "openai/gpt-6.1-sol" },
+                    { "model": "o4-mini" },
+                    { "model": "unknown-model" }
+                ]),
+                "",
+                CodexCatalogToolProfile::OfficialResponses,
+            )
+        });
+        for model in &models {
+            assert_eq!(model["comp_hash"], "cc-switch", "{}", model["slug"]);
+            assert_eq!(model["service_tiers"], json!([]));
+            assert_eq!(model["additional_speed_tiers"], json!([]));
+            assert_eq!(model["use_responses_lite"], false);
+            assert_eq!(model["shell_type"], "shell_command");
+            assert_eq!(model["context_window"], 128_000);
+            assert!(model.get("apply_patch_tool_type").is_none());
+            assert!(model.get("model_messages").is_none());
+        }
+    }
+
+    #[test]
+    fn compatible_fallback_clears_capabilities_from_a_drifted_template() {
+        let template = official_gpt_row("gpt-6.1-sol", "native instructions");
+        let settings = json!({ "modelCatalog": { "models": [{ "model": "unknown-model" }] } });
+        let spec = codex_catalog_model_specs(&settings).pop().unwrap();
+        let model = codex_catalog_model_entry(
+            &template,
+            &spec,
+            0,
+            CodexCatalogToolProfile::OfficialResponses,
+            128_000,
+        );
+        assert_eq!(model["comp_hash"], "cc-switch");
+        assert_eq!(model["service_tiers"], json!([]));
+        assert_eq!(model["additional_speed_tiers"], json!([]));
+        assert_eq!(model["use_responses_lite"], false);
+        assert_eq!(model["shell_type"], "shell_command");
+        assert!(model.get("apply_patch_tool_type").is_none());
+        assert!(model.get("model_messages").is_none());
+    }
+
+    #[test]
+    fn compatible_unknown_stack_rows_keep_the_bridge_marker() {
+        let catalog = with_official_models(official_gpt_rows(), || {
+            let settings = json!({ "modelCatalog": { "models": [
+                { "model": "gpt-6-sol-alias" },
+                { "model": "unknown-model" }
+            ] } });
+            plan_codex_stack_catalog(
+                CodexStackRoute::Official {
+                    native: official_gpt_rows(),
+                    config_text: "",
+                },
+                &[CodexStackCatalogMember {
+                    key: "relay",
+                    provider_name: "Native relay",
+                    row: CodexCatalogRow {
+                        settings: &settings,
+                        config_text: "",
+                        profile: CodexCatalogToolProfile::OfficialResponses,
+                    },
+                }],
+                false,
+            )
+            .unwrap()
+        });
+        for model in catalog["models"].as_array().unwrap().iter().skip(3) {
+            assert!(model["slug"].as_str().unwrap().starts_with("ccs-relay/"));
+            assert_eq!(model["comp_hash"], "cc-switch");
+            assert_eq!(model["service_tiers"], json!([]));
+            assert_eq!(model["use_responses_lite"], false);
+        }
     }
 
     #[test]

@@ -389,13 +389,51 @@ pub fn is_codex_native_responses_url(base_url: &str) -> bool {
         .any(|marker| lower.contains(marker))
 }
 
-/// Resolve the model-catalog tool profile for a Codex provider using the SAME
-/// Anthropic detection as the proxy router ([`codex_provider_uses_anthropic`]), so the
-/// generated catalog never disagrees with the routed transform. A provider whose
-/// Anthropic upstream is declared only via settings `apiFormat` or TOML `wire_api`
-/// (not `meta.api_format`) would otherwise get a `ProxyChat` catalog and emit the
-/// freeform `apply_patch` tool that the Anthropic transform then silently drops.
-/// Non-Anthropic providers keep the existing `meta.api_format` classification.
+/// Explicit protocol opt-in for third-party Responses relays. This never makes
+/// a relay an official account or changes its authentication. Re-check the wire
+/// format here so stale/imported metadata cannot upgrade a converted provider.
+pub fn codex_provider_supports_native_protocol(provider: &Provider) -> bool {
+    if provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.codex_official_compatible)
+        != Some(true)
+        || provider.uses_managed_account_auth()
+        || is_codex_official_provider(provider)
+    {
+        return false;
+    }
+
+    let api_format = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("api_format")
+                .and_then(JsonValue::as_str)
+        })
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("apiFormat")
+                .and_then(JsonValue::as_str)
+        });
+    if let Some(api_format) = api_format {
+        return api_format == "openai_responses";
+    }
+
+    provider
+        .settings_config
+        .get("config")
+        .and_then(JsonValue::as_str)
+        .and_then(extract_codex_wire_api_from_toml)
+        .is_some_and(|wire_api| wire_api.eq_ignore_ascii_case("responses"))
+}
+
+/// Resolve the model-catalog tool profile using the same protocol detection as
+/// the proxy router, including stored and imported configuration formats.
 pub fn resolve_codex_catalog_tool_profile(
     provider: &Provider,
 ) -> crate::codex_config::CodexCatalogToolProfile {
@@ -413,6 +451,9 @@ pub fn resolve_codex_catalog_tool_profile(
     }
     if codex_provider_uses_anthropic(provider) {
         return CodexCatalogToolProfile::Anthropic;
+    }
+    if codex_provider_supports_native_protocol(provider) {
+        return CodexCatalogToolProfile::OfficialResponses;
     }
 
     // Defensive fallback for providers saved in SQLite before their preset
@@ -1688,6 +1729,42 @@ wire_api = "anthropic"
     }
 
     #[test]
+    fn native_protocol_opt_in_requires_a_responses_provider() {
+        for format in ["openai_responses", "openai_chat", "anthropic", "unknown"] {
+            let mut provider = create_provider(json!({ "apiFormat": format }));
+            provider.meta = Some(crate::provider::ProviderMeta {
+                codex_official_compatible: Some(true),
+                ..Default::default()
+            });
+            assert_eq!(
+                codex_provider_supports_native_protocol(&provider),
+                format == "openai_responses",
+                "stored format {format}"
+            );
+        }
+
+        let mut provider = create_provider(json!({
+            "config": "model_provider = \"custom\"\n[model_providers.custom]\nwire_api = \"responses\"\n"
+        }));
+        assert!(!codex_provider_supports_native_protocol(&provider));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            codex_official_compatible: Some(true),
+            ..Default::default()
+        });
+        assert!(codex_provider_supports_native_protocol(&provider));
+        provider.meta.as_mut().unwrap().codex_official_compatible = Some(false);
+        assert!(!codex_provider_supports_native_protocol(&provider));
+        provider.meta.as_mut().unwrap().codex_official_compatible = Some(true);
+        provider.meta.as_mut().unwrap().api_format = Some("openai_chat".to_string());
+        assert!(!codex_provider_supports_native_protocol(&provider));
+        provider.meta.as_mut().unwrap().api_format = Some("openai_responses".to_string());
+        for provider_type in ["xai_oauth", "github_copilot", "codex_oauth"] {
+            provider.meta.as_mut().unwrap().provider_type = Some(provider_type.to_string());
+            assert!(!codex_provider_supports_native_protocol(&provider));
+        }
+    }
+
+    #[test]
     fn test_resolve_catalog_profile_matches_router() {
         use crate::codex_config::CodexCatalogToolProfile;
 
@@ -1722,6 +1799,18 @@ wire_api = "anthropic"
         assert_eq!(
             resolve_codex_catalog_tool_profile(&native),
             CodexCatalogToolProfile::NativeResponses
+        );
+
+        native.meta.as_mut().unwrap().codex_official_compatible = Some(true);
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&native),
+            CodexCatalogToolProfile::OfficialResponses
+        );
+        native.meta.as_mut().unwrap().api_format = Some("openai_chat".to_string());
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&native),
+            CodexCatalogToolProfile::ProxyChat,
+            "the compatibility opt-in must not upgrade a converted Chat endpoint"
         );
 
         let chat = create_provider(json!({ "apiFormat": "openai_chat" }));

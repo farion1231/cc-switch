@@ -1856,6 +1856,8 @@
     "proxyTakeoverStorageNotice": "💡 目前應用處於路由模式。這裡編輯的是儲存的供應商配置，實際的 live 配置暫由路由服務接管",
     "enableRemoteCompaction": "啟用遠端壓縮",
     "remoteCompactionHint": "開啟後會將目前 model_providers 條目的 name 寫為 OpenAI，讓 Codex 嘗試使用遠端壓縮。",
+    "officialCompatibleLabel": "原生 OpenAI 協定相容",
+    "officialCompatibleHint": "僅適用於支援 OpenAI 原生遠端壓縮的 Responses 服務。匹配官方 GPT 模型時保留 Fast 選項與壓縮相容性；路由模式下仍由「啟用遠端壓縮」控制是否使用遠端壓縮。實際優先層級及跨帳號壓縮相容性由上游決定。",
     "apiUrlLabel": "API 請求位址",
     "extractFailed": "擷取失敗：{{error}}",
     "saveFailed": "儲存失敗：{{error}}",
