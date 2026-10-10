@@ -82,7 +82,7 @@ export function ProviderStatsTable({
                 const provider = getUsageProviderLabel(stat.providerName, t);
                 return (
                   <tr
-                    key={`${stat.providerId}:${stat.providerName}`}
+                    key={JSON.stringify([stat.appType, stat.providerId])}
                     className={usageTable.row}
                   >
                     <td className={usageTable.td}>

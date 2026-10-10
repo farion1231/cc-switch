@@ -268,7 +268,7 @@ pub(crate) fn stale_clients(store: &DeviceStore, check_catalog: bool) -> Option<
     // 顺手记一次：兜住在 CC Switch 之外改了目录的情况。
     let history = record(store, &current, (env.now_ms)());
     let servers = probe(&env);
-    let mut stale = if check_catalog && current != NO_CATALOG {
+    let mut stale = if check_catalog {
         judge(&history, &current, &servers)
     } else {
         None
@@ -307,13 +307,17 @@ fn judge(history: &[Generation], current: &str, servers: &AppServers) -> Option<
     })
 }
 
-/// 启动于 `started_ms` 的进程读到的是不是别的目录。早于记下的第一代、判断不了的按旧的算。
+/// 启动于 `started_ms` 的进程读到的是不是别的目录。早于记下的第一代、判断不了的：现在
+/// 不读 CC Switch 的目录（[`NO_CATALOG`]）时按新的算，否则从没进过代理的直连用户也会被
+/// 报；其余按旧的算。
 fn is_stale(history: &[Generation], current: &str, started_ms: u64) -> bool {
     history
         .iter()
         .rev()
         .find(|generation| generation.since_ms.saturating_add(MARGIN_MS) <= started_ms)
-        .is_none_or(|generation| generation.fingerprint != current)
+        .map_or(current != NO_CATALOG, |generation| {
+            generation.fingerprint != current
+        })
 }
 
 fn probe(env: &Env) -> AppServers {
@@ -641,6 +645,13 @@ mod tests {
         assert!(is_stale(&history, "b", 1_500_000));
         // 早于第一代：判断不了，按旧的算。
         assert!(is_stale(&history, "b", 500_000));
+        // 现在不读 CC Switch 的目录：早于第一代的按新的算；在我们的目录时启动的仍是旧的。
+        let history = [
+            generation(1_000_000, "a"),
+            generation(2_000_000, NO_CATALOG),
+        ];
+        assert!(!is_stale(&history, NO_CATALOG, 500_000));
+        assert!(is_stale(&history, NO_CATALOG, 1_500_000));
         // 来回切：a → b → a，在第一次 a 时启动的进程读到的正是现在这份。
         let history = [
             generation(1_000_000, "a"),
@@ -785,9 +796,16 @@ mod tests {
                 auth: false
             })
         );
-        // 撤掉指针之后不提示（新启动的 Codex 也不读 CC Switch 的目录）。
+        // 撤掉指针之后仍提示：桌面版还拿着 CC Switch 的旧目录，新启动的 Codex 读的是内置列表。
         point_at_catalog(None);
-        assert_eq!(stale_clients(&store, true), None);
+        assert_eq!(
+            stale_clients(&store, true),
+            Some(StaleClients {
+                daemon: false,
+                others: true,
+                auth: false
+            })
+        );
     }
 
     #[test]

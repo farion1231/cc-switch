@@ -39,6 +39,14 @@ fn openai_cache_write_tokens(usage: &Value) -> u32 {
         .unwrap_or(0) as u32
 }
 
+/// Claude usage 中按 1 小时 TTL 写入的缓存 token（`cache_creation_input_tokens` 的子集）
+pub(crate) fn claude_cache_creation_1h_tokens(usage: &Value) -> u32 {
+    usage
+        .pointer("/cache_creation/ephemeral_1h_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32
+}
+
 /// Session 日志 request_id 前缀，与 `session_usage.rs` 中的格式保持一致
 pub const SESSION_REQUEST_ID_PREFIX: &str = "session:";
 
@@ -66,6 +74,8 @@ pub struct TokenUsage {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_creation_tokens: u32,
+    /// `cache_creation_tokens` 中按 1 小时 TTL 写入的部分（Claude 单独计价）
+    pub cache_creation_1h_tokens: u32,
     /// 从响应中提取的实际模型名称（如果可用）
     pub model: Option<String>,
     /// 从响应中提取的消息 ID（用于跨源去重）
@@ -126,6 +136,7 @@ impl TokenUsage {
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
+            cache_creation_1h_tokens: claude_cache_creation_1h_tokens(usage),
             model,
             message_id,
         })
@@ -172,6 +183,8 @@ impl TokenUsage {
                                 .and_then(|v| v.as_u64())
                                 .unwrap_or(0)
                                 as u32;
+                            usage.cache_creation_1h_tokens =
+                                claude_cache_creation_1h_tokens(msg_usage);
                         }
                     }
                     "message_delta" => {
@@ -214,6 +227,8 @@ impl TokenUsage {
                                     }
                                     if let Some(cache_creation) = delta_cache_creation {
                                         usage.cache_creation_tokens = cache_creation;
+                                        usage.cache_creation_1h_tokens =
+                                            claude_cache_creation_1h_tokens(delta_usage);
                                     }
                                 }
                             }
@@ -228,6 +243,8 @@ impl TokenUsage {
                             if usage.cache_creation_tokens == 0 {
                                 if let Some(cache_creation) = delta_cache_creation {
                                     usage.cache_creation_tokens = cache_creation;
+                                    usage.cache_creation_1h_tokens =
+                                        claude_cache_creation_1h_tokens(delta_usage);
                                 }
                             }
                         }
@@ -284,6 +301,7 @@ impl TokenUsage {
             output_tokens: output_tokens? as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
+            cache_creation_1h_tokens: 0,
             model,
             message_id: response_id(body, "id"),
         })
@@ -371,6 +389,7 @@ impl TokenUsage {
             output_tokens: completion_tokens as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
+            cache_creation_1h_tokens: 0,
             model,
             message_id: response_id(body, "id"),
         })
@@ -421,6 +440,7 @@ impl TokenUsage {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model,
             message_id: response_id(body, "responseId"),
         })
@@ -476,6 +496,7 @@ impl TokenUsage {
                 output_tokens: total_output,
                 cache_read_tokens: total_cache_read,
                 cache_creation_tokens: 0,
+                cache_creation_1h_tokens: 0,
                 model,
                 message_id,
             })

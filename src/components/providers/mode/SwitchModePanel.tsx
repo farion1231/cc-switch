@@ -454,7 +454,6 @@ export function SwitchModePanel({
   if (
     app === "codex" &&
     stack?.staleClients &&
-    (stack.staleClients.auth || (view === "stack" && active === "stack")) &&
     (stack.staleClients.daemon || stack.staleClients.others) &&
     !staleDismissed
   ) {
