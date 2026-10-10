@@ -21,6 +21,7 @@ describe("Grok Build config", () => {
     const parsed = parseToml(config) as any;
 
     expect(parsed.models.default).toBe("grok-4.5");
+    expect(parsed.models.session_summary).toBe("grok-4.5");
     expect(parsed.model["grok-4.5"]).toEqual({
       model: "grok-4.5",
       base_url: "https://relay.example.com/v1",
@@ -55,6 +56,9 @@ describe("Grok Build config", () => {
       contextWindow: 320000,
     });
     expect(extractGrokBuildBaseUrl(config)).toBe("https://api.example.com");
+    expect((parseToml(config) as any).models.session_summary).toBe(
+      "custom-model",
+    );
   });
 
   it("accepts env_key credentials without adding an empty api_key", () => {
@@ -136,7 +140,66 @@ context_window = 500000
     const parsed = parseToml(renamed) as any;
 
     expect(parsed.models.default).toBe("new-profile");
+    expect(parsed.models.session_summary).toBe("new-profile");
     expect(parsed.model["new-profile"].model).toBe("grok-upstream");
+    expect(parsed.model).not.toHaveProperty("old-profile");
+  });
+
+  it("sets the summary profile when editing a legacy config without one", () => {
+    const original = `[models]
+default = "custom-profile"
+
+[model."custom-profile"]
+model = "upstream-model"
+base_url = "https://relay.example.com/v1"
+name = "Relay"
+api_key = "test-key"
+api_backend = "responses"
+context_window = 500000
+`;
+    const updated = updateGrokBuildConfig(original, {
+      ...parseGrokBuildConfig(original),
+      name: "Updated Relay",
+    });
+    const parsed = parseToml(updated) as any;
+
+    expect(parsed.models.session_summary).toBe("custom-profile");
+    expect(parsed.model[parsed.models.session_summary].model).toBe(
+      "upstream-model",
+    );
+  });
+
+  it("preserves a separately configured summary model when renaming the default", () => {
+    const original = `[models]
+default = "old-profile"
+session_summary = "title-profile"
+web_search = "search-profile"
+
+[model."old-profile"]
+model = "upstream-model"
+base_url = "https://relay.example.com/v1"
+name = "Relay"
+api_key = "test-key"
+api_backend = "responses"
+context_window = 500000
+
+[model."title-profile"]
+model = "small-model"
+base_url = "https://title.example.com/v1"
+env_key = "TITLE_API_KEY"
+`;
+    const updated = updateGrokBuildConfig(original, {
+      ...parseGrokBuildConfig(original),
+      model: "new-profile",
+    });
+    const parsed = parseToml(updated) as any;
+
+    expect(parsed.models.default).toBe("new-profile");
+    expect(parsed.models.session_summary).toBe("title-profile");
+    expect(parsed.models.web_search).toBe("search-profile");
+    expect(parsed.model["title-profile"]).toEqual(
+      (parseToml(original) as any).model["title-profile"],
+    );
     expect(parsed.model).not.toHaveProperty("old-profile");
   });
 });
