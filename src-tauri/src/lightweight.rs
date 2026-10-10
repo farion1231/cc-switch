@@ -69,6 +69,11 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("创建主窗口失败: {e}"))?;
 
     if let Some(window) = app.get_webview_window("main") {
+        #[cfg(target_os = "windows")]
+        {
+            crate::windows_fix::clamp_main_window_size(&window);
+            crate::windows_fix::watch_scale_factor_changes(&window);
+        }
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
