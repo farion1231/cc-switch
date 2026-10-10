@@ -1143,6 +1143,44 @@ fn model_pricing_seed_includes_claude_opus_5_5() {
 }
 
 #[test]
+fn model_pricing_seed_includes_claude_sonnet_5_5_and_haiku_5_5() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price_of = |model_id: &str| -> (String, String, String, String) {
+        conn.query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = ?1",
+            [model_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap_or_else(|e| panic!("query {model_id} price: {e}"))
+    };
+
+    // 缓存读 0.05x = $0.10：不是 Sonnet 5 的 $0.20
+    assert_eq!(
+        price_of("claude-sonnet-5-5"),
+        (
+            "2".to_string(),
+            "10".to_string(),
+            "0.10".to_string(),
+            "2.50".to_string(),
+        )
+    );
+    // 10 万 token 以内的标准档
+    assert_eq!(
+        price_of("claude-haiku-5-5"),
+        (
+            "0.10".to_string(),
+            "0.50".to_string(),
+            "0.01".to_string(),
+            "0.125".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_refresh_finishes_old_repair_chains_and_preserves_custom_prices() {
     let db = Database::memory().expect("create memory db");
     {
