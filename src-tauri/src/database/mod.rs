@@ -44,7 +44,7 @@ use crate::config::get_app_config_dir;
 use crate::error::AppError;
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 // DAO 方法通过 impl Database 提供，无需额外导出
 
@@ -58,17 +58,55 @@ pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError
         .map_err(|e| AppError::Config(format!("JSON serialization failed: {e}")))
 }
 
-/// 安全地获取 Mutex 锁，避免 unwrap panic
+/// 获取数据库的锁，锁中毒时清理后继续使用，见 [`lock_recovering`]。
 macro_rules! lock_conn {
     ($mutex:expr) => {
-        $mutex
-            .lock()
-            .map_err(|e| AppError::Database(format!("Mutex lock failed: {}", e)))?
+        $crate::database::lock_recovering(&$mutex)
     };
 }
 
 // 导出宏供子模块使用
 pub(crate) use lock_conn;
+
+/// 持锁的任务 panic 后 `Mutex` 会中毒，之后每次 `lock()` 都返回错误。整个应用共用
+/// 一条数据库连接，中毒后托盘、供应商切换、退出时把客户端指回直连的写回全都失败，
+/// 只能重启进程（#8058）。这里取回锁内的值，按 [`RecoverPoisoned`] 清理并清除中毒
+/// 标记后照常返回。
+pub(crate) fn lock_recovering<T: RecoverPoisoned>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        log::warn!("数据库锁因持锁任务 panic 而中毒，清理后继续使用");
+        let mut guard = poisoned.into_inner();
+        guard.recover_poisoned();
+        mutex.clear_poison();
+        guard
+    })
+}
+
+/// 锁中毒后、继续使用锁内的值之前要做的清理。
+pub(crate) trait RecoverPoisoned {
+    fn recover_poisoned(&mut self);
+}
+
+impl RecoverPoisoned for Connection {
+    /// rusqlite 的 `Transaction` 在 panic 展开时会自己回滚。这里兜底其他还停在事务里
+    /// 的情况（如手写的 `BEGIN`），否则之后的写入都会落进一个永远不会提交的事务。
+    fn recover_poisoned(&mut self) {
+        if self.is_autocommit() {
+            return;
+        }
+        match self.execute_batch("ROLLBACK") {
+            Ok(()) => log::warn!("数据库锁中毒时连接仍在事务中，已回滚未提交的写入"),
+            Err(e) => log::error!("数据库锁中毒后回滚未完成的事务失败: {e}"),
+        }
+    }
+}
+
+impl RecoverPoisoned for Option<crate::services::usage_stats::LogCountCache> {
+    /// 只是加速用的缓存，清空后下次查询重新统计。
+    fn recover_poisoned(&mut self) {
+        *self = None;
+    }
+}
 
 /// 数据库连接封装
 ///

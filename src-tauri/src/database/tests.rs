@@ -1431,3 +1431,70 @@ fn incremental_vacuum_reclaims_entire_freelist() {
     Database::incremental_vacuum_on_conn(&conn).expect("incremental vacuum");
     assert_eq!(freelist(&conn), 0, "all free pages should be reclaimed");
 }
+
+/// 在另一个线程里持有连接锁时 panic，让锁中毒。
+fn poison_conn_lock(db: &Database, before_panic: impl FnOnce(&Connection) + Send) {
+    let joined = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let conn = db.conn.lock().expect("lock conn");
+                before_panic(&conn);
+                panic!("simulated panic while holding the database lock");
+            })
+            .join()
+    });
+    assert!(joined.is_err(), "the holder thread should have panicked");
+    assert!(db.conn.is_poisoned());
+}
+
+#[test]
+fn poisoned_connection_lock_is_recovered() {
+    let db = Database::memory().expect("create memory db");
+    db.set_setting("before", "1")
+        .expect("write before poisoning");
+    poison_conn_lock(&db, |_| {});
+
+    assert_eq!(
+        db.get_setting("before")
+            .expect("read after poisoning")
+            .as_deref(),
+        Some("1")
+    );
+    db.set_setting("after", "2").expect("write after poisoning");
+    assert_eq!(
+        db.get_setting("after").expect("read back").as_deref(),
+        Some("2")
+    );
+    assert!(!db.conn.is_poisoned(), "recovery should clear the poison");
+}
+
+#[test]
+fn poisoned_connection_lock_rolls_back_unfinished_transaction() {
+    let db = Database::memory().expect("create memory db");
+    poison_conn_lock(&db, |conn| {
+        conn.execute_batch(
+            "BEGIN; INSERT INTO settings (key, value) VALUES ('half-written', 'x');",
+        )
+        .expect("leave a transaction open");
+    });
+
+    // 同一连接看得到自己未提交的写入，没回滚的话这里会读到 'x'。
+    assert_eq!(
+        db.get_setting("half-written")
+            .expect("read after poisoning"),
+        None
+    );
+    assert!(lock_recovering(&db.conn).is_autocommit());
+}
+
+#[test]
+fn proxy_sync_reads_report_stored_flags_after_poisoning() {
+    let db = Database::memory().expect("create memory db");
+    db.set_proxy_flags_sync("claude", true, true)
+        .expect("enable claude takeover");
+    poison_conn_lock(&db, |_| {});
+
+    // 这几个同步读取以前在锁中毒时静默返回默认值，托盘会把接管显示成关闭。
+    assert_eq!(db.get_proxy_flags_sync("claude"), (true, true));
+    assert!(db.is_live_takeover_active_sync());
+}
