@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 
 /** 应用名：品牌名不翻译，四种语言都写原文。 */
 export const APP_DISPLAY_NAME: Record<AppId, string> = {
+  "copilot-byok": "VS Code Copilot",
   claude: "Claude Code",
   "claude-desktop": "Claude Desktop",
   codex: "Codex",
@@ -22,6 +23,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
 };
 
 const APP_ICON_NAME: Record<AppId, string> = {
+  "copilot-byok": "githubcopilot",
   claude: "claude",
   "claude-desktop": "claude",
   codex: "openai",

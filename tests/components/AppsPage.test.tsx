@@ -25,6 +25,7 @@ import type {
 } from "@/lib/api/settings";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { APP_IDS } from "@/config/appConfig";
+import type { CopilotByokTargetState } from "@/lib/api/copilotByok";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
@@ -44,9 +45,15 @@ const mocks = vi.hoisted(() => ({
   autoSaveSettings: vi.fn(async () => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
   desktopStatus: { supported: true, installed: true, configured: true },
+  copilotTargets: [{ source: "detected" }] as CopilotByokTargetState[],
 }));
 
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
+vi.mock("@/lib/api/copilotByok", () => ({
+  copilotByokApi: {
+    getState: async () => ({ targets: mocks.copilotTargets }),
+  },
+}));
 vi.mock("@/lib/api/providers", () => ({
   providersApi: {
     getClaudeDesktopStatus: async () => mocks.desktopStatus,
@@ -235,6 +242,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     missing.clear();
     mocks.settings = {};
     mocks.dragEndHandlers = [];
+    mocks.copilotTargets = [{ source: "detected" }] as CopilotByokTargetState[];
     mocks.desktopStatus = {
       supported: true,
       installed: true,
@@ -691,6 +699,23 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(installed.queryByText("Codex")).toBeNull();
     expect(notInstalled.getByText("Codex")).toBeInTheDocument();
     expect(notInstalled.queryByText("Claude Code")).toBeNull();
+  });
+
+  it("shows detected VS Code profiles without CLI lifecycle actions", async () => {
+    await renderApps();
+    expect(rowApps("appsPage.sectionInstalled")).toContain("copilot-byok");
+    expect(
+      card("VS Code Copilot").queryByRole("button", {
+        name: /settings\.tool(Update|Install|Uninstall)/,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps VS Code Copilot visible when no sync target is detected", async () => {
+    mocks.copilotTargets = [];
+    await renderApps();
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["copilot-byok"]);
+    expect(card("VS Code Copilot").getByRole("switch")).toBeInTheDocument();
   });
 
   it("groups Claude Desktop by whether it is installed, not whether it is connected", async () => {

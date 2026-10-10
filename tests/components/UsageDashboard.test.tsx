@@ -378,6 +378,7 @@ describe("UsageDashboard", () => {
   it("lists only the apps shown on the Apps page, keeping the selected one", async () => {
     setSettings({
       visibleApps: {
+        "copilot-byok": false,
         claude: false,
         "claude-desktop": true,
         codex: true,

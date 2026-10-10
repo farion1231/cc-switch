@@ -24,6 +24,7 @@ export const APP_IDS: AppId[] = [
   "gemini",
   "grokbuild",
   "opencode",
+  "copilot-byok",
   "openclaw",
   "hermes",
   "pi",
@@ -35,6 +36,7 @@ export const APP_IDS: AppId[] = [
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
+  "copilot-byok": true,
   claude: true,
   "claude-desktop": true,
   codex: true,
@@ -178,7 +180,10 @@ export function usesEditorView(appId: AppId): boolean {
 }
 
 /** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
+export type McpAppId = Exclude<
+  AppId,
+  "claude-desktop" | "openclaw" | "copilot-byok"
+>;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -203,6 +208,21 @@ export function usesGeminiStyleForm(appId: string): boolean {
 }
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
+  "copilot-byok": {
+    label: "VS Code Copilot",
+    icon: (
+      <ProviderIcon
+        icon="githubcopilot"
+        name="VS Code Copilot"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-blue-500/10 ring-1 ring-blue-500/20 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
+  },
   claude: {
     label: "Claude",
     icon: <ClaudeIcon size={14} />,

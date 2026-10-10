@@ -70,6 +70,21 @@ pub async fn get_config_status(
     app: String,
 ) -> Result<ConfigStatus, String> {
     match AppType::from_str(&app).map_err(|e| e.to_string())? {
+        AppType::CopilotByok => {
+            let state = crate::copilot_byok::get_state(state.db.as_ref()).map_err(String::from)?;
+            Ok(ConfigStatus {
+                exists: state
+                    .targets
+                    .iter()
+                    .any(|target| target.selected && target.config_exists),
+                path: state
+                    .targets
+                    .iter()
+                    .find(|target| target.selected)
+                    .map(|target| target.language_models_path.clone())
+                    .unwrap_or_default(),
+            })
+        }
         AppType::Claude => Ok(config::get_claude_config_status()),
         AppType::ClaudeDesktop => {
             let status = crate::claude_desktop_config::get_status(
@@ -200,6 +215,9 @@ pub async fn get_claude_code_config_path() -> Result<String, String> {
 #[tauri::command]
 pub async fn get_config_dir(app: String) -> Result<String, String> {
     let dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
+        AppType::CopilotByok => {
+            crate::copilot_byok::primary_profile_config_dir().map_err(String::from)?
+        }
         AppType::Claude => config::get_claude_config_dir(),
         AppType::ClaudeDesktop => {
             crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
@@ -227,6 +245,9 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, String> {
     let config_dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
+        AppType::CopilotByok => {
+            crate::copilot_byok::primary_profile_config_dir().map_err(String::from)?
+        }
         AppType::Claude => config::get_claude_config_dir(),
         AppType::ClaudeDesktop => {
             crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
