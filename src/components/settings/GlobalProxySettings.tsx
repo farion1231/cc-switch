@@ -50,11 +50,11 @@ function mergeAuth(
 
   try {
     const parsed = new URL(baseUrl);
-    // URL 对象的 username/password setter 会自动进行 percent-encoding
-    // 不要使用 encodeURIComponent，否则会导致双重编码
-    parsed.username = username.trim();
+    // URL setters preserve literal %, so encode raw credentials before the
+    // single decode in extractAuth. Already escaped sequences stay escaped.
+    parsed.username = encodeURIComponent(username.trim());
     if (password) {
-      parsed.password = password;
+      parsed.password = encodeURIComponent(password);
     }
     return parsed.toString();
   } catch {

@@ -9,10 +9,11 @@ vi.mock("react-i18next", () => ({
 const mutateAsyncMock = vi.fn();
 const testMutateAsyncMock = vi.fn();
 const scanMutateAsyncMock = vi.fn();
+let savedProxyUrl = "http://127.0.0.1:7890";
 
 vi.mock("@/hooks/useGlobalProxy", () => ({
   useGlobalProxyUrl: () => ({
-    data: "http://127.0.0.1:7890",
+    data: savedProxyUrl,
     isLoading: false,
   }),
   useSetGlobalProxyUrl: () => ({
@@ -31,6 +32,7 @@ vi.mock("@/hooks/useGlobalProxy", () => ({
 
 describe("GlobalProxySettings", () => {
   beforeEach(() => {
+    savedProxyUrl = "http://127.0.0.1:7890";
     mutateAsyncMock.mockReset();
     testMutateAsyncMock.mockReset();
     scanMutateAsyncMock.mockReset();
@@ -81,4 +83,48 @@ describe("GlobalProxySettings", () => {
 
     expect(urlInput).toHaveValue("");
   });
+
+  it.each([
+    ["user%name", "pass%word"],
+    ["user%40name", "pass%3Aword"],
+    ["user", "100%"],
+    ["user@name", "p@ss:word/#? "],
+    ["\u7528\u6237", "\u5bc6\u7801%25"],
+  ])(
+    "preserves credentials %s / %s when saved and reloaded",
+    async (username, password) => {
+      const { unmount } = render(<GlobalProxySettings />);
+
+      fireEvent.change(
+        screen.getByPlaceholderText("settings.globalProxy.username"),
+        {
+          target: { value: username },
+        },
+      );
+      fireEvent.change(
+        screen.getByPlaceholderText("settings.globalProxy.password"),
+        {
+          target: { value: password },
+        },
+      );
+      fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+      await waitFor(() => expect(mutateAsyncMock).toHaveBeenCalledTimes(1));
+      savedProxyUrl = mutateAsyncMock.mock.calls[0][0];
+      unmount();
+      render(<GlobalProxySettings />);
+
+      expect(
+        screen.getByPlaceholderText("settings.globalProxy.username"),
+      ).toHaveValue(username);
+      expect(
+        screen.getByPlaceholderText("settings.globalProxy.password"),
+      ).toHaveValue(password);
+      expect(
+        screen.getByPlaceholderText(
+          "http://127.0.0.1:7890 / socks5://127.0.0.1:1080",
+        ),
+      ).toHaveValue("http://127.0.0.1:7890/");
+    },
+  );
 });
