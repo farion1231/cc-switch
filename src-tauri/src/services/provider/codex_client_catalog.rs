@@ -1,4 +1,4 @@
-//! Codex 客户端是不是还在用旧的模型目录，以及重启 Codex 的托管守护进程。
+//! Codex 客户端是否还在用旧模型目录或缓存切换前的文件登录，以及按用户确认重启守护进程。
 //!
 //! Codex 的 app-server 只在启动时读一次模型目录（codex-rs `app-server/src/model_catalog.rs`：
 //! 「retained startup model catalog」），之后每个请求重读 `config.toml`：路由跟着变，模型列表
@@ -22,13 +22,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::codex_config::{get_codex_config_dir, get_codex_model_catalog_path};
+use crate::codex_config::{
+    codex_config_auth_store_mode, extract_codex_auth_user_identity, get_codex_auth_path,
+    get_codex_config_dir, get_codex_model_catalog_path, CodexAuthStoreMode,
+};
 use crate::live::engine::{sha256_hex, DeviceStore};
 use crate::live::project::codex::live_catalog_is_ours;
 
 use super::codex_direct::read_config_text;
 
 pub(crate) const HISTORY_FILENAME: &str = "codex-catalog-history.json";
+const LOGIN_HISTORY_FILENAME: &str = "codex-login-history.json";
 /// 最多记这么多代。更早启动的进程判断不了，按旧的算。
 const HISTORY_LIMIT: usize = 32;
 /// 进程的启动时刻只精确到秒（`ps` 的 etime），每一代又是写完之后才记下的：启动时刻离一代的
@@ -51,7 +55,7 @@ struct Generation {
     fingerprint: String,
 }
 
-/// 还在用旧模型列表的 Codex 客户端（给前端）。
+/// 可能还在用旧模型列表或旧文件登录的 Codex 客户端（给前端）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StaleClients {
@@ -59,6 +63,9 @@ pub struct StaleClients {
     pub daemon: bool,
     /// 其余 app-server（桌面版、编辑器插件）：要用户自己彻底退出再开。
     pub others: bool,
+    /// 文件登录的身份变了，进程可能还缓存着旧账号。不是查询进程内存得到的确认。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub auth: bool,
 }
 
 /// 重启守护进程的结果（给前端）。
@@ -168,14 +175,14 @@ fn history_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn read_history(store: &DeviceStore) -> Vec<Generation> {
-    let path = store.file(HISTORY_FILENAME);
+fn read_history(store: &DeviceStore, filename: &str) -> Vec<Generation> {
+    let path = store.file(filename);
     let Ok(bytes) = std::fs::read(&path) else {
         return Vec::new();
     };
     serde_json::from_slice(&bytes).unwrap_or_else(|error| {
         log::warn!(
-            "Codex 模型目录的变化记录 {} 无法解析，当作空的: {error}",
+            "Codex 客户端状态的变化记录 {} 无法解析，当作空的: {error}",
             path.display()
         );
         Vec::new()
@@ -185,10 +192,19 @@ fn read_history(store: &DeviceStore) -> Vec<Generation> {
 /// 现在的目录和最后一代不同就记成新的一代，返回记完之后的历史。尽力而为：写不进去只打日志，
 /// 下次再记（判断会偏向「旧」）。
 fn record(store: &DeviceStore, fingerprint: &str, now_ms: u64) -> Vec<Generation> {
+    record_history(store, HISTORY_FILENAME, fingerprint, now_ms)
+}
+
+fn record_history(
+    store: &DeviceStore,
+    filename: &str,
+    fingerprint: &str,
+    now_ms: u64,
+) -> Vec<Generation> {
     let _guard = history_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut history = read_history(store);
+    let mut history = read_history(store, filename);
     if history
         .last()
         .is_some_and(|last| last.fingerprint == fingerprint)
@@ -201,8 +217,8 @@ fn record(store: &DeviceStore, fingerprint: &str, now_ms: u64) -> Vec<Generation
     });
     let excess = history.len().saturating_sub(HISTORY_LIMIT);
     history.drain(..excess);
-    if let Err(error) = crate::config::write_json_file(&store.file(HISTORY_FILENAME), &history) {
-        log::warn!("记录 Codex 模型目录的变化失败: {error}");
+    if let Err(error) = crate::config::write_json_file(&store.file(filename), &history) {
+        log::warn!("记录 Codex 客户端状态的变化失败: {error}");
     }
     history
 }
@@ -218,23 +234,62 @@ fn current_fingerprint() -> String {
         .unwrap_or_else(|_| NO_CATALOG.to_string())
 }
 
-/// 记下新启动的 Codex 现在会读到的目录。Codex 的客户端文件每写一次（直连、进出代理、Stack
+/// 记下新启动的 Codex 会读到的目录和文件登录身份。客户端文件每写一次（直连、进出代理、Stack
 /// 增删、退出时写回）和启动接上之后各调一次。
 pub(crate) fn observe(store: &DeviceStore) {
-    record(store, &current_fingerprint(), (env().now_ms)());
+    let now = (env().now_ms)();
+    record(store, &current_fingerprint(), now);
+    if let Some(login) = current_login_fingerprint() {
+        record_history(store, LOGIN_HISTORY_FILENAME, &login, now);
+    }
 }
 
-/// 还在用旧目录的 Codex 客户端。都是新的，或者新启动的 Codex 本来就不读 CC Switch 的目录时
-/// 为 `None`。要读进程表，放到阻塞线程池里调。
-pub(crate) fn stale_clients(store: &DeviceStore) -> Option<StaleClients> {
+/// 只跟踪 file 存储里的稳定身份，不持久化 token，不把 token 轮换误判成切号。
+/// keyring/auto/ephemeral 的实际身份不能从 auth.json 推断，交给它们各自的登录流程。
+fn current_login_fingerprint() -> Option<String> {
+    if codex_config_auth_store_mode(&read_config_text()) != CodexAuthStoreMode::File {
+        return None;
+    }
+    let bytes = std::fs::read(get_codex_auth_path()).ok()?;
+    let auth: Value = serde_json::from_slice(&bytes).ok()?;
+    let account = auth.pointer("/tokens/account_id")?.as_str()?;
+    if account.trim().is_empty() {
+        return None;
+    }
+    let user = extract_codex_auth_user_identity(&auth);
+    Some(sha256_hex(&serde_json::to_vec(&(account, user)).ok()?))
+}
+
+/// 可能缓存旧账号或目录的客户端。`check_catalog` 只影响目录，账号检查不受模式限制。
+/// 要读进程表，放到阻塞线程池里调；不查询进程的实际认证，也不自动重启。
+pub(crate) fn stale_clients(store: &DeviceStore, check_catalog: bool) -> Option<StaleClients> {
     let env = env();
     let current = current_fingerprint();
     // 顺手记一次：兜住在 CC Switch 之外改了目录的情况。
     let history = record(store, &current, (env.now_ms)());
-    if current == NO_CATALOG {
-        return None;
+    let servers = probe(&env);
+    let mut stale = if check_catalog {
+        judge(&history, &current, &servers)
+    } else {
+        None
+    };
+    if let Some(login) = current_login_fingerprint() {
+        let history = record_history(store, LOGIN_HISTORY_FILENAME, &login, (env.now_ms)());
+        // 首次观察不是切号；不能因进程早于安装 CC Switch 就声称它缓存了别的账号。
+        if history.len() > 1 {
+            if let Some(auth_stale) = judge(&history, &login, &servers) {
+                let clients = stale.get_or_insert(StaleClients {
+                    daemon: false,
+                    others: false,
+                    auth: false,
+                });
+                clients.daemon |= auth_stale.daemon;
+                clients.others |= auth_stale.others;
+                clients.auth = true;
+            }
+        }
     }
-    judge(&history, &current, &probe(&env))
+    stale
 }
 
 fn judge(history: &[Generation], current: &str, servers: &AppServers) -> Option<StaleClients> {
@@ -245,16 +300,24 @@ fn judge(history: &[Generation], current: &str, servers: &AppServers) -> Option<
         .others
         .iter()
         .any(|&started| is_stale(history, current, started));
-    (daemon || others).then_some(StaleClients { daemon, others })
+    (daemon || others).then_some(StaleClients {
+        daemon,
+        others,
+        auth: false,
+    })
 }
 
-/// 启动于 `started_ms` 的进程读到的是不是别的目录。早于记下的第一代、判断不了的按旧的算。
+/// 启动于 `started_ms` 的进程读到的是不是别的目录。早于记下的第一代、判断不了的：现在
+/// 不读 CC Switch 的目录（[`NO_CATALOG`]）时按新的算，否则从没进过代理的直连用户也会被
+/// 报；其余按旧的算。
 fn is_stale(history: &[Generation], current: &str, started_ms: u64) -> bool {
     history
         .iter()
         .rev()
         .find(|generation| generation.since_ms.saturating_add(MARGIN_MS) <= started_ms)
-        .is_none_or(|generation| generation.fingerprint != current)
+        .map_or(current != NO_CATALOG, |generation| {
+            generation.fingerprint != current
+        })
 }
 
 fn probe(env: &Env) -> AppServers {
@@ -582,6 +645,13 @@ mod tests {
         assert!(is_stale(&history, "b", 1_500_000));
         // 早于第一代：判断不了，按旧的算。
         assert!(is_stale(&history, "b", 500_000));
+        // 现在不读 CC Switch 的目录：早于第一代的按新的算；在我们的目录时启动的仍是旧的。
+        let history = [
+            generation(1_000_000, "a"),
+            generation(2_000_000, NO_CATALOG),
+        ];
+        assert!(!is_stale(&history, NO_CATALOG, 500_000));
+        assert!(is_stale(&history, NO_CATALOG, 1_500_000));
         // 来回切：a → b → a，在第一次 a 时启动的进程读到的正是现在这份。
         let history = [
             generation(1_000_000, "a"),
@@ -602,7 +672,7 @@ mod tests {
         for step in 0..40u64 {
             record(&store, &format!("f{step}"), 10 + step);
         }
-        let history = read_history(&store);
+        let history = read_history(&store, HISTORY_FILENAME);
         assert_eq!(history.len(), HISTORY_LIMIT);
         assert_eq!(history.last(), Some(&generation(49, "f39")));
         assert_eq!(history.first(), Some(&generation(18, "f8")));
@@ -653,7 +723,7 @@ mod tests {
         *table.lock().unwrap() = daemon_row("00:00");
         clock.store(1_060_000, Ordering::SeqCst);
         *table.lock().unwrap() = daemon_row("00:50");
-        assert_eq!(stale_clients(&store), None);
+        assert_eq!(stale_clients(&store, true), None);
 
         // 退出 CC Switch，一分钟后再打开。
         point_at_catalog(None);
@@ -662,7 +732,7 @@ mod tests {
         point_at_catalog(Some("stack"));
         observe(&store);
         *table.lock().unwrap() = daemon_row("01:50");
-        assert_eq!(stale_clients(&store), None);
+        assert_eq!(stale_clients(&store, true), None);
 
         // 目录变了（Stack 增删）：守护进程还拿着旧的。
         clock.store(1_200_000, Ordering::SeqCst);
@@ -670,10 +740,11 @@ mod tests {
         observe(&store);
         *table.lock().unwrap() = daemon_row("03:10");
         assert_eq!(
-            stale_clients(&store),
+            stale_clients(&store, true),
             Some(StaleClients {
                 daemon: true,
-                others: false
+                others: false,
+                auth: false
             })
         );
 
@@ -687,10 +758,11 @@ mod tests {
         observe(&store);
         *table.lock().unwrap() = daemon_row("02:10");
         assert_eq!(
-            stale_clients(&store),
+            stale_clients(&store, true),
             Some(StaleClients {
                 daemon: true,
-                others: false
+                others: false,
+                auth: false
             })
         );
     }
@@ -717,15 +789,132 @@ mod tests {
         *table.lock().unwrap() =
             "62347 02:30 /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex -c features.code_mode_host=true app-server".to_string();
         assert_eq!(
-            stale_clients(&store),
+            stale_clients(&store, true),
             Some(StaleClients {
                 daemon: false,
-                others: true
+                others: true,
+                auth: false
             })
         );
-        // 撤掉指针之后不提示（新启动的 Codex 也不读 CC Switch 的目录）。
+        // 撤掉指针之后仍提示：桌面版还拿着 CC Switch 的旧目录，新启动的 Codex 读的是内置列表。
         point_at_catalog(None);
-        assert_eq!(stale_clients(&store), None);
+        assert_eq!(
+            stale_clients(&store, true),
+            Some(StaleClients {
+                daemon: false,
+                others: true,
+                auth: false
+            })
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn account_switch_is_reported_without_a_catalog_and_refresh_is_not() {
+        let scope = Scope::new();
+        let store = scope.store();
+        let clock = Arc::new(AtomicU64::new(1_000_000));
+        let table = Arc::new(Mutex::new(String::new()));
+        let restarted = Arc::new(AtomicBool::new(false));
+        fake_env(clock.clone(), table.clone(), restarted.clone());
+        point_at_catalog(None);
+        let auth = |account: &str, token: &str| {
+            std::fs::write(
+                get_codex_config_dir().join("auth.json"),
+                serde_json::json!({"tokens": {"account_id": account, "access_token": token}})
+                    .to_string(),
+            )
+            .unwrap();
+        };
+        auth("a", "old-token");
+        observe(&store);
+        clock.store(1_100_000, Ordering::SeqCst);
+        *table.lock().unwrap() = "62347 01:30 /opt/bin/codex app-server".to_string();
+        assert_eq!(
+            stale_clients(&store, true),
+            None,
+            "initial observation is not a switch"
+        );
+        auth("a", "refreshed-token");
+        observe(&store);
+        assert_eq!(
+            stale_clients(&store, true),
+            None,
+            "token refresh is not an account switch"
+        );
+
+        auth("b", "target-token");
+        observe(&store);
+        assert!(
+            stale_clients(&store, true).is_some(),
+            "the running server still caches account a"
+        );
+        assert!(
+            !restarted.load(Ordering::SeqCst),
+            "observing must not restart anything"
+        );
+        clock.store(1_200_000, Ordering::SeqCst);
+        *table.lock().unwrap() = "62347 00:30 /opt/bin/codex app-server".to_string();
+        assert_eq!(
+            stale_clients(&store, true),
+            None,
+            "a new server reads account b"
+        );
+        // 切回 a：最早读 a 的进程不需要重启，读 b 的进程需要。
+        auth("a", "another-token");
+        observe(&store);
+        *table.lock().unwrap() = "62347 03:10 /opt/bin/codex app-server".to_string();
+        assert_eq!(stale_clients(&store, false), None);
+        *table.lock().unwrap() = "62347 00:30 /opt/bin/codex app-server".to_string();
+        let notice = stale_clients(&store, false).unwrap();
+        assert!(notice.auth && notice.others && !notice.daemon);
+        write_daemon_pid(59013);
+        *table.lock().unwrap() = format!("59013 00:30 {DAEMON} app-server --managed-daemon");
+        let notice = stale_clients(&store, false).unwrap();
+        assert!(notice.auth && notice.daemon && !notice.others);
+        assert!(!restarted.load(Ordering::SeqCst));
+        for mode in ["keyring", "auto", "ephemeral"] {
+            std::fs::write(
+                get_codex_config_dir().join("config.toml"),
+                format!("cli_auth_credentials_store = \"{mode}\"\n"),
+            )
+            .unwrap();
+            assert_eq!(
+                stale_clients(&store, false),
+                None,
+                "{mode} is not file auth"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn file_login_fingerprint_separates_users_in_the_same_workspace() {
+        use base64::Engine;
+        let scope = Scope::new();
+        point_at_catalog(None);
+        let login = |user: &str| {
+            let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::json!({"sub": user}).to_string());
+            std::fs::write(
+                get_codex_auth_path(),
+                serde_json::json!({"tokens": {
+                    "account_id": "shared-workspace",
+                    "id_token": format!("eyJhbGciOiJub25lIn0.{claims}.synthetic"),
+                    "access_token": "not-persisted"
+                }})
+                .to_string(),
+            )
+            .unwrap();
+        };
+        login("a");
+        let first = current_login_fingerprint().unwrap();
+        observe(&scope.store());
+        login("b");
+        assert_ne!(current_login_fingerprint().unwrap(), first);
+        let history = std::fs::read_to_string(scope.store().file(LOGIN_HISTORY_FILENAME)).unwrap();
+        assert!(!history.contains("not-persisted"));
+        assert!(!history.contains("shared-workspace"));
     }
 
     #[test]

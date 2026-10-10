@@ -11,7 +11,8 @@ use super::{
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
     opaque_state_rectifier::{
-        detect_opaque_state_rejection, rectify_opaque_state, OpaqueStateRejection,
+        carries_encrypted_agent_task, detect_opaque_state_rejection, rectify_opaque_state,
+        unreadable_agent_task_error, OpaqueStateRejection,
     },
     provider_router::ProviderRouter,
     providers::{
@@ -992,8 +993,25 @@ impl RequestForwarder {
                         &provider_body,
                         &e,
                     ) {
+                        // 这一轮是派给子 agent 的加密任务：整流不动它（见
+                        // `opaque_state_rectifier`），去掉别家的状态后仍被拒，就是任务本身解不开。
+                        let agent_task = carries_encrypted_agent_task(&provider_body);
                         let mut opaque_body = provider_body.clone();
                         let rectified = rectify_opaque_state(&mut opaque_body, rejection);
+                        if !rectified.applied && agent_task {
+                            log::warn!(
+                                "[{app_type_str}] [RECT-023] provider={} 解不开子 agent 任务的密文（主、子 agent 不在同一家），不重试",
+                                provider.id
+                            );
+                            return Err(self
+                                .finish_neutral_failure(
+                                    unreadable_agent_task_error(),
+                                    provider,
+                                    app_type_str,
+                                    used_half_open_permit,
+                                )
+                                .await);
+                        }
                         if rectified.applied {
                             let _ = std::mem::replace(&mut opaque_rectifier_retried, true);
                             log::info!(
@@ -1038,6 +1056,31 @@ impl RequestForwarder {
                                     log::warn!(
                                         "[{app_type_str}] [RECT-022] 密文整流重试仍失败: {retry_err}"
                                     );
+                                    if agent_task
+                                        && self
+                                            .opaque_state_retry_rejection(
+                                                app_type,
+                                                provider,
+                                                opaque_retry_codex_upstream_format,
+                                                false,
+                                                &opaque_body,
+                                                &retry_err,
+                                            )
+                                            .is_some()
+                                    {
+                                        log::warn!(
+                                            "[{app_type_str}] [RECT-023] provider={} 解不开子 agent 任务的密文（主、子 agent 不在同一家），不再重试",
+                                            provider.id
+                                        );
+                                        return Err(self
+                                            .finish_neutral_failure(
+                                                unreadable_agent_task_error(),
+                                                provider,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                            )
+                                            .await);
+                                    }
                                     e = retry_err;
                                 }
                             }
@@ -2766,6 +2809,17 @@ impl RequestForwarder {
                     // A response.failed/error before output remains failover-safe.
                     response = self.validate_responses_stream_start(response).await?;
                 }
+            } else if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+                && !codex_responses_to_chat
+                && !codex_responses_to_anthropic
+                && request_is_streaming
+                && !response.is_json()
+                && self.rectifier_config.enabled
+                && carries_encrypted_agent_task(&filtered_body)
+            {
+                response = self
+                    .hold_encrypted_agent_task_stream(response, &filtered_body)
+                    .await?;
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -2967,6 +3021,66 @@ impl RequestForwarder {
                 return Ok(ProxyResponse::streamed(status, headers, replay));
             }
         }
+    }
+
+    /// 原样转发的 Responses 请求末尾是一条带密文的子 agent 任务时（见
+    /// `opaque_state_rectifier::carries_encrypted_agent_task`），先看到第一个不是生命周期的事件
+    /// 再交出流：上游解不开密文时会在流里、输出之前回 `response.failed`，这时改成上游错误，
+    /// 回到重试循环里和 HTTP 报错一样整流或说明原因。其余情况（有输出、别的失败、到了截止
+    /// 时间、缓冲太多）把读过的字节原样接回去，客户端看到的流和没经过这里一样。
+    ///
+    /// 整个缓冲阶段只有一个截止时间（不是每读一块重新计时）：上游在输出前一直发心跳时，流
+    /// 也得按时交出去。解不开密文是上游一收到请求就报的错，不用等到生成，所以最多压
+    /// [`MAX_HOLD`]，首包超时更短时按首包超时。
+    async fn hold_encrypted_agent_task_stream(
+        &self,
+        response: ProxyResponse,
+        request: &Value,
+    ) -> Result<ProxyResponse, ProxyError> {
+        const MAX_HOLD_BYTES: usize = 256 * 1024;
+        const MAX_HOLD: std::time::Duration = std::time::Duration::from_secs(10);
+
+        let window = match self.streaming_first_byte_timeout {
+            timeout if timeout.is_zero() => MAX_HOLD,
+            timeout => timeout.min(MAX_HOLD),
+        };
+        let deadline = tokio::time::Instant::now() + window;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let mut stream = Box::pin(response.bytes_stream());
+        let mut replay_chunks: Vec<Bytes> = Vec::new();
+        let mut held_bytes = 0usize;
+        let mut parse_buffer = String::new();
+        let mut utf8_remainder = Vec::new();
+
+        'hold: loop {
+            let Ok(next) = tokio::time::timeout_at(deadline, stream.next()).await else {
+                break 'hold;
+            };
+            let Some(chunk) = next else {
+                break 'hold;
+            };
+            // 还没有交出流，读出错和首包前出错一样回到重试循环。
+            let chunk = chunk
+                .map_err(|error| ProxyError::ForwardFailed(format!("读取流式响应失败: {error}")))?;
+            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+            held_bytes += chunk.len();
+            replay_chunks.push(chunk);
+
+            while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
+                match encrypted_task_stream_start(&block, request) {
+                    StreamStart::Pending => {}
+                    StreamStart::Commit => break 'hold,
+                    StreamStart::Rejected(error) => return Err(error),
+                }
+            }
+            if held_bytes > MAX_HOLD_BYTES {
+                break 'hold;
+            }
+        }
+
+        let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
+        Ok(ProxyResponse::streamed(status, headers, replay))
     }
 
     async fn prime_streaming_response(
@@ -3521,6 +3635,48 @@ fn codex_anthropic_cache_config(config: &OptimizerConfig) -> OptimizerConfig {
         enabled: true,
         thinking_optimizer: false,
         cache_injection: config.cache_injection,
+    }
+}
+
+/// [`Forwarder::hold_encrypted_agent_task_stream`] 看到一个完整 SSE 块之后怎么做。
+enum StreamStart {
+    /// 生命周期事件（或不是 JSON），接着读。
+    Pending,
+    /// 有输出或别的结局：交出流。
+    Commit,
+    /// 输出之前上游就自证验不了请求里的密文。
+    Rejected(ProxyError),
+}
+
+fn encrypted_task_stream_start(block: &str, request: &Value) -> StreamStart {
+    let mut named_event = None;
+    let mut data_lines = Vec::new();
+    for line in block.lines() {
+        if let Some(event) = crate::proxy::sse::strip_sse_field(line, "event") {
+            named_event = Some(event.trim().to_string());
+        } else if let Some(data) = crate::proxy::sse::strip_sse_field(line, "data") {
+            data_lines.push(data);
+        }
+    }
+    let Ok(value) = serde_json::from_str::<Value>(&data_lines.join("\n")) else {
+        return StreamStart::Pending;
+    };
+    let event = named_event
+        .as_deref()
+        .filter(|event| !event.is_empty())
+        .or_else(|| value.get("type").and_then(Value::as_str))
+        .unwrap_or("");
+    match event {
+        "response.created" | "response.in_progress" | "response.queued" => StreamStart::Pending,
+        "response.failed" | "error" => {
+            let response = value.get("response").unwrap_or(&value);
+            let error = response.get("error").unwrap_or(response);
+            match super::opaque_state_rectifier::in_stream_rejection(error, request) {
+                Some(rejection) => StreamStart::Rejected(rejection),
+                None => StreamStart::Commit,
+            }
+        }
+        _ => StreamStart::Commit,
     }
 }
 
@@ -6895,8 +7051,9 @@ mod tests {
             assert!(seen.headers.contains_key("session_id"));
         }
 
-        /// 原生 Responses 第三方收不了 Codex 私有的压缩触发：改成不带工具的摘要回合，
-        /// CC Switch 包装的压缩摘要改成普通消息；看不出来源的压缩密文原样发出。
+        /// 原生 Responses 第三方收不了 Codex 私有的压缩触发：改成禁止新工具调用的摘要回合
+        /// （工具定义保留，历史里的调用条目还引用着它们），CC Switch 包装的压缩摘要改成
+        /// 普通消息；看不出来源的压缩密文原样发出。
         #[tokio::test]
         async fn native_third_party_compaction_becomes_summary_turn() {
             use crate::proxy::providers::codex_compaction::{
@@ -6921,7 +7078,11 @@ mod tests {
                 request,
             )
             .await;
-            assert!(seen.body.get("tools").is_none());
+            assert_eq!(
+                seen.body["tools"],
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }])
+            );
+            assert_eq!(seen.body["tool_choice"], "none");
             let input = seen.body["input"].as_array().unwrap();
             assert_eq!(
                 input[0],
@@ -7357,6 +7518,278 @@ mod tests {
                     .is_err()
             );
             assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
+        /// 按脚本依次回应的假上游，每一步自己定 content-type 和原始响应体（流式用）。
+        async fn raw_upstream(script: Vec<(u16, &'static str, String)>) -> Upstream {
+            let script = Arc::new(Mutex::new(std::collections::VecDeque::from(script)));
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let app = {
+                let seen = seen.clone();
+                axum::Router::new().fallback(move |headers: HeaderMap, body: Bytes| {
+                    let script = script.clone();
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().await.push(Seen {
+                            headers,
+                            body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+                        });
+                        let (status, content_type, body) = script
+                            .lock()
+                            .await
+                            .pop_front()
+                            .expect("upstream script exhausted");
+                        (
+                            StatusCode::from_u16(status).expect("status"),
+                            [(http::header::CONTENT_TYPE, content_type)],
+                            body,
+                        )
+                    }
+                })
+            };
+            Upstream {
+                base_url: serve_upstream(app).await,
+                seen,
+            }
+        }
+
+        const ENCRYPTED_TASK_REJECTION: &str =
+            "Encrypted function output content could not be decrypted or decoded.";
+
+        fn sse(events: &[Value]) -> (u16, &'static str, String) {
+            let body = events
+                .iter()
+                .map(|event| {
+                    format!(
+                        "event: {}\ndata: {event}\n\n",
+                        event["type"].as_str().unwrap()
+                    )
+                })
+                .collect::<String>();
+            (200, "text/event-stream", body)
+        }
+
+        fn failed_stream(message: &str) -> (u16, &'static str, String) {
+            sse(&[
+                json!({ "type": "response.created", "response": { "id": "r1", "status": "in_progress" } }),
+                json!({ "type": "response.failed", "response": { "id": "r1", "status": "failed",
+                         "error": { "code": "server_error", "message": message } } }),
+            ])
+        }
+
+        fn completed_stream() -> (u16, &'static str, String) {
+            sse(&[
+                json!({ "type": "response.created", "response": { "id": "r1", "status": "in_progress" } }),
+                json!({ "type": "response.output_item.added", "output_index": 0,
+                         "item": { "type": "message", "id": "msg_1", "role": "assistant", "content": [] } }),
+                json!({ "type": "response.completed", "response": { "id": "r1", "status": "completed", "output": [] } }),
+            ])
+        }
+
+        /// 子 agent 的第一个请求：末尾是主 agent 那家签发的任务密文。`history` 放在它前面。
+        fn sub_agent_request(history: Vec<Value>) -> Value {
+            let mut input = history;
+            input.push(json!({
+                "type": "agent_message",
+                "author": "/root",
+                "recipient": "/root/worker",
+                "content": [
+                    { "type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" },
+                    { "type": "encrypted_content", "encrypted_content": "gAAAAB-task-from-main" }
+                ]
+            }));
+            json!({ "model": "listed", "input": input, "stream": true })
+        }
+
+        async fn forward_sub_agent(
+            upstream: &Upstream,
+            request: Value,
+        ) -> Result<ForwardResult, ForwardError> {
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(upstream, "openai_responses")],
+                )
+                .await
+        }
+
+        async fn body_text(result: ForwardResult) -> String {
+            let chunks: Vec<_> = result.response.bytes_stream().collect().await;
+            let bytes: Vec<u8> = chunks
+                .into_iter()
+                .flat_map(|chunk| chunk.expect("chunk").to_vec())
+                .collect();
+            String::from_utf8(bytes).expect("utf8")
+        }
+
+        fn is_unreadable_task_error(error: &ProxyError) -> bool {
+            let ProxyError::UpstreamError {
+                status: 400,
+                body: Some(body),
+            } = error
+            else {
+                return false;
+            };
+            serde_json::from_str::<Value>(body)
+                .is_ok_and(|body| body["error"]["code"] == "unreadable_encrypted_agent_task")
+        }
+
+        fn task_ciphertext(seen: &Seen) -> &Value {
+            &seen.body["input"].as_array().unwrap().last().unwrap()["content"][1]
+                ["encrypted_content"]
+        }
+
+        /// 子 agent 换了一家：上游在流里、输出之前说解不开。不把空任务交给子 agent，也不让
+        /// Codex 对着同一个错重试，直接说明原因。
+        #[tokio::test]
+        async fn sub_agent_task_rejected_in_stream_returns_an_explanation() {
+            let upstream = raw_upstream(vec![failed_stream(ENCRYPTED_TASK_REJECTION)]).await;
+            let error = forward_sub_agent(&upstream, sub_agent_request(Vec::new()))
+                .await
+                .err()
+                .expect("rejected");
+            assert!(is_unreadable_task_error(&error.error), "{:?}", error.error);
+            // 请求里没有别家的历史状态可去：只发一次。
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
+        /// 历史里也有别家的状态时，先去掉历史里的、任务原样保留重试一次；还被拒才说明原因。
+        #[tokio::test]
+        async fn sub_agent_retry_strips_history_but_keeps_the_task() {
+            let history = vec![
+                json!({ "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA-other-org" }),
+                json!({ "type": "agent_message", "author": "/root", "recipient": "/root/worker",
+                         "content": [{ "type": "encrypted_content", "encrypted_content": "gAAAA-older-task" }] }),
+            ];
+            let upstream = raw_upstream(vec![
+                failed_stream(ENCRYPTED_TASK_REJECTION),
+                failed_stream(ENCRYPTED_TASK_REJECTION),
+            ])
+            .await;
+            let error = forward_sub_agent(&upstream, sub_agent_request(history.clone()))
+                .await
+                .err()
+                .expect("rejected");
+            assert!(is_unreadable_task_error(&error.error), "{:?}", error.error);
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(carries_reasoning(&seen[0]));
+            assert!(!carries_reasoning(&seen[1]));
+            assert_eq!(seen[1].body["input"][0]["content"][0]["type"], "input_text");
+            assert_eq!(task_ciphertext(&seen[1]), "gAAAAB-task-from-main");
+            drop(seen);
+
+            // 历史里的状态才是问题：重试成功，任务照样原样到达上游。
+            let upstream = raw_upstream(vec![
+                failed_stream(ENCRYPTED_TASK_REJECTION),
+                completed_stream(),
+            ])
+            .await;
+            assert!(forward_sub_agent(&upstream, sub_agent_request(history))
+                .await
+                .is_ok());
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert_eq!(task_ciphertext(&seen[1]), "gAAAAB-task-from-main");
+        }
+
+        /// HTTP 报错同样处理。
+        #[tokio::test]
+        async fn sub_agent_task_rejected_over_http_returns_an_explanation() {
+            let rejection = json!({ "error": { "message": ENCRYPTED_TASK_REJECTION } }).to_string();
+            let upstream = raw_upstream(vec![(502, "application/json", rejection)]).await;
+            let error = forward_sub_agent(&upstream, sub_agent_request(Vec::new()))
+                .await
+                .err()
+                .expect("rejected");
+            assert!(is_unreadable_task_error(&error.error), "{:?}", error.error);
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
+        /// 缓冲阶段只有一个截止时间：上游在输出前一直发心跳，也不能无限期压着流不交给客户端。
+        #[tokio::test]
+        async fn sub_agent_hold_has_one_deadline_despite_heartbeats() {
+            const HEARTBEATS: u32 = 40;
+            let created = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\"}}\n\n";
+            let completed = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"status\":\"completed\",\"output\":[]}}\n\n";
+            let app = axum::Router::new().fallback(move || async move {
+                let stream = futures::stream::unfold(0u32, move |n| async move {
+                    if n > HEARTBEATS {
+                        return None;
+                    }
+                    if n > 0 {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    let chunk = match n {
+                        0 => created,
+                        HEARTBEATS => completed,
+                        _ => ": keepalive\n\n",
+                    };
+                    Some((
+                        Ok::<_, std::io::Error>(Bytes::from_static(chunk.as_bytes())),
+                        n + 1,
+                    ))
+                });
+                (
+                    [(http::header::CONTENT_TYPE, "text/event-stream")],
+                    axum::body::Body::from_stream(stream),
+                )
+            });
+            let upstream = Upstream {
+                base_url: serve_upstream(app).await,
+                seen: Arc::new(Mutex::new(Vec::new())),
+            };
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_millis(100))
+                .stack_request(true);
+
+            let started = std::time::Instant::now();
+            let result = forwarder
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    sub_agent_request(Vec::new()),
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("committed");
+            let handed_over = started.elapsed();
+            // 心跳要发 800ms；截止时间 100ms，交出流不该等到心跳发完。
+            assert!(
+                handed_over < Duration::from_millis(500),
+                "held for {handed_over:?}"
+            );
+            let text = body_text(result).await;
+            assert!(text.starts_with(created), "{text}");
+            assert!(text.ends_with(completed), "{text}");
+            assert_eq!(
+                text.matches(": keepalive").count(),
+                (HEARTBEATS - 1) as usize
+            );
+        }
+
+        /// 上游解得开（同一家）或者是别的失败：客户端收到的流和上游发的逐字节一样。
+        #[tokio::test]
+        async fn sub_agent_streams_pass_through_unchanged_otherwise() {
+            for step in [completed_stream(), failed_stream("backend exploded")] {
+                let expected = step.2.clone();
+                let upstream = raw_upstream(vec![step]).await;
+                let result = forward_sub_agent(&upstream, sub_agent_request(Vec::new()))
+                    .await
+                    .map_err(|error| error.error)
+                    .expect("committed");
+                assert_eq!(body_text(result).await, expected);
+                assert_eq!(upstream.seen.lock().await.len(), 1);
+            }
         }
     }
 

@@ -126,6 +126,7 @@
     "stackDefaultHint": "它是默认供应商：列表里的第一个模型负责 Claude Code 启动和后台任务",
     "officialModelsBundled": "官方模型列表暂未取到，暂用 Codex 内置列表，可能缺少账号专属模型",
     "officialModelsUnavailable": "聚合的模型暂不可用：读取不到 Codex 模型列表",
+    "officialModelsOutdated": "本机 Codex 版本过旧，拿不到完整的官方模型列表：请把 Codex（包括命令行）升级到最新版",
     "routeOwnsCatalog": "聚合的模型不会出现在 Codex 里：路由供应商使用自己的模型目录文件（model_catalog_json）",
     "adoptCatalog": "改用 CC Switch 的模型目录",
     "adoptCatalogDone": "已改用 CC Switch 的模型目录，重启 Codex 后生效",
@@ -157,7 +158,8 @@
     "dragHandle": "拖拽排序",
     "searchPlaceholder": "按名称/备注/网址搜索供应商...",
     "searchAriaLabel": "搜索供应商",
-    "searchScopeHint": "根据名称、备注和官网链接匹配结果。",
+    "searchScopeHint": "根据名称、备注、官网和请求地址匹配结果。",
+    "searchButtonTip": "搜索供应商（{{shortcut}}）",
     "searchCloseHint": "按 Esc 关闭",
     "searchCloseAriaLabel": "关闭供应商搜索",
     "noSearchResults": "没有符合搜索条件的供应商。",
@@ -811,6 +813,13 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
     "unifyCodexSessionHistoryDescription": "开启后，官方订阅将以共享的 custom 供应商标识运行，官方与第三方会话出现在同一历史列表中，并可选择把现有官方会话一并迁入（迁移前自动备份）。关闭开关时可按备份恢复迁入的会话。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
+    "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
+    "codexStackClassicSubagentsDescription": "Codex 聚合模式下，主 agent 和子 agent 用不同供应商的模型时，子 agent 可能读不到任务：Codex 新版的子 agent 工具会把任务交给主 agent 那家加密，换一家就解不开。打开后聚合的所有模型改用 Codex 经典的子 agent 工具，任务以明文传递；代价是没有 followup_task、interrupt_agent 等新版功能。只影响聚合模式，改完要重启 Codex 才生效",
+    "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 里打开了 [features] multi_agent_v2，它比这个开关优先，开关不会生效",
+    "codexSessionCompression": "压缩 Codex 历史会话",
+    "codexSessionCompressionDescription": "打开后，Codex 每次启动时会在后台把 7 天以上没动过的会话文件压缩保存，明显减少占用的磁盘空间；在这些会话上继续对话时 Codex 会自动解压。CC Switch 照常显示和统计压缩过的会话，只是列表里不显示它们最后一条回复的预览。这是 Codex 还在开发中的功能，打开后 Codex 每次启动会显示一条提示；需要较新版本的 Codex，重启 Codex 后生效。关闭后不再压缩，已压缩的会话保持原样",
+    "codexSessionCompressionUsage": "会话目录当前占用 {{size}}",
+    "codexSessionCompressionFailed": "修改 Codex 会话压缩设置失败",
     "unifyCodexHistoryRestoreCompleted": "已按备份还原官方会话历史（{{files}} 个会话文件、{{rows}} 条索引记录）",
     "unifyCodexHistoryRestoreFailed": "还原官方会话历史失败，请重试",
     "unifyCodexHistoryRestoreNothing": "当前 Codex 目录没有可恢复的迁移备份",
@@ -823,7 +832,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "显示项目切换",
-      "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口"
+      "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口",
+      "showProviderSearch": "显示供应商搜索",
+      "showProviderSearchDescription": "在供应商页顶部显示搜索按钮，可按名称、备注、官网和请求地址查找。关掉后仍可用 ⌘F / Ctrl+F 打开搜索"
     },
     "terminal": {
       "title": "首选终端",
@@ -2317,7 +2328,10 @@
     },
     "heatmap": {
       "title": "用量热力图",
-      "subtitle": "最近 53 周的每日用量",
+      "subtitle": "最近 53 周的每日用量；展开后每 53 周一段往前排，各段颜色深浅可以直接对比",
+      "spanSummary": "{{tokens}} Token · {{requests}} 次请求 · {{cost}}",
+      "showMore": "显示更多",
+      "showLess": "收起",
       "less": "少",
       "more": "多"
     },
@@ -3142,7 +3156,6 @@
     "checkUpdates": "检查更新",
     "checkingUpdates": "检查中...",
     "noUpdates": "所有技能已是最新版本",
-    "updatesFound": "发现 {{count}} 个技能有可用更新",
     "updateAll": "全部更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "已成功更新 {{count}} 个技能",
@@ -3567,15 +3580,16 @@
       "ariaLabel": "{{appLabel}} 聚合模式",
       "failoverUnavailable": "{{appLabel}} 在聚合模式下不做故障转移。队列和设置保留，回到路由模式后恢复",
       "codexStale": {
-        "title": "Codex 还在用旧的模型列表，聚合的模型不会出现",
+        "authTitle": "Codex 可能仍缓存着切换前的账号；重启后台服务才能载入新登录",
+        "title": "Codex 还在用旧的模型列表，切换后的模型不会出现",
         "daemon": "命令行：重开 codex 不够，要重启后台的守护进程。",
         "others": "桌面版：要彻底退出再重开（macOS 上按 ⌘Q，只关窗口不行）；编辑器插件要重开编辑器窗口。",
         "restart": "重启 Codex 守护进程",
         "confirmTitle": "重启 Codex 守护进程？",
-        "confirmMessage": "所有终端里的 codex 共用这个守护进程，正在运行的任务会被中断。重启之后重新打开 codex，就能看到聚合的模型。",
+        "confirmMessage": "所有终端里的 codex 共用这个守护进程，正在运行的任务会被中断。重启之后重新打开 codex，载入最新的账号和模型列表。",
         "confirm": "重启",
-        "restarted": "Codex 守护进程已重启，重新打开 codex 就能看到聚合的模型",
-        "notRunning": "Codex 守护进程没在运行，下次打开 codex 时会读到新的模型列表",
+        "restarted": "Codex 守护进程已重启，重新打开 codex 以载入最新账号和模型列表",
+        "notRunning": "Codex 守护进程没有在运行，下次启动时会载入当前登录和模型列表",
         "failed": "重启 Codex 守护进程失败：{{error}}"
       }
     },
@@ -4512,7 +4526,8 @@
       "uninstallManyButton": "卸载 {{count}} 个",
       "updateAll": "更新 {{count}} 个 Skill？",
       "updateBody": "更新会用仓库里的内容替换本地目录。本地改过的地方只保留在备份里（{{path}}）。",
-      "updateAllButton": "更新 {{count}} 个"
+      "updateAllButton": "更新 {{count}} 个",
+      "updateListAria": "将要更新的 Skill"
     },
     "toast": {
       "installed": "已安装 {{name}}，并在 {{apps}} 启用",
@@ -4601,7 +4616,8 @@
     "headerUpdates": "{{count}} 个可更新",
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "显示全部 Skill",
-    "updateAllCount": "全部更新（{{count}} 个）"
+    "updateAllCount": "全部更新（{{count}} 个）",
+    "updatingProgress": "正在更新 {{done}}/{{total}}…"
   },
   "newLayoutNotice": {
     "title": "界面改版了",
