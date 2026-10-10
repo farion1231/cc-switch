@@ -21,6 +21,7 @@ import { HelpTip, DisabledReason } from "@/components/ui/help-tip";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
+import { AuxiliaryQueueManager } from "@/components/proxy/AuxiliaryQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { MODE_TONE } from "@/components/providers/mode/ModeTabs";
@@ -115,6 +116,11 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     return [{ app, mode: view.mode as AppMode, routeName }];
   });
   const usingCount = usingApps.length + (desktopMapping ? 1 : 0);
+
+  // 辅助请求队列只对 Claude 开放：特征签名（x-claude-code-request-class）是
+  // Anthropic Messages 入站格式独有的。接管中 = 模式不是 direct。
+  const claudeMode = modeQueries[PROXY_APP_IDS.indexOf("claude")]?.data?.mode;
+  const claudeAttached = claudeMode === "route" || claudeMode === "stack";
 
   const saveListen = async () => {
     if (!config) return;
@@ -369,6 +375,31 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
             }))}
           />
           <AutoFailoverConfigPanel key={failoverApp} appType={failoverApp} />
+        </div>
+      </SettingsBlock>
+
+      <SettingsBlock
+        title={t("settings.advanced.auxiliary.title")}
+        help={{
+          title: t("settings.advanced.auxiliary.title"),
+          body: t("settings.advanced.auxiliary.description"),
+        }}
+      >
+        <div className="space-y-4 rounded-panel border border-border bg-surface p-5">
+          {!running && (
+            <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+              <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                {t("proxy.auxiliary.proxyRequired", {
+                  defaultValue:
+                    "需要先启动路由服务并接管 Claude，才能配置辅助请求队列",
+                })}
+              </p>
+            </div>
+          )}
+          <AuxiliaryQueueManager
+            appType="claude"
+            disabled={!running || !claudeAttached}
+          />
         </div>
       </SettingsBlock>
 

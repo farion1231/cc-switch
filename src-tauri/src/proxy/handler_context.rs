@@ -7,13 +7,30 @@ use crate::mode::stack::StackTarget;
 use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
-    forwarder::RequestForwarder,
+    forwarder::{ForwardPolicy, RequestForwarder},
+    log_codes::pin as log_pin,
+    provider_router::PinnedProvider,
     server::ProxyState,
     types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
     ProxyError,
 };
 use axum::http::HeaderMap;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
+
+/// 会话级「钉住供应商」请求头
+///
+/// 客户端把它带上即可让**这一个会话**定向到指定供应商（Claude Code 用
+/// `ANTHROPIC_CUSTOM_HEADERS` 注入即可），值为 provider id 或供应商名称。
+/// 不带、或值为空串时行为不变，仍走默认路由（当前供应商 / 故障转移队列）。
+///
+/// 钉住只约束对话本体：Claude Code 的辅助流量（`x-claude-code-request-class:
+/// auxiliary`，含 Auto Mode 权限分类器）仍按辅助请求队列分流（分流优先于钉住），
+/// 队列不可用时才回落到被钉的供应商。
+///
+/// 这个头只在代理内部消费，由 forwarder 从出站请求里剔除，不会泄漏给上游。
+pub const PROVIDER_PIN_HEADER: &str = "x-cc-provider";
 
 /// 流式超时配置
 #[derive(Debug, Clone, Copy)]
@@ -71,8 +88,24 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 本次请求的辅助流量判定结果
+    pub auxiliary: AuxiliaryPlan,
+    /// 本次请求由 `x-cc-provider` 钉死了供应商
+    pub provider_pinned: bool,
     /// Stack 模型的请求（`mode::stack`）：直达 Stack 里的那一家，不读也不写任何路由状态。
     pub is_stack: bool,
+}
+
+/// 本次请求的辅助流量判定结果
+#[derive(Debug, Clone, Default)]
+pub struct AuxiliaryPlan {
+    /// 实际由辅助请求队列供给 provider 链（false = 未命中，或已回落到常规路由链）
+    pub routed: bool,
+    /// provider_id -> 出站模型名覆写（只含队列里真正配了覆写的成员）
+    ///
+    /// 用 `Arc` 是因为这张表会随 `ForwardPolicy` 一起被克隆到转发器，
+    /// 而它在一次请求内是只读的。
+    pub models: Arc<HashMap<String, String>>,
 }
 
 impl RequestContext {
@@ -124,27 +157,162 @@ impl RequestContext {
             session_result.client_provided
         );
 
+        // 从请求体提取模型名称：AUX-001 日志和常规选路都要用。
+        // Stack 命中的请求不用它选路，但仍作为 fallback 记录在日志里。
+        let request_model = body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // 会话级钉住：客户端显式点名了供应商，直接锁定为唯一候选。
+        let pin = headers.get(PROVIDER_PIN_HEADER).map(decode_header_value);
+        let pinned_provider = match pin.as_deref().map(str::trim).filter(|pin| !pin.is_empty()) {
+            Some(pin) => {
+                match state
+                    .provider_router
+                    .resolve_pinned_provider(app_type_str, pin)
+                    .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
+                {
+                    PinnedProvider::Found(provider) => {
+                        log::info!(
+                            "[{tag}] [{code}] {PROVIDER_PIN_HEADER}={pin} → {name} ({id})",
+                            code = log_pin::RESOLVED,
+                            name = provider.name,
+                            id = provider.id,
+                        );
+                        Some(*provider)
+                    }
+                    // 这里必须硬失败。静默回落到默认供应商，等于把用户明确点名的会话
+                    // 打到另一个账号上、扣另一份额度，而客户端完全看不出来 ——
+                    // 一个拼错的名字应当当场报错，而不是变成一笔记错账。
+                    PinnedProvider::NotFound => {
+                        log::warn!(
+                            "[{tag}] [{code}] {PROVIDER_PIN_HEADER}={pin} 未匹配到任何 {app_type_str} 供应商",
+                            code = log_pin::UNKNOWN,
+                        );
+                        return Err(ProxyError::InvalidRequest(format!(
+                            "{PROVIDER_PIN_HEADER}: 未找到供应商 \"{pin}\"（{app_type_str}）"
+                        )));
+                    }
+                    PinnedProvider::Ambiguous(count) => {
+                        log::warn!(
+                            "[{tag}] [{code}] {PROVIDER_PIN_HEADER}={pin} 匹配到 {count} 个同名供应商",
+                            code = log_pin::AMBIGUOUS,
+                        );
+                        return Err(ProxyError::InvalidRequest(format!(
+                            "{PROVIDER_PIN_HEADER}: \"{pin}\" 匹配到 {count} 个同名供应商，请改用 provider id"
+                        )));
+                    }
+                }
+            }
+            None => None,
+        };
+        let provider_pinned = pinned_provider.is_some();
+
+        // 辅助流量判定：只对 Claude 生效。识别只认 `x-claude-code-request-class`
+        // 这一个官方网关头，其它客户端不会发它，判定天然短路。
+        //
+        // 命中的是 class=auxiliary 这一整桶辅助请求（Auto Mode 权限分类器、标题
+        // 生成、记忆抽取、insights……），不止分类器本身 —— 客户端的映射粒度就到
+        // 这一层，细节见 `auxiliary::ROUTED_REQUEST_CLASSES`。
+        let mut auxiliary = AuxiliaryPlan::default();
+        let mut auxiliary_providers: Option<Vec<Provider>> = None;
+
+        if app_type_str == AppType::Claude.as_str() {
+            let routed_class = crate::proxy::auxiliary::routed_request_class(headers);
+
+            if routed_class.is_none() {
+                // 头没出现 = 客户端没开网关提示头，队列永远不会接管；提醒一次
+                if app_config.auxiliary_queue_enabled {
+                    crate::proxy::auxiliary::warn_missing_hint_header_once(headers, tag);
+                }
+            }
+
+            if let Some(request_class) = routed_class {
+                log::info!(
+                    "[{tag}] [AUX-001] 命中辅助流量 (request-class={request_class}), model={request_model}, session={session_id}"
+                );
+
+                if app_config.auxiliary_queue_enabled {
+                    // 会话钉住（x-cc-provider）不拦截这里的选路：分流优先于钉住。
+                    match state
+                        .provider_router
+                        .select_auxiliary_providers(app_type_str)
+                        .await
+                    {
+                        // 空 list 走和 None 一样的回落分支：不把「永不报错」这个保证
+                        // 寄托在 select_auxiliary_providers 的实现细节上 —— 一旦它哪天
+                        // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死辅助请求。
+                        Ok(Some(selection)) if !selection.providers.is_empty() => {
+                            log::info!(
+                                "[{tag}] [AUX-002] 辅助请求队列接管, {} 个可用供应商, P1={}",
+                                selection.providers.len(),
+                                selection
+                                    .providers
+                                    .first()
+                                    .map(|p| p.name.as_str())
+                                    .unwrap_or("-")
+                            );
+                            auxiliary.routed = true;
+                            auxiliary.models = Arc::new(selection.models);
+                            auxiliary_providers = Some(selection.providers);
+                        }
+                        Ok(_) => {
+                            log::info!(
+                                "[{tag}] [AUX-003] 辅助请求队列为空或全部熔断, 回落到常规路由链"
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[{tag}] [AUX-003] 读取辅助请求队列失败: {e}, 回落到常规路由链"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         let is_stack = stack.is_some();
         let (provider, providers, current_provider_id, request_model) = match stack {
             Some(target) => {
-                // Stack 模型：只发往 Stack 里的那一家，不读代理路由、不经熔断器选家。按「单家、
-                // 不转移」处理：换成有效副本，转发和读响应两个阶段都从这里取，超时和重试
-                // 跟着关掉（见 `create_forwarder`）。
-                app_config.auto_failover_enabled = false;
-                log::debug!(
-                    "[{}] Stacked model {} → provider {}, upstream model {}, session: {}",
-                    tag,
-                    target.original_model,
-                    target.provider.name,
-                    target.upstream_model,
-                    session_id
-                );
-                (
-                    target.provider.clone(),
-                    vec![target.provider.clone()],
-                    target.provider.id,
-                    target.original_model,
-                )
+                // 选路优先级延续常规请求的语义：辅助请求队列 > 会话钉住 > Stack 目标。
+                // Auto Mode 的判定请求是会话里的后台杂务，不该按 Stack 那家的全价走；
+                // 队列空/全熔断、也没钉住时，才落到 Stack 目标本身。
+                if let Some(list) = auxiliary_providers {
+                    let provider = list
+                        .first()
+                        .cloned()
+                        .ok_or(ProxyError::NoAvailableProvider)?;
+                    (provider, list, target.provider.id, target.original_model)
+                } else if let Some(pinned) = pinned_provider {
+                    // 钉住 = 单元素链：转发器据此天然跳过熔断器与故障转移，不会替用户换家
+                    (
+                        pinned.clone(),
+                        vec![pinned],
+                        target.provider.id,
+                        target.original_model,
+                    )
+                } else {
+                    // Stack 模型：只发往 Stack 里的那一家，不读代理路由、不经熔断器选家。按「单家、
+                    // 不转移」处理：换成有效副本，转发和读响应两个阶段都从这里取，超时和重试
+                    // 跟着关掉（见 `create_forwarder`）。
+                    app_config.auto_failover_enabled = false;
+                    log::debug!(
+                        "[{}] Stacked model {} → provider {}, upstream model {}, session: {}",
+                        tag,
+                        target.original_model,
+                        target.provider.name,
+                        target.upstream_model,
+                        session_id
+                    );
+                    (
+                        target.provider.clone(),
+                        vec![target.provider.clone()],
+                        target.provider.id,
+                        target.original_model,
+                    )
+                }
             }
             None => {
                 let current_provider = crate::mode::current::provider_in_use(&state.db, &app_type)
@@ -155,36 +323,40 @@ impl RequestContext {
                     .map(|provider| provider.id.clone())
                     .unwrap_or_default();
 
-                // 从请求体提取模型名称
-                let request_model = body
-                    .get("model")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-
                 // Stack 模式不做故障转移：只发往默认那家，和故障转移关着时一样跳过熔断器选家；
                 // 队列留着，回到路由模式恢复。故障转移本来就关着时不用读模式。
                 let stack_mode = app_config.auto_failover_enabled
                     && crate::mode::stack::stack_mode_now(&app_type);
-                let providers = if stack_mode {
-                    app_config.auto_failover_enabled = false;
-                    vec![current_provider.ok_or(ProxyError::NoProvidersConfigured)?]
-                } else {
-                    // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
-                    // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-                    state
-                        .provider_router
-                        .select_providers_with_current(app_type_str, current_provider)
-                        .await
-                        .map_err(|e| match e {
-                            crate::error::AppError::AllProvidersCircuitOpen => {
-                                ProxyError::AllProvidersCircuitOpen
+                // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
+                // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
+                //
+                // 优先级：辅助请求队列 > 会话钉住 > 常规路由（Stack 模式当前家含在常规路由里）。
+                let providers = match auxiliary_providers {
+                    Some(list) => list,
+                    None => match pinned_provider {
+                        // 钉住 = 单元素链：转发器据此天然跳过熔断器与故障转移，不会替用户换家
+                        Some(provider) => vec![provider],
+                        None => {
+                            if stack_mode {
+                                app_config.auto_failover_enabled = false;
+                                vec![current_provider.ok_or(ProxyError::NoProvidersConfigured)?]
+                            } else {
+                                state
+                                    .provider_router
+                                    .select_providers_with_current(app_type_str, current_provider)
+                                    .await
+                                    .map_err(|e| match e {
+                                        crate::error::AppError::AllProvidersCircuitOpen => {
+                                            ProxyError::AllProvidersCircuitOpen
+                                        }
+                                        crate::error::AppError::NoProvidersConfigured => {
+                                            ProxyError::NoProvidersConfigured
+                                        }
+                                        _ => ProxyError::DatabaseError(e.to_string()),
+                                    })?
                             }
-                            crate::error::AppError::NoProvidersConfigured => {
-                                ProxyError::NoProvidersConfigured
-                            }
-                            _ => ProxyError::DatabaseError(e.to_string()),
-                        })?
+                        }
+                    },
                 };
 
                 let provider = providers
@@ -204,6 +376,34 @@ impl RequestContext {
             }
         };
 
+        if auxiliary.routed {
+            // app_config 是 create_forwarder / streaming_timeout_config / handlers 里
+            // 非流式超时的唯一真源；就地改写这份**内存副本**（不写库）即可让
+            // 「辅助请求专属重试 + 短超时」在所有 handler 上自动生效。
+            //
+            // 必须解开 auto_failover_enabled 这道闸门：它关着时 create_forwarder 会把
+            // max_retries 和三个超时全部强制为 0，辅助请求队列只会试第一家，且永远比
+            // 客户端截止晚放弃 —— 特性等于没做。
+            //
+            // 只在队列真正接管时收紧。回落到常规链路时一个字段都不碰：那条链路是
+            // 用户自己配的，把 600 秒超时压到十几秒会把「20 秒能成功」变成「硬失败」，
+            // 而客户端本来还愿意等 —— 严格更差。
+            let (attempt_timeout, max_retries) =
+                crate::proxy::auxiliary::attempt_budget(providers.len());
+
+            app_config.auto_failover_enabled = true;
+            app_config.non_streaming_timeout = attempt_timeout;
+            // 辅助请求是非流式的，这两项只在上游意外以流式返回时兜底
+            app_config.streaming_first_byte_timeout = attempt_timeout;
+            app_config.streaming_idle_timeout = attempt_timeout;
+            app_config.max_retries = max_retries;
+
+            log::debug!(
+                "[{tag}] [AUX-002] 辅助请求预算: {} 家可用, 单次 {attempt_timeout}s, max_retries={max_retries}",
+                providers.len()
+            );
+        }
+
         Ok(Self {
             start_time,
             app_config,
@@ -220,6 +420,8 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            auxiliary,
+            provider_pinned,
             is_stack,
         })
     }
@@ -289,6 +491,11 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            ForwardPolicy {
+                auxiliary_routed: self.auxiliary.routed,
+                auxiliary_models: self.auxiliary.models.clone(),
+                provider_pinned: self.provider_pinned,
+            },
         )
         .stack_request(self.is_stack)
     }
@@ -326,6 +533,48 @@ impl RequestContext {
                 idle_timeout: 0,
             }
         }
+    }
+}
+
+/// 把请求头的原始字节解成字符串
+///
+/// 不能用 `HeaderValue::to_str()`：它只接受可见 ASCII，带中文或重音的供应商名
+/// 会被判成 `Err`，再 `.ok()` 一下就和「压根没带这个头」无法区分 —— 于是静默
+/// 回落到默认供应商，正是钉住这个特性最要杜绝的那种记错账。
+///
+/// 所以这里自己解码，且**不会失败**：先按 UTF-8（curl / 自定义客户端直传原始
+/// 字节），失败再按 latin-1 逐字节（Node 系客户端按 latin-1 落字节，例如 Claude
+/// Code 的 `ANTHROPIC_CUSTOM_HEADERS`）。哪怕解出来是一串乱码，也会走到「未找到
+/// 供应商」的硬失败分支，而不是变成一次悄悄换家。
+fn decode_header_value(value: &axum::http::HeaderValue) -> String {
+    match std::str::from_utf8(value.as_bytes()) {
+        Ok(text) => text.to_string(),
+        Err(_) => value.as_bytes().iter().map(|&b| b as char).collect(),
+    }
+}
+
+#[cfg(test)]
+mod header_decode_tests {
+    use super::decode_header_value;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn decodes_utf8_and_latin1_without_ever_dropping_the_value() {
+        // 可见 ASCII：老路径也能过
+        assert_eq!(
+            decode_header_value(&HeaderValue::from_static("Provider B")),
+            "Provider B"
+        );
+
+        // UTF-8 原始字节（curl / 自定义客户端）：`to_str()` 在这里会返回 Err，
+        // 而静默丢弃就等于悄悄换家
+        let utf8 = HeaderValue::from_bytes("我的备用渠道".as_bytes()).expect("utf-8 header value");
+        assert!(utf8.to_str().is_err(), "前提：to_str 确实吃不下非 ASCII");
+        assert_eq!(decode_header_value(&utf8), "我的备用渠道");
+
+        // latin-1 字节（Node 系客户端按 latin-1 落字节，如 ANTHROPIC_CUSTOM_HEADERS）
+        let latin1 = HeaderValue::from_bytes(&[b'C', b'a', b'f', 0xE9]).expect("latin-1 header");
+        assert_eq!(decode_header_value(&latin1), "Café");
     }
 }
 

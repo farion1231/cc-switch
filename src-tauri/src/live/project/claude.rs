@@ -238,7 +238,8 @@ pub struct StackRoleModel<'a> {
 ///   - 路由模式（`stack_default` 为 `None`）：稳定的 `claude-*` 别名，显示名跟着路由供应商，
 ///     真实模型由代理映射；
 ///   - Stack 模式：四档都写 `stack_default` 的 Stack id，请求直达默认那家的这个模型；
-/// - 独有字段：路由供应商的。它们在客户端发请求时生效，代理不能替它补上。
+/// - 独有字段：路由供应商的。它们在客户端发请求时生效，代理不能替它补上；
+///   例外是 `CLAUDE_CODE_GATEWAY_HINT_HEADERS`——代理本身是网关，没配过时默认补 1。
 pub fn proxy_projection(
     route: &ClaudeProjection,
     proxy_url: &str,
@@ -280,10 +281,21 @@ pub fn proxy_projection(
             env.insert(key.to_string(), placeholder);
         }
     }
+    let mut exclusive = route.exclusive.clone();
+    // 网关提示头开关：cc-switch 在 Claude Code 眼里就是一台 LLM 网关，开了它客户端
+    // 才会发 `x-claude-code-request-class`，辅助请求队列才有信号可认（识别逻辑见
+    // `proxy::auxiliary`；2.1.273 起支持，更早的版本无视该变量）。
+    //
+    // 用 entry 而不是 insert：路由供应商行里显式写过（含显式关成 "0"）就尊重行里的
+    // 值，接管只负责「没配过的补上」。放进独有字段：进契约（值变化时才重写客户端
+    // 文件），切走代理模式时值没被改过就连带删掉。
+    exclusive
+        .entry("CLAUDE_CODE_GATEWAY_HINT_HEADERS".to_string())
+        .or_insert_with(|| Value::String("1".to_string()));
     ClaudeProjection {
         top: Map::new(),
         env,
-        exclusive: route.exclusive.clone(),
+        exclusive,
     }
 }
 
@@ -755,5 +767,43 @@ mod tests {
             "claude-sonnet-5[1M]"
         );
         assert_eq!(routed.env["CLAUDE_CODE_SUBAGENT_MODEL"], "glm-4.7-air");
+    }
+
+    #[test]
+    fn proxy_projection_seeds_gateway_hint_headers() {
+        // 没有这个变量客户端就不发 x-claude-code-request-class，
+        // 辅助请求队列的唯一信号源断掉，功能等于没做
+        let row = json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "sk" } });
+        let projection = proxy_projection(
+            &ClaudeProjection::of(&row),
+            "http://127.0.0.1:15721",
+            ProxyAuth::FollowRow,
+            None,
+        );
+
+        assert_eq!(
+            projection.exclusive["CLAUDE_CODE_GATEWAY_HINT_HEADERS"],
+            "1"
+        );
+    }
+
+    #[test]
+    fn proxy_projection_respects_row_configured_gateway_hint_headers() {
+        // 供应商行里显式关过，接管不能替他改回来
+        let row = json!({ "env": {
+            "ANTHROPIC_AUTH_TOKEN": "sk",
+            "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "0"
+        }});
+        let projection = proxy_projection(
+            &ClaudeProjection::of(&row),
+            "http://127.0.0.1:15721",
+            ProxyAuth::FollowRow,
+            None,
+        );
+
+        assert_eq!(
+            projection.exclusive["CLAUDE_CODE_GATEWAY_HINT_HEADERS"],
+            "0"
+        );
     }
 }

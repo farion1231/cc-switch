@@ -1636,6 +1636,15 @@ pub fn run() {
             commands::remove_from_failover_queue,
             commands::get_auto_failover_enabled,
             commands::set_auto_failover_enabled,
+            // Auxiliary queue management (Claude only)
+            commands::get_auxiliary_queue,
+            commands::get_available_providers_for_auxiliary,
+            commands::add_to_auxiliary_queue,
+            commands::remove_from_auxiliary_queue,
+            commands::reorder_auxiliary_queue,
+            commands::set_auxiliary_model,
+            commands::get_auxiliary_config,
+            commands::set_auxiliary_config,
             // Usage statistics
             commands::get_usage_summary,
             commands::get_session_usage_summary,

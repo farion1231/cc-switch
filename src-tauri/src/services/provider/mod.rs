@@ -2331,6 +2331,14 @@ requires_openai_auth = true
             db.update_proxy_config_for_app(config)
                 .await
                 .expect("update app proxy config");
+            // 与上面 Claude 接管用例相同：端口设 0 让系统分配随机端口，
+            // 避免与本机正在运行的 CC Switch 实例抢默认端口 15721
+            db.update_proxy_config(ProxyConfig {
+                listen_port: 0,
+                ..Default::default()
+            })
+            .await
+            .expect("update proxy config");
         }
 
         state
@@ -2338,6 +2346,12 @@ requires_openai_auth = true
             .start()
             .await
             .expect("start proxy service");
+        let proxy_url = state
+            .proxy_service
+            .build_proxy_urls()
+            .await
+            .expect("proxy url")
+            .0;
 
         let mut updated = Provider::with_id(
             "p1".into(),
@@ -2381,7 +2395,7 @@ requires_openai_auth = true
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!("{proxy_url}/claude-desktop")),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));

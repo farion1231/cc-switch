@@ -407,6 +407,10 @@
         "title": "Auto Failover",
         "description": "Configure failover queue and circuit breaker strategy"
       },
+      "auxiliary": {
+        "title": "Auxiliary Queue",
+        "description": "Route auxiliary requests (Auto Mode classifier and friends, request-class=auxiliary) to dedicated providers"
+      },
       "pricing": {
         "title": "Cost Pricing",
         "description": "Manage token pricing rules for each model"
@@ -3464,6 +3468,11 @@
       "takeoverRequired": "Take over {{app}} first, then enable failover"
     }
   },
+  "auxiliary": {
+    "enabled": "Auxiliary queue enabled",
+    "disabled": "Auxiliary queue disabled",
+    "toggleFailed": "Operation failed"
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "Service Address",
@@ -3615,6 +3624,30 @@
       "reorderSuccess": "Queue order updated",
       "reorderFailed": "Failed to update order",
       "toggleFailed": "Failed to update status"
+    },
+    "auxiliary": {
+      "proxyRequired": "Start the routing service and take over Claude before configuring the auxiliary queue",
+      "enable": "Enable auxiliary queue",
+      "enableDescription": "When enabled, requests Claude Code marks as auxiliary (Auto Mode safety classifier, title generation, memory extraction, and so on) are sent to the queued providers in order. If the queue is empty or every provider is circuit-broken, requests fall back to the normal routing chain instead of failing."
+    },
+    "auxiliaryQueue": {
+      "title": "Auxiliary Queue",
+      "description": "Manage provider order for auxiliary requests, including the Auto Mode safety classifier",
+      "info": "Claude Code sends a safety-classifier request before running a Bash command. The client enforces a hard timeout on it; exceeding that marks the classifier unavailable and blocks the command. Put fast, cheap providers in this queue to avoid timing out on a reasoning round trip. Detection reads the client's x-claude-code-request-class header, whose granularity stops at \"auxiliary\", so title generation and memory extraction ride along. That header requires CLAUDE_CODE_GATEWAY_HINT_HEADERS=1 (written automatically on takeover; restart Claude Code sessions after changing it).",
+      "selectProvider": "Select a provider to add to the queue",
+      "noAvailableProviders": "No providers available to add",
+      "empty": "Auxiliary queue is empty. Auxiliary requests use the normal routing chain until you add a provider.",
+      "orderHint": "Drag the handle to change the order providers are tried. This order applies to the auxiliary queue only — the provider list and the failover queue are unaffected.",
+      "modelHint": "Leave empty to pass through the model the client asked for. When set, auxiliary requests sent to this provider use that model name instead. The bucket mixes small requests (title generation, permission checks) with forks that carry the whole conversation (tens of thousands of tokens), so a model with a small context window will fail and fall through to the next provider.",
+      "addSuccess": "Added to auxiliary queue",
+      "addFailed": "Failed to add",
+      "removeSuccess": "Removed from auxiliary queue",
+      "removeFailed": "Failed to remove",
+      "dragHandle": "Drag to reorder",
+      "reorderFailed": "Failed to update order",
+      "modelLabel": "Model",
+      "modelPlaceholder": "Empty = pass through the client model",
+      "modelSaveFailed": "Failed to save model"
     },
     "autoFailover": {
       "info": "When the failover queue has multiple providers, the system will try them in priority order when requests fail. When a provider reaches the consecutive failure threshold, the circuit breaker will open and skip it temporarily.",

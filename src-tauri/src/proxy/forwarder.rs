@@ -9,7 +9,7 @@ use super::{
     error::*,
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
-    log_codes::fwd as log_fwd,
+    log_codes::{fwd as log_fwd, ups as log_ups},
     opaque_state_rectifier::{
         carries_encrypted_agent_task, detect_opaque_state_rejection, rectify_opaque_state,
         unreadable_agent_task_error, OpaqueStateRejection,
@@ -370,9 +370,26 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 本次请求的转发策略开关
+    policy: ForwardPolicy,
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+}
+
+/// 转发器的「每请求策略」开关集合
+///
+/// 独立成结构体而不是继续追加位置参数：`RequestForwarder::new` 已经有 16 个
+/// 位置参数，再加裸 bool 与相邻的 `session_client_provided: bool` 极易串位。
+/// 下一个 per-request 开关的成本从此是一个字段，而不是一个参数。
+#[derive(Debug, Clone, Default)]
+pub struct ForwardPolicy {
+    /// 本次由辅助请求队列供给 provider —— 成功后**不得**改写「当前供应商」
+    pub auxiliary_routed: bool,
+    /// provider_id -> 出站模型名覆写；仅在 `auxiliary_routed` 时非空
+    pub auxiliary_models: std::sync::Arc<std::collections::HashMap<String, String>>,
+    /// 本次由 `x-cc-provider` 钉住供应商 —— 成功后**不得**改写「当前供应商」
+    pub provider_pinned: bool,
 }
 
 impl RequestForwarder {
@@ -464,6 +481,7 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        policy: ForwardPolicy,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -487,6 +505,7 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            policy,
             stack_request: false,
         }
     }
@@ -495,6 +514,33 @@ impl RequestForwarder {
     pub fn stack_request(mut self, stack_request: bool) -> Self {
         self.stack_request = stack_request;
         self
+    }
+
+    /// 成功回源后是否应把「当前供应商」同步为实际使用的 provider
+    ///
+    /// 辅助请求走的是侧信道队列，绝不能改写用户在首页选定的当前供应商 ——
+    /// 否则每执行一次 Auto Mode 的 Bash 命令，UI / 托盘 / settings 就会被切到
+    /// 廉价的分类器供应商，并把 failover_count 污染成噪声。
+    ///
+    /// `x-cc-provider` 钉住的请求同理：那是「这一个会话走这家」，不是「以后都走
+    /// 这家」。让一个后台会话反向改写首页选择，是纯粹的意外。
+    fn should_sync_current_provider(&self, provider_id: &str) -> bool {
+        !self.policy.auxiliary_routed
+            && !self.policy.provider_pinned
+            && self.current_provider_id_at_start.as_str() != provider_id
+    }
+
+    /// 成功回源后是否应把 `current_providers`（即 status.active_targets）刷成实际使用的 provider
+    ///
+    /// 与 `should_sync_current_provider` 是两条独立的泄漏路径：那个管的是**持久**切换
+    /// （写 settings / 刷托盘 / 发 provider-switched），这个管的是 UI 上的「当前正在用哪家」
+    /// 标记 —— `ProxyServer::get_status` 把它暴露为 `active_targets`，前端据此给供应商卡片
+    /// 画绿色边框。辅助请求若写进去，会一直显示到下一次常规请求为止。
+    ///
+    /// 注意这里**不能**复用 `should_sync_current_provider`：那个在「实际 provider == 起始
+    /// provider」时也返回 false，会导致代理刚启动、尚未发生任何切换时 active_targets 永远为空。
+    fn should_update_active_target(&self) -> bool {
+        !self.policy.auxiliary_routed && !self.policy.provider_pinned
     }
 
     /// 这个请求读写路由状态吗：熔断器（许可、结果、健康度）、「正在使用」、代理统计
@@ -600,6 +646,13 @@ impl RequestForwarder {
         if !self.routing_state_enabled() {
             return;
         }
+        // 与 active_targets 共用同一道闸门：面板在 active_targets 为空时正是
+        // 回落到这两个字段显示「当前 Provider」，不挡住的话，侧信道供应商
+        // （辅助请求队列 / 会话钉住）照样会顶到面板上 —— 尤其是代理刚起、
+        // 首个请求就是侧信道请求时，active_targets 必然为空。
+        if !self.should_update_active_target() {
+            return;
+        }
         let mut status = self.status.write().await;
         status.current_provider = Some(provider.name.clone());
         status.current_provider_id = Some(provider.id.clone());
@@ -636,7 +689,9 @@ impl RequestForwarder {
         self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
             .await;
 
-        {
+        // 侧信道请求（辅助请求队列 / 会话钉住）不改写「当前正在用哪家」：
+        // 面板据此给供应商卡片画绿色边框，侧信道供应商顶上去就是串台。
+        if self.should_update_active_target() {
             let mut current_providers = self.current_providers.write().await;
             current_providers.insert(
                 app_type_str.to_string(),
@@ -648,7 +703,8 @@ impl RequestForwarder {
             let mut status = self.status.write().await;
             status.success_requests += 1;
             status.last_error = None;
-            if self.current_provider_id_at_start.as_str() != provider.id.as_str() {
+            let should_switch = self.should_sync_current_provider(&provider.id);
+            if should_switch {
                 status.failover_count += 1;
 
                 let fm = self.failover_manager.clone();
@@ -817,6 +873,7 @@ impl RequestForwarder {
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
+            let mut thinking_off_rectifier_retried = false;
             let mut opaque_rectifier_retried = false;
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
@@ -868,7 +925,8 @@ impl RequestForwarder {
             //
             // total_requests / last_request_at / active_connections 已由
             // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
-            // 新「正在尝试哪个 provider」的展示字段。
+            // 新「正在尝试哪个 provider」的展示字段。侧信道请求
+            // （辅助请求队列 / 会话钉住）的闸门在 `note_attempt` 里。
             self.note_attempt(provider).await;
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
@@ -899,6 +957,83 @@ impl RequestForwarder {
                         .await);
                 }
                 Err(mut e) => {
+                    // thinking 修复：有些 Anthropic 兼容层（火山方舟等）不接受
+                    // `thinking: {"type":"disabled"}`。代理不主动写这个字段 ——
+                    // 它是客户端自己发的；但上游为此把请求打回来时，删掉它重试一次，
+                    // 总好过把一条本可成功的请求原样判死。只修这一条：不记忆、不预判，
+                    // 下一条请求仍按客户端的原样发出。
+                    if !thinking_off_rectifier_retried
+                        && super::auxiliary::has_thinking_disabled(&provider_body)
+                        && super::auxiliary::is_thinking_disabled_rejection(
+                            extract_error_message(&e).as_deref(),
+                        )
+                    {
+                        let mut stripped_body = provider_body.clone();
+                        if super::auxiliary::strip_thinking(&mut stripped_body) {
+                            // 与 media 降级同样的写法：本轮所有分支都会离开这次迭代，
+                            // 标记只为挡住将来新增的「继续往下走」分支
+                            let _ = std::mem::replace(&mut thinking_off_rectifier_retried, true);
+                            log::warn!(
+                                "[{app_type_str}] [AUX-007] provider={} 拒绝客户端发来的 thinking:disabled, 删除该字段后重试本条",
+                                provider.id
+                            );
+
+                            let mut thinking_retry_codex_upstream_format = None;
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    provider,
+                                    endpoint,
+                                    &stripped_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                    &mut thinking_retry_codex_upstream_format,
+                                )
+                                .await
+                            {
+                                Ok(forwarded) => {
+                                    log::info!(
+                                        "[{app_type_str}] [AUX-007] 删除 thinking 后重试成功 (provider={})",
+                                        provider.id
+                                    );
+                                    return Ok(self
+                                        .finish_success(
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            forwarded,
+                                            thinking_retry_codex_upstream_format,
+                                        )
+                                        .await);
+                                }
+                                Err(retry_err) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [AUX-007] 删除 thinking 后重试仍失败 (provider={}): {}",
+                                        provider.id,
+                                        summarize_proxy_error(&retry_err)
+                                    );
+                                    if let Some(err) = self
+                                        .handle_rectifier_retry_failure(
+                                            retry_err,
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            "thinking 删除",
+                                            &mut last_error,
+                                            &mut last_provider,
+                                        )
+                                        .await
+                                    {
+                                        return Err(err);
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
                     // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
@@ -1182,7 +1317,13 @@ impl RequestForwarder {
                     }
 
                     // 检测是否需要触发 budget 整流器（仅 Claude/ClaudeAuth 供应商）
-                    if is_anthropic_provider {
+                    //
+                    // 辅助请求豁免：`rectify_thinking_budget` 会把 thinking 改写成
+                    // enabled + budget_tokens=32000 并把 max_tokens 抬到 64000 ——
+                    // 那是**打开**思考，正好撞上这条链路要躲的客户端硬超时，也和
+                    // 「代理不改写 thinking」这条不变量直接冲突。这里宁可让请求带着
+                    // 上游的原始报错回去，也不替客户端做这个决定。
+                    if is_anthropic_provider && !self.policy.auxiliary_routed {
                         let error_message = extract_error_message(&e);
                         if should_rectify_thinking_budget(
                             error_message.as_deref(),
@@ -1321,6 +1462,19 @@ impl RequestForwarder {
                             continue;
                         }
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
+                            // 不可重试的上游错误此前一条日志都不打，只写进 DB 的
+                            // error_message —— 用户在终端和日志里都看不到原因（客户端
+                            // 对辅助请求的失败只给自己的兜底文案）。客户端主动断连不算
+                            // 上游故障，不打。
+                            if matches!(category, ErrorCategory::NonRetryable) {
+                                log::warn!(
+                                    "[{app_type_str}] [{code}] provider={} 失败且不重试: {}",
+                                    provider.name,
+                                    summarize_proxy_error(&e),
+                                    code = log_ups::FAILURE,
+                                );
+                            }
+
                             // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
                             return Err(self
                                 .finish_neutral_failure(
@@ -1474,6 +1628,26 @@ impl RequestForwarder {
             && is_copilot
             && super::providers::is_codex_responses_endpoint(endpoint);
         let is_copilot_claude_body = is_copilot && !matches!(app_type, AppType::Codex);
+
+        // 辅助请求队列条目的模型覆写。
+        //
+        // 必须放在模型映射**之后**：`model_mapper::map_model` 认不出的名字会落到
+        // 该供应商的 default_model 兜底，放在映射前写进去的覆写会被这条兜底吃掉
+        // ——实测写 `deepseek-v4-pro`、出站变成火山的默认 `glm-5.3-flash`，日志说
+        // 覆写成功而上游收到的是另一个模型。
+        //
+        // 放在这里、而不是更靠后：Copilot 归一化与 [1m] 剥离仍要作用在覆写值上，
+        // 它们处理的是「这家上游怎么称呼这个模型」，与「用哪个模型」是两件事。
+        // 出站模型名（outbound_model）在下方从 mapped_body 读取，自然跟着覆写走。
+        if let Some(model) = self.policy.auxiliary_models.get(&provider.id) {
+            if super::auxiliary::override_model(&mut mapped_body, model) {
+                log::info!(
+                    "[{}] [AUX-005] 辅助请求模型覆写为 {model} (provider={})",
+                    app_type.as_str(),
+                    provider.id
+                );
+            }
+        }
 
         // The OpenCode gateway wants a stable per-conversation session id (see the
         // injection site below). It has to be derived here: `mapped_body` is moved
@@ -2413,6 +2587,11 @@ impl RequestForwarder {
                 continue;
             }
 
+            // --- 本地路由控制头 — 只在代理内部消费，不出网 ---
+            if key_str.eq_ignore_ascii_case(super::handler_context::PROVIDER_PIN_HEADER) {
+                continue;
+            }
+
             // --- 连接 / 追踪 / CDN 类 — 无条件跳过 ---
             if matches!(
                 key_str,
@@ -3333,6 +3512,7 @@ impl RequestForwarder {
     }
 }
 
+/// 从 ProxyError 中提取错误消息
 /// 从 ProxyError 中提取错误消息
 fn extract_error_message(error: &ProxyError) -> Option<String> {
     match error {
@@ -4706,6 +4886,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            policy: ForwardPolicy::default(),
             stack_request: false,
         }
     }
@@ -4747,6 +4928,56 @@ mod tests {
             assert_eq!(status.success_requests, 1);
             assert_eq!(status.failover_count, 0);
         }
+    }
+
+    #[test]
+    fn forward_policy_default_is_inert() {
+        // 默认策略必须开关全关，保证所有既有路径逐字节不变
+        let policy = ForwardPolicy::default();
+        assert!(!policy.auxiliary_routed);
+        assert!(!policy.provider_pinned);
+        assert!(policy.auxiliary_models.is_empty());
+    }
+
+    #[test]
+    fn should_sync_current_provider_skips_auxiliary_routed_requests() {
+        let mut fwd = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        fwd.current_provider_id_at_start = "main".to_string();
+
+        // 常规请求：换了 provider 就该同步当前供应商
+        assert!(fwd.should_sync_current_provider("cheap"));
+        assert!(!fwd.should_sync_current_provider("main"));
+
+        // 辅助请求：无论如何都不得改写用户选定的当前供应商
+        fwd.policy.auxiliary_routed = true;
+        assert!(!fwd.should_sync_current_provider("cheap"));
+        assert!(!fwd.should_sync_current_provider("main"));
+
+        // 会话钉住同理：那是「这一个会话走这家」，不是「以后都走这家」
+        fwd.policy.auxiliary_routed = false;
+        fwd.policy.provider_pinned = true;
+        assert!(!fwd.should_sync_current_provider("cheap"));
+        assert!(!fwd.should_sync_current_provider("main"));
+    }
+
+    #[test]
+    fn should_update_active_target_skips_only_auxiliary_routed_requests() {
+        let mut fwd = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        fwd.current_provider_id_at_start = "main".to_string();
+
+        // 常规请求必须刷新 active_targets —— 包括「实际 provider == 起始 provider」的情况，
+        // 否则代理刚启动、还没发生任何切换时前端拿不到任何 active_target。
+        assert!(fwd.should_update_active_target());
+
+        // 辅助请求走侧信道，不得污染 UI 上的「当前正在用哪家」标记
+        fwd.policy.auxiliary_routed = true;
+        assert!(!fwd.should_update_active_target());
+
+        // 钉住的会话同样是侧信道：面板在 active_targets 为空时会回落到
+        // status.current_provider，那个字段也归这道闸门管
+        fwd.policy.auxiliary_routed = false;
+        fwd.policy.provider_pinned = true;
+        assert!(!fwd.should_update_active_target());
     }
 
     #[test]

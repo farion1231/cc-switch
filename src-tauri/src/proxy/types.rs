@@ -166,6 +166,8 @@ pub struct AppProxyConfig {
     pub enabled: bool,
     /// 该 app 自动故障转移开关
     pub auto_failover_enabled: bool,
+    /// 辅助请求队列开关（Auto Mode 安全辅助请求的侧信道路由；当前仅 Claude）
+    pub auxiliary_queue_enabled: bool,
     /// 最大重试次数
     pub max_retries: u32,
     /// 流式首字超时（秒）
