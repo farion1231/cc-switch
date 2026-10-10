@@ -3847,6 +3847,50 @@ pub(crate) fn run_detected_tool_command_with_timeout(
     }
 }
 
+/// Read only same-user native Codex processes, without opening a console window.
+#[cfg(windows)]
+pub(crate) fn query_windows_codex_processes(
+    timeout: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    use std::process::{Command, Stdio};
+    const QUERY: &str = r#"
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$rows = @(Get-CimInstance Win32_Process -Filter "Name = 'codex.exe'" | ForEach-Object {
+    $p = $_
+    if ($p.CommandLine -and $p.CreationDate -and $p.ExecutablePath) {
+        try {
+            $owner = Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid
+            if ($owner.ReturnValue -eq 0 -and $owner.Sid -eq $sid) {
+                [pscustomobject]@{
+                    pid = $p.ProcessId
+                    startedMs = ([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds()
+                    command = $p.CommandLine
+                }
+            }
+        } catch { }
+    }
+})
+ConvertTo-Json -InputObject $rows -Compress
+"#;
+    let child = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            QUERY,
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to query Codex processes: {error}"))?;
+    wait_child_output(child, CommandDeadline::from_timeout(Some(timeout)))
+}
+
 #[cfg(target_os = "windows")]
 fn run_windows_tool_command_capture(
     tool_path: &Path,
@@ -4323,7 +4367,7 @@ pub async fn list_tool_installations(
 }
 
 #[cfg(target_os = "windows")]
-fn wsl_distro_for_tool(tool: &str) -> Option<String> {
+pub(crate) fn wsl_distro_for_tool(tool: &str) -> Option<String> {
     let override_dir = match tool {
         "claude" => crate::settings::get_claude_override_dir(),
         "codex" => crate::settings::get_codex_override_dir(),
