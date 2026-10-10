@@ -59,7 +59,7 @@ interface ProfileSwitcherProps {
  * 项目列表全应用共享（用户拥有的项目就那几个），但切换按分组进行：
  * Claude 组（Claude Code 的供应商/MCP/Skills/记忆文件 + Claude Desktop
  * 的供应商）与 Codex 组各自指向自己的当前项目、只应用组内快照。
- * 与右侧 AppSwitcher（仅切换查看的应用）语义不同。
+ * 与侧栏的应用列表（只切换查看的应用）语义不同。
  */
 export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
   const { t } = useTranslation();
@@ -110,11 +110,14 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
             type="button"
             role="combobox"
             aria-expanded={open}
+            aria-label={t("profiles.switcherAriaLabel", {
+              name: currentProfile?.name ?? t("profiles.none"),
+            })}
             title={t(`profiles.switcherTooltip.${scope}`)}
             className={cn(
               "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium transition-colors",
               "hover:bg-black/5 dark:hover:bg-white/5",
-              currentProfile ? "text-foreground" : "text-muted-foreground",
+              currentProfile ? "text-fg-1" : "text-fg-2",
             )}
           >
             <FolderOpen className="h-4 w-4 shrink-0 opacity-70" />
@@ -128,6 +131,7 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
           side="bottom"
           align="start"
           sideOffset={6}
+          aria-label={t(`profiles.switcherTooltip.${scope}`)}
           className="z-[100] w-64 p-0"
         >
           <Command label={t("profiles.searchPlaceholder")}>
@@ -153,7 +157,7 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
                       />
                       <span className="truncate">{profile.name}</span>
                       {!hasScopeSnapshot(profile, scope) && (
-                        <span className="ml-auto shrink-0 pl-2 text-xs text-muted-foreground">
+                        <span className="ml-auto shrink-0 pl-2 text-xs text-fg-2">
                           {t("profiles.noSnapshotForScope")}
                         </span>
                       )}

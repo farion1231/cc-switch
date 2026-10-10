@@ -100,6 +100,33 @@ describe("Pi provider presets", () => {
     expect(models.every((model) => model.contextWindow === 272_000)).toBe(true);
   });
 
+  // #7859: 官方 V4.1 Flash 识图，V4 Pro 仍是纯文本
+  it("declares image input for official DeepSeek V4.1 Flash only", () => {
+    const models =
+      piProviderPresets.find((preset) => preset.name === "DeepSeek")
+        ?.settingsConfig.models ?? [];
+    const input = (id: string) =>
+      models.find((model) => model.id === id)?.input;
+
+    expect(input("deepseek-flash")).toEqual(["text", "image"]);
+    expect(input("deepseek-v4-pro")).toEqual(["text"]);
+  });
+
+  // #7956: 火山各套餐端点不同，Agent Plan 曾误用 Coding Plan 的端点
+  it("points each Volcengine plan at its own Ark endpoint", () => {
+    const endpoints = Object.fromEntries(
+      piProviderPresets
+        .filter((preset) => preset.family === "volcengine")
+        .map((preset) => [preset.planKey, preset.settingsConfig.baseUrl]),
+    );
+
+    expect(endpoints).toEqual({
+      agentPlan: "https://ark.cn-beijing.volces.com/api/plan/v3",
+      codingPlan: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      payg: "https://ark.cn-beijing.volces.com/api/v3",
+    });
+  });
+
   it("keeps provider-specific OpenAI compatibility metadata", () => {
     const preset = (name: string) => {
       const found = piProviderPresets.find((item) => item.name === name);
@@ -146,6 +173,27 @@ describe("Pi provider presets", () => {
         requiresReasoningContentOnAssistantMessages: true,
         thinkingFormat: "deepseek",
       });
+    }
+
+    const qwenCompat = {
+      thinkingFormat: "qwen",
+      supportsDeveloperRole: false,
+    };
+    for (const name of [
+      "千问AI平台",
+      "千问AI平台 Token Plan",
+      "QwenCloud",
+      "QwenCloud Token Plan",
+    ]) {
+      const models = preset(name).settingsConfig.models;
+      expect(models.every((item) => item.reasoning)).toBe(true);
+      for (const item of models) {
+        expect(item.compat).toEqual(qwenCompat);
+      }
+    }
+
+    for (const item of preset("QwenCloud For Coding").settingsConfig.models) {
+      expect(item.compat).toBeUndefined();
     }
   });
 });

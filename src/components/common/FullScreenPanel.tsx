@@ -1,20 +1,24 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { ArrowLeft } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import {
-  isWindows,
-  isLinux,
-  DRAG_REGION_ATTR,
-  DRAG_REGION_STYLE,
-} from "@/lib/platform";
+import { HoverTip } from "@/components/ui/hover-tip";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { useUnsavedChangesTracker } from "@/lib/unsavedChanges";
 import { cn } from "@/lib/utils";
 
 interface FullScreenPanelProps {
   isOpen: boolean;
   title: string;
+  /** 标题后的灰字（应用名） */
+  subtitle?: React.ReactNode;
+  /** 返回按钮的读屏文字，默认「返回」 */
+  backLabel?: string;
+  /** 页头右侧 */
+  actions?: React.ReactNode;
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
@@ -25,10 +29,15 @@ interface FullScreenPanelProps {
    * 通过 `cn`(twMerge) 合并，传入如 `pt-3` 只覆盖顶部内边距，其余保持默认。
    */
   contentClassName?: string;
+  /**
+   * 编辑表单：用户改过内容后，从侧栏、托盘、⌘, 离开当前页前会先确认。
+   * 只给编辑页打开；授权中心、测速这类页面不需要。
+   */
+  trackUnsavedChanges?: boolean;
 }
 
-const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px - match App.tsx
-const HEADER_HEIGHT = 64; // px - match App.tsx
+/** 外壳里的内容区（App 的 <main id="content-area">）：二级页只盖住它，侧栏留着 */
+const CONTENT_AREA_ID = "content-area";
 
 let bodyScrollLockCount = 0;
 let bodyOverflowBeforeFirstLock: string | null = null;
@@ -57,12 +66,21 @@ const unlockBodyScroll = () => {
 export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   isOpen,
   title,
+  subtitle,
+  backLabel,
+  actions,
   onClose,
   children,
   footer,
   contentClassName,
   motionPreset = "fade",
+  trackUnsavedChanges = false,
 }) => {
+  // 面板关掉后组件可能还挂着：只在打开时登记，关掉即撤销
+  const unsavedChangesHandlers = useUnsavedChangesTracker(
+    trackUnsavedChanges && isOpen,
+  );
+  const { t } = useTranslation();
   const prefersReducedMotion = useReducedMotion();
   const shouldSlideFromRight =
     motionPreset === "slide-from-right" && !prefersReducedMotion;
@@ -107,6 +125,11 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
     };
   }, [isOpen]);
 
+  const host =
+    typeof document !== "undefined"
+      ? document.getElementById(CONTENT_AREA_ID)
+      : null;
+
   return createPortal(
     <AnimatePresence>
       {isOpen && (
@@ -125,77 +148,51 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
               ? { duration: 0.26, ease: [0.22, 1, 0.36, 1] }
               : { duration: prefersReducedMotion ? 0 : 0.2 }
           }
-          className="fixed inset-0 z-[60] flex flex-col"
-          style={{ backgroundColor: "hsl(var(--background))" }}
-        >
-          {/* Drag region - match App.tsx. Linux 上 DRAG_BAR_HEIGHT=0，
-              直接跳过整个元素；macOS 保留 28px 拖拽占位。 */}
-          {DRAG_BAR_HEIGHT > 0 && (
-            <div
-              data-tauri-drag-region
-              style={
-                {
-                  WebkitAppRegion: "drag",
-                  height: DRAG_BAR_HEIGHT,
-                } as React.CSSProperties
-              }
-            />
+          className={cn(
+            "inset-0 z-[60] flex flex-col bg-app",
+            host ? "absolute" : "fixed",
           )}
-
-          {/* Header - match App.tsx */}
-          <div
-            className="flex-shrink-0 flex items-center"
-            {...DRAG_REGION_ATTR}
-            style={
-              {
-                ...DRAG_REGION_STYLE,
-                backgroundColor: "hsl(var(--background))",
-                height: HEADER_HEIGHT,
-              } as React.CSSProperties
+        >
+          <AppPageHeader
+            variant="app"
+            title={title}
+            // 标题里常带用户起的名字，不限长度；必须能收缩截断，否则会把窗口按钮挤出可视区
+            truncateTitle
+            subtitle={subtitle}
+            actions={actions}
+            leading={
+              <HoverTip content={backLabel ?? t("common.back")}>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="icon-compact"
+                  className="h-8 w-8"
+                  onClick={onClose}
+                  aria-label={backLabel ?? t("common.back")}
+                >
+                  <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
+                </Button>
+              </HoverTip>
             }
-          >
-            <div
-              className="px-6 w-full flex items-center gap-4"
-              {...DRAG_REGION_ATTR}
-              style={{ ...DRAG_REGION_STYLE } as React.CSSProperties}
-            >
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={onClose}
-                className="rounded-lg select-none"
-                style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              <h2 className="text-lg font-semibold text-foreground select-none">
-                {title}
-              </h2>
-            </div>
-          </div>
+          />
 
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto scroll-overlay">
-            <div className={cn("px-6 py-6 space-y-6 w-full", contentClassName)}>
+          <div className="flex-1 overflow-y-auto scroll-stable">
+            <div
+              className={cn("w-full space-y-6 px-6 py-6", contentClassName)}
+              {...unsavedChangesHandlers}
+            >
               {children}
             </div>
           </div>
 
-          {/* Footer */}
           {footer && (
-            <div
-              className="flex-shrink-0 py-4 border-t border-border-default"
-              style={{ backgroundColor: "hsl(var(--background))" }}
-            >
-              <div className="px-6 flex items-center justify-end gap-3">
-                {footer}
-              </div>
+            <div className="flex h-14 shrink-0 items-center justify-end gap-2 border-t border-border px-6">
+              {footer}
             </div>
           )}
         </motion.div>
       )}
     </AnimatePresence>,
-    document.body,
+    host ?? document.body,
   );
 };

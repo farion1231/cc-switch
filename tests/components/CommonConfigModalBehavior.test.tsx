@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import CodexConfigEditor from "@/components/providers/forms/CodexConfigEditor";
 import GeminiConfigEditor from "@/components/providers/forms/GeminiConfigEditor";
@@ -47,77 +47,69 @@ vi.mock("@/components/JsonEditor", () => ({
 }));
 
 describe("Common config modals", () => {
-  it("keeps the Codex common config modal closed after user closes it with an error present", async () => {
+  it("shows no Codex common config snippet and lists fields that do not follow the provider", () => {
     render(
       <CodexConfigEditor
         authValue="{}"
         configValue=""
         onAuthChange={() => {}}
         onConfigChange={() => {}}
-        useCommonConfig={false}
-        onCommonConfigToggle={() => {}}
-        commonConfigSnippet={`base_url = "https://example.com"`}
-        onCommonConfigSnippetChange={() => false}
-        onCommonConfigErrorClear={() => {}}
-        commonConfigError="Invalid TOML"
         authError=""
         configError=""
+        inactiveFields={[
+          {
+            path: ["mcp_servers", "legacy"],
+            value: '[mcp_servers.legacy]\ncommand = "x"\n',
+          },
+        ]}
       />,
     );
 
-    expect(screen.queryByTestId("common-config-panel")).not.toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByRole("button", {
+    expect(
+      screen.queryByRole("button", {
         name: /codexConfig.editCommonConfig|编辑通用配置/,
       }),
-    );
-
-    expect(screen.getByTestId("common-config-panel")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
-
-    await waitFor(() =>
-      expect(
-        screen.queryByTestId("common-config-panel"),
-      ).not.toBeInTheDocument(),
-    );
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "mcp_servers.legacy" }),
+    ).toBeInTheDocument();
   });
 
-  it("keeps the Gemini common config modal closed after user closes it with an error present", async () => {
+  it("shows no Gemini common config snippet and adds inactive fields to the global settings", () => {
+    const onEnvChange = vi.fn();
+    const onConfigChange = vi.fn();
     render(
       <GeminiConfigEditor
-        envValue="{}"
-        configValue="{}"
-        onEnvChange={() => {}}
-        onConfigChange={() => {}}
-        useCommonConfig={false}
-        onCommonConfigToggle={() => {}}
-        commonConfigSnippet={`{"GEMINI_MODEL":"gemini-2.5-pro"}`}
-        onCommonConfigSnippetChange={() => false}
-        onCommonConfigErrorClear={() => {}}
-        commonConfigError="Invalid JSON"
+        envValue={"GEMINI_API_KEY=k\nDEBUG=0"}
+        configValue={'{\n  "ui": {}\n}'}
+        onEnvChange={onEnvChange}
+        onConfigChange={onConfigChange}
         envError=""
         configError=""
+        inactiveFields={[
+          { path: ["env", "DEBUG"], value: "1" },
+          { path: ["config", "general"], value: { vimMode: true } },
+          { path: ["env", "HTTPS_PROXY"], value: "http://p" },
+        ]}
       />,
     );
 
-    expect(screen.queryByTestId("common-config-panel")).not.toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByRole("button", {
+    expect(
+      screen.queryByRole("button", {
         name: /geminiConfig.editCommonConfig|编辑通用配置/,
       }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "+ env.DEBUG" }));
+    expect(onEnvChange).toHaveBeenLastCalledWith("GEMINI_API_KEY=k\nDEBUG=1");
+    fireEvent.click(screen.getByRole("button", { name: "+ env.HTTPS_PROXY" }));
+    expect(onEnvChange).toHaveBeenLastCalledWith(
+      "GEMINI_API_KEY=k\nDEBUG=0\nHTTPS_PROXY=http://p",
     );
-
-    expect(screen.getByTestId("common-config-panel")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
-
-    await waitFor(() =>
-      expect(
-        screen.queryByTestId("common-config-panel"),
-      ).not.toBeInTheDocument(),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "+ config.general" }));
+    expect(JSON.parse(onConfigChange.mock.calls.at(-1)?.[0])).toEqual({
+      ui: {},
+      general: { vimMode: true },
+    });
   });
 });

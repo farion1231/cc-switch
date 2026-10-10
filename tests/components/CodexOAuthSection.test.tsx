@@ -8,6 +8,11 @@ import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 const mocks = vi.hoisted(() => ({
   useCodexOauth: vi.fn(),
   renderAccountQuota: vi.fn(),
+  accountUsers: vi.fn(),
+}));
+
+vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
+  useManagedAccountUsers: () => mocks.accountUsers,
 }));
 
 vi.mock("@/components/providers/forms/hooks/useCodexOauth", () => ({
@@ -41,6 +46,8 @@ describe("CodexOAuthSection", () => {
       configurable: true,
       value: vi.fn(),
     });
+    mocks.accountUsers.mockReset();
+    mocks.accountUsers.mockReturnValue([]);
     mocks.useCodexOauth.mockReturnValue({
       accounts: [
         {
@@ -78,6 +85,8 @@ describe("CodexOAuthSection", () => {
       isRemovingAccount: false,
       isSettingDefaultAccount: false,
       addAccount: vi.fn(),
+      reauthAccount: vi.fn(),
+      retryAuth: vi.fn(),
       removeAccount: vi.fn(),
       setDefaultAccount: vi.fn(),
       cancelAuth: vi.fn(),
@@ -113,6 +122,202 @@ describe("CodexOAuthSection", () => {
     expect(
       screen.getAllByTestId("account-quota").map((quota) => quota.textContent),
     ).toEqual(["account-1", "account-2"]);
+  });
+
+  it("shows how many providers use each account", () => {
+    mocks.accountUsers.mockImplementation((ids: string[]) =>
+      ids.includes("account-1")
+        ? [
+            {
+              appId: "claude",
+              providerId: "p1",
+              name: "ChatGPT A",
+              viaDefault: false,
+            },
+            {
+              appId: "codex",
+              providerId: "p2",
+              name: "OpenAI Official",
+              viaDefault: false,
+            },
+          ]
+        : [],
+    );
+    render(<CodexOAuthSection />);
+
+    // 只有在用的账号才写，0 个不显示
+    expect(screen.getAllByText("2 个供应商在用")).toHaveLength(1);
+  });
+
+  it("asks before removing an account and names the affected providers", async () => {
+    const user = userEvent.setup();
+    const authResult = mocks.useCodexOauth();
+    mocks.accountUsers.mockImplementation((ids: string[]) =>
+      ids.includes("account-1")
+        ? [
+            {
+              appId: "claude",
+              providerId: "p1",
+              name: "ChatGPT A",
+              viaDefault: false,
+            },
+            {
+              appId: "claude-desktop",
+              providerId: "p3",
+              name: "ChatGPT Desktop",
+              viaDefault: true,
+            },
+          ]
+        : [],
+    );
+    render(<CodexOAuthSection />);
+
+    // 删除收进账号行的 ⋯
+    await user.click(
+      screen.getByRole("button", { name: "user@example.com 的更多操作" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "删除账号…" }),
+    );
+    expect(authResult.removeAccount).not.toHaveBeenCalled();
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("删除账号「user@example.com」？");
+    // 指定了这个账号的会坏；跟着默认账号的（还有别的账号）改用新的默认账号
+    expect(dialog).toHaveTextContent(
+      "这些供应商会无法使用，直到重新登录或改选别的账号：",
+    );
+    expect(dialog).toHaveTextContent("Claude Code：ChatGPT A");
+    expect(dialog).toHaveTextContent(
+      "这些供应商用的是默认账号，删除后改用新的默认账号：",
+    );
+    expect(dialog).toHaveTextContent("Claude Desktop：ChatGPT Desktop");
+
+    const confirm = screen.getByRole("button", { name: "删除账号" });
+    expect(confirm.className).toContain("bg-danger");
+    await user.click(confirm);
+    expect(authResult.removeAccount).toHaveBeenCalledWith("account-1");
+  });
+
+  it("asks before removing all accounts", async () => {
+    const user = userEvent.setup();
+    const authResult = mocks.useCodexOauth();
+    render(<CodexOAuthSection />);
+
+    // 「删除全部账号…」收进服务标题行的 ⋯，触发项本身不是红色实心按钮
+    expect(
+      screen.queryByRole("button", { name: /注销所有账号|删除全部/ }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "ChatGPT 的更多操作" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "删除全部账号…" }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("删除全部 ChatGPT 账号？");
+    expect(dialog).toHaveTextContent("没有供应商在用这些账号。");
+    expect(authResult.logout).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "删除 2 个账号" }));
+    expect(authResult.logout).toHaveBeenCalled();
+  });
+
+  it("reauthenticates the selected legacy account in place", async () => {
+    const user = userEvent.setup();
+    const authResult = mocks.useCodexOauth();
+    const reauthAccount = vi.fn();
+    mocks.useCodexOauth.mockReturnValue({
+      ...authResult,
+      reauthAccount,
+      accounts: [
+        {
+          ...authResult.accounts[0],
+          reauth_required: true,
+        },
+      ],
+    });
+
+    render(<CodexOAuthSection />);
+    // 需要重新登录的账号：徽标 + 原因写在第二行，额度不显示
+    expect(screen.getByText("需要重新登录")).toBeInTheDocument();
+    expect(screen.getByText("id_token")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重新登录" }));
+
+    expect(reauthAccount).toHaveBeenCalledWith("account-1");
+    expect(authResult.addAccount).not.toHaveBeenCalled();
+  });
+
+  it("allows an existing account to reauthenticate in place", async () => {
+    const user = userEvent.setup();
+    const authResult = mocks.useCodexOauth();
+    const reauthAccount = vi.fn();
+    mocks.useCodexOauth.mockReturnValue({
+      ...authResult,
+      reauthAccount,
+      accounts: [authResult.accounts[0]],
+    });
+
+    render(<CodexOAuthSection />);
+    // 正常账号的「重新登录」在 ⋯ 里
+    expect(
+      screen.queryByRole("button", { name: "重新登录" }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "user@example.com 的更多操作" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "重新登录" }));
+
+    expect(reauthAccount).toHaveBeenCalledWith("account-1");
+  });
+
+  it("sets another account as default from its menu", async () => {
+    const user = userEvent.setup();
+    const authResult = mocks.useCodexOauth();
+    render(<CodexOAuthSection />);
+
+    // 默认账号的 ⋯ 里没有「设为默认」
+    await user.click(
+      screen.getByRole("button", { name: "user@example.com 的更多操作" }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "设为默认" }),
+    ).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await user.click(
+      screen.getByRole("button", { name: "second@example.com 的更多操作" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "设为默认" }));
+    expect(authResult.setDefaultAccount).toHaveBeenCalledWith("account-2");
+  });
+
+  it("shows the device code while waiting for authorization", () => {
+    const authResult = mocks.useCodexOauth();
+    mocks.useCodexOauth.mockReturnValue({
+      ...authResult,
+      pollingState: "polling",
+      isPolling: true,
+      isAddingAccount: true,
+      deviceCode: {
+        provider: "codex_oauth",
+        device_code: "dc",
+        user_code: "7KQP-3XRD",
+        verification_uri: "https://auth.openai.com/codex/device",
+        expires_in: 900,
+        interval: 5,
+      },
+    });
+    render(<CodexOAuthSection />);
+
+    expect(
+      screen.getByText("添加 ChatGPT 账号 · 等待授权中…"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("7KQP-3XRD")).toBeInTheDocument();
+    // 同一组正在登录时，「添加账号」不能再点，原因指向等待块
+    const add = screen.getByRole("button", { name: "添加账号" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    expect(add).toHaveAttribute("aria-describedby", "auth-pending-chatgpt");
   });
 
   it("selects a specific account when multiple accounts are managed", async () => {
@@ -202,7 +407,7 @@ describe("CodexOAuthSection", () => {
     expect(accountPlaceholder.parentElement).toHaveClass(
       "text-sm",
       "font-normal",
-      "text-muted-foreground",
+      "text-fg-2",
     );
   });
 
@@ -426,6 +631,7 @@ describe("CodexOAuthSection", () => {
   });
 
   it("reports automatic invalidation separately from a user choice", async () => {
+    const user = userEvent.setup();
     const authResult = mocks.useCodexOauth();
     const onAccountSelect = vi.fn();
     const onSelectionConfirmed = vi.fn();
@@ -450,5 +656,13 @@ describe("CodexOAuthSection", () => {
     await waitFor(() => expect(onSelectionInvalidated).toHaveBeenCalledOnce());
     expect(onAccountSelect).toHaveBeenCalledWith(null);
     expect(onSelectionConfirmed).not.toHaveBeenCalled();
+
+    rerender(<CodexOAuthSection {...props} selectedAccountId={null} />);
+    await user.click(screen.getByRole("combobox"));
+    await user.click(
+      await screen.findByRole("option", { name: "second@example.com" }),
+    );
+    expect(onAccountSelect).toHaveBeenLastCalledWith("account-2");
+    expect(onSelectionConfirmed).toHaveBeenCalledOnce();
   });
 });

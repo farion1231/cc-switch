@@ -22,7 +22,7 @@ use serde_json::Value;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     time::Duration,
 };
@@ -142,9 +142,19 @@ pub(crate) async fn read_decoded_body(
 // ============================================================================
 
 /// 检测响应是否为 SSE 流式响应
+///
+/// 上游标了 `text/event-stream` 就是流；客户端要的是流（`request_is_stream`）、
+/// 上游 2xx 却完全不带 Content-Type 时也按流处理。chatgpt.com 的 Codex
+/// Responses 回包就不带这个头：当成整包读会把实时输出攒到回合结束才一次性
+/// 交给客户端，SSE 文本按 JSON 解析失败，用量记成 0（会话日志导入随之去重
+/// 不上，同一回合出现两行）。只认“缺头”，不认任意非 JSON：网关忽略
+/// `stream: true`、回一个标成 `text/plain` 的 JSON 时，仍按整包解析用量。
 #[inline]
-pub fn is_sse_response(response: &ProxyResponse) -> bool {
+pub fn is_sse_response(response: &ProxyResponse, request_is_stream: bool) -> bool {
     response.is_sse()
+        || (request_is_stream
+            && response.status().is_success()
+            && response.content_type().is_none())
 }
 
 /// 处理流式响应
@@ -328,9 +338,10 @@ pub async fn process_response(
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
+    request_is_stream: bool,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<Response, ProxyError> {
-    if is_sse_response(&response) {
+    if is_sse_response(&response, request_is_stream) {
         Ok(handle_streaming(response, ctx, state, parser_config, connection_guard).await)
     } else {
         handle_non_streaming(response, ctx, state, parser_config, connection_guard).await
@@ -351,8 +362,7 @@ pub struct SseUsageCollector {
 
 struct SseUsageCollectorInner {
     events: Mutex<Vec<Value>>,
-    first_event_time: Mutex<Option<std::time::Instant>>,
-    first_event_set: AtomicBool,
+    first_output_time: OnceLock<std::time::Instant>,
     start_time: std::time::Instant,
     on_complete: UsageCallbackWithTiming,
     should_collect: Option<StreamUsageEventFilter>,
@@ -370,8 +380,7 @@ impl SseUsageCollector {
         Self {
             inner: Arc::new(SseUsageCollectorInner {
                 events: Mutex::new(Vec::new()),
-                first_event_time: Mutex::new(None),
-                first_event_set: AtomicBool::new(false),
+                first_output_time: OnceLock::new(),
                 start_time,
                 on_complete,
                 should_collect,
@@ -387,21 +396,22 @@ impl SseUsageCollector {
             .unwrap_or(true)
     }
 
-    /// 标记首个被收集的 SSE 事件时间，沿用 `first_token_ms` 的既有近似语义。
-    async fn mark_first_collected_event_time(&self) {
-        if self.inner.first_event_set.load(Ordering::Acquire) {
+    /// 观察一行 SSE data，记下首个输出事件的时间（`first_token_ms`）。
+    ///
+    /// 必须对每一行 data 调用，不能只看 usage 过滤器收下的事件：过滤器只挑带
+    /// usage 的事件，上游的开头事件不带 usage 时，首个被收下的就是结尾的
+    /// completed，生成时长被压到几毫秒，TPS 随之虚高。
+    pub fn observe_data(&self, event_name: Option<&str>, data: &str) {
+        if self.inner.first_output_time.get().is_some() {
             return;
         }
-        let mut first_time = self.inner.first_event_time.lock().await;
-        if first_time.is_none() {
-            *first_time = Some(std::time::Instant::now());
-            self.inner.first_event_set.store(true, Ordering::Release);
+        if sse_data_starts_output(event_name, data) {
+            let _ = self.inner.first_output_time.set(std::time::Instant::now());
         }
     }
 
     /// 推送 SSE 事件
     pub async fn push(&self, event: Value) {
-        self.mark_first_collected_event_time().await;
         let mut events = self.inner.events.lock().await;
         events.push(event);
     }
@@ -417,13 +427,35 @@ impl SseUsageCollector {
             std::mem::take(&mut *guard)
         };
 
-        let first_token_ms = {
-            let first_time = self.inner.first_event_time.lock().await;
-            first_time.map(|t| (t - self.inner.start_time).as_millis() as u64)
-        };
+        let first_token_ms = self
+            .inner
+            .first_output_time
+            .get()
+            .map(|t| (*t - self.inner.start_time).as_millis() as u64);
 
         (self.inner.on_complete)(events, first_token_ms);
     }
+}
+
+/// 判断一行 SSE data 是否标志着模型开始输出（口径同 Sub2API 的 semantic TTFT）：
+/// 跳过只宣告响应开始或保活的元数据事件，其余非空事件都算。Chat Completions /
+/// Gemini 的分块没有事件类型，一律算。
+fn sse_data_starts_output(event_name: Option<&str>, data: &str) -> bool {
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return false;
+    }
+    let event_type = match event_name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => name.to_string(),
+        None => serde_json::from_str::<Value>(data)
+            .ok()
+            .and_then(|value| value.get("type")?.as_str().map(str::to_string))
+            .unwrap_or_default(),
+    };
+    !matches!(
+        event_type.as_str(),
+        "response.created" | "response.in_progress" | "ping" | "keepalive"
+    )
 }
 
 struct SseUsageFinishGuard {
@@ -638,15 +670,6 @@ async fn log_usage_internal(
 ) {
     use super::usage::logger::UsageLogger;
 
-    let logger = UsageLogger::new(&state.db);
-    let (multiplier, pricing_model_source) =
-        logger.resolve_pricing_config(provider_id, app_type).await;
-    let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
-        outbound_model
-    } else {
-        model
-    };
-
     let dedup_scope = super::usage::parser::dedup_scope_for_app(app_type, provider_id);
     let request_id = usage.dedup_request_id(dedup_scope);
 
@@ -659,22 +682,47 @@ async fn log_usage_internal(
         usage.cache_creation_tokens
     );
 
-    if let Err(e) = logger.log_with_calculation(
-        request_id,
-        provider_id.to_string(),
-        app_type.to_string(),
-        model.to_string(),
-        request_model.to_string(),
-        pricing_model.to_string(),
-        usage,
-        multiplier,
-        latency_ms,
-        first_token_ms,
-        status_code,
-        session_id,
-        None, // provider_type
-        is_streaming,
-    ) {
+    // #7818：使用量写入要拿 Database 的单把 std::sync::Mutex<Connection> 并做
+    // 磁盘 IO，同步执行会卡住 tokio worker，移到阻塞线程池执行。计费模式
+    // 读取走同一把锁，一并移入。
+    let db = state.db.clone();
+    let provider_id = provider_id.to_string();
+    let app_type = app_type.to_string();
+    let model = model.to_string();
+    let request_model = request_model.to_string();
+    let outbound_model = outbound_model.to_string();
+    let write = tokio::task::spawn_blocking(move || {
+        let logger = UsageLogger::new(&db);
+        // 计费模式读取的 DAO 是伪 async（无真实挂起点、直接取阻塞锁），
+        // 在阻塞线程上 block_on 不会停转运行时
+        let pricing_model_source = tokio::runtime::Handle::current()
+            .block_on(logger.resolve_pricing_model_source(&app_type));
+        let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
+            outbound_model
+        } else {
+            model.clone()
+        };
+        logger.log_with_calculation(
+            request_id,
+            provider_id,
+            app_type,
+            model,
+            request_model,
+            pricing_model,
+            usage,
+            latency_ms,
+            first_token_ms,
+            status_code,
+            session_id,
+            None, // provider_type
+            is_streaming,
+        )
+    });
+    if let Err(e) = write.await.unwrap_or_else(|e| {
+        Err(crate::error::AppError::Database(format!(
+            "usage 记录任务失败: {e}"
+        )))
+    }) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }
 }
@@ -751,9 +799,15 @@ pub fn create_logged_passthrough_stream(
                         // 尝试解析并记录完整的 SSE 事件
                         while let Some(event_text) = take_sse_block(&mut buffer) {
                             if !event_text.trim().is_empty() {
+                                let event_name = event_text
+                                    .lines()
+                                    .find_map(|line| strip_sse_field(line, "event"));
                                 // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
+                                        if let Some(c) = &collector {
+                                            c.observe_data(event_name, data);
+                                        }
                                         if data.trim() != "[DONE]" {
                                             let collected = match &collector {
                                                 Some(c) if c.should_collect(data) => {
@@ -858,17 +912,94 @@ mod tests {
     use crate::database::Database;
     use crate::error::AppError;
     use crate::provider::ProviderMeta;
-    use crate::proxy::failover_switch::FailoverSwitchManager;
-    use crate::proxy::provider_router::ProviderRouter;
-    use crate::proxy::providers::{
-        codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore,
-    };
-    use crate::proxy::types::{ProxyConfig, ProxyStatus};
     use rust_decimal::Decimal;
-    use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
+
+    #[test]
+    fn sse_data_starts_output_skips_metadata_events() {
+        assert!(!sse_data_starts_output(
+            Some("response.created"),
+            r#"{"type":"response.created"}"#
+        ));
+        assert!(!sse_data_starts_output(
+            None,
+            r#"{"type":"response.in_progress","response":{}}"#
+        ));
+        assert!(!sse_data_starts_output(Some("ping"), r#"{"type":"ping"}"#));
+        assert!(!sse_data_starts_output(None, "[DONE]"));
+        assert!(!sse_data_starts_output(None, "  "));
+
+        assert!(sse_data_starts_output(
+            Some("response.output_text.delta"),
+            r#"{"type":"response.output_text.delta","delta":"hi"}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("message_start"),
+            r#"{"type":"message_start"}"#
+        ));
+        // Chat Completions / Gemini 分块没有事件类型
+        assert!(sse_data_starts_output(
+            None,
+            r#"{"choices":[{"delta":{"content":"hi"}}]}"#
+        ));
+    }
+
+    /// 回归：上游 response.created 不带 usage 时，首个被 usage 过滤器收下的是
+    /// 结尾的 completed；首 token 时间必须仍落在首个输出事件上。
+    #[tokio::test]
+    async fn first_token_ms_tracks_first_output_not_first_usage_event() {
+        let start = std::time::Instant::now();
+        let recorded = Arc::new(std::sync::Mutex::new(None));
+        let recorded_in_cb = recorded.clone();
+        let collector = SseUsageCollector::new(
+            start,
+            Some(super::super::handler_config::codex_stream_usage_event_filter),
+            move |events, first_token_ms| {
+                *recorded_in_cb.lock().unwrap() = Some((
+                    events.len(),
+                    first_token_ms,
+                    start.elapsed().as_millis() as u64,
+                ));
+            },
+        );
+
+        let upstream = async_stream::stream! {
+            yield Ok::<_, std::io::Error>(Bytes::from(
+                "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{}}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            yield Ok(Bytes::from(
+                "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            yield Ok(Bytes::from(
+                "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n\n",
+            ));
+        };
+        let stream = create_logged_passthrough_stream(
+            upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        futures::pin_mut!(stream);
+        while stream.next().await.is_some() {}
+
+        let (collected, first_token_ms, latency_ms) =
+            recorded.lock().unwrap().expect("collector finished");
+        assert_eq!(collected, 1, "only the completed event carries usage");
+        let first_token_ms = first_token_ms.expect("first output recorded");
+        assert!(first_token_ms >= 50, "first_token_ms={first_token_ms}");
+        assert!(
+            latency_ms >= first_token_ms + 50,
+            "first_token_ms={first_token_ms}, latency_ms={latency_ms}"
+        );
+    }
 
     #[test]
     fn format_headers_keeps_only_allowlisted_diagnostic_values() {
@@ -911,6 +1042,46 @@ mod tests {
             "压缩炸弹应被拒绝而不是完整展开: {:?}",
             result.map(|(_, _, body)| body.len())
         );
+    }
+
+    fn response_with_content_type(
+        status: http::StatusCode,
+        content_type: Option<&'static str>,
+    ) -> ProxyResponse {
+        let mut headers = HeaderMap::new();
+        if let Some(content_type) = content_type {
+            headers.insert("content-type", content_type.parse().unwrap());
+        }
+        ProxyResponse::buffered(status, headers, Bytes::new())
+    }
+
+    #[test]
+    fn stream_request_without_content_type_is_treated_as_sse() {
+        // chatgpt.com 的 Codex Responses 回包不带 Content-Type。
+        let response = response_with_content_type(http::StatusCode::OK, None);
+        assert!(is_sse_response(&response, true));
+        assert!(!is_sse_response(&response, false));
+    }
+
+    #[test]
+    fn declared_content_type_wins_over_stream_flag() {
+        let sse = response_with_content_type(
+            http::StatusCode::OK,
+            Some("text/event-stream;charset=utf-8"),
+        );
+        assert!(is_sse_response(&sse, false));
+
+        // 网关忽略 stream: true 时回的 JSON（无论标成什么）仍按整包解析用量。
+        for content_type in ["application/json", "text/plain"] {
+            let response = response_with_content_type(http::StatusCode::OK, Some(content_type));
+            assert!(!is_sse_response(&response, true), "{content_type}");
+        }
+    }
+
+    #[test]
+    fn stream_request_error_without_content_type_stays_buffered() {
+        let response = response_with_content_type(http::StatusCode::BAD_REQUEST, None);
+        assert!(!is_sse_response(&response, true));
     }
 
     #[test]
@@ -1019,18 +1190,7 @@ mod tests {
     }
 
     fn build_state(db: Arc<Database>) -> ProxyState {
-        ProxyState {
-            db: db.clone(),
-            config: Arc::new(RwLock::new(ProxyConfig::default())),
-            status: Arc::new(RwLock::new(ProxyStatus::default())),
-            start_time: Arc::new(RwLock::new(None)),
-            current_providers: Arc::new(RwLock::new(HashMap::new())),
-            provider_router: Arc::new(ProviderRouter::new(db.clone())),
-            gemini_shadow: Arc::new(GeminiShadowStore::default()),
-            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
-            app_handle: None,
-            failover_manager: Arc::new(FailoverSwitchManager::new(db)),
-        }
+        ProxyState::for_test(db)
     }
 
     fn seed_pricing(db: &Database) -> Result<(), AppError> {
@@ -1069,14 +1229,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_log_usage_uses_provider_override_config() -> Result<(), AppError> {
+    async fn test_log_usage_ignores_legacy_multiplier_and_provider_overrides(
+    ) -> Result<(), AppError> {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_default_cost_multiplier(app_type, "1.5").await?;
         db.set_pricing_model_source(app_type, "response").await?;
         seed_pricing(&db)?;
+        {
+            // 旧版写下的全局倍率仍留在列里，新版不再读取
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_config SET default_cost_multiplier = '1.5' WHERE app_type = ?1",
+                [app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
 
+        // 旧版的供应商级覆盖仍在 meta 里（给旧设备往返保留），新版不再读取
         let meta = ProviderMeta {
             cost_multiplier: Some("2".to_string()),
             pricing_model_source: Some("request".to_string()),
@@ -1090,6 +1260,7 @@ mod tests {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
@@ -1111,24 +1282,20 @@ mod tests {
         .await;
 
         let conn = crate::database::lock_conn!(db.conn);
-        let (model, request_model, total_cost, cost_multiplier): (String, String, String, String) =
-            conn.query_row(
-                "SELECT model, request_model, total_cost_usd, cost_multiplier
+        let (total_cost, cost_multiplier): (String, String) = conn
+            .query_row(
+                "SELECT total_cost_usd, cost_multiplier
                  FROM proxy_request_logs WHERE provider_id = ?1",
                 ["provider-1"],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        assert_eq!(model, "resp-model");
-        assert_eq!(request_model, "req-model");
-        assert_eq!(
-            Decimal::from_str(&cost_multiplier).unwrap(),
-            Decimal::from_str("2").unwrap()
-        );
+        assert_eq!(Decimal::from_str(&cost_multiplier).unwrap(), Decimal::ONE);
+        // 按全局的「返回模型」计价：resp-model $1/M，不乘倍率
         assert_eq!(
             Decimal::from_str(&total_cost).unwrap(),
-            Decimal::from_str("4").unwrap()
+            Decimal::from_str("1").unwrap()
         );
         Ok(())
     }
@@ -1158,6 +1325,7 @@ mod tests {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
@@ -1202,37 +1370,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_claude_desktop_inherits_claude_global_defaults() -> Result<(), AppError> {
+    async fn test_claude_desktop_inherits_claude_pricing_source() -> Result<(), AppError> {
         use crate::proxy::usage::logger::UsageLogger;
 
         let db = Arc::new(Database::memory()?);
 
-        // 全局计费配置只有 claude/codex/gemini 三行；claude-desktop 的
-        // 全局默认必须继承 claude，而不是静默落回工厂默认（1 / response）
-        db.set_default_cost_multiplier("claude", "1.5").await?;
+        // proxy_config 没有 claude-desktop 行；它的计费模式必须继承 claude，
+        // 而不是静默落回工厂默认（response）
         db.set_pricing_model_source("claude", "request").await?;
 
         let logger = UsageLogger::new(&db);
-        let (multiplier, source) = logger
-            .resolve_pricing_config("nonexistent-provider", "claude-desktop")
-            .await;
+        let source = logger.resolve_pricing_model_source("claude-desktop").await;
 
-        assert_eq!(multiplier, Decimal::from_str("1.5").unwrap());
         assert_eq!(source, "request");
         Ok(())
     }
 
+    // #7818 回归闸门：使用量写入必须离开异步执行器线程。
+    // Database 全局只有单把 std::sync::Mutex<Connection>，先让专用线程占住
+    // 这把锁模拟慢盘/竞争。修复前，log_usage_internal 会在当前 tokio worker
+    // 上同步等锁，单线程（current_thread）运行时被整个卡死，下方的心跳
+    // sleep 只能在锁释放（约 500ms）后才会醒来；修复后写入走阻塞线程池，
+    // sleep 照常在 100ms 触发。
     #[tokio::test]
-    async fn test_log_usage_falls_back_to_global_defaults() -> Result<(), AppError> {
+    async fn log_usage_write_does_not_block_the_async_runtime() -> Result<(), AppError> {
+        use std::thread;
+        use std::time::{Duration, Instant};
+
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_default_cost_multiplier(app_type, "1.5").await?;
         db.set_pricing_model_source(app_type, "response").await?;
         seed_pricing(&db)?;
-
-        let meta = ProviderMeta::default();
-        insert_provider(&db, "provider-2", app_type, meta)?;
+        insert_provider(&db, "provider-busy", app_type, ProviderMeta::default())?;
 
         let state = build_state(db.clone());
         let usage = TokenUsage {
@@ -1240,44 +1410,60 @@ mod tests {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
 
-        log_usage_internal(
-            &state,
-            "provider-2",
-            app_type,
-            "resp-model",
-            "req-model",
-            "req-model",
-            usage,
-            10,
-            None,
-            false,
-            200,
-            None,
-        )
-        .await;
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let blocker_db = db.clone();
+        let blocker = thread::spawn(move || {
+            let _guard = blocker_db.conn.lock().expect("占锁失败");
+            locked_tx.send(()).expect("通知占锁失败");
+            // 无论被测代码走哪条路径都定时释放，测试不会挂死
+            thread::sleep(Duration::from_millis(500));
+        });
+        locked_rx.recv().expect("接收占锁通知失败");
 
+        let writer = tokio::spawn(async move {
+            log_usage_internal(
+                &state,
+                "provider-busy",
+                app_type,
+                "resp-model",
+                "req-model",
+                "req-model",
+                usage,
+                10,
+                None,
+                false,
+                200,
+                None,
+            )
+            .await;
+        });
+
+        let start = Instant::now();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let heartbeat = start.elapsed();
+        blocker.join().expect("占锁线程 panic");
+        writer.await.expect("使用量写入任务 panic");
+
+        assert!(
+            heartbeat < Duration::from_millis(300),
+            "使用量写入阻塞了异步执行器 {heartbeat:?}（应移到阻塞线程池执行）"
+        );
+
+        // 锁释放后记录最终仍要落库
         let conn = crate::database::lock_conn!(db.conn);
-        let (total_cost, cost_multiplier): (String, String) = conn
+        let count: i64 = conn
             .query_row(
-                "SELECT total_cost_usd, cost_multiplier
-                 FROM proxy_request_logs WHERE provider_id = ?1",
-                ["provider-2"],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE provider_id = ?1",
+                ["provider-busy"],
+                |row| row.get(0),
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
-
-        assert_eq!(
-            Decimal::from_str(&cost_multiplier).unwrap(),
-            Decimal::from_str("1.5").unwrap()
-        );
-        assert_eq!(
-            Decimal::from_str(&total_cost).unwrap(),
-            Decimal::from_str("1.5").unwrap()
-        );
+        assert_eq!(count, 1);
         Ok(())
     }
 }

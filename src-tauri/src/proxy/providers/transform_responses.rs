@@ -24,6 +24,11 @@ use super::reasoning_bridge::{
 
 pub(crate) const TOOL_RESULT_ERROR_MARKER: &str = "[cc-switch:tool-result-error]";
 
+/// OpenAI Responses API 拒绝 `max_output_tokens` 小于 16。Anthropic 侧的合法
+/// 小预算探测请求（如 Claude Desktop 的模型可用性探测发 `max_tokens=1`）
+/// 会被严格网关整体拒绝，转换时把低于下限的预算抬到最小值而不是让请求失败。
+pub(crate) const RESPONSES_MIN_MAX_OUTPUT_TOKENS: u64 = 16;
+
 fn has_http_url_scheme(value: &str) -> bool {
     value
         .get(.."http://".len())
@@ -1805,9 +1810,20 @@ pub fn anthropic_to_responses(
         result["input"] = json!(input);
     }
 
-    // max_tokens → max_output_tokens (Responses API uses max_output_tokens for all models)
+    // max_tokens → max_output_tokens (Responses API uses max_output_tokens for
+    // all models). The Responses API rejects values below 16 ("The number must
+    // be `>= 16`"), while Anthropic clients legitimately send tiny probe
+    // budgets (Claude Desktop's model-availability probe uses max_tokens=1),
+    // so sub-floor budgets are clamped up to the minimum instead of failing
+    // the whole request. 0 and non-integer values keep their existing
+    // pass-through semantics.
     if let Some(v) = body.get("max_tokens") {
-        result["max_output_tokens"] = v.clone();
+        result["max_output_tokens"] = match v.as_u64() {
+            Some(n) if (1..RESPONSES_MIN_MAX_OUTPUT_TOKENS).contains(&n) => {
+                json!(RESPONSES_MIN_MAX_OUTPUT_TOKENS)
+            }
+            _ => v.clone(),
+        };
     }
 
     // 直接透传的参数
@@ -1887,14 +1903,25 @@ pub fn anthropic_to_responses(
                 if forced_hosted_web_search_name.is_some() {
                     continue;
                 }
-                response_tools.push(json!({
+                let mut response_tool = json!({
                     "type": "function",
+                    // Anthropic 工具 schema 允许可选参数（required 是任意子集），而
+                    // Responses 后端把省略的 `strict` 按 true 处理：可选属性会被
+                    // 严格化进 required，模型被迫输出它本应能省略的字段（#7713 中
+                    // Claude Code Agent 的可选 isolation 被强制输出即此形态）。
+                    // 显式 false 保留客户端 schema 的可选语义。
+                    "strict": false,
                     "name": tool.get("name").and_then(Value::as_str).unwrap_or(""),
-                    "description": tool.get("description"),
-                    "parameters": super::transform::clean_schema(
-                        tool.get("input_schema").cloned().unwrap_or(json!({}))
-                    )
-                }));
+                });
+                // 同 transform.rs：缺失的 description 省略而非输出 null，
+                // 否则严格上游会拒绝整个请求。
+                if let Some(description) = tool.get("description").filter(|d| !d.is_null()) {
+                    response_tool["description"] = description.clone();
+                }
+                response_tool["parameters"] = super::transform::clean_schema(
+                    tool.get("input_schema").cloned().unwrap_or(json!({})),
+                );
+                response_tools.push(response_tool);
             }
         }
 
@@ -1937,6 +1964,13 @@ pub fn anthropic_to_responses(
     if let Some(v) = body.get("tool_choice") {
         result["tool_choice"] =
             map_tool_choice_to_responses(v, &hosted_web_search_names, is_codex_oauth);
+        if is_codex_oauth {
+            if let Some(disable_parallel) =
+                v.get("disable_parallel_tool_use").and_then(Value::as_bool)
+            {
+                result["parallel_tool_calls"] = json!(!disable_parallel);
+            }
+        }
     }
 
     const WEB_SEARCH_SOURCES_MARKER: &str = "web_search_call.action.sources";
@@ -2007,8 +2041,10 @@ pub fn anthropic_to_responses(
             // —— 兜底必填字段（or_insert：客户端送了什么就保留，否则注入默认值）——
             obj.entry("instructions".to_string()).or_insert(json!(""));
             obj.entry("tools".to_string()).or_insert(json!([]));
+            // Anthropic 默认允许并行工具调用。优先保留上方已转换的显式设置，
+            // 否则允许支持该能力的 Codex 模型在同一响应中批量调用独立工具。
             obj.entry("parallel_tool_calls".to_string())
-                .or_insert(json!(false));
+                .or_insert(json!(true));
 
             // —— 强制覆盖 stream = true ——
             // 即便客户端误传 stream:false 也要覆盖，因为 codex-rs 永远 true，
@@ -3311,6 +3347,8 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
+        // 省略 strict 会被 Responses 后端按 true 严格化，可选参数被强制输出（#7713）
+        assert_eq!(result["tools"][0]["strict"], json!(false));
         assert_eq!(result["tools"][0]["name"], "get_weather");
         assert!(result["tools"][0].get("parameters").is_some());
         assert_eq!(result["tools"][0]["parameters"]["type"], json!("object"));
@@ -3320,6 +3358,68 @@ mod tests {
         );
         // input_schema should not appear
         assert!(result["tools"][0].get("input_schema").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_marks_function_tools_not_strict() {
+        // #7713：可选参数（required 是任意子集）必须保留可选语义。
+        // 省略 strict 时 Responses 后端按 true 严格化，模型被迫输出 isolation。
+        let input = json!({
+            "model": "gpt-5.6-luna",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Call the agent"}],
+            "tools": [{
+                "name": "Agent",
+                "description": "Launch a sub-agent",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string"},
+                        "prompt": {"type": "string"},
+                        "isolation": {"type": "string", "enum": ["worktree", "remote"]}
+                    },
+                    "required": ["description", "prompt"]
+                }
+            }]
+        });
+
+        let plain = anthropic_to_responses(input.clone(), None, false, false).unwrap();
+        assert_eq!(plain["tools"][0]["strict"], json!(false));
+        // required 保持为原有子集，strict 语义交由后端保留
+        assert_eq!(
+            plain["tools"][0]["parameters"]["required"],
+            json!(["description", "prompt"])
+        );
+
+        // 同一转换分支也服务 Codex OAuth 后端
+        let oauth = anthropic_to_responses(input, None, true, false).unwrap();
+        assert_eq!(oauth["tools"][0]["strict"], json!(false));
+        assert_eq!(
+            oauth["tools"][0]["parameters"]["required"],
+            json!(["description", "prompt"])
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_omits_missing_tool_description() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [
+                {"name": "NoDesc", "input_schema": {"type": "object"}},
+                {"name": "Described", "description": "Has one",
+                 "input_schema": {"type": "object"}}
+            ]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        // 缺 description：省略字段而不是序列化成 null（严格上游会 400）
+        assert!(tools[0].get("description").is_none());
+        assert!(tools[0].get("parameters").is_some());
+        assert_eq!(tools[1]["description"], json!("Has one"));
     }
 
     #[test]
@@ -4569,6 +4669,61 @@ mod tests {
     }
 
     #[test]
+    fn test_replayed_legacy_envelope_omits_output_only_fields() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+        // A pre-whitelist envelope keeps the backend output item verbatim,
+        // including the `status` field the official Codex backend started
+        // emitting on 2026-10-03 and rejects as an unknown input parameter.
+        let legacy = json!({
+            "id": "rs_legacy",
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "prior turn"}],
+            "encrypted_content": "opaque",
+            "status": "completed"
+        });
+        let signature = format!(
+            "ccswitch-openai-reasoning-v1:{}",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&legacy).unwrap())
+        );
+        let replay = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6",
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": [
+                        {"type": "thinking", "thinking": "prior turn", "signature": signature},
+                        {"type": "tool_use", "id": "call_9", "name": "lookup", "input": {}}
+                    ]},
+                    {"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": "call_9", "content": "ok"}
+                    ]}
+                ]
+            }),
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+        let reasoning_items: Vec<&Value> = replay["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("reasoning"))
+            .collect();
+        assert_eq!(reasoning_items.len(), 1);
+        assert_eq!(
+            reasoning_items[0],
+            &json!({
+                "id": "rs_legacy",
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "prior turn"}],
+                "encrypted_content": "opaque"
+            })
+        );
+    }
+
+    #[test]
     fn test_reasoning_only_assistant_turn_is_not_replayed() {
         let item = json!({
             "type": "reasoning",
@@ -4803,12 +4958,83 @@ mod tests {
         let input = json!({
             "model": "gpt-5.4",
             "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
             "output_config": {"effort": "max"},
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_responses_max_capable_models_preserve_max() {
+        for model in [
+            "gpt-5.6",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-luna",
+        ] {
+            let input = json!({
+                "model": model,
+                "max_tokens": 1024,
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "max"},
+                "messages": [{"role": "user", "content": "Hello"}]
+            });
+
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["reasoning"]["effort"], "max", "model {model}");
+        }
+    }
+
+    #[test]
+    fn test_responses_output_config_xhigh_sets_reasoning_xhigh() {
+        // Claude Code's `/effort xhigh` sends output_config.effort="xhigh";
+        // previously it fell into the unknown-value branch and was dropped.
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_responses_grok_4_6_reasoning_effort_not_dropped() {
+        // After model mapping, the Responses gate runs on the mapped name;
+        // grok-4.6 / grok-4.6-* were missing from the whitelist (#7314).
+        let input = json!({
+            "model": "grok-4.6-build",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_responses_thinking_off_clamps_effort_to_low() {
+        // Thinking turned off in Claude Code: no `thinking`, effort still "high".
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "output_config": {"effort": "high"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "low");
     }
 
     #[test]
@@ -5007,6 +5233,44 @@ mod tests {
         assert_eq!(result["max_output_tokens"], json!(1024));
     }
 
+    #[test]
+    fn test_anthropic_to_responses_clamps_sub_floor_max_tokens() {
+        // Responses API 拒绝 max_output_tokens < 16（"The number must be >= 16"）。
+        // Claude Desktop 的模型可用性探测发 max_tokens=1，原样转发会让整个
+        // 探测请求 400，客户端因此判定"配置的模型不可用"（#7103）。
+        for budget in [1u64, 8, 15] {
+            let input = json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": budget,
+                "messages": [{"role": "user", "content": "ping"}]
+            });
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["max_output_tokens"], json!(16));
+        }
+
+        // 下限本身与正常预算保持原样
+        for budget in [16u64, 1024] {
+            let input = json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": budget,
+                "messages": [{"role": "user", "content": "ping"}]
+            });
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["max_output_tokens"], json!(budget));
+        }
+
+        // 0 与非整数不抬升：保持既有透传语义，把非法值留给上游裁决
+        for raw in [json!(0), json!("16"), json!(12.5)] {
+            let input = json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": raw,
+                "messages": [{"role": "user", "content": "ping"}]
+            });
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["max_output_tokens"], raw);
+        }
+    }
+
     // ==================== 第二轮：P0 + P1 字段对齐 ====================
 
     #[test]
@@ -5065,10 +5329,53 @@ mod tests {
         assert_eq!(result["tools"], json!([]), "tools 缺失时应兜底为空数组");
         assert_eq!(
             result["parallel_tool_calls"],
-            json!(false),
-            "parallel_tool_calls 应兜底为 false"
+            json!(true),
+            "parallel_tool_calls 应默认允许并行工具调用"
         );
         assert_eq!(result["stream"], json!(true), "stream 应被强制设为 true");
+    }
+
+    #[test]
+    fn test_codex_oauth_maps_anthropic_parallel_tool_choice() {
+        let enabled = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6-sol",
+                "tools": [{
+                    "name": "read_file",
+                    "input_schema": {"type": "object"}
+                }],
+                "tool_choice": {
+                    "type": "auto",
+                    "disable_parallel_tool_use": false
+                },
+                "messages": [{"role": "user", "content": "Read both files"}]
+            }),
+            None,
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(enabled["parallel_tool_calls"], json!(true));
+
+        let disabled = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6-sol",
+                "tools": [{
+                    "name": "read_file",
+                    "input_schema": {"type": "object"}
+                }],
+                "tool_choice": {
+                    "type": "auto",
+                    "disable_parallel_tool_use": true
+                },
+                "messages": [{"role": "user", "content": "Read one file"}]
+            }),
+            None,
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(disabled["parallel_tool_calls"], json!(false));
     }
 
     #[test]
@@ -5147,6 +5454,10 @@ mod tests {
         let input = json!({
             "model": "gpt-5-codex",
             "max_tokens": 1024,
+            "tool_choice": {
+                "type": "auto",
+                "disable_parallel_tool_use": false
+            },
             "messages": [{"role": "user", "content": "Hello"}]
         });
 

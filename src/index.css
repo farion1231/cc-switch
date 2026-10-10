@@ -3,61 +3,308 @@
 @tailwind utilities;
 
 @layer base {
+  /* shadcn 组件用的 HSL token（可以带 /50 这类透明度），取值对齐 v7 设计稿的 tokens.css */
   :root {
     --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --foreground: 240 5.9% 10%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 240 5.9% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
+    --popover-foreground: 240 5.9% 10%;
 
-    --primary: 210 100% 56%;
+    /* v7：主操作色和 --action-bg 一致（黑白），不再是蓝色 */
+    --primary: 240 5.9% 10%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 240 4.8% 95.9%;
+    --secondary: 240 10.3% 94.3%;
     --secondary-foreground: 240 5.9% 10%;
 
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
+    --muted: 240 10.3% 94.3%;
+    --muted-foreground: 240 4.3% 41.4%;
+    --accent: 240 10.3% 94.3%;
     --accent-foreground: 240 5.9% 10%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 210 100% 56%;
+    --border: 240 10.2% 90.4%;
+    --input: 240 10.2% 90.4%;
+    /* 焦点环 = 主题色 #F97316（docs/design-system.html） */
+    --ring: 24.6 95% 53.1%;
 
     --radius: 0.5rem;
   }
 
   .dark {
-    --background: 240 5% 12%;
-    --foreground: 0 0% 98%;
-    --card: 240 5% 16%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 5% 16%;
-    --popover-foreground: 0 0% 98%;
+    --background: 240 3.4% 11.4%;
+    --foreground: 240 4.8% 95.9%;
+    --card: 240 5.2% 19%;
+    --card-foreground: 240 4.8% 95.9%;
+    --popover: 240 5.2% 19%;
+    --popover-foreground: 240 4.8% 95.9%;
 
-    --primary: 210 100% 54%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 240 4.8% 95.9%;
+    --primary-foreground: 240 5.9% 10%;
 
-    --secondary: 240 5% 18%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 240 5% 15.7%;
+    --secondary-foreground: 240 4.8% 95.9%;
 
-    --muted: 240 5% 18%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 5% 18%;
-    --accent-foreground: 0 0% 98%;
+    --muted: 240 5% 15.7%;
+    --muted-foreground: 240 5.7% 72.5%;
+    --accent: 240 5% 15.7%;
+    --accent-foreground: 240 4.8% 95.9%;
 
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 240 5% 24%;
-    --input: 240 5% 24%;
-    --ring: 210 100% 54%;
+    --border: 240 5.3% 25.7%;
+    --input: 240 5.3% 25.7%;
+    /* 深色下焦点色压低饱和度和亮度（约 #d8783a），亮橙描边在深底上太刺眼 */
+    --ring: 24 66% 54%;
   }
+
+  /* v7 设计 token（docs/research/2026-09-30-ui-design-v7/project/tokens.css）。
+     --border / --ring 沿用上面的 HSL 版本，其余照设计稿的名字。
+     --action-* 是实心按钮、开关的开、勾选框的操作色；主题色 #F97316 只覆盖这一组和 --ring。
+     --action-text：橙色当文字用（链接）时用深一档，保证对比度。 */
+  :root {
+    --bg-app: #ffffff;
+    --bg-sidebar: #f5f5f7;
+    --bg-subtle: #efeff2;
+    --bg-selected: #e4e4ea;
+    --bg-card: #ffffff;
+    --border-strong: #cfcfd6;
+    --text-1: #18181b;
+    --text-2: #52525b;
+    --text-3: #65656e;
+    --action-bg: #f97316;
+    --action-fg: #ffffff;
+    --action-hover: #ea620a;
+    --action-text: #c2410c;
+    --action-soft: #fff1e6;
+    --inverse-bg: #18181b;
+    --inverse-fg: #ffffff;
+    --inverse-hover: #2e2e33;
+    --overlay: rgba(9, 9, 11, 0.36);
+    --control-off: #888890;
+
+    /* 模式色：直连蓝、路由青绿、聚合紫。--*-border 是当前卡片的边框，等于各自的 fill */
+    --direct-fill: #0a84ff;
+    --direct-text: #0063c7;
+    --direct-soft: #eaf3ff;
+    --direct-solid: #0066cc;
+    --direct-on: #ffffff;
+    --direct-border: var(--direct-fill);
+
+    --route-fill: #0d9488;
+    --route-text: #06726b;
+    --route-soft: #e7f6f4;
+    --route-solid: #0f766e;
+    --route-on: #ffffff;
+    --route-border: var(--route-fill);
+
+    --stack-fill: #7c3aed;
+    --stack-text: #6d28d9;
+    --stack-soft: #f2ecfe;
+    --stack-solid: #6d28d9;
+    --stack-on: #ffffff;
+    --stack-border: var(--stack-fill);
+
+    --success: #16a34a;
+    --success-text: #007634;
+    --success-soft: #e8f7ee;
+    --warning: #d97706;
+    --warning-text: #a64a00;
+    --warning-soft: #fef3c7;
+    --danger: #dc2626;
+    --danger-text: #b91c1c;
+    --danger-soft: #fee2e2;
+    --chart-1: #0891b2;
+    /* 热力图 1–4 档：前三档用 chart-1 保住饱和度，最深档换同色相深一级的 #0e7490。
+       chart-1 是中等亮度，只按浓度混的话最深档不够深，整张图偏淡 */
+    --heat-1: color-mix(in srgb, var(--chart-1) 32%, transparent);
+    --heat-2: color-mix(in srgb, var(--chart-1) 62%, transparent);
+    --heat-3: var(--chart-1);
+    --heat-4: #0e7490;
+    --chart-2: #db2777;
+    --chart-grid: #ececf0;
+
+    /* 会话阅读页的 Agent 主题色：只用于提问竖条和助手 glyph，
+       正文保持中性（决策 D4）。作文字用时对 --bg-app / --bg-subtle 对比度 ≥ 4.5:1 */
+    --agent-claude: #c2613f;
+    --agent-codex: #3f3f46;
+    --agent-gemini: #3367d6;
+    --agent-opencode: #0f766e;
+    --agent-pi: #7c3aed;
+    --agent-generic: var(--text-2);
+    --diff-add-bg: var(--success-soft);
+    --diff-del-bg: var(--danger-soft);
+
+    --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+    --shadow-md:
+      0 4px 12px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
+    --shadow-lg:
+      0 20px 40px rgba(16, 24, 40, 0.16), 0 4px 12px rgba(16, 24, 40, 0.08);
+  }
+
+  .dark {
+    --bg-app: #1c1c1e;
+    --bg-sidebar: #161618;
+    --bg-subtle: #26262a;
+    --bg-selected: #313136;
+    --bg-card: #2e2e33;
+    --border-strong: #4a4a52;
+    --text-1: #f4f4f5;
+    --text-2: #d0d0d8;
+    --text-3: #b5b5bd;
+    /* 深色模式：实心块压暗一档（大面积不刺眼）+ 白字；文字、焦点描边用亮一档的 #fb923c */
+    --action-bg: #ea580c;
+    --action-fg: #ffffff;
+    --action-hover: #f06d1f;
+    --action-text: #fb923c;
+    /* 深色下浅橙底用半透明叠在卡片 / 侧栏底色上：不透明的深橙会发闷、像一块棕色 */
+    --action-soft: rgba(249, 115, 21, 0.12);
+    --inverse-bg: #f4f4f5;
+    --inverse-fg: #18181b;
+    --inverse-hover: #e4e4e7;
+    --overlay: rgba(0, 0, 0, 0.55);
+    --control-off: #6f6f77;
+
+    /* 深色模式的模式色压低亮度和饱和度：原来的亮蓝 / 青绿 / 亮紫在深底上太刺眼。
+       浅底用半透明叠加，当前卡片边框用半透明的 fill */
+    --direct-fill: #4a8fd9;
+    --direct-text: #8fb8e6;
+    --direct-soft: rgba(74, 143, 217, 0.12);
+    --direct-solid: #2f6db3;
+    --direct-on: #ffffff;
+    --direct-border: color-mix(in srgb, var(--direct-fill) 50%, transparent);
+
+    --route-fill: #2a9d8f;
+    --route-text: #7cc4ba;
+    --route-soft: rgba(42, 157, 143, 0.12);
+    --route-solid: #1f7d72;
+    --route-on: #ffffff;
+    --route-border: color-mix(in srgb, var(--route-fill) 50%, transparent);
+
+    --stack-fill: #8b74d6;
+    --stack-text: #b5a6e3;
+    --stack-soft: rgba(139, 116, 214, 0.12);
+    --stack-solid: #6a52bf;
+    --stack-on: #ffffff;
+    --stack-border: color-mix(in srgb, var(--stack-fill) 50%, transparent);
+
+    --success: #4ade80;
+    --success-text: #4ade80;
+    --success-soft: #0f2b1a;
+    --warning: #fbbf24;
+    --warning-text: #fcd34d;
+    --warning-soft: #33260a;
+    --danger: #f87171;
+    --danger-text: #fca5a5;
+    --danger-soft: #3a1414;
+    --chart-1: #38bdf8;
+    /* 深色底上越亮越多，chart-1 本身就是最亮档 */
+    --heat-1: color-mix(in srgb, var(--chart-1) 30%, transparent);
+    --heat-2: color-mix(in srgb, var(--chart-1) 50%, transparent);
+    --heat-3: color-mix(in srgb, var(--chart-1) 75%, transparent);
+    --heat-4: var(--chart-1);
+    --chart-2: #f472b6;
+    --chart-grid: #2c2c31;
+
+    --agent-claude: #e08a6a;
+    --agent-codex: #d4d4d8;
+    --agent-gemini: #8ab4f8;
+    --agent-opencode: #5eead4;
+    --agent-pi: #c4b5fd;
+    --agent-generic: var(--text-2);
+    --diff-add-bg: var(--success-soft);
+    --diff-del-bg: var(--danger-soft);
+
+    --shadow-sm:
+      0 0 0 1px rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* 勾选框 / 单选框（docs/design-system.html「开关 · 勾选」）：不用系统原生外观（各处边框、圆角、深色模式都不一样），
+   统一画成 16px、1.5px border-strong 描边；选中 = 主题色底 + 反色勾（单选 = 粗主题色圈）。
+   原生 <input type="checkbox|radio"> 加 ui-checkbox / ui-radio 即可，Checkbox 组件已经带上。 */
+@layer components {
+  .ui-checkbox,
+  .ui-radio {
+    appearance: none;
+    -webkit-appearance: none;
+    display: inline-grid;
+    place-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    border: 1.5px solid var(--border-strong);
+    background-color: var(--bg-card);
+    cursor: pointer;
+    transition:
+      background-color 150ms,
+      border-color 150ms;
+  }
+  .ui-checkbox {
+    border-radius: 4px;
+  }
+  .ui-radio {
+    border-radius: 9999px;
+  }
+  .ui-checkbox::before {
+    content: "";
+    width: 10px;
+    height: 10px;
+    background-color: var(--action-fg);
+    transform: scale(0);
+    transition: transform 120ms ease-out;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  .ui-checkbox:indeterminate::before {
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  .ui-checkbox:checked,
+  .ui-checkbox:indeterminate {
+    background-color: var(--action-bg);
+    border-color: var(--action-bg);
+  }
+  .ui-checkbox:checked::before,
+  .ui-checkbox:indeterminate::before {
+    transform: scale(1);
+  }
+  .ui-radio:checked {
+    border: 5px solid var(--action-bg);
+  }
+  .ui-checkbox:hover:not(:disabled):not(:checked):not(:indeterminate),
+  .ui-radio:hover:not(:disabled):not(:checked) {
+    border-color: var(--text-3);
+  }
+  .ui-checkbox:focus-visible,
+  .ui-radio:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+  .ui-checkbox:disabled,
+  .ui-radio:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+}
+
+/* 切换明暗期间暂停所有过渡（theme-provider 加上 theme-switching，两帧后移除） */
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
 }
 
 .glass {
@@ -124,8 +371,6 @@
 
 * {
   box-sizing: border-box;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
 }
 
 html {
@@ -217,20 +462,63 @@ html[data-window-active="false"] .status-heartbeat {
   }
 }
 
+/* 细滚动条常显：不设 scrollbar-width / scrollbar-color，
+   否则 Chromium（WebView2）会忽略下面的 ::-webkit-scrollbar 样式 */
 ::-webkit-scrollbar {
-  display: none;
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+  background-color: var(--border-strong);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-3);
 }
 
 *:focus-visible {
-  @apply outline-2 outline-blue-500 outline-offset-2;
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* 焦点框只给键盘用户（src/lib/inputModality.ts 在按导航键时给 <html> 加 data-keyboard）。
+   鼠标点过的按钮、页签不画主题色描边，也关掉 Tailwind 的 focus-visible:ring-*。
+   输入框 / 文本域聚焦时的主题色光晕不在这条规则里（它们点进去也算 :focus-visible），照常显示。 */
+html:not([data-keyboard])
+  :is(*:not(input, textarea, select, [contenteditable="true"])):focus-visible,
+html:not([data-keyboard]) button:focus,
+html:not([data-keyboard]) [role="tab"]:focus,
+html:not([data-keyboard]) [tabindex]:focus {
+  outline: none;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  --tw-ring-offset-shadow: 0 0 #0000 !important;
 }
 
 @layer utilities {
-  .scroll-overlay {
-    scrollbar-gutter: stable both-edges;
-    padding-right: 0.5rem;
-    margin-right: -0.5rem;
-    overflow-x: hidden;
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 滚动条常显且占 8px：主滚动区、大列表先把这条槽留出来，
+     内容高度跨过能否滚动的临界时整列不会左右横跳。
+     不用 scrollbar-gutter: stable：WKWebView（macOS）对自定义 ::-webkit-scrollbar 不留槽；
+     overflow-y: scroll 两边都留，轨道透明、不能滚时不画滑块，看起来和留槽一样。
+     这条排在 overflow-*-auto 之后，同权重时它生效。 */
+  .scroll-stable {
+    overflow-y: scroll;
   }
 
   .border-default {
