@@ -340,13 +340,13 @@
     },
     "unifyCodexHistory": {
       "title": "统一 Codex 会话历史",
-      "message": "开启后，官方订阅与第三方将共用同一个会话历史列表。注意：跨供应商继续旧会话时，可能因对方后端无法解密 encrypted_content 推理内容而失败。\n\n可选择同时把现有官方会话历史迁入共享列表（迁移前自动备份到 ~/.cc-switch/backups，关闭开关时可选择恢复）。",
+      "message": "开启后，Codex CLI 的 resume 列表会把官方订阅与第三方的会话合并显示（Codex 桌面版更新后已经可以显示全部会话，不受影响）。注意：跨供应商继续旧会话时，可能因对方后端无法解密 encrypted_content 推理内容而失败。\n\n可选择同时把现有官方会话历史迁入共享列表（迁移前自动备份到 ~/.cc-switch/backups，关闭开关时可选择恢复）。",
       "migrateExisting": "同时迁入现有官方会话历史",
       "confirm": "我已了解，继续开启"
     },
     "unifyCodexHistoryOff": {
       "title": "关闭统一会话历史",
-      "message": "关闭后，官方订阅与第三方将恢复各自独立的会话历史列表。开启期间产生的会话因无法区分来源，将留在第三方历史中，官方订阅将看不到它们。",
+      "message": "关闭后，Codex CLI 中官方订阅与第三方将恢复各自独立的会话列表（桌面版仍显示全部会话）。开启期间产生的会话因无法区分来源，将留在第三方历史中，CLI 在官方订阅下将看不到它们。",
       "restoreBackup": "把开启时迁入的官方会话还原回官方历史（按备份精确还原）",
       "confirm": "关闭"
     },
@@ -812,7 +812,7 @@
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
-    "unifyCodexSessionHistoryDescription": "开启后，官方订阅将以共享的 custom 供应商标识运行，官方与第三方会话出现在同一历史列表中，并可选择把现有官方会话一并迁入（迁移前自动备份）。关闭开关时可按备份恢复迁入的会话。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
+    "unifyCodexSessionHistoryDescription": "只影响 Codex CLI：CLI 的 resume 列表只显示当前供应商的会话，开启后官方订阅改以共享的 custom 供应商标识运行，官方与第三方会话出现在同一列表中。Codex 桌面版更新后已经可以显示全部会话，只用桌面版无需开启。可选择把现有官方会话一并迁入（迁移前自动备份），关闭时可按备份恢复。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
     "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
     "codexStackClassicSubagentsDescription": "Codex 聚合模式下，主 agent 和子 agent 用不同供应商的模型时，子 agent 可能读不到任务：Codex 新版的子 agent 工具会把任务交给主 agent 那家加密，换一家就解不开。打开后聚合的所有模型改用 Codex 经典的子 agent 工具，任务以明文传递；代价是没有 followup_task、interrupt_agent 等新版功能。只影响聚合模式，改完要重启 Codex 才生效",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 里打开了 [features] multi_agent_v2，它比这个开关优先，开关不会生效",

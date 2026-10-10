@@ -340,13 +340,13 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "When enabled, the official subscription and third-party providers share one session history list. Note: resuming an old session across providers may fail because its encrypted_content reasoning cannot be decrypted by another backend.\n\nYou can also migrate your existing official session history into the shared list (originals are backed up to ~/.cc-switch/backups first and can be restored when you turn this off).",
+      "message": "When enabled, the Codex CLI resume list shows official subscription and third-party sessions together (the Codex desktop app can show all sessions since a recent update and is unaffected). Note: resuming an old session across providers may fail because the other backend cannot decrypt its encrypted_content reasoning.\n\nYou can also migrate your existing official session history into the shared list (backed up to ~/.cc-switch/backups first; you can restore it when turning this off).",
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
     "unifyCodexHistoryOff": {
       "title": "Turn off unified session history",
-      "message": "After turning this off, the official subscription and third-party providers return to separate history lists. Sessions created while it was on cannot be attributed to a provider, so they stay in the third-party history and the official subscription will not see them.",
+      "message": "When turned off, the Codex CLI goes back to separate session lists for the official subscription and third-party providers (the desktop app still shows all sessions). Sessions created while this was on can't be told apart, so they stay in the third-party history and the CLI won't show them under the official subscription.",
       "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
       "confirm": "Turn off"
     },
@@ -812,7 +812,7 @@
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one history list, optionally migrating existing official sessions in (backed up first). When turning it off, the migrated sessions can be restored from backup. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistoryDescription": "Affects the Codex CLI only: its resume list shows only the current provider's sessions. When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one list. The Codex desktop app can show all sessions since a recent update, so desktop-only users don't need this. You can optionally migrate existing official sessions in (backed up first) and restore them from backup when turning it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "In Codex aggregation mode, a sub-agent whose model comes from a different provider than the main agent may not be able to read its task: the newer Codex sub-agent tools have the main agent's provider encrypt the task, and no other provider can decrypt it. When enabled, every aggregated model uses the classic Codex sub-agent tools, which pass the task as plain text; the trade-off is losing newer features such as followup_task and interrupt_agent. Only affects aggregation mode; restart Codex for the change to take effect.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
