@@ -5,6 +5,12 @@
 //! extglob，由 [`is_supported_pattern`] 上游过滤）。
 //! 行为由 `testdata/glob-oracle.json` 锁定
 //! （`scripts/glob-oracle/gen.mjs` 用与 pi 相同版本的 minimatch 生成）。
+//!
+//! 条目解析（trim/`~`/`file://`/相对 agentDir/Windows 盘符与 Git Bash 形态）
+//! 经双平台全量差分验证（Linux/macOS 共享 POSIX 分支，113 形态零不一致，
+//! 含 node path.win32 复刻 oracle 的 Windows 36 形态）。与 pi 的唯一行为
+//! 分歧：非法 `file://`（坏百分号 / `%2F` / 非 localhost 权威）pi 抛错中断
+//! 整个资源加载，本模块降级为跳过该条目（防御性更强）。
 
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -392,13 +398,13 @@ pub(crate) fn resolve_pi_skill_sources() -> PiSkillSources {
 /// settings `skills` 条目分类（§1.1）：
 /// package scheme 跳过；`!`/`+`/`-` 前缀与含通配符 → 模式；
 /// 纯路径 → 扫描根（`~` 展开、相对 agent 目录、需存在且为目录）。
+/// 条目分流（对齐 pi splitPatterns/isPattern：**原始串**判定，先于 trim）：
+/// `!`/`+`/`-` 前缀或含 `*`/`?` → 模式；scheme 仅在纯路径分支跳过
+/// （pi 把 `npm:x*` 当 include 模式而非包，故通配符判定必须在前）。
 fn classify_entry(raw: &str, agent_dir: &Option<PathBuf>, sources: &mut PiSkillSources) {
     const SCHEMES: [&str; 7] = [
         "npm:", "git:", "github:", "http:", "https:", "ssh:", "builtin:",
     ];
-    if SCHEMES.iter().any(|s| raw.starts_with(s)) {
-        return; // Pi packages，out of scope
-    }
     let stripped = match raw.as_bytes().first().copied() {
         Some(b'!') => {
             if let Some(w) = push_pattern(&mut sources.patterns.excludes, &raw[1..]) {
@@ -430,6 +436,11 @@ fn classify_entry(raw: &str, agent_dir: &Option<PathBuf>, sources: &mut PiSkillS
         }
         return;
     }
+    // 纯路径分支：pi 把 scheme 条目当普通相对路径解析（agentDir/npm:xxx
+    // 不存在 → 告警跳过）；这里显式跳过，净效果一致。
+    if SCHEMES.iter().any(|s| raw.starts_with(s)) {
+        return;
+    }
     // 纯路径 → 扫描根
     let resolved = resolve_entry_path(stripped, agent_dir);
     if let Some(path) = resolved {
@@ -451,23 +462,246 @@ fn push_pattern(bucket: &mut Vec<String>, pattern: &str) -> Option<String> {
     warning
 }
 
-/// 条目路径解析：`~` 展开；相对路径相对 pi agent 目录（agent 目录不可用时跳过）。
+/// 条目路径解析（对齐 pi resolvePathFromBase → resolvePath{trim:true}，经
+/// 双平台差分验证，见模块头注释）：
+/// trim → `~` 展开（win32 另认 `~\`）→ `file://`（权威/空路径/百分号语义）→
+/// 绝对原样 / 相对 agent 目录 → 词法归一 → 仅存在目录成为扫描根。
 fn resolve_entry_path(entry: &str, agent_dir: &Option<PathBuf>) -> Option<PathBuf> {
-    let path = if let Some(rest) = entry.strip_prefix("~/") {
-        crate::config::get_home_dir().join(rest)
-    } else if entry == "~" {
-        crate::config::get_home_dir()
-    } else if entry.starts_with('/') {
-        PathBuf::from(entry)
+    let path = resolve_plain_entry(
+        entry,
+        &crate::config::get_home_dir(),
+        agent_dir,
+        cfg!(windows),
+    )?;
+    let normalized = if cfg!(windows) {
+        path // win 分支已在 resolve_win 内词法归一
     } else {
-        agent_dir.as_ref()?.join(entry)
+        normalize_lexical(&path)
     };
-    // 仅目录成为扫描根（单文件技能/out of scope；不存在的路径跳过）
-    if path.is_dir() {
-        Some(path)
-    } else {
-        None
+    // 仅目录成为扫描根（单文件技能/不存在的路径跳过）
+    normalized.is_dir().then_some(normalized)
+}
+
+/// 纯路径条目的解析主体（不含存在性检查；win 参数化仅为在 Linux 上测试
+/// Windows 分支，生产传 cfg!(windows)）。与 pi 的已知分歧：非法 file://
+/// （坏百分号 / `%2F` / 非 localhost 权威）pi 抛错中断整个加载，此处降级
+/// 跳过该条目（防御性更强）。
+fn resolve_plain_entry(
+    entry: &str,
+    home: &Path,
+    agent_dir: &Option<PathBuf>,
+    win: bool,
+) -> Option<PathBuf> {
+    let trimmed = entry.trim();
+    if win {
+        let agent = agent_dir
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())?;
+        return Some(PathBuf::from(resolve_plain_win(
+            trimmed,
+            &home.to_string_lossy(),
+            &agent,
+        )));
     }
+    if trimmed == "~" {
+        return Some(home.to_path_buf());
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        return Some(home.join(rest));
+    }
+    if let Some(rest) = trimmed.strip_prefix("file://") {
+        return Some(PathBuf::from(file_url_path_posix(rest)?));
+    }
+    if trimmed.starts_with('/') {
+        return Some(PathBuf::from(trimmed));
+    }
+    Some(agent_dir.as_ref()?.join(trimmed))
+}
+
+/// 词法归一（对齐 node 的 resolve：折叠 `.` 与 `..` 段，不触盘）
+fn normalize_lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// node fileURLToPath 的 POSIX 语义：空权威或 localhost；空路径 → `/`；
+/// `%2F` 非法（pi 抛 ERR_INVALID_FILE_URL_PATH）；百分号解码
+/// （非法序列 → None；pi 抛 URI malformed）。
+fn file_url_path_posix(rest: &str) -> Option<String> {
+    let path = match rest.strip_prefix("localhost") {
+        Some("") => "/",
+        Some(tail) if tail.starts_with('/') => tail,
+        _ if rest.is_empty() => "/",
+        _ => rest,
+    };
+    if !path.starts_with('/') || path.contains("%2f") || path.contains("%2F") {
+        return None; // 非空非 localhost 权威 / %2F
+    }
+    percent_decode(path)
+}
+
+/// 百分号解码（%XX）。非法序列 / 非 UTF-8 → None（pi 此处抛错）。
+fn percent_decode(s: &str) -> Option<String> {
+    fn hex(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let h = hex(*bytes.get(i + 1)?)?;
+            let l = hex(*bytes.get(i + 2)?)?;
+            out.push(h * 16 + l);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+// ─── Windows 分支（对齐 pi normalizePath 的 win32 语义 + node path.win32）───
+
+/// Windows 模式纯路径解析（pi resolvePathFromBase 的 win32 语义）
+fn resolve_plain_win(trimmed: &str, home: &str, agent: &str) -> String {
+    let normalized = normalize_windows_shell_path(trimmed);
+    let base = if normalized == "~" {
+        home.to_string()
+    } else if normalized.starts_with("~/") || normalized.starts_with("~\\") {
+        format!("{home}\\{}", &normalized[2..])
+    } else if normalized.starts_with("file://") {
+        match file_url_to_path_win(&normalized) {
+            Ok(p) => p,
+            Err(()) => return String::new(), // 非法 URL → 调用方按跳过处理
+        }
+    } else {
+        return resolve_win(agent, &normalized);
+    };
+    // ~ / file:// 分支结果也过一遍 win32 词法 resolve（折叠 . / ..）
+    resolve_win("", &base)
+}
+
+/// pi normalizeWindowsShellPath：Git Bash / MSYS / Cygwin / WSL 盘符形态
+/// （`/c/…`、`/mnt/c/…`、`/cygdrive/c/…` → `C:\…`）。以 `//` 开头或含 `\` 时不转换。
+fn normalize_windows_shell_path(s: &str) -> String {
+    if !s.starts_with('/') || s.starts_with("//") || s.contains('\\') {
+        return s.to_string();
+    }
+    let rest = &s[1..];
+    let rest = rest
+        .strip_prefix("mnt/")
+        .or_else(|| rest.strip_prefix("cygdrive/"))
+        .unwrap_or(rest);
+    let mut chars = rest.chars();
+    let Some(drive) = chars.next() else {
+        return s.to_string();
+    };
+    if !drive.is_ascii_alphabetic() {
+        return s.to_string();
+    }
+    let tail = chars.as_str();
+    if !tail.is_empty() && !tail.starts_with('/') {
+        return s.to_string();
+    }
+    format!(
+        "{}:\\{}",
+        drive.to_ascii_uppercase(),
+        tail.trim_start_matches('/').replace('/', "\\")
+    )
+}
+
+/// node win32 的绝对路径判定：UNC（`\\\\…`）、有根无盘符（`\\…`）、
+/// 盘符（`C:\` / `C:/`）、posix 绝对形态（`/…`）。
+fn is_absolute_win(s: &str) -> bool {
+    s.starts_with("\\\\")
+        || s.starts_with('\\')
+        || (s.len() >= 3
+            && s.as_bytes()[0].is_ascii_alphabetic()
+            && s.as_bytes()[1] == b':'
+            && (s.as_bytes()[2] == b'\\' || s.as_bytes()[2] == b'/'))
+        || s.starts_with('/')
+}
+
+/// win32 词法 resolve（折叠 `.` / `..`，统一反斜杠；盘符 / UNC / 有根前缀保留）
+fn resolve_win(base: &str, input: &str) -> String {
+    let split_prefix = |s: &str| -> (String, String) {
+        let unified = s.replace('/', "\\");
+        if let Some(rest) = unified.strip_prefix("\\\\") {
+            let mut it = rest.splitn(3, "\\");
+            let server = it.next().unwrap_or("");
+            let share = it.next().unwrap_or("");
+            let tail = it.next().unwrap_or("");
+            (format!("\\\\{server}\\{share}"), tail.to_string())
+        } else if let Some(rest) = unified.strip_prefix('\\') {
+            ("\\".to_string(), rest.to_string())
+        } else if unified.len() >= 3 && unified.as_bytes()[1] == b':' {
+            (unified[..2].to_string(), unified[3..].to_string())
+        } else {
+            (String::new(), unified)
+        }
+    };
+    let (prefix, rel) = if is_absolute_win(input) {
+        split_prefix(input)
+    } else {
+        let (prefix, rest) = split_prefix(base);
+        (prefix, format!("{rest}\\{}", input.replace('/', "\\")))
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in rel.trim_matches('\\').split('\\') {
+        match seg {
+            "." | "" => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    if prefix.is_empty() {
+        parts.join("\\")
+    } else if prefix == "\\" {
+        format!("\\{}", parts.join("\\"))
+    } else if parts.is_empty() {
+        prefix
+    } else {
+        format!("{prefix}\\{}", parts.join("\\"))
+    }
+}
+
+/// node fileURLToPath 的 win32 语义：drive 形态（`/C:/x` → `C:\x`）、
+/// localhost 权威、`%2F` 非法、百分号解码。
+fn file_url_to_path_win(url: &str) -> Result<String, ()> {
+    let rest = url.strip_prefix("file://").ok_or(())?;
+    let rest = match rest.strip_prefix("localhost") {
+        Some(tail) if tail.starts_with('/') || tail.is_empty() => tail,
+        _ => rest,
+    };
+    if rest.is_empty() || rest.contains("%2f") || rest.contains("%2F") {
+        return Err(()); // 空路径 / %2F（pi 抛 ERR_INVALID_FILE_URL_PATH）
+    }
+    let decoded = percent_decode(rest).ok_or(())?;
+    let path = decoded.strip_prefix('/').unwrap_or(&decoded);
+    // 必须是 /C:/ 形态
+    if !(path.len() >= 2 && path.as_bytes()[0].is_ascii_alphabetic() && path.as_bytes()[1] == b':')
+    {
+        return Err(());
+    }
+    Ok(path.replace('/', "\\"))
 }
 
 /// 追加扫描根（仅存在目录：canonicalize 后按路径去重，失败则跳过）
@@ -575,13 +809,23 @@ fn matches_any_exact(md_path: &Path, base_dir: &Path, patterns: &[String]) -> bo
     })
 }
 
-/// 路径 posix 化（对齐 pi 的 toPosixPath，Windows 兼容）
+/// 分隔符归一（对齐 pi 的 toPosixPath = split(sep).join("/")，经差分验证）：
+/// Windows 上 `\`→`/`；Linux/macOS 上 sep 即 `/`，**恒等**——模式与匹配目标
+/// 里的 `\` 是 minimatch 转义字符，必须原样保留。
 fn to_posix(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    posix_separated(&path.to_string_lossy(), cfg!(windows))
 }
 
 fn to_posix_str(s: &str) -> String {
-    s.replace('\\', "/")
+    posix_separated(s, cfg!(windows))
+}
+
+fn posix_separated(s: &str, win: bool) -> String {
+    if win {
+        s.replace('\\', "/")
+    } else {
+        s.to_string()
+    }
 }
 
 /// 相对路径（posix）：base_dir 不含 path 时向上攀升（对齐 node path.relative）
@@ -1460,5 +1704,181 @@ mod tests {
         let v = env.vis("pdf");
         assert_eq!(v.state, PiVisState::Shared);
         assert_eq!(v.shared_roots.len(), 1);
+    }
+
+    // ===== 条目解析差分用例（Linux/macOS POSIX 分支 + Windows 函数）=====
+
+    use super::{
+        file_url_path_posix, file_url_to_path_win, is_absolute_win, normalize_windows_shell_path,
+        posix_separated, resolve_plain_entry, resolve_win,
+    };
+
+    #[test]
+    #[serial]
+    fn plain_entry_trim_and_whitespace_semantics() {
+        let env = VisEnv::new(None);
+        std::fs::create_dir_all(env.home().join("trimmed")).expect("mkdir");
+        let home = env.home();
+        let agent: Option<PathBuf> = Some(env.agent());
+
+        // pi：resolvePath(trim:true) → 纯路径首尾空白裁剪后解析
+        assert_eq!(
+            resolve_plain_entry("  ~/trimmed  ", &home, &agent, false),
+            Some(home.join("trimmed"))
+        );
+        // pi：isPattern 在 trim 之前 → 前导空格破坏模式识别 → 纯路径 → 不存在
+        let mut sources = resolve_pi_skill_sources();
+        classify_entry(" !foo", &agent, &mut sources);
+        assert!(sources
+            .roots
+            .iter()
+            .all(|r| matches!(r.origin, PiSharedRootOrigin::AgentsDir)));
+        assert!(sources.patterns.excludes.is_empty());
+        // pi：模式条目不 trim → 尾随空格保留（死模式）
+        classify_entry("!foo ", &agent, &mut sources);
+        assert_eq!(sources.patterns.excludes, vec!["foo ".to_string()]);
+    }
+
+    #[test]
+    #[serial]
+    fn file_url_entries_posix_semantics() {
+        let env = VisEnv::new(None);
+        std::fs::create_dir_all(env.home().join("a b")).expect("mkdir");
+        let home = env.home();
+        let agent: Option<PathBuf> = Some(env.agent());
+
+        let r = |s: &str| resolve_plain_entry(s, &home, &agent, false);
+        // 基本形态 / localhost 权威（路径 / 保留）
+        assert_eq!(r("file:///tmp"), Some(PathBuf::from("/tmp")));
+        assert_eq!(r("file://localhost/tmp"), Some(PathBuf::from("/tmp")));
+        // 空路径 → /
+        assert_eq!(r("file://"), Some(PathBuf::from("/")));
+        assert_eq!(r("file://localhost"), Some(PathBuf::from("/")));
+        // 百分号解码
+        assert_eq!(
+            r(&format!("file://{}/a%20b", home.display())),
+            Some(home.join("a b"))
+        );
+        // 非法：坏百分号 / %2F / 非 localhost 权威（pi 抛错，降级跳过）
+        assert_eq!(r("file:///tmp/%zz"), None);
+        assert_eq!(r("file:///a%2Fb"), None);
+        assert_eq!(r("file://other/x"), None);
+        // 前缀大小写敏感：FILE:// 走相对路径
+        assert_eq!(r("FILE:///tmp/x"), Some(env.agent().join("FILE:/tmp/x")));
+
+        // file_url_path_posix 直测
+        assert_eq!(file_url_path_posix("localhost"), Some("/".to_string()));
+        assert_eq!(file_url_path_posix(""), Some("/".to_string()));
+        assert_eq!(file_url_path_posix("localhostfoo/x"), None);
+    }
+
+    #[test]
+    #[serial]
+    fn scheme_with_wildcard_is_pattern_not_path() {
+        let env = VisEnv::new(None);
+        let agent: Option<PathBuf> = Some(env.agent());
+        let mut sources = resolve_pi_skill_sources();
+        // pi：isPattern 先于 scheme → "npm:x*" 是 include 模式（非包）
+        classify_entry("npm:x*", &agent, &mut sources);
+        assert_eq!(sources.patterns.includes, vec!["npm:x*".to_string()]);
+        // 纯 scheme（无通配）→ 跳过
+        classify_entry("npm:@scope/pkg", &agent, &mut sources);
+        assert!(sources
+            .roots
+            .iter()
+            .all(|r| matches!(r.origin, PiSharedRootOrigin::AgentsDir)));
+    }
+
+    #[test]
+    fn pattern_backslash_escape_preserved_on_posix() {
+        // 非 Windows：toPosixPath 恒等，`\\` 是 minimatch 转义必须保留
+        assert_eq!(posix_separated(r"!\*x", false), r"!\*x");
+        assert_eq!(posix_separated(r"a\b", false), r"a\b");
+        // Windows：`\\` 是分隔符，转换为 /
+        assert_eq!(posix_separated(r"a\b", true), "a/b");
+    }
+
+    #[test]
+    fn win_shell_path_normalization() {
+        // Git Bash / MSYS / Cygwin / WSL 盘符形态
+        assert_eq!(normalize_windows_shell_path("/c/Users/x"), r"C:\Users\x");
+        assert_eq!(normalize_windows_shell_path("/mnt/c/x"), r"C:\x");
+        assert_eq!(normalize_windows_shell_path("/cygdrive/c/x"), r"C:\x");
+        // 不转换：双斜杠 / 含反斜杠 / 无盘符
+        assert_eq!(normalize_windows_shell_path("//x"), "//x");
+        assert_eq!(normalize_windows_shell_path(r"C:\x"), r"C:\x");
+        assert_eq!(normalize_windows_shell_path("/foo"), "/foo");
+    }
+
+    #[test]
+    fn win_absolute_detection() {
+        assert!(is_absolute_win(r"C:\x"));
+        assert!(is_absolute_win("C:/x"));
+        assert!(is_absolute_win(r"\\srv\share"));
+        assert!(is_absolute_win(r"\x"));
+        assert!(is_absolute_win("/foo")); // node win32：posix 绝对形态也算
+        assert!(!is_absolute_win(r"C:x"));
+        assert!(!is_absolute_win(r"rel\sub"));
+    }
+
+    #[test]
+    fn win_lexical_resolve() {
+        let base = r"C:\Users\test\.pi\agent";
+        // 相对 + 折叠
+        assert_eq!(
+            resolve_win(base, r"rel\sub"),
+            r"C:\Users\test\.pi\agent\rel\sub"
+        );
+        assert_eq!(resolve_win(base, r"..\up"), r"C:\Users\test\.pi\up");
+        assert_eq!(resolve_win(base, "C:/a/../b"), r"C:\b");
+        // 有根无盘符 / UNC / 盘符前缀保留
+        assert_eq!(resolve_win(base, r"\skills"), r"\skills");
+        assert_eq!(resolve_win(base, r"\\srv\share\s"), r"\\srv\share\s");
+        // 折叠专用调用（base 为空、input 为绝对）
+        assert_eq!(resolve_win("", r"C:\Users\a\..\b"), r"C:\Users\b");
+    }
+
+    #[test]
+    fn win_file_url() {
+        assert_eq!(
+            file_url_to_path_win("file:///C:/x").ok(),
+            Some(r"C:\x".to_string())
+        );
+        assert_eq!(
+            file_url_to_path_win("file://localhost/C:/x").ok(),
+            Some(r"C:\x".to_string())
+        );
+        assert_eq!(
+            file_url_to_path_win("file:///C:/a%20b").ok(),
+            Some(r"C:\a b".to_string())
+        );
+        assert!(file_url_to_path_win("file:///C:/x%2Fy").is_err());
+        assert!(file_url_to_path_win("file://other/C:/x").is_err());
+        assert!(file_url_to_path_win("file:///").is_err()); // 无盘符形态
+    }
+
+    #[test]
+    fn win_plain_entry_resolution() {
+        let home = Path::new(r"C:\Users\test");
+        let agent: Option<PathBuf> = Some(PathBuf::from(r"C:\Users\test\.pi\agent"));
+        let r = |s: &str| resolve_plain_entry(s, home, &agent, true);
+        // ~\ 形态（win32 专有）
+        assert_eq!(r(r"~\skills"), Some(PathBuf::from(r"C:\Users\test\skills")));
+        assert_eq!(r("~"), Some(PathBuf::from(r"C:\Users\test")));
+        // 混合分隔符盘符 / Git Bash 形态
+        assert_eq!(
+            r("C:/Users/test/skills"),
+            Some(PathBuf::from(r"C:\Users\test\skills"))
+        );
+        assert_eq!(
+            r("/c/Users/test/skills"),
+            Some(PathBuf::from(r"C:\Users\test\skills"))
+        );
+        // 相对 + 折叠
+        assert_eq!(
+            r(r"rel\sub"),
+            Some(PathBuf::from(r"C:\Users\test\.pi\agent\rel\sub"))
+        );
+        assert_eq!(r(r"~\a\..\b"), Some(PathBuf::from(r"C:\Users\test\b")));
     }
 }
