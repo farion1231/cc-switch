@@ -2162,8 +2162,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
-      "deveco": "DevEco Code"
-,
+      "deveco": "DevEco Code",
       "label": "Filter by app"
     },
     "rawInputLabel": "Raw",

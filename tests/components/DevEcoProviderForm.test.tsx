@@ -1,8 +1,25 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import {
+  fireEvent,
+  render as rtlRender,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DevEcoProviderForm } from "@/components/providers/forms/DevEcoProviderForm";
 import { devecoProviderPresets } from "@/config/devEcoProviderPresets";
 import { mcodeProviderPresets } from "@/config/mcodeProviderPresets";
+import { createTestQueryClient } from "../utils/testQueryClient";
+
+// The OpenCode-style fields read model metadata through react-query, so every
+// render needs a client — same wrapper the Mcode sibling test uses.
+const render = (ui: ReactElement) =>
+  rtlRender(
+    <QueryClientProvider client={createTestQueryClient()}>
+      {ui}
+    </QueryClientProvider>,
+  );
 
 vi.mock("@/components/JsonEditor", () => ({
   default: ({

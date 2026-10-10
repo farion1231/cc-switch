@@ -129,8 +129,7 @@ pub struct ToolVersion {
 }
 
 const VALID_TOOLS: [&str; 10] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode",
-    "deveco",
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "deveco",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]

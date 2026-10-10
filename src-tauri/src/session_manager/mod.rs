@@ -11,9 +11,7 @@ use std::time::Instant;
 
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
-use providers::{
-    claude, codex, deveco, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi,
-};
+use providers::{claude, codex, deveco, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
