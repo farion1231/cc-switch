@@ -925,13 +925,22 @@ fn build_tool_action_line(
         // ① WSL 工具(override 是 UNC `\\wsl$\<distro>\...`):锚定的绝对路径是 Windows
         //    主机路径,跨 wsl.exe 进入 distro 文件系统后无效;且 enumerate 不参与 WSL。
         //    install 走 POSIX 安装优先级,update 走 POSIX 静态/官方 update 命令,
-        //    再通过 wsl.exe -d distro -- sh 包一层。
+        //    再通过 wsl.exe 调用选定的 Linux shell。
         //    **必须用 wsl_tool_action_shell_command 而非 tool_action_shell_command**:
         //    后者在 Windows target 给 hermes 返回 PowerShell installer,且 Windows batch
         //    语义也不适合跨 wsl.exe;这里统一替换为 POSIX 版安装/更新命令。
         if let Some(distro) = wsl_distro_for_tool(tool) {
             let command = wsl_tool_action_shell_command(tool, action)
                 .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?;
+            if tool == "claude" && matches!(action, ToolLifecycleAction::Update) {
+                return build_wsl_tool_action_line_with_exec(
+                    &distro,
+                    &command,
+                    wsl_shell,
+                    wsl_shell_flag,
+                    true,
+                );
+            }
             return build_wsl_tool_action_line(&distro, &command, wsl_shell, wsl_shell_flag);
         }
         // ② Windows 原生 update 锚定;install 走静态(install.sh 是 bash 脚本,Windows
@@ -996,6 +1005,17 @@ fn build_wsl_tool_action_line(
     force_shell: Option<&str>,
     force_shell_flag: Option<&str>,
 ) -> Result<String, String> {
+    build_wsl_tool_action_line_with_exec(distro, command, force_shell, force_shell_flag, false)
+}
+
+#[cfg(target_os = "windows")]
+fn build_wsl_tool_action_line_with_exec(
+    distro: &str,
+    command: &str,
+    force_shell: Option<&str>,
+    force_shell_flag: Option<&str>,
+    execute_directly: bool,
+) -> Result<String, String> {
     if !is_valid_wsl_distro_name(distro) {
         return Err(format!("Invalid WSL distro name: {distro}"));
     }
@@ -1016,8 +1036,12 @@ fn build_wsl_tool_action_line(
         default_flag_for_shell(shell)
     };
 
+    // --exec avoids a second parse by the distro's default shell, which would
+    // expand variables in the Claude source probe before the chosen shell runs.
+    // Keep legacy invocation for other tool actions until they have coverage.
+    let execution = if execute_directly { "--exec" } else { "--" };
     Ok(format!(
-        "wsl.exe -d {distro} -- {shell} {flag} {}",
+        "wsl.exe -d {distro} {execution} {shell} {flag} {}",
         windows_cmd_double_quote_arg(command)
     ))
 }
@@ -7502,13 +7526,14 @@ mkdir -p "$tools" "$readlink_bin" "$fail_bin" "$decoder_fail_bin"
 for utility in sh base64 mkdir dirname cp chmod ln rm cat; do
   ln -s "$(command -v "$utility")" "$tools/$utility"
 done
-ln -s "$(command -v readlink)" "$tools/actual-readlink"
+printf '%s\n' "$(command -v readlink)" > "$tools/readlink-path"
 cat > "$tools/readlink" <<'READLINK_PROXY'
 #!/bin/sh
 if [ -n "${CC_SWITCH_TEST_READLINK_TRACE-}" ]; then
   printf 'arg|%s\n' "$@" >> "$CC_SWITCH_TEST_READLINK_TRACE"
 fi
-exec "${0%/*}/actual-readlink" "$@"
+IFS= read -r native_readlink < "${0%/*}/readlink-path" || exit 1
+exec "$native_readlink" "$@"
 READLINK_PROXY
 cat > "$tools/claude-template" <<'CLAUDE'
 #!/bin/sh
@@ -7738,10 +7763,19 @@ fi"#
                     wsl_tool_action_shell_command("claude", ToolLifecycleAction::Update),
                     Some(command.clone())
                 );
-                let line =
-                    build_wsl_tool_action_line("Ubuntu", &command, Some("fish"), None).unwrap();
-                assert!(line.starts_with("wsl.exe -d Ubuntu -- fish -lc "));
+                let line = build_wsl_tool_action_line_with_exec(
+                    "Ubuntu",
+                    &command,
+                    Some("fish"),
+                    None,
+                    true,
+                )
+                .unwrap();
+                assert!(line.starts_with("wsl.exe -d Ubuntu --exec fish -lc "));
                 assert!(!line.contains("call "), "{line}");
+                let legacy =
+                    build_wsl_tool_action_line("Ubuntu", &command, Some("fish"), None).unwrap();
+                assert!(legacy.starts_with("wsl.exe -d Ubuntu -- fish -lc "));
             }
         }
 
@@ -7817,8 +7851,14 @@ fi"#
                     shell_single_quote(&readlink_trace),
                     wsl_claude_update_command()
                 );
-                let line = build_wsl_tool_action_line(distro, &payload, Some("sh"), Some("-c"))
-                    .expect("fixture should build the production WSL batch line");
+                let line = build_wsl_tool_action_line_with_exec(
+                    distro,
+                    &payload,
+                    Some("sh"),
+                    Some("-c"),
+                    true,
+                )
+                .expect("fixture should build the production WSL batch line");
                 assert!(!line.contains("call "), "{line}");
                 std::fs::write(
                     &bat,
@@ -7861,8 +7901,11 @@ fi"#
                 assert_eq!(
                     output.status.code(),
                     Some(expected_status),
-                    "batch/WSL exit code: {}",
-                    String::from_utf8_lossy(&output.stderr)
+                    "batch/WSL exit code: {}; stdout: {}; readlink argv: {}; trace error: {}",
+                    String::from_utf8_lossy(&output.stderr),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&trace.stdout),
+                    String::from_utf8_lossy(&trace.stderr)
                 );
                 assert_eq!(
                     String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
