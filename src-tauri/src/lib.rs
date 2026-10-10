@@ -1664,6 +1664,9 @@ pub fn run() {
             commands::stream_check_provider,
             // Session manager
             commands::list_sessions,
+            commands::sync_session_index,
+            commands::search_session_content,
+            commands::clear_session_index,
             commands::get_session_messages,
             commands::stream_session_messages,
             commands::get_session_block_content,

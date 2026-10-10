@@ -10,6 +10,7 @@ import {
   effectiveBlocks,
   estimateRowHeight,
   FAILURE_PREVIEW_LINES,
+  findMatchPositionForMessage,
   findMatchRowIndex,
   findSearchHits,
   findTurnRowIndex,
@@ -583,6 +584,35 @@ describe("搜索", () => {
     expect(merged).toBeDefined();
     // 合并步骤的子步骤命中 → 父步骤也要展开
     expect(hits!.stepIds.has(merged!.id)).toBe(true);
+  });
+
+  it("findMatchPositionForMessage 把正文命中的消息换算成查找序号", () => {
+    const turns = buildTurns(
+      [
+        msg("user", [text("ask needle")], { turnId: "t1" }),
+        msg("assistant", [text("note needle"), call("c")], { turnId: "t1" }),
+        msg("tool", [result("c")], { turnId: "t1" }),
+        msg("assistant", [text("final needle")], { turnId: "t1" }),
+        msg("user", [text("second")], { turnId: "t2" }),
+        msg("assistant", [text("answer needle")], { turnId: "t2" }),
+      ],
+      { style: AGENT_READER_STYLES.codex },
+    );
+    const hits = findSearchHits(turns, "needle")!;
+    expect(hits.matches.map((m) => m.target)).toEqual([
+      "question",
+      "step",
+      "final",
+      "final",
+    ]);
+    expect(findMatchPositionForMessage(turns, hits, 0)).toBe(1);
+    expect(findMatchPositionForMessage(turns, hits, 1)).toBe(2);
+    expect(findMatchPositionForMessage(turns, hits, 3)).toBe(3);
+    expect(findMatchPositionForMessage(turns, hits, 5)).toBe(4);
+    // 这条消息本身没有命中：退回同一轮的第一个命中
+    expect(findMatchPositionForMessage(turns, hits, 4)).toBe(4);
+    // 超出范围：第 1 个
+    expect(findMatchPositionForMessage(turns, hits, 99)).toBe(1);
   });
 
   it("stepSearchText 覆盖每种步骤", () => {

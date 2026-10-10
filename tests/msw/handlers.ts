@@ -12,6 +12,7 @@ import {
   getProviders,
   listProviders,
   listSessions,
+  searchSessionContent,
   resetProviderState,
   setCurrentProviderId,
   updateProvider,
@@ -145,6 +146,25 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/open_external`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/list_sessions`, () => success(listSessions())),
+
+  http.post(`${TAURI_ENDPOINT}/sync_session_index`, () => {
+    const total = listSessions().length;
+    return success({ running: false, processed: total, total });
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/search_session_content`, async ({ request }) => {
+    const { query, providerIds } = await withJson<{
+      query: string;
+      providerIds?: string[];
+    }>(request);
+    const total = listSessions().length;
+    return success({
+      hits: searchSessionContent(query, providerIds),
+      status: { running: false, processed: total, total },
+    });
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/clear_session_index`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/get_session_messages`, async ({ request }) => {
     const { providerId, sourcePath } = await withJson<{

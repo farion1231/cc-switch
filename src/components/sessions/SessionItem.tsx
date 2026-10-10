@@ -12,7 +12,7 @@ import {
 import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph } from "@/components/shell/AppGlyph";
 import { cn } from "@/lib/utils";
-import type { SessionMeta } from "@/types";
+import type { SessionContentHit, SessionMeta } from "@/types";
 import {
   canDeleteSession,
   formatRelativeTime,
@@ -30,6 +30,29 @@ const rowIconButton =
 
 export const sessionMenuItemClass = "h-8 rounded-control px-2.5 text-body";
 
+/** 会话行高；正文命中的第 2、3 条摘录列在行下方，每条一行 */
+const SESSION_ROW_HEIGHT = 56;
+const EXTRA_SNIPPET_HEIGHT = 20;
+const EXTRA_SNIPPETS_PADDING = 6;
+
+const extraSnippetsOf = (
+  contentHit: SessionContentHit | undefined,
+  selectionMode: boolean,
+) => (selectionMode ? [] : (contentHit?.snippets.slice(1) ?? []));
+
+/** 虚拟列表用：与 SessionItem 实际渲染的高度一致 */
+export const getSessionRowHeight = (
+  contentHit: SessionContentHit | undefined,
+  selectionMode: boolean,
+) => {
+  const extras = extraSnippetsOf(contentHit, selectionMode).length;
+  return extras
+    ? SESSION_ROW_HEIGHT +
+        extras * EXTRA_SNIPPET_HEIGHT +
+        EXTRA_SNIPPETS_PADDING
+    : SESSION_ROW_HEIGHT;
+};
+
 interface SessionItemProps {
   session: SessionMeta;
   /** 选了「全部应用」时行首显示应用图标 */
@@ -39,6 +62,10 @@ interface SessionItemProps {
   selectionMode: boolean;
   isChecked: boolean;
   searchQuery?: string;
+  /** 正文搜索命中：第二行改显示最相关的摘录，其余摘录列在行下方 */
+  contentHit?: SessionContentHit;
+  /** 点行下方的摘录：打开会话并跳到那条消息 */
+  onOpenAt?: (messageIndex: number) => void;
   /** 一键恢复用的终端名；为空表示这个平台不能一键恢复 */
   launchTerminal: string | null;
   bordered: boolean;
@@ -60,6 +87,8 @@ export function SessionItem({
   selectionMode,
   isChecked,
   searchQuery,
+  contentHit,
+  onOpenAt,
   launchTerminal,
   bordered,
   openButtonId,
@@ -81,6 +110,8 @@ export function SessionItem({
   const title = formatSessionTitle(session);
   const untitled = !session.title && !session.projectDir;
   const lastText = getSessionLastText(session);
+  const snippet = contentHit?.snippets[0]?.text;
+  const extraSnippets = extraSnippetsOf(contentHit, selectionMode);
   const archived = isArchivedSession(session);
   const deletable = canDeleteSession(session);
   const blocked = selectionMode && !deletable;
@@ -89,12 +120,13 @@ export function SessionItem({
   const dirName = session.projectDir
     ? getBaseName(session.projectDir)
     : t("sessionManager.unknownDirectory", { defaultValue: "未知目录" });
-  const hasMeta = showDir || Boolean(lastText) || archived || blocked;
+  const hasMeta =
+    showDir || Boolean(snippet || lastText) || archived || blocked;
   const appId = isSessionAppId(session.providerId) ? session.providerId : null;
 
   const tip = [
     title,
-    lastText,
+    snippet ?? lastText,
     t("sessionManager.rowTimes", {
       defaultValue: "最近活跃 {{last}} · 创建 {{created}}",
       last: formatShortDateTime(lastActive) || "-",
@@ -110,7 +142,7 @@ export function SessionItem({
       })
     : null;
 
-  return (
+  const row = (
     <div
       className={cn(
         "group relative flex h-14 items-center gap-2.5 bg-surface pe-3 ps-4 transition-colors hover:bg-subtle focus-within:bg-subtle",
@@ -198,20 +230,34 @@ export function SessionItem({
               <>
                 <Folder className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
                 <span className="shrink-0">{dirName}</span>
-                {lastText && (
+                {(snippet || lastText) && (
                   <span aria-hidden="true" className="shrink-0">
                     ·
                   </span>
                 )}
               </>
             )}
-            {lastText && (
+            {snippet ? (
               <span className="min-w-0 truncate">
-                {t("sessionManager.lastPrefix", {
-                  defaultValue: "最后：{{text}}",
-                  text: lastText,
+                {t("sessionManager.contentHitPrefix", {
+                  defaultValue: "正文：",
                 })}
+                {searchQuery ? highlightText(snippet, searchQuery) : snippet}
+                {contentHit.matchCount > 1 &&
+                  t("sessionManager.contentHitMore", {
+                    defaultValue: "（{{count}} 条消息命中）",
+                    count: contentHit.matchCount,
+                  })}
               </span>
+            ) : (
+              lastText && (
+                <span className="min-w-0 truncate">
+                  {t("sessionManager.lastPrefix", {
+                    defaultValue: "最后：{{text}}",
+                    text: lastText,
+                  })}
+                </span>
+              )
             )}
             {archived && (
               <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-border-strong px-1.5 text-badge text-fg-2">
@@ -348,6 +394,35 @@ export function SessionItem({
           </div>
         )}
       </div>
+    </div>
+  );
+
+  if (extraSnippets.length === 0) return row;
+  return (
+    <div className="bg-surface">
+      {row}
+      <ul
+        aria-label={t("sessionManager.moreContentHits", {
+          defaultValue: "更多正文命中",
+        })}
+        className={cn(
+          "m-0 list-none pb-1.5 pe-3",
+          showAppIcon ? "ps-[66px]" : "ps-[42px]",
+        )}
+      >
+        {extraSnippets.map((item) => (
+          <li key={item.messageIndex}>
+            <button
+              type="button"
+              title={item.text}
+              onClick={() => onOpenAt?.(item.messageIndex)}
+              className="block h-5 w-full truncate rounded-control text-left text-caption text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {searchQuery ? highlightText(item.text, searchQuery) : item.text}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

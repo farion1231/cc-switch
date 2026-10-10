@@ -397,6 +397,8 @@ export interface Settings {
   usageDashboardRefreshIntervalMs?: number;
   // 会话用量自动扫描开关（默认开启=自动模式；关闭后仅手动同步时扫描会话日志，代理记账不受影响）
   sessionAutoSyncEnabled?: boolean;
+  // 会话页搜索消息正文（默认开启；在本地建 session-index.db 索引，关闭时删除索引）
+  sessionContentSearchEnabled?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header
@@ -498,6 +500,35 @@ export interface Settings {
       migratedStateRows?: number;
     };
   };
+}
+
+/** 一条命中消息的摘录 */
+export interface SessionContentSnippet {
+  /** 摘录所在消息在会话里的序号 */
+  messageIndex: number;
+  /** 命中词附近的纯文本，空白已压缩 */
+  text: string;
+}
+
+/** 会话正文搜索的命中（search_session_content）：最多 3 条摘录，第一条最相关 */
+export interface SessionContentHit {
+  providerId: string;
+  sourcePath: string;
+  snippets: SessionContentSnippet[];
+  /** 命中的消息条数 */
+  matchCount: number;
+}
+
+/** 正文索引的进度；running 为 false 且 processed === total 时索引已是最新 */
+export interface SessionIndexStatus {
+  running: boolean;
+  processed: number;
+  total: number;
+}
+
+export interface SessionContentSearchResult {
+  hits: SessionContentHit[];
+  status: SessionIndexStatus;
 }
 
 export interface SessionMeta {
