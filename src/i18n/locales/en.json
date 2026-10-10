@@ -2080,6 +2080,26 @@
     "regionLabel": "Region"
   },
   "usage": {
+    "countLabel": {
+      "requests": "Requests",
+      "hermesApiCalls": "Aggregate API calls",
+      "mixedActivity": "Counted activity"
+    },
+    "averageCostLabel": {
+      "perRequest": "Average Cost",
+      "perApiCall": "Average cost per API call",
+      "perActivity": "Average cost per counted activity"
+    },
+    "hermes": {
+      "mainTask": "Main task",
+      "precisionNotice": "The count is a delta of Hermes's cumulative api_call_count; it is not an exact physical HTTP request, retry, or fallback count.",
+      "syncWindowNotice": "Trend timestamps mark synchronization windows rather than exact request times.",
+      "profile": "Profile",
+      "profilePlaceholder": "All Profiles",
+      "task": "Task",
+      "taskPlaceholder": "All Tasks",
+      "aggregateOnlyNotice": "This Hermes source contains cumulative usage counters, not individual request records. Request status and latency are unavailable."
+    },
     "title": "Usage Statistics",
     "subtitle": "View AI model usage and cost statistics",
     "today": "24 Hours",

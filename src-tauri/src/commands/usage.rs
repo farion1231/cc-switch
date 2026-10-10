@@ -20,6 +20,7 @@ where
 }
 
 /// 获取使用量汇总
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn get_usage_summary(
     state: State<'_, AppState>,
@@ -28,14 +29,18 @@ pub async fn get_usage_summary(
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    profile_name: Option<String>,
+    task: Option<String>,
 ) -> Result<UsageSummary, AppError> {
     run_db_query(&state, move |db| {
-        db.get_usage_summary(
+        db.get_usage_summary_with_hermes_filters(
             start_date,
             end_date,
             app_type.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
         )
     })
     .await
@@ -62,19 +67,24 @@ pub async fn get_usage_summary_by_app(
     end_date: Option<i64>,
     provider_name: Option<String>,
     model: Option<String>,
+    profile_name: Option<String>,
+    task: Option<String>,
 ) -> Result<Vec<UsageSummaryByApp>, AppError> {
     run_db_query(&state, move |db| {
-        db.get_usage_summary_by_app(
+        db.get_usage_summary_by_app_with_hermes_filters(
             start_date,
             end_date,
             provider_name.as_deref(),
             model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
         )
     })
     .await
 }
 
 /// 获取每日趋势
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn get_usage_trends(
     state: State<'_, AppState>,
@@ -83,14 +93,18 @@ pub async fn get_usage_trends(
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    profile_name: Option<String>,
+    task: Option<String>,
 ) -> Result<Vec<DailyStats>, AppError> {
     run_db_query(&state, move |db| {
-        db.get_daily_trends(
+        db.get_daily_trends_with_hermes_filters(
             start_date,
             end_date,
             app_type.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
         )
     })
     .await
@@ -103,18 +117,23 @@ pub async fn get_usage_first_date(
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    profile_name: Option<String>,
+    task: Option<String>,
 ) -> Result<Option<String>, AppError> {
     run_db_query(&state, move |db| {
-        db.get_first_usage_date(
+        db.get_first_usage_date_with_hermes_filters(
             app_type.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
         )
     })
     .await
 }
 
 /// 获取 Provider 统计
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn get_provider_stats(
     state: State<'_, AppState>,
@@ -123,20 +142,25 @@ pub async fn get_provider_stats(
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    profile_name: Option<String>,
+    task: Option<String>,
 ) -> Result<Vec<ProviderStats>, AppError> {
     run_db_query(&state, move |db| {
-        db.get_provider_stats(
+        db.get_provider_stats_with_hermes_filters(
             start_date,
             end_date,
             app_type.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
         )
     })
     .await
 }
 
 /// 获取模型统计
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn get_model_stats(
     state: State<'_, AppState>,
@@ -145,14 +169,18 @@ pub async fn get_model_stats(
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    profile_name: Option<String>,
+    task: Option<String>,
 ) -> Result<Vec<ModelStats>, AppError> {
     run_db_query(&state, move |db| {
-        db.get_model_stats(
+        db.get_model_stats_with_hermes_filters(
             start_date,
             end_date,
             app_type.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            profile_name.as_deref(),
+            task.as_deref(),
         )
     })
     .await
@@ -366,6 +394,14 @@ pub fn get_usage_data_sources(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::services::session_usage::DataSourceSummary>, AppError> {
     crate::services::session_usage::get_data_source_breakdown(&state.db)
+}
+
+/// 获取 Hermes 聚合统计的 Profile/task 维度及精度说明
+#[tauri::command]
+pub fn get_hermes_usage_metadata(
+    state: State<'_, AppState>,
+) -> Result<HermesUsageMetadata, AppError> {
+    state.db.get_hermes_usage_metadata()
 }
 
 #[cfg(test)]

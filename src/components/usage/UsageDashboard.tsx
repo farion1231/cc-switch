@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Database,
   Loader2,
+  Info,
   RefreshCw,
 } from "lucide-react";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
@@ -37,6 +38,8 @@ import {
   useModelStats,
   useProviderStats,
   useSessionUsageLastSync,
+  useHermesUsageMetadata,
+  useUsageSummaryByApp,
 } from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import { usageApi } from "@/lib/api/usage";
@@ -165,6 +168,8 @@ export function UsageDashboard({
     undefined,
   );
   const [model, setModel] = useState<string | undefined>(undefined);
+  const [profileName, setProfileName] = useState<string | undefined>();
+  const [task, setTask] = useState<string | undefined>();
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
   const [tab, setTab] = useState<UsageTab>("logs");
   // 没有用量时也能进定价页：新装的人往往先配好 models.dev 同步再开始用
@@ -198,6 +203,8 @@ export function UsageDashboard({
     setAppType(initialAppType);
     setProviderName(undefined);
     setModel(undefined);
+    setProfileName(undefined);
+    setTask(undefined);
   }, [initialAppType]);
 
   // 切应用时清掉下游筛选，避免留下一个在新范围内查无数据的"幽灵"组合；
@@ -207,6 +214,8 @@ export function UsageDashboard({
     if (next !== appType) {
       setProviderName(undefined);
       setModel(undefined);
+      setProfileName(undefined);
+      setTask(undefined);
     }
   };
   const changeProviderName = (next: string | undefined) => {
@@ -215,6 +224,25 @@ export function UsageDashboard({
       setModel(undefined);
     }
   };
+
+  const { data: hermesMetadata } = useHermesUsageMetadata(appType === "hermes");
+  useEffect(() => {
+    if (appType !== "hermes") {
+      setProfileName(undefined);
+      setTask(undefined);
+      return;
+    }
+    if (profileName != null && !hermesMetadata?.profiles.includes(profileName))
+      setProfileName(undefined);
+    if (task != null && !hermesMetadata?.tasks.includes(task))
+      setTask(undefined);
+  }, [
+    appType,
+    hermesMetadata?.profiles,
+    hermesMetadata?.tasks,
+    profileName,
+    task,
+  ]);
 
   // 后端写入新日志时 emit `usage-log-recorded`，立刻 invalidate 所有 usage 查询
   useUsageEventBridge();
@@ -314,12 +342,12 @@ export function UsageDashboard({
   };
   const { data: providerOptionsData } = useProviderStats(
     range,
-    { appType },
+    { appType, profileName, task },
     refetch,
   );
   const { data: modelOptionsData } = useModelStats(
     range,
-    { appType, providerName },
+    { appType, providerName, profileName, task },
     refetch,
   );
   // 有没有任何用量（不分时间范围）：一条都没有时显示空状态
@@ -328,7 +356,19 @@ export function UsageDashboard({
     queryFn: () => usageApi.getUsageSummary(),
     refetchInterval: refetch.refetchInterval,
   });
-  const isEmpty = allTimeSummary != null && allTimeSummary.totalRequests === 0;
+  const isEmpty =
+    appType !== "hermes" &&
+    allTimeSummary != null &&
+    allTimeSummary.totalRequests === 0;
+  const { data: summaryByApp } = useUsageSummaryByApp(
+    range,
+    { providerName, model, profileName, task },
+    refetch,
+  );
+  const showHermesPrecisionNotice =
+    appType === "hermes" ||
+    (appType === "all" &&
+      summaryByApp?.some((app) => app.appType === "hermes") === true);
 
   const providerOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -611,6 +651,86 @@ export function UsageDashboard({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+      {appType === "hermes" && (
+        <>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="neutral"
+                size="regular"
+                className="max-w-[156px] shrink gap-1 pe-2 ps-3"
+                aria-label={t("usage.hermes.profile")}
+              >
+                <span className="min-w-0 truncate">
+                  {profileName ?? t("usage.hermes.profilePlaceholder")}
+                </span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-2" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className={menuContentClass}>
+              <DropdownMenuItem
+                className={menuItemClass}
+                onSelect={() => setProfileName(undefined)}
+              >
+                <MenuCheck checked={profileName == null} />
+                {t("usage.hermes.profilePlaceholder")}
+              </DropdownMenuItem>
+              {(hermesMetadata?.profiles ?? []).map((name) => (
+                <DropdownMenuItem
+                  key={name}
+                  className={menuItemClass}
+                  onSelect={() => setProfileName(name)}
+                >
+                  <MenuCheck checked={profileName === name} />
+                  <span className="min-w-0 truncate" title={name}>
+                    {name}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="neutral"
+                size="regular"
+                className="max-w-[156px] shrink gap-1 pe-2 ps-3"
+                aria-label={t("usage.hermes.task")}
+              >
+                <span className="min-w-0 truncate">
+                  {task === ""
+                    ? t("usage.hermes.mainTask")
+                    : (task ?? t("usage.hermes.taskPlaceholder"))}
+                </span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-2" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className={menuContentClass}>
+              <DropdownMenuItem
+                className={menuItemClass}
+                onSelect={() => setTask(undefined)}
+              >
+                <MenuCheck checked={task == null} />
+                {t("usage.hermes.taskPlaceholder")}
+              </DropdownMenuItem>
+              {(hermesMetadata?.tasks ?? []).map((name) => (
+                <DropdownMenuItem
+                  key={name}
+                  className={menuItemClass}
+                  onSelect={() => setTask(name)}
+                >
+                  <MenuCheck checked={task === name} />
+                  <span className="min-w-0 truncate" title={name}>
+                    {name === "" ? t("usage.hermes.mainTask") : name}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
+      )}
       <UsageDateRangePicker
         selection={range}
         triggerLabel={rangeLabel}
@@ -632,7 +752,7 @@ export function UsageDashboard({
       : `${t("usage.statusCode")} ${statusCode}`;
 
   const tabTrailing =
-    tab === "logs" ? (
+    tab === "logs" && appType !== "hermes" ? (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -694,23 +814,30 @@ export function UsageDashboard({
         id="usage-tabpanel"
         aria-labelledby={`usage-tab-${tab}`}
       >
-        {tab === "logs" && (
-          <RequestLogTable
-            range={range}
-            appType={appType}
-            providerName={providerName}
-            model={model}
-            statusCode={statusCode}
-            refreshIntervalMs={refreshIntervalMs}
-            onOpenDetail={setDetailRequestId}
-          />
-        )}
+        {tab === "logs" &&
+          (appType === "hermes" ? (
+            <div className="rounded-panel border border-border bg-surface p-4 text-caption text-fg-2">
+              {t("usage.hermes.aggregateOnlyNotice")}
+            </div>
+          ) : (
+            <RequestLogTable
+              range={range}
+              appType={appType}
+              providerName={providerName}
+              model={model}
+              statusCode={statusCode}
+              refreshIntervalMs={refreshIntervalMs}
+              onOpenDetail={setDetailRequestId}
+            />
+          ))}
         {tab === "providers" && (
           <ProviderStatsTable
             range={range}
             appType={appType}
             providerName={providerName}
             model={model}
+            profileName={profileName}
+            task={task}
             refreshIntervalMs={refreshIntervalMs}
           />
         )}
@@ -720,6 +847,8 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
+            profileName={profileName}
+            task={task}
             refreshIntervalMs={refreshIntervalMs}
           />
         )}
@@ -785,16 +914,34 @@ export function UsageDashboard({
           appType={scopedAppType}
           providerName={providerName}
           model={model}
+          profileName={profileName}
+          task={task}
           refreshIntervalMs={refreshIntervalMs}
           compact={compact}
         />
 
+        {showHermesPrecisionNotice && (
+          <div
+            role="note"
+            data-testid="hermes-precision-notice"
+            title={hermesMetadata?.explanation}
+            className="flex items-start gap-2 rounded-panel border border-border bg-subtle px-3 py-2 text-caption text-fg-2"
+          >
+            <Info className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p>{t("usage.hermes.precisionNotice")}</p>
+              <p>{t("usage.hermes.syncWindowNotice")}</p>
+            </div>
+          </div>
+        )}
         {/* 「全部」看长期分布用热力图；24 小时到 30 天这类短范围用柱状图 */}
         {range.preset === "all" ? (
           <UsageHeatmap
             appType={appType}
             providerName={providerName}
             model={model}
+            profileName={profileName}
+            task={task}
             refreshIntervalMs={refreshIntervalMs}
           />
         ) : (
@@ -804,6 +951,8 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
+            profileName={profileName}
+            task={task}
             refreshIntervalMs={refreshIntervalMs}
           />
         )}

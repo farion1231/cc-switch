@@ -2080,6 +2080,26 @@
     "regionLabel": "地区"
   },
   "usage": {
+    "countLabel": {
+      "requests": "请求数",
+      "hermesApiCalls": "聚合 API 调用数",
+      "mixedActivity": "计数活动"
+    },
+    "averageCostLabel": {
+      "perRequest": "平均成本",
+      "perApiCall": "平均每次 API 调用成本",
+      "perActivity": "平均每次计数活动成本"
+    },
+    "hermes": {
+      "mainTask": "主任务",
+      "precisionNotice": "计数是 Hermes 累计 api_call_count 的差值，并不等同于精确的物理 HTTP 请求、重试或回退次数。",
+      "syncWindowNotice": "趋势时间点表示同步窗口，而不是精确的请求时间。",
+      "profile": "Profile",
+      "profilePlaceholder": "全部 Profile",
+      "task": "任务",
+      "taskPlaceholder": "全部任务",
+      "aggregateOnlyNotice": "此 Hermes 数据源是累计用量计数，不含逐次请求记录；请求状态与延迟不可用。"
+    },
     "title": "使用统计",
     "subtitle": "查看 AI 模型的使用情况和成本统计",
     "today": "24小时",

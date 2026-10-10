@@ -1660,6 +1660,7 @@ pub fn run() {
             commands::rebuild_codex_usage,
             commands::get_session_usage_last_sync,
             commands::get_usage_data_sources,
+            commands::get_hermes_usage_metadata,
             // Stream health check
             commands::stream_check_provider,
             // Session manager
