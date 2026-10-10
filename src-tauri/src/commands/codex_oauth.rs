@@ -91,6 +91,7 @@ async fn query_codex_oauth_quota_for(
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_codex_oauth_models(
     account_id: Option<String>,
+    provider_meta: Option<crate::provider::ProviderMeta>,
     state: State<'_, CodexOAuthState>,
 ) -> Result<Vec<FetchedModel>, String> {
     let manager = &state.0;
@@ -115,5 +116,7 @@ pub async fn get_codex_oauth_models(
         .await
         .map_err(|e| e.to_string())?;
 
-    crate::services::codex_oauth_models::fetch_models_with_token(&token, &chatgpt_account_id).await
+    let meta = provider_meta.unwrap_or_default();
+    crate::services::codex_oauth_models::fetch_models_with_token(&token, &chatgpt_account_id, &meta)
+        .await
 }

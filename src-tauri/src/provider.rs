@@ -613,6 +613,20 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub stack_models: Option<Vec<ClaudeStackModel>>,
+    /// Codex OAuth 客户端版本号。用于 ChatGPT 后端 API 的模型 cohort 路由，
+    /// 不同版本可访问的模型目录不同。未设置时使用默认值 "0.159.0"。
+    #[serde(
+        rename = "codexOauthClientVersion",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub codex_oauth_client_version: Option<String>,
+    /// Codex config.toml 的 model_provider 值。未设置时默认 "custom"。
+    /// 同时作为 `[model_providers.<id>]` 的节名，与 model_provider 保持一致。
+    #[serde(
+        rename = "codexModelProviderId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub codex_model_provider_id: Option<String>,
 }
 
 /// Stack 模式下 Claude Code 供应商发布的一个模型。
@@ -909,13 +923,19 @@ impl UniversalProvider {
         };
 
         // 生成 Codex 的 config.toml 内容
+        // model_provider 从 meta 读取，默认 "custom"；节名与 model_provider 保持一致
+        let model_provider_id = self
+            .meta
+            .as_ref()
+            .and_then(|m| m.codex_model_provider_id.clone())
+            .unwrap_or_else(|| "custom".to_string());
         let config_toml = format!(
-            r#"model_provider = "custom"
+            r#"model_provider = "{model_provider_id}"
 model = "{model}"
 model_reasoning_effort = "{reasoning_effort}"
 disable_response_storage = true
 
-[model_providers.custom]
+[model_providers.{model_provider_id}]
 name = "NewAPI"
 base_url = "{codex_base_url}"
 wire_api = "responses"

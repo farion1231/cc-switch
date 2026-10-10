@@ -203,6 +203,8 @@ export interface DirectoryInputProps {
   onChange: (value?: string) => void;
   onBrowse: () => Promise<void>;
   onReset: () => Promise<void>;
+  /** 失焦回调，用于刷新待执行的防抖保存 */
+  onBlur?: () => void;
 }
 
 export function DirectoryInput({
@@ -214,6 +216,7 @@ export function DirectoryInput({
   onChange,
   onBrowse,
   onReset,
+  onBlur,
 }: DirectoryInputProps) {
   const { t } = useTranslation();
   const displayValue = useMemo(
@@ -239,6 +242,7 @@ export function DirectoryInput({
           placeholder={placeholder}
           className="text-xs"
           onChange={(event) => onChange(event.target.value)}
+          onBlur={onBlur}
         />
         <HoverTip content={t("settings.browseDirectory")}>
           <Button

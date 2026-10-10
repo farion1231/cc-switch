@@ -1,5 +1,7 @@
 import type { UsageData } from "@/types";
 
+export type UsageDisplayMode = "remaining" | "used" | "both";
+
 interface UsageSummaryLabels {
   invalid: string;
   remaining: string;
@@ -48,6 +50,7 @@ function formatUsed(
 export function formatUsageDataSummary(
   data: UsageData,
   labels: UsageSummaryLabels,
+  mode: UsageDisplayMode = "remaining",
 ): string {
   const planPrefix = data.planName ? `[${data.planName}] ` : "";
 
@@ -55,13 +58,23 @@ export function formatUsageDataSummary(
     return `${planPrefix}${data.invalidMessage || labels.invalid}`;
   }
 
-  const parts = [
-    formatUsed(data, labels),
-    isNumber(data.remaining)
+  const showUsed = mode === "used" || mode === "both";
+  const showRemaining = mode === "remaining" || mode === "both";
+
+  const remainingPart =
+    showRemaining && isNumber(data.remaining)
       ? `${labels.remaining} ${formatValue(data.remaining, data.unit)}`
-      : null,
-    data.extra || null,
-  ].filter((part): part is string => Boolean(part));
+      : null;
+
+  const usedPart = showUsed ? formatUsed(data, labels) : null;
+
+  // 向后兼容：remaining 模式下如果没有 remaining 数据，回退到显示 used
+  const fallbackUsed =
+    mode === "remaining" && remainingPart === null ? formatUsed(data, labels) : null;
+
+  const parts = [usedPart || fallbackUsed, remainingPart, data.extra || null].filter(
+    (part): part is string => Boolean(part),
+  );
 
   return `${planPrefix}${parts.join(" / ") || labels.invalid}`;
 }

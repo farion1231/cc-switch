@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -46,6 +46,7 @@ export interface UseSettingsResult {
   autoSaveSettings: (
     updates: Partial<SettingsFormState>,
   ) => Promise<SaveResult | null>;
+  flushAutoSaveSettings: () => boolean;
   resetSettings: () => void;
   acknowledgeRestart: () => void;
 }
@@ -185,9 +186,17 @@ export function useSettings(): UseSettingsResult {
     [t],
   );
 
-  // 即时保存设置（用于 General 标签页的实时更新）
-  // 保存基础配置 + 独立的系统 API 调用（开机自启）
-  const autoSaveSettings = useCallback(
+  // 防抖定时器 ref，用于避免目录路径编辑时每改一个字符就触发保存
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 暂存待执行的 autoSave 参数与 promise 回调，供 flush 立即保存使用
+  const autoSavePendingRef = useRef<{
+    updates: Partial<SettingsFormState>;
+    resolve: (value: SaveResult | null) => void;
+    reject: (reason: unknown) => void;
+  } | null>(null);
+
+  // 实际执行即时保存的内部函数（从原 autoSaveSettings 提取）
+  const executeAutoSave = useCallback(
     async (updates: Partial<SettingsFormState>): Promise<SaveResult | null> => {
       const mergedSettings = settings ? { ...settings, ...updates } : null;
       if (!mergedSettings) return null;
@@ -316,6 +325,49 @@ export function useSettings(): UseSettingsResult {
     },
     [data, queryClient, saveMutation, settings, syncClaudePluginIfChanged, t],
   );
+
+  // 即时保存设置（用于 General 标签页的实时更新）
+  // 保存基础配置 + 独立的系统 API 调用（开机自启）
+  // 使用 300ms 防抖，避免目录路径编辑时每改一个字符就触发保存
+  const autoSaveSettings = useCallback(
+    (updates: Partial<SettingsFormState>): Promise<SaveResult | null> => {
+      return new Promise<SaveResult | null>((resolve, reject) => {
+        // 清除旧定时器，以最后一次调用为准
+        if (autoSaveTimerRef.current !== null) {
+          clearTimeout(autoSaveTimerRef.current);
+        }
+        // 暂存最新的更新参数与 promise 回调
+        autoSavePendingRef.current = { updates, resolve, reject };
+        // 设置防抖定时器
+        autoSaveTimerRef.current = setTimeout(async () => {
+          autoSaveTimerRef.current = null;
+          const pending = autoSavePendingRef.current;
+          autoSavePendingRef.current = null;
+          if (!pending) return;
+          try {
+            const result = await executeAutoSave(pending.updates);
+            pending.resolve(result);
+          } catch (error) {
+            pending.reject(error);
+          }
+        }, 300);
+      });
+    },
+    [executeAutoSave],
+  );
+
+  // 立即刷新待执行的 autoSave（用于失焦等场景）
+  const flushAutoSaveSettings = useCallback((): boolean => {
+    if (autoSaveTimerRef.current === null || autoSavePendingRef.current === null) {
+      return false;
+    }
+    clearTimeout(autoSaveTimerRef.current);
+    const pending = autoSavePendingRef.current;
+    autoSaveTimerRef.current = null;
+    autoSavePendingRef.current = null;
+    executeAutoSave(pending.updates).then(pending.resolve).catch(pending.reject);
+    return true;
+  }, [executeAutoSave]);
 
   // 完整保存设置（用于 Advanced 标签页的手动保存）
   // 包含所有系统 API 调用和完整的验证流程
@@ -534,6 +586,7 @@ export function useSettings(): UseSettingsResult {
     resetAppConfigDir,
     saveSettings,
     autoSaveSettings,
+    flushAutoSaveSettings,
     resetSettings,
     acknowledgeRestart,
   };

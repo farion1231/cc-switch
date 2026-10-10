@@ -296,6 +296,11 @@ export function RequestLogTable({
           {unpriced ? t("usage.unpriced") : fmtUsd(log.totalCostUsd, 4)}
         </td>
         <td
+          className={cn(usageTable.tdEnd, firstToken == null && usageTable.muted)}
+        >
+          {firstToken == null ? "—" : `${(firstToken / 1000).toFixed(1)}s`}
+        </td>
+        <td
           className={cn(usageTable.tdEnd, tps == null && usageTable.muted)}
           title={timingTip}
         >
@@ -333,6 +338,7 @@ export function RequestLogTable({
               <th className={usageTable.thEnd}>{t("usage.outputTokens")}</th>
               <th className={usageTable.thEnd}>{t("usage.cacheReadTokens")}</th>
               <th className={usageTable.thEnd}>{t("usage.cost")}</th>
+              <th className={usageTable.thEnd}>{t("usage.firstToken")}</th>
               <th className={usageTable.thEnd}>
                 <span className="inline-flex items-center gap-0.5">
                   {t("usage.speed")}
@@ -346,7 +352,7 @@ export function RequestLogTable({
           <tbody>
             {logs.length === 0 ? (
               <tr>
-                <td colSpan={9} className={usageTable.empty}>
+                <td colSpan={10} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>

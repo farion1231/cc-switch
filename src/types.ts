@@ -239,6 +239,12 @@ export interface ProviderMeta {
   githubAccountId?: string;
   // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
   stackModels?: ClaudeStackModel[];
+  // Codex OAuth 客户端版本号。用于 ChatGPT 后端 API 的模型 cohort 路由，
+  // 不同版本可访问的模型目录不同。未设置时使用默认值 "0.159.0"。
+  codexOauthClientVersion?: string;
+  // Codex config.toml 的 model_provider 值。未设置时默认 "custom"。
+  // 同时作为 [model_providers.<id>] 的节名，与 model_provider 保持一致。
+  codexModelProviderId?: string;
 }
 
 // Stack 模式下 Claude Code 供应商发布的一个模型
@@ -427,6 +433,8 @@ export interface Settings {
   autoSyncConfirmed?: boolean;
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
+  // 用量显示模式：remaining（默认，显示剩余百分比）、used（显示已使用百分比）、both（同时显示）
+  usageDisplayMode?: "remaining" | "used" | "both";
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "zh-TW" | "ja";
 

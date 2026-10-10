@@ -375,7 +375,7 @@ fn exclusive_of(provider: &Provider, projection: &CodexProjection) -> Vec<(Strin
     let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
     if codex_disables_web_search(
         &provider.settings_config,
-        &projection.catalog_input_text(),
+        &projection.catalog_input_text(provider.meta.as_ref()),
         profile,
     ) {
         exclusive.retain(|(key, _)| key != "web_search");
@@ -629,7 +629,7 @@ pub(crate) fn plan(
         (None, Some(provider), Some(projection)) => {
             plan_codex_model_catalog(
                 &provider.settings_config,
-                &projection.catalog_input_text(),
+                &projection.catalog_input_text(provider.meta.as_ref()),
                 crate::proxy::providers::resolve_codex_catalog_tool_profile(provider),
             )?
             .catalog
@@ -731,7 +731,7 @@ fn stack_catalog(
         );
         return Ok(None);
     }
-    let route_text = projection.catalog_input_text();
+    let route_text = projection.catalog_input_text(route.meta.as_ref());
     let route_row = if is_official(route) {
         // 写了目录之后 Codex 只认文件里的模型：拿不到官方行时不能写出只有 Stack 模型的目录。
         match prepared.native.as_ref().and_then(NativeRows::rows) {
@@ -761,7 +761,7 @@ fn stack_catalog(
         .filter_map(|member| match project(&member.provider) {
             Ok(projection) => Some((
                 member,
-                projection.catalog_input_text(),
+                projection.catalog_input_text(member.provider.meta.as_ref()),
                 crate::proxy::providers::resolve_codex_catalog_tool_profile(&member.provider),
             )),
             Err(error) => {

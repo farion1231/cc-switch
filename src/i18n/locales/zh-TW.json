@@ -4230,6 +4230,9 @@
     "usedUp": "已用完",
     "balance": "餘額 {{value}}",
     "balanceUsedUp": "餘額已用完",
+    "usedPercent": "已使用 {{percent}}%",
+    "usedAndRemainingPercent": "已使用 {{usedPercent}}% / 剩餘 {{remainingPercent}}%",
+    "usedValueAndRemaining": "已用 {{usedValue}} / 剩餘 {{remainingValue}}",
     "planExpired": "方案已過期",
     "failed": "額度沒查到",
     "reason": {

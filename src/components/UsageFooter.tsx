@@ -18,6 +18,8 @@ import {
   tierLine,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
+import { useSettings } from "@/hooks/useSettings";
+import type { UsageDisplayMode } from "@/utils/usageDisplay";
 
 interface UsageFooterProps {
   provider: Provider;
@@ -59,6 +61,7 @@ function planLine(
   t: TFunction,
   data: UsageData,
   index: number,
+  mode: UsageDisplayMode = "remaining",
 ): QuotaLine | null {
   const key = `${index}-${data.planName ?? ""}`;
   const amount = (value: number) =>
@@ -75,6 +78,100 @@ function planLine(
   if (data.isValid === false) {
     return expiredLine(t, data.invalidMessage || detail || undefined, key);
   }
+
+  const total =
+    typeof data.total === "number" && data.total > 0 && data.total !== -1
+      ? data.total
+      : null;
+  const usedPercent =
+    total !== null && data.used !== undefined
+      ? Math.round((data.used / total) * 100)
+      : null;
+
+  // mode === "used"：优先显示已使用
+  if (mode === "used") {
+    if (usedPercent !== null) {
+      return {
+        key,
+        left: 100 - usedPercent,
+        tone: "plain",
+        text: t("quota.usedPercent", { percent: usedPercent }),
+        detail: detail || undefined,
+      };
+    }
+    if (data.used !== undefined) {
+      return {
+        key,
+        left: Infinity,
+        tone: "plain",
+        text: `${t("usage.used")} ${amount(data.used)}`,
+        detail: detail || undefined,
+      };
+    }
+    return null;
+  }
+
+  // mode === "both"：同时显示已使用和剩余
+  if (mode === "both") {
+    if (usedPercent !== null && data.remaining !== undefined && total !== null) {
+      const remainingPercent = Math.round(
+        (data.remaining / total) * 100,
+      );
+      return {
+        key,
+        left: remainingPercent,
+        tone: "plain",
+        text: t("quota.usedAndRemainingPercent", {
+          usedPercent,
+          remainingPercent,
+        }),
+        detail: detail || undefined,
+      };
+    }
+    if (data.used !== undefined && data.remaining !== undefined) {
+      return {
+        key,
+        left: Infinity,
+        tone: "plain",
+        text: t("quota.usedValueAndRemaining", {
+          usedValue: amount(data.used),
+          remainingValue: amount(data.remaining),
+        }),
+        detail: detail || undefined,
+      };
+    }
+    // 回退：只有其中一个
+    if (usedPercent !== null) {
+      return {
+        key,
+        left: 100 - usedPercent,
+        tone: "plain",
+        text: t("quota.usedPercent", { percent: usedPercent }),
+        detail: detail || undefined,
+      };
+    }
+    if (data.remaining !== undefined) {
+      return balanceLine(t, {
+        key,
+        remaining: data.remaining,
+        total: total,
+        unit: data.unit,
+        detail: detail || undefined,
+      });
+    }
+    if (data.used !== undefined) {
+      return {
+        key,
+        left: Infinity,
+        tone: "plain",
+        text: `${t("usage.used")} ${amount(data.used)}`,
+        detail: detail || undefined,
+      };
+    }
+    return null;
+  }
+
+  // mode === "remaining"（默认）：保持现有行为
   if (data.remaining !== undefined) {
     return balanceLine(t, {
       key,
@@ -106,6 +203,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   inline = false,
 }) => {
   const { t } = useTranslation();
+  const { settings: appSettings } = useSettings();
+  const displayMode = appSettings?.usageDisplayMode ?? "remaining";
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
 
@@ -204,7 +303,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   }
 
   const lines = usageDataList
-    .map((data, index) => planLine(t, data, index))
+    .map((data, index) => planLine(t, data, index, displayMode))
     .filter((line): line is QuotaLine => line !== null);
   if (lines.length === 0) return null;
 
@@ -224,7 +323,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
       className="mt-3"
       title={t("usage.planUsage")}
       rows={usageDataList.flatMap((data, index) => {
-        const line = planLine(t, data, index);
+        const line = planLine(t, data, index, displayMode);
         return line
           ? [
               {

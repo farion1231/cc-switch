@@ -549,7 +549,7 @@ pub fn codex_stack_upstream_rejects_web_search(
             official: false,
             proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
         })
-        .map(|projection| projection.catalog_input_text());
+        .map(|projection| projection.catalog_input_text(provider.meta.as_ref()));
     let config_text = match &projected {
         Ok(text) => text.as_str(),
         Err(_) => provider
@@ -1272,7 +1272,7 @@ wire_api = "responses"
                 proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
             })
             .unwrap();
-            let config = projection.catalog_input_text();
+            let config = projection.catalog_input_text(provider.meta.as_ref());
             let parsed: TomlValue = toml::from_str(&config).unwrap();
             assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
             let route = &parsed["model_providers"]["custom"];
