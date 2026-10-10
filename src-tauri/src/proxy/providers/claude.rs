@@ -310,14 +310,11 @@ fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
     changed
 }
 
-fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: &Value) -> bool {
-    if body
-        .get("model")
-        .and_then(|m| m.as_str())
-        .is_some_and(is_reasoning_vendor_identifier)
-    {
-        return true;
-    }
+fn reasoning_content_policy_for_openai_chat(
+    provider: &Provider,
+    body: &Value,
+) -> super::transform::ReasoningContentPolicy {
+    use super::transform::ReasoningContentPolicy;
 
     let settings = &provider.settings_config;
     let base_urls = [
@@ -330,10 +327,37 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
         settings.get("apiEndpoint").and_then(|v| v.as_str()),
     ];
 
-    base_urls
+    // 聚合 / 托管网关不认厂商私有的 `reasoning_content`，把CC Switch 补的占位当成
+    // 非法参数 → `400 Invalid request parameters`（issue #7608）。注意必须先看平台：
+    // 走网关的厂商模型（如 opencode.ai 上的 mimo-v2.6-flash）也要保留下方的 model hint
+    // 命中「需要回放」。
+    //
+    // 这里只关掉**占位注入**，不回放真实 thinking：请求历史里由 Claude 真实产出、并经
+    // 响应侧回灌的thinking 是跨轮推理上下文的一部分，与工具调用成对出现；若连它一起
+    // 丢弃，工具调用照发但配套推理消失，比占位更糟。语义与 Codex Responses→Chat 路径
+    // （`should_inject_tool_call_reasoning_placeholder` 只门控末端占位回填）对称。
+    if super::codex::platform_is_aggregator_gateway(&provider.name, base_urls.into_iter().flatten())
+    {
+        return ReasoningContentPolicy::GATEWAY;
+    }
+
+    if body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .is_some_and(is_reasoning_vendor_identifier)
+    {
+        return ReasoningContentPolicy::VENDOR;
+    }
+
+    if base_urls
         .into_iter()
         .flatten()
         .any(is_reasoning_vendor_identifier)
+    {
+        return ReasoningContentPolicy::VENDOR;
+    }
+
+    ReasoningContentPolicy::NONE
 }
 
 pub fn transform_claude_request_for_api_format(
@@ -422,11 +446,11 @@ pub fn transform_claude_request_for_api_format(
             Ok(result)
         }
         "openai_chat" => {
-            let preserve_reasoning_content =
-                should_preserve_reasoning_content_for_openai_chat(provider, &body);
+            let reasoning_content_policy =
+                reasoning_content_policy_for_openai_chat(provider, &body);
             let mut result = super::transform::anthropic_to_openai_with_reasoning_content(
                 body,
-                preserve_reasoning_content,
+                reasoning_content_policy,
             )?;
             // Inject prompt_cache_key only if explicitly configured in meta
             if let Some(key) = provider
@@ -2309,6 +2333,165 @@ mod tests {
         let msg = &transformed["messages"][0];
         assert_eq!(msg["reasoning_content"], "I should call the tool.");
         assert!(msg.get("tool_calls").is_some());
+    }
+
+    /// 聚合网关（issue #7608）经完整 Claude 调用链：只禁**虚构占位**，真实 thinking 必须回放。
+    ///
+    /// 回归防护：此前这里对网关整体返回 `preserve_reasoning_content = false`，导致
+    /// 工具续轮中「工具调用照发、配套推理被静默丢弃」。
+    #[test]
+    fn test_transform_openai_chat_aggregator_gateway_replays_real_reasoning() {
+        for base_url in [
+            "https://opencode.ai/zen/v1",
+            "https://api.siliconflow.cn/v1",
+            "https://api.modelscope.cn/v1",
+            "https://openrouter.ai/api/v1",
+        ] {
+            let provider = create_provider_with_meta(
+                json!({
+                    "env": {
+                        "ANTHROPIC_BASE_URL": base_url,
+                        "ANTHROPIC_API_KEY": "test-key"
+                    }
+                }),
+                ProviderMeta {
+                    api_format: Some("openai_chat".to_string()),
+                    ..Default::default()
+                },
+            );
+            let body = json!({
+                "model": "mimo-v2.6-flash",
+                "max_tokens": 64,
+                "messages": [{
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "I should call the tool."},
+                        {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                    ]
+                }]
+            });
+
+            let transformed =
+                transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                    .unwrap();
+
+            let msg = &transformed["messages"][0];
+            assert_eq!(
+                msg["reasoning_content"], "I should call the tool.",
+                "gateway {base_url} must replay genuine thinking"
+            );
+            assert!(msg.get("tool_calls").is_some());
+        }
+    }
+
+    /// 聚合网关 + 裸 tool_use（无真实推理）→ 不补占位，避免 `400 Invalid request parameters`。
+    #[test]
+    fn test_transform_openai_chat_aggregator_gateway_skips_placeholder_for_bare_tool_use() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "mimo-v2.6-flash",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert!(
+            msg.get("reasoning_content").is_none(),
+            "gateway must not receive an invented placeholder"
+        );
+        assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    /// `redacted_thinking` 密文不可恢复→ 属纯占位，网关必须跳过。
+    #[test]
+    fn test_transform_openai_chat_aggregator_gateway_skips_redacted_thinking_placeholder() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "mimo-v2.6-flash",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "redacted_thinking", "data": "opaque"},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert!(msg.get("reasoning_content").is_none());
+        assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    /// 平台优先于model hint：走网关的厂商模型归GATEWAY 策略（回放 + 不补占位），
+    /// 而不是被 model 名命中成 VENDOR（会补占位 → 网关 400）。
+    #[test]
+    fn test_transform_openai_chat_gateway_takes_priority_over_vendor_model_hint() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert!(transformed["messages"][0]
+            .get("reasoning_content")
+            .is_none());
     }
 
     #[test]

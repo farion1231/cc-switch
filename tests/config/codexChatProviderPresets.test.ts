@@ -115,6 +115,8 @@ const expectedChatPresets = new Map<
         "deepseek-v4-pro": 1048576,
         "deepseek-v4-flash": 1048576,
         "mimo-v2.5-pro": 1048576,
+        "mimo-v2.6-flash": 1048576,
+        "mimo-v2.6-pro": 1048576,
       },
     },
   ],
@@ -392,6 +394,11 @@ describe("Codex Chat provider presets", () => {
       "deepseek-v4-pro": ["high", "max"],
       "deepseek-v4-flash": ["low", "high", "max"],
       "mimo-v2.5-pro": null,
+      // models.dev 2026-10-04：opencode-go 的 MiMo V2.6 两档 reasoning_options
+      // 为空（网关未暴露 effort 档位）→ 不声明 reasoningLevels，代理查表为
+      // None 时完全不发 reasoning_effort。
+      "mimo-v2.6-flash": null,
+      "mimo-v2.6-pro": null,
     });
   });
 });

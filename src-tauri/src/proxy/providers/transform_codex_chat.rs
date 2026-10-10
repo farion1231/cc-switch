@@ -10,7 +10,7 @@ use super::codex_chat_common::{
 };
 use super::codex_compaction;
 use super::inline_think::split_leading_think_block;
-use crate::provider::CodexChatReasoningConfig;
+use crate::provider::{CodexChatReasoningConfig, Provider};
 use crate::proxy::{
     error::ProxyError,
     json_canonical::{
@@ -264,14 +264,19 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 #[allow(dead_code)]
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
-    responses_to_chat_completions_with_reasoning(body, None)
+    responses_to_chat_completions_with_reasoning(body, None, None)
 }
 
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request,
 /// using provider-declared Codex Chat reasoning capabilities when available.
+///
+/// `provider` 仅用于按平台身份裁剪非标准字段（见
+/// `should_inject_tool_call_reasoning_placeholder`）；拿不到（如单测直接调用本函数）
+/// 时回落到「保持既有行为」，保证既有调用者的产出不被静默改变。
 pub fn responses_to_chat_completions_with_reasoning(
     body: Value,
     reasoning_config: Option<&CodexChatReasoningConfig>,
+    provider: Option<&Provider>,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
@@ -292,7 +297,7 @@ pub fn responses_to_chat_completions_with_reasoning(
     }
 
     if let Some(input) = body.get("input") {
-        append_responses_input_as_chat_messages(input, &mut messages, &tool_context)?;
+        append_responses_input_as_chat_messages(input, &mut messages, &tool_context, provider)?;
     }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
@@ -613,6 +618,7 @@ fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
     tool_context: &CodexToolContext,
+    provider: Option<&Provider>,
 ) -> Result<(), ProxyError> {
     let mut pending_tool_calls = Vec::new();
     let mut pending_media = Vec::new();
@@ -673,7 +679,7 @@ fn append_responses_input_as_chat_messages(
         last_assistant_index,
         &mut pending_reasoning,
     );
-    backfill_tool_call_reasoning_placeholders(messages);
+    backfill_tool_call_reasoning_placeholders(messages, provider);
     Ok(())
 }
 
@@ -1160,11 +1166,30 @@ fn attach_pending_reasoning_to_assistant(
     }
 }
 
+/// 是否允许给带 `tool_calls` 的 assistant 消息补 `reasoning_content` 占位。
+///
+/// 聚合 / 托管网关（OpenRouter / SiliconFlow / ModelScope / OpenCode Zen，见
+/// `codex::is_aggregator_gateway`）自己做 OpenAI 兼容层，只认平台定义的请求方言，
+/// 厂商私有的 `reasoning_content` 会被判为非法参数 →
+/// `400 Invalid request parameters`（issue #7608：OpenCode-Go + mimo-v2.6-flash）。
+/// Codex 会话每轮都会回填 tool-call 历史，所以第二轮起必现。
+///
+/// 只在「确实是聚合网关」时关闭回填；其余场景一律保持既有行为，避免给直连厂商引入
+/// 新的 `reasoning_content is missing` 故障。`provider` 为 None（拿不到供应商信息）
+/// 时同样按既有行为处理。
+fn should_inject_tool_call_reasoning_placeholder(provider: Option<&Provider>) -> bool {
+    !provider.is_some_and(super::codex::is_aggregator_gateway)
+}
+
 /// 在所有 input 处理完毕后，对仍缺 `reasoning_content` 的 assistant tool-call 消息补占位。
 /// 必须作为管线末端的最终兜底执行：真实 reasoning 可能以尾随 `reasoning` item 的形式经
 /// `attach_pending_reasoning_to_previous_assistant` 回填，过早注入占位会被
 /// `append_reasoning_content` 追加而污染真实思考。
-fn backfill_tool_call_reasoning_placeholders(messages: &mut [Value]) {
+fn backfill_tool_call_reasoning_placeholders(messages: &mut [Value], provider: Option<&Provider>) {
+    // 聚合网关不认这个厂商私有字段（issue #7608），整段跳过，避免 400。
+    if !should_inject_tool_call_reasoning_placeholder(provider) {
+        return;
+    }
     for message in messages.iter_mut() {
         let is_assistant_tool_call = message.get("role").and_then(|value| value.as_str())
             == Some("assistant")
@@ -2766,7 +2791,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert_eq!(result["reasoning_effort"], "max");
@@ -2834,7 +2860,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "max"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "xhigh");
         assert!(result.get("reasoning_effort").is_none());
@@ -2849,7 +2876,7 @@ mod tests {
             "reasoning": {"effort": "high"}
         });
         let result_high =
-            responses_to_chat_completions_with_reasoning(input_high, Some(&config)).unwrap();
+            responses_to_chat_completions_with_reasoning(input_high, Some(&config), None).unwrap();
         assert_eq!(result_high["reasoning"]["effort"], "high");
         assert!(result_high.get("reasoning_effort").is_none());
     }
@@ -2874,7 +2901,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "none");
         // none 不是 OpenAI 顶层 reasoning_effort 的合法枚举，不写顶层别名；也不写 thinking。
@@ -2902,7 +2930,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         // thinking 关闭信号照发；但不写 reasoning_effort，也不写原生 reasoning 对象。
         assert_eq!(result["thinking"]["type"], "disabled");
@@ -2941,7 +2970,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -2983,7 +3012,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -3012,7 +3041,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
             assert_eq!(result["reasoning_effort"], "max", "effort={input_effort}");
         }
     }
@@ -3036,7 +3065,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "medium"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert!(result.get("reasoning_effort").is_none());
         assert!(result.get("thinking").is_none());
@@ -3059,7 +3089,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert!(result.get("reasoning_effort").is_none());
@@ -3082,7 +3113,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["enable_thinking"], true);
         assert!(result.get("reasoning_effort").is_none());
@@ -3533,6 +3565,7 @@ mod tests {
     fn responses_request_to_chat_injects_placeholder_reasoning_for_bare_tool_call() {
         // 历史恢复 miss 时，带 tool_calls 的 assistant 消息没有任何可用 reasoning，
         // 必须补占位，否则 kimi/Moonshot thinking 模型会拒绝整个请求。
+        // 直连厂商不在聚合网关排除范围内 → 回填保持不变（issue #7608 只收紧网关）。
         let input = json!({
             "model": "kimi-k2-thinking",
             "input": [
@@ -3550,13 +3583,196 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let provider = codex_provider("Kimi", json!({ "base_url": "https://api.moonshot.cn/v1" }));
+        let result =
+            responses_to_chat_completions_with_reasoning(input, None, Some(&provider)).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
         assert_eq!(messages[0]["reasoning_content"], "tool call");
         assert_eq!(messages[1]["role"], "tool");
+    }
+
+    fn codex_provider(name: &str, settings_config: Value) -> Provider {
+        Provider {
+            id: "test-codex".to_string(),
+            name: name.to_string(),
+            settings_config,
+            website_url: None,
+            category: Some("third_party".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    /// OpenCode Go 预设的真实形态：base_url 只存在于 `config` TOML 里，
+    /// `settings_config` 没有直写的 base_url 字段——平台判定必须能从 TOML 提取。
+    fn opencode_go_provider() -> Provider {
+        codex_provider(
+            "OpenCode Go",
+            json!({
+                "config": concat!(
+                    "model_provider = \"custom\"\n",
+                    "model = \"glm-5.3\"\n",
+                    "\n",
+                    "[model_providers.custom]\n",
+                    "name = \"opencode_go\"\n",
+                    "base_url = \"https://opencode.ai/zen/go/v1\"\n",
+                    "wire_api = \"responses\"\n",
+                    "requires_openai_auth = true\n"
+                )
+            }),
+        )
+    }
+
+    /// issue #7608 现场形态：第二轮起的请求必然携带 tool-call 历史。
+    fn tool_call_history_input(model: &str) -> Value {
+        json!({
+            "model": model,
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"README.md\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "Readme content"
+                }
+            ]
+        })
+    }
+
+    /// OpenCode Go 预设声明的 Codex Chat reasoning 能力（`effortValueMode: "zen"`）。
+    fn opencode_go_reasoning_config() -> CodexChatReasoningConfig {
+        CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: Some(vec![
+                "low".to_string(),
+                "high".to_string(),
+                "max".to_string(),
+            ]),
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_skips_placeholder_reasoning_for_opencode_zen() {
+        // issue #7608：OpenCode Zen 是严格 OpenAI 兼容网关，厂商私有的
+        // reasoning_content 会被判非法参数 → `400 Invalid request parameters`。
+        let provider = opencode_go_provider();
+        let config = opencode_go_reasoning_config();
+
+        let result = responses_to_chat_completions_with_reasoning(
+            tool_call_history_input("mimo-v2.6-flash"),
+            Some(&config),
+            Some(&provider),
+        )
+        .unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "assistant");
+        assert!(messages[0]["tool_calls"].is_array());
+        assert!(
+            messages[0].get("reasoning_content").is_none(),
+            "聚合网关不应收到占位 reasoning_content：{:?}",
+            messages[0]
+        );
+        assert_eq!(messages[1]["role"], "tool");
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_real_reasoning_on_aggregator_gateway() {
+        // 网关拒的只是「凭空补的占位」；上游真实回传的历史 reasoning 必须照常保留。
+        let provider = opencode_go_provider();
+        let config = opencode_go_reasoning_config();
+        let input = json!({
+            "model": "mimo-v2.6-flash",
+            "input": [
+                { "type": "reasoning", "summary": [{"text": "先读文件再决定"}] },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"README.md\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "Readme content"
+                }
+            ]
+        });
+
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), Some(&provider))
+                .unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["reasoning_content"], "先读文件再决定");
+    }
+
+    #[test]
+    fn responses_request_to_chat_skips_placeholder_reasoning_for_aggregator_gateways() {
+        let config = opencode_go_reasoning_config();
+        for (name, base_url) in [
+            ("OpenRouter", "https://openrouter.ai/api/v1"),
+            ("SiliconFlow", "https://api.siliconflow.cn/v1"),
+            ("ModelScope", "https://api-inference.modelscope.cn/v1"),
+            ("OpenCode Zen", "https://opencode.ai/zen/v1"),
+        ] {
+            let provider = codex_provider(name, json!({ "base_url": base_url }));
+            let result = responses_to_chat_completions_with_reasoning(
+                tool_call_history_input("deepseek-v4-flash"),
+                Some(&config),
+                Some(&provider),
+            )
+            .unwrap();
+            let messages = result["messages"].as_array().unwrap();
+
+            assert!(
+                messages[0].get("reasoning_content").is_none(),
+                "{name} 不应收到占位 reasoning_content：{:?}",
+                messages[0]
+            );
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_placeholder_reasoning_for_direct_vendors() {
+        // 最小变更边界：只挡聚合网关，直连厂商的既有回填行为保持不变，
+        // 避免引入 `reasoning_content is missing` 新故障。
+        for base_url in [
+            "https://api.deepseek.com/v1",
+            "https://api.moonshot.cn/v1",
+            "https://api.mimo.chat/v1",
+        ] {
+            let provider = codex_provider("Direct Vendor", json!({ "base_url": base_url }));
+            let result = responses_to_chat_completions_with_reasoning(
+                tool_call_history_input("kimi-k2-thinking"),
+                None,
+                Some(&provider),
+            )
+            .unwrap();
+            let messages = result["messages"].as_array().unwrap();
+
+            assert_eq!(
+                messages[0]["reasoning_content"], "tool call",
+                "直连厂商应保持既有回填行为：{base_url}"
+            );
+        }
     }
 
     #[test]
