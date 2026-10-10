@@ -7,12 +7,14 @@ import { cn } from "@/lib/utils";
  * 设置页的版式（v7）：分节标题 15/600 → 带边框的卡片 → 一行一项，左边名称、右边控件。
  */
 export function SettingsBlock({
+  id,
   title,
   help,
   actions,
   children,
   className,
 }: {
+  id?: string;
   title?: ReactNode;
   /** 标题旁的「?」：规则和术语放这里，后果不放 */
   help?: { title: string; body: ReactNode };
@@ -22,7 +24,7 @@ export function SettingsBlock({
   className?: string;
 }) {
   return (
-    <section className={cn("space-y-3", className)}>
+    <section id={id} className={cn("space-y-3", className)}>
       {(title || actions) && (
         <div className="flex min-h-7 items-center gap-2">
           {title && <h2 className="m-0 text-section text-fg-1">{title}</h2>}
