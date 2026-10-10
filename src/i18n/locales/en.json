@@ -3970,6 +3970,23 @@
     "queryFailed": "Query failed",
     "refresh": "Refresh"
   },
+  "aggregate": {
+    "enable": "Enable aggregate routing",
+    "title": "Aggregate provider",
+    "hint": "Holds no endpoint or key; routes requests to other providers by model. Restart Claude Desktop after enabling.",
+    "targetProvider": "Target provider",
+    "upstreamModel": "Upstream model",
+    "upstreamModelPlaceholder": "Leave empty to skip this tier",
+    "displayName": "Display name",
+    "supports1m": "1M context",
+    "slotIdPreview": "Slot ID",
+    "addProvider": "Add provider",
+    "defaultTarget": "Default target",
+    "defaultTargetPlaceholder": "Required: requests that match no tier fall back to this",
+    "defaultTargetHint": "Requests that match no slot go here (Claude's internal calls use it)",
+    "notSaveable": "Add at least one slot and choose a default target before saving",
+    "modeLockedHint": "Aggregate routing takes over request forwarding, so the mode is locked to model mapping (proxy)."
+  },
   "nav": {
     "mainLabel": "Main navigation",
     "skipToContent": "Skip to main content",

@@ -125,6 +125,28 @@ export interface ClaudeDesktopModelRoute {
   supports1m?: boolean;
 }
 
+// Aggregate provider routing: fan requests out to other providers per model tier
+export type AggregateTier = "sonnet" | "opus" | "haiku" | "fable";
+
+export interface AggregateRouteSlot {
+  /** Generated slot id — persisted, stable routing key. Written by assignSlotIds; the backend only validates it. */
+  routeId: string;
+  tier: AggregateTier;
+  providerId: string;
+  upstreamModel: string;
+  label?: string;
+  supports1m?: boolean;
+}
+
+export type DefaultTarget =
+  | { kind: "slotId"; value: string }
+  | { kind: "providerId"; value: string };
+
+export interface AggregateRoutes {
+  slots: AggregateRouteSlot[];
+  defaultTarget: DefaultTarget;
+}
+
 export type CodexChatThinkingParam =
   | "none"
   | "thinking"
@@ -181,6 +203,8 @@ export interface ProviderMeta {
   claudeDesktopMode?: "direct" | "proxy";
   // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
   claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
+  // 聚合供应商：无端点无凭据，按模型把请求分流到其他供应商
+  aggregateRoutes?: AggregateRoutes;
   // 用量查询脚本配置
   usage_script?: UsageScript;
   // 请求地址管理：测速后自动选择最佳端点

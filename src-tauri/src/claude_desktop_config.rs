@@ -354,6 +354,13 @@ pub fn validate_direct_provider(provider: &Provider) -> Result<(), AppError> {
         return Ok(());
     }
 
+    // An aggregate provider has no endpoint or credentials of its own (the
+    // proxy uses the target provider's), so direct-mode credential validation
+    // does not apply to it.
+    if crate::aggregate::is_aggregate_provider(provider) {
+        return Ok(());
+    }
+
     if !provider.settings_config.is_object() {
         return Err(AppError::localized(
             "claude_desktop.provider.settings_not_object",
@@ -438,6 +445,14 @@ pub fn validate_proxy_provider(provider: &Provider) -> Result<(), AppError> {
     }
 
     proxy_model_routes(provider)?;
+
+    // An aggregate provider has no endpoint or credentials of its own (the
+    // proxy uses the target provider's), so its own credentials are not
+    // checked — the route table itself was validated by proxy_model_routes
+    // above.
+    if crate::aggregate::is_aggregate_provider(provider) {
+        return Ok(());
+    }
 
     if !has_proxy_base_url_and_key(provider) {
         return Err(AppError::localized(
@@ -573,6 +588,12 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
 }
 
 pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
+    // Aggregate provider: the model specs come from the slots in its routing
+    // table, not from its own `claudeDesktopModelRoutes`.
+    if crate::aggregate::is_aggregate_provider(provider) {
+        return crate::aggregate::aggregate_model_routes(provider);
+    }
+
     let routes = provider
         .meta
         .as_ref()
@@ -768,7 +789,7 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
     Ok(body)
 }
 
-fn strip_one_m_suffix_for_route_lookup(model: &str) -> &str {
+pub(crate) fn strip_one_m_suffix_for_route_lookup(model: &str) -> &str {
     let trimmed = model.trim();
     let marker = ONE_M_CONTEXT_MARKER.as_bytes();
     let bytes = trimmed.as_bytes();
@@ -958,7 +979,17 @@ fn apply_provider_to_paths(
     }
 
     validate_provider(provider)?;
-    let profile = match provider_mode(provider) {
+    // An aggregate provider has no endpoint or credentials of its own (the
+    // local proxy forwards using the target provider's), so it must always be
+    // written through the proxy branch: its model list is derived from the
+    // route slots, and taking the direct branch would fail when reading the
+    // aggregate's own (absent) credentials.
+    let mode = if crate::aggregate::is_aggregate_provider(provider) {
+        ClaudeDesktopMode::Proxy
+    } else {
+        provider_mode(provider)
+    };
+    let profile = match mode {
         ClaudeDesktopMode::Direct => {
             let credentials = direct_gateway_credentials(provider)?;
             let model_specs = direct_inference_model_specs(provider)?;
@@ -2427,5 +2458,103 @@ mod tests {
             None,
         );
         assert!(!is_compatible_direct_provider(&missing_bearer));
+    }
+
+    /// Builds a provider carrying only an aggregate route table with an empty
+    /// settings_config — no endpoint and no credentials of its own (the proxy
+    /// forwards using the target provider's).
+    fn aggregate_provider_without_credentials(id: &str) -> Provider {
+        let mut provider =
+            Provider::with_id(id.to_string(), "Aggregate".to_string(), json!({}), None);
+        provider.meta = Some(ProviderMeta {
+            aggregate_routes: Some(crate::aggregate::AggregateRoutes {
+                slots: vec![crate::aggregate::AggregateRouteSlot {
+                    route_id: "claude-sonnet-1".into(),
+                    tier: crate::aggregate::AggregateTier::Sonnet,
+                    provider_id: "p-glm".into(),
+                    upstream_model: "glm-5.3".into(),
+                    label: None,
+                    supports_1m: false,
+                }],
+                default_target: crate::aggregate::DefaultTarget::ProviderId("p-glm".into()),
+            }),
+            ..Default::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn validate_direct_provider_accepts_aggregate_without_endpoint_or_credentials() {
+        // An aggregate provider has no endpoint or credentials of its own (the
+        // proxy uses the target provider's), so an empty settings_config must
+        // still pass direct validation — the user must not be forced to invent
+        // a placeholder endpoint and key.
+        let aggregate = aggregate_provider_without_credentials("agg");
+        validate_direct_provider(&aggregate)
+            .expect("aggregate provider must validate without endpoint or credentials");
+    }
+
+    #[test]
+    fn validate_direct_provider_still_rejects_ordinary_provider_without_credentials() {
+        // Control: an ordinary provider with an empty settings_config must
+        // still be rejected (the aggregate short-circuit must not relax it).
+        let plain = Provider::with_id("plain".to_string(), "Plain".to_string(), json!({}), None);
+        validate_direct_provider(&plain)
+            .expect_err("ordinary provider without endpoint/credentials must still be rejected");
+    }
+
+    #[test]
+    fn validate_proxy_provider_accepts_aggregate_without_endpoint_or_credentials() {
+        // An aggregate provider runs through the local proxy: it has no
+        // endpoint or credentials of its own (the proxy uses the target
+        // provider's), so an empty settings_config must still pass proxy
+        // validation — this is the main path the UI persists through
+        // (meta.claudeDesktopMode = "proxy").
+        let mut aggregate = aggregate_provider_without_credentials("agg");
+        aggregate
+            .meta
+            .as_mut()
+            .expect("meta present")
+            .claude_desktop_mode = Some(ClaudeDesktopMode::Proxy);
+        validate_proxy_provider(&aggregate)
+            .expect("aggregate provider must validate as proxy without endpoint or credentials");
+    }
+
+    #[test]
+    fn validate_proxy_provider_still_rejects_ordinary_provider_without_credentials() {
+        // Control: an ordinary proxy provider with an empty settings_config
+        // must still be rejected (the aggregate short-circuit must not relax
+        // it).
+        let mut plain =
+            Provider::with_id("plain".to_string(), "Plain".to_string(), json!({}), None);
+        plain.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            ..Default::default()
+        });
+        validate_proxy_provider(&plain).expect_err(
+            "ordinary proxy provider without endpoint/credentials must still be rejected",
+        );
+    }
+
+    #[test]
+    fn apply_aggregate_provider_without_credentials_writes_local_gateway_profile() {
+        // After saving, an aggregate provider must actually activate: with an
+        // empty settings_config it still writes the profile through the proxy
+        // branch (the model list is derived from the slots and the gateway is
+        // the local proxy) instead of reading the aggregate's own
+        // endpoint/credentials.
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let db = test_db();
+        let aggregate = aggregate_provider_without_credentials("agg");
+
+        apply_provider_to_paths(&db, &aggregate, &paths).expect("apply aggregate provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("http://127.0.0.1:15721/claude-desktop")
+        );
+        assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-1"]));
     }
 }
