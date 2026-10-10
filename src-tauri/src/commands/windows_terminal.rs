@@ -39,7 +39,11 @@ struct WtDefaultProfile {
 
 #[cfg(any(target_os = "windows", test))]
 impl WtDefaultProfile {
-    fn build_wt_args<'a>(&'a self, encoded_command: &'a str) -> Vec<&'a str> {
+    fn build_wt_args<'a>(
+        &'a self,
+        encoded_command: &'a str,
+        cmd_bootstrap_command: &'a str,
+    ) -> Vec<&'a str> {
         let mut args = vec![
             "new-tab",
             "--profile",
@@ -52,7 +56,7 @@ impl WtDefaultProfile {
                 args.extend(["-NoExit", "-EncodedCommand", encoded_command]);
             }
             WtDefaultShell::Cmd => {
-                args.extend(wt_cmd_batch_args(encoded_command));
+                args.extend(wt_cmd_batch_args(cmd_bootstrap_command));
             }
         }
         args
@@ -101,29 +105,28 @@ fn wt_batch_script(bat_path: &str) -> String {
     wt_batch_script_with_env(bat_path, &[])
 }
 
-/// CMD cannot decode the payload itself. Use the built-in Windows PowerShell as
-/// a short-lived bootstrap; the selected CMD tab still stays open with /V:OFF.
+/// CMD cannot decode the payload itself. Pin the short-lived bootstrap to the
+/// system Windows PowerShell rather than searching WT's starting directory.
 #[cfg(any(target_os = "windows", test))]
-fn wt_cmd_batch_args(encoded_command: &str) -> [&str; 9] {
-    [
-        "/D",
-        "/V:OFF",
-        "/K",
-        "powershell.exe",
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-EncodedCommand",
-        encoded_command,
-    ]
+fn wt_cmd_bootstrap_command(powershell_path: &str, encoded_command: &str) -> String {
+    format!(
+        "\"{powershell_path}\" -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded_command}"
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn wt_cmd_batch_args(cmd_bootstrap_command: &str) -> [&str; 5] {
+    // WT wraps this space-containing command in quotes. /S strips that outer
+    // pair and preserves the executable's inner quotes, even with profile /S.
+    ["/D", "/V:OFF", "/S", "/K", cmd_bootstrap_command]
 }
 
 /// When the default profile cannot be appended to safely, start cmd explicitly
 /// instead of appending `/K` to an unknown shell.
 #[cfg(any(target_os = "windows", test))]
-fn build_wt_cmd_fallback_args(encoded_command: &str) -> Vec<&str> {
+fn build_wt_cmd_fallback_args(cmd_bootstrap_command: &str) -> Vec<&str> {
     let mut args = vec!["new-tab", "cmd"];
-    args.extend(wt_cmd_batch_args(encoded_command));
+    args.extend(wt_cmd_batch_args(cmd_bootstrap_command));
     args
 }
 
@@ -134,10 +137,11 @@ fn select_wt_launch_args<'a>(
     profile: Option<&'a WtDefaultProfile>,
     supports_append: bool,
     encoded_command: &'a str,
+    cmd_bootstrap_command: &'a str,
 ) -> Vec<&'a str> {
     match (profile, supports_append) {
-        (Some(profile), true) => profile.build_wt_args(encoded_command),
-        _ => build_wt_cmd_fallback_args(encoded_command),
+        (Some(profile), true) => profile.build_wt_args(encoded_command, cmd_bootstrap_command),
+        _ => build_wt_cmd_fallback_args(cmd_bootstrap_command),
     }
 }
 
@@ -1160,7 +1164,7 @@ fn wt_installation_version(installation: &ResolvedWtInstallation) -> Option<(u16
 /// WT may already be a resident GUI process, so report only spawn failure and
 /// return without waiting for the window to close.
 #[cfg(target_os = "windows")]
-fn run_wt_command(launcher: &str, args: &[&str]) -> Result<(), String> {
+fn run_wt_command(launcher: &str, args: &[impl AsRef<std::ffi::OsStr>]) -> Result<(), String> {
     let mut command = std::process::Command::new(launcher);
     detach_claude_parent_session_env(&mut command);
     // Per-launch values travel in the encoded command, never in the WT
@@ -1198,7 +1202,16 @@ pub(super) fn launch_wt_terminal_with_env(
     let supports_append = profile.is_some() && wt_version.is_none_or(wt_version_supports_append);
     let encoded_command =
         powershell_encoded_command(&wt_batch_script_with_env(bat_path, launch_env));
-    let args = select_wt_launch_args(profile.as_ref(), supports_append, &encoded_command);
+    let powershell_path = super::windows_console::system_powershell_path()
+        .map_err(|error| format!("无法定位系统 Windows PowerShell: {error}"))?;
+    let cmd_bootstrap_command =
+        wt_cmd_bootstrap_command(&powershell_path.to_string_lossy(), &encoded_command);
+    let args = select_wt_launch_args(
+        profile.as_ref(),
+        supports_append,
+        &encoded_command,
+        &cmd_bootstrap_command,
+    );
     run_wt_command(&wt_command, &args)
 }
 
@@ -1228,18 +1241,206 @@ mod tests {
         }
     }
 
-    fn extend_expected_cmd_batch_args<'a>(args: &mut Vec<&'a str>, encoded_command: &'a str) {
-        args.extend([
-            "/D",
-            "/V:OFF",
-            "/K",
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-EncodedCommand",
-            encoded_command,
-        ]);
+    fn test_powershell_path() -> &'static str {
+        #[cfg(target_os = "windows")]
+        {
+            static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+            PATH.get_or_init(|| {
+                super::super::windows_console::system_powershell_path()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        }
+    }
+
+    fn select_wt_launch_args(
+        profile: Option<&WtDefaultProfile>,
+        supports_append: bool,
+        encoded_command: &str,
+    ) -> Vec<String> {
+        let bootstrap = wt_cmd_bootstrap_command(test_powershell_path(), encoded_command);
+        super::select_wt_launch_args(profile, supports_append, encoded_command, &bootstrap)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn build_wt_cmd_fallback_args(encoded_command: &str) -> Vec<String> {
+        let bootstrap = wt_cmd_bootstrap_command(test_powershell_path(), encoded_command);
+        super::build_wt_cmd_fallback_args(&bootstrap)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn extend_expected_cmd_batch_args(args: &mut Vec<String>, encoded_command: &str) {
+        args.extend(["/D", "/V:OFF", "/S", "/K"].map(str::to_string));
+        args.push(format!(
+            "\"{}\" -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded_command}",
+            test_powershell_path(),
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    fn wt_child_command_line(args: &[String]) -> String {
+        let command_start = args.iter().position(|arg| arg == "--").map_or(2, |i| i + 1);
+        // Match WT's commandline assembly: wrap arguments containing a space,
+        // leaving the bootstrap command's embedded quotes intact for CMD /S.
+        args[command_start..]
+            .iter()
+            .map(|arg| {
+                let arg = if arg == "/K" { "/C" } else { arg.as_str() };
+                if arg.contains(' ') {
+                    format!("\"{arg}\"")
+                } else {
+                    arg.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wt_cmd_bootstrap_quotes_absolute_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("bootstrap_probe.rs");
+        std::fs::write(
+            &source,
+            r#"fn main() {
+    let marker = std::env::var_os("CC_SWITCH_TEST_BOOTSTRAP_MARKER").unwrap();
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    std::fs::write(marker, args.join("\n")).unwrap();
+}"#,
+        )
+        .unwrap();
+        let executable = temp.path().join("bootstrap_probe.exe");
+        let compiled =
+            std::process::Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+                .arg(&source)
+                .arg("-o")
+                .arg(&executable)
+                .output()
+                .unwrap();
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let profile = WtDefaultProfile {
+            selector: "CMD probe".to_string(),
+            shell: WtDefaultShell::Cmd,
+        };
+        for directory in ["System Space", "系统 空格&(test)", "System&(test)"] {
+            let directory = temp.path().join(directory);
+            std::fs::create_dir(&directory).unwrap();
+            let bootstrap_path = directory.join("powershell.exe");
+            std::fs::copy(&executable, &bootstrap_path).unwrap();
+            let bootstrap =
+                wt_cmd_bootstrap_command(&bootstrap_path.to_string_lossy(), "encoded-probe");
+            for selected_profile in [Some(&profile), None] {
+                let args: Vec<String> = super::select_wt_launch_args(
+                    selected_profile,
+                    true,
+                    "encoded-probe",
+                    &bootstrap,
+                )
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+                for prefix in ["", "/S /Q "] {
+                    let marker = temp.path().join("bootstrap-args.txt");
+                    let output = std::process::Command::new("cmd")
+                        .raw_arg(format!("{prefix}{}", wt_child_command_line(&args)))
+                        .env("CC_SWITCH_TEST_BOOTSTRAP_MARKER", &marker)
+                        .output()
+                        .unwrap();
+                    assert_eq!(
+                        std::fs::read_to_string(&marker).unwrap_or_else(|error| panic!(
+                            "{}: profile={selected_profile:?}, prefix={prefix:?}: {error}; stderr={}",
+                            bootstrap_path.display(), decode_command_output(&output.stderr),
+                        )),
+                        "-NoLogo\n-NoProfile\n-NonInteractive\n-EncodedCommand\nencoded-probe",
+                    );
+                    std::fs::remove_file(marker).unwrap();
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wt_cmd_bootstrap_does_not_search_starting_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let starting_dir = temp.path().join("wt-starting-directory");
+        let selected_cwd = temp.path().join("迅雷下载 selected project");
+        std::fs::create_dir(&starting_dir).unwrap();
+        std::fs::create_dir(&selected_cwd).unwrap();
+        let probe_source = temp.path().join("shadow_probe.rs");
+        std::fs::write(
+            &probe_source,
+            r#"fn main() {
+    std::fs::write("shadow-probe.txt", "unexpected bootstrap").unwrap();
+}"#,
+        )
+        .unwrap();
+        let compiled =
+            std::process::Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+                .arg(&probe_source)
+                .arg("-o")
+                .arg(starting_dir.join("powershell.exe"))
+                .output()
+                .unwrap();
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let batch = temp.path().join("provider-probe.bat");
+        std::fs::write(
+            &batch,
+            b"@echo off\r\nsetlocal DisableDelayedExpansion\r\ncd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 5\r\n> real-batch.txt echo ok\r\n",
+        )
+        .unwrap();
+        let encoded = powershell_encoded_command(&wt_batch_script_with_env(
+            &batch.to_string_lossy(),
+            &[(WINDOWS_CWD_ENV, &selected_cwd.to_string_lossy())],
+        ));
+        let profile = WtDefaultProfile {
+            selector: "CMD probe".to_string(),
+            shell: WtDefaultShell::Cmd,
+        };
+        let mut failures = Vec::new();
+        for selected_profile in [Some(&profile), None] {
+            let args = select_wt_launch_args(selected_profile, true, &encoded);
+            let output = std::process::Command::new("cmd")
+                .raw_arg(wt_child_command_line(&args))
+                .current_dir(&starting_dir)
+                .env_remove("NoDefaultCurrentDirectoryInExePath")
+                .output()
+                .unwrap();
+            let shadow = starting_dir.join("shadow-probe.txt");
+            let marker = selected_cwd.join("real-batch.txt");
+            if shadow.exists()
+                || std::fs::read_to_string(&marker).unwrap_or_default().trim() != "ok"
+            {
+                failures.push(format!(
+                    "{selected_profile:?}: shadow={}, real_batch={}; stdout={}; stderr={}",
+                    shadow.exists(),
+                    marker.exists(),
+                    decode_command_output(&output.stdout),
+                    decode_command_output(&output.stderr),
+                ));
+            }
+            let _ = std::fs::remove_file(shadow);
+            let _ = std::fs::remove_file(marker);
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     /// Cover JSONC, well-known GUIDs, quoted commandlines, and name matches.
@@ -1806,17 +2007,21 @@ mod tests {
                     }),
                     "version={version:?}, listed={listed}"
                 );
-                let mut expected_args = vec!["new-tab"];
+                let mut expected_args = vec!["new-tab".to_string()];
                 if let Some(shell) = expected_shell {
-                    expected_args.extend(["--profile", guid, "--appendCommandLine", "--"]);
+                    expected_args.extend(
+                        ["--profile", guid, "--appendCommandLine", "--"].map(str::to_string),
+                    );
                     match shell {
                         WtDefaultShell::Cmd => {
                             extend_expected_cmd_batch_args(&mut expected_args, "encoded-probe")
                         }
-                        _ => expected_args.extend(["-NoExit", "-EncodedCommand", "encoded-probe"]),
+                        _ => expected_args.extend(
+                            ["-NoExit", "-EncodedCommand", "encoded-probe"].map(str::to_string),
+                        ),
                     }
                 } else {
-                    expected_args.push("cmd");
+                    expected_args.push("cmd".to_string());
                     extend_expected_cmd_batch_args(&mut expected_args, "encoded-probe");
                 }
                 assert_eq!(
@@ -1958,7 +2163,7 @@ mod tests {
                 let actual = args
                     .windows(2)
                     .find(|pair| pair[0] == "--profile")
-                    .map(|pair| pair[1]);
+                    .map(|pair| pair[1].as_str());
                 assert_eq!(
                     actual,
                     profile.as_ref().map(|profile| profile.selector.as_str()),
@@ -2090,7 +2295,7 @@ mod tests {
         ));
         let encoded = encoded_command.as_str();
         assert!(!encoded.contains('%'));
-        let mut expected_fallback = vec!["new-tab", "cmd"];
+        let mut expected_fallback = vec!["new-tab".to_string(), "cmd".to_string()];
         extend_expected_cmd_batch_args(&mut expected_fallback, encoded);
 
         for shell in [
@@ -2102,17 +2307,19 @@ mod tests {
                 selector: "Custom profile with spaces".to_string(),
                 shell,
             };
-            let mut expected = vec![
+            let mut expected: Vec<String> = [
                 "new-tab",
                 "--profile",
                 "Custom profile with spaces",
                 "--appendCommandLine",
                 "--",
-            ];
+            ]
+            .map(str::to_string)
+            .into();
             if shell == WtDefaultShell::Cmd {
                 extend_expected_cmd_batch_args(&mut expected, encoded);
             } else {
-                expected.extend(["-NoExit", "-EncodedCommand", encoded]);
+                expected.extend(["-NoExit", "-EncodedCommand", encoded].map(str::to_string));
             }
             assert_eq!(
                 select_wt_launch_args(Some(&profile), true, encoded),
@@ -2328,28 +2535,9 @@ mod tests {
                         shell,
                     });
                     let args = select_wt_launch_args(profile.as_ref(), true, &encoded_command);
-                    let command_start = args
-                        .iter()
-                        .position(|arg| *arg == "--")
-                        .map_or(2, |i| i + 1);
                     // Expand AFTER quoting, just as WT does; quoting an already
                     // expanded path again would introduce an unrelated CMD error.
-                    let child_args = args[command_start..]
-                        .iter()
-                        .map(|arg| {
-                            let arg = if *arg == "/K" { "/C" } else { arg };
-                            assert!(
-                                !arg.contains('"'),
-                                "fixture arguments have no embedded quotes"
-                            );
-                            if arg.chars().any(char::is_whitespace) {
-                                format!("\"{arg}\"")
-                            } else {
-                                arg.to_string()
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ");
+                    let child_args = wt_child_command_line(&args);
                     let child_args = expand_in_resident_environment(&child_args);
                     let executable = match shell {
                         Some(WtDefaultShell::Pwsh) => "pwsh",
@@ -2485,7 +2673,7 @@ fn main() {
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
         let missing_launcher = temp.path().join("missing.exe");
-        assert!(run_wt_command(&missing_launcher.to_string_lossy(), &[]).is_err());
+        assert!(run_wt_command(&missing_launcher.to_string_lossy(), &[] as &[&str]).is_err());
     }
 
     #[cfg(target_os = "windows")]
