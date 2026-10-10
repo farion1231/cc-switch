@@ -477,6 +477,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_proxy_points_to_loopback() {
         set_proxy_port(15721);
         assert!(proxy_points_to_loopback("http://127.0.0.1:15721"));
@@ -489,6 +490,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_system_proxy_points_to_loopback() {
         let _guard = env_lock().lock().unwrap();
         set_proxy_port(15721);

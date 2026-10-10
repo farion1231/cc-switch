@@ -7,8 +7,9 @@
 use super::codex_chat_common::{
     append_reasoning_content, extract_reasoning_field_text, extract_reasoning_summary_text,
     response_function_call_item, response_function_call_item_with_namespace,
-    split_leading_think_block,
 };
+use super::codex_compaction;
+use super::inline_think::split_leading_think_block;
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
@@ -68,11 +69,17 @@ pub(crate) struct CodexToolContext {
     seen_chat_names: HashSet<String>,
     chat_name_to_spec: HashMap<String, CodexToolSpec>,
     namespace_name_to_chat_name: HashMap<(String, String), String>,
+    /// 这个请求是 Codex 远程压缩（input 里有 `compaction_trigger`），见 `codex_compaction`。
+    compaction_request: bool,
 }
 
 impl CodexToolContext {
     pub(crate) fn chat_tools(&self) -> &[Value] {
         &self.chat_tools
+    }
+
+    pub(crate) fn is_compaction_request(&self) -> bool {
+        self.compaction_request
     }
 
     pub(crate) fn lookup_chat_name(&self, chat_name: &str) -> Option<&CodexToolSpec> {
@@ -249,6 +256,7 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     if let Some(input) = body.get("input") {
         collect_input_declared_tools(input, &mut context);
     }
+    context.compaction_request = codex_compaction::is_compaction_request(body);
 
     context
 }
@@ -312,8 +320,10 @@ pub fn responses_to_chat_completions_with_reasoning(
 
     apply_reasoning_options(&mut result, &body, model, reasoning_config);
 
+    // 压缩回合只要一段摘要：不带工具和结构化输出，与 Codex 本地压缩请求同形。
+    let compaction = tool_context.is_compaction_request();
     let tools = tool_context.chat_tools();
-    if !tools.is_empty() {
+    if !tools.is_empty() && !compaction {
         result["tools"] = json!(tools);
     }
 
@@ -322,6 +332,9 @@ pub fn responses_to_chat_completions_with_reasoning(
     }
 
     for key in EXTRA_CHAT_PASSTHROUGH_FIELDS {
+        if compaction && *key == "response_format" {
+            continue;
+        }
         if let Some(value) = body.get(*key) {
             result[*key] = value.clone();
         }
@@ -770,6 +783,32 @@ fn append_responses_item_as_chat_message(
             // 真正的尾部剩余由 input 结束时的收尾逻辑、或回合边界消息（user 等）
             // 到达时回溯附挂，见 attach_pending_reasoning_to_previous_assistant。
             append_pending_reasoning(pending_reasoning, responses_reasoning_item_text(item));
+        }
+        // Codex 远程压缩：触发条目换成压缩提示词，历史里的压缩条目换成摘要正文，
+        // 都按一条普通用户消息处理（回合边界、pending reasoning 的附挂规则照旧）。
+        Some("compaction_trigger") => {
+            append_responses_item_as_chat_message(
+                &codex_compaction::compaction_prompt_item(),
+                messages,
+                pending_tool_calls,
+                pending_media,
+                pending_reasoning,
+                last_assistant_index,
+                tool_context,
+            )?;
+        }
+        Some("compaction" | "compaction_summary" | "context_compaction") => {
+            if let Some(text) = codex_compaction::compaction_item_replay_text(item) {
+                append_responses_item_as_chat_message(
+                    &codex_compaction::user_message_item(&text),
+                    messages,
+                    pending_tool_calls,
+                    pending_media,
+                    pending_reasoning,
+                    last_assistant_index,
+                    tool_context,
+                )?;
+            }
         }
         // An `additional_tools` carrier declares tools for this request; its
         // nested tools are lifted via `build_codex_tool_context_from_request`
@@ -1992,23 +2031,21 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         "total_tokens": total_tokens
     });
 
-    let direct_cache_read = usage.get("cache_read_input_tokens").and_then(Value::as_u64);
+    // 每环要求「存在且非 0」：显式 0 按未上报处理继续向后找（#8041：部分中转把
+    // 靠前字段硬编码为桩 0，真值只在低顺位字段）。官方端点同值非 0 不受影响；
+    // 真 0 命中时各候选同为 0/缺失，结果不变。
+    fn provided_nonzero(value: Option<&Value>) -> Option<u64> {
+        value.and_then(Value::as_u64).filter(|tokens| *tokens > 0)
+    }
+    let direct_cache_read = provided_nonzero(usage.get("cache_read_input_tokens"));
     let cached = direct_cache_read
-        .or_else(|| {
-            usage
-                .pointer("/prompt_tokens_details/cached_tokens")
-                .and_then(Value::as_u64)
-        })
-        .or_else(|| {
-            usage
-                .pointer("/input_tokens_details/cached_tokens")
-                .and_then(Value::as_u64)
-        })
+        .or_else(|| provided_nonzero(usage.pointer("/prompt_tokens_details/cached_tokens")))
+        .or_else(|| provided_nonzero(usage.pointer("/input_tokens_details/cached_tokens")))
         // DeepSeek Chat 的文档化缓存命中字段（与 usage/parser.rs 的处理对应），末位兜底。
         // 官方端点目前把同值镜像进未文档化的 prompt_tokens_details.cached_tokens（上面的
         // 标准字段已命中），故仅当上游只发文档字段、不发镜像时此兜底生效（如部分中转），
         // 并防御未文档化镜像将来消失；上游发任一标准字段时行为零变化。
-        .or_else(|| usage.get("prompt_cache_hit_tokens").and_then(Value::as_u64))
+        .or_else(|| provided_nonzero(usage.get("prompt_cache_hit_tokens")))
         .unwrap_or(0);
     let cache_write = usage
         .pointer("/prompt_tokens_details/cache_write_tokens")
@@ -2755,6 +2792,25 @@ mod tests {
         assert_eq!(result["output_tokens"], 100);
         assert_eq!(result["input_tokens_details"]["cached_tokens"], 600);
         assert_eq!(result["input_tokens_details"]["cache_write_tokens"], 0);
+    }
+
+    #[test]
+    fn chat_usage_to_responses_usage_stub_zero_cache_read_falls_through_to_deepseek_hit_tokens() {
+        // #8041 报告者 payload：桩 0 不能短路候选链——合成 response.completed 后
+        // from_codex_response_auto 只能看到这个重建对象，真值必须经
+        // input_tokens_details.cached_tokens 存活到落库/计费（Responses 形态的
+        // input_tokens 保持含缓存的总量，缓存命中进 details）。
+        let usage = json!({
+            "prompt_tokens": 6650,
+            "completion_tokens": 16,
+            "total_tokens": 6666,
+            "cache_read_input_tokens": 0,
+            "prompt_cache_hit_tokens": 6400
+        });
+
+        let result = chat_usage_to_responses_usage(Some(&usage));
+        assert_eq!(result["input_tokens"], 6650);
+        assert_eq!(result["input_tokens_details"]["cached_tokens"], 6400);
     }
 
     #[test]
@@ -4495,7 +4551,7 @@ mod tests {
             .get("image_url")
             .and_then(|value| value.get("url"))
             .and_then(Value::as_str)
-            .is_some_and(|url| url == &data_url)));
+            .is_some_and(|url| url == data_url)));
         assert_eq!(messages[3]["content"], "Viewing the image now.");
         assert_eq!(messages[3]["tool_calls"][0]["id"], "call_next");
         assert_eq!(messages[4]["tool_call_id"], "call_next");
@@ -4657,13 +4713,16 @@ mod tests {
         assert_eq!(converted["input_tokens_details"]["cached_tokens"], 40);
         assert_eq!(converted["cache_read_input_tokens"], 40);
 
+        // #8041 行为反转：显式 0 按「未上报」处理让位给嵌套标准字段（与
+        // usage/parser.rs、流式 extract_cache_read_tokens 同规则）；重建对象
+        // 只镜像非 0 直传字段，桩 0 不再上抛。
         let direct_zero = json!({
             "prompt_tokens_details": { "cached_tokens": 12 },
             "cache_read_input_tokens": 0
         });
         let converted = chat_usage_to_responses_usage(Some(&direct_zero));
-        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 0);
-        assert_eq!(converted["cache_read_input_tokens"], 0);
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 12);
+        assert!(converted.get("cache_read_input_tokens").is_none());
 
         let invalid_direct = json!({
             "prompt_tokens_details": { "cached_tokens": 12 },
@@ -5434,5 +5493,56 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    #[test]
+    fn compaction_request_becomes_tool_free_summary_turn() {
+        let own_summary = codex_compaction::encode_compaction_summary("earlier progress");
+        let body = json!({
+            "model": "kimi-k3",
+            "stream": true,
+            "input": [
+                { "type": "compaction", "id": "cmp_1", "encrypted_content": own_summary },
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "fix bug" }] },
+                { "type": "function_call", "call_id": "call_1", "name": "shell", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "call_1", "output": "ok" },
+                { "type": "compaction_trigger" }
+            ],
+            "tools": [{ "type": "function", "name": "shell", "parameters": { "type": "object" } }],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true
+        });
+        let result = responses_to_chat_completions(body).unwrap();
+        assert!(result.get("tools").is_none());
+        assert!(result.get("tool_choice").is_none());
+        assert!(result.get("parallel_tool_calls").is_none());
+
+        let messages = result["messages"].as_array().unwrap();
+        let first = serde_json::to_string(&messages[0]["content"]).unwrap();
+        assert!(first.contains("earlier progress"));
+        assert!(first.contains("Another language model started to solve this problem"));
+        let last = messages.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert!(serde_json::to_string(&last["content"])
+            .unwrap()
+            .contains("CONTEXT CHECKPOINT COMPACTION"));
+        // 工具调用历史照常保留（与 Codex 本地压缩请求同形）。
+        assert!(messages.iter().any(|message| message["role"] == "tool"));
+    }
+
+    #[test]
+    fn foreign_compaction_blob_becomes_readable_note_instead_of_vanishing() {
+        let body = json!({
+            "model": "kimi-k3",
+            "input": [
+                { "type": "compaction", "encrypted_content": "gAAAAB-openai-blob" },
+                { "type": "context_compaction" },
+                { "type": "message", "role": "user", "content": "continue" }
+            ]
+        });
+        let result = responses_to_chat_completions(body).unwrap();
+        let rendered = serde_json::to_string(&result["messages"]).unwrap();
+        assert!(rendered.contains(codex_compaction::OPAQUE_COMPACTION_NOTE));
+        assert!(!rendered.contains("gAAAAB-openai-blob"));
     }
 }

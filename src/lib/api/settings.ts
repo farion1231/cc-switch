@@ -44,6 +44,26 @@ export const settingsApi = {
     return await invoke("has_codex_unify_history_backup");
   },
 
+  /** Codex 的 config.toml 是否用 [features] multi_agent_v2 强制了新版子 agent 工具 */
+  async codexForcesMultiAgentV2(): Promise<boolean> {
+    return await invoke("codex_forces_multi_agent_v2");
+  },
+
+  /** Codex 会话压缩开关（config.toml 的 [features] local_thread_store_compression） */
+  async getCodexSessionCompression(): Promise<boolean> {
+    return await invoke("get_codex_session_compression");
+  },
+
+  /** 开关 Codex 会话压缩，返回写入后的状态 */
+  async setCodexSessionCompression(enabled: boolean): Promise<boolean> {
+    return await invoke("set_codex_session_compression", { enabled });
+  },
+
+  /** Codex 会话目录当前占用的字节数 */
+  async getCodexSessionsDiskUsage(): Promise<number> {
+    return await invoke("get_codex_sessions_disk_usage");
+  },
+
   /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
   async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
     return await invoke("restore_codex_unified_history");
@@ -276,6 +296,13 @@ export const settingsApi = {
     return await invoke("probe_tool_installations", { tools });
   },
 
+  /** 「应用」页展示路径、来源和多处安装（和升级前的预检分开调用）。 */
+  async listToolInstallations(
+    tools: string[],
+  ): Promise<ToolInstallationReport[]> {
+    return await invoke("list_tool_installations", { tools });
+  },
+
   async getRectifierConfig(): Promise<RectifierConfig> {
     return await invoke("get_rectifier_config");
   },
@@ -319,6 +346,8 @@ export interface ToolInstallationReport {
   needs_confirmation: boolean;
   command: string;
   anchored: boolean;
+  /** 默认那处是认不出安装渠道的原生可执行文件：不执行升级，command 为空。 */
+  unmanaged: boolean;
 }
 
 export interface RectifierConfig {
@@ -346,6 +375,15 @@ export interface BackupEntry {
   createdAt: string;
 }
 
+export interface BackupLocation {
+  id: string;
+  path: string;
+  sizeBytes: number;
+  itemCount: number;
+  lastModified?: string | null;
+  deletable: boolean;
+}
+
 export const backupsApi = {
   async createDbBackup(): Promise<string> {
     return await invoke("create_db_backup");
@@ -365,5 +403,18 @@ export const backupsApi = {
 
   async deleteDbBackup(filename: string): Promise<void> {
     await invoke("delete_db_backup", { filename });
+  },
+
+  async listBackupLocations(): Promise<BackupLocation[]> {
+    return await invoke("list_backup_locations");
+  },
+
+  /** 删除一类备份，返回释放的字节数 */
+  async deleteBackupLocation(id: string): Promise<number> {
+    return await invoke("delete_backup_location", { id });
+  },
+
+  async revealBackupLocation(id: string): Promise<boolean> {
+    return await invoke("reveal_backup_location", { id });
   },
 };

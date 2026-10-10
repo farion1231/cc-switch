@@ -1,0 +1,33 @@
+{
+  "version": "4.0.5",
+  "items": [
+    {
+      "type": "new",
+      "zh": "Codex 可以用 GitHub Copilot 账号",
+      "zh-TW": "Codex 可以使用 GitHub Copilot 帳號",
+      "en": "Codex can now use a GitHub Copilot account",
+      "ja": "Codex で GitHub Copilot アカウントを使えるように"
+    },
+    {
+      "type": "fix",
+      "zh": "修复映射到 GPT 后 Claude Code 子代理总被派去 worktree",
+      "zh-TW": "修復對應到 GPT 後 Claude Code 子代理總被派去 worktree",
+      "en": "Fixed Claude Code sub-agents always sent to a worktree when mapped to GPT",
+      "ja": "GPT へのマッピング時にサブエージェントが常に worktree で動く問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 聚合模式下 GLM 等模型在 /model 里看不到",
+      "zh-TW": "修復 Codex 聚合模式下 GLM 等模型在 /model 中看不到",
+      "en": "Fixed GLM and other models missing from /model in Codex aggregation mode",
+      "ja": "Codex の集約モードで GLM などのモデルが /model に表示されない問題を修正"
+    },
+    {
+      "type": "new",
+      "zh": "「全部」热力图可以往前查看完整历史",
+      "zh-TW": "「全部」熱力圖可以往前查看完整歷史",
+      "en": "The all-time heatmap can now show your full usage history",
+      "ja": "「すべて」のヒートマップで過去の全履歴を表示できるように"
+    }
+  ]
+}

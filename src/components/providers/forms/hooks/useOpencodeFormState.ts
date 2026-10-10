@@ -3,9 +3,8 @@ import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
 import {
   OPENCODE_DEFAULT_NPM,
   OPENCODE_DEFAULT_CONFIG,
-  OPENCODE_EXTRA_OPTION_DRAFT_PREFIX,
   OPENCODE_HEADER_DRAFT_PREFIX,
-  isKnownOpencodeOptionKey,
+  mergeOpencodeExtraOptionRows,
   parseOpencodeConfig,
   toOpencodeExtraOptions,
 } from "../helpers/opencodeFormUtils";
@@ -58,7 +57,7 @@ export function useOpencodeFormState({
 
   const [opencodeNpm, setOpencodeNpm] = useState<string>(() => {
     if (appId !== "opencode") return OPENCODE_DEFAULT_NPM;
-    return initialOpencodeConfig?.npm || OPENCODE_DEFAULT_NPM;
+    return initialOpencodeConfig?.npm ?? OPENCODE_DEFAULT_NPM;
   });
 
   const [opencodeApiKey, setOpencodeApiKey] = useState<string>(() => {
@@ -181,23 +180,7 @@ export function useOpencodeFormState({
       setOpencodeExtraOptions(options);
       updateOpencodeSettings((config) => {
         if (!config.options) config.options = {};
-
-        for (const k of Object.keys(config.options)) {
-          if (!isKnownOpencodeOptionKey(k)) {
-            delete config.options[k];
-          }
-        }
-
-        for (const [k, v] of Object.entries(options)) {
-          const trimmedKey = k.trim();
-          if (trimmedKey && !k.startsWith(OPENCODE_EXTRA_OPTION_DRAFT_PREFIX)) {
-            try {
-              config.options[trimmedKey] = JSON.parse(v);
-            } catch {
-              config.options[trimmedKey] = v;
-            }
-          }
-        }
+        mergeOpencodeExtraOptionRows(config.options, options);
       });
     },
     [updateOpencodeSettings],
@@ -205,7 +188,7 @@ export function useOpencodeFormState({
 
   const resetOpencodeState = useCallback((config?: OpenCodeProviderConfig) => {
     setOpencodeProviderKey("");
-    setOpencodeNpm(config?.npm || OPENCODE_DEFAULT_NPM);
+    setOpencodeNpm(config?.npm ?? OPENCODE_DEFAULT_NPM);
     setOpencodeBaseUrl(config?.options?.baseURL || "");
     setOpencodeApiKey(config?.options?.apiKey || "");
     setOpencodeHeaders(config?.options?.headers || {});

@@ -1,11 +1,11 @@
 import {
   act,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
@@ -434,11 +434,26 @@ describe("OpenCodeFormFields", () => {
     expect(Object.keys(nextOptions)[0]).toMatch(/^draft-option:/);
   });
 
+  it("rejects renaming an extra option onto an existing key and restores the input", () => {
+    const onExtraOptionsChange = vi.fn();
+    renderOpenCodeForm({
+      extraOptions: { target: "100", source: "100" },
+      onExtraOptionsChange,
+    });
+
+    const keyInput = screen.getByDisplayValue("source");
+    fireEvent.change(keyInput, { target: { value: "target" } });
+    fireEvent.blur(keyInput);
+
+    expect(onExtraOptionsChange).not.toHaveBeenCalled();
+    expect(keyInput).toHaveValue("source");
+  });
+
   it("uses the family section divider for model configuration", () => {
     renderOpenCodeForm();
 
     const section = screen.getByText("Models").closest("div.border-l");
-    expect(section).toHaveClass("border-border-default", "pl-3");
+    expect(section).toHaveClass("border-border", "pl-3");
   });
 
   it("surfaces existing model token limits", () => {

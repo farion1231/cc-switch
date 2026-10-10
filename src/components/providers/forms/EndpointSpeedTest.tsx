@@ -490,18 +490,18 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
       <div className="glass rounded-xl p-6 border border-white/10 flex flex-col gap-6">
         {/* 测速控制栏 */}
         <div className="flex items-center justify-between">
-          <div className="text-sm text-muted-foreground">
+          <div className="text-sm text-fg-2">
             {entries.length} {t("endpointTest.endpoints")}
           </div>
           <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
+            <label className="flex items-center gap-1.5 text-xs text-fg-2">
               <input
                 type="checkbox"
                 checked={autoSelect}
                 onChange={(event) => {
                   onAutoSelectChange(event.target.checked);
                 }}
-                className="h-3.5 w-3.5 rounded border-border-default bg-background text-primary focus:ring-2 focus:ring-primary/20"
+                className="ui-checkbox"
               />
               {t("endpointTest.autoSelect")}
             </label>
@@ -509,8 +509,9 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
               type="button"
               onClick={runSpeedTest}
               disabled={isTesting || !hasEndpoints}
-              size="sm"
-              className="h-7 w-24 gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              variant="neutral"
+              size="compact"
+              className="w-24 gap-1.5"
             >
               {isTesting ? (
                 <>
@@ -553,7 +554,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
             </Button>
           </div>
           {addError && (
-            <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+            <div className="flex items-center gap-1.5 text-xs text-danger-text">
               <AlertCircle className="h-3 w-3" />
               {addError}
             </div>
@@ -571,25 +572,23 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                 <div
                   key={entry.id}
                   onClick={() => handleSelect(entry.url)}
-                  className={`group flex cursor-pointer items-center justify-between px-3 py-2.5 rounded-lg border transition text-foreground ${
+                  className={`group flex cursor-pointer items-center justify-between px-3 py-2.5 rounded-lg border transition text-fg-1 ${
                     isSelected
                       ? "border-primary/70 bg-primary/5 shadow-sm"
-                      : "border-border-default bg-background hover:bg-muted"
+                      : "border-border bg-surface hover:bg-subtle"
                   }`}
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-3">
                     {/* 选择指示器 */}
                     <div
                       className={`h-1.5 w-1.5 flex-shrink-0 rounded-full transition ${
-                        isSelected
-                          ? "bg-blue-500 dark:bg-blue-400"
-                          : "bg-gray-300 dark:bg-gray-700"
+                        isSelected ? "bg-action" : "bg-subtle"
                       }`}
                     />
 
                     {/* 内容 */}
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm text-foreground">
+                      <div className="truncate text-sm text-fg-1">
                         {entry.url}
                       </div>
                     </div>
@@ -602,25 +601,25 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                         <div
                           className={`font-mono text-sm font-medium ${
                             latency < 300
-                              ? "text-emerald-600 dark:text-emerald-400"
+                              ? "text-success-text"
                               : latency < 500
-                                ? "text-yellow-600 dark:text-yellow-400"
+                                ? "text-warning-text"
                                 : latency < 800
-                                  ? "text-orange-600 dark:text-orange-400"
-                                  : "text-red-600 dark:text-red-400"
+                                  ? "text-warning-text"
+                                  : "text-danger-text"
                           }`}
                         >
                           {latency}ms
                         </div>
                       </div>
                     ) : isTesting ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                      <Loader2 className="h-4 w-4 animate-spin text-fg-3" />
                     ) : entry.error ? (
-                      <div className="text-xs text-gray-400">
+                      <div className="text-xs text-fg-3">
                         {t("endpointTest.failed")}
                       </div>
                     ) : (
-                      <div className="text-xs text-gray-400">—</div>
+                      <div className="text-xs text-fg-3">—</div>
                     )}
 
                     <button
@@ -629,7 +628,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                         event.stopPropagation();
                         handleRemoveEndpoint(entry);
                       }}
-                      className="opacity-0 transition hover:text-red-600 group-hover:opacity-100 dark:hover:text-red-400"
+                      className="opacity-0 transition hover:text-danger-text group-hover:opacity-100"
                     >
                       <X className="h-4 w-4" />
                     </button>
@@ -639,14 +638,14 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
             })}
           </div>
         ) : (
-          <div className="rounded-md border border-dashed border-border-default bg-muted px-4 py-8 text-center text-sm text-muted-foreground">
+          <div className="rounded-md border border-dashed border-border bg-subtle px-4 py-8 text-center text-sm text-fg-2">
             {t("endpointTest.empty")}
           </div>
         )}
 
         {/* 错误提示 */}
         {lastError && (
-          <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+          <div className="flex items-center gap-1.5 text-xs text-danger-text">
             <AlertCircle className="h-3 w-3" />
             {lastError}
           </div>

@@ -109,8 +109,9 @@ pub async fn get_config_status(
             Ok(ConfigStatus { exists, path })
         }
         AppType::OpenCode => {
-            let config_path = crate::opencode_config::get_opencode_config_path();
-            let exists = config_path.exists();
+            let config_path =
+                crate::opencode_config::get_opencode_config_path().map_err(|e| e.to_string())?;
+            let exists = config_path.try_exists().map_err(|e| e.to_string())?;
             let path = crate::opencode_config::get_opencode_dir()
                 .to_string_lossy()
                 .to_string();
@@ -314,23 +315,6 @@ pub async fn get_common_config_snippet(
         .map_err(|e| e.to_string())
 }
 
-/// 对前端编辑器里的 config.toml 文本做通用配置片段的合并/剥离。
-/// 放后端是为了走 toml_edit（保注释、保键序）；前端 smol-toml 的
-/// 整文档重序列化会破坏用户手写格式。
-#[tauri::command]
-pub async fn update_toml_common_config_snippet(
-    config_toml: String,
-    snippet_toml: String,
-    enabled: bool,
-) -> Result<String, String> {
-    crate::services::provider::update_toml_common_config_snippet(
-        &config_toml,
-        &snippet_toml,
-        enabled,
-    )
-    .map_err(|e| e.to_string())
-}
-
 #[tauri::command]
 pub async fn set_common_config_snippet(
     app_type: String,
@@ -338,30 +322,13 @@ pub async fn set_common_config_snippet(
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<(), String> {
     let is_cleared = snippet.trim().is_empty();
-    let old_snippet = state
-        .db
-        .get_config_snippet(&app_type)
-        .map_err(|e| e.to_string())?;
 
     validate_common_config_snippet(&app_type, &snippet)?;
 
     let value = if is_cleared { None } else { Some(snippet) };
 
-    if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
-        if let Some(legacy_snippet) = old_snippet
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
-            crate::services::provider::ProviderService::migrate_legacy_common_config_usage(
-                state.inner(),
-                app,
-                legacy_snippet,
-            )
-            .map_err(|e| e.to_string())?;
-        }
-    }
-
+    // Claude Code、Codex、Gemini CLI 的片段已冻结：只存库，留给旧版、Lite、CLI 读；新版
+    // 既不按它迁移存量行，也不再用它重写 live（共享设置直接在供应商编辑器底部改）。
     state
         .db
         .set_config_snippet(&app_type, value)
@@ -370,15 +337,6 @@ pub async fn set_common_config_snippet(
         .db
         .set_config_snippet_cleared(&app_type, is_cleared)
         .map_err(|e| e.to_string())?;
-
-    if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
-        let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
-        crate::services::provider::ProviderService::sync_current_provider_for_app(
-            state.inner(),
-            app,
-        )
-        .map_err(|e| e.to_string())?;
-    }
 
     if app_type == "omo"
         && state
