@@ -5,6 +5,32 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.8] - 2026-10-10
+
+The fourth patch release on the 4.0 stable line. Codex aggregation works for users who only installed the Codex desktop app, and when the official model list is unavailable the notice now says why and clears itself once the list is back. Model fetching in the Claude, Codex, Grok Build and OpenCode forms sends the configured request headers, Settings > Data gains an "Open log" button, and dark-mode text is less glaring.
+
+**Stats**: 8 commits | 29 files changed | +1265 insertions | -128 deletions
+
+### Added
+
+- **Open Log Button**: The diagnostic log section in Settings > Data gets an "Open log" button that reveals `cc-switch.log` in the system file manager, falling back to the logs directory when the file has not been created yet, so the log can be attached to an issue without hunting for the hidden config folder.
+
+### Fixed
+
+- **Codex Aggregation Without a Standalone Codex CLI** (refs #8087, #7993): The Codex Stack page reported "official models unavailable" whenever both the online fetch and `codex debug models --bundled` failed, and users who only installed the desktop app have no `codex` on PATH. The desktop app's own CLI is now the last fallback: on macOS `ChatGPT.app` and the pre-rename `Codex.app` under `/Applications` and `~/Applications` (current `codex-cli/bin/codex` layout before the older `Resources/codex`; `ChatGPT.app` always wins so a leftover `Codex.app` cannot shadow a newer model list), on Windows `%LOCALAPPDATA%\OpenAI\Codex\bin\<version>\codex.exe`, newest modification time first. Standalone installs still take precedence.
+- **Why the Official Codex Model List Is Unavailable** (refs #8087, #7993): Every cause collapsed into one generic notice and skipped logins were not logged. The Stack view now exposes `noticeReasons` and the notice lists them in all four locales: no usable ChatGPT login, login not refreshed for over 8 days, login missing the workspace or user ID, no Codex version, fetch failed or an invalid list for the official list; no Codex CLI found, the CLI failed to print a list, or no usable model for the bundled list. Each fallback logs one warning and CLI failures reach the default log level. Recovery is automatic: a refresh after a fallback always rewrites the client, and while the cached entry is still fresh the background check rewrites from it without fetching, so a 304 or unchanged list no longer leaves the notice in place until the next manual switch.
+- **Model Fetching Ignored Configured Request Headers** (#7759, #7760, fixes #7747): The OpenCode form now sends its configured headers when fetching model lists, and the Claude and Codex forms (the Grok Build form reuses the Codex one) forward the provider's local-routing Header override JSON, parsed by the shared `parseHeaderOverrideJson` rules through a new `modelFetchRequestHeaders` helper, so gateways such as Cloudflare AI Gateway (`cf-aig-authorization`) accept the `GET /v1/models` probe. Invalid or empty overrides fall back to a plain fetch. Editing the override in the Codex form now also clears the fetched list and drops in-flight responses.
+- **Dark-mode Text Too Bright**: The three dark-mode text tiers sat close to white (15.5 / 11.1 / 8.4 contrast on the app background). `--text-1` is now `#e4e4e7` with the shadcn `--foreground` family following, `--text-2` `#ababb3`, `--text-3` `#9a9aa2`, and `--muted-foreground` aligns with `--text-2`, for about 13.4 / 7.5 / 6.1; secondary and tertiary text stays at or above 4.5:1 on card and selected backgrounds. Light mode is unchanged.
+
+### Docs
+
+- The v4.0.7 release notes explain the Codex session compression switch in detail (how it maps to `config.toml`, when Codex compresses, resuming, CC Switch's session list and usage, caveats).
+- The en and ja quota display help and the en, ja and zh-TW backup hints use the labels the UI actually shows.
+
+### Upgrade notes
+
+- **No database schema change** (still 20).
+
 ## [4.0.7] - 2026-10-10
 
 The third patch release on the 4.0 stable line. Switching between the Plus and Team workspaces of the same OpenAI user works again (a 4.0 regression), quota windows can show what is used instead of what is left, compressed Codex session rollouts are read everywhere and can be enabled from Settings, and the Codex stale-client notice now covers direct ↔ routing switches and Windows. Usage accounting fixes cover Claude 1-hour cache writes, explicit-zero OpenAI cache fields from relays, Codex cache writes in session imports, missing Sonnet 5.5 / Haiku 5.5 prices and duplicate provider rows on the Claude stats tab; other fixes cover Codex top-level `base_url` being dropped on save, Windows batch files under non-ASCII usernames, and form editors in OpenCode, MiniMax Code and OpenClaw.
