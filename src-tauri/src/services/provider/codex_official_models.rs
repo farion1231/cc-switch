@@ -1185,6 +1185,9 @@ mod tests {
 
     #[test]
     fn thread_versions_come_from_the_most_recently_created_threads() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::TempDir::new().unwrap();
         let db = dir.path().join("state_5.sqlite");
         let conn = rusqlite::Connection::open(&db).unwrap();
