@@ -675,6 +675,8 @@ function App() {
       return;
     }
     if (managementBusyRef.current) return;
+    // 再点当前页不会离开：不弹确认，也不能清掉编辑页的未保存登记
+    if (currentViewRef.current === page) return;
     if (confirmLeave(() => openPage(page))) return;
     closeProviderPanels();
     if (page === "prompts" && currentViewRef.current !== "prompts") {
