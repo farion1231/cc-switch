@@ -4,7 +4,7 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::config::write_text_file;
-use crate::openclaw_config::get_openclaw_dir;
+use crate::openclaw_config::get_openclaw_workspace_dir;
 
 /// Allowed workspace filenames (whitelist for security)
 const ALLOWED_FILES: &[&str] = &[
@@ -58,7 +58,9 @@ pub struct DailyMemoryFileInfo {
 /// List all daily memory files under `workspace/memory/`.
 #[tauri::command]
 pub async fn list_daily_memory_files() -> Result<Vec<DailyMemoryFileInfo>, String> {
-    let memory_dir = get_openclaw_dir().join("workspace").join("memory");
+    let memory_dir = get_openclaw_workspace_dir()
+        .map_err(|e| e.to_string())?
+        .join("memory");
 
     if !memory_dir.exists() {
         return Ok(Vec::new());
@@ -119,8 +121,8 @@ pub async fn list_daily_memory_files() -> Result<Vec<DailyMemoryFileInfo>, Strin
 pub async fn read_daily_memory_file(filename: String) -> Result<Option<String>, String> {
     validate_daily_memory_filename(&filename)?;
 
-    let path = get_openclaw_dir()
-        .join("workspace")
+    let path = get_openclaw_workspace_dir()
+        .map_err(|e| e.to_string())?
         .join("memory")
         .join(&filename);
 
@@ -138,7 +140,9 @@ pub async fn read_daily_memory_file(filename: String) -> Result<Option<String>, 
 pub async fn write_daily_memory_file(filename: String, content: String) -> Result<(), String> {
     validate_daily_memory_filename(&filename)?;
 
-    let memory_dir = get_openclaw_dir().join("workspace").join("memory");
+    let memory_dir = get_openclaw_workspace_dir()
+        .map_err(|e| e.to_string())?
+        .join("memory");
 
     std::fs::create_dir_all(&memory_dir)
         .map_err(|e| format!("Failed to create memory directory: {e}"))?;
@@ -194,7 +198,9 @@ pub struct DailyMemorySearchResult {
 pub async fn search_daily_memory_files(
     query: String,
 ) -> Result<Vec<DailyMemorySearchResult>, String> {
-    let memory_dir = get_openclaw_dir().join("workspace").join("memory");
+    let memory_dir = get_openclaw_workspace_dir()
+        .map_err(|e| e.to_string())?
+        .join("memory");
 
     if !memory_dir.exists() || query.is_empty() {
         return Ok(Vec::new());
@@ -289,8 +295,8 @@ pub async fn search_daily_memory_files(
 pub async fn delete_daily_memory_file(filename: String) -> Result<(), String> {
     validate_daily_memory_filename(&filename)?;
 
-    let path = get_openclaw_dir()
-        .join("workspace")
+    let path = get_openclaw_workspace_dir()
+        .map_err(|e| e.to_string())?
         .join("memory")
         .join(&filename);
 
@@ -310,7 +316,9 @@ pub async fn delete_daily_memory_file(filename: String) -> Result<(), String> {
 pub async fn read_workspace_file(filename: String) -> Result<Option<String>, String> {
     validate_filename(&filename)?;
 
-    let path = get_openclaw_dir().join("workspace").join(&filename);
+    let path = get_openclaw_workspace_dir()
+        .map_err(|e| e.to_string())?
+        .join(&filename);
 
     if !path.exists() {
         return Ok(None);
@@ -327,7 +335,7 @@ pub async fn read_workspace_file(filename: String) -> Result<Option<String>, Str
 pub async fn write_workspace_file(filename: String, content: String) -> Result<(), String> {
     validate_filename(&filename)?;
 
-    let workspace_dir = get_openclaw_dir().join("workspace");
+    let workspace_dir = get_openclaw_workspace_dir().map_err(|e| e.to_string())?;
 
     // Ensure workspace directory exists
     std::fs::create_dir_all(&workspace_dir)
@@ -339,14 +347,23 @@ pub async fn write_workspace_file(filename: String, content: String) -> Result<(
         .map_err(|e| format!("Failed to write workspace file {filename}: {e}"))
 }
 
-/// Open the workspace or memory directory in the system file manager.
-/// `subdir`: "workspace" opens `~/.openclaw/workspace/`,
-///           "memory" opens `~/.openclaw/workspace/memory/`.
+/// Return the same workspace root used by all file operations.
+#[tauri::command]
+pub async fn get_workspace_root_directory() -> Result<String, String> {
+    Ok(get_openclaw_workspace_dir()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string())
+}
+
+/// Open the resolved workspace root or its memory subdirectory.
 #[tauri::command]
 pub async fn open_workspace_directory(handle: AppHandle, subdir: String) -> Result<bool, String> {
     let dir = match subdir.as_str() {
-        "memory" => get_openclaw_dir().join("workspace").join("memory"),
-        _ => get_openclaw_dir().join("workspace"),
+        "memory" => get_openclaw_workspace_dir()
+            .map_err(|e| e.to_string())?
+            .join("memory"),
+        _ => get_openclaw_workspace_dir().map_err(|e| e.to_string())?,
     };
 
     if !dir.exists() {
@@ -359,4 +376,160 @@ pub async fn open_workspace_directory(handle: AppHandle, subdir: String) -> Resu
         .map_err(|e| format!("Failed to open directory: {e}"))?;
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+
+    use crate::openclaw_config::test_environment::TestEnvironment;
+
+    #[tokio::test]
+    #[serial]
+    async fn workspace_commands_use_configured_root_for_files_and_memory() {
+        let temp = tempfile::tempdir().unwrap();
+        let _environment = TestEnvironment::isolated(temp.path());
+        let root = temp.path().join("custom-workspace");
+        let config_dir = crate::openclaw_config::get_openclaw_dir();
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("openclaw.json"),
+            serde_json::json!({
+                "agents": {"defaults": {"workspace": root}}
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            get_workspace_root_directory().await.unwrap(),
+            root.to_string_lossy()
+        );
+        write_workspace_file("MEMORY.md".into(), "shared memory".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            read_workspace_file("MEMORY.md".into())
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("shared memory")
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("MEMORY.md")).unwrap(),
+            "shared memory"
+        );
+
+        let filename = "2026-10-09.md".to_string();
+        write_daily_memory_file(filename.clone(), "daily needle".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            read_daily_memory_file(filename.clone())
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("daily needle")
+        );
+        let files = list_daily_memory_files().await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].filename, filename);
+        let results = search_daily_memory_files("needle".into()).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].filename, filename);
+        delete_daily_memory_file(filename.clone()).await.unwrap();
+        assert!(!root.join("memory").join(filename).exists());
+        assert!(!config_dir.join("workspace").exists());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn workspace_commands_reject_invalid_config_and_unsafe_filenames() {
+        let temp = tempfile::tempdir().unwrap();
+        let _environment = TestEnvironment::isolated(temp.path());
+        let config_dir = crate::openclaw_config::get_openclaw_dir();
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("openclaw.json"), "{ broken").unwrap();
+        assert!(get_workspace_root_directory().await.is_err());
+        assert!(write_workspace_file("MEMORY.md".into(), "text".into())
+            .await
+            .is_err());
+        assert!(
+            write_daily_memory_file("2026-10-09.md".into(), "text".into())
+                .await
+                .is_err()
+        );
+        assert!(!config_dir.join("workspace").exists());
+        std::fs::write(config_dir.join("openclaw.json"), "{}").unwrap();
+        assert!(write_workspace_file("../outside.md".into(), "text".into())
+            .await
+            .is_err());
+        assert!(delete_daily_memory_file("../2026-10-09.md".into())
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn workspace_tests_do_not_touch_an_inherited_state_directory() {
+        let original_state = std::env::var_os("OPENCLAW_STATE_DIR");
+        let inherited = tempfile::tempdir().unwrap();
+        std::fs::write(
+            inherited.path().join("openclaw.json"),
+            r#"{"reviewSentinel":"must-survive"}"#,
+        )
+        .unwrap();
+        let original_environment = TestEnvironment::capture();
+        std::env::set_var("OPENCLAW_STATE_DIR", inherited.path());
+
+        let temp = tempfile::tempdir().unwrap();
+        let environment = TestEnvironment::isolated(temp.path());
+        let config_dir = crate::openclaw_config::get_openclaw_dir();
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("openclaw.json"), "{}").unwrap();
+        write_workspace_file("MEMORY.md".into(), "isolated".into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(inherited.path().join("openclaw.json")).unwrap(),
+            r#"{"reviewSentinel":"must-survive"}"#
+        );
+        drop(environment);
+        assert_eq!(
+            std::env::var_os("OPENCLAW_STATE_DIR").as_deref(),
+            Some(inherited.path().as_os_str())
+        );
+        drop(original_environment);
+        assert_eq!(std::env::var_os("OPENCLAW_STATE_DIR"), original_state);
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_test_environment_restores_unset_and_set_values_after_unwind() {
+        let _original_environment = TestEnvironment::capture();
+        let temp = tempfile::tempdir().unwrap();
+        for original in [None, Some(std::ffi::OsString::from("external-state"))] {
+            match &original {
+                Some(value) => std::env::set_var("OPENCLAW_STATE_DIR", value),
+                None => std::env::remove_var("OPENCLAW_STATE_DIR"),
+            }
+            for panic in [false, true] {
+                let result = std::panic::catch_unwind(|| {
+                    let _environment = TestEnvironment::isolated(temp.path());
+                    assert!(std::env::var_os("OPENCLAW_STATE_DIR").is_none());
+                    assert_eq!(
+                        crate::openclaw_config::get_openclaw_dir(),
+                        temp.path().join(".openclaw")
+                    );
+                    if panic {
+                        panic!("exercise environment cleanup");
+                    }
+                });
+                assert_eq!(result.is_err(), panic);
+                assert_eq!(std::env::var_os("OPENCLAW_STATE_DIR"), original);
+            }
+        }
+    }
 }
