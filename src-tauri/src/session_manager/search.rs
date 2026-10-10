@@ -727,14 +727,35 @@ fn index_source(provider_id: &str, source_path: &str) -> bool {
     let stored = with_index(|index| index.stored_fingerprint(provider_id, source_path))
         .ok()
         .flatten();
+    index_changed_source(
+        stored,
+        fingerprint,
+        || super::load_messages(&source.provider_id, &source.load_path()),
+        |rows| {
+            with_index(|index| index.replace_source(provider_id, source_path, fingerprint, rows))
+        },
+    )
+}
+
+fn index_changed_source(
+    stored: Option<StoredFingerprint>,
+    fingerprint: StoredFingerprint,
+    load: impl FnOnce() -> Result<Vec<SessionMessage>, String>,
+    replace: impl FnOnce(&[(usize, String)]) -> Result<(), String>,
+) -> bool {
     if stored == Some(fingerprint) {
         return false;
     }
-    // 解析失败也记下指纹（零行），免得每次同步都重试一个坏文件
-    let rows = super::load_messages(&source.provider_id, &source.load_path())
-        .map(|messages| message_rows(&messages))
-        .unwrap_or_default();
-    match with_index(|index| index.replace_source(provider_id, source_path, fingerprint, &rows)) {
+    // 读取失败可能只是暂时的：保留旧索引和指纹，让下次同步重试。
+    let messages = match load() {
+        Ok(messages) => messages,
+        Err(e) => {
+            log::warn!("读取会话正文索引源失败: {e}");
+            return false;
+        }
+    };
+    let rows = message_rows(&messages);
+    match replace(&rows) {
         Ok(()) => true,
         Err(e) => {
             log::warn!("写入会话正文索引失败: {e}");
@@ -761,6 +782,71 @@ mod tests {
             .enumerate()
             .map(|(i, text)| (i, text.to_string()))
             .collect()
+    }
+
+    fn sync_source(
+        index: &mut SessionIndex,
+        fingerprint: StoredFingerprint,
+        load: impl FnOnce() -> Result<Vec<SessionMessage>, String>,
+    ) -> bool {
+        let stored = index.stored_fingerprint("codex", "/a.jsonl").unwrap();
+        index_changed_source(stored, fingerprint, load, |rows| {
+            index
+                .replace_source("codex", "/a.jsonl", fingerprint, rows)
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    #[test]
+    fn failed_initial_load_retries_unchanged_source() {
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        let mut attempts = 0;
+        let mut load = || {
+            attempts += 1;
+            if attempts == 1 {
+                Err("temporary read failure".to_string())
+            } else {
+                Ok(vec![SessionMessage::from_blocks(
+                    "user",
+                    None,
+                    vec![SessionBlock::text("retry searchable content")],
+                )])
+            }
+        };
+
+        let first = sync_source(&mut index, fp(1), &mut load);
+        let second = sync_source(&mut index, fp(1), &mut load);
+        assert_eq!(attempts, 2, "failed loads must not cache the fingerprint");
+        assert!(!first);
+        assert!(second);
+        assert_eq!(index.search("searchable", None, 10).unwrap().len(), 1);
+        assert!(!sync_source(&mut index, fp(1), || {
+            panic!("successfully indexed sources should still be skipped")
+        }));
+    }
+
+    #[test]
+    fn failed_refresh_preserves_previous_rows_and_fingerprint() {
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        index
+            .replace_source("codex", "/a.jsonl", fp(1), &rows(&["previous content"]))
+            .unwrap();
+
+        let changed = sync_source(&mut index, fp(2), || Err("temporary read failure".into()));
+        assert_eq!(index.search("previous", None, 10).unwrap().len(), 1);
+        assert_eq!(
+            index.stored_fingerprint("codex", "/a.jsonl").unwrap(),
+            Some(fp(1))
+        );
+        assert!(!changed);
+
+        // A successful empty source must still replace the old rows and fingerprint.
+        assert!(sync_source(&mut index, fp(2), || Ok(Vec::new())));
+        assert!(index.search("previous", None, 10).unwrap().is_empty());
+        assert_eq!(
+            index.stored_fingerprint("codex", "/a.jsonl").unwrap(),
+            Some(fp(2))
+        );
     }
 
     #[test]
