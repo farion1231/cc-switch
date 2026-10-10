@@ -162,6 +162,11 @@ pub(crate) fn build_provider_from_request(
                 "Pi providers must be added from the Pi provider page".to_string(),
             ));
         }
+        AppType::OhMyPi => {
+            return Err(AppError::InvalidInput(
+                "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
+            ));
+        }
     };
 
     // Build usage script configuration if provided

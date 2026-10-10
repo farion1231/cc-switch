@@ -773,7 +773,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
             {
               key: "add",
               label:
-                app === "pi"
+                app === "pi" || app === "ohmypi"
                   ? t("providerCard.action.enable")
                   : t("providerCard.action.add"),
               onClick: () => actions.add(p),

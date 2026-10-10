@@ -92,6 +92,7 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax",
+  ohmypi: "omp",
 };
 
 export function appShortName(appType: string): string {

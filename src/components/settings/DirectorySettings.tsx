@@ -23,6 +23,7 @@ interface DirectorySettingsProps {
   openclawDir?: string;
   hermesDir?: string;
   piDir?: string;
+  ohmypiDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -42,6 +43,7 @@ export function DirectorySettings({
   openclawDir,
   hermesDir,
   piDir,
+  ohmypiDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -188,6 +190,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("pi", val)}
           onBrowse={() => onBrowseDirectory("pi")}
           onReset={() => onResetDirectory("pi")}
+        />
+
+        <DirectoryInput
+          label={t("settings.ohmypiConfigDir")}
+          description={undefined}
+          value={ohmypiDir}
+          resolvedValue={resolvedDirs.ohmypi}
+          placeholder={t("settings.browsePlaceholderOhMyPi")}
+          onChange={(val) => onDirectoryChange("ohmypi", val)}
+          onBrowse={() => onBrowseDirectory("ohmypi")}
+          onReset={() => onResetDirectory("ohmypi")}
         />
       </section>
     </div>

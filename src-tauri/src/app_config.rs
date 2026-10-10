@@ -23,6 +23,8 @@ pub struct McpApps {
     pub hermes: bool,
     #[serde(default)]
     pub pi: bool,
+    #[serde(default)]
+    pub ohmypi: bool,
 }
 
 impl McpApps {
@@ -38,6 +40,7 @@ impl McpApps {
             AppType::Hermes => self.hermes,
             AppType::Mcode => self.mcode,
             AppType::Pi => self.pi,
+            AppType::OhMyPi => self.ohmypi,
             AppType::ClaudeDesktop => false,
         }
     }
@@ -54,6 +57,7 @@ impl McpApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Pi => self.pi = enabled,
+            AppType::OhMyPi => self.ohmypi = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
         }
     }
@@ -85,6 +89,9 @@ impl McpApps {
         if self.pi {
             apps.push(AppType::Pi);
         }
+        if self.ohmypi {
+            apps.push(AppType::OhMyPi);
+        }
         apps
     }
 
@@ -98,6 +105,7 @@ impl McpApps {
             && !self.hermes
             && !self.mcode
             && !self.pi
+            && !self.ohmypi
     }
 }
 
@@ -120,6 +128,8 @@ pub struct SkillApps {
     pub hermes: bool,
     #[serde(default)]
     pub pi: bool,
+    #[serde(default)]
+    pub ohmypi: bool,
 }
 
 impl SkillApps {
@@ -134,6 +144,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::OhMyPi => self.ohmypi,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
             AppType::ClaudeDesktop => false,
         }
@@ -150,6 +161,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::Mcode => self.mcode = enabled,
+            AppType::OhMyPi => self.ohmypi = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
         }
@@ -182,6 +194,9 @@ impl SkillApps {
         if self.pi {
             apps.push(AppType::Pi);
         }
+        if self.ohmypi {
+            apps.push(AppType::OhMyPi);
+        }
         apps
     }
 
@@ -195,6 +210,7 @@ impl SkillApps {
             && !self.hermes
             && !self.mcode
             && !self.pi
+            && !self.ohmypi
     }
 
     /// 仅启用指定应用（其他应用设为禁用）
@@ -415,6 +431,7 @@ pub enum AppType {
     Hermes,
     Pi,
     Mcode,
+    OhMyPi,
 }
 
 impl AppType {
@@ -430,6 +447,7 @@ impl AppType {
             AppType::Hermes => "hermes",
             AppType::Pi => "pi",
             AppType::Mcode => "mcode",
+            AppType::OhMyPi => "ohmypi",
         }
     }
 
@@ -441,7 +459,12 @@ impl AppType {
     pub fn is_additive_mode(&self) -> bool {
         matches!(
             self,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode
+            AppType::OpenCode
+                | AppType::OpenClaw
+                | AppType::Hermes
+                | AppType::Pi
+                | AppType::Mcode
+                | AppType::OhMyPi
         )
     }
 
@@ -465,6 +488,7 @@ impl AppType {
             AppType::Hermes,
             AppType::Pi,
             AppType::Mcode,
+            AppType::OhMyPi,
         ]
         .into_iter()
     }
@@ -486,10 +510,11 @@ impl FromStr for AppType {
             "hermes" => Ok(AppType::Hermes),
             "pi" => Ok(AppType::Pi),
             "mcode" => Ok(AppType::Mcode),
+            "ohmypi" | "oh-my-pi" | "oh_my_pi" | "omp" => Ok(AppType::OhMyPi),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, ohmypi。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, ohmypi."),
             )),
         }
     }
@@ -529,7 +554,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
-            AppType::Pi | AppType::Mcode => None,
+            AppType::Pi | AppType::Mcode | AppType::OhMyPi => None,
         }
     }
 
@@ -544,7 +569,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
-            AppType::Pi | AppType::Mcode => {}
+            AppType::Pi | AppType::Mcode | AppType::OhMyPi => {}
         }
     }
 }
@@ -870,7 +895,8 @@ impl MultiAppConfig {
             AppType::Hermes => &mut config.prompts.hermes.prompts,
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
-            AppType::Pi | AppType::Mcode => return Ok(false),
+            // OhMyPi likewise stores prompts in its native agent config.
+            AppType::Pi | AppType::Mcode | AppType::OhMyPi => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -914,7 +940,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
-                AppType::Pi | AppType::Mcode => continue, // Pi didn't exist in v3.6.x, skip
+                AppType::Pi | AppType::Mcode | AppType::OhMyPi => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {
@@ -1045,6 +1071,16 @@ mod tests {
             AppType::ClaudeDesktop
         );
         assert_eq!(AppType::ClaudeDesktop.as_str(), "claude-desktop");
+    }
+
+    #[test]
+    fn app_type_parses_ohmypi_aliases() {
+        assert_eq!("ohmypi".parse::<AppType>().unwrap(), AppType::OhMyPi);
+        assert_eq!("oh-my-pi".parse::<AppType>().unwrap(), AppType::OhMyPi);
+        assert_eq!("oh_my_pi".parse::<AppType>().unwrap(), AppType::OhMyPi);
+        assert_eq!("omp".parse::<AppType>().unwrap(), AppType::OhMyPi);
+        assert_eq!("OMP".parse::<AppType>().unwrap(), AppType::OhMyPi);
+        assert_eq!(AppType::OhMyPi.as_str(), "ohmypi");
     }
 
     struct TempHome {

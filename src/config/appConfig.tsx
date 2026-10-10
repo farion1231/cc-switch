@@ -27,6 +27,7 @@ export const APP_IDS: AppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "ohmypi",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -40,6 +41,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   hermes: true,
   pi: true,
   mcode: true,
+  ohmypi: false,
 };
 
 /** App IDs shown in Skills panels. */
@@ -52,6 +54,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "ohmypi",
 ];
 
 export type ProxyAppId = Extract<
@@ -82,7 +85,7 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "ohmypi"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -91,6 +94,7 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "ohmypi",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
@@ -123,6 +127,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "ohmypi",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -229,6 +234,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  ohmypi: {
+    label: "Oh My Pi",
+    icon: (
+      <ProviderIcon
+        icon="ohmypi"
+        name="Oh My Pi"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
+    badgeClass:
+      "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
   },
 };
 

@@ -252,6 +252,11 @@ impl Provider {
                 );
                 (base_url, api_key)
             }
+            // Oh My Pi custom providers use the models.yml
+            AppType::OhMyPi => (
+                crate::ohmypi_config::provider_base_url(settings).unwrap_or_default(),
+                str_at(settings.get("apiKey")),
+            ),
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a

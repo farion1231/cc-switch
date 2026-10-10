@@ -69,7 +69,8 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_ohmypi BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -100,6 +101,7 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_ohmypi BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -576,6 +578,11 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        log::info!("迁移数据库从 v20 到 v21（添加 Oh My Pi 支持）");
+                        Self::migrate_v20_to_v21(conn)?;
+                        Self::set_user_version(conn, 21)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1623,6 +1630,22 @@ impl Database {
                 "last_tail_fingerprint",
                 "INTEGER",
             )?;
+        }
+        Ok(())
+    }
+
+    /// v20 -> v21: Oh My Pi support.
+    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+        // 缺表的库（异常/测试夹具）跳过：create_tables 会以含列的新 DDL 建表。
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_ohmypi",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
         }
         Ok(())
     }

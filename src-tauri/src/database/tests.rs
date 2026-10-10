@@ -1431,3 +1431,67 @@ fn incremental_vacuum_reclaims_entire_freelist() {
     Database::incremental_vacuum_on_conn(&conn).expect("incremental vacuum");
     assert_eq!(freelist(&conn), 0, "all free pages should be reclaimed");
 }
+
+#[test]
+fn migration_v20_to_v21_adds_enabled_ohmypi_columns() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    // v20 形态：含 Mcode/Pi 列（v18->v20 产物），无 Oh My Pi 列
+    conn.execute_batch(
+        "CREATE TABLE mcp_servers (
+            id TEXT PRIMARY KEY,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+        );
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_mcode BOOLEAN NOT NULL DEFAULT 0
+        );",
+    )
+    .expect("seed v20 shape");
+    conn.execute(
+        "INSERT INTO mcp_servers (id, enabled_hermes, enabled_mcode, enabled_pi) VALUES ('mcp-1', 1, 1, 1)",
+        [],
+    )
+    .expect("seed mcp row");
+    conn.execute(
+        "INSERT INTO skills (id, enabled_hermes, enabled_mcode) VALUES ('skill-1', 1, 0)",
+        [],
+    )
+    .expect("seed skill row");
+    Database::set_user_version(&conn, 20).expect("set user_version=20");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("user_version after migration"),
+        21
+    );
+    for (table, column) in [
+        ("mcp_servers", "enabled_ohmypi"),
+        ("skills", "enabled_ohmypi"),
+    ] {
+        assert!(
+            Database::has_column(&conn, table, column).expect("check column"),
+            "{table}.{column} should exist after v20 -> v21"
+        );
+    }
+    // 既有标志列的值必须保留
+    let (mcp_hermes, mcp_mcode, mcp_pi, mcp_ohmypi): (i64, i64, i64, i64) = conn
+        .query_row(
+            "SELECT enabled_hermes, enabled_mcode, enabled_pi, enabled_ohmypi FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("read mcp row");
+    assert_eq!((mcp_hermes, mcp_mcode, mcp_pi, mcp_ohmypi), (1, 1, 1, 0));
+    let (skill_hermes, skill_mcode, skill_ohmypi): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT enabled_hermes, enabled_mcode, enabled_ohmypi FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read skill row");
+    assert_eq!((skill_hermes, skill_mcode, skill_ohmypi), (1, 0, 0));
+}

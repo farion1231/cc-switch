@@ -905,6 +905,8 @@
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
     "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
+    "ohmypiConfigDir": "Oh My Pi 設定目錄",
+    "ohmypiConfigDirDescription": "覆寫 Oh My Pi 設定目錄（models.yml、config.yml、提示、Skills 與工作階段）。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -913,6 +915,7 @@
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
     "browsePlaceholderPi": "例如：/home/<您的帳號>/.pi/agent",
+    "browsePlaceholderOhMyPi": "例如：/home/<您的帳號>/.omp/agent",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
     "checkForUpdates": "檢查更新",
@@ -935,8 +938,7 @@
     "starPrompt": "如果 CC Switch 幫到了你，請在 GitHub 點個 Star，這對我們意義重大",
     "starOnGithub": "去點 Star",
     "manualInstallCommands": "手動安裝指令",
-    "oneClickInstall": "一鍵安裝",
-    "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
+    "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi",
     "localEnvCheck": "本地環境檢查",
     "updateAllTools": "全部更新（{{count}}）",
     "currentVersion": "目前版本",
@@ -1046,7 +1048,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "ohmypi": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -4042,8 +4045,12 @@
       "openclaw": "透過 npm 安裝",
       "hermes": "安裝時執行官方安裝腳本",
       "pi": "透過 npm 安裝",
-      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm"
-    }
+      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
+      "omp": "透過 Bun 安裝（需 Bun 1.3.14+）"
+    },
+    "ompDiscoveryHelpTitle": "Oh My Pi 的實際載入範圍",
+    "ompDiscoveryHelp": "Oh My Pi 除了 ~/.omp/agent 自己的設定，還會從其他 Agent 的目錄發現 MCP 伺服器、技能、命令、鉤子、規則和設定（如 Claude 的 ~/.claude、Codex 的 ~/.codex 等）。要讓 Oh My Pi 的實際生效內容與 CC Switch 介面一致，請在 ~/.omp/agent/config.yml 用 disabledProviders 停用不需要的發現來源（id 與文件一致，如 claude、codex、gemini、opencode、github、agents）。",
+    "ompDiscoveryDocsLink": "參考文件：context-files（disabledProviders）"
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
@@ -4709,6 +4716,54 @@
       "loading": "正在查詢額度…",
       "refresh": "重新整理額度",
       "refreshAria": "重新整理 {{login}} 的額度"
+    }
+  },
+  "ohmypi": {
+    "empty": {
+      "title": "尚未新增自訂供應商",
+      "description": "Oh My Pi 內建供應商由 Oh My Pi 自行管理。點擊右上角 +，從預設或自訂設定新增供應商。"
+    },
+    "form": {
+      "modelsToggle": "設定模型列表",
+      "modelsHiddenHint": "未啟用模型列表：儲存後將以 override-only 型態寫入（不寫 models 鍵）",
+      "thinking": "思考設定",
+      "imageInputDecoder": "影像輸入解碼器",
+      "cost": "價格",
+      "passthroughLabel": "其他欄位（YAML，原樣保留）",
+      "fixYamlFirst": "請先修正下方的設定 YAML，再編輯結構化欄位。",
+      "providerKeyDuplicate": "此標識已被使用，請更換",
+      "absoluteHttpUrlRequired": "{{label}} 必須是絕對 HTTP 或 HTTPS URL",
+      "addCompatibilityOption": "新增",
+      "addModel": "新增模型",
+      "compatibility": "介面相容性",
+      "compatibilityHint": "調整相容端點或本機服務的請求行為。",
+      "contextWindow": "上下文長度",
+      "credential": "API Key",
+      "duplicateModel": "模型 ID {{id}} 重複",
+      "imageInput": "支援圖片輸入",
+      "maxTokens": "最大輸出 Token 數",
+      "modelId": "模型 ID",
+      "modelIdRequired": "模型 {{index}} 需要 ID",
+      "modelName": "顯示名稱",
+      "modelNamePlaceholder": "顯示名稱",
+      "nameRequired": "顯示名稱為必填",
+      "noCompatibilityOptions": "暫無相容性選項",
+      "noModels": "暫無模型設定",
+      "optionKey": "選項",
+      "optionValue": "值",
+      "positiveNumberRequired": "{{label}} 必須是大於 0 的數字",
+      "providerKey": "供應商識別碼",
+      "providerKeyRequired": "供應商識別碼為必填",
+      "reasoning": "支援擴展思考",
+      "removeCompatibilityOption": "移除相容性選項",
+      "removeModel": "移除模型",
+      "toggleModelDetails": "展開或收合模型詳細資料"
+    },
+    "provider": {
+      "enabled": "已在 Oh My Pi 中啟用",
+      "enableFailed": "無法在 Oh My Pi 中啟用此供應商",
+      "removed": "已從 Oh My Pi 移除",
+      "writeConflict": "Oh My Pi 設定正由其他程序修改，請稍後再試。"
     }
   }
 }

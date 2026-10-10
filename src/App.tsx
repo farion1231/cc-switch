@@ -51,6 +51,7 @@ import { useLastValidValue } from "@/hooks/useLastValidValue";
 import {
   extractErrorMessage,
   translatePiProviderMutationError,
+  translateOhMyPiProviderMutationError,
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
@@ -124,6 +125,8 @@ import {
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
+import { invalidateOhMyPiProviderCaches, ohmypiKeys } from "@/lib/query/ohmypi";
+import { ohmypiApi } from "@/lib/api";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -358,6 +361,39 @@ function App() {
         {
           description:
             translatePiProviderMutationError(detail, t) || detail || undefined,
+          closeButton: true,
+        },
+      );
+    }
+  };
+
+  const handleEnableOhMyPiProvider = async (provider: Provider) => {
+    try {
+      await providersApi.switch(provider.id, "ohmypi");
+      await invalidateOhMyPiProviderCaches(queryClient);
+      await providersApi.updateTrayMenu().catch((error) => {
+        console.error(
+          "Failed to update tray menu after enabling Oh My Pi provider",
+          error,
+        );
+      });
+      toast.success(
+        t("ohmypi.provider.enabled", {
+          defaultValue: "已在 Oh My Pi 中启用",
+        }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      const detail = extractErrorMessage(error);
+      toast.error(
+        t("ohmypi.provider.enableFailed", {
+          defaultValue: "无法在 Oh My Pi 中启用此供应商",
+        }),
+        {
+          description:
+            translateOhMyPiProviderMutationError(detail, t) ||
+            detail ||
+            undefined,
           closeButton: true,
         },
       );
@@ -801,11 +837,18 @@ function App() {
       } catch (error) {
         const detail = extractErrorMessage(error);
         const description =
-          activeApp === "pi"
-            ? translatePiProviderMutationError(detail, t) || detail
+          activeApp === "pi" || activeApp === "ohmypi"
+            ? activeApp === "pi"
+              ? translatePiProviderMutationError(detail, t) || detail
+              : translateOhMyPiProviderMutationError(detail, t) || detail
             : detail;
         if (activeApp === "pi") {
           void invalidatePiProviderCaches(queryClient).catch(() => undefined);
+        }
+        if (activeApp === "ohmypi") {
+          void invalidateOhMyPiProviderCaches(queryClient).catch(
+            () => undefined,
+          );
         }
         toast.error(t("notifications.removeFromConfigFailed"), {
           description: description || t("common.unknown"),
@@ -815,6 +858,9 @@ function App() {
       }
       if (activeApp === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      }
+      if (activeApp === "ohmypi") {
+        await invalidateOhMyPiProviderCaches(queryClient);
       }
       // Invalidate queries to refresh the isInConfig state
       if (activeApp === "opencode") {
@@ -842,9 +888,13 @@ function App() {
           ? t("pi.provider.removed", {
               defaultValue: "已从 Pi 移除",
             })
-          : t("notifications.removeFromConfigSuccess", {
-              defaultValue: "已从配置移除",
-            }),
+          : activeApp === "ohmypi"
+            ? t("ohmypi.provider.removed", {
+                defaultValue: "已从 Oh My Pi 移除",
+              })
+            : t("notifications.removeFromConfigSuccess", {
+                defaultValue: "已从配置移除",
+              }),
         { closeButton: true },
       );
     } else {
@@ -924,7 +974,8 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
+      activeApp === "ohmypi"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -944,12 +995,19 @@ function App() {
                     queryKey: hermesKeys.liveProviderIds,
                     queryFn: () => providersApi.getHermesLiveProviderIds(),
                   })
-                : (
-                    await queryClient.ensureQueryData({
-                      queryKey: ["pi", "currentState"],
-                      queryFn: () => piApi.getCurrentState(),
-                    })
-                  ).enabledProviderIds;
+                : activeApp === "ohmypi"
+                  ? (
+                      await queryClient.ensureQueryData({
+                        queryKey: ohmypiKeys.currentState,
+                        queryFn: () => ohmypiApi.getCurrentState(),
+                      })
+                    ).enabledProviderIds
+                  : (
+                      await queryClient.ensureQueryData({
+                        queryKey: ["pi", "currentState"],
+                        queryFn: () => piApi.getCurrentState(),
+                      })
+                    ).enabledProviderIds;
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -1334,14 +1392,17 @@ function App() {
             onSwitch={(provider) =>
               void (activeApp === "pi"
                 ? handleEnablePiProvider(provider)
-                : switchProvider(provider))
+                : activeApp === "ohmypi"
+                  ? handleEnableOhMyPiProvider(provider)
+                  : switchProvider(provider))
             }
             onRemoveFromConfig={
               activeApp === "opencode" ||
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
               activeApp === "pi" ||
-              activeApp === "mcode"
+              activeApp === "mcode" ||
+              activeApp === "ohmypi"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

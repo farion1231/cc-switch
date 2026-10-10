@@ -128,8 +128,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 9] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode",
+const VALID_TOOLS: [&str; 10] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "omp",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -731,6 +731,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
+        "omp" => Some("bun install -g @oh-my-pi/pi-coding-agent@latest"),
         _ => None,
     }
 }
@@ -1100,6 +1101,7 @@ async fn get_single_tool_version_impl(
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
+        "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         _ => None,
     };
 
@@ -2893,6 +2895,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
+        "omp" => Some("@oh-my-pi/pi-coding-agent"),
         _ => None,
     }
 }
@@ -4340,6 +4343,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
         "pi" => crate::settings::get_pi_override_dir(),
+        "omp" => crate::settings::get_ohmypi_override_dir(),
         _ => None,
     }?;
 

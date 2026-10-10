@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import { piApi } from "@/lib/api/pi";
@@ -176,6 +177,37 @@ describe("SessionManagerPage", () => {
     setSessionFixtures(sessions, messages);
   });
 
+  it("shows Oh My Pi sessions from its app and in the all-apps filter", async () => {
+    setSessionFixtures(
+      [
+        {
+          providerId: "ohmypi",
+          sessionId: "omp-native-session",
+          title: "Native OMP conversation",
+          sourcePath: "/mock/omp/sessions/project/native.jsonl",
+          lastActiveAt: Date.now(),
+        },
+      ],
+      {},
+    );
+    setSettings({ visibleApps: { ...DEFAULT_VISIBLE_APPS, ohmypi: true } });
+    renderPage("ohmypi");
+    expect(
+      await screen.findByText("Native OMP conversation"),
+    ).toBeInTheDocument();
+    await openAppMenu();
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu).getByRole("menuitemradio", { name: /Oh My Pi/ }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      within(menu).getByRole("menuitemradio", { name: /全部应用/ }),
+    );
+    expect(
+      await screen.findByText("Native OMP conversation"),
+    ).toBeInTheDocument();
+  });
+
   it("surfaces a relative Pi sessionDir instead of presenting an empty scan as authoritative", async () => {
     const discovery = vi.spyOn(piApi, "getSessionDiscovery").mockResolvedValue({
       status: "requires_project_context",
@@ -288,6 +320,7 @@ describe("SessionManagerPage", () => {
         hermes: false,
         pi: false,
         mcode: false,
+        ohmypi: false,
       },
     });
     renderPage("codex");

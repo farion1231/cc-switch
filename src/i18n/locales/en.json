@@ -905,6 +905,8 @@
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
+    "ohmypiConfigDir": "Oh My Pi Configuration Directory",
+    "ohmypiConfigDirDescription": "Override the Oh My Pi configuration directory (models.yml, config.yml, prompts, skills, and sessions).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -913,6 +915,7 @@
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
+    "browsePlaceholderOhMyPi": "e.g., /home/<your-username>/.omp/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -935,7 +938,7 @@
     "starPrompt": "If CC Switch has helped you, please star us on GitHub — it means a lot to us",
     "starOnGithub": "Star on GitHub",
     "manualInstallCommands": "Manual Install Commands",
-    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
+    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi",
     "localEnvCheck": "Local environment check",
     "updateAllTools": "Update All ({{count}})",
     "currentVersion": "Current Version",
@@ -1045,7 +1048,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "ohmypi": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -4041,8 +4045,12 @@
       "openclaw": "Installs with npm",
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
-      "mcode": "Installs with the official script, falls back to npm"
-    }
+      "mcode": "Installs with the official script, falls back to npm",
+      "omp": "Installs with Bun (requires Bun 1.3.14+)"
+    },
+    "ompDiscoveryHelpTitle": "What Oh My Pi actually loads",
+    "ompDiscoveryHelp": "Beyond its own ~/.omp/agent config, Oh My Pi discovers MCP servers, skills, commands, hooks, rules, and settings from other agents' directories (e.g. Claude's ~/.claude, Codex's ~/.codex). To keep what Oh My Pi actually loads in sync with the CC Switch UI, disable unneeded discovery sources via disabledProviders in ~/.omp/agent/config.yml (ids match the docs, e.g. claude, codex, gemini, opencode, github, agents).",
+    "ompDiscoveryDocsLink": "Docs: context-files (disabledProviders)"
   },
   "appPage": {
     "moreActions": "More actions for {{name}}",
@@ -4708,6 +4716,54 @@
       "loading": "Checking quota…",
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}"
+    }
+  },
+  "ohmypi": {
+    "empty": {
+      "title": "No custom providers added yet",
+      "description": "Oh My Pi manages its built-in providers. Click + in the top right to add a provider from a preset or custom configuration."
+    },
+    "form": {
+      "modelsToggle": "Configure model list",
+      "modelsHiddenHint": "Model list disabled: saving writes the provider in override-only form (no \"models\" key)",
+      "thinking": "Thinking",
+      "imageInputDecoder": "Image input decoder",
+      "cost": "Cost",
+      "passthroughLabel": "Other fields (YAML, preserved verbatim)",
+      "fixYamlFirst": "Fix the configuration YAML below before editing the structured fields.",
+      "providerKeyDuplicate": "This key is already in use",
+      "absoluteHttpUrlRequired": "{{label}} must be an absolute HTTP or HTTPS URL",
+      "addCompatibilityOption": "Add",
+      "addModel": "Add model",
+      "compatibility": "Compatibility",
+      "compatibilityHint": "Adjust request behavior for compatible or local endpoints.",
+      "contextWindow": "Context window",
+      "credential": "API Key",
+      "duplicateModel": "Model ID {{id}} is duplicated",
+      "imageInput": "Supports image input",
+      "maxTokens": "Max output tokens",
+      "modelId": "Model ID",
+      "modelIdRequired": "Model {{index}} needs an ID",
+      "modelName": "Display name",
+      "modelNamePlaceholder": "Display name",
+      "nameRequired": "Display name is required",
+      "noCompatibilityOptions": "No compatibility options configured",
+      "noModels": "No models configured",
+      "optionKey": "Option",
+      "optionValue": "Value",
+      "positiveNumberRequired": "{{label}} must be a number greater than 0",
+      "providerKey": "Provider key",
+      "providerKeyRequired": "Provider key is required",
+      "reasoning": "Supports extended thinking",
+      "removeCompatibilityOption": "Remove compatibility option",
+      "removeModel": "Remove model",
+      "toggleModelDetails": "Toggle model details"
+    },
+    "provider": {
+      "enabled": "Enabled in Oh My Pi",
+      "enableFailed": "Could not enable this provider in Oh My Pi",
+      "removed": "Removed from Oh My Pi",
+      "writeConflict": "Another process is updating Oh My Pi's configuration. Try again shortly."
     }
   }
 }
