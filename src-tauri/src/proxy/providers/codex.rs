@@ -1066,17 +1066,21 @@ impl ProviderAdapter for CodexAdapter {
                 if let Some(url) = crate::grok_config::extract_base_url(config_str) {
                     return Ok(url.trim_end_matches('/').to_string());
                 }
-                if let Some(start) = config_str.find("base_url = \"") {
-                    let rest = &config_str[start + 12..];
-                    if let Some(end) = rest.find('"') {
-                        return Ok(rest[..end].trim_end_matches('/').to_string());
+                if let Some(url) = extract_codex_base_url_from_toml(config_str).or_else(|| {
+                    // Preserve the legacy OpenAI alias only as a fallback to the
+                    // canonical active-provider/top-level base_url selection.
+                    let doc = config_str.parse::<TomlValue>().ok()?;
+                    if doc
+                        .get("model_provider")
+                        .is_some_and(|value| value.as_str() != Some("openai"))
+                    {
+                        return None;
                     }
-                }
-                if let Some(start) = config_str.find("base_url = '") {
-                    let rest = &config_str[start + 12..];
-                    if let Some(end) = rest.find('\'') {
-                        return Ok(rest[..end].trim_end_matches('/').to_string());
-                    }
+                    doc.get("openai_base_url")
+                        .and_then(TomlValue::as_str)
+                        .map(ToString::to_string)
+                }) {
+                    return Ok(url.trim_end_matches('/').to_string());
                 }
             }
         }
@@ -2491,5 +2495,304 @@ wire_api = "responses"
 "#
         }));
         assert!(!provider_needs_responses_namespace_flatten(&other));
+    }
+}
+
+// The issue did not publish a full TOML document. These are synthetic equivalent
+// inputs constructed from its ordering/spacing conditions with .invalid hosts.
+#[cfg(test)]
+mod base_url_regressions {
+    use super::*;
+    use crate::provider::ProviderMeta;
+    use serde_json::json;
+
+    const SELECTED: &str = "http://selected.example.invalid/v1";
+    const REALTIME: &str = "http://realtime.example.invalid/v1";
+
+    fn provider(config: &str) -> Provider {
+        Provider::with_id(
+            "issue-8078-synthetic".into(),
+            "Issue 8078 synthetic equivalent".into(),
+            json!({ "config": config }),
+            None,
+        )
+    }
+
+    fn selected_config(prefix: &str) -> String {
+        format!(
+            "{prefix}\nmodel_provider = \"custom\"\n\n[model_providers.custom]\nname = \"Synthetic custom\"\nbase_url = \"{SELECTED}\"\nwire_api = \"responses\"\n"
+        )
+    }
+
+    fn selected_by_adapter(config: &str) -> Result<String, ProxyError> {
+        CodexAdapter::new().extract_base_url(&provider(config))
+    }
+
+    fn assert_realtime_does_not_choose_api_endpoint(key: &str) {
+        let spaced = selected_config(&format!("{key} = \"{REALTIME}\""));
+        let compact = selected_config(&format!("{key}=\"{REALTIME}\""));
+        // Validate both inputs with the real TOML parser and prove that only
+        // non-semantic formatting changed; no handwritten parser is used.
+        assert_eq!(
+            spaced.parse::<TomlValue>().unwrap(),
+            compact.parse::<TomlValue>().unwrap()
+        );
+        for input in [&spaced, &compact] {
+            assert_eq!(crate::grok_config::extract_base_url(input), None);
+            assert_eq!(
+                crate::codex_config::extract_codex_base_url(input).as_deref(),
+                Some(SELECTED)
+            );
+            assert!(!is_codex_official_provider(&provider(input)));
+        }
+        let adapter = CodexAdapter::new();
+        let spaced_actual = selected_by_adapter(&spaced).unwrap();
+        let compact_actual = selected_by_adapter(&compact).unwrap();
+        assert_eq!(compact_actual, SELECTED, "reported whitespace workaround");
+        assert_eq!(
+            spaced_actual, SELECTED,
+            "realtime must not replace selected API endpoint"
+        );
+        assert_eq!(
+            adapter.build_url(&spaced_actual, "/responses"),
+            format!("{SELECTED}/responses")
+        );
+    }
+
+    #[test]
+    fn realtime_ws_must_not_override_selected_api_endpoint() {
+        assert_realtime_does_not_choose_api_endpoint("experimental_realtime_ws_base_url");
+    }
+
+    #[test]
+    fn realtime_webrtc_must_not_override_selected_api_endpoint() {
+        assert_realtime_does_not_choose_api_endpoint("experimental_realtime_webrtc_call_base_url");
+    }
+
+    #[test]
+    fn active_provider_must_win_over_earlier_inactive_table() {
+        let config = format!(
+            "model_provider = \"custom\"\n[model_providers.inactive]\nbase_url = \"http://inactive.example.invalid/v1\"\n[model_providers.custom]\nbase_url = \"{SELECTED}\"\n"
+        );
+        assert_eq!(
+            crate::codex_config::extract_codex_base_url(&config).as_deref(),
+            Some(SELECTED)
+        );
+        let actual = selected_by_adapter(&config).unwrap();
+        assert_eq!(actual, SELECTED);
+    }
+
+    #[test]
+    fn selected_base_url_allows_valid_toml_whitespace() {
+        let spaced = selected_config("");
+        let compact = spaced.replace("base_url = ", "base_url=");
+        assert_eq!(
+            spaced.parse::<TomlValue>().unwrap(),
+            compact.parse::<TomlValue>().unwrap()
+        );
+        assert_eq!(
+            crate::codex_config::extract_codex_base_url(&compact).as_deref(),
+            Some(SELECTED)
+        );
+        let actual = selected_by_adapter(&compact);
+        assert_eq!(actual.unwrap(), SELECTED);
+    }
+
+    #[test]
+    fn standard_selector_and_trailing_slash() {
+        let normal = selected_config("");
+        assert_eq!(selected_by_adapter(&normal).unwrap(), SELECTED);
+        let trailing = normal.replace(SELECTED, &format!("{SELECTED}/"));
+        assert_eq!(selected_by_adapter(&trailing).unwrap(), SELECTED);
+    }
+
+    #[test]
+    fn realtime_after_actual_base_url_keeps_current_choice() {
+        let config = format!(
+            "model_provider = \"custom\"\nmodel_providers.custom = {{ name = \"Synthetic custom\", base_url = \"{SELECTED}\", wire_api = \"responses\" }}\nexperimental_realtime_ws_base_url = \"{REALTIME}\"\n"
+        );
+        let before = selected_config(&format!(
+            "experimental_realtime_ws_base_url = \"{REALTIME}\""
+        ));
+        assert_eq!(
+            before.parse::<TomlValue>().unwrap(),
+            config.parse::<TomlValue>().unwrap()
+        );
+        assert_eq!(selected_by_adapter(&config).unwrap(), SELECTED);
+    }
+
+    #[test]
+    fn legacy_top_level_base_url() {
+        let config = format!("base_url = \"{SELECTED}/\"\n");
+        assert_eq!(
+            crate::codex_config::extract_codex_base_url(&config).as_deref(),
+            Some(format!("{SELECTED}/").as_str())
+        );
+        assert_eq!(selected_by_adapter(&config).unwrap(), SELECTED);
+    }
+
+    #[test]
+    fn json_endpoint_priority() {
+        let config = selected_config(&format!(
+            "experimental_realtime_ws_base_url = \"{REALTIME}\""
+        ));
+        let adapter = CodexAdapter::new();
+        let mut row = provider(&config);
+        row.settings_config["base_url"] = json!("http://json-first.example.invalid/v1/");
+        row.settings_config["baseURL"] = json!("http://json-second.example.invalid/v1/");
+        assert_eq!(
+            adapter.extract_base_url(&row).unwrap(),
+            "http://json-first.example.invalid/v1"
+        );
+        row.settings_config
+            .as_object_mut()
+            .unwrap()
+            .remove("base_url");
+        assert_eq!(
+            adapter.extract_base_url(&row).unwrap(),
+            "http://json-second.example.invalid/v1"
+        );
+        row.settings_config =
+            json!({"config": {"base_url": "http://json-object.example.invalid/v1/"}});
+        assert_eq!(
+            adapter.extract_base_url(&row).unwrap(),
+            "http://json-object.example.invalid/v1"
+        );
+    }
+
+    #[test]
+    fn legacy_openai_alias_does_not_change_canonical_parser() {
+        let config = format!("model_provider = \"openai\"\nopenai_base_url = \"{SELECTED}\"\n");
+        // The shared canonical helper intentionally excludes this legacy alias;
+        // the adapter must preserve its own existing support without changing it.
+        assert_eq!(crate::codex_config::extract_codex_base_url(&config), None);
+        assert_eq!(selected_by_adapter(&config).unwrap(), SELECTED);
+    }
+
+    #[test]
+    fn official_and_managed_endpoint_priority() {
+        let config = selected_config(&format!(
+            "experimental_realtime_ws_base_url = \"{REALTIME}\""
+        ));
+        let adapter = CodexAdapter::new();
+        let mut official = provider(&config);
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.into();
+        official.category = Some("official".into());
+        assert_eq!(
+            adapter.extract_base_url(&official).unwrap(),
+            super::super::CHATGPT_CODEX_BASE_URL
+        );
+        for (kind, expected) in [
+            ("github_copilot", "https://api.githubcopilot.com"),
+            ("xai_oauth", super::super::XAI_API_BASE_URL),
+        ] {
+            let mut row = provider(&config);
+            row.meta = Some(ProviderMeta {
+                provider_type: Some(kind.into()),
+                ..Default::default()
+            });
+            assert_eq!(adapter.extract_base_url(&row).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn grok_selected_model_keeps_priority() {
+        let config = format!(
+            "experimental_realtime_ws_base_url = \"{REALTIME}\"\n[models]\ndefault = \"custom\"\n[model.custom]\nmodel = \"grok-test\"\nbase_url=\"{SELECTED}/\"\nname = \"Synthetic Grok\"\napi_backend = \"responses\"\ncontext_window = 1000\n"
+        );
+        assert_eq!(
+            crate::grok_config::extract_base_url(&config).as_deref(),
+            Some(SELECTED)
+        );
+        assert_eq!(selected_by_adapter(&config).unwrap(), SELECTED);
+    }
+
+    #[test]
+    fn single_and_mixed_quote_realtime_fields_do_not_override_selected_url() {
+        let double = selected_config(&format!(
+            "experimental_realtime_ws_base_url = \"{REALTIME}\""
+        ));
+        let single = double.replace('"', "'");
+        assert_eq!(
+            double.parse::<TomlValue>().unwrap(),
+            single.parse::<TomlValue>().unwrap()
+        );
+        assert_eq!(
+            crate::codex_config::extract_codex_base_url(&single).as_deref(),
+            Some(SELECTED)
+        );
+        assert_eq!(selected_by_adapter(&single).unwrap(), SELECTED);
+        let mixed = selected_config(&format!("experimental_realtime_ws_base_url = '{REALTIME}'"));
+        assert_eq!(selected_by_adapter(&mixed).unwrap(), SELECTED);
+    }
+
+    fn assert_endpoint_cases(cases: Vec<(&str, String, Option<&str>)>) {
+        let failures: Vec<_> = cases
+            .into_iter()
+            .filter_map(|(name, config, expected)| {
+                let actual = selected_by_adapter(&config).ok();
+                (actual.as_deref() != expected)
+                    .then(|| (name, actual, expected.map(str::to_string)))
+            })
+            .collect();
+        assert!(failures.is_empty(), "endpoint mismatches: {failures:#?}");
+    }
+
+    #[test]
+    fn toml_syntax_and_non_endpoint_fields_do_not_change_selection() {
+        let standard = selected_config("");
+        assert_endpoint_cases(vec![
+            ("comment", selected_config(&format!("# base_url = \"{REALTIME}\"")), Some(SELECTED)),
+            ("unrelated table", format!("model_provider = 'custom'\n[mcp_servers.example]\nbase_url = \"{REALTIME}\"\n[model_providers.custom]\nbase_url = \"{SELECTED}\""), Some(SELECTED)),
+            ("quoted key", standard.replace("base_url =", "\"base_url\" ="), Some(SELECTED)),
+            ("tabs", standard.replace("base_url = ", "base_url\t=\t"), Some(SELECTED)),
+            ("dotted key", format!("model_provider='custom'\nmodel_providers.custom.base_url=\"{SELECTED}\""), Some(SELECTED)),
+            ("escaped string", standard.replace("http://", "http:\\u002f\\u002f"), Some(SELECTED)),
+            ("invalid TOML", format!("invalid = [\nbase_url = \"{SELECTED}\""), None),
+            ("unselected table", format!("[model_providers.custom]\nbase_url = \"{SELECTED}\""), None),
+            ("wrong selected table", format!("model_provider='missing'\n[model_providers.custom]\nbase_url = \"{SELECTED}\""), None),
+            ("OpenAI with leftover table", format!("model_provider='openai'\n[model_providers.custom]\nbase_url = \"{SELECTED}\""), None),
+        ]);
+    }
+
+    #[test]
+    fn active_provider_and_legacy_fallback_precedence() {
+        assert_endpoint_cases(vec![
+            ("active over legacy fields", selected_config(&format!("openai_base_url = \"{REALTIME}\"\nbase_url = \"{REALTIME}\"")), Some(SELECTED)),
+            ("missing selected URL keeps canonical root fallback", format!("model_provider='custom'\nbase_url=\"{SELECTED}\"\n[model_providers.custom]\nname='Custom'"), Some(SELECTED)),
+            ("legacy alias with no selector", format!("openai_base_url=\"{SELECTED}/\""), Some(SELECTED)),
+            ("legacy alias with OpenAI selector", format!("model_provider='openai'\nopenai_base_url='{SELECTED}/'"), Some(SELECTED)),
+            // Keep the shared canonical active-provider/top-level-base_url order.
+            // The alias is a fallback, never a competing selector.
+            ("canonical root before alias", format!("base_url = \"{SELECTED}\"\nopenai_base_url = \"{REALTIME}\""), Some(SELECTED)),
+            ("canonical root after alias", format!("openai_base_url = \"{REALTIME}\"\nbase_url = \"{SELECTED}\""), Some(SELECTED)),
+            ("OpenAI canonical root after alias", format!("model_provider='openai'\nopenai_base_url = \"{REALTIME}\"\nbase_url = \"{SELECTED}\""), Some(SELECTED)),
+        ]);
+    }
+
+    #[test]
+    fn legacy_openai_alias_requires_missing_or_exact_openai_selector() {
+        let selectors = [
+            "'custom'",
+            "'ollama'",
+            "'OpenAI'",
+            "''",
+            "' '",
+            "' openai '",
+            "123",
+            "[]",
+            "{}",
+        ];
+        let cases = selectors
+            .into_iter()
+            .map(|selector| {
+                (
+                    selector,
+                    format!("model_provider={selector}\nopenai_base_url = \"{SELECTED}\""),
+                    None,
+                )
+            })
+            .collect();
+        assert_endpoint_cases(cases);
     }
 }
