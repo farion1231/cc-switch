@@ -52,6 +52,17 @@ export interface UseSettingsResult {
 
 export type { SettingsFormState, ResolvedDirectories };
 
+const DIRECTORY_KEYS = [
+  "claudeConfigDir",
+  "codexConfigDir",
+  "geminiConfigDir",
+  "grokConfigDir",
+  "opencodeConfigDir",
+  "openclawConfigDir",
+  "hermesConfigDir",
+  "piConfigDir",
+] as const;
+
 const sanitizeDir = (value?: string | null): string | undefined => {
   if (!value) return undefined;
   const trimmed = value.trim();
@@ -191,6 +202,11 @@ export function useSettings(): UseSettingsResult {
     async (updates: Partial<SettingsFormState>): Promise<SaveResult | null> => {
       const mergedSettings = settings ? { ...settings, ...updates } : null;
       if (!mergedSettings) return null;
+
+      // 目录草稿只由显式「保存」写入，自动保存沿用已确认的值
+      for (const key of DIRECTORY_KEYS) {
+        if (!(key in updates)) mergedSettings[key] = data?.[key];
+      }
 
       try {
         const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
