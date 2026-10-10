@@ -73,8 +73,8 @@ describe("quota lines", () => {
         "每周 Opus",
       ).text,
     ).toBe("每周 Opus 剩余 50%");
-    expect(toneForLeft(10)).toBe("normal");
-    expect(toneForLeft(9)).toBe("warning");
+    expect(toneForLeft(20)).toBe("normal");
+    expect(toneForLeft(19)).toBe("warning");
   });
 
   it("only colors a balance once it runs out, even when nearly gone", () => {

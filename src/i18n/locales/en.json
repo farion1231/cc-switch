@@ -126,6 +126,7 @@
     "stackDefaultHint": "This is the default provider: the first model in its list handles Claude Code's startup and background tasks",
     "officialModelsBundled": "The official model list isn't available yet, so Codex's built-in list is used for now and account-specific models may be missing",
     "officialModelsUnavailable": "Aggregated models are unavailable for now: the Codex model list can't be read",
+    "officialModelsOutdated": "Codex on this computer is too old to get the full official model list: update Codex (including the CLI) to the latest version",
     "routeOwnsCatalog": "Aggregated models won't show up in Codex: the routed provider uses its own model catalog file (model_catalog_json)",
     "adoptCatalog": "Use CC Switch's model catalog",
     "adoptCatalogDone": "Now using CC Switch's model catalog. Restart Codex to apply",
@@ -157,7 +158,8 @@
     "dragHandle": "Drag to reorder",
     "searchPlaceholder": "Search name, notes, or URL...",
     "searchAriaLabel": "Search providers",
-    "searchScopeHint": "Matches provider name, notes, and URL.",
+    "searchScopeHint": "Matches provider name, notes, website, and API address.",
+    "searchButtonTip": "Search providers ({{shortcut}})",
     "searchCloseHint": "Press Esc to close",
     "searchCloseAriaLabel": "Close provider search",
     "noSearchResults": "No providers match your search.",
@@ -811,6 +813,9 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
     "unifyCodexSessionHistoryDescription": "When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one history list, optionally migrating existing official sessions in (backed up first). When turning it off, the migrated sessions can be restored from backup. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
+    "codexStackClassicSubagentsDescription": "In Codex aggregation mode, a sub-agent whose model comes from a different provider than the main agent may not be able to read its task: the newer Codex sub-agent tools have the main agent's provider encrypt the task, and no other provider can decrypt it. When enabled, every aggregated model uses the classic Codex sub-agent tools, which pass the task as plain text; the trade-off is losing newer features such as followup_task and interrupt_agent. Only affects aggregation mode; restart Codex for the change to take effect.",
+    "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
     "unifyCodexHistoryRestoreCompleted": "Official session history restored from backup ({{files}} session files, {{rows}} index rows)",
     "unifyCodexHistoryRestoreFailed": "Failed to restore official session history, please try again",
     "unifyCodexHistoryRestoreNothing": "No restorable migration backup for the current Codex directory",
@@ -823,7 +828,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "Show project switcher",
-      "showProfileSwitcherDescription": "Show the project switcher in the main page header"
+      "showProfileSwitcherDescription": "Show the project switcher in the main page header",
+      "showProviderSearch": "Show provider search",
+      "showProviderSearchDescription": "Show a search button at the top of the provider page to find providers by name, notes, website, or API address. When hidden, ⌘F / Ctrl+F still opens search"
     },
     "terminal": {
       "title": "Preferred Terminal",
@@ -3145,7 +3152,6 @@
     "checkUpdates": "Check Updates",
     "checkingUpdates": "Checking...",
     "noUpdates": "All skills are up to date",
-    "updatesFound": "{{count}} skill(s) have updates available",
     "updateAll": "Update All ({{count}})",
     "updatingAll": "Updating...",
     "updateAllSuccess": "Successfully updated {{count}} skill(s)",
@@ -4516,7 +4522,8 @@
       "uninstallManyButton": "Uninstall {{count}}",
       "updateAll": "Update {{count}} Skills?",
       "updateBody": "Updating replaces the local folder with the repository's content. Local edits are kept only in the backup ({{path}}).",
-      "updateAllButton": "Update {{count}}"
+      "updateAllButton": "Update {{count}}",
+      "updateListAria": "Skills to update"
     },
     "toast": {
       "installed": "Installed {{name}} and enabled it in {{apps}}",
@@ -4605,7 +4612,8 @@
     "headerUpdates": "{{count}} updates",
     "headerUpdatesShow": "Show only Skills with updates",
     "headerUpdatesClear": "Show all Skills",
-    "updateAllCount": "Update all ({{count}})"
+    "updateAllCount": "Update all ({{count}})",
+    "updatingProgress": "Updating {{done}}/{{total}}…"
   },
   "newLayoutNotice": {
     "title": "CC Switch has a new look",

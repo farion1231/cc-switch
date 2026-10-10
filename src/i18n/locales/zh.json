@@ -126,6 +126,7 @@
     "stackDefaultHint": "它是默认供应商：列表里的第一个模型负责 Claude Code 启动和后台任务",
     "officialModelsBundled": "官方模型列表暂未取到，暂用 Codex 内置列表，可能缺少账号专属模型",
     "officialModelsUnavailable": "聚合的模型暂不可用：读取不到 Codex 模型列表",
+    "officialModelsOutdated": "本机 Codex 版本过旧，拿不到完整的官方模型列表：请把 Codex（包括命令行）升级到最新版",
     "routeOwnsCatalog": "聚合的模型不会出现在 Codex 里：路由供应商使用自己的模型目录文件（model_catalog_json）",
     "adoptCatalog": "改用 CC Switch 的模型目录",
     "adoptCatalogDone": "已改用 CC Switch 的模型目录，重启 Codex 后生效",
@@ -157,7 +158,8 @@
     "dragHandle": "拖拽排序",
     "searchPlaceholder": "按名称/备注/网址搜索供应商...",
     "searchAriaLabel": "搜索供应商",
-    "searchScopeHint": "根据名称、备注和官网链接匹配结果。",
+    "searchScopeHint": "根据名称、备注、官网和请求地址匹配结果。",
+    "searchButtonTip": "搜索供应商（{{shortcut}}）",
     "searchCloseHint": "按 Esc 关闭",
     "searchCloseAriaLabel": "关闭供应商搜索",
     "noSearchResults": "没有符合搜索条件的供应商。",
@@ -811,6 +813,9 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
     "unifyCodexSessionHistoryDescription": "开启后，官方订阅将以共享的 custom 供应商标识运行，官方与第三方会话出现在同一历史列表中，并可选择把现有官方会话一并迁入（迁移前自动备份）。关闭开关时可按备份恢复迁入的会话。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
+    "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
+    "codexStackClassicSubagentsDescription": "Codex 聚合模式下，主 agent 和子 agent 用不同供应商的模型时，子 agent 可能读不到任务：Codex 新版的子 agent 工具会把任务交给主 agent 那家加密，换一家就解不开。打开后聚合的所有模型改用 Codex 经典的子 agent 工具，任务以明文传递；代价是没有 followup_task、interrupt_agent 等新版功能。只影响聚合模式，改完要重启 Codex 才生效",
+    "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 里打开了 [features] multi_agent_v2，它比这个开关优先，开关不会生效",
     "unifyCodexHistoryRestoreCompleted": "已按备份还原官方会话历史（{{files}} 个会话文件、{{rows}} 条索引记录）",
     "unifyCodexHistoryRestoreFailed": "还原官方会话历史失败，请重试",
     "unifyCodexHistoryRestoreNothing": "当前 Codex 目录没有可恢复的迁移备份",
@@ -823,7 +828,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "显示项目切换",
-      "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口"
+      "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口",
+      "showProviderSearch": "显示供应商搜索",
+      "showProviderSearchDescription": "在供应商页顶部显示搜索按钮，可按名称、备注、官网和请求地址查找。关掉后仍可用 ⌘F / Ctrl+F 打开搜索"
     },
     "terminal": {
       "title": "首选终端",
@@ -3145,7 +3152,6 @@
     "checkUpdates": "检查更新",
     "checkingUpdates": "检查中...",
     "noUpdates": "所有技能已是最新版本",
-    "updatesFound": "发现 {{count}} 个技能有可用更新",
     "updateAll": "全部更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "已成功更新 {{count}} 个技能",
@@ -4516,7 +4522,8 @@
       "uninstallManyButton": "卸载 {{count}} 个",
       "updateAll": "更新 {{count}} 个 Skill？",
       "updateBody": "更新会用仓库里的内容替换本地目录。本地改过的地方只保留在备份里（{{path}}）。",
-      "updateAllButton": "更新 {{count}} 个"
+      "updateAllButton": "更新 {{count}} 个",
+      "updateListAria": "将要更新的 Skill"
     },
     "toast": {
       "installed": "已安装 {{name}}，并在 {{apps}} 启用",
@@ -4605,7 +4612,8 @@
     "headerUpdates": "{{count}} 个可更新",
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "显示全部 Skill",
-    "updateAllCount": "全部更新（{{count}} 个）"
+    "updateAllCount": "全部更新（{{count}} 个）",
+    "updatingProgress": "正在更新 {{done}}/{{total}}…"
   },
   "newLayoutNotice": {
     "title": "界面改版了",
