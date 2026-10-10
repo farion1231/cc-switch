@@ -101,6 +101,140 @@ describe("useDirectorySettings", () => {
     });
   });
 
+  it.each([
+    ["claude", "claudeConfigDir"],
+    ["codex", "codexConfigDir"],
+    ["gemini", "geminiConfigDir"],
+    ["grokbuild", "grokConfigDir"],
+    ["opencode", "opencodeConfigDir"],
+    ["openclaw", "openclawConfigDir"],
+    ["hermes", "hermesConfigDir"],
+    ["pi", "piConfigDir"],
+  ] as const)(
+    "syncs the %s display when form drafts are discarded",
+    async (app, field) => {
+      const initialSettings = createSettings({ [field]: undefined });
+      const { result, rerender } = renderHook(
+        ({ settings }) => useDirectorySettings({ settings, onUpdateSettings }),
+        { initialProps: { settings: initialSettings } },
+      );
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      const backendDirectory = result.current.resolvedDirs[app];
+      rerender({
+        settings: { ...initialSettings, skipClaudeOnboarding: true },
+      });
+      expect(result.current.resolvedDirs[app]).toBe(backendDirectory);
+
+      act(() => result.current.updateAppConfigDir("/unsaved/app"));
+      rerender({
+        settings: { ...initialSettings, [field]: "/unsaved/config" },
+      });
+      expect(result.current.resolvedDirs[app]).toBe("/unsaved/config");
+
+      rerender({ settings: initialSettings });
+      await waitFor(() =>
+        expect(result.current.resolvedDirs[app]).toBe(backendDirectory),
+      );
+      expect(result.current.appConfigDir).toBe("/unsaved/app");
+      expect(result.current.resolvedDirs.appConfig).toBe("/unsaved/app");
+
+      rerender({ settings: { ...initialSettings, [field]: "/saved/config" } });
+      expect(result.current.resolvedDirs[app]).toBe("/saved/config");
+    },
+  );
+
+  it.each(["edit", "reset", "resetAll"] as const)(
+    "ignores an older backend resolution after a newer %s",
+    async (action) => {
+      const initialSettings = createSettings({ claudeConfigDir: undefined });
+      const { result, rerender } = renderHook(
+        ({ settings }) => useDirectorySettings({ settings, onUpdateSettings }),
+        { initialProps: { settings: initialSettings } },
+      );
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      rerender({
+        settings: { ...initialSettings, claudeConfigDir: "/discarded" },
+      });
+      let finishResolution!: (directory: string) => void;
+      getConfigDirMock.mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            finishResolution = resolve;
+          }),
+      );
+      rerender({ settings: initialSettings });
+
+      if (action === "resetAll") {
+        act(() =>
+          result.current.resetAllDirectories({ claude: "/reset/claude" }),
+        );
+      } else {
+        act(() => result.current.updateDirectory("claude", "/newer/draft"));
+        rerender({
+          settings: { ...initialSettings, claudeConfigDir: "/newer/draft" },
+        });
+        if (action === "reset") {
+          await act(() => result.current.resetDirectory("claude"));
+          rerender({ settings: initialSettings });
+        }
+      }
+      await act(async () => finishResolution("/older/backend"));
+      expect(result.current.resolvedDirs.claude).toBe(
+        action === "edit"
+          ? "/newer/draft"
+          : action === "reset"
+            ? "/home/mock/.claude"
+            : "/reset/claude",
+      );
+    },
+  );
+
+  it("finishes a backend resolution across unrelated settings and directory edits", async () => {
+    const initialSettings = createSettings({ claudeConfigDir: undefined });
+    const { result, rerender } = renderHook(
+      ({ settings }) => useDirectorySettings({ settings, onUpdateSettings }),
+      { initialProps: { settings: initialSettings } },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    rerender({
+      settings: { ...initialSettings, claudeConfigDir: "/discarded" },
+    });
+    let finishResolution!: (directory: string) => void;
+    getConfigDirMock.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          finishResolution = resolve;
+        }),
+    );
+    rerender({ settings: initialSettings });
+    rerender({ settings: { ...initialSettings, skipClaudeOnboarding: true } });
+    act(() => result.current.updateDirectory("codex", "/newer/codex"));
+    rerender({
+      settings: {
+        ...initialSettings,
+        skipClaudeOnboarding: true,
+        codexConfigDir: "/newer/codex",
+      },
+    });
+    await act(async () => finishResolution("/backend/default"));
+    expect(result.current.resolvedDirs.claude).toBe("/backend/default");
+    expect(result.current.resolvedDirs.codex).toBe("/newer/codex");
+  });
+
+  it("does not resolve a local reset against the persisted custom directory", async () => {
+    const initialSettings = createSettings();
+    const { result, rerender } = renderHook(
+      ({ settings }) => useDirectorySettings({ settings, onUpdateSettings }),
+      { initialProps: { settings: initialSettings } },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    getConfigDirMock.mockClear();
+    await act(() => result.current.resetDirectory("claude"));
+    rerender({ settings: { ...initialSettings, claudeConfigDir: undefined } });
+    expect(result.current.resolvedDirs.claude).toBe("/home/mock/.claude");
+    expect(getConfigDirMock).not.toHaveBeenCalled();
+  });
+
   it("updates claude directory when browsing succeeds", async () => {
     selectConfigDirectoryMock.mockResolvedValue("/picked/claude");
 
