@@ -295,6 +295,7 @@
     "skipClaudeOnboardingFailed": "Claude Code の初回確認スキップに失敗しました",
     "clearClaudeOnboardingSkipFailed": "Claude Code の初回確認の復元に失敗しました",
     "updateSuccess": "プロバイダーを更新しました",
+    "providerSavedNotLive": "カードに保存しました。このカードへの切り替え時またはプロキシ契約の再書き込み時に反映されます（今回のキーフィールドの変更は現在有効な設定には反映されていません）",
     "updateFailed": "プロバイダーの更新に失敗しました: {{error}}",
     "deleteSuccess": "プロバイダーを削除しました",
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",

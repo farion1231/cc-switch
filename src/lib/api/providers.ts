@@ -84,7 +84,7 @@ export const providersApi = {
     appId: AppId,
     addToLive?: boolean,
     editorSave?: ProviderEditorSave,
-  ): Promise<boolean> {
+  ): Promise<SwitchResult> {
     return await invoke("add_provider", {
       provider,
       app: appId,
@@ -98,7 +98,7 @@ export const providersApi = {
     appId: AppId,
     originalId?: string,
     editorSave?: ProviderEditorSave,
-  ): Promise<boolean> {
+  ): Promise<SwitchResult> {
     return await invoke("update_provider", {
       provider,
       app: appId,

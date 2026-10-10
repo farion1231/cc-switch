@@ -1449,6 +1449,30 @@ struct CodexCatalogModelSpec {
     default_reasoning_level: Option<String>,
 }
 
+/// 行里配了非空的显式模型目录（`modelCatalog.models`）：目录生成器直接用目录条目、
+/// 不再读顶层 `model`（`codex_published_specs` 的早退）。窗口键不受影响（`RowWindows::of`
+/// 总是读）。
+pub(crate) fn codex_has_explicit_catalog(settings: &Value) -> bool {
+    !codex_catalog_model_specs(settings).is_empty()
+}
+
+/// 这一行进合并目录的**可发布条目**是否存在：显式模型目录非空，或顶层 `model` 非空
+///（`codex_published_specs` 两边都没有 → 空列表，成员不进目录、窗口改动无人消费）。
+pub(crate) fn codex_has_publishable_catalog_entries(settings: &Value) -> bool {
+    codex_has_explicit_catalog(settings)
+        || settings
+            .get("config")
+            .and_then(Value::as_str)
+            .and_then(codex_top_level_model)
+            .is_some()
+}
+
+/// 两行的显式模型目录是否**发布等价**：按消费端 `codex_catalog_model_specs` 解析后的
+/// 规范化条目比较——表单保存会把字段名规范成 camelCase（解析端两种写法都认），原始
+/// JSON 的字面相同性不作数（issue #7948 五审 2）。
+pub(crate) fn codex_catalog_specs_equal(a: &Value, b: &Value) -> bool {
+    codex_catalog_model_specs(a) == codex_catalog_model_specs(b)
+}
 fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
     let Some(models) = settings
         .get("modelCatalog")
@@ -2816,6 +2840,57 @@ pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
         })
         .as_deref()
         == Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+}
+
+/// live 的 `config.toml` 里有没有旧版（v3.17–v3.20）官方代理接管留下的**接管形态**的表：
+/// `[model_providers.cc-switch-official]` 存在、`base_url` 指向本地代理（`is_proxy_url`），
+/// 且没有被 `[profiles.*]` 的 `model_provider` 引用（引用它的表归用户管，doomed filter
+/// 也不删）。顶层选中的形态由 [`codex_config_has_official_proxy_route`] 认。
+///
+/// 用户把旧表修成别的用途（指向有效远端、或删掉 `base_url` 供旧会话解析）后就不是残留：
+/// 不触发启动归一化，一个字节都不动（issue #7948）。
+pub fn codex_config_has_official_proxy_table(
+    config_text: &str,
+    is_proxy_url: impl Fn(&str) -> bool,
+) -> bool {
+    if !config_text.contains(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
+        return false;
+    }
+    config_text.parse::<DocumentMut>().is_ok_and(|doc| {
+        let Some(providers) = doc
+            .get("model_providers")
+            .and_then(|item| item.as_table_like())
+        else {
+            return false;
+        };
+        // 被 profile 引用的表归用户管：清理时不删，归一化时也不认残留。
+        let profile_referenced: Vec<String> = doc
+            .get("profiles")
+            .and_then(|item| item.as_table_like())
+            .map(|profiles| {
+                profiles
+                    .iter()
+                    .filter_map(|(_, profile)| {
+                        profile
+                            .as_table_like()?
+                            .get("model_provider")
+                            .and_then(|item| item.as_str())
+                            .map(str::to_string)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if profile_referenced.contains(&CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID.to_string()) {
+            return false;
+        }
+        providers
+            .get(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+            .and_then(|item| item.as_table_like())
+            .and_then(|table| table.get("base_url"))
+            .and_then(|item| item.as_str())
+            .map(|url| url.trim().trim_end_matches('/'))
+            .is_some_and(is_proxy_url)
+    })
 }
 
 /// live 的 `config.toml` 是不是现在的代理官方路由（`is_proxy_url` 认本地代理给 Codex 的

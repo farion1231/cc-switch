@@ -129,6 +129,104 @@ impl EditorSaveKind {
     }
 }
 
+/// 这次保存里有没有**延迟生效**的关键字段改动（要弹「切换时才生效」的提醒，issue #7948）：
+/// - 直连当前卡（`key_fields` 为真）不弹——当场写 live。
+/// - 代理路由那家不弹——契约当场整体重写。
+/// - **活跃 Stack 模式**下的成员（`stack_mode_now`：代理且 Stack 开着；名单残留但 Stack
+///   已关的不算，那时成员不发布、改动只进 DB 行）——只豁免**证明过即时生效**的字段：
+///   代理逐请求消费的路由表键（地址 / 协议 / 凭据）和行的 Key；以及目录生成器确实消费、
+///   且合并目录正在发布的目录类改动——按改动种类分开（外审 P2 二轮）：
+///   条目类（顶层 `model`、`modelCatalog` 列表的增删改）只要成员的条目被这次保存碰到
+///   就即时（含删掉最后一个条目：目录里少一条当场发布）；窗口/压缩阈值键要求**保存后
+///   仍有可发布条目**（目录生成器对无条目成员早退，删光条目的同次窗口改动只进 DB 行）。
+///   路由表里代理不读的键（`stream_max_retries` 这类）、目录不消费的顶层/独有字段
+///   （`review_model`、`model_verbosity`）、嵌套模型名——一律照弹。
+/// - 其余（代理下非路由非活跃成员、直连下非当前卡）：全部关键字段改动都延迟，弹。
+fn deferred_key_fields(
+    mode: &crate::mode::state::ModeState,
+    app_type: &AppType,
+    id: &str,
+    changes: codex_editor::KeyFieldChanges,
+    catalog: MemberCatalogPublication,
+) -> bool {
+    if mode.is_proxy() && mode.routes_to(id) {
+        return false;
+    }
+    let active_stack_member = mode.is_proxy()
+        && crate::mode::stack::stack_mode_now(app_type)
+        && crate::mode::stack::is_member(app_type, id).unwrap_or(false);
+    if active_stack_member {
+        return changes.route_table_other
+            || changes.top_exclusive_other
+            || changes.nested
+            || (changes.catalog_entries && !catalog.entries)
+            || (changes.catalog_windows && !catalog.windows);
+    }
+    changes.any()
+}
+
+/// 活跃 Stack 成员的目录类改动这次保存会不会**当场**进客户端目录（issue #7948 三审 +
+/// 四审 Minor 2 + 五审 1，外审 P2 两轮）。前提（两条否决，任一失败两个口径都为假）：
+/// 合并目录真的在发布——默认路由行带自己的 `model_catalog_json` 时 `stack_catalog`
+/// 跳过合并；官方做路由且官方模型行拿不到（`prepare_official_rows` 拿不到预测登录 /
+/// `NativeSource::Unavailable`）同样跳过（`Bundled` 是降级可用，仍发布）。之后按改动
+/// 种类分口径：
+/// - `entries`（条目类：顶层 `model`、`modelCatalog` 列表的增删改）：`edited`（这次保存
+///   提交的 `settings_config`）还有条目 → 改动当场进目录；条目原本在保存前的行
+///   `before` 里、这次被删光 → 目录少了这一条同样当场发布（保存流程里
+///   `resync_proxy_for_saved_row` 先于本判定按新行重写契约，`published_members` 对
+///   没剩模型的成员照样保留，`codex_stack_third_party_rows` 给它空列表）。
+/// - `windows`（窗口/压缩阈值键）：目录生成器对无可发布条目的成员早退（同上空列表），
+///   窗口只进 DB 行——要求 `edited` 保存后仍有条目，才有消费者即时读它。
+///   两头都没有条目的成员，目录类改动只进 DB 行，两个口径都为假。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MemberCatalogPublication {
+    entries: bool,
+    windows: bool,
+}
+
+fn member_catalog_published(
+    state: &AppState,
+    mode: &crate::mode::state::ModeState,
+    before: Option<&Value>,
+    edited: &Value,
+) -> MemberCatalogPublication {
+    let unpublished = || MemberCatalogPublication {
+        entries: false,
+        windows: false,
+    };
+    let Some(route_id) = mode.proxy_route.as_deref() else {
+        return unpublished();
+    };
+    let Ok(Some(route)) = state
+        .db
+        .get_provider_by_id(route_id, AppType::Codex.as_str())
+    else {
+        return unpublished();
+    };
+    if codex_direct::route_owns_catalog(&route) {
+        return unpublished();
+    }
+    if codex_direct::is_official(&route)
+        && !matches!(
+            codex_official_models::last_source(),
+            Some(codex_official_models::NativeSource::Fetched)
+                | Some(codex_official_models::NativeSource::Bundled)
+        )
+    {
+        return unpublished();
+    }
+    // 删掉最后的条目也算「碰得着」条目类改动：契约重写把这条从客户端目录里当场拿掉；
+    // 窗口键不行——没有条目就没有消费它的人。
+    let before_entries =
+        before.is_some_and(crate::codex_config::codex_has_publishable_catalog_entries);
+    let edited_entries = crate::codex_config::codex_has_publishable_catalog_entries(edited);
+    MemberCatalogPublication {
+        entries: before_entries || edited_entries,
+        windows: edited_entries,
+    }
+}
+
 /// Provider business logic service
 pub struct ProviderService;
 
@@ -5730,10 +5828,11 @@ impl ProviderService {
         provider: Provider,
         add_to_live: bool,
         editor: Option<EditorSave>,
-    ) -> Result<bool, AppError> {
+    ) -> Result<SwitchResult, AppError> {
         match (app_type, editor) {
             (AppType::Claude, Some(editor)) => {
                 Self::add_claude_from_editor(state, provider, editor)
+                    .map(|_| SwitchResult::default())
             }
             (AppType::Codex, Some(editor)) => {
                 Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Add)
@@ -5746,8 +5845,11 @@ impl ProviderService {
                     editor,
                     EditorSaveKind::Add,
                 )
+                .map(|_| SwitchResult::default())
             }
-            (app_type, _) => Self::add(state, app_type, provider, add_to_live),
+            (app_type, _) => {
+                Self::add(state, app_type, provider, add_to_live).map(|_| SwitchResult::default())
+            }
         }
     }
 
@@ -5759,12 +5861,13 @@ impl ProviderService {
         original_id: Option<&str>,
         provider: Provider,
         editor: Option<EditorSave>,
-    ) -> Result<bool, AppError> {
+    ) -> Result<SwitchResult, AppError> {
         match (app_type, editor) {
             (AppType::Claude, Some(editor))
                 if original_id.is_none_or(|original| original == provider.id) =>
             {
                 Self::update_claude_from_editor(state, provider, editor)
+                    .map(|_| SwitchResult::default())
             }
             (AppType::Codex, Some(editor))
                 if original_id.is_none_or(|original| original == provider.id) =>
@@ -5781,8 +5884,10 @@ impl ProviderService {
                     editor,
                     EditorSaveKind::Update,
                 )
+                .map(|_| SwitchResult::default())
             }
-            (app_type, _) => Self::update(state, app_type, original_id, provider),
+            (app_type, _) => Self::update(state, app_type, original_id, provider)
+                .map(|_| SwitchResult::default()),
         }
     }
 
@@ -5794,13 +5899,17 @@ impl ProviderService {
         provider: Provider,
         editor: EditorSave,
         kind: EditorSaveKind,
-    ) -> Result<bool, AppError> {
+    ) -> Result<SwitchResult, AppError> {
         let app_type = AppType::Codex;
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
         let mut provider = provider;
+        // 这次保存在表单里提交的 settings_config（plan_save 之后会被换成规范化的行）：
+        // 成员目录发布的判定看它和保存前的行，且条目类与窗口类分开口径——删光条目
+        // 的删除当场发布，同次窗口改动却只进 DB 行（见 `member_catalog_published`）。
+        let edited_settings = provider.settings_config.clone();
         let plan = codex_editor::plan_save(
             existing.as_ref().map(|row| &row.settings_config),
             &provider.settings_config,
@@ -5845,7 +5954,33 @@ impl ProviderService {
             )
             .and_then(|()| Self::resync_proxy_for_saved_row(state, &app_type, &provider))
         };
-        Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
+        Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)?;
+
+        // 关键字段的改动这次没进 live（代理模式、或直连下编辑的不是当前供应商）：行里
+        // 已经存好，切换 / 重写代理契约时生效；带个警告提醒用户，别当成保存失败
+        //（issue #7948）。哪些算「延迟」见 `deferred_key_fields`（路由卡、活跃 Stack
+        // 成员的即时字段都不弹；嵌套模型名只来自路由那家，成员改它要弹）。
+        let mut result = SwitchResult::default();
+        if kind == EditorSaveKind::Update
+            && !key_fields
+            && deferred_key_fields(
+                &mode,
+                &app_type,
+                &provider.id,
+                plan.key_field_changes,
+                member_catalog_published(
+                    state,
+                    &mode,
+                    existing.as_ref().map(|row| &row.settings_config),
+                    &edited_settings,
+                ),
+            )
+        {
+            result
+                .warnings
+                .push(codex_editor::KEYFIELDS_PENDING_SWITCH.to_string());
+        }
+        Ok(result)
     }
 
     /// 从编辑器新增或保存 Gemini CLI、Grok Build 供应商：关键字段存回行，其余改动作为全局

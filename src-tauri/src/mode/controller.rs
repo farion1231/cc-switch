@@ -396,6 +396,77 @@ async fn write_proxy(
     Ok(!unchanged)
 }
 
+/// Codex live 里旧版（v3.17–v3.20）代理接管的遗留物：顶层选中的 `cc-switch-official`、
+/// 接管形态的表（指向本地代理、未被 `[profiles.*]` 引用）、或官方路由指着本地代理。
+/// 有标记才归一化；用户修过的表（指向远端 / 删了地址）和手写的直连配置一个字节都不动。
+fn codex_live_has_legacy_takeover(state: &AppState) -> bool {
+    let text = codex_direct::read_config_text();
+    if text.is_empty() {
+        return false;
+    }
+    crate::codex_config::codex_config_has_official_proxy_route(&text)
+        || crate::codex_config::codex_config_has_official_proxy_table(&text, |url| {
+            codex_direct::is_local_proxy_base_url(&state.db, url)
+        })
+        || codex_direct::routes_official_to_proxy(&state.db, &text)
+}
+
+/// settled 直连时把旧版接管的遗留物按直连那家归一化**一次**（换关键字段、删遗留表）。
+/// 完成状态按 **Codex 配置目录**记在 `live-state.json`（`legacy_takeover_repaired_in` 存
+/// 目录的规范化字符串）：修过的目录不再重做，之后用户对 live 的手改不会被反复覆盖——
+/// `[profiles.*]` 引用住、清理不掉的表就是靠这个兜底；换 `codex_config_dir` 后新目录
+/// 的残留仍要修。没有标记不写；失败不拦调用方、不记完成，下一次启动再试。调用方持有
+/// 切换锁（issue #7948）。
+fn repair_codex_legacy_live(state: &AppState) {
+    let store = DeviceStore::for_device();
+    let dir_key = crate::codex_history_migration::canonical_dir_string(
+        &crate::codex_config::get_codex_config_dir(),
+    );
+    if crate::mode::state::legacy_takeover_repaired_in(&store, AppType::Codex.as_str())
+        .unwrap_or_default()
+        .iter()
+        .any(|done| done == &dir_key)
+    {
+        return;
+    }
+    if !codex_live_has_legacy_takeover(state) {
+        return;
+    }
+    let direct = match direct_provider(state, &AppType::Codex) {
+        Ok(direct) => direct,
+        Err(error) => {
+            log::warn!("读 Codex 的直连供应商失败，跳过旧版遗留物的归一化: {error}");
+            return;
+        }
+    };
+    log::info!("[MODE] codex live 带旧版接管的遗留物，按直连归一化一次");
+    let target = usable_direct(&AppType::Codex, direct.as_ref());
+    match codex_direct::write_direct(
+        &state.db,
+        &state.codex_oauth_manager,
+        op::APPLY,
+        Owner::None,
+        target,
+        PendingTarget::default(),
+    ) {
+        Ok(_) => {
+            if let Err(error) = crate::mode::state::mark_legacy_takeover_repaired_in(
+                &store,
+                AppType::Codex.as_str(),
+                &dir_key,
+            ) {
+                log::warn!("记录 codex 遗留物归一化完成失败（会再试一次）: {error}");
+            }
+        }
+        Err(error) => {
+            log::warn!(
+                "[MODE] 归一化 codex live 失败，下次启动再试: {}",
+                crate::error_for_log(&error.to_string())
+            );
+        }
+    }
+}
+
 /// 写回直连投影（直连指针的供应商）。
 fn write_direct(
     state: &AppState,
@@ -426,6 +497,9 @@ fn write_direct(
         }
         AppType::Codex => {
             if !attached {
+                // settled 直连：live 归用户管，不写。只有认出旧版接管的遗留物才归一化一次
+                //（issue #7948）；没有标记的手写配置一个字节都不动。
+                repair_codex_legacy_live(state);
                 commit_state(state, app, &pending_target)?;
                 return Ok(());
             }
@@ -1572,6 +1646,11 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
                 contract: None,
             },
         )?;
+    } else if *app == AppType::Codex {
+        // settled 直连：live 一般归用户管，不写。旧版（v3.17–v3.20）代理接管的遗留物
+        //（`cc-switch-official` 选路 / 表、指向本地代理的官方路由）没有任何写入会清它，
+        // 命中标记就归一化一次（issue #7948）。
+        repair_codex_legacy_live(state);
     }
     Ok(())
 }
@@ -3914,6 +3993,1381 @@ model_provider = "c"
         assert_eq!(codex_text(), outside);
     }
 
+    /// 直连下编辑非当前供应商：关键字段的改动只存进行（live 一个字节不动），保存的返回里
+    /// 带警告提醒它们何时生效；只改全局设置、或编辑当前的 a（当场换进 live）不警告
+    ///（issue #7948）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_save_warns_when_key_field_edits_stay_out_of_live() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let save = |id: &str, settings: Value, base: Value| {
+            let mut row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            row.settings_config = settings;
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                Some(id),
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+        };
+        let view_of = |id: &str| {
+            let row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+                .expect("view")
+                .settings
+        };
+        let edited_view = |base: &Value, from: &str, to: &str| {
+            let mut edited = base.clone();
+            edited["config"] = json!(base["config"].as_str().unwrap().replace(from, to));
+            edited
+        };
+
+        // 非当前的 b，改 base_url：警告 + live 一个字节不动，改动存进 b 的行。
+        let base = view_of("b");
+        let before = codex_text();
+        let result = save(
+            "b",
+            edited_view(&base, "https://b.example/v1", "https://b2.example/v1"),
+            base,
+        )
+        .expect("save b");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "codex_keyfields_pending_switch"),
+            "{:?}",
+            result.warnings
+        );
+        assert_eq!(codex_text(), before, "b is not current: live untouched");
+        let stored = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        assert!(
+            stored.settings_config["config"]
+                .as_str()
+                .unwrap()
+                .contains("https://b2.example/v1"),
+            "the edit is stored in the row"
+        );
+
+        // 非当前的 b，只改全局设置：不警告，全局改动进 live。
+        let base = view_of("b");
+        let result = save("b", edited_view(&base, "\"on-request\"", "\"never\""), base)
+            .expect("save b global");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert!(codex_text().contains("\"never\""), "global edit applied");
+
+        // 当前的 a，改 base_url：不警告，live 当场换。
+        let base = view_of("a");
+        let result = save(
+            "a",
+            edited_view(&base, "https://a.example/v1", "https://a2.example/v1"),
+            base,
+        )
+        .expect("save a");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert!(
+            codex_text().contains("https://a2.example/v1"),
+            "the current card goes live"
+        );
+    }
+
+    /// 代理模式：编辑路由那家不警告（契约当场按新行重写）；编辑非路由那家带警告、live
+    /// 一个字节不动（issue #7948）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_save_in_proxy_mode_warns_only_for_non_route_cards() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        enter(&state, &AppType::Codex, false)
+            .await
+            .expect("enter proxy");
+        let save = |id: &str, settings: Value, base: Value| {
+            let mut row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            row.settings_config = settings;
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                Some(id),
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+        };
+        let view_of = |id: &str| {
+            let row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+                .expect("view")
+                .settings
+        };
+
+        // 非路由的 b，改 base_url：警告 + live（代理契约）一个字节不动。
+        let base = view_of("b");
+        let before = codex_text();
+        let result = save(
+            "b",
+            {
+                let mut edited = base.clone();
+                edited["config"] = json!(base["config"]
+                    .as_str()
+                    .unwrap()
+                    .replace("https://b.example/v1", "https://b2.example/v1"));
+                edited
+            },
+            base,
+        )
+        .expect("save b");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "codex_keyfields_pending_switch"),
+            "{:?}",
+            result.warnings
+        );
+        assert_eq!(codex_text(), before, "b is not the route: live untouched");
+
+        // 路由的 a，改 base_url：不警告（契约当场按新行重写）。
+        let base = view_of("a");
+        let result = save(
+            "a",
+            {
+                let mut edited = base.clone();
+                edited["config"] = json!(base["config"]
+                    .as_str()
+                    .unwrap()
+                    .replace("https://a.example/v1", "https://a2.example/v1"));
+                edited
+            },
+            base,
+        )
+        .expect("save a");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+
+        if state.proxy_service.is_running().await {
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    /// Stack 模式的「切换时才生效」提醒按**证实过即时生效**的字段精确豁免（issue #7948
+    /// 二审 Minor 1+2 + 三审 Minor）。活跃成员的：路由表里代理逐请求消费的键（base_url /
+    /// wire_api / 凭据）和行的 Key 不弹；目录生成器消费的字段（`model`、窗口键）只在合并
+    /// 目录**正在发布**（默认路由没带自己的 `model_catalog_json`）时不弹；其余（目录不消费
+    /// 的 `review_model`、代理不读的 `stream_max_retries`、嵌套模型名）都弹；退回普通路由
+    /// 后名单残留的成员不发布，全量弹。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_save_in_stack_mode_warns_only_for_deferred_fields() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        // b 自带嵌套模型名、review_model、窗口键，表里还带代理不消费的 stream_max_retries。
+        let mut b = codex_row(
+            "b",
+            "https://b.example/v1",
+            "review_model = \"gpt-b-review\"\nmodel_context_window = 120000\n[agents]\ndefault_subagent_model = \"gpt-b-mini\"\n",
+        );
+        b.settings_config["config"] = json!(b.settings_config["config"].as_str().unwrap().replace(
+            "wire_api = \"responses\"\n",
+            "wire_api = \"responses\"\nstream_max_retries = 5\n"
+        ));
+        state.db.save_provider("codex", &b).unwrap();
+        enter(&state, &AppType::Codex, true)
+            .await
+            .expect("enter stack");
+        set_stack_member(&state, &AppType::Codex, "b", true)
+            .await
+            .expect("add b to the stack");
+        let save = |state: &AppState, id: &str, from: &str, to: &str| {
+            let row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            let view =
+                ProviderService::editor_view(state, AppType::Codex, &row.settings_config, None)
+                    .expect("view");
+            let base = view.settings;
+            let mut row = row;
+            let mut edited = base.clone();
+            edited["config"] = json!(base["config"].as_str().unwrap().replace(from, to));
+            row.settings_config = edited;
+            ProviderService::update_from_editor(
+                state,
+                AppType::Codex,
+                Some(id),
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+        };
+        let warned = |result: &crate::services::provider::SwitchResult| {
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "codex_keyfields_pending_switch")
+        };
+
+        // 代理逐请求消费的键：base_url 不弹（三审通过面保住）。
+        let result = save(&state, "b", "https://b.example/v1", "https://b2.example/v1")
+            .expect("save b base_url");
+        assert!(!warned(&result), "endpoint: {:?}", result.warnings);
+        let b_slug = {
+            let stack_state = state::stack(&DeviceStore::for_device(), "codex").unwrap();
+            let key = stack_state.key_of("b").expect("b's stack key").to_string();
+            stack::encode(&AppType::Codex, &key, "gpt-b", false)
+        };
+
+        // 目录消费的窗口键：合并目录正在发布 → 不弹，且目录文件真带上了新值。
+        let result = save(
+            &state,
+            "b",
+            "model_context_window = 120000",
+            "model_context_window = 240000",
+        )
+        .expect("save b window");
+        assert!(
+            !warned(&result),
+            "catalog-published window: {:?}",
+            result.warnings
+        );
+        let catalog: Value = serde_json::from_str(
+            &fs::read_to_string(crate::codex_config::get_codex_model_catalog_path()).unwrap(),
+        )
+        .unwrap();
+        let b_entry = catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["slug"] == json!(b_slug))
+            .expect("b is published");
+        assert_eq!(b_entry["context_window"], json!(240000), "{b_entry}");
+
+        // 三审反例 1：review_model 目录生成器不消费 → 弹；值只进了 DB 行。
+        let result =
+            save(&state, "b", "gpt-b-review", "gpt-b2-review").expect("save b review_model");
+        assert!(
+            warned(&result),
+            "review_model is not consumed: {:?}",
+            result.warnings
+        );
+        let stored = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        assert!(
+            stored.settings_config["config"]
+                .as_str()
+                .unwrap()
+                .contains("gpt-b2-review")
+                && !codex_text().contains("gpt-b2-review"),
+            "stored in the row, not in live"
+        );
+
+        // 三审反例 3：stream_max_retries 只有 Codex CLI 读 → 弹。
+        let result = save(
+            &state,
+            "b",
+            "stream_max_retries = 5",
+            "stream_max_retries = 9",
+        )
+        .expect("save b retries");
+        assert!(
+            warned(&result),
+            "unconsumed table key: {:?}",
+            result.warnings
+        );
+
+        // 嵌套模型名：只来自路由那家的投影 → 弹（二审通过面保住）。
+        let result = save(&state, "b", "gpt-b-mini", "gpt-b2-mini").expect("save b nested");
+        assert!(warned(&result), "nested: {:?}", result.warnings);
+
+        // 三审反例 2：默认路由行带自己的 model_catalog_json → 合并目录跳过发布，
+        // 成员的窗口改动进不了客户端 → 弹；目录文件保持旧值。
+        let mut route = codex_a_b();
+        let route_row = route.first_mut().unwrap();
+        route_row.settings_config["config"] = json!(format!(
+            "model_catalog_json = \"my-models.json\"\n{}",
+            route_row.settings_config["config"].as_str().unwrap()
+        ));
+        state.db.save_provider("codex", route_row).unwrap();
+        let result = save(
+            &state,
+            "b",
+            "model_context_window = 240000",
+            "model_context_window = 360000",
+        )
+        .expect("save b window with route-owned catalog");
+        assert!(
+            warned(&result),
+            "the merged catalog is not published: {:?}",
+            result.warnings
+        );
+        let catalog: Value = serde_json::from_str(
+            &fs::read_to_string(crate::codex_config::get_codex_model_catalog_path()).unwrap(),
+        )
+        .unwrap();
+        let b_entry = catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["slug"] == json!(b_slug))
+            .expect("b's old entry stays");
+        assert_eq!(b_entry["context_window"], json!(240000), "{b_entry}");
+
+        // 退回普通代理路由（b 还留在名单里）：成员不发布，全量弹（二审通过面保住）。
+        enter(&state, &AppType::Codex, false)
+            .await
+            .expect("back to plain routing");
+        let result = save(
+            &state,
+            "b",
+            "https://b2.example/v1",
+            "https://b3.example/v1",
+        )
+        .expect("save b after stack off");
+        assert!(
+            warned(&result),
+            "stack off: members are not published: {:?}",
+            result.warnings
+        );
+
+        if state.proxy_service.is_running().await {
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    /// 原生官方卡（没有 `model_provider`、没有自定义表）作为非当前卡片：原样保存、只改
+    /// 全局设置都不弹「切换时才生效」（两边都选不上路由表不算表变化）；改 Key 仍弹
+    ///（issue #7948 四审 Minor 1）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_save_of_a_native_official_card_warns_only_for_real_key_edits() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let mut rows = codex_a_b().to_vec();
+        rows.push(codex_official());
+        let state = state_with(AppType::Codex, &rows, "a").await;
+        let save = |state: &AppState, settings: Value, base: Value| {
+            let mut row = state
+                .db
+                .get_provider_by_id(crate::database::CODEX_OFFICIAL_PROVIDER_ID, "codex")
+                .unwrap()
+                .unwrap();
+            row.settings_config = settings;
+            ProviderService::update_from_editor(
+                state,
+                AppType::Codex,
+                Some(crate::database::CODEX_OFFICIAL_PROVIDER_ID),
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+        };
+        let row = state
+            .db
+            .get_provider_by_id(crate::database::CODEX_OFFICIAL_PROVIDER_ID, "codex")
+            .unwrap()
+            .unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view official");
+        let base = view.settings;
+        assert!(
+            !base["config"]
+                .as_str()
+                .unwrap()
+                .contains("model_provider = "),
+            "the official projection carries no selector: {}",
+            base["config"]
+        );
+
+        // 原样保存：不弹。
+        let result = save(&state, base.clone(), base.clone()).expect("identical save");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+
+        // 只改全局设置：不弹。
+        let mut edited = base.clone();
+        edited["config"] = json!(base["config"]
+            .as_str()
+            .unwrap()
+            .replace("on-request", "never"));
+        let result = save(&state, edited, base.clone()).expect("global-only save");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+
+        // 改 Key：仍弹（进行、延迟生效）。
+        let mut edited = base.clone();
+        let mut auth = edited["auth"].clone();
+        auth["OPENAI_API_KEY"] = json!("sk-official-new");
+        edited["auth"] = auth;
+        let result = save(&state, edited, base).expect("key save");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "codex_keyfields_pending_switch"),
+            "a key edit is still deferred: {:?}",
+            result.warnings
+        );
+    }
+
+    /// 官方做路由、官方模型行拿不到（`officialModelsUnavailable`，复用既有桩架场景）时
+    /// 合并目录不发布：成员改窗口键要弹「切换时才生效」（issue #7948 四审 Minor 2）。
+    #[tokio::test]
+    #[serial]
+    async fn stack_member_window_edits_warn_while_official_models_are_unavailable() {
+        let _home = Home::new();
+        let alice = chatgpt("ws", "alice");
+        seed_codex("cli_auth_credentials_store = \"auto\"\n", Some(&alice));
+        let fake = fake_models(vec![official_list(&[])], CodexKeychainLogin::Unknown, None);
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
+        enter(&state, &AppType::Codex, true)
+            .await
+            .expect("enter stack");
+        set_codex_member(&state, "a", true).await;
+        assert_eq!(
+            stack_views(&state, &AppType::Codex).unwrap().notice,
+            Some("officialModelsUnavailable"),
+            "the scenario matches codex_stack_notice"
+        );
+
+        let row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view a");
+        let base = view.settings;
+        let mut row = row;
+        let mut edited = base.clone();
+        edited["config"] = json!(base["config"].as_str().unwrap().replace(
+            "model_context_window = 200000",
+            "model_context_window = 240000"
+        ));
+        row.settings_config = edited;
+        let result = ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("a"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save a window");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "codex_keyfields_pending_switch"),
+            "the merged catalog is not published: {:?}",
+            result.warnings
+        );
+
+        drop(fake);
+        if state.proxy_service.is_running().await {
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    /// 成员配了显式模型目录（`modelCatalog`）：目录生成器早退、不读顶层 `model`——只改
+    /// `model` 目录不变，要弹；窗口键仍被 `RowWindows::of` 消费（issue #7948 四审 Minor 3）。
+    #[tokio::test]
+    #[serial]
+    async fn stack_member_model_edits_warn_when_an_explicit_catalog_takes_over() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
+        enter(&state, &AppType::Codex, true)
+            .await
+            .expect("enter stack");
+        set_codex_member(&state, "deepseek", true).await;
+        let save = |state: &AppState, id: &str, from: &str, to: &str| {
+            let row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            let view =
+                ProviderService::editor_view(state, AppType::Codex, &row.settings_config, None)
+                    .expect("view");
+            let base = view.settings;
+            let mut row = row;
+            let mut edited = base.clone();
+            edited["config"] = json!(base["config"].as_str().unwrap().replace(from, to));
+            row.settings_config = edited;
+            ProviderService::update_from_editor(
+                state,
+                AppType::Codex,
+                Some(id),
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+        };
+
+        // 只改顶层 model：显式目录接管，目录不变 → 弹。
+        let result = save(&state, "deepseek", "gpt-deepseek", "gpt-deepseek2").expect("save model");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "codex_keyfields_pending_switch"),
+            "the explicit catalog does not read the top-level model: {:?}",
+            result.warnings
+        );
+        let slugs = catalog_slugs();
+        assert!(
+            slugs.iter().any(|slug| slug.contains("deepseek-v4-pro")),
+            "the explicit catalog entry stays: {slugs:?}"
+        );
+        assert!(
+            slugs.iter().all(|slug| !slug.contains("gpt-deepseek")),
+            "the edited model never reaches the catalog: {slugs:?}"
+        );
+
+        if state.proxy_service.is_running().await {
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    /// 没有可发布条目的成员（无顶层 `model`、无显式目录，只有表 + Key + 窗口值）：目录里
+    /// 没有它的行，窗口改动只进 DB——必须弹「切换时才生效」（issue #7948 五审 1）。
+    #[tokio::test]
+    #[serial]
+    async fn stack_member_window_edits_warn_without_publishable_entries() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let mut rows = codex_a_b().to_vec();
+        rows.push(Provider::with_id(
+            "w".to_string(),
+            "W".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-w" },
+                "config": "model_provider = \"w\"\nmodel_context_window = 120000\n\n[model_providers.w]\nname = \"w\"\nbase_url = \"https://w.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        ));
+        let state = state_with(AppType::Codex, &rows, "a").await;
+        enter(&state, &AppType::Codex, true)
+            .await
+            .expect("enter stack");
+        set_codex_member(&state, "w", true).await;
+
+        let row = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view w");
+        let base = view.settings;
+        let mut row = row;
+        let mut edited = base.clone();
+        edited["config"] = json!(base["config"].as_str().unwrap().replace(
+            "model_context_window = 120000",
+            "model_context_window = 240000"
+        ));
+        row.settings_config = edited;
+        let result = ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("w"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save w window");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "codex_keyfields_pending_switch"),
+            "no publishable entries: the window edit only reaches the row: {:?}",
+            result.warnings
+        );
+        let stored = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        assert!(
+            stored.settings_config["config"]
+                .as_str()
+                .unwrap()
+                .contains("model_context_window = 240000"),
+            "the row carries the edit"
+        );
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        let catalog_text = fs::read_to_string(&catalog_path).unwrap_or_default();
+        assert!(
+            !catalog_text.contains("240000"),
+            "the member has no catalog entry: {catalog_text}"
+        );
+
+        if state.proxy_service.is_running().await {
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    /// 已发布的成员（顶层 `model`、没有显式模型目录）把模型删光再保存：目录里它那条
+    /// 当场消失（契约重写随保存立即跑，issue #7980 P2 外审），不弹「切换时才生效」。
+    #[tokio::test]
+    #[serial]
+    async fn stack_member_deleting_last_published_model_applies_immediately() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let mut rows = codex_a_b().to_vec();
+        rows.push(Provider::with_id(
+            "w".to_string(),
+            "W".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-w" },
+                "config": "model_provider = \"w\"\nmodel = \"gpt-w\"\n\n[model_providers.w]\nname = \"w\"\nbase_url = \"https://w.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        ));
+        let state = state_with(AppType::Codex, &rows, "a").await;
+        enter(&state, &AppType::Codex, true)
+            .await
+            .expect("enter stack");
+        set_codex_member(&state, "w", true).await;
+        let w_slug = {
+            let stack_state = state::stack(&DeviceStore::for_device(), "codex").unwrap();
+            let key = stack_state.key_of("w").expect("w's stack key").to_string();
+            stack::encode(&AppType::Codex, &key, "gpt-w", false)
+        };
+        assert!(
+            codex_catalog()["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["slug"] == json!(w_slug)),
+            "w's model is published before the save"
+        );
+
+        let row = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view w");
+        let base = view.settings;
+        let mut row = row;
+        let mut edited = base.clone();
+        edited["config"] = json!(base["config"]
+            .as_str()
+            .unwrap()
+            .replace("model = \"gpt-w\"\n", ""));
+        assert!(
+            !edited["config"]
+                .as_str()
+                .unwrap()
+                .contains("model = \"gpt-w\""),
+            "the model is really gone from the edit"
+        );
+        row.settings_config = edited;
+        let result = ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("w"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save w without a model");
+        assert!(
+            result.warnings.is_empty(),
+            "the deletion publishes now: {:?}",
+            result.warnings
+        );
+        let catalog_text =
+            fs::read_to_string(crate::codex_config::get_codex_model_catalog_path()).unwrap();
+        assert!(
+            !catalog_text.contains(&w_slug),
+            "w's published entry is gone from the client catalog: {catalog_text}"
+        );
+
+        if state.proxy_service.is_running().await {
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    /// 删掉最后一个模型**并同次改窗口**：删除即时发布（不因窗口再报），但新窗口没有
+    /// 消费者（目录生成器对无条目成员早退）——窗口部分延迟生效，仍要弹（外审 P2 二轮）。
+    #[tokio::test]
+    #[serial]
+    async fn stack_member_deleting_last_model_with_window_edit_still_warns() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let mut rows = codex_a_b().to_vec();
+        rows.push(Provider::with_id(
+            "w".to_string(),
+            "W".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-w" },
+                "config": "model_provider = \"w\"\nmodel = \"gpt-w\"\nmodel_context_window = 120000\n\n[model_providers.w]\nname = \"w\"\nbase_url = \"https://w.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        ));
+        let state = state_with(AppType::Codex, &rows, "a").await;
+        enter(&state, &AppType::Codex, true)
+            .await
+            .expect("enter stack");
+        set_codex_member(&state, "w", true).await;
+
+        let row = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view w");
+        let base = view.settings;
+        let mut row = row;
+        let mut edited = base.clone();
+        edited["config"] = json!(base["config"].as_str().unwrap().replace(
+            "model = \"gpt-w\"\nmodel_context_window = 120000",
+            "model_context_window = 240000"
+        ));
+        assert!(
+            !edited["config"].as_str().unwrap().contains("gpt-w")
+                && edited["config"].as_str().unwrap().contains("240000"),
+            "the edit drops the model and moves the window: {}",
+            edited["config"]
+        );
+        row.settings_config = edited;
+        let result = ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("w"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save w");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "codex_keyfields_pending_switch"),
+            "the window edit has no consumer left: {:?}",
+            result.warnings
+        );
+        let catalog_text =
+            fs::read_to_string(crate::codex_config::get_codex_model_catalog_path()).unwrap();
+        assert!(
+            !catalog_text.contains("gpt-w") && !catalog_text.contains("240000"),
+            "the deletion published, the window did not: {catalog_text}"
+        );
+        let stored = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        assert!(
+            !stored.settings_config["config"]
+                .as_str()
+                .unwrap()
+                .contains("gpt-w")
+                && stored.settings_config["config"]
+                    .as_str()
+                    .unwrap()
+                    .contains("model_context_window = 240000"),
+            "the row carries the whole edit: {}",
+            stored.settings_config["config"]
+        );
+
+        if state.proxy_service.is_running().await {
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    /// 显式 `modelCatalog` 的最后一个条目被删：和顶层 `model` 一样是条目类删除，
+    /// 当场从客户端目录里消失，不弹「切换时才生效」（外审 P2 二轮补面）。
+    #[tokio::test]
+    #[serial]
+    async fn stack_member_deleting_last_explicit_catalog_entry_applies_immediately() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let mut rows = codex_a_b().to_vec();
+        let mut w = Provider::with_id(
+            "w".to_string(),
+            "W".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-w" },
+                "config": "model_provider = \"w\"\n\n[model_providers.w]\nname = \"w\"\nbase_url = \"https://w.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        w.settings_config["modelCatalog"] = json!({ "models": [{ "model": "relay-w" }] });
+        rows.push(w);
+        let state = state_with(AppType::Codex, &rows, "a").await;
+        enter(&state, &AppType::Codex, true)
+            .await
+            .expect("enter stack");
+        set_codex_member(&state, "w", true).await;
+        let catalog_text =
+            fs::read_to_string(crate::codex_config::get_codex_model_catalog_path()).unwrap();
+        assert!(
+            catalog_text.contains("relay-w"),
+            "w's explicit entry is published before the save: {catalog_text}"
+        );
+
+        let row = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view w");
+        let base = view.settings;
+        let mut row = row;
+        let mut edited = base.clone();
+        edited
+            .as_object_mut()
+            .expect("settings object")
+            .remove("modelCatalog");
+        row.settings_config = edited;
+        let result = ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("w"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save w without the catalog");
+        assert!(
+            result.warnings.is_empty(),
+            "the entry deletion publishes now: {:?}",
+            result.warnings
+        );
+        let catalog_text =
+            fs::read_to_string(crate::codex_config::get_codex_model_catalog_path()).unwrap();
+        assert!(
+            !catalog_text.contains("relay-w"),
+            "w's published entry is gone from the client catalog: {catalog_text}"
+        );
+        let stored = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        assert!(
+            stored.settings_config.get("modelCatalog").is_none(),
+            "the row lost the catalog: {}",
+            stored.settings_config
+        );
+
+        if state.proxy_service.is_running().await {
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    /// 第二个窗口键 `model_auto_compact_token_limit` 的混合编辑边界：删最后一个模型 +
+    /// 同次改压缩阈值——删除即时发布，新阈值只进 DB 行（无消费者），窗口部分必须弹
+    ///（终审覆盖审计 (d)）。
+    #[tokio::test]
+    #[serial]
+    async fn stack_member_deleting_last_model_with_compact_limit_edit_still_warns() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let mut rows = codex_a_b().to_vec();
+        rows.push(Provider::with_id(
+            "w".to_string(),
+            "W".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-w" },
+                "config": "model_provider = \"w\"\nmodel = \"gpt-w\"\nmodel_auto_compact_token_limit = 12345\n\n[model_providers.w]\nname = \"w\"\nbase_url = \"https://w.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        ));
+        let state = state_with(AppType::Codex, &rows, "a").await;
+        enter(&state, &AppType::Codex, true)
+            .await
+            .expect("enter stack");
+        set_codex_member(&state, "w", true).await;
+        let catalog_text =
+            fs::read_to_string(crate::codex_config::get_codex_model_catalog_path()).unwrap();
+        assert!(
+            catalog_text.contains("gpt-w"),
+            "w's model is published before the save: {catalog_text}"
+        );
+
+        let row = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view w");
+        let base = view.settings;
+        let mut row = row;
+        let mut edited = base.clone();
+        edited["config"] = json!(base["config"].as_str().unwrap().replace(
+            "model = \"gpt-w\"\nmodel_auto_compact_token_limit = 12345",
+            "model_auto_compact_token_limit = 54321"
+        ));
+        assert!(
+            !edited["config"].as_str().unwrap().contains("gpt-w")
+                && edited["config"].as_str().unwrap().contains("54321"),
+            "the edit drops the model and moves the compact limit: {}",
+            edited["config"]
+        );
+        row.settings_config = edited;
+        let result = ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("w"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save w");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "codex_keyfields_pending_switch"),
+            "the compact-limit edit has no consumer left: {:?}",
+            result.warnings
+        );
+        let catalog_text =
+            fs::read_to_string(crate::codex_config::get_codex_model_catalog_path()).unwrap();
+        assert!(
+            !catalog_text.contains("gpt-w") && !catalog_text.contains("54321"),
+            "the deletion published, the compact limit did not: {catalog_text}"
+        );
+        let stored = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        assert!(
+            !stored.settings_config["config"]
+                .as_str()
+                .unwrap()
+                .contains("gpt-w")
+                && stored.settings_config["config"]
+                    .as_str()
+                    .unwrap()
+                    .contains("model_auto_compact_token_limit = 54321"),
+            "the row carries the whole edit: {}",
+            stored.settings_config["config"]
+        );
+
+        if state.proxy_service.is_running().await {
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    /// 显式目录存在时的混合编辑边界：删掉 `modelCatalog` 的最后一个条目 + 同次改窗口——
+    /// 条目删除即时发布，但窗口随后没有消费者（目录生成器对无条目成员早退），窗口部分
+    /// 必须弹（终审覆盖审计 (d)）。
+    #[tokio::test]
+    #[serial]
+    async fn stack_member_deleting_last_catalog_entry_with_window_edit_still_warns() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let mut rows = codex_a_b().to_vec();
+        let mut w = Provider::with_id(
+            "w".to_string(),
+            "W".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-w" },
+                "config": "model_provider = \"w\"\nmodel_context_window = 120000\n\n[model_providers.w]\nname = \"w\"\nbase_url = \"https://w.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        w.settings_config["modelCatalog"] = json!({ "models": [{ "model": "relay-w" }] });
+        rows.push(w);
+        let state = state_with(AppType::Codex, &rows, "a").await;
+        enter(&state, &AppType::Codex, true)
+            .await
+            .expect("enter stack");
+        set_codex_member(&state, "w", true).await;
+        let catalog_text =
+            fs::read_to_string(crate::codex_config::get_codex_model_catalog_path()).unwrap();
+        assert!(
+            catalog_text.contains("relay-w"),
+            "w's explicit entry is published before the save: {catalog_text}"
+        );
+
+        let row = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view w");
+        let base = view.settings;
+        let mut row = row;
+        let mut edited = base.clone();
+        edited["config"] = json!(base["config"].as_str().unwrap().replace(
+            "model_context_window = 120000",
+            "model_context_window = 240000"
+        ));
+        edited
+            .as_object_mut()
+            .expect("settings object")
+            .remove("modelCatalog");
+        row.settings_config = edited;
+        let result = ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("w"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save w");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "codex_keyfields_pending_switch"),
+            "the window edit has no consumer left: {:?}",
+            result.warnings
+        );
+        let catalog_text =
+            fs::read_to_string(crate::codex_config::get_codex_model_catalog_path()).unwrap();
+        assert!(
+            !catalog_text.contains("relay-w") && !catalog_text.contains("240000"),
+            "the entry deletion published, the window did not: {catalog_text}"
+        );
+        let stored = state.db.get_provider_by_id("w", "codex").unwrap().unwrap();
+        assert!(
+            stored.settings_config.get("modelCatalog").is_none()
+                && stored.settings_config["config"]
+                    .as_str()
+                    .unwrap()
+                    .contains("model_context_window = 240000"),
+            "the row carries the whole edit: {}",
+            stored.settings_config["config"]
+        );
+
+        if state.proxy_service.is_running().await {
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    /// 只删一个从 live 带进来的独有字段：删除是立即生效的全局改动（当场写进 live），
+    /// 不弹「切换时才生效」的提醒（issue #7948 外审 Minor 4）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_save_deleting_a_live_exclusive_field_warns_nothing() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(
+            &CODEX_USER_LIVE.replace(
+                "model = \"gpt-a\"\n",
+                "model = \"gpt-a\"\nmodel_verbosity = \"high\"\n",
+            ),
+            None,
+        );
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view b");
+        let base = view.settings;
+        assert!(
+            base["config"].as_str().unwrap().contains("model_verbosity"),
+            "brought in from live: {}",
+            base["config"]
+        );
+        let mut row = row;
+        let mut edited = base.clone();
+        edited["config"] = json!(base["config"]
+            .as_str()
+            .unwrap()
+            .replace("model_verbosity = \"high\"\n", ""));
+        row.settings_config = edited;
+        let result = ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("b"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save b");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert!(
+            !codex_text().contains("model_verbosity"),
+            "the deletion applies immediately"
+        );
+    }
+
+    /// 升级遗留（issue #7948）：settled 直连的 Codex live 里留着 v3.17–v3.20 官方代理接管的
+    /// `[model_providers.cc-switch-official]` 表（顶层选路早已换走，没有别的写入会清它）→
+    /// 启动时按直连那家归一化一次；用户的表和全局设置原样保留。归一化等于一次干净的切换：
+    /// 引用旧 id 的存量会话由此进入 Codex 自己的「provider not found，重新打开对话线程」
+    /// 指引（本地代理对旧凭据的 401 也有现成的「请重启 Codex 或新建会话」指引，见
+    /// forwarder 的 official_codex_rejects_stale_proxy_placeholder_with_restart_hint），
+    /// 新会话用的当前供应商表则必须完整。
+    #[tokio::test]
+    #[serial]
+    async fn startup_repairs_a_legacy_codex_takeover_table_in_settled_direct() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        // 第一次启动把模式落定成 settled 直连；没有遗留标记，live 一个字节不动。
+        startup(&state).await;
+        assert_eq!(mode(&AppType::Codex).mode, Some(Mode::Direct));
+        assert_eq!(codex_text(), CODEX_USER_LIVE);
+
+        // 旧版接管的表残留（顶层选路是 custom，表没人引用）。
+        let residue = format!(
+            "{CODEX_USER_LIVE}\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\nbase_url = \"http://127.0.0.1:15721/v1\"\n"
+        );
+        fs::write(codex_config_path(), &residue).unwrap();
+
+        startup(&state).await;
+
+        let after = codex_text();
+        assert!(!after.contains("cc-switch-official"), "{after}");
+        assert!(
+            after.contains("https://a.example/v1"),
+            "rewritten from the direct card: {after}"
+        );
+        assert!(after.contains("[model_providers.ollama_local]"), "{after}");
+        assert_eq!(codex_user_parts(&after).len(), 6, "{after}");
+
+        // 会话按 provider id 分桶、按当前 config.toml 解析：归一化后新会话的表必须完整
+        //（地址 + Key），旧 id 的会话走 Codex 自己的 not-found 指引。
+        let doc = codex_doc();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            doc["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://a.example/v1")
+        );
+        assert_eq!(
+            doc["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some("sk-a")
+        );
+    }
+
+    /// settled 直连的 Codex live 没有旧版接管标记时，启动一个字节都不写（issue #7948）。
+    #[tokio::test]
+    #[serial]
+    async fn startup_leaves_a_marker_free_codex_live_alone_in_settled_direct() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        startup(&state).await;
+        assert_eq!(mode(&AppType::Codex).mode, Some(Mode::Direct));
+
+        startup(&state).await;
+
+        assert_eq!(codex_text(), CODEX_USER_LIVE);
+    }
+
+    /// 用户把旧版接管的表修成有效远端（或删掉 `base_url`）供旧会话解析：不算残留，启动
+    /// 一个字节不动（issue #7948 外审 Major 1）。
+    #[tokio::test]
+    #[serial]
+    async fn startup_leaves_a_user_repaired_cc_switch_official_table_alone() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        startup(&state).await;
+        assert_eq!(mode(&AppType::Codex).mode, Some(Mode::Direct));
+
+        for repaired in [
+            // 指向有效远端。
+            "\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\nbase_url = \"https://official-relay.example/v1\"\n",
+            // 删掉地址（用户手工修复，供旧会话按官方端点解析）。
+            "\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\n",
+        ] {
+            let compat = format!("{CODEX_USER_LIVE}{repaired}");
+            fs::write(codex_config_path(), &compat).unwrap();
+            startup(&state).await;
+            assert_eq!(
+                codex_text(),
+                compat,
+                "a user-repaired table is not takeover residue"
+            );
+        }
+    }
+
+    /// `[profiles.legacy]` 引用住旧表：清理不删它，归一化也不认它残留——不做任何写入
+    ///（issue #7948 外审 Major 2b）。
+    #[tokio::test]
+    #[serial]
+    async fn startup_leaves_a_profile_referenced_legacy_table_alone() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        startup(&state).await;
+        assert_eq!(mode(&AppType::Codex).mode, Some(Mode::Direct));
+        let referenced = format!(
+            "{CODEX_USER_LIVE}\n[profiles.legacy]\nmodel_provider = \"cc-switch-official\"\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\nbase_url = \"http://127.0.0.1:15721/v1\"\n"
+        );
+        fs::write(codex_config_path(), &referenced).unwrap();
+
+        startup(&state).await;
+
+        assert_eq!(
+            codex_text(),
+            referenced,
+            "a profile-referenced table belongs to the user"
+        );
+    }
+
+    /// 归一化只做一次（完成状态按目录记在 live-state.json）：之后**重新注入**能命中门控的
+    /// 残留、重建应用状态，启动也不再改写——标记挡住的是门控本身，不是靠「残留已被清掉」
+    /// 的同义反复（issue #7948 外审 Major 2a、二审 Minor 4）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_legacy_repair_runs_only_once() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        startup(&state).await;
+        let residue = format!(
+            "{CODEX_USER_LIVE}\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\nbase_url = \"http://127.0.0.1:15721/v1\"\n"
+        );
+        fs::write(codex_config_path(), &residue).unwrap();
+        startup(&state).await;
+        assert!(
+            !codex_text().contains("cc-switch-official"),
+            "repaired once"
+        );
+        let dir_key = crate::codex_history_migration::canonical_dir_string(
+            &crate::codex_config::get_codex_config_dir(),
+        );
+        assert!(
+            state::legacy_takeover_repaired_in(&DeviceStore::for_device(), "codex")
+                .unwrap()
+                .contains(&dir_key),
+            "the flag is set for this config dir"
+        );
+
+        // 重新注入能命中门控的 table-only 残留 + 重建应用状态（同一 HOME，新 AppState）：
+        // 启动不改写，标记仍在。
+        fs::write(codex_config_path(), &residue).unwrap();
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        startup(&state).await;
+        assert_eq!(
+            codex_text(),
+            residue,
+            "the flag beats the marker: the repair never runs twice"
+        );
+        assert!(
+            state::legacy_takeover_repaired_in(&DeviceStore::for_device(), "codex")
+                .unwrap()
+                .contains(&crate::codex_history_migration::canonical_dir_string(
+                    &crate::codex_config::get_codex_config_dir(),
+                )),
+            "the flag survives"
+        );
+    }
+
+    /// 归一化写失败（直连那家的行投影不出来）不记完成：live 原样，下次启动重试；行修好
+    /// 后再启动才归一化并记完成（issue #7948 二审 Minor 4 的失败用例）。
+    #[tokio::test]
+    #[serial]
+    async fn a_failed_codex_legacy_repair_is_retried_next_startup() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        startup(&state).await;
+        // 把直连那家的行弄坏：选了不存在的 provider，投影失败，写入被拒。
+        let mut broken = codex_a_b();
+        let broken_row = broken.first_mut().unwrap();
+        broken_row.settings_config["config"] =
+            json!("model_provider = \"ghost\"\nmodel = \"gpt-a\"\n");
+        state.db.save_provider("codex", broken_row).unwrap();
+        let residue = format!(
+            "{CODEX_USER_LIVE}\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\nbase_url = \"http://127.0.0.1:15721/v1\"\n"
+        );
+        fs::write(codex_config_path(), &residue).unwrap();
+
+        startup(&state).await;
+        assert_eq!(
+            codex_text(),
+            residue,
+            "the write is refused, the live file stays"
+        );
+        assert!(
+            state::legacy_takeover_repaired_in(&DeviceStore::for_device(), "codex")
+                .unwrap()
+                .is_empty(),
+            "a failed repair is not marked done"
+        );
+
+        // 行修好后再启动：归一化并记完成。
+        state
+            .db
+            .save_provider("codex", &codex_row("a", "https://a.example/v1", "model_context_window = 200000\n[agents]\ndefault_subagent_model = \"gpt-a-mini\"\n"))
+            .unwrap();
+        startup(&state).await;
+        assert!(!codex_text().contains("cc-switch-official"), "retried");
+        assert!(
+            !state::legacy_takeover_repaired_in(&DeviceStore::for_device(), "codex")
+                .unwrap()
+                .is_empty(),
+            "marked done after the retry succeeds"
+        );
+    }
+
+    /// 完成状态绑定 **Codex 配置目录**（`legacy_takeover_repaired_in` 存目录的规范化字符串）：
+    /// 目录 A 修完 → 切到带残留的目录 B 仍会修 → 切回 A 重新注入残留也不重做
+    ///（issue #7948 二审 Minor 3）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_legacy_repair_follows_the_config_dir() {
+        let home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let residue = format!(
+            "{CODEX_USER_LIVE}\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\nbase_url = \"http://127.0.0.1:15721/v1\"\n"
+        );
+        startup(&state).await;
+        fs::write(codex_config_path(), &residue).unwrap();
+        startup(&state).await;
+        assert!(
+            !codex_text().contains("cc-switch-official"),
+            "dir A repaired"
+        );
+
+        // 切到目录 B（带同样的残留）：标记绑定目录，B 仍要修。
+        let dir_b = home.dir.path().join("codex-b");
+        fs::create_dir_all(&dir_b).unwrap();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            codex_config_dir: Some(dir_b.to_string_lossy().to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+        fs::write(dir_b.join("config.toml"), &residue).unwrap();
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        startup(&state).await;
+        let text_b = fs::read_to_string(dir_b.join("config.toml")).unwrap();
+        assert!(
+            !text_b.contains("cc-switch-official"),
+            "the new config dir is still repaired: {text_b}"
+        );
+
+        // 切回目录 A：重新注入残留也不重做。
+        crate::settings::update_settings(crate::settings::AppSettings {
+            codex_config_dir: None,
+            ..Default::default()
+        })
+        .unwrap();
+        fs::write(codex_config_path(), &residue).unwrap();
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        startup(&state).await;
+        assert_eq!(codex_text(), residue, "a repaired dir is never redone");
+    }
+
     /// live 里用户自己写的独有字段（`model_verbosity` 这类）不归当前供应商：原样保存不会
     /// 把它收进行，切走时也就不会删掉；在编辑器里删掉它就从 live 删；新加的独有字段归
     /// 供应商。
@@ -4850,7 +6304,7 @@ model_provider = "c"
         mut row: Provider,
         edited: Value,
         base: Value,
-    ) -> Result<bool, AppError> {
+    ) -> Result<crate::services::provider::SwitchResult, AppError> {
         // 和新增对话框一样：`row` 是投影成 `base` 的草稿。
         let draft = std::mem::replace(&mut row.settings_config, edited);
         ProviderService::add_from_editor(

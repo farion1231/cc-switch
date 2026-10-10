@@ -43,7 +43,7 @@ pub async fn add_provider(
     provider: Provider,
     #[allow(non_snake_case)] addToLive: Option<bool>,
     #[allow(non_snake_case)] editorSave: Option<EditorSave>,
-) -> Result<bool, String> {
+) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let add_to_live = addToLive.unwrap_or(true);
     tauri::async_runtime::spawn_blocking(move || {
@@ -64,7 +64,7 @@ pub async fn update_provider(
     provider: Provider,
     #[allow(non_snake_case)] originalId: Option<String>,
     #[allow(non_snake_case)] editorSave: Option<EditorSave>,
-) -> Result<bool, String> {
+) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
