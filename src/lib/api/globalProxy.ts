@@ -21,6 +21,7 @@ export interface ProxyTestResult {
 export interface UpstreamProxyStatus {
   enabled: boolean;
   proxyUrl: string | null;
+  followSystemProxy: boolean;
 }
 
 /**
@@ -35,7 +36,7 @@ export interface DetectedProxy {
 /**
  * 获取全局代理 URL
  *
- * @returns 代理 URL，null 表示未配置（直连）
+ * @returns 代理 URL，null 表示未配置显式代理
  */
 export async function getGlobalProxyUrl(): Promise<string | null> {
   return invoke<string | null>("get_global_proxy_url");
@@ -45,7 +46,7 @@ export async function getGlobalProxyUrl(): Promise<string | null> {
  * 设置全局代理 URL
  *
  * @param url - 代理 URL（如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080）
- *              空字符串表示清除代理（直连）
+ *              空字符串表示清除显式代理，是否直连由跟随系统代理开关决定
  */
 export async function setGlobalProxyUrl(url: string): Promise<void> {
   try {
@@ -54,6 +55,14 @@ export async function setGlobalProxyUrl(url: string): Promise<void> {
     // Tauri invoke 错误可能是字符串
     throw new Error(typeof error === "string" ? error : String(error));
   }
+}
+
+export async function getFollowSystemProxy(): Promise<boolean> {
+  return invoke<boolean>("get_follow_system_proxy");
+}
+
+export async function setFollowSystemProxy(follow: boolean): Promise<void> {
+  return invoke("set_follow_system_proxy", { follow });
 }
 
 /**

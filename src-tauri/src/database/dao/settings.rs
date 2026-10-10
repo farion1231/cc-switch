@@ -142,7 +142,7 @@ impl Database {
 
     /// 获取全局出站代理 URL
     ///
-    /// 返回 None 表示未配置或已清除代理（直连）
+    /// 返回 None 表示未配置显式代理；是否直连由 follow_system_proxy 决定。
     /// 返回 Some(url) 表示已配置代理
     pub fn get_global_proxy_url(&self) -> Result<Option<String>, AppError> {
         self.get_setting(Self::GLOBAL_PROXY_URL_KEY)
@@ -151,7 +151,7 @@ impl Database {
     /// 设置全局出站代理 URL
     ///
     /// - 传入非空字符串：启用代理
-    /// - 传入空字符串或 None：清除代理设置（直连）
+    /// - 传入空字符串或 None：清除显式代理，保留跟随策略。
     pub fn set_global_proxy_url(&self, url: Option<&str>) -> Result<(), AppError> {
         match url {
             Some(u) if !u.trim().is_empty() => {
@@ -168,6 +168,15 @@ impl Database {
                 Ok(())
             }
         }
+    }
+
+    /// 缺省为 true，保留已有用户跟随系统代理的行为。
+    pub fn get_follow_system_proxy(&self) -> Result<bool, AppError> {
+        Ok(self.get_setting("follow_system_proxy")?.as_deref() != Some("false"))
+    }
+
+    pub fn set_follow_system_proxy(&self, follow: bool) -> Result<(), AppError> {
+        self.set_setting("follow_system_proxy", if follow { "true" } else { "false" })
     }
 
     // --- 代理接管状态管理（已废弃，使用 proxy_config.enabled 替代）---
@@ -323,5 +332,20 @@ impl Database {
         let json = serde_json::to_string(config)
             .map_err(|e| AppError::Database(format!("序列化日志配置失败: {e}")))?;
         self.set_setting("log_config", &json)
+    }
+}
+
+#[cfg(test)]
+mod outbound_proxy_policy_tests {
+    use crate::database::Database;
+
+    #[test]
+    fn follow_system_proxy_defaults_to_true_and_roundtrips() {
+        let db = Database::memory().unwrap();
+        assert!(db.get_follow_system_proxy().unwrap());
+        db.set_follow_system_proxy(false).unwrap();
+        assert!(!db.get_follow_system_proxy().unwrap());
+        db.set_follow_system_proxy(true).unwrap();
+        assert!(db.get_follow_system_proxy().unwrap());
     }
 }

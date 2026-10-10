@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 /// 获取全局代理 URL
 ///
-/// 返回当前配置的代理 URL，null 表示直连。
+/// 返回当前显式代理 URL，null 时按跟随策略连接。
 #[tauri::command]
 pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
     let result = state.db.get_global_proxy_url().map_err(|e| e.to_string())?;
@@ -27,7 +27,7 @@ pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<
 /// 设置全局代理 URL
 ///
 /// - 传入非空字符串：启用代理
-/// - 传入空字符串：清除代理（直连）
+/// - 传入空字符串：清除显式代理，保留跟随策略
 ///
 /// 执行顺序：先验证 → 写 DB → 再应用
 /// 这样确保 DB 写失败时不会出现运行态与持久化不一致的问题
@@ -63,9 +63,40 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
         "[GlobalProxy] [GP-009] Configuration updated: {}",
         url_opt
             .map(http_client::mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
+            .unwrap_or_else(|| "no explicit proxy".to_string())
     );
 
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_follow_system_proxy(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    state
+        .db
+        .get_follow_system_proxy()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_follow_system_proxy(
+    state: tauri::State<'_, AppState>,
+    follow: bool,
+) -> Result<(), String> {
+    let previous = state
+        .db
+        .get_follow_system_proxy()
+        .map_err(|e| e.to_string())?;
+    state
+        .db
+        .set_follow_system_proxy(follow)
+        .map_err(|e| e.to_string())?;
+    if let Err(error) = http_client::set_follow_system_proxy(follow) {
+        state
+            .db
+            .set_follow_system_proxy(previous)
+            .map_err(|e| format!("{error}; failed to restore saved proxy policy: {e}"))?;
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -162,10 +193,11 @@ pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
 /// 返回当前是否启用了出站代理以及代理 URL。
 #[tauri::command]
 pub fn get_upstream_proxy_status() -> UpstreamProxyStatus {
-    let url = http_client::get_current_proxy_url();
+    let (url, follow_system_proxy) = http_client::proxy_policy();
     UpstreamProxyStatus {
         enabled: url.is_some(),
         proxy_url: url,
+        follow_system_proxy,
     }
 }
 
@@ -177,6 +209,7 @@ pub struct UpstreamProxyStatus {
     pub enabled: bool,
     /// 代理 URL
     pub proxy_url: Option<String>,
+    pub follow_system_proxy: bool,
 }
 
 /// 检测到的代理信息

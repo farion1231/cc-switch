@@ -10,6 +10,8 @@ import { useTranslation } from "react-i18next";
 import {
   getGlobalProxyUrl,
   setGlobalProxyUrl,
+  getFollowSystemProxy,
+  setFollowSystemProxy,
   testProxyUrl,
   getUpstreamProxyStatus,
   scanLocalProxies,
@@ -51,6 +53,31 @@ export function useSetGlobalProxyUrl() {
             ? error
             : "Unknown error";
       toast.error(t("settings.globalProxy.saveFailed", { error: message }));
+    },
+  });
+}
+
+export function useFollowSystemProxy() {
+  return useQuery({
+    queryKey: ["followSystemProxy"],
+    queryFn: getFollowSystemProxy,
+  });
+}
+
+export function useSetFollowSystemProxy() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+  return useMutation({
+    mutationFn: setFollowSystemProxy,
+    onSuccess: () => {
+      toast.success(t("settings.globalProxy.saved"));
+      queryClient.invalidateQueries({ queryKey: ["followSystemProxy"] });
+      queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        t("settings.globalProxy.saveFailed", { error: String(error) }),
+      );
     },
   });
 }
