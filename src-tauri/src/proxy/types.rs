@@ -268,6 +268,123 @@ impl Default for OptimizerConfig {
     }
 }
 
+/// 围栏检测与故障转移配置
+///
+/// 存储在 settings 表中，key = "guardrail_config"
+/// 用于检测安全围栏拒绝并自动切换供应商
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuardrailConfig {
+    /// 总开关（默认关闭）
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// 检测模式
+    #[serde(default)]
+    pub mode: GuardrailMode,
+
+    /// 置信度阈值
+    #[serde(default)]
+    pub confidence_threshold: ConfidenceThreshold,
+
+    /// 自定义检测规则列表
+    #[serde(default)]
+    pub custom_rules: Vec<CustomRule>,
+}
+
+/// 检测模式
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GuardrailMode {
+    /// 严格模式（仅强拒绝触发）
+    Strict,
+    /// 宽松模式（强+中等拒绝都触发）
+    Loose,
+    /// 自定义模式（完全按 custom_rules）
+    Custom,
+}
+
+impl Default for GuardrailMode {
+    fn default() -> Self {
+        GuardrailMode::Strict
+    }
+}
+
+/// 置信度阈值
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfidenceThreshold {
+    Low,
+    Medium,
+    High,
+}
+
+impl Default for ConfidenceThreshold {
+    fn default() -> Self {
+        ConfidenceThreshold::Medium
+    }
+}
+
+impl ConfidenceThreshold {
+    /// 转换为数值阈值
+    pub fn as_value(&self) -> u8 {
+        match self {
+            ConfidenceThreshold::Low => 1,
+            ConfidenceThreshold::Medium => 2,
+            ConfidenceThreshold::High => 3,
+        }
+    }
+}
+
+/// 自定义检测规则
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomRule {
+    /// 规则名称（唯一标识）
+    pub name: String,
+
+    /// 正则表达式模式
+    pub pattern: String,
+
+    /// 触发动作
+    pub action: RuleAction,
+
+    /// 优先级（数字越大优先级越高，默认 10）
+    #[serde(default = "default_rule_priority")]
+    pub priority: i32,
+
+    /// 是否区分大小写（默认 false）
+    #[serde(default)]
+    pub case_insensitive: bool,
+}
+
+fn default_rule_priority() -> i32 {
+    10
+}
+
+/// 规则触发动作
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleAction {
+    /// 切换供应商并重试
+    SwitchProvider,
+    /// 仅记录日志（不切换）
+    LogOnly,
+    /// 立即拒绝（不重试）
+    RejectImmediately,
+}
+
+impl Default for GuardrailConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: GuardrailMode::Strict,
+            confidence_threshold: ConfidenceThreshold::Medium,
+            custom_rules: Vec::new(),
+        }
+    }
+}
+
 /// Copilot 优化器配置
 ///
 /// 存储在 settings 表中，key = "copilot_optimizer_config"
