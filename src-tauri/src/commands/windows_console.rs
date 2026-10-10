@@ -93,6 +93,10 @@ fn console_executable(program: &OsStr) -> io::Result<PathBuf> {
     Ok(system_directory()?.join(relative))
 }
 
+pub(super) fn system_powershell_path() -> io::Result<PathBuf> {
+    console_executable(OsStr::new("powershell"))
+}
+
 fn command_line(command: &Command, executable: &Path) -> io::Result<Vec<u16>> {
     let mut line = Vec::new();
     append_windows_arg(&mut line, executable.as_os_str(), true)?;
