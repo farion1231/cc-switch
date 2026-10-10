@@ -1939,7 +1939,7 @@ fn collect_snapshots(
     let port = snapshots
         .iter()
         .any(|snapshot| snapshot.service_down)
-        .then(|| app_state.db.get_proxy_listen_sync().1);
+        .then(|| app_state.db.get_proxy_client_endpoint_sync().1);
     let visible: Vec<(AppType, bool)> = snapshots
         .iter()
         .map(|snapshot| (snapshot.app.clone(), snapshot.mode == TrayMode::Direct))

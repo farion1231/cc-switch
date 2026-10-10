@@ -1612,6 +1612,8 @@ pub fn run() {
             // Global & Per-App Config
             commands::get_global_proxy_config,
             commands::update_global_proxy_config,
+            commands::get_proxy_client_host,
+            commands::set_proxy_client_host,
             commands::get_proxy_config_for_app,
             commands::update_proxy_config_for_app,
             commands::get_pricing_model_source,

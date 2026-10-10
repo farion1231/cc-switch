@@ -933,17 +933,15 @@ fn normalize_mimo_anthropic_thinking_history(body: &mut Value) {
 }
 
 pub fn proxy_gateway_base_url_from_db(db: &Database) -> Result<String, AppError> {
-    // get_proxy_config is async-tagged but its body is fully synchronous (rusqlite
-    // under a Mutex), so block_on cannot deadlock the calling thread.
-    let config = futures::executor::block_on(db.get_proxy_config())?;
-    if config.listen_port == 0 {
+    let (host, port) = db.get_proxy_client_endpoint_sync();
+    if port == 0 {
         return Err(AppError::Config(
             "Claude Desktop 代理地址需要真实监听端口；请先启动本地代理或使用固定端口".to_string(),
         ));
     }
     Ok(format!(
         "{}{}",
-        crate::services::proxy::proxy_origin(&config.listen_address, config.listen_port),
+        crate::services::proxy::proxy_origin(&host, port),
         CLAUDE_DESKTOP_PROXY_PREFIX
     ))
 }

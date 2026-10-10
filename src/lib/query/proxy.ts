@@ -16,6 +16,7 @@ export const proxyKeys = {
   status: ["proxyStatus"] as const,
   takeoverStatus: ["proxyTakeoverStatus"] as const,
   globalConfig: ["globalProxyConfig"] as const,
+  clientHost: ["proxyClientHost"] as const,
   appConfig: (appType: string) => ["appProxyConfig", appType] as const,
 };
 
@@ -277,6 +278,40 @@ export function useUpdateGlobalProxyConfig() {
       toast.error(
         t("proxy.settings.toast.saveFailed", { error: error.message }),
       );
+    },
+  });
+}
+
+/**
+ * 获取客户端地址
+ */
+export function useProxyClientHost() {
+  return useQuery({
+    queryKey: proxyKeys.clientHost,
+    queryFn: () => proxyApi.getProxyClientHost(),
+  });
+}
+
+/**
+ * 保存客户端地址（后端会重写接上路由的客户端）
+ */
+export function useSetProxyClientHost() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: (host: string) => proxyApi.setProxyClientHost(host),
+    onSuccess: () => {
+      toast.success(t("proxy.settings.toast.saved"), { closeButton: true });
+    },
+    onError: (error: Error) => {
+      toast.error(
+        t("proxy.settings.toast.saveFailed", { error: error.message }),
+      );
+    },
+    // 重写失败时地址也已经存下了，两种情况都刷新
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: proxyKeys.clientHost });
     },
   });
 }

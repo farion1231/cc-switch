@@ -2852,6 +2852,56 @@ mod mode_tests {
         state.proxy_service.stop().await.unwrap();
     }
 
+    /// 客户端地址存在本机 settings.json，不进会同步到别的设备的库；保存时重写接上路由的
+    /// 客户端，第一次重写失败后改好客户端文件、原样再保存一次就是重试。
+    #[tokio::test]
+    #[serial]
+    async fn saving_the_client_host_rewrites_routed_clients_and_retries_on_the_same_value() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("enter claude");
+        let routed = fs::read_to_string(settings_path()).unwrap();
+
+        fs::write(settings_path(), "not json").unwrap();
+        crate::commands::save_proxy_client_host(&state, " 172.25.144.1 ")
+            .await
+            .expect_err("claude settings unreadable");
+        assert_eq!(
+            crate::settings::get_proxy_client_host().as_deref(),
+            Some("172.25.144.1")
+        );
+        let snapshot = state.db.export_sql_string_for_sync().unwrap();
+        assert!(!snapshot.contains("172.25.144.1"));
+
+        fs::write(settings_path(), &routed).unwrap();
+        crate::commands::save_proxy_client_host(&state, "172.25.144.1")
+            .await
+            .expect("retry the same save");
+        let settings = fs::read_to_string(settings_path()).unwrap();
+        assert!(settings.contains("http://172.25.144.1:"), "{settings}");
+        assert!(
+            crate::claude_desktop_config::proxy_gateway_base_url_from_db(&state.db)
+                .unwrap()
+                .starts_with("http://172.25.144.1:")
+        );
+
+        crate::commands::save_proxy_client_host(&state, "")
+            .await
+            .expect("clear the client host");
+        assert_eq!(crate::settings::get_proxy_client_host(), None);
+        let settings = fs::read_to_string(settings_path()).unwrap();
+        assert!(settings.contains("http://127.0.0.1:"), "{settings}");
+        state.proxy_service.stop().await.unwrap();
+    }
+
     #[tokio::test]
     #[serial]
     async fn codex_routes_between_official_and_third_party_contracts() {

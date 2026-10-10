@@ -126,6 +126,16 @@ export const proxyApi = {
     return invoke("update_global_proxy_config", { config });
   },
 
+  // 获取客户端地址（写给客户端的代理主机，空表示按监听地址推）
+  async getProxyClientHost(): Promise<string> {
+    return invoke("get_proxy_client_host");
+  },
+
+  // 保存客户端地址，并按新地址重写接上路由的客户端
+  async setProxyClientHost(host: string): Promise<void> {
+    return invoke("set_proxy_client_host", { host });
+  },
+
   // 获取指定应用的代理配置
   async getProxyConfigForApp(appType: string): Promise<AppProxyConfig> {
     return invoke("get_proxy_config_for_app", { appType });
