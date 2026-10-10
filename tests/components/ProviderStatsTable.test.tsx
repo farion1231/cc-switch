@@ -22,6 +22,7 @@ vi.mock("@/lib/query/usage", () => ({
 
 const stat = (overrides: Partial<ProviderStats>): ProviderStats => ({
   providerId: "p",
+  appType: "claude",
   providerName: "P",
   requestCount: 1,
   totalTokens: 1_000,
@@ -119,4 +120,100 @@ describe("ProviderStatsTable", () => {
     expect(rows[1]).toHaveTextContent("Kimi For Coding");
     expect(rows[1].lastElementChild).toHaveTextContent("—");
   });
+
+  it.each([false, true])(
+    "removes cross-app rows after repeated switches (empty target: %s)",
+    (emptyTarget) => {
+      const consoleError = vi.spyOn(console, "error");
+      const claudeStats = [
+        stat({
+          providerId: "shared-provider",
+          appType: "claude-desktop",
+          providerName: "Shared Provider",
+          requestCount: 42,
+        }),
+        stat({
+          providerId: "shared-provider",
+          appType: "claude",
+          providerName: "Shared Provider",
+          requestCount: 7,
+        }),
+        stat({ providerId: "other", providerName: "Other" }),
+      ];
+      const targetStats = emptyTarget
+        ? []
+        : [
+            stat({
+              providerId: "codex-only",
+              appType: "codex",
+              providerName: "Codex only",
+              requestCount: 10,
+            }),
+            stat({
+              providerId: "other",
+              appType: "codex",
+              providerName: "Other",
+            }),
+          ];
+      const table = (appType: string) => (
+        <ProviderStatsTable
+          range={{ preset: "7d" }}
+          appType={appType}
+          refreshIntervalMs={0}
+        />
+      );
+
+      try {
+        useProviderStatsMock.mockReturnValue({
+          isLoading: false,
+          data: claudeStats,
+        });
+        const { rerender } = render(table("claude"));
+
+        for (let cycle = 0; cycle < 2; cycle++) {
+          if (cycle > 0) {
+            useProviderStatsMock.mockReturnValue({
+              isLoading: false,
+              data: claudeStats,
+            });
+            rerender(table("claude"));
+          }
+          const claudeRows = screen.getAllByRole("row").slice(1);
+          expect(claudeRows).toHaveLength(3);
+          expect(claudeRows[0]).toHaveTextContent("Shared Provider");
+          expect(claudeRows[0]).toHaveTextContent("42");
+          expect(claudeRows[1]).toHaveTextContent("Shared Provider");
+          expect(claudeRows[1]).toHaveTextContent("7");
+
+          useProviderStatsMock.mockReturnValue({
+            isLoading: false,
+            data: targetStats,
+          });
+          rerender(table("codex"));
+          expect(screen.queryByText("Shared Provider")).not.toBeInTheDocument();
+          const targetRows = screen.getAllByRole("row").slice(1);
+          expect(targetRows).toHaveLength(emptyTarget ? 1 : 2);
+          if (emptyTarget) {
+            expect(targetRows[0]).toHaveTextContent("usage.noData");
+          } else {
+            expect(targetRows[0]).toHaveTextContent("Codex only");
+            expect(targetRows[1]).toHaveTextContent("Other");
+          }
+        }
+
+        useProviderStatsMock.mockReturnValue({ isLoading: false, data: [] });
+        rerender(table("gemini"));
+        expect(screen.queryByText("Shared Provider")).not.toBeInTheDocument();
+        expect(screen.getAllByRole("row")).toHaveLength(2);
+        expect(screen.getByText("usage.noData")).toBeInTheDocument();
+        expect(
+          consoleError.mock.calls.filter((args) =>
+            args.some((arg) => String(arg).includes("same key")),
+          ),
+        ).toHaveLength(0);
+      } finally {
+        consoleError.mockRestore();
+      }
+    },
+  );
 });

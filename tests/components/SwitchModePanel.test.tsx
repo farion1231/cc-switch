@@ -149,7 +149,7 @@ describe("SwitchModePanel — Stack mode", () => {
     ]);
   });
 
-  it("warns about Codex clients on an old model list only in Stack mode", async () => {
+  it("warns about Codex clients on an old model list in every mode", async () => {
     const stack = (active: boolean) =>
       http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({
@@ -170,10 +170,9 @@ describe("SwitchModePanel — Stack mode", () => {
     mockMode("route", "route");
     server.use(stack(false));
     renderPanel("codex", { route: provider("route") });
-    await screen.findByTestId("card-route");
     expect(
-      screen.queryByText("proxy.stackMode.codexStale.title"),
-    ).not.toBeInTheDocument();
+      await screen.findByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
   });
 
   it.each(["direct", "route", "stack"] as const)(
