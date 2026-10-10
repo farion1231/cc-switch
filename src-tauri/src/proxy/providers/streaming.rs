@@ -74,6 +74,10 @@ struct Usage {
     cache_read_input_tokens: Option<u32>,
     #[serde(default)]
     cache_creation_input_tokens: Option<u32>,
+    /// DeepSeek 风格文档化缓存命中字段（部分中转把标准字段硬编码为桩 0、
+    /// 真值只放这里，#8041）
+    #[serde(default)]
+    prompt_cache_hit_tokens: Option<u32>,
 }
 
 /// Nested token details from OpenAI format
@@ -828,18 +832,23 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     }
 }
 
-/// Extract cache_read tokens from Usage, checking both direct field and nested details
+/// Extract cache_read tokens from Usage, checking both direct field and nested details.
+/// 每环要求「存在且非 0」：显式 0 按未上报处理继续向后找（#8041：部分中转把
+/// 靠前字段硬编码为桩 0，真值只在低顺位字段）；全 0/缺失仍读 0。
 fn extract_cache_read_tokens(usage: &Usage) -> Option<u32> {
-    // Direct field takes priority (compatible servers)
-    if let Some(v) = usage.cache_read_input_tokens {
-        return Some(v);
+    fn provided_nonzero(value: Option<u32>) -> Option<u32> {
+        value.filter(|&tokens| tokens > 0)
     }
-    // OpenAI standard: prompt_tokens_details.cached_tokens
-    usage
-        .prompt_tokens_details
-        .as_ref()
-        .map(|d| d.cached_tokens)
-        .filter(|&v| v > 0)
+    // Direct field takes priority (compatible servers), then the OpenAI standard
+    // nested details, then the documented DeepSeek cache-hit field as last fallback.
+    provided_nonzero(usage.cache_read_input_tokens)
+        .or_else(|| {
+            usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|details| provided_nonzero(Some(details.cached_tokens)))
+        })
+        .or_else(|| provided_nonzero(usage.prompt_cache_hit_tokens))
 }
 
 /// Extract cache-write tokens from direct compatibility fields or OpenAI details.
@@ -1322,6 +1331,39 @@ mod tests {
                 .pointer("/usage/cache_creation_input_tokens")
                 .and_then(|v| v.as_u64()),
             Some(300)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_usage_chunk_stub_zero_cache_read_falls_through_to_deepseek_hit_tokens() {
+        // #8041 报告者 payload：中转把首环 cache_read_input_tokens 硬编码为桩 0，
+        // 真值只在 prompt_cache_hit_tokens。显式 0 按「未上报」处理继续向后找，
+        // 不能 Some(0) 短路候选链；cache_read 修正后 fresh input = 6650 - 6400 = 250。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_stub0\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"tool-1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_stub0\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":6650,\"completion_tokens\":16,\"cache_read_input_tokens\":0,\"prompt_cache_hit_tokens\":6400}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let message_delta = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_delta"))
+            .expect("should emit message_delta with usage");
+
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_read_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(6400)
+        );
+        // fresh input = 6650 - 6400 - 0 = 250
+        assert_eq!(
+            message_delta
+                .pointer("/usage/input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(250)
         );
     }
 
