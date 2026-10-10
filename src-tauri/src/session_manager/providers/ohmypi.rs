@@ -1,363 +1,633 @@
-//! Oh My Pi session discovery (JSONL transcripts under `~/.omp/agent/sessions/`).
-//!
-//! Oh My Pi is a Pi descendant: sessions are JSONL files named `<session-id>.jsonl`
-//! with entries of `{"type":"message","message":{"role":...,"content":...},...}`.
-//! The exact field set is finalized against the local Oh My Pi source during apply;
-//! this provider consumes the stable envelope (filename id + message role/content).
+//! Native OMP session buckets, active journal branches and transcript blocks.
 
+use super::pi::{is_valid_tree_id, MAX_SESSION_BYTES, MAX_TREE_ENTRIES};
+use super::pi_blocks::PiTranscript;
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, truncate_summary, TITLE_MAX_CHARS,
+    for_each_jsonl_value, parse_timestamp_to_ms, path_basename, truncate_summary, TITLE_MAX_CHARS,
 };
-use crate::session_manager::{project_content, SessionMessage, SessionMeta};
+use crate::session_manager::{SessionMessage, SessionMeta};
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 const PROVIDER_ID: &str = "ohmypi";
-const MAX_SESSION_BYTES: u64 = 128 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy)]
+enum SessionLayout {
+    Flat,
+    ProjectBuckets,
+}
+
+fn resolve_session_root() -> Result<(PathBuf, SessionLayout), String> {
+    if let Some(raw) = std::env::var_os("PI_CODING_AGENT_SESSION_DIR").filter(|raw| !raw.is_empty())
+    {
+        let root = PathBuf::from(raw);
+        if !root.is_absolute() {
+            return Err(format!(
+                "Relative Oh My Pi session directory requires a project cwd: {}",
+                root.display()
+            ));
+        }
+        return Ok((root, SessionLayout::Flat));
+    }
+    crate::ohmypi_config::get_ohmypi_data_dir()
+        .map(|dir| (dir.join("sessions"), SessionLayout::ProjectBuckets))
+        .map_err(|error| error.to_string())
+}
 
 pub fn session_roots() -> Vec<PathBuf> {
-    match crate::ohmypi_config::get_ohmypi_agent_dir() {
-        Ok(dir) => vec![dir.join("sessions")],
+    match resolve_session_root() {
+        Ok((root, _)) => vec![root],
         Err(error) => {
-            log::warn!("Oh My Pi session root unavailable: {error}");
+            log::warn!("Oh My Pi session discovery unavailable: {error}");
             Vec::new()
         }
     }
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let mut sessions = Vec::new();
-    for root in session_roots() {
-        collect_sessions_in_root(&root, &mut sessions);
-    }
-    sessions
-}
-
-fn collect_sessions_in_root(root: &Path, output: &mut Vec<SessionMeta>) {
-    let entries = match fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
+    let (root, layout) = match resolve_session_root() {
+        Ok(resolution) => resolution,
+        Err(error) => {
+            log::warn!("Oh My Pi session discovery unavailable: {error}");
+            return Vec::new();
+        }
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_sessions_in_root(&path, output);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-            if let Ok(meta) = parse_session(&path) {
-                output.push(meta);
-            }
-        }
-    }
-}
-
-pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    validate_file_size(path)?;
-    let file = fs::File::open(path)
-        .map_err(|error| format!("Failed to open Oh My Pi session: {error}"))?;
-    let mut messages = Vec::new();
-    for line in BufReader::new(file).lines() {
-        let line = line.map_err(|error| format!("Failed to read Oh My Pi session: {error}"))?;
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
-        if value.get("type").and_then(|v| v.as_str()) != Some("message") {
-            continue;
-        }
-        let Some(message) = value.get("message").and_then(|v| v.as_object()) else {
-            continue;
-        };
-        let role = message
-            .get("role")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let content = message.get("content").map(extract_text).unwrap_or_default();
-        let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
-        let id = value.get("id").and_then(|v| v.as_str()).map(str::to_string);
-        let mut msg = SessionMessage {
-            role,
-            content,
-            ts,
-            id,
-            ..SessionMessage::default()
-        };
-        msg.content = project_content(&msg.blocks);
-        messages.push(msg);
-    }
-    Ok(messages)
-}
-
-pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
-    let source = path
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve Oh My Pi session: {error}"))?;
-    if !source.starts_with(root) {
-        return Err("Oh My Pi session source is outside the session root".to_string());
-    }
-    let file_id = source
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default();
-    // File names are `<timestamp>_<uuid>.jsonl`; match on the uuid suffix.
-    let id_matches = file_id == session_id
-        || file_id
-            .rsplit_once('_')
-            .map(|(_, suffix)| suffix == session_id)
-            .unwrap_or(false);
-    if !id_matches {
-        return Err(format!(
-            "Oh My Pi session ID mismatch: expected {session_id}, found {file_id}"
-        ));
-    }
-    fs::remove_file(&source)
-        .map_err(|error| format!("Failed to delete Oh My Pi session: {error}"))?;
-    Ok(true)
-}
-
-fn parse_session(path: &Path) -> Result<SessionMeta, String> {
-    let source = path
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve Oh My Pi session: {error}"))?;
-    let source_path = source
-        .to_str()
-        .ok_or_else(|| "Oh My Pi session path is not valid UTF-8".to_string())?
-        .to_string();
-    // Fallback id: derived from the file stem (`<timestamp>_<uuid>.jsonl`),
-    // overridden by the real `id` from the `{"type":"session",...}` header line.
-    // The stem is also omp's resume key: `--resume` matches the
-    // `<timestamp>_<uuid>` filename prefix (session-listing.ts
-    // sessionMatchesResumeArg), so it — not the header id/path — must back the
-    // resume command.
-    let file_stem = source
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| "Oh My Pi session has no id".to_string())?
-        .to_string();
-    let mut session_id = file_stem.clone();
-
-    validate_file_size(&source)?;
-    let file = fs::File::open(&source)
-        .map_err(|error| format!("Failed to open Oh My Pi session: {error}"))?;
-
-    let mut created_at: Option<i64> = None;
-    let mut last_active_at: Option<i64> = None;
-    let mut first_user_message: Option<String> = None;
-    let mut last_message: Option<String> = None;
-    let mut cwd: Option<String> = None;
-    let mut session_title: Option<String> = None;
-
-    for line in BufReader::new(file).lines() {
-        let Ok(line) = line else { continue };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
-        if let Some(ts) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
-            if created_at.is_none() {
-                created_at = Some(ts);
-            }
-            last_active_at = Some(ts);
-        }
-        match value.get("type").and_then(|v| v.as_str()) {
-            Some("session") => {
-                if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
-                    let id = id.trim();
-                    if !id.is_empty() {
-                        session_id = id.to_string();
-                    }
-                }
-            }
-            Some("title") if session_title.is_none() => {
-                if let Some(t) = value.get("title").and_then(|v| v.as_str()) {
-                    if !t.is_empty() {
-                        session_title = Some(t.to_string());
-                    }
-                }
-            }
-            _ => {}
-        }
-        if value.get("type").and_then(|v| v.as_str()) == Some("message") {
-            let Some(message) = value.get("message").and_then(|v| v.as_object()) else {
-                continue;
-            };
-            let role = message.get("role").and_then(|v| v.as_str());
-            let text = message.get("content").map(extract_text).unwrap_or_default();
-            if role == Some("user") && first_user_message.is_none() {
-                first_user_message = Some(text.clone());
-            }
-            if !text.trim().is_empty() {
-                last_message = Some(text);
-            }
-        }
-        if let Some(cwd_value) = value.get("cwd").and_then(|v| v.as_str()) {
-            if cwd.is_none() && !cwd_value.is_empty() {
-                cwd = Some(cwd_value.to_string());
-            }
-        }
-    }
-
-    let title = session_title
-        .as_deref()
-        .map(|t| truncate_summary(t, TITLE_MAX_CHARS))
-        .filter(|t| !t.is_empty())
-        .or_else(|| {
-            first_user_message
-                .as_deref()
-                .map(|message| truncate_summary(message, TITLE_MAX_CHARS))
-                .filter(|message| !message.is_empty())
-                .or_else(|| {
-                    cwd.as_deref()
-                        .and_then(path_basename)
-                        .filter(|s| !s.is_empty())
+    collect_session_files(&root, layout)
+        .into_iter()
+        .filter_map(|path| {
+            validate_source(&root, &path, layout)
+                .and_then(|(_, path)| parse_session(&path))
+                .map_err(|error| {
+                    log::debug!("Skipping Oh My Pi session {}: {error}", path.display())
                 })
-        });
+                .ok()
+        })
+        .collect()
+}
 
-    Ok(SessionMeta {
-        provider_id: PROVIDER_ID.to_string(),
-        session_id,
+fn collect_session_files(root: &Path, layout: SessionLayout) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let candidates = match layout {
+            SessionLayout::Flat if kind.is_file() => vec![entry],
+            SessionLayout::ProjectBuckets if kind.is_dir() => fs::read_dir(entry.path())
+                .map(|entries| entries.flatten().collect())
+                .unwrap_or_default(),
+            _ => continue,
+        };
+        files.extend(candidates.into_iter().filter_map(|entry| {
+            (entry.file_type().is_ok_and(|kind| kind.is_file())
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "jsonl"))
+            .then(|| entry.path())
+        }));
+    }
+    files
+}
+
+fn validate_source(
+    root: &Path,
+    source: &Path,
+    layout: SessionLayout,
+) -> Result<(PathBuf, PathBuf), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve Oh My Pi session root: {error}"))?;
+    let source = source
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve Oh My Pi session: {error}"))?;
+    let relative = source
+        .strip_prefix(&root)
+        .map_err(|_| "Oh My Pi session source is outside the session root".to_string())?;
+    let expected_depth = match layout {
+        SessionLayout::Flat => 1,
+        SessionLayout::ProjectBuckets => 2,
+    };
+    if relative.components().count() != expected_depth
+        || source
+            .extension()
+            .is_none_or(|extension| extension != "jsonl")
+    {
+        return Err(
+            "Oh My Pi session source does not match the active directory layout".to_string(),
+        );
+    }
+    let metadata = fs::metadata(&source)
+        .map_err(|error| format!("Failed to inspect Oh My Pi session: {error}"))?;
+    if !metadata.is_file() || metadata.len() > MAX_SESSION_BYTES {
+        return Err("Invalid or oversized Oh My Pi session file".to_string());
+    }
+    Ok((root, source))
+}
+
+struct SessionTree {
+    header: Value,
+    title: Option<String>,
+    active_indexes: HashSet<usize>,
+    last_active_at: Option<i64>,
+}
+
+fn read_tree(path: &Path) -> Result<SessionTree, String> {
+    let mut header = None;
+    let mut title_slot = None;
+    let mut parents = HashMap::<String, (Option<String>, usize)>::new();
+    let mut latest_id = None;
+    let mut legacy_previous_id = None;
+    let mut last_active_at = None;
+    let mut index = 0usize;
+    for_each_jsonl_value(path, |_, value| {
+        index += 1;
+        if index > MAX_TREE_ENTRIES {
+            return Err("Oh My Pi session exceeds the entry limit".to_string());
+        }
+        if header.is_none() {
+            if index == 1 && value.get("type").and_then(Value::as_str) == Some("title") {
+                title_slot = value
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                return Ok(());
+            }
+            if value.get("type").and_then(Value::as_str) != Some("session")
+                || !value
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_valid_tree_id)
+            {
+                return Err("Oh My Pi session has no valid header".to_string());
+            }
+            header = Some(value);
+            return Ok(());
+        }
+        let version = header
+            .as_ref()
+            .and_then(|header| header.get("version"))
+            .and_then(Value::as_u64)
+            .unwrap_or(1);
+        let identity = if version < 2 {
+            Some((format!("legacy-{index}"), legacy_previous_id.clone()))
+        } else {
+            value
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| is_valid_tree_id(id))
+                .and_then(|id| {
+                    let parent = match value.get("parentId") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::String(parent)) if is_valid_tree_id(parent) => {
+                            Some(parent.clone())
+                        }
+                        _ => return None,
+                    };
+                    Some((id.to_string(), parent))
+                })
+        };
+        if let Some((id, parent)) = identity {
+            parents.insert(id.clone(), (parent, index));
+            latest_id = Some(id.clone());
+            legacy_previous_id = Some(id);
+        }
+        if let Some(timestamp) = value.get("timestamp").and_then(parse_timestamp_to_ms) {
+            last_active_at =
+                Some(last_active_at.map_or(timestamp, |current: i64| current.max(timestamp)));
+        }
+        Ok(())
+    })?;
+    let header = header.ok_or_else(|| "Oh My Pi session has no valid header".to_string())?;
+    let title = title_slot.or_else(|| {
+        header
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    let mut active_indexes = HashSet::new();
+    let mut visited = HashSet::new();
+    while let Some(id) = latest_id {
+        if !visited.insert(id.clone()) {
+            break;
+        }
+        let Some((parent, index)) = parents.get(&id) else {
+            break;
+        };
+        active_indexes.insert(*index);
+        latest_id = parent.clone();
+    }
+    Ok(SessionTree {
+        header,
         title,
-        summary: last_message.map(|m| truncate_summary(&m, 160)),
-        project_dir: cwd,
-        created_at,
+        active_indexes,
         last_active_at,
-        source_path: Some(source_path.clone()),
-        resume_command: Some(format!("omp --resume {file_stem}")),
     })
 }
 
-fn validate_file_size(path: &Path) -> Result<(), String> {
-    let metadata =
-        fs::metadata(path).map_err(|error| format!("Failed to stat Oh My Pi session: {error}"))?;
-    if metadata.len() > MAX_SESSION_BYTES {
-        return Err(format!(
-            "Oh My Pi session exceeds the 128 MiB limit: {}",
-            path.display()
-        ));
+fn read_active_messages(path: &Path, tree: &SessionTree) -> Result<Vec<SessionMessage>, String> {
+    let mut transcript = PiTranscript::new();
+    let mut index = 0usize;
+    for_each_jsonl_value(path, |span, mut value| {
+        index += 1;
+        if !tree.active_indexes.contains(&index) {
+            return Ok(());
+        }
+        // OMP stores a complete model selector; Pi's block mapper uses two fields.
+        if value.get("type").and_then(Value::as_str) == Some("model_change") {
+            if let Some(model) = value
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            {
+                if let Some((provider, model_id)) = model.split_once('/') {
+                    value["provider"] = Value::String(provider.to_string());
+                    value["modelId"] = Value::String(model_id.to_string());
+                } else {
+                    value["modelId"] = Value::String(model);
+                }
+            }
+        }
+        let id = value.get("id").and_then(Value::as_str).map(str::to_string);
+        transcript.push_entry(&value, span, id);
+        Ok(())
+    })?;
+    Ok(transcript.finish())
+}
+
+pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
+    let (root, layout) = resolve_session_root()?;
+    let (_, source) = validate_source(&root, path, layout)?;
+    let tree = read_tree(&source)?;
+    read_active_messages(&source, &tree)
+}
+
+fn resume_command(source: &Path) -> Result<String, String> {
+    use crate::session_manager::terminal::shell_escape;
+    let agent = crate::ohmypi_config::get_ohmypi_agent_dir().map_err(|error| error.to_string())?;
+    let native_agent =
+        crate::ohmypi_config::get_ohmypi_native_agent_dir().map_err(|error| error.to_string())?;
+    let profile = if agent == native_agent {
+        crate::ohmypi_config::get_ohmypi_active_profile().map_err(|error| error.to_string())?
+    } else {
+        None
+    };
+    let profile = profile.as_deref().unwrap_or("default");
+    let mut assignments = vec![
+        format!("OMP_PROFILE={}", shell_escape(profile)),
+        format!("PI_PROFILE={}", shell_escape(profile)),
+        format!(
+            "PI_CODING_AGENT_DIR={}",
+            shell_escape(&agent.to_string_lossy())
+        ),
+    ];
+    // Terminal launch is POSIX/macOS. Clear GUI-unset directory variables too:
+    // inheriting the terminal's profile/XDG paths would select different native state.
+    for variable in [
+        "PI_CONFIG_DIR",
+        "PI_CODING_AGENT_SESSION_DIR",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "XDG_CACHE_HOME",
+    ] {
+        let value = std::env::var(variable).unwrap_or_default();
+        assignments.push(format!("{variable}={}", shell_escape(&value)));
     }
-    Ok(())
+    Ok(format!(
+        "{} omp --resume {}",
+        assignments.join(" "),
+        shell_escape(&source.to_string_lossy())
+    ))
+}
+
+fn parse_session(path: &Path) -> Result<SessionMeta, String> {
+    let tree = read_tree(path)?;
+    let messages = read_active_messages(path, &tree)?;
+    let cwd = tree
+        .header
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|cwd| !cwd.is_empty())
+        .map(str::to_string);
+    let title = tree
+        .title
+        .filter(|title| !title.trim().is_empty())
+        .or_else(|| {
+            messages
+                .iter()
+                .find(|message| message.role == "user" && !message.content.trim().is_empty())
+                .map(|message| truncate_summary(&message.content, TITLE_MAX_CHARS))
+                .or_else(|| cwd.as_deref().and_then(path_basename))
+        });
+    let summary = messages
+        .iter()
+        .rev()
+        .find(|message| {
+            matches!(message.role.as_str(), "user" | "assistant")
+                && !message.content.trim().is_empty()
+        })
+        .map(|message| truncate_summary(&message.content, 160));
+    let created_at = tree.header.get("timestamp").and_then(parse_timestamp_to_ms);
+    Ok(SessionMeta {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: tree.header["id"]
+            .as_str()
+            .expect("validated session id")
+            .to_string(),
+        title,
+        summary,
+        project_dir: cwd,
+        created_at,
+        last_active_at: tree.last_active_at.or(created_at),
+        source_path: Some(path.to_string_lossy().to_string()),
+        resume_command: Some(resume_command(path)?),
+    })
+}
+
+pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    let (configured_root, layout) = resolve_session_root()?;
+    let (validated_root, source) = validate_source(&configured_root, path, layout)?;
+    if root.canonicalize().map_err(|error| error.to_string())? != validated_root {
+        return Err("Oh My Pi session root changed before deletion".to_string());
+    }
+    let tree = read_tree(&source)?;
+    if tree.header["id"].as_str() != Some(session_id) {
+        return Err("Oh My Pi session ID mismatch".to_string());
+    }
+    let artifacts = source.with_extension("");
+    let artifacts_type = match fs::symlink_metadata(&artifacts) {
+        Ok(metadata) => Some(metadata.file_type()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("Failed to inspect Oh My Pi artifacts: {error}")),
+    };
+    fs::remove_file(&source)
+        .map_err(|error| format!("Failed to delete Oh My Pi session: {error}"))?;
+    if let Some(kind) = artifacts_type {
+        let result = if kind.is_dir() {
+            fs::remove_dir_all(&artifacts)
+        } else {
+            fs::remove_file(&artifacts)
+        };
+        result.map_err(|error| {
+            format!("Oh My Pi session deleted but artifact cleanup failed: {error}")
+        })?;
+    }
+    let prefix = format!(
+        "{}.",
+        source
+            .file_name()
+            .expect("validated session file")
+            .to_string_lossy()
+    );
+    if let Ok(entries) = fs::read_dir(source.parent().expect("validated session parent")) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&prefix)
+                && name.ends_with(".bak")
+                && entry.file_type().is_ok_and(|kind| !kind.is_dir())
+            {
+                if let Err(error) = fs::remove_file(entry.path()) {
+                    log::warn!(
+                        "Failed to remove Oh My Pi session backup {}: {error}",
+                        entry.path().display()
+                    );
+                }
+            }
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ohmypi_config::test_support::TestAgentDir;
+    use crate::session_manager::model::{ContentRef, SessionBlock};
+    use serde_json::json;
     use serial_test::serial;
 
-    fn write_session_jsonl(dir: &Path, id: &str) {
-        fs::create_dir_all(dir).expect("create sessions dir");
+    struct SessionDirEnv(Option<std::ffi::OsString>);
+    impl SessionDirEnv {
+        fn set(path: Option<&Path>) -> Self {
+            let previous = std::env::var_os("PI_CODING_AGENT_SESSION_DIR");
+            if let Some(path) = path {
+                std::env::set_var("PI_CODING_AGENT_SESSION_DIR", path);
+            } else {
+                std::env::remove_var("PI_CODING_AGENT_SESSION_DIR");
+            }
+            Self(previous)
+        }
+    }
+    impl Drop for SessionDirEnv {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.0 {
+                std::env::set_var("PI_CODING_AGENT_SESSION_DIR", previous);
+            } else {
+                std::env::remove_var("PI_CODING_AGENT_SESSION_DIR");
+            }
+        }
+    }
+    fn write(path: &Path, records: &[Value]) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
-            dir.join(format!("{id}.jsonl")),
+            path,
+            records
+                .iter()
+                .map(|record| format!("{record}\n"))
+                .collect::<String>(),
+        )
+        .unwrap();
+    }
+    fn header(id: &str) -> Value {
+        json!({"type":"session","version":3,"id":id,"timestamp":"2026-10-10T18:00:00Z","cwd":"/repo","title":"Legacy title"})
+    }
+    fn message(id: &str, parent: Option<&str>, role: &str, text: &str) -> Value {
+        json!({"type":"message","id":id,"parentId":parent,"timestamp":"2026-10-10T18:00:01Z","message":{"role":role,"content":[{"type":"text","text":text}]}})
+    }
+
+    #[test]
+    #[serial]
+    fn renders_active_branch_and_structured_tools_with_native_titles() {
+        let _agent = TestAgentDir::new();
+        let _env = SessionDirEnv::set(None);
+        let root = session_roots().remove(0);
+        let file = root.join("project").join("2026-10-10_session-id.jsonl");
+        write(
+            &file,
+            &[
+                json!({"type":"title","v":1,"title":"Current renamed title","updatedAt":"2026-10-10T18:02:00Z","pad":""}),
+                header("session-id"),
+                message("u1", None, "user", "Root request"),
+                message("old-answer", Some("u1"), "assistant", "Abandoned answer"),
+                message("u2", Some("u1"), "user", "New alternative"),
+                json!({"type":"model_change","id":"model","parentId":"u2","model":"openai/gpt-5"}),
+                json!({"type":"message","id":"a2","parentId":"model","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Check the repository ".repeat(30)},{"type":"toolCall","id":"call1","name":"bash","arguments":{"command":"pwd"}}]}}),
+                json!({"type":"message","id":"result","parentId":"a2","message":{"role":"toolResult","toolCallId":"call1","toolName":"bash","content":[{"type":"text","text":"/repo"}],"isError":false}}),
+            ],
+        );
+        let messages = load_messages(&file).unwrap();
+        assert!(!messages
+            .iter()
+            .any(|message| message.id.as_deref() == Some("old-answer")));
+        assert_eq!(messages[0].content, "Root request");
+        assert_eq!(messages[1].content, "New alternative");
+        assert!(messages
+            .iter()
+            .any(|message| message.content == "openai/gpt-5"));
+        assert!(messages
+            .iter()
+            .flat_map(|message| &message.blocks)
+            .any(|block| matches!(block,SessionBlock::ToolCall { id,.. } if id == "call1")));
+        assert!(messages.iter().flat_map(|message| &message.blocks).any(
+            |block| matches!(block,SessionBlock::ToolResult { preview,.. } if preview == "/repo")
+        ));
+        assert!(messages.iter().flat_map(|message| &message.blocks).any(|block| matches!(block,SessionBlock::Thinking { full:Some(ContentRef::Jsonl {pointer,..}),.. } if pointer == "/message/content/0/thinking")));
+        let sessions = scan_sessions();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title.as_deref(), Some("Current renamed title"));
+        fs::write(
+            &file,
             format!(
                 "{}\n{}\n",
-                serde_json::json!({
-                    "type": "message",
-                    "message": {"role": "user", "content": [{"type": "text", "text": "hello"}], "id": "u1"},
-                    "timestamp": 1700000000000i64
-                }),
-                serde_json::json!({
-                    "type": "message",
-                    "message": {"role": "assistant", "content": [{"type": "text", "text": "hi there"}], "id": "a1"},
-                    "timestamp": 1700000001000i64
-                })
+                header("session-id"),
+                message("u1", None, "user", "Prompt title")
             ),
         )
-        .expect("write session");
-    }
-
-    fn write_session_file(path: &Path, content: &str) {
-        fs::create_dir_all(path.parent().expect("parent dir")).expect("create parent dir");
-        fs::write(path, content).expect("write session");
+        .unwrap();
+        assert_eq!(scan_sessions()[0].title.as_deref(), Some("Legacy title"));
     }
 
     #[test]
     #[serial]
-    fn scans_nested_jsonl_sessions_recursively() {
+    fn excludes_child_artifacts_and_honors_flat_custom_session_roots() {
         let _agent = TestAgentDir::new();
-        let dir = session_roots().first().expect("session root").clone();
-        // Real Oh My Pi layout: <branch-dir>/<timestamp>_<uuid>.jsonl.
-        let nested = dir
-            .join("branch-main")
-            .join("2026-08-08T13-49-08-014Z_019fe1a2-0000.jsonl");
-        write_session_file(
-            &nested,
-            &format!(
-                "{}\n{}\n",
-                serde_json::json!({
-                    "type": "session",
-                    "version": 1,
-                    "id": "019fe1a2-0000",
-                    "cwd": "/home/user/project"
-                }),
-                serde_json::json!({
-                    "type": "message",
-                    "message": {"role": "user", "content": [{"type": "text", "text": "nested hello"}], "id": "u1"},
-                    "timestamp": 1700000000000i64
-                })
-            ),
+        let _env = SessionDirEnv::set(None);
+        let root = session_roots().remove(0);
+        let file = root.join("project/parent.jsonl");
+        write(
+            &file,
+            &[
+                header("parent"),
+                message("u1", None, "user", "Interactive parent"),
+            ],
         );
-
-        let sessions = scan_sessions();
-        assert_eq!(sessions.len(), 1);
-        let session = &sessions[0];
-        assert_eq!(session.session_id, "019fe1a2-0000");
-        assert_eq!(session.project_dir.as_deref(), Some("/home/user/project"));
-    }
-
-    #[test]
-    #[serial]
-    fn parses_real_session_id_cwd_and_title_from_header_lines() {
-        let _agent = TestAgentDir::new();
-        let dir = session_roots().first().expect("session root").clone();
-        let nested = dir
-            .join("branch-x")
-            .join("2026-08-08T13-49-08-014Z_019fe1a2-1111.jsonl");
-        write_session_file(
-            &nested,
-            &format!(
-                "{}\n{}\n{}\n",
-                serde_json::json!({
-                    "type": "session",
-                    "version": 1,
-                    "id": "019fe1a2-1111",
-                    "cwd": "/repo/backend"
-                }),
-                serde_json::json!({
-                    "type": "title",
-                    "v": 1,
-                    "title": "Fix the ohmypi scanner"
-                }),
-                serde_json::json!({
-                    "type": "message",
-                    "message": {"role": "user", "content": [{"type": "text", "text": "hello"}], "id": "u1"},
-                    "timestamp": 1700000000000i64
-                })
-            ),
+        let child = root.join("project/parent/worker.jsonl");
+        write(
+            &child,
+            &[
+                header("child-id"),
+                message("u1", None, "user", "Delegated worker"),
+            ],
         );
-
-        let sessions = scan_sessions();
-        assert_eq!(sessions.len(), 1);
-        let session = &sessions[0];
-        assert_eq!(session.session_id, "019fe1a2-1111");
-        assert_eq!(session.project_dir.as_deref(), Some("/repo/backend"));
-        assert_eq!(session.title.as_deref(), Some("Fix the ohmypi scanner"));
         assert_eq!(
-            session.resume_command.as_deref(),
-            Some("omp --resume 2026-08-08T13-49-08-014Z_019fe1a2-1111")
+            scan_sessions()
+                .iter()
+                .map(|session| &session.session_id)
+                .collect::<Vec<_>>(),
+            vec!["parent"]
         );
+        assert!(load_messages(&child).is_err());
+        let custom = tempfile::tempdir().unwrap();
+        let _custom_env = SessionDirEnv::set(Some(custom.path()));
+        write(&custom.path().join("custom.jsonl"), &[header("custom")]);
+        write(
+            &custom.path().join("nested/hidden.jsonl"),
+            &[header("hidden")],
+        );
+        assert_eq!(session_roots(), vec![custom.path().to_path_buf()]);
+        assert_eq!(scan_sessions()[0].session_id, "custom");
+        assert_eq!(scan_sessions().len(), 1);
+        assert!(load_messages(&file).is_err());
     }
 
     #[test]
     #[serial]
-    fn deletes_session_matching_uuid_suffix_of_file_stem() {
+    fn relative_custom_root_never_falls_back_to_default_history() {
         let _agent = TestAgentDir::new();
-        let dir = session_roots().first().expect("session root").clone();
-        fs::create_dir_all(&dir).expect("create sessions dir");
-        let root = dir.canonicalize().expect("canonical root");
-        let file_path = root.join("2026-08-08T13-49-08-014Z_019fe1a2-2222.jsonl");
-        write_session_jsonl(&root, "2026-08-08T13-49-08-014Z_019fe1a2-2222");
+        let _env = SessionDirEnv::set(Some(Path::new(".omp/project-sessions")));
+        assert!(resolve_session_root()
+            .unwrap_err()
+            .contains("requires a project cwd"));
+        assert!(session_roots().is_empty());
+        assert!(scan_sessions().is_empty());
+    }
 
-        let deleted = delete_session(&root, &file_path, "019fe1a2-2222").expect("delete");
-        assert!(deleted);
-        assert!(!file_path.exists());
+    #[test]
+    #[serial]
+    fn deletion_uses_header_identity_and_removes_artifacts_and_only_own_backups() {
+        let _agent = TestAgentDir::new();
+        let _env = SessionDirEnv::set(None);
+        let root = session_roots().remove(0);
+        let file = root.join("project/custom-name.jsonl");
+        write(&file, &[header("real-header-id")]);
+        let artifacts = file.with_extension("");
+        fs::create_dir_all(&artifacts).unwrap();
+        fs::write(artifacts.join("draft.txt"), "Private draft").unwrap();
+        write(&artifacts.join("worker.jsonl"), &[header("worker-id")]);
+        let backup = file.with_file_name("custom-name.jsonl.123.bak");
+        let unrelated = file.with_file_name("other.jsonl.123.bak");
+        fs::write(&backup, "own backup").unwrap();
+        fs::write(&unrelated, "other backup").unwrap();
+        assert!(delete_session(&root, &file, "wrong-id").is_err());
+        assert!(file.exists() && artifacts.exists());
+        assert!(delete_session(&root, &file, "real-header-id").unwrap());
+        assert!(!file.exists() && !artifacts.exists() && !backup.exists());
+        assert!(unrelated.exists());
+        assert!(scan_sessions().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial]
+    fn artifact_symlink_cleanup_never_removes_its_external_target() {
+        let _agent = TestAgentDir::new();
+        let _env = SessionDirEnv::set(None);
+        let root = session_roots().remove(0);
+        let file = root.join("project/safe.jsonl");
+        write(&file, &[header("safe")]);
+        let external = tempfile::tempdir().unwrap();
+        fs::write(external.path().join("keep.txt"), "keep").unwrap();
+        std::os::unix::fs::symlink(external.path(), file.with_extension("")).unwrap();
+        assert!(delete_session(&root, &file, "safe").unwrap());
+        assert!(external.path().join("keep.txt").exists());
+        assert!(fs::symlink_metadata(file.with_extension("")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial]
+    fn resume_preserves_custom_agent_directory_and_quotes_absolute_source() {
+        let _agent = TestAgentDir::new();
+        let _env = SessionDirEnv::set(None);
+        let directory = crate::ohmypi_config::get_ohmypi_agent_dir().unwrap();
+        let source = directory.join("sessions/project/quote'$(false) name.jsonl");
+        let command = resume_command(&source).unwrap();
+        let shell=format!("omp() {{ printf '%s\\n' \"$OMP_PROFILE\" \"$PI_CODING_AGENT_DIR\" \"$@\"; }}; {command}");
+        let result = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(shell)
+            .env("OMP_PROFILE", "wrong-shell-profile")
+            .env("PI_PROFILE", "wrong-shell-profile")
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        assert_eq!(
+            String::from_utf8(result.stdout)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec![
+                "default",
+                directory.to_str().unwrap(),
+                "--resume",
+                source.to_str().unwrap()
+            ]
+        );
     }
 }

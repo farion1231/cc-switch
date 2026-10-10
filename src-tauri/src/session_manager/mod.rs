@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 // 其余模型类型从 `session_manager::model` 引用
-pub use model::{project_content, SessionMessage};
+pub use model::SessionMessage;
 use providers::{claude, codex, gemini, grokbuild, hermes, mcode, ohmypi, openclaw, opencode, pi};
 
 #[derive(Debug, Clone, Serialize)]

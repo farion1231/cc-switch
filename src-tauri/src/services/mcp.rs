@@ -28,23 +28,46 @@ impl McpService {
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
         // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）
-        let prev_apps = state
-            .db
-            .get_all_mcp_servers()?
-            .get(&server.id)
+        let previous = state.db.get_all_mcp_servers()?.get(&server.id).cloned();
+        let prev_apps = previous
+            .as_ref()
             .map(|s| s.apps.clone())
             .unwrap_or_default();
 
-        // MCode / Pi 的文件和数据库一起提交：任一步失败都恢复原样
+        // Keep our disabled OMP tombstone in step with edits while the checkbox is off.
+        let managed_ohmypi = server.apps.ohmypi
+            || prev_apps.ohmypi
+            || previous.as_ref().is_some_and(|saved| {
+                mcp::ohmypi::is_disabled_managed(&saved.id, &saved.server).unwrap_or(false)
+            });
+        // Native MCP writes and managed state commit together.
+        let save_with_ohmypi = || {
+            if managed_ohmypi {
+                mcp::ohmypi::sync_and_commit(
+                    &server.id,
+                    mcp::ohmypi::OhMyPiChange::from_previous(
+                        &server.server,
+                        previous
+                            .as_ref()
+                            .map(|s| &s.server)
+                            .unwrap_or(&server.server),
+                        server.apps.ohmypi,
+                    ),
+                    || state.db.save_mcp_server(&server),
+                )
+            } else {
+                state.db.save_mcp_server(&server)
+            }
+        };
         let save_with_pi = || {
             if server.apps.pi || prev_apps.pi {
                 mcp::pi::sync_and_commit(
                     &server.id,
                     mcp::pi::PiChange::from_enabled(server.apps.pi.then_some(&server.server)),
-                    || state.db.save_mcp_server(&server),
+                    save_with_ohmypi,
                 )
             } else {
-                state.db.save_mcp_server(&server)
+                save_with_ohmypi()
             }
         };
         if server.apps.mcode || prev_apps.mcode {
@@ -88,13 +111,22 @@ impl McpService {
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
-            let delete_with_pi = || {
-                if server.apps.pi {
-                    mcp::pi::sync_and_commit(id, mcp::pi::PiChange::Remove, || {
-                        state.db.delete_mcp_server(id)
-                    })
+            let delete_with_ohmypi = || {
+                if server.apps.ohmypi {
+                    mcp::ohmypi::sync_and_commit(
+                        id,
+                        mcp::ohmypi::OhMyPiChange::Remove(Some(&server.server)),
+                        || state.db.delete_mcp_server(id),
+                    )
                 } else {
                     state.db.delete_mcp_server(id)
+                }
+            };
+            let delete_with_pi = || {
+                if server.apps.pi {
+                    mcp::pi::sync_and_commit(id, mcp::pi::PiChange::Remove, delete_with_ohmypi)
+                } else {
+                    delete_with_ohmypi()
                 }
             };
             if server.apps.mcode {
@@ -109,6 +141,11 @@ impl McpService {
                 }
             }
 
+            if !server.apps.ohmypi {
+                if let Err(err) = mcp::ohmypi::remove_disabled_if_managed(id, &server.server) {
+                    log::warn!("Cleaning disabled Oh My Pi MCP '{id}' failed: {err}");
+                }
+            }
             // 从所有应用的 live 配置中移除
             Self::remove_server_from_all_apps(state, id, &server)?;
             Ok(true)
@@ -124,7 +161,7 @@ impl McpService {
         app: AppType,
         enabled: bool,
     ) -> Result<(), AppError> {
-        if matches!(app, AppType::Mcode | AppType::Pi) {
+        if matches!(app, AppType::Mcode | AppType::Pi | AppType::OhMyPi) {
             if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
                 let spec = enabled.then_some(&server.server);
                 let commit = || {
@@ -134,6 +171,12 @@ impl McpService {
                 };
                 if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::OhMyPi {
+                    mcp::ohmypi::sync_and_commit(
+                        server_id,
+                        mcp::ohmypi::OhMyPiChange::from_enabled(&server.server, enabled),
+                        commit,
+                    )?;
                 } else {
                     mcp::pi::sync_and_commit(
                         server_id,
@@ -162,7 +205,7 @@ impl McpService {
     /// 将 MCP 服务器同步到所有启用的应用
     fn sync_server_to_apps(_state: &AppState, server: &McpServer) -> Result<(), AppError> {
         for app in server.apps.enabled_apps() {
-            if matches!(app, AppType::Mcode | AppType::Pi) {
+            if matches!(app, AppType::Mcode | AppType::Pi | AppType::OhMyPi) {
                 continue; // Already written before saving the managed state.
             }
             Self::sync_server_to_app_no_config(server, &app)?;
@@ -369,7 +412,7 @@ impl McpService {
         for server in servers.values() {
             let result = if server.apps.is_enabled_for(app) {
                 Self::sync_server_to_app(state, server, app)
-            } else if !matches!(app, AppType::Mcode | AppType::Pi) {
+            } else if !matches!(app, AppType::Mcode | AppType::Pi | AppType::OhMyPi) {
                 Self::remove_server_from_app(state, &server.id, app)
             } else {
                 // MCode / Pi's false flag also covers pre-existing, unmanaged servers.
@@ -665,40 +708,7 @@ impl McpService {
 
     /// 从 Oh My Pi 导入 MCP
     pub fn import_from_ohmypi(state: &AppState) -> Result<usize, AppError> {
-        // 创建临时 MultiAppConfig 用于导入
-        let mut temp_config = crate::app_config::MultiAppConfig::default();
-
-        // 调用导入逻辑（从 mcp/ohmypi.rs）
-        let count = crate::mcp::import_from_ohmypi(&mut temp_config)?;
-
-        let mut new_count = 0;
-
-        // 如果有导入的服务器，保存到数据库
-        if count > 0 {
-            if let Some(servers) = &temp_config.mcp.servers {
-                let mut existing = state.db.get_all_mcp_servers()?;
-                for server in servers.values() {
-                    // 已存在：仅启用 Oh My Pi，不覆盖其他字段（与导入模块语义保持一致）
-                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
-                        let mut merged = existing_server.clone();
-                        merged.apps.ohmypi = true;
-                        merged
-                    } else {
-                        // 真正的新服务器
-                        new_count += 1;
-                        server.clone()
-                    };
-
-                    state.db.save_mcp_server(&to_save)?;
-                    existing.insert(to_save.id.clone(), to_save.clone());
-
-                    // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
-                    // 显式编辑、启用/禁用或手动同步时再执行写回。
-                }
-            }
-        }
-
-        Ok(new_count)
+        mcp::ohmypi::import(state)
     }
 
     /// 从所有支持 MCP 的应用导入服务器，返回新导入的数量。

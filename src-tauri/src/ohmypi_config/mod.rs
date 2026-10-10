@@ -17,6 +17,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
+mod validation;
+
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 const MISSING_REVISION: &str = "missing";
 static FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -41,47 +43,143 @@ pub(crate) fn get_ohmypi_agent_dir() -> Result<PathBuf, AppError> {
         return Ok(dir);
     }
 
-    // Named profile: OMP_PROFILE, then PI_PROFILE.
-    for var in ["OMP_PROFILE", "PI_PROFILE"] {
-        if let Some(name) = named_profile(std::env::var_os(var)) {
-            return Ok(get_home_dir()
-                .join(".omp")
-                .join("profiles")
-                .join(name)
-                .join("agent"));
+    get_ohmypi_native_agent_dir()
+}
+
+pub(crate) fn get_ohmypi_active_profile() -> Result<Option<String>, AppError> {
+    let selected = std::env::var_os("OMP_PROFILE").or_else(|| std::env::var_os("PI_PROFILE"));
+    normalize_profile(
+        selected
+            .as_deref()
+            .map(|name| name.to_string_lossy())
+            .as_deref(),
+    )
+}
+
+fn normalize_profile(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    let name = raw.unwrap_or_default().trim();
+    if name.is_empty() || name == "default" {
+        return Ok(None);
+    }
+    let reserved = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let reserved_device = matches!(reserved.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (reserved.len() == 4
+            && (reserved.starts_with("COM") || reserved.starts_with("LPT"))
+            && reserved.as_bytes()[3].is_ascii_digit());
+    if name.len() > 64
+        || !name.as_bytes()[0].is_ascii_lowercase() && !name.as_bytes()[0].is_ascii_digit()
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._-".contains(&c))
+        || name.ends_with('.')
+        || reserved_device
+    {
+        return Err(AppError::Config(format!(
+            "Invalid Oh My Pi profile: {name}"
+        )));
+    }
+    Ok(Some(name.to_string()))
+}
+
+fn native_agent_dir(
+    home: &Path,
+    config_dir: Option<&str>,
+    profile: Option<&str>,
+    inherited_profile: Option<&str>,
+    agent_dir: Option<&Path>,
+) -> Result<PathBuf, AppError> {
+    // PI_CONFIG_DIR is a directory name relative to home, as in omp's path.join(home, name).
+    let config_dir = config_dir.filter(|name| !name.is_empty()).unwrap_or(".omp");
+    let root = home.join(config_dir.trim_start_matches(std::path::MAIN_SEPARATOR));
+    if let Some(profile) = profile {
+        return Ok(root.join("profiles").join(profile).join("agent"));
+    }
+    // A parent omp process may have exported its named profile directory.
+    // Explicit default mode must ignore that derived override.
+    let agent_dir = agent_dir.filter(|agent| {
+        inherited_profile
+            .is_none_or(|profile| *agent != root.join("profiles").join(profile).join("agent"))
+    });
+    if let Some(agent) = agent_dir.filter(|path| !path.as_os_str().is_empty()) {
+        return if agent.is_absolute() {
+            Ok(agent.to_path_buf())
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(agent))
+                .map_err(|error| {
+                    AppError::Config(format!("Cannot resolve Oh My Pi agent directory: {error}"))
+                })
+        };
+    }
+    Ok(root.join("agent"))
+}
+
+pub(crate) fn get_ohmypi_native_agent_dir() -> Result<PathBuf, AppError> {
+    let profile = get_ohmypi_active_profile()?;
+    let config_dir = std::env::var("PI_CONFIG_DIR").ok();
+    let agent_dir = std::env::var_os("PI_CODING_AGENT_DIR").map(PathBuf::from);
+    let inherited_profile = normalize_profile(std::env::var("PI_PROFILE").ok().as_deref())
+        .ok()
+        .flatten();
+    native_agent_dir(
+        &get_home_dir(),
+        config_dir.as_deref(),
+        profile.as_deref(),
+        inherited_profile.as_deref(),
+        agent_dir.as_deref(),
+    )
+}
+
+pub(crate) fn get_ohmypi_data_dir() -> Result<PathBuf, AppError> {
+    let agent = get_ohmypi_agent_dir()?;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let profile = get_ohmypi_active_profile()?;
+        let config_dir = std::env::var("PI_CONFIG_DIR").ok();
+        let default_agent = native_agent_dir(
+            &get_home_dir(),
+            config_dir.as_deref(),
+            profile.as_deref(),
+            None,
+            None,
+        )?;
+        let xdg = std::env::var_os("XDG_DATA_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        Ok(data_dir(
+            &agent,
+            &default_agent,
+            profile.as_deref(),
+            xdg.as_deref(),
+        ))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    Ok(agent)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn data_dir(
+    agent: &Path,
+    default_agent: &Path,
+    profile: Option<&str>,
+    xdg: Option<&Path>,
+) -> PathBuf {
+    if agent == default_agent {
+        if let Some(xdg) = xdg {
+            let mut root = xdg.join("omp");
+            if let Some(profile) = profile {
+                root = root.join("profiles").join(profile);
+            }
+            if root.exists() {
+                return root;
+            }
         }
     }
-
-    // PI_CODING_AGENT_DIR is used directly as the agent dir (default profile).
-    if let Some(dir) = env_path("PI_CODING_AGENT_DIR") {
-        return Ok(dir);
-    }
-
-    // PI_CONFIG_DIR replaces the `.omp` base: ~/<PI_CONFIG_DIR>/agent.
-    if let Some(dir) = env_path("PI_CONFIG_DIR") {
-        return Ok(dir.join("agent"));
-    }
-
-    Ok(get_home_dir().join(".omp").join("agent"))
-}
-
-fn named_profile(raw: Option<std::ffi::OsString>) -> Option<String> {
-    let value = raw?.to_string_lossy().trim().to_string();
-    if value.is_empty() || value.eq_ignore_ascii_case("default") {
-        None
-    } else {
-        Some(value)
-    }
-}
-
-fn env_path(name: &str) -> Option<PathBuf> {
-    let raw = std::env::var_os(name)?;
-    let value = raw.to_string_lossy();
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(crate::settings::resolve_override_path(trimmed))
+    agent.to_path_buf()
 }
 
 /// Existing `models.yml` → `models.yaml` wins; greenfield defaults to `models.yml`.
@@ -475,15 +573,7 @@ pub(crate) fn restore_ohmypi_provider_if_missing(
 /// (`models` absent/empty) are accepted; the node must simply be a non-empty
 /// object keyed by a non-empty id.
 pub(crate) fn validate_provider_node(provider_key: &str, config: &Value) -> Result<(), AppError> {
-    if provider_key.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "Oh My Pi provider key cannot be empty".to_string(),
-        ));
-    }
-    config.as_object().ok_or_else(|| {
-        AppError::InvalidInput("Oh My Pi provider configuration must be an object".to_string())
-    })?;
-    Ok(())
+    validation::validate_provider_node(provider_key, config)
 }
 
 pub(crate) fn provider_base_url(config: &Value) -> Result<String, AppError> {
@@ -590,6 +680,7 @@ pub(crate) fn provider_from_selector(selector: &str) -> &str {
 // MCP server I/O (mcp.json)
 // ============================================================================
 
+#[cfg(test)]
 pub(crate) fn read_ohmypi_mcp_servers() -> Result<IndexMap<String, Value>, AppError> {
     let _guard = lock_files()?;
     let path = get_ohmypi_mcp_path()?;
@@ -613,6 +704,27 @@ pub(crate) fn read_ohmypi_mcp_servers() -> Result<IndexMap<String, Value>, AppEr
     }
 }
 
+/// Mutate the native MCP document while preserving other root keys and checking external writes.
+pub(crate) fn update_ohmypi_mcp_document(
+    update: impl FnOnce(&mut Value) -> Result<bool, AppError>,
+) -> Result<(), AppError> {
+    let _guard = lock_files()?;
+    let path = get_ohmypi_mcp_path()?;
+    let (mut document, expected_revision) =
+        read_document_with_revision(&path, "Oh My Pi MCP", false)?;
+    if !document.is_object() {
+        return Err(AppError::Config(format!(
+            "Oh My Pi MCP root must be an object: {}",
+            path.display()
+        )));
+    }
+    if update(&mut document)? {
+        write_document(&path, &document, &expected_revision, "Oh My Pi MCP", false)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 pub(crate) fn set_ohmypi_mcp_server(id: &str, config: &Value) -> Result<(), AppError> {
     let _guard = lock_files()?;
     let path = get_ohmypi_mcp_path()?;
@@ -637,6 +749,7 @@ pub(crate) fn set_ohmypi_mcp_server(id: &str, config: &Value) -> Result<(), AppE
     write_document(&path, &document, &expected_revision, "Oh My Pi MCP", false)
 }
 
+#[cfg(test)]
 pub(crate) fn remove_ohmypi_mcp_server(id: &str) -> Result<(), AppError> {
     let _guard = lock_files()?;
     let path = get_ohmypi_mcp_path()?;
@@ -703,6 +816,84 @@ mod tests {
     use super::*;
     use serde_json::json;
     use serial_test::serial;
+
+    #[test]
+    fn native_profile_and_config_root_resolution() {
+        let home = tempfile::tempdir().expect("home");
+        assert_eq!(normalize_profile(Some("").or(Some("work"))).unwrap(), None);
+        assert_eq!(
+            normalize_profile(Some("default").or(Some("work"))).unwrap(),
+            None
+        );
+        assert_eq!(
+            normalize_profile(None.or(Some("work"))).unwrap().as_deref(),
+            Some("work")
+        );
+        assert_eq!(
+            native_agent_dir(home.path(), Some(".custom"), None, None, None).unwrap(),
+            home.path().join(".custom/agent")
+        );
+        assert_eq!(
+            native_agent_dir(
+                home.path(),
+                Some(".custom"),
+                Some("work"),
+                None,
+                Some(Path::new("ignored"))
+            )
+            .unwrap(),
+            home.path().join(".custom/profiles/work/agent")
+        );
+        let inherited = home.path().join(".custom/profiles/work/agent");
+        assert_eq!(
+            native_agent_dir(
+                home.path(),
+                Some(".custom"),
+                None,
+                Some("work"),
+                Some(&inherited)
+            )
+            .unwrap(),
+            home.path().join(".custom/agent")
+        );
+        let custom = home.path().join("custom-agent");
+        assert_eq!(
+            native_agent_dir(
+                home.path(),
+                Some(".custom"),
+                None,
+                Some("work"),
+                Some(&custom)
+            )
+            .unwrap(),
+            custom
+        );
+        for invalid in ["../other", "UPPER", "con", "nul.txt", "trailing."] {
+            assert!(normalize_profile(Some(invalid)).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn xdg_data_root_follows_existing_profile_and_agent_override() {
+        let home = tempfile::tempdir().expect("home");
+        let xdg = tempfile::tempdir().expect("xdg");
+        let default = home.path().join(".omp/agent");
+        std::fs::create_dir_all(xdg.path().join("omp")).unwrap();
+        assert_eq!(
+            data_dir(&default, &default, None, Some(xdg.path())),
+            xdg.path().join("omp")
+        );
+        let custom = home.path().join("custom-agent");
+        assert_eq!(data_dir(&custom, &default, None, Some(xdg.path())), custom);
+        let work = home.path().join(".omp/profiles/work/agent");
+        assert_eq!(data_dir(&work, &work, Some("work"), Some(xdg.path())), work);
+        std::fs::create_dir_all(xdg.path().join("omp/profiles/work")).unwrap();
+        assert_eq!(
+            data_dir(&work, &work, Some("work"), Some(xdg.path())),
+            xdg.path().join("omp/profiles/work")
+        );
+    }
 
     fn provider() -> Value {
         json!({

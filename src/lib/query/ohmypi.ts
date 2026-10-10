@@ -22,6 +22,7 @@ export const invalidateOhMyPiDirectoryCaches = async (
     queryClient.invalidateQueries({ queryKey: ohmypiKeys.all }),
     queryClient.invalidateQueries({ queryKey: ["providers", "ohmypi"] }),
     queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+    queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   ]);
 };
 

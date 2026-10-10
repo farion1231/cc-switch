@@ -9,15 +9,16 @@ import type { ProviderCategory } from "@/types";
  * Oh My Pi provider catalog, derived from the Pi catalog.
  *
  * `models.yml` is validated by Oh My Pi's `ModelsConfigSchema`, and only
- * fields the schema defines are allowed on a model. Pi presets therefore get
- * stripped here of everything omp would reject:
+ * known fields must follow its native contract. Pi presets therefore translate
+ * their thinking dialect and strip Pi-only model controls:
  *
  * - `thinkingLevelMap` (Pi-only model field) and the embedded model-catalog
  *   reference symbol;
  * - the `compat` keys `forceAdaptiveThinking`,
  *   `requiresReasoningContentOnAssistantMessages` and `deferredToolsMode`
  *   (Pi harness compat flags absent from omp's schema) — writing them into
- *   OMP's config would be a bug.
+ *   OMP's config would not apply those flags. Reasoning replay is translated
+ *   to omp's tool-call replay controls instead.
  *
  * Oh My Pi presets that have no Pi counterpart are appended below so the omp
  * catalog keeps its own entries.
@@ -110,6 +111,26 @@ interface OhMyPiPresetSeed extends PresetFamilyFields {
   iconColor?: string;
 }
 
+// Pi's DeepSeek dialect and omp's zai dialect both send thinking.type.
+// Omp uses explicit reasoning replay controls instead of Pi's assistant flag.
+function toOhMyPiCompat(
+  compat: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = Object.fromEntries(
+    Object.entries(compat).filter(
+      ([key]) => !(key in OMP_INCOMPATIBLE_COMPAT_KEYS),
+    ),
+  );
+  if (result.thinkingFormat === "deepseek") result.thinkingFormat = "zai";
+  if (compat.requiresReasoningContentOnAssistantMessages === true) {
+    result.reasoningContentField = "reasoning_content";
+    result.requiresReasoningContentForToolCalls = true;
+    result.requiresReasoningContentForAllAssistantTurns = true;
+    result.allowsSyntheticReasoningContentForToolCalls = false;
+  }
+  return result;
+}
+
 function toOhMyPiModel(model: Record<string, unknown>): OhMyPiModelSeed {
   const seed: OhMyPiModelSeed = {
     id: String(model.id),
@@ -126,11 +147,7 @@ function toOhMyPiModel(model: Record<string, unknown>): OhMyPiModelSeed {
     seed.headers = model.headers as Record<string, string>;
   }
   const compat = model.compat as Record<string, unknown> | undefined;
-  const stripped = Object.fromEntries(
-    Object.entries(compat ?? {}).filter(
-      ([key]) => !(key in OMP_INCOMPATIBLE_COMPAT_KEYS),
-    ),
-  );
+  const stripped = toOhMyPiCompat(compat ?? {});
   if (Object.keys(stripped).length > 0) {
     seed.compat = stripped;
   }
@@ -149,11 +166,7 @@ function toOhMyPiPreset(preset: PiProviderPreset): OhMyPiPresetSeed {
       ...(config.headers !== undefined ? { headers: config.headers } : {}),
       ...(config.compat !== undefined
         ? {
-            compat: Object.fromEntries(
-              Object.entries(config.compat).filter(
-                ([key]) => !(key in OMP_INCOMPATIBLE_COMPAT_KEYS),
-              ),
-            ),
+            compat: toOhMyPiCompat(config.compat),
           }
         : {}),
       models: config.models

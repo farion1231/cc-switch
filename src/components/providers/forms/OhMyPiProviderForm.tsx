@@ -389,7 +389,8 @@ export function OhMyPiProviderForm({
   const [providerKey, setProviderKey] = useState(providerId ?? "");
   const [baseUrl, setBaseUrl] = useState(optionalText(initialConfig.baseUrl));
   const [api, setApi] = useState(
-    () => optionalText(initialConfig.api) || "openai-completions",
+    () =>
+      optionalText(initialConfig.api) || (isEdit ? "" : "openai-completions"),
   );
   const [apiKey, setApiKey] = useState(optionalText(initialConfig.apiKey));
   const [providerHeaders, setProviderHeaders] = useState<
@@ -459,7 +460,10 @@ export function OhMyPiProviderForm({
   const buildSettingsConfig = useCallback(
     (displayName: string): Record<string, unknown> => {
       const parsedPassthrough = parseYamlObject(passthroughText);
-      const passthrough = parsedPassthrough ?? providerPassthrough;
+      const passthrough =
+        passthroughText.trim() === ""
+          ? {}
+          : (parsedPassthrough ?? providerPassthrough);
       return buildOhMyPiSettingsConfig({
         passthrough,
         name: displayName,
@@ -789,7 +793,7 @@ export function OhMyPiProviderForm({
         );
       }
       const seen = new Set<string>();
-      for (const model of models) {
+      for (const model of includeModels ? models : []) {
         const id = model.id.trim();
         if (id.length === 0) {
           throw new OhMyPiFormValidationError(
@@ -992,7 +996,12 @@ export function OhMyPiProviderForm({
               })}
               htmlFor="ohmypi-provider-api-select"
             >
-              <Select value={api} onValueChange={handleApiChange}>
+              <Select
+                value={api || "inherit"}
+                onValueChange={(value) =>
+                  handleApiChange(value === "inherit" ? "" : value)
+                }
+              >
                 <SelectTrigger
                   id="ohmypi-provider-api-select"
                   className="w-full"
@@ -1000,6 +1009,11 @@ export function OhMyPiProviderForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  {isEdit && (
+                    <SelectItem value="inherit">
+                      {t("common.default", { defaultValue: "Default" })}
+                    </SelectItem>
+                  )}
                   {API_FORMATS.map((format) => (
                     <SelectItem key={format.value} value={format.value}>
                       {format.label}
@@ -1343,7 +1357,7 @@ export function OhMyPiProviderForm({
                                     hasCost: true,
                                   })
                                 }
-                                placeholder='{"input":0.15,"output":0.25}'
+                                placeholder='{"input":0.15,"output":0.25,"cacheRead":0,"cacheWrite":0}'
                                 className="font-mono text-xs"
                               />
                             </Field>
