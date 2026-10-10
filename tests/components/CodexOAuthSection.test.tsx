@@ -30,6 +30,14 @@ vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
   CopilotAuthSection: () => <div />,
 }));
 
+// Batch controls have their own query-backed behavior tests; this suite checks
+// the account section and Auth Center composition without a QueryClient.
+vi.mock("@/components/settings/auth/CodexQuotaRefreshControls", () => ({
+  CodexQuotaRefreshControls: () => (
+    <div data-testid="codex-quota-refresh-controls" />
+  ),
+}));
+
 vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
   XaiOAuthSection: () => <div />,
 }));
@@ -116,6 +124,9 @@ describe("CodexOAuthSection", () => {
 
   it("renders account quota in Auth Center", () => {
     render(<AuthCenterPanel />);
+    expect(
+      screen.getByTestId("codex-quota-refresh-controls"),
+    ).toBeInTheDocument();
 
     expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-1");
     expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-2");

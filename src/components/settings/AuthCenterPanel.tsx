@@ -7,6 +7,8 @@ import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
 import { isMac } from "@/lib/platform";
 import type { ManagedAuthProvider } from "@/lib/api";
 
+import { CodexQuotaRefreshControls } from "./auth/CodexQuotaRefreshControls";
+
 interface AuthCenterPanelProps {
   authScrollTarget?: ManagedAuthProvider | null;
   /**
@@ -70,6 +72,7 @@ export function AuthCenterPanel({
       </div>
       <div ref={codexOauthSectionRef} className="scroll-mt-4">
         <CodexOAuthSection showAccountQuota />
+        <CodexQuotaRefreshControls />
       </div>
       <div ref={xaiOauthSectionRef} className="scroll-mt-4">
         <XaiOAuthSection mode="manage" helpSide={showAgy ? "bottom" : "top"} />
