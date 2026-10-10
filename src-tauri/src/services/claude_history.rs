@@ -45,8 +45,26 @@ fn read_at(path: &Path) -> Result<ClaudeHistoryRetention, AppError> {
     })
 }
 
+fn require_standard_settings(path: &Path) -> Result<(), AppError> {
+    // Creating settings.json would redirect existing live readers away from claude.json.
+    // Retention editing does not own migration of the rest of that configuration.
+    if read_current(path)?.is_none() {
+        let legacy = path.with_file_name("claude.json");
+        if read_current(&legacy)?.is_some() {
+            return Err(AppError::localized(
+                "claude.history.legacy_migration_required",
+                format!("请先将 {} 的完整配置迁移到 {}，再修改会话保留天数；本次没有创建设置文件", legacy.display(), path.display()),
+                format!("Migrate the complete configuration from {} to {} before editing history retention; no settings file was created", legacy.display(), path.display()),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn get() -> Result<ClaudeHistoryRetention, AppError> {
-    read_at(&get_claude_config_dir().join("settings.json"))
+    let path = get_claude_config_dir().join("settings.json");
+    require_standard_settings(&path)?;
+    read_at(&path)
 }
 
 struct RetentionPatch {
@@ -103,6 +121,9 @@ pub fn set(
             "Claude configuration directory changed".into(),
         ));
     }
+    // Recheck under the same application write lock as provider/editor operations:
+    // a legacy file may have appeared since the UI loaded the setting.
+    require_standard_settings(&path)?;
     let patch = RetentionPatch {
         expected: expected.days,
         days,
@@ -150,19 +171,80 @@ mod tests {
 
     #[test]
     #[serial]
-    fn public_service_uses_standard_settings_and_preserves_legacy_file() {
+    fn legacy_only_retention_writes_cannot_shadow_live_configuration() {
         let home = tempfile::tempdir().unwrap();
         let _home = TestHome::at(home.path());
         let dir = get_claude_config_dir();
         fs::create_dir_all(&dir).unwrap();
         let legacy = dir.join("claude.json");
-        let legacy_bytes = b"{\"cleanupPeriodDays\":730,\"custom\":true}";
+        let original = json!({
+            "cleanupPeriodDays": 730,
+            "hooks": {"Stop": []},
+            "permissions": {"allow": ["Read"]},
+            "env": {"USER_CUSTOM_SETTING": "keep-me"},
+            "custom": true
+        });
+        let legacy_bytes = serde_json::to_vec(&original).unwrap();
+        fs::write(&legacy, &legacy_bytes).unwrap();
+        let path = dir.join("settings.json");
+        let state = crate::store::AppState::new(std::sync::Arc::new(Database::memory().unwrap()));
+        let target = crate::provider::Provider::with_id(
+            "test-provider".into(),
+            "Test provider".into(),
+            json!({"env": {"ANTHROPIC_BASE_URL": "https://example.invalid", "ANTHROPIC_AUTH_TOKEN": "test-token"}}),
+            None,
+        );
+        state.db.save_provider("claude", &target).unwrap();
+        let assert_consumers = || {
+            let live =
+                crate::services::provider::read_live_settings(crate::app_config::AppType::Claude)
+                    .unwrap();
+            let editor = crate::services::provider::ProviderService::editor_view(
+                &state,
+                crate::app_config::AppType::Claude,
+                &target.settings_config,
+                None,
+            )
+            .unwrap();
+            for key in ["cleanupPeriodDays", "hooks", "permissions", "custom"] {
+                assert_eq!(live[key], original[key]);
+                assert_eq!(editor.settings[key], original[key]);
+            }
+            assert_eq!(live["env"]["USER_CUSTOM_SETTING"], "keep-me");
+            assert_eq!(editor.settings["env"]["USER_CUSTOM_SETTING"], "keep-me");
+            assert_eq!(crate::config::get_claude_settings_path(), legacy);
+            assert!(!path.exists());
+        };
+        assert_consumers();
+        // Direct IPC callers must also be refused, even without a successful UI read.
+        let expected = ClaudeHistoryRetention {
+            config_path: path.to_string_lossy().into_owned(),
+            days: None,
+        };
+        for days in [Some(90), None] {
+            assert!(set(&state.db, expected.clone(), days).is_err());
+            assert_eq!(fs::read(&legacy).unwrap(), legacy_bytes);
+            assert_consumers();
+        }
+        assert!(get().is_err());
+        crate::services::provider::claude_direct::switch_to(&state.db, None, &target).unwrap();
+        assert_consumers();
+    }
+
+    #[test]
+    #[serial]
+    fn standard_settings_with_a_legacy_sibling_remain_editable() {
+        let home = tempfile::tempdir().unwrap();
+        let _home = TestHome::at(home.path());
+        let dir = get_claude_config_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let legacy = dir.join("claude.json");
+        let legacy_bytes = b"{\"cleanupPeriodDays\":365,\"custom\":true}";
         fs::write(&legacy, legacy_bytes).unwrap();
         let path = dir.join("settings.json");
+        fs::write(&path, b"{\"cleanupPeriodDays\":730,\"hooks\":{}}").unwrap();
         let expected = get().unwrap();
-        assert_eq!(expected.config_path, path.to_string_lossy());
-        assert_eq!(expected.days, None);
-        assert!(!path.exists());
+        assert_eq!(expected.days, Some(730));
 
         let db = Database::memory().unwrap();
         let saved = set(&db, expected, Some(90)).unwrap();
@@ -176,6 +258,23 @@ mod tests {
             .unwrap()
             .get("cleanupPeriodDays")
             .is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_file_created_after_read_prevents_standard_file_creation() {
+        let home = tempfile::tempdir().unwrap();
+        let _home = TestHome::at(home.path());
+        let expected = get().unwrap();
+        let dir = get_claude_config_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let legacy = dir.join("claude.json");
+        let original = b"{\"hooks\":{\"Stop\":[]}}";
+        fs::write(&legacy, original).unwrap();
+        let db = Database::memory().unwrap();
+        assert!(set(&db, expected, Some(90)).is_err());
+        assert_eq!(fs::read(&legacy).unwrap(), original);
+        assert!(!dir.join("settings.json").exists());
     }
 
     #[test]

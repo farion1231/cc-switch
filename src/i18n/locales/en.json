@@ -809,11 +809,11 @@
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "claudeHistoryRetention": {
       "label": "Claude Code history retention",
-      "help": "Claude Code keeps session transcripts and other application data for 30 days by default. Enter a larger value such as 99999 for long-term retention. This changes cleanupPeriodDays in the displayed configuration file; project or managed settings may override it. It is not a backup.",
+      "help": "Claude Code keeps session transcripts and other application data for 30 days by default. Enter a larger value such as 99999 for long-term retention. This changes cleanupPeriodDays in the displayed configuration file; project or managed settings may override it. It is not a backup. If this directory only contains the legacy claude.json, migrate its complete configuration to settings.json before editing retention; CC Switch will not migrate it automatically.",
       "days": "days",
       "reset": "Use default (30 days)",
       "invalid": "Enter a positive whole number of days.",
-      "error": "Could not read or save the retention setting. Reload it before retrying; the configuration may have changed."
+      "error": "Could not read or save the retention setting. Reload it before retrying. If only legacy claude.json exists, first migrate its complete configuration to settings.json to preserve your other settings."
     },
     "skipClaudeOnboardingDescription": "On first launch, Claude Code runs an onboarding flow that asks you to pick a theme and sign in to an Anthropic account. If you use a third-party provider you don't need that sign-in, so turning this on skips straight past it. It works by writing hasCompletedOnboarding: true to ~/.claude.json; turning it off removes that field, and the onboarding appears again on the next launch.",
     "codexAuth": "Codex App Enhancements",
