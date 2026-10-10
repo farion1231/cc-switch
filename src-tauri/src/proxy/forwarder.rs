@@ -978,6 +978,7 @@ impl RequestForwarder {
                                 provider.id
                             );
 
+                            let mut thinking_retry_codex_upstream_format = None;
                             match self
                                 .forward(
                                     app_type,
@@ -988,6 +989,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    &mut thinking_retry_codex_upstream_format,
                                 )
                                 .await
                             {
@@ -1002,6 +1004,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
+                                            thinking_retry_codex_upstream_format,
                                         )
                                         .await);
                                 }
