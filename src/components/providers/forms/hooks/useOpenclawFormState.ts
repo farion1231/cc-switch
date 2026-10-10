@@ -51,6 +51,12 @@ function parseOpenclawField<T>(
   }
 }
 
+function hasUserAgentHeader(headers?: Record<string, string>): boolean {
+  return Object.keys(headers ?? {}).some(
+    (key) => key.toLowerCase() === "user-agent",
+  );
+}
+
 export function useOpenclawFormState({
   initialData,
   appId,
@@ -99,7 +105,7 @@ export function useOpenclawFormState({
       "headers",
       {},
     );
-    return "User-Agent" in headers;
+    return hasUserAgentHeader(headers);
   });
 
   const updateOpenclawConfig = useCallback(
@@ -161,8 +167,15 @@ export function useOpenclawFormState({
     (enabled: boolean) => {
       setOpenclawUserAgent(enabled);
       updateOpenclawConfig((config) => {
+        const headers = { ...config.headers };
+        for (const key of Object.keys(headers)) {
+          if (key.toLowerCase() === "user-agent") delete headers[key];
+        }
         if (enabled) {
-          config.headers = { "User-Agent": OPENCLAW_DEFAULT_USER_AGENT };
+          headers["User-Agent"] = OPENCLAW_DEFAULT_USER_AGENT;
+        }
+        if (Object.keys(headers).length > 0) {
+          config.headers = headers;
         } else {
           delete config.headers;
         }
@@ -177,7 +190,7 @@ export function useOpenclawFormState({
     setOpenclawApiKey(config?.apiKey || "");
     setOpenclawApi(config?.api || "openai-completions");
     setOpenclawModels(config?.models || []);
-    const ua = config?.headers ? "User-Agent" in config.headers : false;
+    const ua = hasUserAgentHeader(config?.headers);
     setOpenclawUserAgent(ua);
   }, []);
 
