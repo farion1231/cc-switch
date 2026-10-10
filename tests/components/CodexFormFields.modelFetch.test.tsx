@@ -252,7 +252,6 @@ describe("Codex model-fetch lifecycle", () => {
             displayName: "Model One",
             contextWindow: 400_000,
             supportsParallelToolCalls: false,
-            inputModalities: ["text"],
           },
         ]);
       } else {
@@ -366,6 +365,7 @@ describe("Codex model-fetch lifecycle", () => {
         ...advertisedModel(),
         context_window: 922_000,
         supports_parallel_tool_calls: true,
+        supports_vision: true,
         reasoning_effort: ["none", "low", "medium", "high", "xhigh"],
       },
     ]);
@@ -376,6 +376,7 @@ describe("Codex model-fetch lifecycle", () => {
           model: "model-1",
           contextWindow: 1_048_576,
           supportsParallelToolCalls: false,
+          inputModalities: ["text"],
           reasoningLevels: ["max"],
           baseInstructions: "Keep me",
         },
@@ -390,6 +391,7 @@ describe("Codex model-fetch lifecycle", () => {
           model: "model-1",
           contextWindow: 922_000,
           supportsParallelToolCalls: true,
+          inputModalities: ["text", "image"],
           reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
           baseInstructions: "Keep me",
         }),
@@ -411,6 +413,7 @@ describe("Codex model-fetch lifecycle", () => {
           model: "model-1",
           contextWindow: 222_000,
           supportsParallelToolCalls: true,
+          inputModalities: ["text", "image"],
           reasoningLevels: ["high", "max"],
         },
       ],
@@ -424,11 +427,57 @@ describe("Codex model-fetch lifecycle", () => {
           model: "model-1",
           contextWindow: 222_000,
           supportsParallelToolCalls: true,
+          inputModalities: ["text", "image"],
           reasoningLevels: ["high", "max"],
         }),
       ]),
     );
   });
+
+  it.each([
+    { vision: true, previous: undefined, expected: ["text", "image"] },
+    { vision: true, previous: ["text"], expected: ["text", "image"] },
+    {
+      vision: true,
+      previous: ["text", "image"],
+      expected: ["text", "image"],
+    },
+    { vision: false, previous: undefined, expected: ["text"] },
+    { vision: false, previous: ["text"], expected: ["text"] },
+    { vision: false, previous: ["text", "image"], expected: ["text"] },
+    { vision: undefined, previous: undefined, expected: undefined },
+    { vision: undefined, previous: ["text"], expected: ["text"] },
+    {
+      vision: undefined,
+      previous: ["text", "image"],
+      expected: ["text", "image"],
+    },
+  ])(
+    "maps Copilot vision=$vision with previous modalities=$previous",
+    async ({ vision, previous, expected }) => {
+      vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
+        { ...advertisedModel(), supports_vision: vision },
+      ]);
+      const props = {
+        ...makeProps("copilot"),
+        catalogModels: previous
+          ? [{ model: "model-1", inputModalities: previous }]
+          : [],
+      };
+      render(<Harness {...props} />);
+      fireEvent.click(fetchButton());
+
+      await waitFor(() => expect(fetchButton()).toBeEnabled());
+      expect(props.onCatalogModelsChange).toHaveBeenCalledOnce();
+      const [models] = vi.mocked(props.onCatalogModelsChange!).mock.calls[0];
+      expect(models).toHaveLength(1);
+      expect(models[0].model).toBe("model-1");
+      expect(models[0].inputModalities).toEqual(expected);
+      if (expected === undefined) {
+        expect(models[0]).not.toHaveProperty("inputModalities");
+      }
+    },
+  );
 
   it("clears stale reasoning levels when Copilot explicitly reports none", async () => {
     vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
