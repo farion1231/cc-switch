@@ -199,6 +199,30 @@ describe("SwitchModePanel — Stack mode", () => {
     },
   );
 
+  it("does not hide the account notice behind routeOwnsCatalog", async () => {
+    mockMode("stack", "route");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: true,
+          members: [],
+          notice: "routeOwnsCatalog",
+          staleClients: { daemon: true, others: true, auth: true },
+        }),
+      ),
+    );
+    renderPanel("codex", { route: provider("route") });
+    expect(
+      await screen.findByText("provider.routeOwnsCatalog"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("proxy.stackMode.codexStale.authTitle"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("proxy.stackMode.codexStale.title"),
+    ).not.toBeInTheDocument();
+  });
+
   it("does not read the Stack list for apps without Stack mode", async () => {
     mockMode("route", "a");
     let stackReads = 0;
