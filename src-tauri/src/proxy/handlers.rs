@@ -1468,7 +1468,7 @@ async fn handle_responses_compact_for_app(
     .await
 }
 
-/// 原生 Responses 透传到官方以外的上游：流式响应补齐迟到的函数调用
+/// 原生 Responses 透传到官方以外的上游：流式响应补齐函数调用的身份与迟到的
 /// 参数（`responses_late_arguments`）。错误体、非流式响应走通用透传，用量按同一套配置统计。
 async fn handle_codex_late_arguments_repair(
     response: super::hyper_client::ProxyResponse,
