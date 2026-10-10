@@ -89,6 +89,79 @@ describe("McodeProviderForm", () => {
     },
   );
 
+  it("keeps untouched extra option values verbatim when another option is edited", async () => {
+    const submit = vi.fn();
+    render(
+      <McodeProviderForm
+        appId="mcode"
+        providerId="existing"
+        initialData={{
+          name: "Existing",
+          settingsConfig: {
+            kind: "custom",
+            api: "anthropic-messages",
+            enabled: true,
+            options: {
+              baseURL: "https://api.example.com/anthropic",
+              apiKey: "local-test-key",
+              name: "123",
+              timeout: 100,
+            },
+            models: { model: { name: "Model" } },
+          },
+        }}
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    const valueInputs = screen.getAllByPlaceholderText("600000");
+    fireEvent.change(valueInputs[valueInputs.length - 1], {
+      target: { value: "200" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.options).toMatchObject({ name: "123", timeout: 200 });
+  });
+
+  it("keeps both rows with their types when a rename collides with an existing key", async () => {
+    const submit = vi.fn();
+    render(
+      <McodeProviderForm
+        appId="mcode"
+        providerId="existing"
+        initialData={{
+          name: "Existing",
+          settingsConfig: {
+            kind: "custom",
+            api: "anthropic-messages",
+            enabled: true,
+            options: {
+              baseURL: "https://api.example.com/mcode",
+              apiKey: "local-test-key",
+              target: "100",
+              source: 100,
+            },
+            models: { model: { name: "Model" } },
+          },
+        }}
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    const keyInputs = screen.getAllByPlaceholderText("timeout");
+    fireEvent.change(keyInputs[keyInputs.length - 1], {
+      target: { value: "target" },
+    });
+    fireEvent.blur(keyInputs[keyInputs.length - 1]);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.options).toMatchObject({ target: "100", source: 100 });
+  });
+
   it("keeps a rejected save open and displays the failure", async () => {
     render(
       <McodeProviderForm
