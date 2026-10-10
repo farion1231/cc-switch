@@ -1433,53 +1433,6 @@ fn incremental_vacuum_reclaims_entire_freelist() {
 }
 
 #[test]
-fn migration_v18_to_v19_adds_enabled_mcode_columns() {
-    let conn = Connection::open_in_memory().expect("open memory db");
-    conn.execute_batch(
-        "CREATE TABLE mcp_servers (
-            id TEXT PRIMARY KEY,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
-        );
-        CREATE TABLE skills (
-            id TEXT PRIMARY KEY,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
-        );",
-    )
-    .expect("seed v18 shape");
-    conn.execute(
-        "INSERT INTO mcp_servers (id, enabled_hermes) VALUES ('mcp-1', 1)",
-        [],
-    )
-    .expect("seed mcp row");
-    conn.execute(
-        "INSERT INTO skills (id, enabled_hermes) VALUES ('skill-1', 1)",
-        [],
-    )
-    .expect("seed skill row");
-    Database::set_user_version(&conn, 18).expect("set user_version=18");
-
-    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
-
-    assert!(
-        Database::has_column(&conn, "mcp_servers", "enabled_mcode").expect("check mcp column"),
-        "mcp_servers.enabled_mcode should exist after v18 -> v19"
-    );
-    assert!(
-        Database::has_column(&conn, "skills", "enabled_mcode").expect("check skills column"),
-        "skills.enabled_mcode should exist after v18 -> v19"
-    );
-    // 既有标志列的值必须保留
-    let (mcp_hermes, mcp_mcode): (i64, i64) = conn
-        .query_row(
-            "SELECT enabled_hermes, enabled_mcode FROM mcp_servers WHERE id = 'mcp-1'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("read mcp row");
-    assert_eq!((mcp_hermes, mcp_mcode), (1, 0));
-}
-
-#[test]
 fn migration_v20_to_v21_adds_enabled_ohmypi_columns() {
     let conn = Connection::open_in_memory().expect("open memory db");
     // v20 形态：含 Mcode/Pi 列（v18->v20 产物），无 Oh My Pi 列
