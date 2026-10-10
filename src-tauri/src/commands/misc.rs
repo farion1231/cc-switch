@@ -6920,7 +6920,7 @@ mod tests {
             std::fs::write(
                 &script,
                 format!(
-                    "@echo off\r\ncall {command}\r\nif errorlevel 1 exit /b %errorlevel%\r\necho after^|%npm_config_allow_scripts%^|%npm_config_ignore_scripts%^|%npm_config_include%\r\n"
+                    "@chcp 65001>nul\r\n@echo off\r\ncall {command}\r\nif errorlevel 1 exit /b %errorlevel%\r\necho after^|%npm_config_allow_scripts%^|%npm_config_ignore_scripts%^|%npm_config_include%\r\n"
                 ),
             )
             .unwrap();
@@ -6981,6 +6981,7 @@ mod tests {
         #[test]
         fn claude_windows_update_process_preserves_literal_percent_and_special_paths() {
             assert_claude_windows_update_process_chain("npm %foo% & test! prefix");
+            assert_claude_windows_update_process_chain("npm 中文目录 %foo% & test! prefix");
         }
 
         /// **必须与 `win_quote_path_for_batch` 主体保持镜像**——给 anchored 测试动态算
