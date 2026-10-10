@@ -67,7 +67,8 @@ pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
 pub fn get_error_message(error: &ProxyError) -> String {
     match error {
         ProxyError::UpstreamError { status, body } => {
-            if let Some(body) = body {
+            let trimmed = body.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            if let Some(body) = trimmed {
                 format!("上游错误 ({status}): {body}")
             } else {
                 format!("上游错误 ({status})")
@@ -152,4 +153,20 @@ mod tests {
         assert!(msg.contains("500"));
         assert!(msg.contains("Internal Server Error"));
     }
+
+    #[test]
+    fn test_get_error_message_empty_body() {
+        let error_empty = ProxyError::UpstreamError {
+            status: 502,
+            body: Some("   ".to_string()),
+        };
+        assert_eq!(get_error_message(&error_empty), "上游错误 (502)");
+
+        let error_none = ProxyError::UpstreamError {
+            status: 502,
+            body: None,
+        };
+        assert_eq!(get_error_message(&error_none), "上游错误 (502)");
+    }
 }
+
