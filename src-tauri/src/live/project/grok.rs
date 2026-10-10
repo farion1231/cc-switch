@@ -57,12 +57,27 @@ impl GrokProjection {
             )
         })?;
         let name = resolve_table_name(&doc)?;
-        let table = doc
+        let mut table = doc
             .get("model")
             .and_then(Item::as_table_like)
             .and_then(|models| models.get(&name))
             .and_then(fresh_table)
             .expect("resolve_table_name 只返回存在的表");
+
+        if table
+            .get("base_url")
+            .and_then(Item::as_str)
+            .is_none_or(|url| url.trim().is_empty())
+        {
+            if let Some(endpoint) = doc
+                .get("endpoints")
+                .and_then(|endpoints| endpoints.get("models_base_url"))
+                .and_then(Item::as_str)
+                .filter(|url| !url.trim().is_empty())
+            {
+                table.insert("base_url", toml_edit::value(endpoint.trim()));
+            }
+        }
 
         // 形状校验沿用现有规则（model、base_url、name、api_key / env_key、api_backend、
         // context_window），对象是归一化后的这一张表。
@@ -230,6 +245,27 @@ impl GrokConfigPatch {
         let target_name = self.target.as_ref().map(|(name, _)| name.as_str());
         let root = doc.as_table_mut();
 
+        if let Some(endpoints) = root.get_mut("endpoints").and_then(Item::as_table_like_mut) {
+            let legacy_packy = endpoints
+                .get("models_base_url")
+                .and_then(Item::as_str)
+                .is_some_and(|url| {
+                    matches!(
+                        url.trim().trim_end_matches('/'),
+                        "https://www.packyapi.ai/v1"
+                            | "https://cf.api.fan/v1"
+                            | "https://slb-v1.api.fan/v1"
+                            | "https://www.packyapi.com/v1"
+                    )
+                });
+            if legacy_packy {
+                endpoints.remove("models_base_url");
+            }
+            if endpoints.is_empty() {
+                root.remove("endpoints");
+            }
+        }
+
         match target_name {
             Some(name) => {
                 let models = table_mut(path, root, "models", true)?.expect("created");
@@ -247,6 +283,13 @@ impl GrokConfigPatch {
             None => {
                 if let Some(models) = table_mut(path, root, "models", false)? {
                     models.remove("default");
+                    let retired_search = models
+                        .get("web_search")
+                        .and_then(Item::as_str)
+                        .is_some_and(|name| self.retired.iter().any(|retired| retired == name));
+                    if retired_search {
+                        models.remove("web_search");
+                    }
                 }
             }
         }
@@ -380,6 +423,59 @@ env_key = "B_KEY"
 api_backend = "chat_completions"
 context_window = 200000
 "#;
+
+    #[test]
+    fn legacy_packy_endpoint_survives_projection_without_polluting_official_login() {
+        let legacy = ROW_A
+            .replace("base_url = \"https://a.example/v1\"\n", "")
+            .replace(
+                "default = \"grok-4.5\"",
+                "default = \"grok-4.5\"\nweb_search = \"grok-4.5\"",
+            )
+            + "\n[endpoints]\nmodels_base_url = \"https://cf.api.fan/v1\"\nother = \"keep\"\n";
+        let packy = GrokProjection::of(&row(&legacy), false).unwrap();
+        let custom = apply(
+            &GrokConfigPatch::direct(&packy, Vec::new(), PLACEHOLDER),
+            &legacy,
+        );
+        let selected = crate::grok_config::extract_model_config(&custom).unwrap();
+        assert_eq!(selected.base_url, "https://cf.api.fan/v1");
+        assert_eq!(selected.api_key.as_deref(), Some("key-a"));
+        let official = GrokProjection::of(&row(""), true).unwrap();
+        let clean = apply(
+            &GrokConfigPatch::direct(&official, packy.written_tables(), PLACEHOLDER),
+            &custom,
+        );
+        let document: DocumentMut = clean.parse().unwrap();
+        assert!(document.get("model").is_none());
+        assert!(document.get("models").is_none());
+        assert!(document["endpoints"].get("models_base_url").is_none());
+        assert_eq!(document["endpoints"]["other"].as_str(), Some("keep"));
+        let restored = apply(
+            &GrokConfigPatch::direct(&packy, Vec::new(), PLACEHOLDER),
+            &clean,
+        );
+        assert_eq!(
+            crate::grok_config::extract_model_config(&restored).unwrap(),
+            selected
+        );
+    }
+
+    #[test]
+    fn model_endpoint_wins_and_unrelated_global_endpoint_is_preserved() {
+        let config =
+            format!("{ROW_A}\n[endpoints]\nmodels_base_url = \"https://custom.example/v1\"\n");
+        let target = GrokProjection::of(&row(&config), false).unwrap();
+        assert_eq!(
+            target.table.as_ref().unwrap().1["base_url"].as_str(),
+            Some("https://a.example/v1")
+        );
+        let out = apply(
+            &GrokConfigPatch::direct(&target, Vec::new(), PLACEHOLDER),
+            &config,
+        );
+        assert!(out.contains("https://custom.example/v1"));
+    }
 
     #[test]
     fn a_default_that_points_nowhere_falls_back_to_the_only_table() {

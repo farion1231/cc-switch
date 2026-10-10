@@ -36,6 +36,8 @@ import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
 import {
   grokBuildOfficialPreset,
   grokBuildProviderPresets,
+  isKnownPackyCodeEndpoint,
+  resolveGrokBuildConfigOptions,
   type GrokBuildProviderPreset,
 } from "@/config/grokBuildProviderPresets";
 import {
@@ -101,7 +103,9 @@ export function GrokBuildProviderForm({
   const [isPartner, setIsPartner] = useState(
     initialData?.meta?.isPartner ?? false,
   );
-  const [partnerPromotionKey, setPartnerPromotionKey] = useState<string>();
+  const [partnerPromotionKey, setPartnerPromotionKey] = useState(
+    initialData?.meta?.partnerPromotionKey,
+  );
   const [profile, setProfile] = useState(initialConfig.model);
   const [upstreamModel, setUpstreamModel] = useState(
     initialConfig.upstreamModel ?? initialConfig.model,
@@ -176,6 +180,15 @@ export function GrokBuildProviderForm({
   const [draftCustomEndpoints, setDraftCustomEndpoints] = useState<string[]>(
     [],
   );
+  const configOptions = useMemo(
+    () =>
+      resolveGrokBuildConfigOptions({
+        partnerPromotionKey,
+        isPartner,
+        baseUrl,
+      }),
+    [baseUrl, isPartner, partnerPromotionKey],
+  );
 
   const form = useForm<ProviderFormData>({
     resolver: zodResolver(providerSchema),
@@ -244,7 +257,9 @@ export function GrokBuildProviderForm({
       ...overrides,
       apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
     };
-    setRawConfig((current) => updateGrokBuildConfig(current, next));
+    setRawConfig((current) =>
+      updateGrokBuildConfig(current, next, configOptions),
+    );
   };
 
   const handlePresetChange = (presetId: string) => {
@@ -300,15 +315,18 @@ export function GrokBuildProviderForm({
     setUpstreamModel(presetModel);
     setApiFormat(presetApiFormat);
     setPresetEndpoints(preset.endpointCandidates ?? []);
-    const presetConfig = buildGrokBuildConfig({
-      model: profile,
-      upstreamModel: presetModel,
-      baseUrl: presetBaseUrl,
-      name: presetName,
-      apiKey: presetApiKey,
-      apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
-      contextWindow: Number.parseInt(contextWindow, 10),
-    });
+    const presetConfig = buildGrokBuildConfig(
+      {
+        model: profile,
+        upstreamModel: presetModel,
+        baseUrl: presetBaseUrl,
+        name: presetName,
+        apiKey: presetApiKey,
+        apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
+        contextWindow: Number.parseInt(contextWindow, 10),
+      },
+      preset.configOptions,
+    );
     setRawConfig(presetConfig);
     projectGrokDraft(presetConfig, preset.category);
   };
@@ -369,15 +387,19 @@ export function GrokBuildProviderForm({
       return;
     }
 
-    const finalConfig = updateGrokBuildConfig(rawConfig, {
-      model: profile,
-      upstreamModel,
-      baseUrl,
-      name,
-      apiKey,
-      apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
-      contextWindow: parsedContextWindow,
-    });
+    const finalConfig = updateGrokBuildConfig(
+      rawConfig,
+      {
+        model: profile,
+        upstreamModel,
+        baseUrl,
+        name,
+        apiKey,
+        apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
+        contextWindow: parsedContextWindow,
+      },
+      configOptions,
+    );
     const configError = validateGrokBuildConfig(finalConfig);
     if (configError) {
       toast.error(
@@ -407,6 +429,11 @@ export function GrokBuildProviderForm({
     const parsedMaxOutputTokens = Number.parseInt(maxOutputTokens, 10);
     const initialMeta = { ...(initialData?.meta ?? {}) };
     delete initialMeta.custom_endpoints;
+    const resolvedPartnerPromotionKey =
+      partnerPromotionKey?.trim() ||
+      (isPartner && isKnownPackyCodeEndpoint(baseUrl)
+        ? "packycode"
+        : undefined);
     const meta: ProviderMeta = {
       ...initialMeta,
       apiFormat,
@@ -414,7 +441,7 @@ export function GrokBuildProviderForm({
       isFullUrl,
       endpointAutoSelect,
       isPartner,
-      partnerPromotionKey,
+      partnerPromotionKey: resolvedPartnerPromotionKey,
       impersonateClaudeCode,
       promptCacheRouting,
       codexChatReasoning,

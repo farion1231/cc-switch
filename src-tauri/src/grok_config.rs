@@ -58,6 +58,20 @@ fn optional_non_empty_string(table: &toml::value::Table, key: &str) -> Option<St
         .map(ToString::to_string)
 }
 
+fn resolve_base_url(
+    root: &toml::value::Table,
+    selected_model: &toml::value::Table,
+) -> Option<String> {
+    optional_non_empty_string(selected_model, "base_url")
+        .or_else(|| {
+            root.get("endpoints")
+                .and_then(toml::Value::as_table)
+                .and_then(|endpoints| optional_non_empty_string(endpoints, "models_base_url"))
+        })
+        .map(|base_url| base_url.trim_end_matches('/').to_string())
+        .filter(|base_url| !base_url.is_empty())
+}
+
 /// Syntax-only validation for a Grok Build config document (empty allowed).
 ///
 /// 官方条目走 Grok CLI 自带的 xAI OAuth 登录，config.toml 不需要（通常也没有）
@@ -144,7 +158,13 @@ pub fn validate_config_toml(config_toml: &str) -> Result<(), AppError> {
         })?;
 
     required_non_empty_string(selected_model, "model")?;
-    required_non_empty_string(selected_model, "base_url")?;
+    resolve_base_url(root, selected_model).ok_or_else(|| {
+        AppError::localized(
+            "provider.grokbuild.field.missing",
+            "Grok Build 配置缺少有效的 base_url 或 endpoints.models_base_url 字段",
+            "Grok Build configuration is missing a valid base_url or endpoints.models_base_url field",
+        )
+    })?;
     required_non_empty_string(selected_model, "name")?;
     if optional_non_empty_string(selected_model, "api_key").is_none()
         && optional_non_empty_string(selected_model, "env_key").is_none()
@@ -189,11 +209,7 @@ pub fn extract_model_config(config_toml: &str) -> Option<GrokModelConfig> {
     Some(GrokModelConfig {
         profile: default_model.to_string(),
         model: selected_model.get("model")?.as_str()?.trim().to_string(),
-        base_url: selected_model
-            .get("base_url")?
-            .as_str()?
-            .trim_end_matches('/')
-            .to_string(),
+        base_url: resolve_base_url(root, selected_model)?,
         name: selected_model.get("name")?.as_str()?.trim().to_string(),
         api_key: optional_non_empty_string(selected_model, "api_key"),
         env_key: optional_non_empty_string(selected_model, "env_key"),
@@ -329,10 +345,30 @@ context_window = 500000
 "#
     }
 
+    fn valid_models_endpoint_config() -> &'static str {
+        r#"[models]
+default = "grok-4.5"
+web_search = "grok-4.5"
+
+[endpoints]
+models_base_url = "https://endpoint.example/v1/"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+name = "Endpoint Example"
+api_key = "secret"
+api_backend = "responses"
+context_window = 500000
+supports_backend_search = false
+"#
+    }
+
     #[test]
     fn validates_expected_config_shape() {
         validate_config_toml(valid_config()).expect("valid Grok Build config");
         validate_config_toml(valid_env_key_config()).expect("valid env_key configuration");
+        validate_config_toml(valid_models_endpoint_config())
+            .expect("valid endpoints.models_base_url configuration");
     }
 
     #[test]
@@ -374,6 +410,39 @@ context_window = 500000
         let error = validate_config_toml(&config).expect_err("credentials should be required");
         assert!(error.to_string().contains("api_key"));
         assert!(error.to_string().contains("env_key"));
+    }
+
+    #[test]
+    fn rejects_config_without_model_or_endpoint_base_url() {
+        let config = valid_config().replace("base_url = \"https://example.com/v1\"\n", "");
+        let error = validate_config_toml(&config).expect_err("base URL should be required");
+        assert!(error.to_string().contains("base_url"));
+    }
+
+    #[test]
+    fn extracts_models_endpoint_base_url() {
+        let selected =
+            extract_model_config(valid_models_endpoint_config()).expect("selected model");
+
+        assert_eq!(selected.base_url, "https://endpoint.example/v1");
+        assert_eq!(
+            extract_credentials(valid_models_endpoint_config()),
+            Some((
+                "https://endpoint.example/v1".to_string(),
+                "secret".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn model_base_url_takes_precedence_over_models_endpoint() {
+        let config = valid_models_endpoint_config().replace(
+            "model = \"grok-4.5\"\n",
+            "model = \"grok-4.5\"\nbase_url = \"https://model.example/v1\"\n",
+        );
+
+        let selected = extract_model_config(&config).expect("selected model");
+        assert_eq!(selected.base_url, "https://model.example/v1");
     }
 
     #[test]
