@@ -856,6 +856,30 @@ fn tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Option<
     tool_action_shell_command_for_shell(tool, action, shell)
 }
 
+/// WSL cannot use the host's UNC paths to identify a Linux npm installation.
+/// Resolve the active launcher inside the distro instead. Run the probe in sh
+/// so this remains valid even when the user's outer WSL shell is fish, and keep
+/// npm settings on the primary process tree only (not its npm fallback).
+#[cfg(any(target_os = "windows", test))]
+fn wsl_claude_update_command() -> String {
+    // Keep the generated payload on one line: Windows writes it into a batch
+    // launcher before passing it to wsl.exe.
+    let primary = concat!(
+        "ccs_claude_path=$(command -v claude 2>/dev/null) || ccs_claude_path=; ",
+        r#"ccs_claude_real=$(readlink -f -- "$ccs_claude_path" 2>/dev/null) || ccs_claude_real=; "#,
+        r#"case "$ccs_claude_path:$ccs_claude_real" in "#,
+        "*/.bun/*|*/install/global/node_modules/*|*/.volta/*|*/volta/*|*/pnpm/*|*/node_modules/.pnpm/*|*/Cellar/*|*/Caskroom/*) claude update ;; ",
+        r#"*) case "$ccs_claude_real" in */node_modules/@anthropic-ai/claude-code/*) "#,
+        "npm_config_allow_scripts=@anthropic-ai/claude-code npm_config_ignore_scripts=false npm_config_include=optional claude update ;; ",
+        "*) claude update ;; esac ;; esac",
+    );
+    chain_update_commands(
+        format!("sh -c {}", shell_single_quote(primary)),
+        npm_install_command_for("claude").unwrap().to_string(),
+        LifecycleCommandShell::Posix,
+    )
+}
+
 /// Windows host 上的 WSL 分支专用:`tool_action_shell_command` 在 Windows target 编译
 /// 出的版本会包含 Windows batch 语义(例如 `|| call npm ...`)且 hermes 会返回
 /// Windows PowerShell installer,但跨 `wsl.exe` 边界后跑的是 Linux。这个 wrapper
@@ -872,7 +896,11 @@ fn wsl_tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Opt
             }
         }
         ToolLifecycleAction::Update => {
-            tool_action_shell_command_for_shell(tool, action, LifecycleCommandShell::Posix)
+            if tool == "claude" {
+                Some(wsl_claude_update_command())
+            } else {
+                tool_action_shell_command_for_shell(tool, action, LifecycleCommandShell::Posix)
+            }
         }
     }
 }
@@ -3501,6 +3529,137 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
     }
 }
 
+/// npm's Windows launcher is a text shim rather than a symlink, so canonicalize
+/// leaves it outside node_modules. Require its invocation to match the adjacent
+/// package's declared Claude bin; a .cmd extension or sibling npm is not ownership.
+#[cfg(target_os = "windows")]
+fn is_windows_npm_claude_install(bin_path: &str, real_target: &str) -> bool {
+    use std::io::Read;
+
+    if [bin_path, real_target].iter().any(|path| {
+        matches!(
+            infer_install_source(Path::new(path)),
+            "volta" | "pnpm" | "bun"
+        )
+    }) {
+        return false;
+    }
+    let real = real_target.replace('\\', "/").to_ascii_lowercase();
+    if real.contains("/node_modules/.pnpm/") || real.contains("/install/global/node_modules/") {
+        return false;
+    }
+    if real.contains("/node_modules/@anthropic-ai/claude-code/") {
+        return true;
+    }
+
+    // Both files are metadata probes, never executable input. Bound reads so an
+    // unrelated/custom launcher cannot make the lifecycle planner read arbitrarily.
+    let read_small = |path: &Path| -> Option<String> {
+        const MAX_METADATA_BYTES: u64 = 64 * 1024;
+        let file = std::fs::File::open(path).ok()?;
+        let mut text = String::new();
+        file.take(MAX_METADATA_BYTES + 1)
+            .read_to_string(&mut text)
+            .ok()?;
+        (text.len() as u64 <= MAX_METADATA_BYTES).then_some(text)
+    };
+
+    [real_target, bin_path].iter().any(|entry| {
+        let entry = windows_shell_compatible_path(Path::new(entry));
+        if !is_windows_command_script(&entry) {
+            return false;
+        }
+        let Some(prefix) = entry.parent() else {
+            return false;
+        };
+        let package_dir = prefix.join("node_modules/@anthropic-ai/claude-code");
+        let Some(package_text) = read_small(&package_dir.join("package.json")) else {
+            return false;
+        };
+        let Ok(package) = serde_json::from_str::<serde_json::Value>(&package_text) else {
+            return false;
+        };
+        if package.get("name").and_then(|v| v.as_str()) != Some("@anthropic-ai/claude-code") {
+            return false;
+        }
+        let Some(target) = package
+            .get("bin")
+            .and_then(|bin| bin.get("claude").or_else(|| bin.as_str().map(|_| bin)))
+            .and_then(|bin| bin.as_str())
+        else {
+            return false;
+        };
+        // The expected target must stay inside this package, not claim another
+        // install through an absolute path or parent traversal.
+        let target = target.replace('\\', "/");
+        if target.is_empty()
+            || target.starts_with('/')
+            || target.contains(':')
+            || target.split('/').any(|part| part == "..")
+        {
+            return false;
+        }
+        let target = target.trim_start_matches("./").to_ascii_lowercase();
+        let Some(launcher) = read_small(&entry) else {
+            return false;
+        };
+        let launcher = launcher.replace('\\', "/").to_ascii_lowercase();
+        if !launcher
+            .trim_start_matches('\u{feff}')
+            .starts_with("@echo off")
+        {
+            return false;
+        }
+        let targets = [
+            format!("\"%dp0%/node_modules/@anthropic-ai/claude-code/{target}\""),
+            format!("\"%~dp0/node_modules/@anthropic-ai/claude-code/{target}\""),
+        ];
+        launcher.lines().any(|line| {
+            let line = line.trim();
+            targets.iter().any(|target| {
+                let Some((before, after)) = line.split_once(target) else {
+                    return false;
+                };
+                let before = before.trim_end();
+                let invocation = before
+                    .rsplit_once('&')
+                    .map_or(before, |(_, command)| command.trim());
+                after.trim() == "%*"
+                    && (invocation.is_empty()
+                        || invocation == "\"%_prog%\""
+                        || invocation == "node"
+                        || ((invocation.starts_with("\"%~dp0")
+                            || invocation.starts_with("\"%dp0%"))
+                            && invocation.ends_with("/node.exe\"")))
+            })
+        })
+    })
+}
+
+/// Scope npm configuration to a new process tree. Encoding hides the literal
+/// path from the outer batch/call percent expansion. The inner cmd receives it
+/// through one environment expansion and runs the final launcher without call,
+/// so literal percent signs are not reparsed and the launcher exit code survives.
+#[cfg(target_os = "windows")]
+fn claude_npm_windows_primary_update_command(bin_path: &str) -> String {
+    let path = windows_shell_compatible_path(Path::new(bin_path));
+    let path = path.to_string_lossy().replace('\'', "''");
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'; \
+         $env:npm_config_allow_scripts = '@anthropic-ai/claude-code'; \
+         $env:npm_config_ignore_scripts = 'false'; \
+         $env:npm_config_include = 'optional'; \
+         $env:CC_SWITCH_CLAUDE_UPDATE_PATH = '{path}'; \
+         $process = Start-Process -FilePath $env:ComSpec \
+         -ArgumentList '/D /V:OFF /S /C \"\"%CC_SWITCH_CLAUDE_UPDATE_PATH%\" update\"' \
+         -NoNewWindow -Wait -PassThru; exit $process.ExitCode"
+    );
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(&script)
+    )
+}
+
 /// Windows 版锚定命令生成。对平台确认可静默运行的工具优先使用官方 CLI 自升级；
 /// 对 npm/Volta/pnpm 这类可确认写回位置的安装，再接一个包管理器 fallback。不存在 brew/bun/claude-native
 /// (Windows 没 Homebrew、Bun for Windows 仍 preview；Grok native 使用 PowerShell installer)。
@@ -3551,7 +3710,11 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path);
     if prefers_official_update(tool, LifecycleCommandShell::WindowsBatch) {
-        let update = anchored_official_update_command(tool, bin_path)?;
+        let update = if tool == "claude" && is_windows_npm_claude_install(bin_path, real_target) {
+            claude_npm_windows_primary_update_command(bin_path)
+        } else {
+            anchored_official_update_command(tool, bin_path)?
+        };
         return Some(match package_command {
             Some(fallback) => {
                 chain_update_commands(update, fallback, LifecycleCommandShell::WindowsBatch)
@@ -6552,6 +6715,207 @@ mod tests {
             (dir, sub, bin_path)
         }
 
+        fn setup_claude_npm_shim(subdir: &str) -> (tempfile::TempDir, std::path::PathBuf, String) {
+            let (dir, prefix, bin_path) = setup_sibling(subdir, "claude.cmd", &["npm.cmd"]);
+            let package_dir = prefix.join("node_modules/@anthropic-ai/claude-code");
+            std::fs::create_dir_all(package_dir.join("bin")).unwrap();
+            std::fs::write(
+                package_dir.join("package.json"),
+                r#"{"name":"@anthropic-ai/claude-code","bin":{"claude":"bin/claude.cmd"}}"#,
+            )
+            .unwrap();
+            // A batch stand-in for npm's native bin keeps this test offline while
+            // exercising both the npm shim and the updater's descendant process.
+            std::fs::write(
+                &bin_path,
+                "@ECHO off\r\nSET \"dp0=%~dp0\"\r\n\"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.cmd\" %*\r\n",
+            )
+            .unwrap();
+            std::fs::write(
+                package_dir.join("bin/claude.cmd"),
+                "@echo off\r\nif not \"%~1\"==\"update\" exit /b 99\r\ncmd.exe /D /V:OFF /S /C \"\"%%TEST_NPM_PATH%%\" install -g @anthropic-ai/claude-code@latest\"\r\nexit /b %TEST_CLAUDE_EXIT%\r\n",
+            )
+            .unwrap();
+            std::fs::write(
+                prefix.join("npm.cmd"),
+                "@echo off\r\necho npm^|%npm_config_allow_scripts%^|%npm_config_ignore_scripts%^|%npm_config_include%^|%*\r\nif \"%~1\"==\"i\" exit /b %TEST_FALLBACK_EXIT%\r\nexit /b 0\r\n",
+            )
+            .unwrap();
+            (dir, prefix, bin_path)
+        }
+
+        #[test]
+        fn claude_windows_npm_source_requires_package_target_evidence() {
+            let (_dir, prefix, launcher) = setup_claude_npm_shim("npm prefix");
+            let canonical = std::fs::canonicalize(&launcher).unwrap();
+            assert!(is_windows_npm_claude_install(
+                &launcher,
+                &canonical.to_string_lossy()
+            ));
+            let command = anchored_command_from_paths("claude", &launcher, &launcher).unwrap();
+            assert!(command.starts_with(
+                "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand "
+            ));
+            assert!(command.ends_with(&format!(
+                " || call {} i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
+                expect_quoted_path(&prefix.join("npm.cmd").to_string_lossy())
+            )));
+
+            let package = prefix.join("node_modules/@anthropic-ai/claude-code/package.json");
+            std::fs::write(
+                &package,
+                r#"{"name":"another-package","bin":{"claude":"bin/claude.cmd"}}"#,
+            )
+            .unwrap();
+            assert!(!is_windows_npm_claude_install(&launcher, &launcher));
+            std::fs::write(
+                &package,
+                r#"{"name":"@anthropic-ai/claude-code","bin":{"claude":"bin/other.cmd"}}"#,
+            )
+            .unwrap();
+            assert!(!is_windows_npm_claude_install(&launcher, &launcher));
+        }
+
+        #[test]
+        fn claude_windows_npm_source_accepts_resolved_package_binary() {
+            assert!(is_windows_npm_claude_install(
+                r"C:\npm-global\claude.exe",
+                r"\\?\C:\NPM-GLOBAL\NODE_MODULES\@ANTHROPIC-AI\CLAUDE-CODE\bin\claude.exe"
+            ));
+        }
+
+        #[test]
+        fn claude_windows_other_sources_keep_their_update_policy() {
+            for real in [
+                r"C:\Users\me\Volta\tools\node_modules\@anthropic-ai\claude-code\bin\claude.exe",
+                r"C:\Users\me\pnpm\node_modules\@anthropic-ai\claude-code\bin\claude.exe",
+                r"C:\Users\me\.bun\install\node_modules\@anthropic-ai\claude-code\bin\claude.exe",
+                r"C:\custom-bun\install\global\node_modules\@anthropic-ai\claude-code\bin\claude.exe",
+            ] {
+                assert!(!is_windows_npm_claude_install(
+                    r"C:\custom-entry\claude.exe",
+                    real
+                ));
+            }
+            for subdir in ["native", "Volta", "pnpm", ".bun/bin"] {
+                let (_dir, prefix, launcher) = setup_claude_npm_shim(subdir);
+                let native = prefix.join("claude.exe");
+                std::fs::write(&native, b"MZ\x90\x00").unwrap();
+                assert!(!is_windows_npm_claude_install(
+                    &native.to_string_lossy(),
+                    &native.to_string_lossy()
+                ));
+                if subdir != "native" {
+                    assert!(!is_windows_npm_claude_install(&launcher, &launcher));
+                    assert!(!is_windows_npm_claude_install(
+                        &launcher,
+                        &prefix
+                            .join("node_modules/@anthropic-ai/claude-code/bin/claude.exe")
+                            .to_string_lossy()
+                    ));
+                } else {
+                    // Adjacent npm metadata cannot claim an unrelated .cmd or
+                    // a comment that merely mentions the npm package target.
+                    for unknown in [
+                        "@echo off\r\nexit /b 0\r\n",
+                        "@echo off\r\nrem \"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.cmd\" %*\r\nexit /b 0\r\n",
+                        "@echo off\r\necho \"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.cmd\" %*\r\nexit /b 0\r\n",
+                    ] {
+                        std::fs::write(&launcher, unknown).unwrap();
+                        assert!(!is_windows_npm_claude_install(&launcher, &launcher));
+                        let command =
+                            anchored_command_from_paths("claude", &launcher, &launcher).unwrap();
+                        assert_eq!(
+                            command,
+                            format!(
+                                "{} update || call {} i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
+                                expect_quoted_path(&launcher),
+                                expect_quoted_path(&prefix.join("npm.cmd").to_string_lossy())
+                            )
+                        );
+                    }
+                }
+            }
+        }
+
+        fn assert_claude_windows_update_process_chain(subdir: &str) {
+            use std::process::Command;
+
+            let inherited = [
+                "npm_config_allow_scripts",
+                "npm_config_ignore_scripts",
+                "npm_config_include",
+            ]
+            .map(std::env::var_os);
+            let (_dir, prefix, launcher) = setup_claude_npm_shim(subdir);
+            let command = anchored_command_from_paths("claude", &launcher, &launcher).unwrap();
+            let script = prefix.join("run-update.bat");
+            std::fs::write(
+                &script,
+                format!(
+                    "@echo off\r\ncall {command}\r\nif errorlevel 1 exit /b %errorlevel%\r\necho after^|%npm_config_allow_scripts%^|%npm_config_ignore_scripts%^|%npm_config_include%\r\n"
+                ),
+            )
+            .unwrap();
+            let primary = "npm|@anthropic-ai/claude-code|false|optional|install -g @anthropic-ai/claude-code@latest\n";
+            let fallback = "npm|previous-package|true|prod|i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code\n";
+            let after = "after|previous-package|true|prod\n";
+            for (primary_exit, fallback_exit, expected_code, expected_output) in [
+                ("0", "42", 0, format!("{primary}{after}")),
+                ("1", "0", 0, format!("{primary}{fallback}{after}")),
+                ("1", "42", 42, format!("{primary}{fallback}")),
+            ] {
+                let output = Command::new("cmd")
+                    .args(["/D", "/V:OFF", "/S", "/C"])
+                    // Invoke the fixture batch through one expansion too; a
+                    // literal %foo% in cmd's /C input would corrupt its own path.
+                    .raw_arg("\"\"%TEST_UPDATE_SCRIPT_PATH%\"\"")
+                    .env("TEST_UPDATE_SCRIPT_PATH", &script)
+                    .env("npm_config_allow_scripts", "previous-package")
+                    .env("npm_config_ignore_scripts", "true")
+                    .env("npm_config_include", "prod")
+                    .env("TEST_NPM_PATH", prefix.join("npm.cmd"))
+                    .env("TEST_CLAUDE_EXIT", primary_exit)
+                    .env("TEST_FALLBACK_EXIT", fallback_exit)
+                    .env("foo", "incorrect-percent-expansion")
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output()
+                    .expect("Windows fixture process should execute");
+                assert_eq!(
+                    output.status.code(),
+                    Some(expected_code),
+                    "{subdir}: {}",
+                    decode_command_output(&output.stderr)
+                );
+                assert_eq!(
+                    decode_command_output(&output.stdout).replace("\r\n", "\n"),
+                    expected_output,
+                    "{subdir}: {}",
+                    decode_command_output(&output.stderr)
+                );
+            }
+            assert_eq!(
+                [
+                    "npm_config_allow_scripts",
+                    "npm_config_ignore_scripts",
+                    "npm_config_include",
+                ]
+                .map(std::env::var_os),
+                inherited,
+                "update process configuration must not change the Rust parent's environment"
+            );
+        }
+
+        #[test]
+        fn claude_windows_update_child_inherits_scoped_settings_without_parent_leakage() {
+            assert_claude_windows_update_process_chain("npm prefix with spaces");
+        }
+
+        #[test]
+        fn claude_windows_update_process_preserves_literal_percent_and_special_paths() {
+            assert_claude_windows_update_process_chain("npm %foo% & test! prefix");
+        }
+
         /// **必须与 `win_quote_path_for_batch` 主体保持镜像**——给 anchored 测试动态算
         /// expected,让用例在 temp 根目录含空格 / `&` / `(` / `%` 等特殊字符的开发机上
         /// 也能通过(默认 Windows `%TEMP%` = `C:\Users\<user>\AppData\Local\Temp`,
@@ -7101,10 +7465,372 @@ mod tests {
             // WSL 内跑的是 POSIX shell,不能带 Windows batch 的 `call`。同时 update
             // fallback 仍应先尝试官方 CLI 自升级。
             let cmd = wsl_tool_action_shell_command("claude", ToolLifecycleAction::Update).unwrap();
-            assert_eq!(
-                cmd,
-                "claude update || npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
+            assert_eq!(cmd, wsl_claude_update_command());
+            assert!(
+                !cmd.contains("call "),
+                "Linux commands cannot use batch call: {cmd}"
             );
+        }
+    }
+
+    mod claude_update_wsl {
+        use super::super::*;
+        use std::process::{Command, Output};
+
+        // The same fixture runs locally on Unix and through real wsl.exe on Windows.
+        // All files and symlinks are created by the Linux/POSIX shell; host UNC paths
+        // do not participate in source detection or execution.
+        fn fixture_script() -> String {
+            let fixture = r#"set -eu
+fixture=$(mktemp -d)
+trap 'rm -rf "$fixture"' EXIT HUP INT TERM
+base="$fixture/home dir's tree"
+tools="$fixture/tools"
+readlink_bin="$fixture/readlink-bin"
+fail_bin="$fixture/failed-readlink"
+mkdir -p "$tools" "$readlink_bin" "$fail_bin"
+for utility in sh readlink mkdir dirname cp chmod ln rm cat; do
+  ln -s "$(command -v "$utility")" "$tools/$utility"
+done
+cat > "$tools/claude-template" <<'CLAUDE'
+#!/bin/sh
+[ "$1" = update ] || exit 96
+printf 'primary|%s|%s|%s\n' "${npm_config_allow_scripts-unset}" "${npm_config_ignore_scripts-unset}" "${npm_config_include-unset}"
+npm install -g @anthropic-ai/claude-code@latest
+exit "$CC_SWITCH_TEST_CLAUDE_EXIT"
+CLAUDE
+cat > "$tools/npm" <<'NPM'
+#!/bin/sh
+case "$1" in
+  install) label=child ;;
+  i) label=fallback ;;
+  *) exit 97 ;;
+esac
+printf '%s|%s|%s|%s|%s\n' "$label" "${npm_config_allow_scripts-unset}" "${npm_config_ignore_scripts-unset}" "${npm_config_include-unset}" "$*"
+[ "$label" != fallback ] || exit "$CC_SWITCH_TEST_FALLBACK_EXIT"
+NPM
+cat > "$fail_bin/readlink" <<'READLINK_FAIL'
+#!/bin/sh
+exit 1
+READLINK_FAIL
+chmod +x "$tools/npm" "$fail_bin/readlink"
+make_launcher() {
+  launcher_bin=$1
+  target=$2
+  mkdir -p "$launcher_bin" "$(dirname "$target")"
+  cp "$tools/claude-template" "$target"
+  chmod +x "$target"
+  ln -s "$target" "$launcher_bin/claude"
+}
+npm_bin="$base/.nvm/versions/node/v22/bin"
+npm_target="$base/.nvm/versions/node/v22/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+make_launcher "$npm_bin" "$npm_target"
+__MAC_READLINK_FIXTURE__
+run_update() {
+  __UPDATE_COMMAND__
+}
+export npm_config_allow_scripts=previous-package
+export npm_config_ignore_scripts=true
+export npm_config_include=prod
+parent='previous-package|true|prod'
+scoped='@anthropic-ai/claude-code|false|optional'
+fallback="fallback|$parent|i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
+check_update() {
+  name=$1
+  expected_scope=$2
+  primary_exit=$3
+  fallback_exit=$4
+  expected_status=$5
+  export CC_SWITCH_TEST_CLAUDE_EXIT=$primary_exit
+  export CC_SWITCH_TEST_FALLBACK_EXIT=$fallback_exit
+  if actual=$(run_update 2> "$fixture/stderr"); then status=0; else status=$?; fi
+  expected="primary|$expected_scope
+child|$expected_scope|install -g @anthropic-ai/claude-code@latest"
+  if [ "$primary_exit" != 0 ]; then expected="$expected
+$fallback"; fi
+  if [ "$status" != "$expected_status" ] || [ "$actual" != "$expected" ]; then
+    printf '%s: status %s, expected %s\nactual:\n%s\nexpected:\n%s\n' "$name" "$status" "$expected_status" "$actual" "$expected" >&2
+    cat "$fixture/stderr" >&2
+    exit 1
+  fi
+  [ "$npm_config_allow_scripts|$npm_config_ignore_scripts|$npm_config_include" = "$parent" ] || exit 98
+}
+export PATH="$npm_bin:$readlink_bin:$tools"
+check_update npm-primary-success "$scoped" 0 42 0
+check_update npm-fallback-success "$scoped" 1 0 0
+check_update npm-fallback-failure "$scoped" 1 42 42
+export PATH="$fail_bin:$npm_bin:$readlink_bin:$tools"
+check_update failed-source-probe "$parent" 0 42 0
+__SOURCE_CASES__
+# If command -v cannot locate Claude, the original npm fallback remains usable.
+export PATH="$readlink_bin:$tools"
+export CC_SWITCH_TEST_FALLBACK_EXIT=0
+if actual=$(run_update 2> "$fixture/stderr"); then status=0; else status=$?; fi
+[ "$status" = 0 ] && [ "$actual" = "$fallback" ] || exit 99
+[ "$npm_config_allow_scripts|$npm_config_ignore_scripts|$npm_config_include" = "$parent" ] || exit 98
+printf 'all WSL Claude update cases passed\n'
+"#;
+            // Some macOS versions lack GNU readlink -f. Use native readlink first;
+            // if unsupported, emulate only the absolute symlinks this fixture creates.
+            let mac_readlink = if cfg!(target_os = "macos") {
+                r#"if [ "$(readlink -f -- "$npm_bin/claude" 2>/dev/null || :)" != "$npm_target" ]; then
+  cat > "$readlink_bin/readlink" <<'READLINK'
+#!/bin/sh
+[ "$1" = -f ] || exit 90
+shift
+[ "$1" = -- ] && shift
+[ "$#" = 1 ] && [ -e "$1" ] || exit 1
+if [ -L "$1" ]; then /usr/bin/readlink "$1"; else printf '%s\n' "$1"; fi
+READLINK
+  chmod +x "$readlink_bin/readlink"
+fi"#
+            } else {
+                ""
+            };
+            let cases = [
+                (
+                    "system-npm",
+                    "/usr/bin",
+                    "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+                    true,
+                ),
+                (
+                    "native",
+                    "/.local/bin",
+                    "/.local/share/claude/versions/2.1.146",
+                    false,
+                ),
+                (
+                    "native-in-node-manager",
+                    "/native/.nvm/versions/node/v22/bin",
+                    "/native/.local/share/claude/versions/2.1.146",
+                    false,
+                ),
+                (
+                    "bun",
+                    "/.bun/bin",
+                    "/.bun/install/global/node_modules/@anthropic-ai/claude-code/cli.js",
+                    false,
+                ),
+                (
+                    "custom-bun",
+                    "/custom-bun/bin",
+                    "/custom-bun/install/global/node_modules/@anthropic-ai/claude-code/cli.js",
+                    false,
+                ),
+                (
+                    "volta-launcher",
+                    "/.volta/bin",
+                    "/volta-package/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+                    false,
+                ),
+                (
+                    "volta-target",
+                    "/volta-target-bin",
+                    "/.volta/tools/image/packages/claude/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+                    false,
+                ),
+                (
+                    "pnpm",
+                    "/.local/share/pnpm/bin",
+                    "/.local/share/pnpm/global/5/node_modules/@anthropic-ai/claude-code/cli.js",
+                    false,
+                ),
+                (
+                    "custom-pnpm-store",
+                    "/custom-pnpm/bin",
+                    "/custom-pnpm/store/node_modules/.pnpm/claude-code/node_modules/@anthropic-ai/claude-code/cli.js",
+                    false,
+                ),
+                (
+                    "homebrew",
+                    "/homebrew/bin",
+                    "/homebrew/Cellar/claude-code/2.1.146/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+                    false,
+                ),
+                (
+                    "homebrew-cask",
+                    "/cask/bin",
+                    "/Caskroom/claude-code/2.1.146/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+                    false,
+                ),
+                ("unknown", "/custom/bin", "/custom/lib/claude", false),
+            ];
+            let mut source_cases = String::new();
+            for (name, bin, target, npm) in cases {
+                let expected_scope = if npm { "$scoped" } else { "$parent" };
+                source_cases.push_str(&format!(
+                    "make_launcher \"$base{bin}\" \"$base{target}\"\nexport PATH=\"$base{bin}:$readlink_bin:$tools\"\ncheck_update {name} \"{expected_scope}\" 0 42 0\n"
+                ));
+            }
+            fixture
+                .replace("__MAC_READLINK_FIXTURE__", mac_readlink)
+                .replace("__UPDATE_COMMAND__", &wsl_claude_update_command())
+                .replace("__SOURCE_CASES__", &source_cases)
+        }
+
+        fn assert_fixture_passed(output: Output) {
+            assert!(
+                output.status.success(),
+                "fixture failed with {:?}\nstdout: {}\nstderr: {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stdout)
+                    .contains("all WSL Claude update cases passed"),
+                "fixture must finish all source, scope, and exit-code cases"
+            );
+        }
+
+        #[test]
+        fn wsl_claude_update_uses_posix_chain() {
+            let command = wsl_claude_update_command();
+            assert!(command.starts_with("sh -c '"));
+            assert!(command.ends_with(&format!(
+                " || {}",
+                npm_install_command_for("claude").unwrap()
+            )));
+            assert!(!command.contains("call "), "{command}");
+            #[cfg(target_os = "windows")]
+            {
+                assert_eq!(
+                    wsl_tool_action_shell_command("claude", ToolLifecycleAction::Update),
+                    Some(command.clone())
+                );
+                let line =
+                    build_wsl_tool_action_line("Ubuntu", &command, Some("fish"), None).unwrap();
+                assert!(line.starts_with("wsl.exe -d Ubuntu -- fish -lc "));
+                assert!(!line.contains("call "), "{line}");
+            }
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn wsl_claude_update_preserves_scope_and_fallback() {
+            let output = Command::new("/bin/sh")
+                .args(["-c", &fixture_script()])
+                .output()
+                .expect("POSIX fixture should start");
+            assert_fixture_passed(output);
+        }
+
+        #[cfg(target_os = "windows")]
+        fn run_wsl_script(distro: &str, script: &str) -> Output {
+            use std::io::Write;
+            use std::os::windows::process::CommandExt;
+            use std::process::Stdio;
+
+            let mut child = Command::new("wsl.exe")
+                .args(["-d", distro, "--", "sh", "-s"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("real wsl.exe should start");
+            child
+                .stdin
+                .take()
+                .expect("WSL stdin should be piped")
+                .write_all(script.as_bytes())
+                .expect("fixture should reach the WSL distro");
+            child.wait_with_output().expect("WSL fixture should finish")
+        }
+
+        #[cfg(target_os = "windows")]
+        fn assert_wsl_batch_roundtrip(distro: &str) {
+            use std::os::windows::process::CommandExt;
+
+            let fixture = fixture_script();
+            let (setup, _) = fixture
+                .split_once("run_update() {")
+                .expect("fixture should expose its setup before running updates");
+            let setup = format!("{setup}\ntrap - EXIT HUP INT TERM\nprintf '%s\\n' \"$fixture\"\n");
+            let staged = run_wsl_script(distro, &setup);
+            assert!(
+                staged.status.success(),
+                "WSL setup failed: {}",
+                String::from_utf8_lossy(&staged.stderr)
+            );
+            let linux_temp = String::from_utf8(staged.stdout)
+                .expect("Linux fixture path should be UTF-8")
+                .trim()
+                .to_string();
+            assert!(
+                linux_temp.starts_with('/') && !linux_temp.chars().any(char::is_control),
+                "fixture should return one absolute Linux path"
+            );
+            let npm_bin = format!("{linux_temp}/home dir's tree/.nvm/versions/node/v22/bin");
+            let tools = format!("{linux_temp}/tools");
+            let script_dir = tempfile::tempdir().expect("native batch tempdir should exist");
+            let bat = script_dir.path().join("claude-wsl.bat");
+            let mut results = Vec::new();
+            for (primary_exit, fallback_exit, expected_status) in
+                [(0, 42, 0), (1, 0, 0), (1, 42, 42)]
+            {
+                let payload = format!(
+                    "export PATH={}:{}; export npm_config_allow_scripts=previous-package npm_config_ignore_scripts=true npm_config_include=prod CC_SWITCH_TEST_CLAUDE_EXIT={primary_exit} CC_SWITCH_TEST_FALLBACK_EXIT={fallback_exit}; {}",
+                    shell_single_quote(&npm_bin),
+                    shell_single_quote(&tools),
+                    wsl_claude_update_command()
+                );
+                let line = build_wsl_tool_action_line(distro, &payload, Some("sh"), Some("-c"))
+                    .expect("fixture should build the production WSL batch line");
+                assert!(!line.contains("call "), "{line}");
+                std::fs::write(
+                    &bat,
+                    format!("@echo off\r\n{line}\r\nexit /b %errorlevel%\r\n"),
+                )
+                .expect("native batch fixture should be written");
+                let output = Command::new("cmd")
+                    .arg("/C")
+                    .arg(&bat)
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output()
+                    .expect("real cmd should run the production WSL command line");
+                results.push((primary_exit, expected_status, output));
+            }
+            let cleanup = run_wsl_script(
+                distro,
+                &format!("rm -rf {}\n", shell_single_quote(&linux_temp)),
+            );
+            assert!(
+                cleanup.status.success(),
+                "Linux fixture cleanup should finish"
+            );
+            let primary = "primary|@anthropic-ai/claude-code|false|optional\nchild|@anthropic-ai/claude-code|false|optional|install -g @anthropic-ai/claude-code@latest\n";
+            let fallback = "fallback|previous-package|true|prod|i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code\n";
+            for (primary_exit, expected_status, output) in results {
+                let expected = if primary_exit == 0 {
+                    primary.to_string()
+                } else {
+                    format!("{primary}{fallback}")
+                };
+                assert_eq!(
+                    output.status.code(),
+                    Some(expected_status),
+                    "batch/WSL exit code: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(
+                    String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+                    expected,
+                    "batch/WSL must preserve the complete quoted helper payload"
+                );
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        #[test]
+        #[ignore = "Requires real Windows/WSL and CC_SWITCH_WSL_DISTRO"]
+        fn wsl_claude_update_preserves_scope_and_fallback() {
+            let distro = std::env::var("CC_SWITCH_WSL_DISTRO")
+                .expect("CC_SWITCH_WSL_DISTRO must name an installed WSL distro");
+            assert!(is_valid_wsl_distro_name(&distro), "invalid WSL distro");
+            assert_fixture_passed(run_wsl_script(&distro, &fixture_script()));
+            assert_wsl_batch_roundtrip(&distro);
         }
     }
 

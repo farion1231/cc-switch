@@ -285,3 +285,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
+
+      - name: Run WSL2 Claude update command regression
+        # Batch launchers used by the fallback need Windows-native temp paths.
+        # Reuse the test binary to avoid rebuilding after the filesystem contract.
+        env:
+          CC_SWITCH_WSL_DISTRO: Ubuntu-24.04
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        shell: pwsh
+        run: |
+          $testName = "commands::misc::tests::claude_update_wsl::wsl_claude_update_preserves_scope_and_fallback"
+          $testList = & $env:CC_SWITCH_TEST_EXE --list --ignored
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $expected = "${testName}: test"
+          if ($testList -notcontains $expected) {
+            throw "Expected ignored test was not discovered: $testName"
+          }
+          & $env:CC_SWITCH_TEST_EXE $testName --ignored --exact --nocapture
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
