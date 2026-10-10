@@ -1562,6 +1562,18 @@ const CODEX_CLI_FIXED_CANDIDATES: &[&str] = &[
     "/home/linuxbrew/.linuxbrew/bin/codex", // Linux Homebrew
 ];
 
+/// macOS 桌面版的 bundle 名，新的在前：改名前叫 Codex.app，改名迁移有时会两份都留着
+/// （openai/codex#48052），这时 ChatGPT.app 是新的那份。
+const CODEX_DESKTOP_APP_BUNDLES: &[&str] = &["ChatGPT.app", "Codex.app"];
+
+/// bundle 里自带的 Codex CLI，新结构在前：`codex-cli/bin/codex` 是指向同目录 `CodexCLI.app`
+/// 的垫片脚本，更早的版本直接放在 `Resources/codex`。只装了桌面版的人 PATH 上没有 `codex`，
+/// 取 Codex 自带的模型列表只能靠它（#8087）。
+const CODEX_DESKTOP_CLI_IN_BUNDLE: &[&str] = &[
+    "Contents/Resources/codex-cli/bin/codex",
+    "Contents/Resources/codex",
+];
+
 fn push_codex_cli_candidate(
     candidates: &mut Vec<PathBuf>,
     seen: &mut HashSet<String>,
@@ -1707,10 +1719,78 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
         push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
     }
 
+    let home = get_home_dir();
     push_env_codex_cli_candidates(&mut candidates, &mut seen);
-    push_home_codex_cli_candidates(&mut candidates, &mut seen, &get_home_dir());
+    push_home_codex_cli_candidates(&mut candidates, &mut seen, &home);
+    push_desktop_codex_cli_candidates(&mut candidates, &mut seen, &home);
 
     candidates
+}
+
+/// 桌面版自带的 CLI。排在最后：装了独立 CLI 的人照旧先用独立的那个。
+///
+/// - macOS：`/Applications` 和 `~/Applications` 下的 ChatGPT.app、Codex.app，新 bundle
+///   排在前面，不管装在哪个目录（别的系统上不存在，自然跳过）；
+/// - Windows：`%LOCALAPPDATA%\OpenAI\Codex\bin\<版本>\codex.exe`，版本目录随桌面版更新而变。
+fn push_desktop_codex_cli_candidates(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    home: &Path,
+) {
+    for bundle in CODEX_DESKTOP_APP_BUNDLES {
+        for applications in [PathBuf::from("/Applications"), home.join("Applications")] {
+            for layout in CODEX_DESKTOP_CLI_IN_BUNDLE {
+                push_existing_codex_cli_candidate(
+                    candidates,
+                    seen,
+                    applications.join(bundle).join(layout),
+                );
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
+            push_codex_cli_candidates_newest_first(
+                candidates,
+                seen,
+                &PathBuf::from(local_appdata)
+                    .join("OpenAI")
+                    .join("Codex")
+                    .join("bin"),
+                "codex.exe",
+            );
+        }
+    }
+}
+
+/// `versions_dir` 下各个版本目录里的 `exe`，按它的修改时间从新到旧（相同时按目录名）。
+/// 不按目录名排：版本号按字符串比，`0.99.0` 会排在 `0.153.4` 前面。
+#[cfg(any(windows, test))]
+fn push_codex_cli_candidates_newest_first(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    versions_dir: &Path,
+    exe: &str,
+) {
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return;
+    };
+
+    let mut discovered = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let candidate = entry.path().join(exe);
+            let modified = fs::metadata(&candidate).ok()?.modified().ok()?;
+            Some((modified, candidate))
+        })
+        .collect::<Vec<_>>();
+
+    discovered.sort_by(|(a_time, a), (b_time, b)| b_time.cmp(a_time).then_with(|| a.cmp(b)));
+    for (_, candidate) in discovered {
+        push_codex_cli_candidate(candidates, seen, candidate);
+    }
 }
 
 fn codex_bundled_models_command(candidate: &Path) -> Command {
@@ -5497,6 +5577,101 @@ wire_api = "responses"
             1,
             "duplicate candidates should be removed"
         );
+    }
+
+    fn create_cli_candidate(path: &Path) {
+        std::fs::create_dir_all(path.parent().expect("candidate parent"))
+            .expect("create candidate parent");
+        std::fs::write(path, "").expect("create candidate");
+    }
+
+    fn desktop_cli(applications: &Path, bundle: &str, layout: &str) -> PathBuf {
+        applications.join(bundle).join(layout)
+    }
+
+    #[test]
+    fn codex_cli_candidates_include_desktop_app_bundles_and_layouts() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let applications = temp_home.path().join("Applications");
+        let current_layout = CODEX_DESKTOP_CLI_IN_BUNDLE[0];
+        let legacy_layout = CODEX_DESKTOP_CLI_IN_BUNDLE[1];
+        let chatgpt_current = desktop_cli(&applications, "ChatGPT.app", current_layout);
+        let chatgpt_legacy = desktop_cli(&applications, "ChatGPT.app", legacy_layout);
+        // 改名前的 Codex.app 只有旧结构（openai/codex#48052）。
+        let codex_legacy = desktop_cli(&applications, "Codex.app", legacy_layout);
+        for path in [&chatgpt_current, &chatgpt_legacy, &codex_legacy] {
+            create_cli_candidate(path);
+        }
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_desktop_codex_cli_candidates(&mut candidates, &mut seen, temp_home.path());
+
+        let position = |path: &Path| {
+            candidates
+                .iter()
+                .position(|candidate| candidate == path)
+                .unwrap_or_else(|| panic!("missing desktop candidate {}", path.display()))
+        };
+        assert!(position(&chatgpt_current) < position(&chatgpt_legacy));
+        // 两份都在时 ChatGPT.app 是新的那份，先用它。
+        assert!(position(&chatgpt_legacy) < position(&codex_legacy));
+    }
+
+    fn set_mtime(path: &Path, time: std::time::SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open")
+            .set_times(std::fs::FileTimes::new().set_modified(time))
+            .expect("set mtime");
+    }
+
+    #[test]
+    fn codex_cli_candidates_try_the_newest_desktop_version_first() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
+        let now = std::time::SystemTime::now();
+        // 按目录名倒序排的话 0.99.0 会排在前面。
+        let older = root.join("0.99.0").join("codex.exe");
+        let newer = root.join("0.162.0").join("codex.exe");
+        create_cli_candidate(&older);
+        create_cli_candidate(&newer);
+        set_mtime(&older, now - std::time::Duration::from_secs(3600));
+        set_mtime(&newer, now);
+        std::fs::create_dir_all(root.join("logs")).expect("create dir without codex.exe");
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_codex_cli_candidates_newest_first(&mut candidates, &mut seen, root, "codex.exe");
+
+        assert_eq!(candidates, vec![newer, older]);
+    }
+
+    #[test]
+    #[serial]
+    fn codex_cli_candidates_try_the_desktop_app_cli_after_standalone_installs() {
+        let test_home = CodexLiveTestHome::new();
+        let home = test_home._dir.path();
+        let standalone = home.join(".volta/bin/codex");
+        let desktop = desktop_cli(
+            &home.join("Applications"),
+            "ChatGPT.app",
+            CODEX_DESKTOP_CLI_IN_BUNDLE[0],
+        );
+        create_cli_candidate(&standalone);
+        create_cli_candidate(&desktop);
+
+        let candidates = codex_cli_candidates();
+        let position = |path: &Path| {
+            candidates
+                .iter()
+                .position(|candidate| candidate == path)
+                .unwrap_or_else(|| panic!("missing candidate {}", path.display()))
+        };
+
+        // 装了独立 CLI 的人照旧先用它，桌面版的只做兜底。
+        assert!(position(&standalone) < position(&desktop));
     }
 
     #[test]
