@@ -14,6 +14,7 @@
 //! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
 
 use crate::codex_config::get_codex_config_dir;
+use crate::codex_rollout_file;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
@@ -29,7 +30,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
@@ -456,6 +457,7 @@ pub(crate) fn clear_codex_replay_caches() {
 }
 
 fn is_rollout_filename(file_name: &str) -> bool {
+    let file_name = codex_rollout_file::logical_file_name(file_name);
     if !file_name.starts_with("rollout-") || !file_name.ends_with(".jsonl") {
         return false;
     }
@@ -595,7 +597,8 @@ fn non_empty_string(value: Option<&serde_json::Value>) -> Option<String> {
 }
 
 fn thread_id_from_filename(path: &Path) -> Option<String> {
-    let stem = path.file_stem()?.to_str()?;
+    let logical = codex_rollout_file::logical_path(path);
+    let stem = logical.file_stem()?.to_str()?;
     let candidate = stem.get(stem.len().checked_sub(36)?..)?;
     uuid::Uuid::parse_str(candidate)
         .ok()
@@ -610,7 +613,8 @@ fn thread_id_from_filename(path: &Path) -> Option<String> {
 /// 向该文件追加。root meta 的 `id` 始终是原线程 ID，一致性校验需同时
 /// 接受两个 UUID。
 fn leading_thread_id_from_filename(path: &Path) -> Option<String> {
-    let stem = path.file_stem()?.to_str()?;
+    let logical = codex_rollout_file::logical_path(path);
+    let stem = logical.file_stem()?.to_str()?;
     let len = stem.len();
     // 布局尾部：…<uuidA>_<uuidB>。uuidB 占 36 字符，其前是 '_'（共 37）
     if !stem.get(len.checked_sub(37)?..)?.starts_with('_') {
@@ -687,14 +691,16 @@ fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
 /// 单个同步 pass 的共享状态。
 ///
 /// - `cursors`：pass 开始时一次性预载的 `session_log_sync` 快照，替代逐文件
-///   SELECT（尤其是 archived 继承的 `substr` 后缀匹配无法走索引，逐文件跑等于
+///   SELECT（尤其是游标继承要按文件名查同一 rollout 的其他路径，逐文件跑等于
 ///   每 pass 全表扫 N 次）。快照语义：同 pass 内其他文件刚写入的游标对后续
-///   archived 继承不可见——影响仅是多一轮由 request_id 去重兜底的重扫，
+///   游标继承不可见——影响仅是多一轮由 request_id 去重兜底的重扫，
 ///   不丢数据、不双算。
 /// - `pricing`：模型定价 pass 级缓存。定价表在 pass 进行中被修改时本 pass
 ///   仍用旧价，下一个同步 pass 生效。
 struct CodexSyncPass {
     cursors: HashMap<String, (i64, i64)>,
+    /// rollout 逻辑文件名（去掉 `.zst`）→ 记过游标的路径，供游标继承按名查找
+    rollout_cursor_paths: HashMap<String, Vec<String>>,
     byte_offsets: HashMap<String, Option<i64>>,
     pricing: HashMap<String, Option<ModelPricing>>,
 }
@@ -720,53 +726,57 @@ impl CodexSyncPass {
                 Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
             })?
             .collect::<Result<HashMap<_, _>, _>>()?;
+        let mut rollout_cursor_paths: HashMap<String, Vec<String>> = HashMap::new();
+        for path in cursors.keys() {
+            let name = codex_rollout_file::logical_file_name(path);
+            if is_rollout_filename(name) {
+                rollout_cursor_paths
+                    .entry(name.to_string())
+                    .or_default()
+                    .push(path.clone());
+            }
+        }
         Ok(Self {
             cursors,
+            rollout_cursor_paths,
             byte_offsets,
             pricing: HashMap::new(),
         })
     }
 }
 
+/// 读游标；同一个 rollout 记在别的路径下的游标读得更远时继承它。
+///
+/// 路径会变的情况：Codex 归档 / 取消归档会移动文件，压缩成 `.jsonl.zst`
+/// 或恢复对话时解压回 `.jsonl` 会换后缀。行号只看内容，各形态通用。
+/// 🔴 这是压缩文件不被重复计费的唯一屏障：request_id 去重只覆盖明细保留的
+/// 30 天，而被压缩的文件至少 7 天没动、往往更老。
 fn get_codex_sync_state(
     db: &Database,
     file_path: &Path,
-    cursors: &HashMap<String, (i64, i64)>,
+    pass: &CodexSyncPass,
 ) -> Result<(i64, i64), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
-    let state = cursors.get(&file_path_str).copied().unwrap_or((0, 0));
-    if state != (0, 0)
-        || file_path
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            != Some("archived_sessions")
-    {
-        return Ok(state);
-    }
-
-    let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
+    let state = pass.cursors.get(&file_path_str).copied().unwrap_or((0, 0));
+    let logical_name = codex_rollout_file::logical_file_name(&file_path_str);
+    let Some(paths) = pass.rollout_cursor_paths.get(logical_name) else {
         return Ok(state);
     };
-    let slash_suffix = format!("/{file_name}");
-    let backslash_suffix = format!("\\{file_name}");
     // 与原 SQL 等价：ORDER BY last_line_offset DESC, last_modified DESC LIMIT 1
     // → 在快照上按 (offset, modified) 取最大。
-    let inherited = cursors
+    let inherited = paths
         .iter()
-        .filter(|(path, _)| {
-            path.as_str() != file_path_str
-                && (path.ends_with(&slash_suffix) || path.ends_with(&backslash_suffix))
-        })
-        .map(|(_, &(modified, offset))| (offset, modified))
+        .filter(|path| path.as_str() != file_path_str)
+        .filter_map(|path| pass.cursors.get(path))
+        .map(|&(modified, offset)| (offset, modified))
         .max();
 
     match inherited {
-        Some((offset, modified)) => {
+        Some((offset, modified)) if offset > state.1 => {
             update_sync_state(db, &file_path_str, modified, offset)?;
             Ok((modified, offset))
         }
-        None => Ok(state),
+        _ => Ok(state),
     }
 }
 
@@ -946,7 +956,7 @@ fn collect_codex_session_files(codex_dir: &Path) -> Vec<PathBuf> {
         if let Ok(entries) = fs::read_dir(&archived_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                if codex_rollout_file::is_rollout_file(&path) {
                     files.push(path);
                 }
             }
@@ -954,7 +964,8 @@ fn collect_codex_session_files(codex_dir: &Path) -> Vec<PathBuf> {
     }
 
     files.sort();
-    files
+    // 压缩 / 解压的瞬间两种形态并存时只读普通形态，避免同一线程出现两个候选
+    codex_rollout_file::dedupe_siblings(files)
 }
 
 fn build_rollout_index(files: &[PathBuf]) -> RolloutIndex {
@@ -981,7 +992,7 @@ fn collect_jsonl_recursive(dir: &Path, files: &mut Vec<PathBuf>, depth: u32, max
         let path = entry.path();
         if path.is_dir() && depth < max_depth {
             collect_jsonl_recursive(&path, files, depth + 1, max_depth);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+        } else if codex_rollout_file::is_rollout_file(&path) {
             files.push(path);
         }
     }
@@ -993,7 +1004,19 @@ fn parse_codex_file(
 ) -> Result<ParsedCodexFile, AppError> {
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
-    let mut reader = BufReader::new(file);
+    // 压缩文件（`.jsonl.zst`）的 observed_bytes 记磁盘上的压缩大小：
+    // 它只用来和下轮的文件大小比对，记解压后长度会让每轮都重新解压。
+    let compressed_size = if codex_rollout_file::is_compressed(file_path) {
+        Some(
+            file.metadata()
+                .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?
+                .len(),
+        )
+    } else {
+        None
+    };
+    let mut reader = codex_rollout_file::reader_from_file(file_path, file)
+        .map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
     let mut root_meta_seen = false;
     let mut root_timestamp = None;
     let mut meta_thread_id = None;
@@ -1238,7 +1261,9 @@ fn parse_codex_file(
         parent,
         token_events,
         line_offset,
-        observed_bytes,
+        observed_bytes: compressed_size
+            .and_then(|size| i64::try_from(size).ok())
+            .unwrap_or(observed_bytes),
         has_billable_tokens,
     })
 }
@@ -1269,7 +1294,9 @@ fn parent_signatures_before(
 
     // 必须扫描完整父文件，不能在首个未来时间戳处 break：rollout 写入顺序
     // 不承诺时间戳严格单调。缓存完整时间线后，不同 child cutoff 只需内存过滤。
-    for line in BufReader::new(file).lines() {
+    let reader = codex_rollout_file::reader_from_file(parent_path, file)
+        .map_err(|error| format!("无法打开父 rollout {}: {error}", parent_path.display()))?;
+    for line in reader.lines() {
         let Ok(line) = line else {
             continue;
         };
@@ -1449,7 +1476,7 @@ fn sync_single_codex_file(
     let file_size = metadata.len();
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_codex_sync_state(db, file_path, &pass.cursors)?;
+    let (last_modified, last_offset) = get_codex_sync_state(db, file_path, pass)?;
 
     // Windows may keep mtime unchanged while Codex holds its write handle open.
     // Legacy cursors have no byte offset: rescan once to catch up and persist it.
@@ -3401,6 +3428,107 @@ mod tests {
         assert_eq!(get_sync_state(&db, &archived_file.to_string_lossy())?.1, 4);
 
         Ok(())
+    }
+
+    fn compress_rollout(plain: &Path) -> PathBuf {
+        let compressed = PathBuf::from(format!("{}.zst", plain.display()));
+        let bytes = fs::read(plain).unwrap();
+        fs::write(
+            &compressed,
+            zstd::stream::encode_all(bytes.as_slice(), 3).unwrap(),
+        )
+        .unwrap();
+        fs::remove_file(plain).unwrap();
+        compressed
+    }
+
+    fn decompress_rollout(compressed: &Path) -> PathBuf {
+        let plain = codex_rollout_file::logical_path(compressed);
+        let text = codex_rollout_file::read_to_string(compressed).unwrap();
+        fs::write(&plain, text).unwrap();
+        fs::remove_file(compressed).unwrap();
+        plain
+    }
+
+    fn prune_detail_rows(db: &Database) -> Result<(), AppError> {
+        let conn = lock_conn!(db.conn);
+        conn.execute("DELETE FROM proxy_request_logs", [])?;
+        Ok(())
+    }
+
+    /// Codex 压缩冷 rollout、恢复对话时再解压回来：两次换路径都靠游标继承防重复，
+    /// 中间把明细删掉（模拟 30 天裁剪），request_id 去重兜不住。
+    #[test]
+    fn test_compressed_rollout_round_trip_never_double_counts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let sessions = temp.path().join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let plain = rollout_path(&sessions, PARENT_ID);
+        let mut lines = vec![
+            session_meta(PARENT_ID),
+            turn_context(),
+            token_count(100, 50, 10),
+        ];
+        write_jsonl(&plain, &lines);
+        assert_eq!(sync_test_file(&db, &plain, &[&plain])?.imported, 1);
+
+        // CC Switch 没赶上第二条用量，文件就被压缩了
+        lines.push(token_count(200, 100, 20));
+        write_jsonl(&plain, &lines);
+        let compressed = compress_rollout(&plain);
+        prune_detail_rows(&db)?;
+        assert_eq!(
+            sync_test_file(&db, &compressed, &[&compressed])?.imported,
+            1
+        );
+        assert_unchanged_codex_file_is_skipped(&db, &compressed)?;
+
+        // 恢复对话：解压回普通形态并追加；普通形态的旧游标落后于压缩形态
+        prune_detail_rows(&db)?;
+        let plain = decompress_rollout(&compressed);
+        lines.push(token_count(300, 150, 30));
+        write_jsonl(&plain, &lines);
+        assert_eq!(sync_test_file(&db, &plain, &[&plain])?.imported, 1);
+
+        let conn = lock_conn!(db.conn);
+        let request_ids: Vec<String> = conn
+            .prepare("SELECT request_id FROM proxy_request_logs")?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        assert_eq!(
+            request_ids,
+            vec![format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:3")]
+        );
+        drop(conn);
+        assert_eq!(get_sync_state(&db, &plain.to_string_lossy())?.1, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn test_compressed_rollout_filename_parsing() {
+        let plain = PathBuf::from(format!("/s/rollout-2026-07-10T03-00-00-{PARENT_ID}.jsonl"));
+        let compressed = PathBuf::from(format!("{}.zst", plain.display()));
+        assert_eq!(
+            thread_id_from_filename(&compressed),
+            thread_id_from_filename(&plain)
+        );
+        assert!(thread_id_from_filename(&compressed).is_some());
+        assert!(is_rollout_filename(
+            compressed.file_name().unwrap().to_str().unwrap()
+        ));
+
+        let two_segment = PathBuf::from(format!(
+            "/s/rollout-2026-08-26T17-18-13-{PARENT_ID}_{CHILD_A_ID}.jsonl.zst"
+        ));
+        assert_eq!(
+            leading_thread_id_from_filename(&two_segment).as_deref(),
+            Some(PARENT_ID)
+        );
+        assert_eq!(
+            thread_id_from_filename(&two_segment).as_deref(),
+            Some(CHILD_A_ID)
+        );
     }
 
     #[test]

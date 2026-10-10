@@ -49,6 +49,21 @@ export const settingsApi = {
     return await invoke("codex_forces_multi_agent_v2");
   },
 
+  /** Codex 会话压缩开关（config.toml 的 [features] local_thread_store_compression） */
+  async getCodexSessionCompression(): Promise<boolean> {
+    return await invoke("get_codex_session_compression");
+  },
+
+  /** 开关 Codex 会话压缩，返回写入后的状态 */
+  async setCodexSessionCompression(enabled: boolean): Promise<boolean> {
+    return await invoke("set_codex_session_compression", { enabled });
+  },
+
+  /** Codex 会话目录当前占用的字节数 */
+  async getCodexSessionsDiskUsage(): Promise<number> {
+    return await invoke("get_codex_sessions_disk_usage");
+  },
+
   /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
   async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
     return await invoke("restore_codex_unified_history");
