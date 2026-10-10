@@ -461,6 +461,8 @@
         "description": "Control the output level for application diagnostic logs",
         "enabled": "Enable Diagnostic Logs",
         "enabledDescription": "Controls cc-switch.log; request usage records and crash.log are unaffected",
+        "openLog": "Open log",
+        "openLogFailed": "Failed to open the log location: {{error}}",
         "level": "Log Level",
         "levelDescription": "Set the minimum log level to output",
         "levels": {

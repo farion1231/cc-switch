@@ -461,6 +461,8 @@
         "description": "控制应用诊断日志的输出级别",
         "enabled": "启用应用诊断日志",
         "enabledDescription": "控制 cc-switch.log；不影响请求用量记录和 crash.log",
+        "openLog": "打开日志",
+        "openLogFailed": "打开日志所在位置失败：{{error}}",
         "level": "日志级别",
         "levelDescription": "设置输出的最低日志级别",
         "levels": {

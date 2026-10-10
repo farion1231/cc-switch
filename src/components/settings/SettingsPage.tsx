@@ -10,6 +10,7 @@ import {
 import {
   Database,
   Folder,
+  FolderOpen,
   Globe,
   Info,
   Loader2,
@@ -308,6 +309,19 @@ export function SettingsPage({
     }
   }, [afterSave, t]);
 
+  const handleRevealLogFile = useCallback(async () => {
+    try {
+      await settingsApi.revealAppLogFile();
+    } catch (error) {
+      console.error("[SettingsPage] Failed to reveal log file", error);
+      toast.error(
+        t("settings.advanced.logConfig.openLogFailed", {
+          error: String(error),
+        }),
+      );
+    }
+  }, [t]);
+
   // 通用设置即时保存（无需手动点击）
   // 使用 autoSaveSettings 避免误触发系统 API（开机自启、Claude 插件等）
   // 返回保存是否成功：需要在保存成功后追加动作的调用方（如统一会话历史
@@ -490,6 +504,16 @@ export function SettingsPage({
                 title: t("settings.advanced.logConfig.title"),
                 body: t("settings.advanced.logConfig.description"),
               }}
+              actions={
+                <Button
+                  variant="neutral"
+                  size="compact"
+                  onClick={() => void handleRevealLogFile()}
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  {t("settings.advanced.logConfig.openLog")}
+                </Button>
+              }
             >
               <div className="rounded-panel border border-border bg-surface p-5">
                 <LogConfigPanel />

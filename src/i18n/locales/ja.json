@@ -461,6 +461,8 @@
         "description": "アプリ診断ログの出力レベルを制御",
         "enabled": "診断ログを有効化",
         "enabledDescription": "cc-switch.log を制御します。リクエスト使用量記録と crash.log には影響しません",
+        "openLog": "ログを開く",
+        "openLogFailed": "ログの場所を開けませんでした：{{error}}",
         "level": "ログレベル",
         "levelDescription": "出力する最小ログレベルを設定",
         "levels": {

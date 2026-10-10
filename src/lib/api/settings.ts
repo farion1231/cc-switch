@@ -113,6 +113,10 @@ export const settingsApi = {
     await invoke("open_app_config_folder");
   },
 
+  async revealAppLogFile(): Promise<void> {
+    await invoke("reveal_app_log_file");
+  },
+
   async getAppConfigDirOverride(): Promise<string | null> {
     return await invoke("get_app_config_dir_override");
   },

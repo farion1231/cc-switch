@@ -461,6 +461,8 @@
         "description": "控制應用程式診斷日誌的輸出層級",
         "enabled": "啟用應用程式診斷日誌",
         "enabledDescription": "控制 cc-switch.log；不影響請求用量記錄和 crash.log",
+        "openLog": "開啟日誌",
+        "openLogFailed": "開啟日誌所在位置失敗：{{error}}",
         "level": "日誌層級",
         "levelDescription": "設定輸出的最低日誌層級",
         "levels": {
