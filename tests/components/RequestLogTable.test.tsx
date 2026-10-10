@@ -86,23 +86,46 @@ describe("RequestLogTable", () => {
     );
   });
 
-  it("shows ten columns by default with first token immediately before speed", () => {
+  it("shows nine columns by default without first-token timing", () => {
     showLogs([requestLog()]);
     render(
       <RequestLogTable range={{ preset: "today" }} refreshIntervalMs={0} />,
     );
 
     const headers = screen.getAllByRole("columnheader");
+    expect(headers).toHaveLength(9);
+    expect(headers[8]).toHaveTextContent("usage.speed");
+    expect(
+      screen.queryByRole("columnheader", { name: "usage.firstToken" }),
+    ).toBeNull();
+    expect(
+      within(screen.getAllByRole("row")[1]).getAllByRole("cell"),
+    ).toHaveLength(9);
+    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "620px" });
+  });
+
+  it("shows first-token timing after speed when explicitly enabled", () => {
+    showLogs([requestLog()]);
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        refreshIntervalMs={0}
+        columnVisibility={{ firstToken: true }}
+      />,
+    );
+
+    const headers = screen.getAllByRole("columnheader");
     expect(headers).toHaveLength(10);
-    expect(headers[8]).toHaveTextContent("usage.firstToken");
-    expect(headers[9]).toHaveTextContent("usage.speed");
+    expect(headers[8]).toHaveTextContent("usage.speed");
+    expect(headers[9]).toHaveTextContent("usage.firstToken");
     const cells = within(screen.getAllByRole("row")[1]).getAllByRole("cell");
     expect(cells).toHaveLength(10);
-    expect(cells[8]).toHaveTextContent("1.8s");
-    expect(cells[8]).toHaveAttribute(
+    expect(cells[9]).toHaveTextContent("1.8s");
+    expect(cells[9]).toHaveAttribute(
       "title",
       "usage.firstTokenMilliseconds:1,800",
     );
+    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "692px" });
   });
 
   it.each([
@@ -118,12 +141,16 @@ describe("RequestLogTable", () => {
     (value, text, title) => {
       showLogs([requestLog({ firstTokenMs: value as number | undefined })]);
       render(
-        <RequestLogTable range={{ preset: "today" }} refreshIntervalMs={0} />,
+        <RequestLogTable
+          range={{ preset: "today" }}
+          refreshIntervalMs={0}
+          columnVisibility={{ firstToken: true }}
+        />,
       );
 
       const cell = within(screen.getAllByRole("row")[1]).getAllByRole(
         "cell",
-      )[8];
+      )[9];
       expect(cell).toHaveTextContent(text);
       expect(cell.getAttribute("title")).toBe(title);
     },
@@ -206,13 +233,13 @@ describe("RequestLogTable", () => {
       <RequestLogTable
         range={range}
         refreshIntervalMs={0}
-        columnVisibility={{ firstToken: false }}
+        columnVisibility={{ firstToken: true }}
       />,
     );
     expect(useRequestLogsMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 1 }),
     );
-    expect(screen.getAllByRole("columnheader")).toHaveLength(9);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(10);
   });
 
   it("resets pagination when the dashboard range changes", async () => {
@@ -371,26 +398,22 @@ describe("RequestLogTable", () => {
         range={{ preset: "7d" }}
         refreshIntervalMs={0}
         onOpenDetail={onOpenDetail}
+        columnVisibility={{ firstToken: true }}
       />,
     );
 
     const rows = screen.getAllByRole("row").slice(1);
+    const cells = rows.map((row) => within(row).getAllByRole("cell"));
     expect(rows).toHaveLength(4);
-    expect(rows[0].lastElementChild).toHaveTextContent("99tok/s");
-    expect(rows[0].lastElementChild).toHaveAttribute(
-      "title",
-      "usage.timingTip",
-    );
-    expect(rows[1].lastElementChild).toHaveTextContent("—");
-    expect(within(rows[1]).getAllByRole("cell")[8]).toHaveTextContent("1.9s");
-    expect(rows[2].lastElementChild).toHaveTextContent("—");
-    expect(within(rows[2]).getAllByRole("cell")[8]).toHaveTextContent("—");
-    expect(rows[3].lastElementChild).toHaveTextContent("≈90tok/s");
-    expect(within(rows[3]).getAllByRole("cell")[8]).toHaveTextContent("—");
-    expect(rows[3].lastElementChild).toHaveAttribute(
-      "title",
-      "usage.estimatedTimingTip",
-    );
+    expect(cells[0][8]).toHaveTextContent("99tok/s");
+    expect(cells[0][8]).toHaveAttribute("title", "usage.timingTip");
+    expect(cells[1][8]).toHaveTextContent("—");
+    expect(cells[1][9]).toHaveTextContent("1.9s");
+    expect(cells[2][8]).toHaveTextContent("—");
+    expect(cells[2][9]).toHaveTextContent("—");
+    expect(cells[3][8]).toHaveTextContent("≈90tok/s");
+    expect(cells[3][9]).toHaveTextContent("—");
+    expect(cells[3][8]).toHaveAttribute("title", "usage.estimatedTimingTip");
     expect(
       screen.getByRole("columnheader", { name: /usage.speed/ }),
     ).toBeInTheDocument();

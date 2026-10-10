@@ -19,18 +19,18 @@ vi.mock("react-i18next", () => ({
 const columns = [
   { id: "time", label: "Time", required: true },
   { id: "model", label: "Model" },
-  { id: "firstToken", label: "First token" },
+  { id: "firstToken", label: "First token", defaultVisible: false },
 ] as const;
 
 describe("ColumnVisibilityMenu", () => {
-  it("shows controlled checkboxes and keeps the menu open after a choice", async () => {
+  it("uses column defaults, accepts explicit visibility and keeps the menu open", async () => {
     const user = userEvent.setup();
     const onVisibleChange = vi.fn();
     const onReset = vi.fn();
     const { rerender } = render(
       <ColumnVisibilityMenu
         columns={columns}
-        visibility={{ firstToken: false }}
+        visibility={{}}
         onVisibleChange={onVisibleChange}
         onReset={onReset}
       />,

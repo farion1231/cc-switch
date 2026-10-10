@@ -10,6 +10,11 @@ const columns = [
   { id: "model" },
   { id: "firstToken" },
 ] as const;
+const columnsWithDefaults = [
+  { id: "time", required: true },
+  { id: "model" },
+  { id: "firstToken", defaultVisible: false },
+] as const;
 
 describe("useColumnVisibility", () => {
   beforeEach(() => {
@@ -44,6 +49,53 @@ describe("useColumnVisibility", () => {
     expect(restored.result.current.visibility.model).toBe(true);
   });
 
+  it("starts hidden, remembers an explicit show choice and restores the hidden default on reset", () => {
+    const mount = () =>
+      renderHook(() => useColumnVisibility(STORAGE_KEY, columnsWithDefaults));
+    const initial = mount();
+    expect(initial.result.current.visibility).toEqual({
+      time: true,
+      model: true,
+      firstToken: false,
+    });
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    act(() => initial.result.current.setVisible("firstToken", true));
+    expect(initial.result.current.visibility.firstToken).toBe(true);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual([]);
+    initial.unmount();
+
+    const restored = mount();
+    expect(restored.result.current.visibility.firstToken).toBe(true);
+    act(() => restored.result.current.reset());
+    expect(restored.result.current.visibility.firstToken).toBe(false);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual([
+      "firstToken",
+    ]);
+    restored.unmount();
+    expect(mount().result.current.visibility.firstToken).toBe(false);
+  });
+
+  it.each([
+    [[], true, true],
+    [["model"], false, true],
+    [["firstToken"], true, false],
+    [["time", "removedColumn"], true, true],
+  ] as const)(
+    "preserves the complete saved selection %j instead of merging new defaults",
+    (hidden, modelVisible, firstTokenVisible) => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(hidden));
+      const { result } = renderHook(() =>
+        useColumnVisibility(STORAGE_KEY, columnsWithDefaults),
+      );
+      expect(result.current.visibility).toEqual({
+        time: true,
+        model: modelVisible,
+        firstToken: firstTokenVisible,
+      });
+    },
+  );
+
   it("ignores unknown and required IDs while retaining valid hidden columns", () => {
     localStorage.setItem(
       STORAGE_KEY,
@@ -68,34 +120,40 @@ describe("useColumnVisibility", () => {
   });
 
   it.each(["broken JSON", "null", "{}", '"model"', '["model", 1]'])(
-    "defaults to all visible for invalid stored structure: %s",
+    "uses column defaults for invalid stored structure: %s",
     (stored) => {
       localStorage.setItem(STORAGE_KEY, stored);
       const { result } = renderHook(() =>
-        useColumnVisibility(STORAGE_KEY, columns),
+        useColumnVisibility(STORAGE_KEY, columnsWithDefaults),
       );
       expect(result.current.visibility).toEqual({
         time: true,
         model: true,
-        firstToken: true,
+        firstToken: false,
       });
     },
   );
 
   it("keeps table choices independent and resets only the chosen table", () => {
-    const logs = renderHook(() => useColumnVisibility(STORAGE_KEY, columns));
+    const logs = renderHook(() =>
+      useColumnVisibility(STORAGE_KEY, columnsWithDefaults),
+    );
     const providers = renderHook(() =>
       useColumnVisibility(OTHER_STORAGE_KEY, columns),
     );
 
     act(() => {
       logs.result.current.setVisible("model", false);
+      logs.result.current.setVisible("firstToken", true);
       providers.result.current.setVisible("firstToken", false);
     });
     act(() => logs.result.current.reset());
 
     expect(logs.result.current.visibility.model).toBe(true);
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual([]);
+    expect(logs.result.current.visibility.firstToken).toBe(false);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual([
+      "firstToken",
+    ]);
     expect(providers.result.current.visibility.firstToken).toBe(false);
     expect(JSON.parse(localStorage.getItem(OTHER_STORAGE_KEY)!)).toEqual([
       "firstToken",
@@ -146,15 +204,16 @@ describe("useColumnVisibility", () => {
         throw new Error("full storage");
       });
     const { result } = renderHook(() =>
-      useColumnVisibility(STORAGE_KEY, columns),
+      useColumnVisibility(STORAGE_KEY, columnsWithDefaults),
     );
 
     expect(result.current.visibility.model).toBe(true);
+    expect(result.current.visibility.firstToken).toBe(false);
     expect(read).toHaveBeenCalledWith(STORAGE_KEY);
-    act(() => result.current.setVisible("model", false));
-    expect(result.current.visibility.model).toBe(false);
+    act(() => result.current.setVisible("firstToken", true));
+    expect(result.current.visibility.firstToken).toBe(true);
     act(() => result.current.reset());
-    expect(result.current.visibility.model).toBe(true);
+    expect(result.current.visibility.firstToken).toBe(false);
     expect(write).toHaveBeenCalledTimes(2);
   });
 

@@ -319,22 +319,6 @@ export function RequestLogTable({
             {unpriced ? t("usage.unpriced") : fmtUsd(log.totalCostUsd, 4)}
           </td>
         )}
-        {isVisible("firstToken") && (
-          <td
-            className={cn(usageTable.tdEnd, !hasFirstToken && usageTable.muted)}
-            title={
-              hasFirstToken
-                ? t("usage.firstTokenMilliseconds", {
-                    value: firstToken.toLocaleString(locale, {
-                      maximumFractionDigits: 20,
-                    }),
-                  })
-                : undefined
-            }
-          >
-            {hasFirstToken ? `${(firstToken / 1000).toFixed(1)}s` : "—"}
-          </td>
-        )}
         {isVisible("speed") && (
           <td
             className={cn(usageTable.tdEnd, tps == null && usageTable.muted)}
@@ -351,6 +335,22 @@ export function RequestLogTable({
                 </span>
               </>
             )}
+          </td>
+        )}
+        {isVisible("firstToken") && (
+          <td
+            className={cn(usageTable.tdEnd, !hasFirstToken && usageTable.muted)}
+            title={
+              hasFirstToken
+                ? t("usage.firstTokenMilliseconds", {
+                    value: firstToken.toLocaleString(locale, {
+                      maximumFractionDigits: 20,
+                    }),
+                  })
+                : undefined
+            }
+          >
+            {hasFirstToken ? `${(firstToken / 1000).toFixed(1)}s` : "—"}
           </td>
         )}
       </tr>
@@ -401,9 +401,6 @@ export function RequestLogTable({
               {isVisible("cost") && (
                 <th className={usageTable.thEnd}>{t("usage.cost")}</th>
               )}
-              {isVisible("firstToken") && (
-                <th className={usageTable.thEnd}>{t("usage.firstToken")}</th>
-              )}
               {isVisible("speed") && (
                 <th className={usageTable.thEnd}>
                   <span className="inline-flex items-center gap-0.5">
@@ -413,6 +410,9 @@ export function RequestLogTable({
                     </HelpTip>
                   </span>
                 </th>
+              )}
+              {isVisible("firstToken") && (
+                <th className={usageTable.thEnd}>{t("usage.firstToken")}</th>
               )}
             </tr>
           </thead>

@@ -53,7 +53,10 @@ export function ColumnVisibilityMenu<K extends string>({
           {columns.map((column) => (
             <DropdownMenuCheckboxItem
               key={column.id}
-              checked={column.required || visibility[column.id] !== false}
+              checked={
+                column.required ||
+                (visibility[column.id] ?? column.defaultVisible ?? true)
+              }
               disabled={column.required}
               className="h-[30px] rounded-control"
               onCheckedChange={(checked) =>

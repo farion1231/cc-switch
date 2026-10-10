@@ -1,9 +1,8 @@
-import type { ColumnVisibility } from "@/types/table";
+import type { ColumnOption, ColumnVisibility } from "@/types/table";
 
-interface UsageColumn<K extends string = string> {
-  id: K;
+interface UsageColumn<K extends string = string>
+  extends Omit<ColumnOption<K>, "label"> {
   labelKey: string;
-  required?: boolean;
   minWidth: number;
 }
 
@@ -16,8 +15,13 @@ export const REQUEST_LOG_COLUMNS = [
   { id: "outputTokens", labelKey: "usage.outputTokens", minWidth: 44 },
   { id: "cacheReadTokens", labelKey: "usage.cacheReadTokens", minWidth: 52 },
   { id: "cost", labelKey: "usage.cost", minWidth: 54 },
-  { id: "firstToken", labelKey: "usage.firstToken", minWidth: 72 },
   { id: "speed", labelKey: "usage.speed", minWidth: 60 },
+  {
+    id: "firstToken",
+    labelKey: "usage.firstToken",
+    defaultVisible: false,
+    minWidth: 72,
+  },
 ] as const satisfies readonly UsageColumn[];
 
 const STATS_METRIC_COLUMNS = [
@@ -49,7 +53,9 @@ export function getColumnLayout<K extends string>(
   visibility?: ColumnVisibility<K>,
 ) {
   const visible = columns.filter(
-    (column) => column.required || visibility?.[column.id] !== false,
+    (column) =>
+      column.required ||
+      (visibility?.[column.id] ?? column.defaultVisible ?? true),
   );
   const ids = new Set(visible.map((column) => column.id));
   return {

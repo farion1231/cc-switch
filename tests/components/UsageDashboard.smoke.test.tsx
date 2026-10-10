@@ -136,7 +136,7 @@ describe("UsageDashboard (smoke)", () => {
     });
   });
 
-  it("keeps column choices independent across tables and restores them after remount", async () => {
+  it("starts with nine log columns, remembers an explicit show choice and resets only that table", async () => {
     const user = userEvent.setup();
     const mount = () =>
       render(
@@ -154,14 +154,23 @@ describe("UsageDashboard (smoke)", () => {
       );
     const first = mount();
     await screen.findByRole("table", { name: "usage.requestLogs" });
-    expect(screen.getAllByRole("columnheader")).toHaveLength(10);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(9);
     const callsBefore = usageApiMock.getRequestLogs.mock.calls.length;
     await openColumns();
+    expect(
+      screen
+        .getAllByRole("menuitemcheckbox")
+        .slice(-2)
+        .map((item) => item.textContent),
+    ).toEqual(["usage.speed", "usage.firstToken"]);
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "usage.firstToken" }),
+    ).toHaveAttribute("aria-checked", "false");
     await user.click(
       screen.getByRole("menuitemcheckbox", { name: "usage.firstToken" }),
     );
     await user.keyboard("{Escape}");
-    expect(screen.getAllByRole("columnheader")).toHaveLength(9);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(10);
     expect(usageApiMock.getRequestLogs).toHaveBeenCalledTimes(callsBefore);
 
     await user.click(screen.getByRole("tab", { name: "usage.tabs.providers" }));
@@ -190,14 +199,41 @@ describe("UsageDashboard (smoke)", () => {
     first.unmount();
     mount();
     await screen.findByRole("table", { name: "usage.requestLogs" });
+    expect(screen.getAllByRole("columnheader")).toHaveLength(10);
+    expect(
+      screen.getByRole("columnheader", { name: "usage.firstToken" }),
+    ).toBeInTheDocument();
+    const callsBeforeReset = usageApiMock.getRequestLogs.mock.calls.length;
+    await openColumns();
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "usage.firstToken" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await user.click(
+      screen.getByRole("menuitem", { name: "common.columnVisibility.reset" }),
+    );
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "usage.firstToken" }),
+    ).toHaveAttribute("aria-checked", "false");
+    await user.keyboard("{Escape}");
+    expect(screen.getAllByRole("columnheader")).toHaveLength(9);
     expect(
       screen.queryByRole("columnheader", { name: "usage.firstToken" }),
     ).not.toBeInTheDocument();
+    expect(usageApiMock.getRequestLogs).toHaveBeenCalledTimes(callsBeforeReset);
+    expect(
+      JSON.parse(
+        localStorage.getItem("cc-switch.usage.requestLogs.hiddenColumns")!,
+      ),
+    ).toEqual(["firstToken"]);
     await user.click(screen.getByRole("tab", { name: "usage.tabs.providers" }));
     await screen.findByRole("table", { name: "usage.providerStats" });
     expect(
       screen.queryByRole("columnheader", { name: "usage.cost" }),
     ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.models" }));
+    await screen.findByRole("table", { name: "usage.modelStats" });
+    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
 
     await user.click(screen.getByRole("tab", { name: "usage.tabs.pricing" }));
     expect(

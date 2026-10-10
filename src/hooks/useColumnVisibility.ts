@@ -1,21 +1,35 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { ColumnOption, ColumnVisibility } from "@/types/table";
 
-type ColumnRule<K extends string> = Pick<ColumnOption<K>, "id" | "required">;
+type ColumnRule<K extends string> = Pick<
+  ColumnOption<K>,
+  "id" | "required" | "defaultVisible"
+>;
+
+function defaultHiddenColumns<K extends string>(
+  columns: readonly ColumnRule<K>[],
+): Set<K> {
+  return new Set(
+    columns
+      .filter((column) => !column.required && column.defaultVisible === false)
+      .map((column) => column.id),
+  );
+}
 
 function readHiddenColumns<K extends string>(
   storageKey: string,
   columns: readonly ColumnRule<K>[],
 ): Set<K> {
   try {
-    const parsed: unknown = JSON.parse(
-      localStorage.getItem(storageKey) ?? "[]",
-    );
+    const stored = localStorage.getItem(storageKey);
+    if (stored === null) return defaultHiddenColumns(columns);
+    // A saved empty array explicitly means all columns are visible.
+    const parsed: unknown = JSON.parse(stored);
     if (
       !Array.isArray(parsed) ||
       !parsed.every((id) => typeof id === "string")
     ) {
-      return new Set();
+      return defaultHiddenColumns(columns);
     }
     return new Set(
       columns
@@ -23,7 +37,7 @@ function readHiddenColumns<K extends string>(
         .map((column) => column.id),
     );
   } catch {
-    return new Set();
+    return defaultHiddenColumns(columns);
   }
 }
 
@@ -78,7 +92,10 @@ export function useColumnVisibility<K extends string>(
     [columns, commit],
   );
 
-  const reset = useCallback(() => commit(new Set()), [commit]);
+  const reset = useCallback(
+    () => commit(defaultHiddenColumns(columns)),
+    [columns, commit],
+  );
 
   return { visibility, setVisible, reset };
 }
