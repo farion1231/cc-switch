@@ -457,8 +457,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       const dualInSucceeded = sharedSkip
         ? succeeded.filter((id) => sharedSkip.dualIds.has(id)).length
         : 0;
-      const skipped =
-        (sharedSkip?.excludedCount ?? 0) + dualInSucceeded;
+      const skipped = (sharedSkip?.excludedCount ?? 0) + dualInSucceeded;
       let text = t(enabled ? toastKey.on : toastKey.off, {
         app: APP_DISPLAY_NAME[app],
         count: succeeded.length - dualInSucceeded,
@@ -530,7 +529,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     const isPi = app === "pi";
     const { ids, excludedCount, dualIds } = isPi
       ? classifyPiBulk(targets, enabled)
-      : { ids: targets.map((s) => s.id), excludedCount: 0, dualIds: new Set<string>() };
+      : {
+          ids: targets.map((s) => s.id),
+          excludedCount: 0,
+          dualIds: new Set<string>(),
+        };
     if (ids.length === 0 && excludedCount === 0) return;
     void bulkToggle(
       ids,
@@ -1751,8 +1754,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
-// ─── Pi 列五态单元格（方案 §2.2/§3.2）────────────────────────────────────
+// ─── Pi 列五态单元格 ─────────────────────────────────────────────────────
 // 控制层二值（勾选框开/关 = pi 是否实际加载），来源与排除信息走角标 + 悬浮。
+// 开关对该状态无能为力的一律锁定：#4 共享（关不掉）、#2 被排除（开不了）。
 interface PiCellProps {
   skill: InstalledSkill;
   fail: boolean;
@@ -1764,7 +1768,13 @@ function PiCell({ skill, fail, disabled, onClick }: PiCellProps) {
   const { t } = useTranslation();
   const vis = skill.piVisibility;
   if (!vis) return null;
-  const state = fail ? "fail" : vis.state === "native" || vis.state === "shared" || vis.state === "native-shared" ? "on" : "off";
+  const state = fail
+    ? "fail"
+    : vis.state === "native" ||
+        vis.state === "shared" ||
+        vis.state === "native-shared"
+      ? "on"
+      : "off";
   const roots = vis.sharedRoots?.join("\n") ?? "";
   const approximate = vis.approximate
     ? t("skillsPage.piState.approximateSuffix")
@@ -1805,7 +1815,12 @@ function PiCell({ skill, fail, disabled, onClick }: PiCellProps) {
         ? t("skillsPage.piState.dualInconsistent")
         : t("skillsPage.piState.dualConsistent");
     } else if (vis.state === "inactive-excluded") {
-      badge = <AlertTriangle className="h-2 w-2 text-warning-text" strokeWidth={2.5} />;
+      badge = (
+        <AlertTriangle
+          className="h-2 w-2 text-warning-text"
+          strokeWidth={2.5}
+        />
+      );
       // 与 #4 对称：开关无法改变 pi 加载状态的一律锁定（开了 pi 也不加载）
       locked = true;
       label =

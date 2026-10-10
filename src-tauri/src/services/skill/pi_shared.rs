@@ -1,4 +1,6 @@
-//! Pi 共享技能感知（方案：`.cache/plans/feat-pi-shared-skills.md`）。
+//! Pi 共享技能感知：cc-switch 之外的 pi 技能加载通道（`~/.agents/skills`
+//! 全局自动发现 + pi `settings.json` 的 `skills` 数组额外扫描根与排除规则）。
+//! 判定结果供技能列表的 Pi 列展示与开关交互使用。
 //!
 //! glob 语义依据 pi 源码 `core/package-manager.js` 的 `matchesAnyPattern`
 //! （minimatch@10 默认选项、按段匹配算法的忠实移植，不支持花括号展开与
@@ -70,7 +72,8 @@ pub(crate) struct PiSharedRoot {
     pub origin: PiSharedRootOrigin,
 }
 
-/// 五态可见性（方案 §2.2）
+/// 技能对 pi 的五态可见性（控制层二值 = 是否被 pi 实际加载；
+/// #2/#4 表示开关对此状态无能为力，UI 侧锁定不可点击）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PiVisState {
     /// #1 未启用（普通）
@@ -128,9 +131,10 @@ pub(crate) fn build_context() -> PiVisibilityContext {
     }
 }
 
-/// 五态判定（方案 §2.1/§2.2，每次现算）：
-/// N/S 存在性均要求含 SKILL.md；N_excluded 对假设路径判定；
-/// S 按来源分两类语义与 baseDir；状态由重扫得出，无硬编码转移。
+/// 五态判定（每次现算，无缓存无硬编码转移）：
+/// - 存在性（N/S）均要求目录含 SKILL.md，防空壳目录误判；
+/// - N_excluded 对**假设路径**跑排除判定（无需副本存在，预判"启用也无效"）；
+/// - S 按共享根来源分两类启用语义与 baseDir（见各判定函数注释）。
 pub(crate) fn pi_skill_visibility(directory: &str, ctx: &PiVisibilityContext) -> PiVisibility {
     let patterns = &ctx.sources.patterns;
 
@@ -233,8 +237,9 @@ fn skill_dir_exists(dir: &Path) -> bool {
     dir.is_dir() && dir.join("SKILL.md").exists()
 }
 
-/// 任一生效共享副本与 SSOT 内容一致（方案 §2.1）：
-/// 共享根 == SSOT 目录（Unified 模式）短路为 true；否则树哈希比对（带缓存）。
+/// 任一生效共享副本与 SSOT 内容一致：
+/// 共享根 == SSOT 目录（Unified 存储模式，两者同一目录）时短路为 true
+/// 跳过哈希；否则树哈希比对（带缓存）。仅作展示信息，不影响开关语义。
 fn same_content_as_ssot(
     shared_roots: &[PathBuf],
     directory: &str,
@@ -352,9 +357,10 @@ pub(crate) struct PiSkillSources {
     pub agent_dir: Option<PathBuf>,
 }
 
-/// 解析 pi 的全部共享技能根与模式（方案 §3.1）。
-/// 固定追加 `~/.agents/skills`；settings 条目分类按 §1.1；
-/// 任何失败路径均不报错，降级为近似结果 + warning。
+/// 解析 pi 的全部共享技能根与模式：
+/// 固定追加 `~/.agents/skills`（pi 无条件自动发现，目录不存在也保留，
+/// 存在性按技能判定）；settings 条目按 classify_entry 分类；
+/// 任何失败路径均不报错，降级为近似结果（approximate）+ warning。
 pub(crate) fn resolve_pi_skill_sources() -> PiSkillSources {
     let mut sources = PiSkillSources {
         roots: Vec::new(),
@@ -395,10 +401,7 @@ pub(crate) fn resolve_pi_skill_sources() -> PiSkillSources {
     sources
 }
 
-/// settings `skills` 条目分类（§1.1）：
-/// package scheme 跳过；`!`/`+`/`-` 前缀与含通配符 → 模式；
-/// 纯路径 → 扫描根（`~` 展开、相对 agent 目录、需存在且为目录）。
-/// 条目分流（对齐 pi splitPatterns/isPattern：**原始串**判定，先于 trim）：
+/// settings `skills` 条目分类（对齐 pi splitPatterns/isPattern：**原始串**判定，先于 trim）：
 /// `!`/`+`/`-` 前缀或含 `*`/`?` → 模式；scheme 仅在纯路径分支跳过
 /// （pi 把 `npm:x*` 当 include 模式而非包，故通配符判定必须在前）。
 fn classify_entry(raw: &str, agent_dir: &Option<PathBuf>, sources: &mut PiSkillSources) {
@@ -718,7 +721,7 @@ fn push_root(roots: &mut Vec<PiSharedRoot>, path: PathBuf, origin: PiSharedRootO
     });
 }
 
-/// §1.2.B：自动发现目录（`~/.pi/agent/skills`、`~/.agents/skills`）的启用判定
+/// 自动发现目录（`~/.pi/agent/skills`、`~/.agents/skills`）的启用判定
 /// （pi `isEnabledByOverrides`）：
 /// 默认启用 → `!glob` 命中→禁用 → `+exact` 命中→启用 → `-exact` 命中→禁用。
 /// 无前缀条目（include 白名单）不参与本判定。
@@ -736,7 +739,8 @@ pub(crate) fn is_autodiscovered_enabled(md_path: &Path, base_dir: &Path, p: &PiP
     enabled
 }
 
-/// §1.2.A：settings 扫描根的启用判定（pi `applyPatterns`，作用于该根收集的全部文件）：
+/// settings 扫描根的启用判定（pi `applyPatterns`，作用于该根收集的全部文件；
+/// 与自动发现目录的差异：include 白名单只在扫描根生效）：
 /// include 白名单（存在时仅保留匹配）→ `!glob` 排除 → `+exact` 从全量加回 → `-exact` 终局排除。
 pub(crate) fn is_scanned_enabled(md_path: &Path, base_dir: &Path, p: &PiPatternSet) -> bool {
     let mut result = p.includes.is_empty() || matches_any_pattern(md_path, base_dir, &p.includes);

@@ -46,9 +46,15 @@ export interface InstalledSkill {
   piVisibility?: PiVisibility;
 }
 
-/** 对 pi 的可见性五态（方案 §2.2/§2.4） */
+/** 对 pi 的可见性五态：inactive / inactive-excluded / native / shared / native-shared
+ *  （由后端 skill::pi_shared 判定引擎现算；开/关 = pi 是否实际加载该技能） */
 export interface PiVisibility {
-  state: "inactive" | "inactive-excluded" | "native" | "shared" | "native-shared";
+  state:
+    | "inactive"
+    | "inactive-excluded"
+    | "native"
+    | "shared"
+    | "native-shared";
   /** 生效的共享根（posix 路径） */
   sharedRoots?: string[];
   /** 原生副本所在目录（实际解析路径，仅原生副本存在时） */

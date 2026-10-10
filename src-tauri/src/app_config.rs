@@ -259,7 +259,8 @@ pub struct InstalledSkill {
     pub pi_visibility: Option<PiVisibilityInfo>,
 }
 
-/// `InstalledSkill.piVisibility` 的载荷（方案 §2.4，由 pi_shared 判定引擎填充）
+/// `InstalledSkill.piVisibility` 的载荷（由 skill::pi_shared 判定引擎每次
+/// 读取时现算填充，不入 DB——pi 的 settings.json 是外部文件，入库快照必然过期）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PiVisibilityInfo {

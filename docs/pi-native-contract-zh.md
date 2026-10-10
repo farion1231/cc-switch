@@ -13,12 +13,14 @@
 | 资源                            | CC Switch 行为                                                | 状态来源         |
 | ------------------------------- | ------------------------------------------------------------- | ---------------- |
 | `models.json`                   | 管理 `providers` 中的全部显式供应商节点；精确新增、替换和移除 | 文件中的实际条目 |
-| 全局 `settings.json`            | 只读 `defaultProvider`、`defaultModel`、`sessionDir`          | Pi 原生设置      |
+| 全局 `settings.json`            | 只读 `defaultProvider`、`defaultModel`、`sessionDir`、`skills` | Pi 原生设置      |
 | `auth.json`                     | 不读、不写、不刷新                                            | Pi `/login`      |
 | `AGENTS.md`                     | 提示库中与文件内容精确匹配的项视为正在使用                    | 文件存在及内容   |
 | `SYSTEM.md`、`APPEND_SYSTEM.md` | 直接编辑固定原生文件；不存在即未配置                          | 文件存在         |
 | `prompts/*.md`                  | 管理顶层斜杠命令模板；空模板是有效原生文件                    | 文件存在         |
-| `skills/<目录>`                 | 目录存在即被 Pi 发现                                          | 原生 Skills 目录 |
+| `skills/<目录>`                 | 按目录名判定，含 SKILL.md 校验                                | 原生 Skills 目录 |
+| `~/.agents/skills`              | pi 无条件自动发现的共享目录，参与技能启用判定                  | 共享 Skills 目录 |
+| settings `skills` 数组          | 额外扫描根与 `!`/`+`/`-` 模式（条目解析逐字节对齐 pi）        | Pi 原生设置      |
 | Sessions JSONL                  | 读取 Pi 的会话头、树分支、消息和会话名称                      | 原生会话文件     |
 
 ### 供应商
@@ -42,6 +44,20 @@ Pi 在全局设置中保存的当前供应商和模型不进入供应商列表�
 
 `models.json`、系统提示文件和模板使用原子写入。进程内写操作串行化；同一次读改写期间的跨进程变化通过 revision 比较发现。列表刷新会先把外部修改同步到数据库；保存时只替换目标 provider 节点，启用和移除只增删目标节点，其他 provider 与顶层字段保持不变。不再维护编辑快照或额外 ownership 状态。
 
+### Skills 共享感知
+
+技能页的 Pi 列按 **Pi 实际加载**判定，判定范围覆盖 Pi 的三条加载通道：
+
+1. 原生目录 `~/.pi/agent/skills/<目录>`；
+2. `~/.agents/skills`（Pi 无条件自动发现）；
+3. 全局 `settings.json` 的 `skills` 数组所配置的额外扫描目录。
+
+`skills` 数组的条目解析（`~` 展开、`file://`、相对 agent 目录、trim、Windows 盘符与 Git Bash 形态）与模式语义（`!` glob 排除、`+` 精确强制启用、`-` 精确强制排除，`-` 优先于 `+`；排除模式同样作用于自动发现目录）逐字节对齐 Pi 的 `resolvePath` / `applyPatterns` / `isEnabledByOverrides`。glob 匹配为 minimatch 常用子集（不含花括号展开与 extglob），行为由 `src-tauri/src/services/skill/testdata/glob-oracle.json` 用与 Pi 相同版本的 minimatch 生成锁定。
+
+技能对 Pi 的可见性为五态：未启用 / 未启用（被排除）/ 原生启用 / 共享启用 / 双来源。共享态与被排除态的单元格锁定不可点击（开关无法改变 Pi 的加载状态）；双来源关闭时仅移除原生副本，共享副本不受影响。存在性判定要求目录含 `SKILL.md`；SSOT 内容比对复用整树哈希（带元数据指纹缓存）。
+
+已知行为分歧：非法 `file://` 条目（坏百分号序列、`%2F`、非 localhost 权威）Pi 会抛错中断整个资源加载，CC Switch 降级为跳过该条目。项目级来源（项目 `.pi/skills`、项目 `.agents/skills`）无法枚举，不在判定范围内。
+
 ### Sessions
 
 全局会话页只枚举绝对 `sessionDir`、`~` 路径或 Pi 默认目录。相对 `sessionDir` 依赖启动 Pi 时的项目工作目录，CC Switch 没有可靠上下文，因此明确显示“需要项目上下文”，不会猜测目录。
@@ -56,5 +72,6 @@ Pi 在全局设置中保存的当前供应商和模型不进入供应商列表�
 - Pi 运行时内置供应商与内置模型目录的复制
 - 完整 `compat`、`modelOverrides` 和费用编辑器；思考档位只提供 Pi 原生 `thinkingLevelMap` 的轻量入口
 - 相对会话目录的全局猜测
+- 写入 Pi `settings.json` 的 `skills` 数组（只读消费；共享目录配置由用户在 Pi 侧管理）
 
 Pi 发布新版本时，通过正常开发和验收重新运行供应商、提示词、Skills 和 Sessions 契约测试。没有进入产品界面的上游字段不应仅为了“覆盖完整”而扩展后端。
