@@ -1623,6 +1623,7 @@ pub fn run() {
             commands::set_proxy_stack_member,
             commands::adopt_codex_stack_catalog,
             commands::restart_codex_app_server_daemon,
+            commands::acknowledge_codex_stale_clients,
             // Proxy failover commands
             commands::get_provider_health,
             commands::reset_circuit_breaker,

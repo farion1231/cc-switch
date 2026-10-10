@@ -3583,6 +3583,8 @@
       "codexStale": {
         "authTitle": "Codex 可能仍快取著切換前的帳號；重新啟動背景服務才能載入新登入",
         "title": "Codex 還在用舊的模型清單，切換後的模型不會出現",
+        "unverifiedTitle": "切換前就開著的 Codex 可能還在用之前的帳號或模型清單",
+        "unverifiedHint": "CC Switch 看不到桌面版和編輯器擴充功能是否在執行；沒開著的話直接關掉這則提示即可。",
         "daemon": "命令列：重開 codex 不夠，要重新啟動背景的守護行程。",
         "others": "桌面版：要完全結束再重開（macOS 上按 ⌘Q，只關視窗不行）；編輯器擴充功能要重開編輯器視窗。",
         "restart": "重新啟動 Codex 守護行程",

@@ -1210,6 +1210,7 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
         members: stack::member_views(&members),
         notice,
         stale_clients: None,
+        stale_revision: None,
     })
 }
 
@@ -1222,8 +1223,11 @@ pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<
     let mut view = stack_views(state, app)?;
     if matches!(app, AppType::Codex) {
         let check_catalog = view.notice != Some("routeOwnsCatalog");
-        view.stale_clients = codex_direct::off_runtime(move || {
-            codex_client_catalog::stale_clients(&DeviceStore::for_device(), check_catalog)
+        (view.stale_clients, view.stale_revision) = codex_direct::off_runtime(move || {
+            let stale =
+                codex_client_catalog::stale_clients(&DeviceStore::for_device(), check_catalog);
+            let revision = stale.map(|_| codex_client_catalog::revision());
+            (stale, revision)
         })
         .await
         .map_err(err)?;
@@ -6065,6 +6069,7 @@ model_provider = "c"
             let (clock, rows) = (now_ms.clone(), table.clone());
             codex_client_catalog::set_test_env(codex_client_catalog::Env {
                 process_table: Box::new(move || Some(rows.lock().unwrap().clone())),
+                daemon_started: Box::new(|| None),
                 now_ms: Box::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
                 restart: Box::new(|_| Err("not in tests".to_string())),
             });
@@ -6150,7 +6155,8 @@ model_provider = "c"
             Some(codex_client_catalog::StaleClients {
                 daemon: false,
                 others: true,
-                auth: false
+                auth: false,
+                unverified: false
             })
         );
         // 普通的 Stack 视图不读进程表。
@@ -6222,7 +6228,8 @@ model_provider = "c"
             Some(codex_client_catalog::StaleClients {
                 daemon: false,
                 others: true,
-                auth: false
+                auth: false,
+                unverified: false
             })
         );
 
@@ -6267,7 +6274,8 @@ model_provider = "c"
             Some(codex_client_catalog::StaleClients {
                 daemon: false,
                 others: true,
-                auth: false
+                auth: false,
+                unverified: false
             })
         );
 

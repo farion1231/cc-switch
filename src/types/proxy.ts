@@ -102,6 +102,11 @@ export interface CodexStaleClients {
   others: boolean;
   /** File-store account changed after startup; the process may cache the old login. */
   auth?: boolean;
+  /**
+   * 看不到桌面版、编辑器插件的进程（Windows）：`others` 只表示上次确认之后目录或登录变了，
+   * 不知道有没有开着。关掉提示时要告诉后端（`acknowledgeCodexStaleClients`）。
+   */
+  unverified?: boolean;
 }
 
 /** Stack 模式的状态、名单和提示。 */
@@ -111,6 +116,8 @@ export interface ProxyStack {
   members: ProxyStackMember[];
   notice?: ProxyStackNotice;
   staleClients?: CodexStaleClients;
+  /** `staleClients` 对应的目录和登录：关掉提示后这个值变了（同一个供应商上又改了目录），重新显示。 */
+  staleRevision?: string;
 }
 
 /** 重启 Codex 守护进程的结果：`notRunning` 表示它没在运行，什么都没做。 */
