@@ -5,12 +5,14 @@ import type { AppId } from "@/lib/api";
 import { useSubscriptionQuota } from "@/lib/query/subscription";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 import {
   creditsBreakdownItem,
   creditsLine,
   failedLines,
   resetCreditsLine,
   tierLine,
+  type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
 
@@ -31,6 +33,8 @@ interface SubscriptionQuotaViewProps {
   /** 用于 `subscription.expiredHint` 的 {tool} 插值；解耦了 hook 的 appId */
   appIdForExpiredHint: string;
   inline?: boolean;
+  /** 按档写剩余还是已用；由外层按设置传入，这里不读设置（见 useQuotaDisplay） */
+  display?: QuotaDisplay;
 }
 
 /** 已知 tier 名称的显示映射（官方订阅 + Token Plan 共用） */
@@ -73,7 +77,10 @@ export function tierShortLabel(t: TFunction, name: string): string {
 export function tierLines(
   t: TFunction,
   tiers: QuotaTier[],
-  { inline = false }: { inline?: boolean } = {},
+  {
+    inline = false,
+    display = "left",
+  }: { inline?: boolean; display?: QuotaDisplay } = {},
 ): { label: string; line: QuotaLine }[] {
   return tiers
     .filter((tier) => tier.name in TIER_I18N_KEYS)
@@ -82,7 +89,10 @@ export function tierLines(
       const label = tierLabel(t, tier.name);
       return {
         label,
-        line: tierLine(t, tier, label, tierShortLabel(t, tier.name)),
+        line: tierLine(t, tier, label, {
+          short: tierShortLabel(t, tier.name),
+          display,
+        }),
       };
     });
 }
@@ -96,9 +106,12 @@ export function quotaRows(
   t: TFunction,
   quota: SubscriptionQuota,
   locale: string,
-  { inline = false }: { inline?: boolean } = {},
+  {
+    inline = false,
+    display = "left",
+  }: { inline?: boolean; display?: QuotaDisplay } = {},
 ): { label: string; line: QuotaLine }[] {
-  const rows = tierLines(t, quota.tiers || [], { inline });
+  const rows = tierLines(t, quota.tiers || [], { inline, display });
   // 一档都没有时额度整块不显示，重置次数、余额也不单独出来
   if (rows.length === 0) return rows;
   const balance = creditsLine(t, quota.creditsBalance, { locale });
@@ -140,7 +153,7 @@ export function quotaFailureReason(
 
 /**
  * 纯展示组件：渲染 SubscriptionQuota 的状态（not_found / parse_error 不显示；
- * 登录过期 / 令牌待刷新 / 查询失败写「额度没查到」+ 原因；成功按档写剩余），支持卡片（inline）和展开两种布局。
+ * 登录过期 / 令牌待刷新 / 查询失败写「额度没查到」+ 原因；成功按档写剩余或已用），支持卡片（inline）和展开两种布局。
  *
  * 数据源由调用方 hook 注入，方便不同的额度后端复用同一套渲染逻辑：
  * - `SubscriptionQuotaFooter`（CLI 凭据路径，by appId）
@@ -152,6 +165,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   refetch,
   appIdForExpiredHint,
   inline = false,
+  display = "left",
 }) => {
   const { t, i18n } = useTranslation();
 
@@ -199,7 +213,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
     );
   }
 
-  const rows = quotaRows(t, quota, i18n.language, { inline });
+  const rows = quotaRows(t, quota, i18n.language, { inline, display });
   if (rows.length === 0) return null;
 
   if (inline) {
@@ -256,6 +270,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   isCurrent = false,
   autoQueryInterval = 5,
 }) => {
+  const display = useQuotaDisplay();
   const {
     data: quota,
     isFetching: loading,
@@ -277,6 +292,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
       // expiredHint 里的 {tool} 是 CLI 命令名：Grok 的命令是 `grok` 而非 appId
       appIdForExpiredHint={appId === "grokbuild" ? "grok" : appId}
       inline={inline}
+      display={display}
     />
   );
 };
