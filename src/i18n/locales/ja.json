@@ -807,6 +807,14 @@
     "enableClaudePluginIntegration": "Claude Code 拡張に適用",
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
+    "claudeHistoryRetention": {
+      "label": "Claude Code の履歴保持日数",
+      "help": "Claude Code は既定で会話履歴とその他のアプリケーションデータを 30 日間保持します。長期保存には 99999 などの大きな値を指定できます。表示された設定ファイルの cleanupPeriodDays を変更します。プロジェクトや管理設定が優先される場合があり、バックアップの代わりにはなりません。 このディレクトリに旧形式の claude.json しかない場合は、保持日数を編集する前に設定全体を settings.json に移行してください。CC Switch は自動移行しません。",
+      "days": "日",
+      "reset": "既定値に戻す（30 日）",
+      "invalid": "日数には正の整数を入力してください。",
+      "error": "保持設定を読み込みまたは保存できませんでした。再読み込みしてから再試行してください。旧形式の claude.json しかない場合は、他の設定を保持するため、先に設定全体を settings.json に移行してください。"
+    },
     "skipClaudeOnboardingDescription": "Claude Code は初回起動時にオンボーディングを行い、テーマの選択と Anthropic アカウントへのログインを求めます。サードパーティのプロバイダーを使う場合は公式アカウントへのログインが不要なため、オンにするとこの手順を飛ばしてすぐに使えます。仕組みとしては ~/.claude.json に hasCompletedOnboarding: true を書き込みます。オフにするとこのフィールドを削除し、次回起動時に再びオンボーディングが表示されます。",
     "codexAuth": "Codex アプリ拡張",
     "preserveCodexOfficialAuthOnSwitch": "直接切替時に公式ログインを保持",
