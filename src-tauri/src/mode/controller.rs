@@ -1216,8 +1216,8 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
 /// [`stack_views`] 再加上 Codex 客户端是否可能缓存旧登录或模型列表（要读进程表，放到阻塞线程
 /// 池里）。账号与目录检测都不分模式：切换账号、直连↔路由切换也会让已启动的客户端拿着旧登录
 /// 或旧目录，同样要重启。路由那家自己管理目录时，重启也看不到 CC Switch 的目录，已经有
-/// `notice` 说明，不再查目录；没有目录时（直连、路由那家没配目录），新启动的客户端不读
-/// CC Switch 的目录，目录检测自己就是空的。
+/// `notice` 说明，不再查目录。没有目录时（直连、路由那家没配目录）照样查：之前在 CC Switch
+/// 的目录时启动的客户端还拿着它。
 pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<StackView, String> {
     let mut view = stack_views(state, app)?;
     if matches!(app, AppType::Codex) {
@@ -6170,11 +6170,64 @@ model_provider = "c"
         clients.desktop_running_for("00:15");
         assert!(stale_clients_of(&state).await.is_some());
 
-        // 换成路由模式：路由那家没有模型目录，新启动的客户端不读 CC Switch 的目录，不报。
+        // 换成路由模式，路由那家没有模型目录：指针撤掉了，桌面版还拿着 Stack 的目录，照样报。
+        clients.advance(10_000);
         enter(&state, &AppType::Codex, false)
             .await
             .expect("routing");
+        assert_eq!(codex_doc().get("model_catalog_json"), None);
+        assert!(stale_clients_of(&state).await.is_some());
+        // 重开之后启动：读的是内置列表，和现在一致。
+        clients.advance(10_000);
+        clients.desktop_running_for("00:05");
+        assert_eq!(stale_clients_of(&state).await, None);
+    }
+
+    /// 从带目录的路由退回没有目录的直连：路由时启动的客户端还拿着路由那家的目录，要报；
+    /// 从没进过代理的直连用户（一直没有目录）不报。
+    #[tokio::test]
+    #[serial]
+    async fn codex_leaving_route_reports_clients_still_on_the_route_catalog() {
+        let _home = Home::new();
+        let clients = FakeClients::install();
+        seed_codex("", None);
+        let route = codex_native(
+            "b",
+            "https://b.example/v1",
+            "",
+            Some(json!({ "models": [{ "model": "b-main", "displayName": "B Main" }] })),
+        );
+        let state = state_with(
+            AppType::Codex,
+            &[codex_native("a", "https://a.example/v1", "", None), route],
+            "a",
+        )
+        .await;
+        // 一直直连、没有目录：早就在跑的客户端不报。
         clients.desktop_running_for("10:00");
+        assert_eq!(stale_clients_of(&state).await, None);
+
+        enter_with_route(&state, &AppType::Codex, false, Some("b"))
+            .await
+            .expect("routing");
+        clients.advance(10_000);
+        clients.desktop_running_for("00:05");
+        assert_eq!(stale_clients_of(&state).await, None);
+
+        clients.advance(10_000);
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert_eq!(codex_doc().get("model_catalog_json"), None);
+        assert_eq!(
+            stale_clients_of(&state).await,
+            Some(codex_client_catalog::StaleClients {
+                daemon: false,
+                others: true,
+                auth: false
+            })
+        );
+
+        clients.advance(10_000);
+        clients.desktop_running_for("00:05");
         assert_eq!(stale_clients_of(&state).await, None);
     }
 
