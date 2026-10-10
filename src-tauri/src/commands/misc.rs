@@ -862,6 +862,8 @@ fn tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Option<
 /// npm settings on the primary process tree only (not its npm fallback).
 #[cfg(any(target_os = "windows", test))]
 fn wsl_claude_update_command() -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
     // Keep the generated payload on one line: Windows writes it into a batch
     // launcher before passing it to wsl.exe.
     let primary = concat!(
@@ -873,8 +875,15 @@ fn wsl_claude_update_command() -> String {
         "npm_config_allow_scripts=@anthropic-ai/claude-code npm_config_ignore_scripts=false npm_config_include=optional claude update ;; ",
         "*) claude update ;; esac ;; esac",
     );
+    // cmd.exe does not honor POSIX quoting or backslash-escaped double quotes.
+    // Transport the trusted source without embedded quotes, then decode it in
+    // Linux. Empty IFS and disabled globbing pass it as one sh -c argument.
+    let decoder = format!(
+        "if ccs_claude_script=$(echo {} | base64 -d); then set -f; IFS=; exec sh -c $ccs_claude_script; else exec claude update; fi",
+        STANDARD.encode(primary)
+    );
     chain_update_commands(
-        format!("sh -c {}", shell_single_quote(primary)),
+        format!("sh -c {}", shell_single_quote(&decoder)),
         npm_install_command_for("claude").unwrap().to_string(),
         LifecycleCommandShell::Posix,
     )
@@ -7488,10 +7497,19 @@ base="$fixture/home dir's tree"
 tools="$fixture/tools"
 readlink_bin="$fixture/readlink-bin"
 fail_bin="$fixture/failed-readlink"
-mkdir -p "$tools" "$readlink_bin" "$fail_bin"
-for utility in sh readlink mkdir dirname cp chmod ln rm cat; do
+decoder_fail_bin="$fixture/failed-decoder"
+mkdir -p "$tools" "$readlink_bin" "$fail_bin" "$decoder_fail_bin"
+for utility in sh base64 mkdir dirname cp chmod ln rm cat; do
   ln -s "$(command -v "$utility")" "$tools/$utility"
 done
+ln -s "$(command -v readlink)" "$tools/actual-readlink"
+cat > "$tools/readlink" <<'READLINK_PROXY'
+#!/bin/sh
+if [ -n "${CC_SWITCH_TEST_READLINK_TRACE-}" ]; then
+  printf 'arg|%s\n' "$@" >> "$CC_SWITCH_TEST_READLINK_TRACE"
+fi
+exec "${0%/*}/actual-readlink" "$@"
+READLINK_PROXY
 cat > "$tools/claude-template" <<'CLAUDE'
 #!/bin/sh
 [ "$1" = update ] || exit 96
@@ -7513,7 +7531,11 @@ cat > "$fail_bin/readlink" <<'READLINK_FAIL'
 #!/bin/sh
 exit 1
 READLINK_FAIL
-chmod +x "$tools/npm" "$fail_bin/readlink"
+cat > "$decoder_fail_bin/base64" <<'DECODE_FAIL'
+#!/bin/sh
+exit 1
+DECODE_FAIL
+chmod +x "$tools/npm" "$tools/readlink" "$fail_bin/readlink" "$decoder_fail_bin/base64"
 make_launcher() {
   launcher_bin=$1
   target=$2
@@ -7527,11 +7549,15 @@ npm_target="$base/.nvm/versions/node/v22/lib/node_modules/@anthropic-ai/claude-c
 make_launcher "$npm_bin" "$npm_target"
 __MAC_READLINK_FIXTURE__
 run_update() {
-  __UPDATE_COMMAND__
+  if __UPDATE_COMMAND__; then update_status=0; else update_status=$?; fi
+  [ "$IFS" = "$parent_ifs" ] || return 98
+  case "$-" in *f*) return 98 ;; esac
+  return "$update_status"
 }
 export npm_config_allow_scripts=previous-package
 export npm_config_ignore_scripts=true
 export npm_config_include=prod
+parent_ifs=$IFS
 parent='previous-package|true|prod'
 scoped='@anthropic-ai/claude-code|false|optional'
 fallback="fallback|$parent|i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
@@ -7554,6 +7580,8 @@ $fallback"; fi
     exit 1
   fi
   [ "$npm_config_allow_scripts|$npm_config_ignore_scripts|$npm_config_include" = "$parent" ] || exit 98
+  [ "$IFS" = "$parent_ifs" ] || exit 98
+  case "$-" in *f*) exit 98 ;; esac
 }
 export PATH="$npm_bin:$readlink_bin:$tools"
 check_update npm-primary-success "$scoped" 0 42 0
@@ -7568,6 +7596,13 @@ export CC_SWITCH_TEST_FALLBACK_EXIT=0
 if actual=$(run_update 2> "$fixture/stderr"); then status=0; else status=$?; fi
 [ "$status" = 0 ] && [ "$actual" = "$fallback" ] || exit 99
 [ "$npm_config_allow_scripts|$npm_config_ignore_scripts|$npm_config_include" = "$parent" ] || exit 98
+# A broken decoder preserves the original primary and npm fallback policy.
+export PATH="$decoder_fail_bin:$npm_bin:$readlink_bin:$tools"
+check_update decoder-primary-success "$parent" 0 42 0
+check_update decoder-fallback-success "$parent" 1 0 0
+check_update decoder-fallback-failure "$parent" 1 42 42
+[ "$IFS" = "$parent_ifs" ] || exit 98
+case "$-" in *f*) exit 98 ;; esac
 printf 'all WSL Claude update cases passed\n'
 "#;
             // Some macOS versions lack GNU readlink -f. Use native readlink first;
@@ -7693,6 +7728,10 @@ fi"#
                 npm_install_command_for("claude").unwrap()
             )));
             assert!(!command.contains("call "), "{command}");
+            assert!(
+                !command.contains('"'),
+                "batch payload should have no embedded double quotes: {command}"
+            );
             #[cfg(target_os = "windows")]
             {
                 assert_eq!(
@@ -7764,6 +7803,7 @@ fi"#
             );
             let npm_bin = format!("{linux_temp}/home dir's tree/.nvm/versions/node/v22/bin");
             let tools = format!("{linux_temp}/tools");
+            let readlink_trace = format!("{linux_temp}/readlink-trace");
             let script_dir = tempfile::tempdir().expect("native batch tempdir should exist");
             let bat = script_dir.path().join("claude-wsl.bat");
             let mut results = Vec::new();
@@ -7771,9 +7811,10 @@ fi"#
                 [(0, 42, 0), (1, 0, 0), (1, 42, 42)]
             {
                 let payload = format!(
-                    "export PATH={}:{}; export npm_config_allow_scripts=previous-package npm_config_ignore_scripts=true npm_config_include=prod CC_SWITCH_TEST_CLAUDE_EXIT={primary_exit} CC_SWITCH_TEST_FALLBACK_EXIT={fallback_exit}; {}",
+                    "export PATH={}:{}; export npm_config_allow_scripts=previous-package npm_config_ignore_scripts=true npm_config_include=prod CC_SWITCH_TEST_CLAUDE_EXIT={primary_exit} CC_SWITCH_TEST_FALLBACK_EXIT={fallback_exit} CC_SWITCH_TEST_READLINK_TRACE={}; {}",
                     shell_single_quote(&npm_bin),
                     shell_single_quote(&tools),
+                    shell_single_quote(&readlink_trace),
                     wsl_claude_update_command()
                 );
                 let line = build_wsl_tool_action_line(distro, &payload, Some("sh"), Some("-c"))
@@ -7784,13 +7825,22 @@ fi"#
                     format!("@echo off\r\n{line}\r\nexit /b %errorlevel%\r\n"),
                 )
                 .expect("native batch fixture should be written");
+                let reset_trace = run_wsl_script(
+                    distro,
+                    &format!("rm -f {}\n", shell_single_quote(&readlink_trace)),
+                );
+                assert!(reset_trace.status.success(), "readlink trace should reset");
                 let output = Command::new("cmd")
                     .arg("/C")
                     .arg(&bat)
                     .creation_flags(CREATE_NO_WINDOW)
                     .output()
                     .expect("real cmd should run the production WSL command line");
-                results.push((primary_exit, expected_status, output));
+                let trace = run_wsl_script(
+                    distro,
+                    &format!("cat {}\n", shell_single_quote(&readlink_trace)),
+                );
+                results.push((primary_exit, expected_status, output, trace));
             }
             let cleanup = run_wsl_script(
                 distro,
@@ -7802,7 +7852,7 @@ fi"#
             );
             let primary = "primary|@anthropic-ai/claude-code|false|optional\nchild|@anthropic-ai/claude-code|false|optional|install -g @anthropic-ai/claude-code@latest\n";
             let fallback = "fallback|previous-package|true|prod|i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code\n";
-            for (primary_exit, expected_status, output) in results {
+            for (primary_exit, expected_status, output, trace) in results {
                 let expected = if primary_exit == 0 {
                     primary.to_string()
                 } else {
@@ -7817,7 +7867,18 @@ fi"#
                 assert_eq!(
                     String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
                     expected,
-                    "batch/WSL must preserve the complete quoted helper payload"
+                    "batch/WSL must preserve the complete quoted helper payload; readlink argv: {}; trace error: {}",
+                    String::from_utf8_lossy(&trace.stdout),
+                    String::from_utf8_lossy(&trace.stderr)
+                );
+                assert!(
+                    trace.status.success(),
+                    "source probe should invoke readlink"
+                );
+                assert_eq!(
+                    String::from_utf8_lossy(&trace.stdout),
+                    format!("arg|-f\narg|--\narg|{npm_bin}/claude\n"),
+                    "source probe must receive the exact path without literal quote characters"
                 );
             }
         }
