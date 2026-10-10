@@ -301,7 +301,7 @@ fn handle_deeplink_url(
                     let _ = window.set_focus();
                     #[cfg(target_os = "linux")]
                     {
-                        linux_fix::nudge_main_window(window.clone());
+                        linux_fix::nudge_main_window(window.clone(), "deeplink");
                     }
                     log::info!("✓ Window shown and focused");
                 }
@@ -396,7 +396,7 @@ pub fn run() {
                 let _ = window.set_focus();
                 #[cfg(target_os = "linux")]
                 {
-                    linux_fix::nudge_main_window(window.clone());
+                    linux_fix::nudge_main_window(window.clone(), "single-instance");
                 }
             }
         }));
@@ -424,6 +424,7 @@ pub fn run() {
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                log::info!("收到窗口关闭请求: label={}", window.label());
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                 let in_db_recovery = crate::init_status::get_init_error()
                     .map(|p| p.kind.as_deref() == Some("db_version_too_new"))
@@ -439,6 +440,7 @@ pub fn run() {
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
                     let _ = window.hide();
+                    log::info!("关闭请求已处理：最小化到托盘");
                     #[cfg(target_os = "windows")]
                     {
                         let _ = window.set_skip_taskbar(true);
@@ -449,6 +451,7 @@ pub fn run() {
                     }
                 } else {
                     api.prevent_close();
+                    log::info!("关闭请求已处理：退出应用");
                     window.app_handle().exit(0);
                 }
             }
@@ -1383,7 +1386,7 @@ pub fn run() {
                     // 这里做 set_focus + 伪 resize，等价于无视觉版本的"最大化-还原"。
                     #[cfg(target_os = "linux")]
                     {
-                        linux_fix::nudge_main_window(window.clone());
+                        linux_fix::nudge_main_window(window.clone(), "startup");
                     }
                 }
             }
@@ -1428,6 +1431,7 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::has_codex_unify_history_backup,
+            commands::codex_forces_multi_agent_v2,
             commands::restore_codex_unified_history,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
@@ -1633,6 +1637,7 @@ pub fn run() {
             commands::get_session_usage_summary,
             commands::get_usage_summary_by_app,
             commands::get_usage_trends,
+            commands::get_usage_first_date,
             commands::get_provider_stats,
             commands::get_model_stats,
             commands::get_request_logs,

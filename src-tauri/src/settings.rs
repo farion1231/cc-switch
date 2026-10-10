@@ -394,6 +394,10 @@ pub struct AppSettings {
     /// Whether to show the project profile switcher on the main page header
     #[serde(default)]
     pub show_profile_switcher: bool,
+    /// Show the provider search button in the provider page header (on by default;
+    /// Cmd/Ctrl+F still opens the search when it is hidden)
+    #[serde(default = "default_true")]
+    pub show_provider_search: bool,
     /// Check installed CLI tools for new versions at startup (off by default:
     /// many users do not want to chase every release).
     #[serde(default)]
@@ -412,6 +416,11 @@ pub struct AppSettings {
     /// a failed migration retries at startup; cleared when the toggle turns off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unify_codex_migrate_existing: Option<bool>,
+    /// Codex 聚合模式下，合并目录里的每个模型都改用经典子 agent 工具（`multi_agent_version`
+    /// 写 `"v1"`）。新版工具（v2）把派给子 agent 的任务加密，只有主 agent 那家后端解得开，
+    /// 主、子 agent 不在同一家时子 agent 读不到任务。默认关：保持官方目录的值。
+    #[serde(default)]
+    pub codex_stack_classic_subagents: bool,
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
@@ -549,10 +558,12 @@ impl Default for AppSettings {
             session_auto_sync_enabled: true,
             enable_failover_toggle: false,
             show_profile_switcher: false,
+            show_provider_search: true,
             check_tool_updates_on_startup: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
+            codex_stack_classic_subagents: false,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             new_layout_notice_confirmed: None,
@@ -1008,6 +1019,16 @@ pub fn unify_codex_session_history() -> bool {
             e.into_inner()
         })
         .unify_codex_session_history
+}
+
+pub fn codex_stack_classic_subagents() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .codex_stack_classic_subagents
 }
 
 // ===== 当前供应商管理函数 =====
