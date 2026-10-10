@@ -175,7 +175,22 @@ pub fn start(app: tauri::AppHandle) {
                 // Settings are rechecked even if a network request is slow. The gate in
                 // refresh_all makes a scheduled tick during an active batch a no-op.
                 tauri::async_runtime::spawn(async move {
-                    let _ = refresh_all(&app).await;
+                    match refresh_all(&app).await {
+                        Ok(results) => {
+                            let succeeded = results
+                                .iter()
+                                .filter(|result| result.error.is_none())
+                                .count();
+                            log::info!(
+                                "[CodexQuotaRefresh] Background refresh completed: {} succeeded, {} failed",
+                                succeeded,
+                                results.len() - succeeded,
+                            );
+                        }
+                        Err(error) => {
+                            log::debug!("[CodexQuotaRefresh] Background refresh skipped: {error}")
+                        }
+                    }
                 });
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
