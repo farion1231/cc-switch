@@ -1084,6 +1084,21 @@ pub fn get_effective_current_provider(
     db: &crate::database::Database,
     app_type: &AppType,
 ) -> Result<Option<String>, AppError> {
+    effective_current_provider(db, app_type, true)
+}
+
+pub(crate) fn get_effective_current_provider_read_only(
+    db: &crate::database::Database,
+    app_type: &AppType,
+) -> Result<Option<String>, AppError> {
+    effective_current_provider(db, app_type, false)
+}
+
+fn effective_current_provider(
+    db: &crate::database::Database,
+    app_type: &AppType,
+    repair_stale_pointer: bool,
+) -> Result<Option<String>, AppError> {
     // 1. 从本地 settings 读取
     if let Some(local_id) = get_current_provider(app_type) {
         // 2. 验证该 ID 在数据库中存在
@@ -1095,13 +1110,15 @@ pub fn get_effective_current_provider(
             return Ok(Some(local_id));
         }
 
-        // 3. 不存在，清理本地 settings
+        // 3. 不存在，回落到数据库；桌面调用同时清理本地 settings。
         log::warn!(
-            "本地 settings 中的供应商 {} ({}) 在数据库中不存在，将清理并 fallback 到数据库",
+            "本地 settings 中的供应商 {} ({}) 在数据库中不存在，fallback 到数据库",
             local_id,
             app_type.as_str()
         );
-        let _ = set_current_provider(app_type, None);
+        if repair_stale_pointer {
+            let _ = set_current_provider(app_type, None);
+        }
     }
 
     // Fallback 到数据库的 is_current

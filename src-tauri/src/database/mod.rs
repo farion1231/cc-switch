@@ -93,6 +93,23 @@ fn register_db_change_hook(conn: &Connection) {
 }
 
 impl Database {
+    /// Open an existing, compatible database without startup maintenance or migrations.
+    pub(crate) fn open_read_only() -> Result<Self, AppError> {
+        let path = get_app_config_dir().join("cc-switch.db");
+        let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let version = Self::get_user_version(&conn)?;
+        if version != SCHEMA_VERSION {
+            return Err(AppError::Config(format!(
+                "Database schema {version} is not supported by this CLI (expected {SCHEMA_VERSION}). Open a matching desktop version first."
+            )));
+        }
+        Ok(Self {
+            conn: Mutex::new(conn),
+            log_count_cache: Mutex::new(None),
+        })
+    }
+
     /// 初始化数据库连接并创建表
     ///
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
