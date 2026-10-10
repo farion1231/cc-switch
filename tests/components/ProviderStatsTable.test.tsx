@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderStatsTable } from "@/components/usage/ProviderStatsTable";
 import {
   getStatsEstimatedSpeed,
   getStatsSpeed,
+  SuccessSpeedCells,
+  SuccessSpeedHeaders,
 } from "@/components/usage/statsColumns";
 import type { ProviderStats } from "@/types/usage";
 
@@ -33,6 +35,123 @@ const stat = (overrides: Partial<ProviderStats>): ProviderStats => ({
 });
 
 describe("ProviderStatsTable", () => {
+  it("shows all six columns by default and hides chosen metrics together with their cells", () => {
+    useProviderStatsMock.mockReturnValue({
+      isLoading: false,
+      data: [stat({})],
+    });
+    const { rerender } = render(
+      <ProviderStatsTable range={{ preset: "7d" }} refreshIntervalMs={0} />,
+    );
+
+    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
+    expect(screen.getAllByRole("cell")).toHaveLength(6);
+    const initialWidth = parseFloat(screen.getByRole("table").style.minWidth);
+
+    rerender(
+      <ProviderStatsTable
+        range={{ preset: "7d" }}
+        refreshIntervalMs={0}
+        columnVisibility={{ requests: false, cost: false, speed: false }}
+      />,
+    );
+
+    expect(
+      screen.getAllByRole("columnheader").map((cell) => cell.textContent),
+    ).toEqual(["usage.provider", "usage.tokens", "usage.successRate"]);
+    expect(screen.getAllByRole("cell")).toHaveLength(3);
+    expect(screen.queryByText("$1.00")).not.toBeInTheDocument();
+    expect(parseFloat(screen.getByRole("table").style.minWidth)).toBeLessThan(
+      initialWidth,
+    );
+  });
+
+  it.each([false, true])(
+    "keeps the provider identifier when every column is set hidden (empty: %s)",
+    (empty) => {
+      useProviderStatsMock.mockReturnValue({
+        isLoading: false,
+        data: empty ? [] : [stat({})],
+      });
+      render(
+        <ProviderStatsTable
+          range={{ preset: "7d" }}
+          refreshIntervalMs={0}
+          columnVisibility={{
+            provider: false,
+            requests: false,
+            tokens: false,
+            cost: false,
+            successRate: false,
+            speed: false,
+          }}
+        />,
+      );
+
+      expect(screen.getAllByRole("columnheader")).toHaveLength(1);
+      expect(screen.getByRole("columnheader")).toHaveTextContent(
+        "usage.provider",
+      );
+      expect(screen.getAllByRole("cell")).toHaveLength(1);
+      if (empty) {
+        expect(screen.getByRole("cell")).toHaveAttribute("colspan", "1");
+      } else {
+        expect(screen.getByRole("cell")).toHaveTextContent("P");
+      }
+    },
+  );
+
+  it("keeps the empty-state span aligned when metrics are hidden", () => {
+    useProviderStatsMock.mockReturnValue({ isLoading: false, data: [] });
+    const { rerender } = render(
+      <ProviderStatsTable range={{ preset: "7d" }} refreshIntervalMs={0} />,
+    );
+    expect(screen.getByRole("cell")).toHaveAttribute("colspan", "6");
+    rerender(
+      <ProviderStatsTable
+        range={{ preset: "7d" }}
+        refreshIntervalMs={0}
+        columnVisibility={{ tokens: false, successRate: false }}
+      />,
+    );
+    expect(screen.getAllByRole("columnheader")).toHaveLength(4);
+    expect(screen.getByRole("cell")).toHaveAttribute("colspan", "4");
+  });
+
+  it("keeps the selected page and query filters when a column is hidden", () => {
+    useProviderStatsMock.mockReturnValue({
+      isLoading: false,
+      data: Array.from({ length: 21 }, (_, index) =>
+        stat({
+          providerId: `provider-${index}`,
+          providerName: `Provider ${index}`,
+          requestCount: 21 - index,
+        }),
+      ),
+    });
+    const props = {
+      range: { preset: "7d" as const },
+      appType: "codex",
+      providerName: "Example",
+      model: "model",
+      refreshIntervalMs: 15_000,
+    };
+    const { rerender } = render(<ProviderStatsTable {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "usage.nextPage" }));
+    expect(screen.getByText("Provider 20")).toBeInTheDocument();
+
+    rerender(
+      <ProviderStatsTable {...props} columnVisibility={{ requests: false }} />,
+    );
+    expect(screen.getByText("Provider 20")).toBeInTheDocument();
+    expect(screen.queryByText("Provider 0")).not.toBeInTheDocument();
+    expect(useProviderStatsMock).toHaveBeenLastCalledWith(
+      { preset: "7d" },
+      { appType: "codex", providerName: "Example", model: "model" },
+      { refetchInterval: 15_000 },
+    );
+  });
+
   it("computes speed as total output over total generation time", () => {
     expect(
       getStatsSpeed(
@@ -214,6 +333,54 @@ describe("ProviderStatsTable", () => {
       } finally {
         consoleError.mockRestore();
       }
+    },
+  );
+});
+
+describe("shared success and speed columns", () => {
+  it.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ])(
+    "renders success=%s and speed=%s independently",
+    (showSuccessRate, showSpeed) => {
+      render(
+        <table>
+          <thead>
+            <tr>
+              <SuccessSpeedHeaders
+                showSuccessRate={showSuccessRate}
+                showSpeed={showSpeed}
+              />
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <SuccessSpeedCells
+                stat={stat({
+                  successRate: 98.25,
+                  speedOutputTokens: 1_200,
+                  speedGenerationMs: 10_000,
+                })}
+                showSuccessRate={showSuccessRate}
+                showSpeed={showSpeed}
+              />
+            </tr>
+          </tbody>
+        </table>,
+      );
+      const expectedCount = Number(showSuccessRate) + Number(showSpeed);
+      expect(screen.queryAllByRole("columnheader")).toHaveLength(expectedCount);
+      expect(screen.queryAllByRole("cell")).toHaveLength(expectedCount);
+      const body = within(screen.getAllByRole("row")[1]);
+      expect(body.queryByText("98.3%") !== null).toBe(showSuccessRate);
+      expect(body.queryByText("tok/s") !== null).toBe(showSpeed);
+      if (showSpeed)
+        expect(body.getByText("tok/s").parentElement).toHaveTextContent(
+          "120tok/s",
+        );
     },
   );
 });

@@ -4,6 +4,11 @@
     "description": "Claude Code / Codex / Gemini CLI 全方位輔助工具"
   },
   "common": {
+    "columnVisibility": {
+      "label": "顯示欄位",
+      "reset": "還原預設",
+      "required": "一律顯示"
+    },
     "unsavedLeaveTitle": "有未儲存的修改",
     "unsavedLeaveMessage": "離開後，目前編輯頁裡的修改不會儲存。",
     "unsavedLeaveConfirm": "放棄修改並離開",
@@ -2359,6 +2364,8 @@
     "speedHelp": "每秒輸出多少 token，從首字算到結束。只算經路由服務、輸出不少於 100 token 的請求；思考過程不外露的模型是近似值。帶 ≈ 的是沒開路由時按工作階段日誌的時間戳記估算的：沒有首字計時，等首字的時間也算在內，所以偏低；只估輸出不少於 200 token 的請求。",
     "speedSumHelpTitle": "彙總速度怎麼算",
     "speedSumHelp": "輸出 token 總數除以生成時間總和，不是逐筆平均，免得短請求把數字帶歪。只算經路由服務、輸出不少於 100 token 的請求。帶 ≈ 的是按工作階段日誌估算的（含首字等待，只估輸出不少於 200 token 的請求），這一列沒有路由資料時才顯示。",
+    "firstToken": "首 Token",
+    "firstTokenMilliseconds": "{{value}} 毫秒",
     "timingTip": "耗時 {{duration}}s · 首字 {{ttft}}s",
     "estimatedTimingTip": "耗時約 {{duration}}s（按工作階段日誌的時間戳記估算，含首字等待）",
     "cacheTip": "快取命中 {{read}} · 快取寫入 {{write}}",
