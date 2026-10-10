@@ -1106,6 +1106,15 @@ async fn handle_responses_for_app(
         .await;
     }
 
+    // Stabilize upstream IDs before compaction adds its own output item.
+    let response = if ctx.provider.is_github_copilot()
+        && codex_upstream_format == Some(CodexUpstreamFormat::NativeResponses)
+    {
+        super::providers::copilot_responses_compat::stabilize_response(response, is_stream)
+    } else {
+        response
+    };
+
     // 原生 Responses 第三方的压缩回合：上游只会回普通消息，补上 Codex 要的那个
     // compaction 条目（请求侧已在 forwarder 改成摘要回合，见 `codex_compaction`）。
     // 压缩回合不带工具，没有要还原的函数名，所以排在 xAI 改写之前。
