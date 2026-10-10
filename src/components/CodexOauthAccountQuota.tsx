@@ -5,6 +5,7 @@ import {
   AccountQuotaColumn,
   subscriptionQuotaState,
 } from "@/components/settings/auth/AccountQuota";
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 
 interface CodexOauthAccountQuotaProps {
   /** cc-switch 自管的 ChatGPT 账号 ID */
@@ -24,6 +25,7 @@ const CodexOauthAccountQuota: React.FC<CodexOauthAccountQuotaProps> = ({
   login = "",
 }) => {
   const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
   const {
     data: quota,
     isFetching: loading,
@@ -36,7 +38,7 @@ const CodexOauthAccountQuota: React.FC<CodexOauthAccountQuotaProps> = ({
   return (
     <AccountQuotaColumn
       login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language)}
+      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}

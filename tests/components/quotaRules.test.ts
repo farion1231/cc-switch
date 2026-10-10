@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
 import {
   balanceLine,
+  barPercent,
   cardRows,
   creditsLine,
   expiredLine,
@@ -18,6 +19,8 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     "quota.tierLeft": "{{labelSp}}剩余 {{value}}%",
     "quota.tierUsedUp": "{{labelSp}}已用完",
     "quota.left": "剩余 {{value}}%",
+    "quota.tierUsed": "{{labelSp}}已用 {{value}}%",
+    "quota.used": "已用 {{value}}%",
     "quota.balance": "余额 {{value}}",
     "quota.tierShort": "{{label}} {{value}}%",
     "quota.resetCredits.left": "重置剩余 {{count}} 次",
@@ -73,8 +76,52 @@ describe("quota lines", () => {
         "每周 Opus",
       ).text,
     ).toBe("每周 Opus 剩余 50%");
-    expect(toneForLeft(10)).toBe("normal");
-    expect(toneForLeft(9)).toBe("warning");
+    expect(toneForLeft(20)).toBe("normal");
+    expect(toneForLeft(19)).toBe("warning");
+  });
+
+  it("writes what is used when chosen, colored and picked by what is left", () => {
+    const used = (name: string, utilization: number, label = "每周") =>
+      tierLine(t, { name, utilization, resetsAt: null }, label, {
+        short: label,
+        display: "used",
+      });
+    expect(used("five_hour", 31.4, "5 小时")).toMatchObject({
+      text: "5 小时已用 31%",
+      value: "已用 31%",
+      short: "5 小时 31%",
+      emphasis: "31%",
+      left: 69,
+      tone: "normal",
+    });
+    // 颜色仍按剩余：已用 94% = 剩余 6%
+    expect(used("seven_day", 94)).toMatchObject({
+      text: "每周已用 94%",
+      tone: "warning",
+    });
+    expect(used("seven_day", 100)).toMatchObject({
+      text: "每周已用完",
+      tone: "danger",
+    });
+    // 超额也只写到已用完，不写已用 120%
+    expect(used("seven_day", 120).text).toBe("每周已用完");
+    // 挑卡片上留哪几档也照旧按剩余
+    expect(
+      pickLines([used("a", 10), used("b", 95), used("c", 60)], 2).map(
+        (line) => line.key,
+      ),
+    ).toEqual(["b", "c"]);
+  });
+
+  it("draws the bar along with the number shown", () => {
+    const tier = { name: "five_hour", utilization: 30, resetsAt: null };
+    expect(barPercent(tierLine(t, tier, "5 小时"))).toBe(70);
+    expect(barPercent(tierLine(t, tier, "5 小时", { display: "used" }))).toBe(
+      30,
+    );
+    // 余额不跟着翻：按剩余画，没有总额时画满
+    expect(barPercent(balanceLine(t, { remaining: 5, total: 100 }))).toBe(5);
+    expect(barPercent(balanceLine(t, { remaining: 5 }))).toBe(100);
   });
 
   it("only colors a balance once it runs out, even when nearly gone", () => {
@@ -112,7 +159,7 @@ describe("quota lines", () => {
 
   it("pins the shortest window on the card and merges the other tiers", () => {
     const tier = (name: string, utilization: number) =>
-      tierLine(t, { name, utilization, resetsAt: null }, name, name);
+      tierLine(t, { name, utilization, resetsAt: null }, name, { short: name });
     const keys = (rows: ReturnType<typeof cardRows>) =>
       rows.map((row) => row.map((line) => line.key));
 
@@ -233,13 +280,13 @@ describe("saved limit resets", () => {
       t,
       { name: "five_hour", utilization: 18, resetsAt: null },
       "5 小时",
-      "5 小时",
+      { short: "5 小时" },
     );
     const weekly = tierLine(
       t,
       { name: "seven_day", utilization: 36, resetsAt: null },
       "每周",
-      "每周",
+      { short: "每周" },
     );
     const resets = resetCreditsLine(
       t,

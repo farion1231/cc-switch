@@ -65,7 +65,7 @@ const MAX_NAME_CHARS: usize = 32;
 /// 问题区里切换失败的原因最多几个字。
 const MAX_REASON_CHARS: usize = 60;
 /// 额度剩余不到这个百分比算「快用完」（和前端 `quotaRules.WARN_BELOW_PERCENT` 一致）。
-const WARN_BELOW_PERCENT: f64 = 10.0;
+const WARN_BELOW_PERCENT: f64 = 20.0;
 
 /// 每个应用行的子菜单句柄，额度更新时就地改标题而不是整菜单重建（整建会关掉 macOS 上
 /// 正开着的菜单）。`create_tray_menu` 每次重建都整表覆盖写入。
@@ -129,6 +129,7 @@ pub struct TrayTexts {
     pub tier_gemini_flash_lite: &'static str,
     pub tier_premium: &'static str,
     pub tier_left: &'static str,
+    pub tier_used: &'static str,
     pub tier_used_up: &'static str,
     pub balance: &'static str,
     pub balance_used_up: &'static str,
@@ -141,6 +142,8 @@ pub struct TrayTexts {
     pub reset_at_time: &'static str,
     /// chrono 格式串：重置日期
     pub date_format: &'static str,
+    /// 按档的额度写已用百分比（设置里「额度显示」选了已用）；不是文案，跟着文案一起传下去
+    pub quota_used: bool,
 }
 
 /// 将系统区域标识映射为托盘支持的语言码。
@@ -228,6 +231,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "Premium",
                 tier_left: "{label} {value}% left",
+                tier_used: "{label} {value}% used",
                 tier_used_up: "{label} used up",
                 balance: "Balance {value}",
                 balance_used_up: "Balance used up",
@@ -239,6 +243,7 @@ impl TrayTexts {
                 reset_on_date: "{label} quota resets {when}",
                 reset_at_time: "{label} quota resets at {when}",
                 date_format: "%b %-d",
+                quota_used: false,
             },
             "ja" => Self {
                 show_main: "CC Switch を開く",
@@ -287,6 +292,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "プレミアム",
                 tier_left: "{label} 残り {value}%",
+                tier_used: "{label} 使用済み {value}%",
                 tier_used_up: "{label} 使い切り",
                 balance: "残高 {value}",
                 balance_used_up: "残高なし",
@@ -298,6 +304,7 @@ impl TrayTexts {
                 reset_on_date: "{label}の枠は {when} にリセット",
                 reset_at_time: "{label}の枠は {when} にリセット",
                 date_format: "%-m月%-d日",
+                quota_used: false,
             },
             "zh-TW" => Self {
                 show_main: "開啟 CC Switch",
@@ -343,6 +350,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "進階請求",
                 tier_left: "{labelSp}剩餘 {value}%",
+                tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "餘額 {value}",
                 balance_used_up: "餘額已用完",
@@ -354,6 +362,7 @@ impl TrayTexts {
                 reset_on_date: "{labelSp}額度 {when}重置",
                 reset_at_time: "{labelSp}額度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
+                quota_used: false,
             },
             _ => Self {
                 show_main: "打开 CC Switch",
@@ -399,6 +408,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "高级请求",
                 tier_left: "{labelSp}剩余 {value}%",
+                tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "余额 {value}",
                 balance_used_up: "余额已用完",
@@ -410,6 +420,7 @@ impl TrayTexts {
                 reset_on_date: "{labelSp}额度 {when}重置",
                 reset_at_time: "{labelSp}额度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
+                quota_used: false,
             },
         }
     }
@@ -421,7 +432,10 @@ impl TrayTexts {
             Some(lang) => lang,
             None => detect_system_tray_language(),
         };
-        Self::from_language(language)
+        Self {
+            quota_used: settings.quota_shows_used(),
+            ..Self::from_language(language)
+        }
     }
 }
 
@@ -456,7 +470,7 @@ fn truncate_chars(text: &str, max: usize) -> String {
     out
 }
 
-// ─── 额度文字（和供应商卡片同一套：一律写剩余，快用完 / 已用完才多说一句）────────────
+// ─── 额度文字（和供应商卡片同一套：按设置写剩余或已用，快用完 / 已用完才多说一句）────────────
 
 /// 托盘里合并的档：周限额的几个别名取最高利用率，Fable 单列；月窗口里 Codex 免费版的 30 天
 /// 窗口也算（#3651）。
@@ -553,6 +567,9 @@ fn tier_line(
     let left = (100.0 - utilization).round().max(0.0);
     let text = if left <= 0.0 {
         fill_label(texts.tier_used_up, label, &[])
+    } else if texts.quota_used {
+        let value = format!("{}", (100.0 - left) as i64);
+        fill_label(texts.tier_used, label, &[("value", value.as_str())])
     } else {
         let value = format!("{}", left as i64);
         fill_label(texts.tier_left, label, &[("value", value.as_str())])
@@ -727,22 +744,6 @@ fn format_script_result(
     (!lines.is_empty()).then_some(QuotaView::Lines(lines))
 }
 
-/// 标题里最多留两行：留剩余最少的，再按原顺序排回去（同卡片 `pickLines`）。
-fn pick_lines(lines: &[QuotaLine], max: usize) -> Vec<&QuotaLine> {
-    let mut order: Vec<usize> = (0..lines.len()).collect();
-    if lines.len() > max {
-        order.sort_by(|a, b| {
-            lines[*a]
-                .left
-                .partial_cmp(&lines[*b].left)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        order.truncate(max);
-        order.sort_unstable();
-    }
-    order.into_iter().map(|index| &lines[index]).collect()
-}
-
 fn worst_left(lines: &[QuotaLine]) -> f64 {
     lines
         .iter()
@@ -750,12 +751,13 @@ fn worst_left(lines: &[QuotaLine]) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
-/// 应用行标题里的额度：`(文字, 快用完)`。查询失败时标题不写额度，原因写在子菜单里。
+/// 应用行标题里的额度：`(文字, 快用完)`。每档都写（#8011：只留剩余最少的两档时，
+/// 5 小时 / 周 / 月三档的 5 小时几乎总被挤掉）。查询失败时标题不写额度，原因写在子菜单里。
 fn quota_title(view: &QuotaView) -> Option<(String, bool)> {
     let QuotaView::Lines(lines) = view else {
         return None;
     };
-    let text = pick_lines(lines, 2)
+    let text = lines
         .iter()
         .map(|line| line.text.as_str())
         .collect::<Vec<_>>()
@@ -2393,7 +2395,7 @@ pub fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {
-            crate::linux_fix::nudge_main_window(window.clone());
+            crate::linux_fix::nudge_main_window(window.clone(), "tray-show-main");
         }
         #[cfg(target_os = "macos")]
         {
@@ -3040,7 +3042,42 @@ mod tests {
     }
 
     #[test]
-    fn almost_out_only_below_ten_percent_left_and_not_when_used_up() {
+    fn subscription_quota_is_written_as_what_is_used_when_chosen() {
+        let used = |texts: TrayTexts| TrayTexts {
+            quota_used: true,
+            ..texts
+        };
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![tier(TIER_FIVE_HOUR, 31.0), tier(TIER_SEVEN_DAY, 95.0)],
+        );
+        // 「快用完」仍按剩余判断
+        assert_eq!(
+            title(format_subscription_quota(&used(zh()), &quota)),
+            Some(("5 小时已用 31% · 每周已用 95%".to_string(), true))
+        );
+        // 用完照旧写「已用完」
+        assert_eq!(
+            sub_title(
+                &used(zh()),
+                &make_quota("claude", true, vec![tier(TIER_FIVE_HOUR, 100.0)])
+            )
+            .as_deref(),
+            Some("5 小时已用完")
+        );
+        assert_eq!(
+            sub_title(
+                &used(en()),
+                &make_quota("gemini", true, vec![tier(TIER_GEMINI_PRO, 15.4)])
+            )
+            .as_deref(),
+            Some("Pro 15% used")
+        );
+    }
+
+    #[test]
+    fn almost_out_only_below_twenty_percent_left_and_not_when_used_up() {
         let at = |used: f64| {
             title(format_subscription_quota(
                 &zh(),
@@ -3048,8 +3085,8 @@ mod tests {
             ))
             .unwrap()
         };
-        assert_eq!(at(85.0), ("5 小时剩余 15%".to_string(), false));
-        assert_eq!(at(91.0), ("5 小时剩余 9%".to_string(), true));
+        assert_eq!(at(80.0), ("5 小时剩余 20%".to_string(), false));
+        assert_eq!(at(85.0), ("5 小时剩余 15%".to_string(), true));
         // 用完时额度本身写「已用完」，不再加「快用完」。
         assert_eq!(at(100.0), ("5 小时已用完".to_string(), false));
     }
@@ -3068,7 +3105,7 @@ mod tests {
     }
 
     #[test]
-    fn title_keeps_the_two_tiers_with_least_left_in_original_order() {
+    fn title_writes_every_tier_in_original_order() {
         let quota = make_quota(
             "gemini",
             true,
@@ -3080,7 +3117,7 @@ mod tests {
         );
         assert_eq!(
             sub_title(&en(), &quota).as_deref(),
-            Some("Flash 58% left · Flash Lite 20% left")
+            Some("Pro 95% left · Flash 58% left · Flash Lite 20% left")
         );
     }
 
@@ -3891,6 +3928,29 @@ mod tests {
         assert_eq!(
             app_row_title(&zh(), &app),
             "Claude Code · Claude Official · 5 小时剩余 69% · 每周剩余 5% · 快用完"
+        );
+    }
+
+    #[test]
+    fn app_row_title_writes_every_tier_including_the_roomy_five_hour_one() {
+        // #8011：火山三档里 5 小时剩得最多，只留剩余最少两档时它总被挤掉。
+        let mut app = snapshot(
+            AppType::Claude,
+            TrayMode::Direct,
+            vec![entry("volc", "火山方舟")],
+        );
+        let volcengine = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 10.0),
+                usage_data(Some(TIER_WEEKLY_LIMIT), 60.0),
+                usage_data(Some(TIER_MONTHLY), 70.0),
+            ],
+        );
+        app.quota = format_script_result(&zh(), &volcengine);
+        assert_eq!(
+            app_row_title(&zh(), &app),
+            "Claude Code · 火山方舟 · 5 小时剩余 90% · 每周剩余 40% · 每月剩余 30%"
         );
     }
 

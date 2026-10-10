@@ -12,7 +12,7 @@ use crate::config::get_claude_config_dir;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
-use crate::proxy::usage::parser::TokenUsage;
+use crate::proxy::usage::parser::{claude_cache_creation_1h_tokens, TokenUsage};
 use crate::services::usage_stats::{
     effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
 };
@@ -196,6 +196,7 @@ struct ParsedAssistantUsage {
     output_tokens: u32,
     cache_read_tokens: u32,
     cache_creation_tokens: u32,
+    cache_creation_1h_tokens: u32,
     stop_reason: Option<String>,
     timestamp: Option<String>,
     session_id: Option<String>,
@@ -774,6 +775,7 @@ fn sync_single_file(
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
+            cache_creation_1h_tokens: claude_cache_creation_1h_tokens(usage),
             stop_reason: message
                 .get("stop_reason")
                 .and_then(|v| v.as_str())
@@ -1036,6 +1038,7 @@ fn session_costs(conn: &rusqlite::Connection, msg: &ParsedAssistantUsage) -> [St
         output_tokens: msg.output_tokens,
         cache_read_tokens: msg.cache_read_tokens,
         cache_creation_tokens: msg.cache_creation_tokens,
+        cache_creation_1h_tokens: msg.cache_creation_1h_tokens,
         model: Some(msg.model.clone()),
         message_id: None,
     };
@@ -1344,6 +1347,7 @@ mod tests {
             output_tokens: 26,
             cache_read_tokens: 5000,
             cache_creation_tokens: 10000,
+            cache_creation_1h_tokens: 0,
             stop_reason: None,
             timestamp: Some("2026-04-05T12:00:00Z".to_string()),
             session_id: None,
@@ -1358,6 +1362,7 @@ mod tests {
             output_tokens: 1349,
             cache_read_tokens: 5000,
             cache_creation_tokens: 10000,
+            cache_creation_1h_tokens: 0,
             stop_reason: Some("end_turn".to_string()),
             timestamp: Some("2026-04-05T12:00:00Z".to_string()),
             session_id: None,
@@ -1409,6 +1414,7 @@ mod tests {
             output_tokens: 20,
             cache_read_tokens: 10,
             cache_creation_tokens: 5,
+            cache_creation_1h_tokens: 0,
             stop_reason: Some("end_turn".to_string()),
             timestamp: Some("1970-01-01T00:16:45Z".to_string()),
             session_id: Some("session-1".to_string()),
@@ -1871,6 +1877,35 @@ mod tests {
             |row| row.get(0),
         )?;
         assert!(!empty_exists, "全 0 token 的 message 应被跳过");
+        drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_bills_1h_cache_writes_at_1h_rate() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("session.jsonl");
+
+        // cache_creation_input_tokens = 5m 写入 + 1h 写入
+        let line = r#"{"type":"assistant","message":{"id":"msg_1h","model":"claude-opus-4-8","usage":{"input_tokens":2,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":400,"ephemeral_1h_input_tokens":600}},"stop_reason":"end_turn"},"timestamp":"2026-06-07T13:01:23Z","sessionId":"session-1h"}"#;
+        fs::write(&file, format!("{line}\n")).unwrap();
+        assert_eq!(sync_single_file(&db, &file, None)?.imported, 1);
+
+        let conn = lock_conn!(db.conn);
+        let cache_creation_cost: String = conn.query_row(
+            "SELECT cache_creation_cost_usd FROM proxy_request_logs WHERE request_id = 'session:msg_1h'",
+            [],
+            |row| row.get(0),
+        )?;
+        // claude-opus-4-8：400 × $6.25/M + 600 × $10/M = 0.0085
+        assert_eq!(
+            cache_creation_cost.parse::<Decimal>().unwrap(),
+            Decimal::new(85, 4)
+        );
         drop(conn);
 
         fs::remove_dir_all(&tmp).ok();

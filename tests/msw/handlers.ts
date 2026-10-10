@@ -395,6 +395,10 @@ export const handlers = [
     success("restarted"),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/acknowledge_codex_stale_clients`, () =>
+    success(null),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_proxy_takeover_status`, () =>
     success({
       claude: false,

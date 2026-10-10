@@ -157,6 +157,19 @@ pub async fn restart_codex_app_server_daemon(
     .map_err(|error| error.to_string())?
 }
 
+/// 用户关掉「Codex 可能还在用旧的」提示（看不到进程时出的那种）：记下现在的模型目录和文件
+/// 登录，同一份不再提示。
+#[tauri::command]
+pub async fn acknowledge_codex_stale_clients() -> Result<(), String> {
+    crate::services::provider::codex_direct::off_runtime(|| {
+        crate::services::provider::codex_client_catalog::acknowledge(
+            &crate::live::engine::DeviceStore::for_device(),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 /// Stack 模型：把一家加入或移出名单（`enabled` 是目标值）。成功时返回客户端看不到或看不全
 /// Stack 模型的提示；失败时 `partial` 为真表示已部分写入，下次操作或重启 CC Switch 时补完。
 #[tauri::command]

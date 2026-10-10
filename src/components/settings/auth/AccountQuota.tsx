@@ -8,17 +8,21 @@ import {
   ResetSlot,
   TONE_FILL,
   TONE_TEXT,
+  TonedText,
   useNow,
 } from "@/components/quota/QuotaLines";
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 import {
   QuotaBreakdownChevron,
   QuotaBreakdownRow,
 } from "@/components/quota/QuotaBreakdown";
 import {
+  barPercent,
   countdownStr,
   formatRelativeTime,
   lineHint,
   tierLine,
+  type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
 import {
@@ -52,8 +56,8 @@ interface AccountQuotaColumnProps {
 }
 
 /**
- * 授权中心账号行右侧的额度（v7 Auth 画板）：212 宽的额度条（条和数字都按「剩余」画，
- * 平时 --chart-1；不到 10% 换 warning，用完换 danger）+ 84 宽的「x 分钟前 ↻」。
+ * 授权中心账号行右侧的额度（v7 Auth 画板）：212 宽的额度条（条和数字按设置写剩余或已用，
+ * 平时 --chart-1；不到 20% 换 warning，用完换 danger）+ 84 宽的「x 分钟前 ↻」。
  * 打开页面时查一次，不轮询；↻ 手动重查。
  */
 export function AccountQuotaColumn({
@@ -185,9 +189,7 @@ function QuotaRowCells({
   /** 跟在说明文字后面的小图标（可点开的行用） */
   trailing?: ReactNode;
 }) {
-  const width = Number.isFinite(line.left)
-    ? Math.max(0, Math.min(100, line.left))
-    : 100;
+  const width = barPercent(line);
   const value = line.value ?? line.text;
   return (
     <>
@@ -217,13 +219,13 @@ function QuotaRowCells({
           />
         </span>
       )}
-      <span
-        className={cn(
-          "w-14 shrink-0 whitespace-nowrap text-end tabular-nums",
-          line.tone === "normal" ? "text-fg-1" : TONE_TEXT[line.tone],
-        )}
-      >
-        {value}
+      {/* 旁边已有额度条，正常时数值不上色 */}
+      <span className="w-14 shrink-0 whitespace-nowrap text-end tabular-nums text-fg-1">
+        <TonedText
+          text={value}
+          line={line}
+          className={line.tone === "normal" ? "" : TONE_TEXT[line.tone]}
+        />
       </span>
     </>
   );
@@ -235,6 +237,7 @@ export function subscriptionQuotaState(
   quota: SubscriptionQuota | undefined,
   loading: boolean,
   locale: string,
+  display: QuotaDisplay = "left",
 ): AccountQuotaState {
   if (!quota) return loading ? { kind: "loading" } : null;
   // 没有凭据 / 凭据解析失败：和供应商卡片一样不显示
@@ -250,7 +253,7 @@ export function subscriptionQuotaState(
       reason: quotaFailureReason(t, quota),
     };
   }
-  const rows = quotaRows(t, quota, locale);
+  const rows = quotaRows(t, quota, locale, { display });
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
@@ -263,6 +266,7 @@ export function CopilotAccountQuota({
   login: string;
 }) {
   const { t } = useTranslation();
+  const display = useQuotaDisplay();
   const query = useCopilotQuota(accountId, { enabled: true, autoQuery: false });
   const { data: quota, isFetching: loading } = query;
 
@@ -275,7 +279,7 @@ export function CopilotAccountQuota({
             kind: "rows",
             rows: quota.tiers.map((tier) => ({
               label,
-              line: tierLine(t, tier, label),
+              line: tierLine(t, tier, label, { display }),
             })),
           }
         : null;
@@ -313,6 +317,7 @@ export function XaiAccountQuota({
   login: string;
 }) {
   const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
   const {
     data: quota,
     isFetching: loading,
@@ -324,7 +329,7 @@ export function XaiAccountQuota({
   return (
     <AccountQuotaColumn
       login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language)}
+      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}

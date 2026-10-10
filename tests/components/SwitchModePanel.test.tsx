@@ -86,7 +86,7 @@ function renderPanel(
   onSwitch = vi.fn(),
 ) {
   const queryClient = createTestQueryClient();
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <SwitchModePanel
         app={app}
@@ -102,6 +102,7 @@ function renderPanel(
       />
     </QueryClientProvider>,
   );
+  return { ...view, queryClient };
 }
 
 beforeEach(() => {
@@ -149,7 +150,7 @@ describe("SwitchModePanel — Stack mode", () => {
     ]);
   });
 
-  it("warns about Codex clients on an old model list only in Stack mode", async () => {
+  it("warns about Codex clients on an old model list in every mode", async () => {
     const stack = (active: boolean) =>
       http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({
@@ -170,11 +171,67 @@ describe("SwitchModePanel — Stack mode", () => {
     mockMode("route", "route");
     server.use(stack(false));
     renderPanel("codex", { route: provider("route") });
-    await screen.findByTestId("card-route");
+    expect(
+      await screen.findByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a dismissed Codex stale notice again once the model list changes again", async () => {
+    let revision = "r1";
+    mockMode("direct", "route");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: false,
+          members: [],
+          staleClients: { daemon: false, others: true },
+          staleRevision: revision,
+        }),
+      ),
+    );
+    const { queryClient } = renderPanel("codex", { route: provider("route") });
+    await screen.findByText("proxy.stackMode.codexStale.title");
+    fireEvent.click(screen.getByRole("button", { name: "common.close" }));
     expect(
       screen.queryByText("proxy.stackMode.codexStale.title"),
     ).not.toBeInTheDocument();
+
+    // 同一份：再拉一次还是关着。
+    await queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
+    expect(
+      screen.queryByText("proxy.stackMode.codexStale.title"),
+    ).not.toBeInTheDocument();
+
+    // 同一个供应商又改了一次目录：同样的客户端，但已经是新的一份。
+    revision = "r2";
+    await queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
+    expect(
+      await screen.findByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
   });
+
+  it.each(["direct", "route", "stack"] as const)(
+    "shows a cached account notice in %s mode",
+    async (mode) => {
+      mockMode(mode, "route");
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+          HttpResponse.json({
+            active: mode === "stack",
+            members: [],
+            staleClients: { daemon: true, others: false, auth: true },
+          }),
+        ),
+      );
+      renderPanel("codex", { route: provider("route") });
+      expect(
+        await screen.findByText("proxy.stackMode.codexStale.authTitle"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("proxy.stackMode.codexStale.title"),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("does not read the Stack list for apps without Stack mode", async () => {
     mockMode("route", "a");

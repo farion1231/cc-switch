@@ -267,7 +267,12 @@ pub(crate) fn predicted_official_login(
         .ok()
         .flatten()
         .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null));
-    let stash = load_stash(&DeviceStore::for_device(), &planned.official_logins).stash;
+    let stash = load_stash(
+        &DeviceStore::for_device(),
+        &planned.official_logins,
+        live.as_ref(),
+    )
+    .stash;
     let auth_plan = codex_login::plan(AuthInput {
         live: live.as_ref(),
         live_is_managed: live_is_managed(prepared, live.as_ref()),
@@ -826,7 +831,12 @@ fn stack_catalog(
             },
         })
         .collect();
-    plan_codex_stack_catalog(route_row, &members).map(Some)
+    plan_codex_stack_catalog(
+        route_row,
+        &members,
+        crate::settings::codex_stack_classic_subagents(),
+    )
+    .map(Some)
 }
 
 fn table_text(table: &Table) -> String {
@@ -905,7 +915,7 @@ fn contract_of(
     }
 }
 
-/// 读登录暂存。
+/// 读到的登录暂存。
 struct LoadedStash {
     stash: LoginStash,
     pre: Option<Vec<u8>>,
@@ -914,17 +924,12 @@ struct LoadedStash {
     unreadable: Option<String>,
 }
 
-fn load_stash(store: &DeviceStore, official_logins: &[Value]) -> LoadedStash {
+/// 读登录暂存。`live` 是现在的 `auth.json`：升级更早版本的暂存时要用（见 `LoginStash::loaded`）。
+fn load_stash(store: &DeviceStore, official_logins: &[Value], live: Option<&Value>) -> LoadedStash {
     let path = store.file(STASH_FILENAME);
     let pre = read_current(&path).ok().flatten();
     let (stash, unreadable) = match pre.as_deref().map(serde_json::from_slice::<LoginStash>) {
-        Some(Ok(stash)) => (
-            LoginStash {
-                initialized: true,
-                ..stash
-            },
-            None,
-        ),
+        Some(Ok(stash)) => (stash.loaded(official_logins, live), None),
         Some(Err(err)) => {
             log::warn!("Codex 登录暂存 {} 无法解析: {err}", path.display());
             (
@@ -1004,7 +1009,7 @@ pub(crate) fn run_with_edits(
         stash,
         pre: stash_pre,
         unreadable: stash_unreadable,
-    } = load_stash(store, &planned.official_logins);
+    } = load_stash(store, &planned.official_logins, live_auth.as_ref());
     let preserve = crate::settings::preserve_codex_official_auth_on_switch();
     let auth_plan = codex_login::plan(AuthInput {
         live: live_auth.as_ref(),

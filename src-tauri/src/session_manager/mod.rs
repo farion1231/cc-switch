@@ -198,8 +198,9 @@ fn delete_session_with_roots(
     source_path: &Path,
     roots: &[PathBuf],
 ) -> Result<bool, String> {
+    let source_path = content::codex_source_or_sibling(provider_id, source_path);
     let (validated_root, validated_source) =
-        content::resolve_under_roots(provider_id, source_path, roots)?;
+        content::resolve_under_roots(provider_id, &source_path, roots)?;
     match provider_id {
         "codex" => codex::delete_session(&validated_root, &validated_source, session_id),
         "claude" => claude::delete_session(&validated_root, &validated_source, session_id),

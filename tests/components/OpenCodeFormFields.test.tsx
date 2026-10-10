@@ -434,6 +434,21 @@ describe("OpenCodeFormFields", () => {
     expect(Object.keys(nextOptions)[0]).toMatch(/^draft-option:/);
   });
 
+  it("rejects renaming an extra option onto an existing key and restores the input", () => {
+    const onExtraOptionsChange = vi.fn();
+    renderOpenCodeForm({
+      extraOptions: { target: "100", source: "100" },
+      onExtraOptionsChange,
+    });
+
+    const keyInput = screen.getByDisplayValue("source");
+    fireEvent.change(keyInput, { target: { value: "target" } });
+    fireEvent.blur(keyInput);
+
+    expect(onExtraOptionsChange).not.toHaveBeenCalled();
+    expect(keyInput).toHaveValue("source");
+  });
+
   it("uses the family section divider for model configuration", () => {
     renderOpenCodeForm();
 
