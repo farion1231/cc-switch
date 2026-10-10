@@ -202,6 +202,17 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
 // 后）只更新数据、不重置 at，避免一次局部刷新把整体 TTL 续命。
 const TOOL_VERSIONS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
 const EMPTY_TOOL_VERSIONS: ToolVersion[] = [];
+// 「自动检查工具版本」开关：沿用「关于」页时期的键名，老用户关掉后升级仍然保持关闭。
+// 只有字面量 "false" 视为关闭（键缺失、其他值、读取失败都按默认「开」处理）。
+const AUTO_CHECK_TOOL_VERSIONS_KEY = "ccswitch:about:autoCheckToolVersions";
+
+function readAutoCheckToolVersions(): boolean {
+  try {
+    return localStorage.getItem(AUTO_CHECK_TOOL_VERSIONS_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
 let toolVersionRequestSequence = 0;
 const latestToolVersionRequests = new Map<string, number>();
 
@@ -306,12 +317,15 @@ export function useToolManagement() {
   // 有缓存（哪怕已超期）就先展示旧值、初始不 loading；超期时由挂载副作用触发后台
   // 重查（stale-while-revalidate）。无缓存（首次）才从 loading 起步。
   const [isLoadingTools, setIsLoadingTools] = useState(
-    () => toolVersionsCache === null,
+    () => toolVersionsCache === null && readAutoCheckToolVersions(),
   );
 
   const [wslShellByTool, setWslShellByTool] = useState<
     Record<string, WslShellPreference>
   >({});
+  const [autoCheckToolVersions, setAutoCheckToolVersionsState] = useState(
+    readAutoCheckToolVersions,
+  );
   const [loadingTools, setLoadingTools] = useState<Record<string, boolean>>({});
   // 多处安装冲突诊断结果：按工具存储，有冲突的工具会在其卡片下方展示。
   // 来源两路：顶部「诊断安装冲突」按钮一次性扫全部，或升级后版本未变时自动补诊。
@@ -495,6 +509,7 @@ export function useToolManagement() {
   );
 
   useEffect(() => {
+    if (!readAutoCheckToolVersions()) return;
     void loadAllToolVersions();
     void loadInstallations();
     // Mount-only: loadAllToolVersions is intentionally excluded to avoid
@@ -509,6 +524,26 @@ export function useToolManagement() {
       loadInstallations({ force: true }),
     ]);
   }, [loadAllToolVersions, loadInstallations]);
+
+  // 检查只由开启操作触发，避免状态变化与挂载副作用重复探测。
+  const setAutoCheckToolVersions = useCallback(
+    (enabled: boolean) => {
+      try {
+        localStorage.setItem(AUTO_CHECK_TOOL_VERSIONS_KEY, String(enabled));
+      } catch (error) {
+        console.error(
+          "[useToolManagement] Failed to persist auto check preference",
+          error,
+        );
+      }
+      setAutoCheckToolVersionsState(enabled);
+      if (enabled) {
+        void loadAllToolVersions();
+        void loadInstallations();
+      }
+    },
+    [loadAllToolVersions, loadInstallations],
+  );
 
   const handleCopyInstallCommands = useCallback(async () => {
     try {
@@ -936,6 +971,8 @@ export function useToolManagement() {
     isDiagnosingAll,
     isAnyBusy,
     lastCheckedAt,
+    autoCheckToolVersions,
+    setAutoCheckToolVersions,
     wslShellByTool,
     checkForUpdates,
     handleToolShellChange,

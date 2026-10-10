@@ -22,6 +22,7 @@ import { isUpdateAvailable } from "@/lib/version";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
@@ -160,6 +161,12 @@ export function AppsPage() {
       })
     : t("appsPage.neverChecked");
 
+  // 关掉自动检查、且确实一次都没查过（也没有手动加载过数据）时才提示「尚未检查」。
+  const showNotChecked =
+    !tools.autoCheckToolVersions &&
+    tools.toolVersionByName.size === 0 &&
+    !tools.isLoadingTools;
+
   return (
     <>
       <AppPageHeader
@@ -253,6 +260,28 @@ export function AppsPage() {
         className="min-h-0 flex-1 overflow-y-auto scroll-stable"
       >
         <div className="px-6 pb-10 pt-4">
+          <div className="mb-3 flex items-center justify-between gap-4 rounded-panel border border-border bg-surface px-4 py-2.5">
+            <div className="min-w-0 space-y-0.5">
+              <Label htmlFor="apps-auto-check-tool-versions">
+                {t("settings.autoCheckToolVersions")}
+              </Label>
+              <p className="text-caption text-fg-2">
+                {t("settings.autoCheckToolVersionsDescription")}
+              </p>
+              {showNotChecked && (
+                <p className="text-caption text-warning-text">
+                  {t("settings.toolVersionsNotChecked")}
+                </p>
+              )}
+            </div>
+            <Switch
+              id="apps-auto-check-tool-versions"
+              checked={tools.autoCheckToolVersions}
+              onCheckedChange={tools.setAutoCheckToolVersions}
+              aria-label={t("settings.autoCheckToolVersions")}
+            />
+          </div>
+
           <div className="flex h-8 items-center px-4 text-caption font-medium text-fg-2">
             <span className="flex-1">{t("appsPage.columnApp")}</span>
             <span className="w-[168px] text-end">
@@ -434,11 +463,12 @@ function ToolRow({
   const isOutdated = isUpdateAvailable(info?.version, info?.latest_version);
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
+  // 未探测的工具不能按未安装处理。
   const action: ToolLifecycleAction | null =
     tools.busyTools.get(tool) ??
-    (isVersionLoading || broken
+    (isVersionLoading || broken || !info
       ? null
-      : !info?.version
+      : !info.version
         ? "install"
         : isOutdated
           ? "update"
@@ -475,6 +505,9 @@ function ToolRow({
       <AlertTriangle className="h-3.5 w-3.5" />
       {t("appsPage.notRunnable")}
     </span>
+  ) : !info ? (
+    // 还没查过（关掉自动检查、也没手动查过）：不谎报「未安装」，只说未知。
+    <span className="text-caption text-fg-2">{t("common.unknown")}</span>
   ) : (
     <span className="text-caption text-fg-2">{t("common.notInstalled")}</span>
   );
