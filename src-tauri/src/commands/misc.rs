@@ -8112,19 +8112,43 @@ printf 'all automatic fish update cases passed\n'
                 .output();
             let cleanup = run_wsl_script_as(
                 distro,
-                &format!("set -e\nuserdel {user}\nrm -rf {home}\n"),
+                &format!(
+                    "set -e\nuid=$(id -u {user})\nif userdel {user}; then\n  rm -rf {home}\nelse\n  status=$?\n  ps -u \"$uid\" -o pid,ppid,stat,comm >&2 || true\n  exit \"$status\"\nfi\n"
+                ),
                 Some("root"),
             );
-            assert!(cleanup.status.success(), "test account should be removed");
-            let output = output.expect("real cmd should start the automatic WSL fixture");
-            assert!(
-                output.status.success(),
-                "stdout: {}; stderr: {}",
+            // Cleanup still runs before assertions, but retain both results so
+            // its failure cannot hide the update command's outcome.
+            let cleanup_diagnostics = format!(
+                "cleanup status: {}; stdout: {}; stderr: {}",
+                cleanup.status,
+                String::from_utf8_lossy(&cleanup.stdout),
+                String::from_utf8_lossy(&cleanup.stderr)
+            );
+            let output = output.unwrap_or_else(|error| {
+                panic!(
+                    "real cmd should start the automatic WSL fixture: {error}; {cleanup_diagnostics}"
+                )
+            });
+            let diagnostics = format!(
+                "command status: {}; stdout: {}; stderr: {}; {cleanup_diagnostics}",
+                output.status,
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
-            assert!(String::from_utf8_lossy(&output.stdout)
-                .contains("all automatic fish update cases passed"));
+            assert!(
+                output.status.success(),
+                "automatic WSL fixture failed: {diagnostics}"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stdout)
+                    .contains("all automatic fish update cases passed"),
+                "automatic WSL fixture success marker missing: {diagnostics}"
+            );
+            assert!(
+                cleanup.status.success(),
+                "test account should be removed: {diagnostics}"
+            );
         }
 
         #[cfg(target_os = "windows")]
