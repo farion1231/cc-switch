@@ -4269,6 +4269,7 @@
       "enabled": "已在 {{app}} 启用 {{count}} 个 {{noun}}",
       "disabled": "已在 {{app}} 关闭 {{count}} 个 {{noun}}",
       "partialFail": "，其中 {{count}} 个没有写入，已在列表里标出",
+      "skippedShared": "，跳过 {{count}} 个（由共享目录提供，仍保持启用）",
       "undone": "已撤销"
     },
     "undo": "撤销",

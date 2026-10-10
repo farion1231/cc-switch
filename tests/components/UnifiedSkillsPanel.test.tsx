@@ -318,6 +318,55 @@ describe("UnifiedSkillsPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("bulk-disabling Pi skips shared skills in the count but still processes dual-source", async () => {
+    m.installed = [
+      // #3 仅原生：正常关闭
+      makeSkill({
+        id: "native-only",
+        name: "Native",
+        directory: "native-only",
+        apps: { pi: true },
+        piVisibility: { state: "native" },
+      }),
+      // #4 仅共享：不调用、不计数
+      makeSkill({
+        id: "shared-only",
+        name: "Shared",
+        directory: "shared-only",
+        apps: { pi: true },
+        piVisibility: { state: "shared", sharedRoots: ["/h/.claude/skills"] },
+      }),
+      // #5 双来源：照常调用（删原生副本）但不计入关闭数
+      makeSkill({
+        id: "dual",
+        name: "Dual",
+        directory: "dual",
+        apps: { pi: true },
+        piVisibility: { state: "native-shared", sharedRoots: ["/h/.agents/skills"] },
+      }),
+    ];
+    renderPanel();
+    // Pi 列 = 第 3 列；点列头 → 全部关闭
+    await userEvent.click(columns()[2]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "appMatrix.pop.disableAll" }),
+    );
+
+    // 调用集：#3 + #5（排除 #4）
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["native-only", "dual"],
+        app: "pi",
+        enabled: false,
+      }),
+    );
+    // toast：关闭计数只含 #3，跳过 = #4 + #5 = 2
+    await waitFor(() => expect(m.toastSuccess).toHaveBeenCalled());
+    const text = m.toastSuccess.mock.calls[0][0] as string;
+    expect(text).toContain("appMatrix.toast.disabled");
+    expect(text).toContain("appMatrix.toast.skippedShared");
+  });
+
   it("bulk-enables only the disabled Skills in a column and offers undo", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A", apps: { codex: true } }),

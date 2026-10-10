@@ -447,15 +447,25 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     app: AppId,
     enabled: boolean,
     toastKey: { on: string; off: string },
+    sharedSkip?: { excludedCount: number; dualIds: Set<string> },
   ) => {
     if (!beginWrite()) return;
     try {
       const { succeeded, failed } = await writeMany(ids, app, enabled);
+      // #5 双来源会成功删除原生副本但技能仍经共享目录加载——不计入"关闭"数，
+      // 记为跳过；撤销集合仍含全部成功项（含 #5，恢复被删的原生副本）。
+      const dualInSucceeded = sharedSkip
+        ? succeeded.filter((id) => sharedSkip.dualIds.has(id)).length
+        : 0;
+      const skipped =
+        (sharedSkip?.excludedCount ?? 0) + dualInSucceeded;
       let text = t(enabled ? toastKey.on : toastKey.off, {
         app: APP_DISPLAY_NAME[app],
-        count: succeeded.length,
+        count: succeeded.length - dualInSucceeded,
         noun,
       });
+      if (skipped > 0)
+        text += t("appMatrix.toast.skippedShared", { count: skipped });
       if (failed) text += t("appMatrix.toast.partialFail", { count: failed });
       showUndoToast(
         text,
@@ -481,23 +491,56 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
   };
 
-  const handleColumnBulk = (app: AppId, enabled: boolean) => {
-    const ids = scope.rows
-      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+  // Pi 批量关闭的共享态分类（#4 仅共享 / #5 双来源）：
+  // #4 不调用（无可操作副本，no-op 谎报成功）；#5 照常调用（删除原生副本）；
+  // 两者均由 bulkToggle 记为"跳过"，关闭计数只含真正会被关掉的技能。
+  const classifyPiBulkDisable = (targets: InstalledSkill[]) => {
+    const ids = targets
+      .filter((skill) => skill.piVisibility?.state !== "shared")
       .map((skill) => skill.id);
-    if (ids.length === 0) return;
-    void bulkToggle(ids, app, enabled, {
-      on: "appMatrix.toast.enabled",
-      off: "appMatrix.toast.disabled",
-    });
+    const excludedCount = targets.length - ids.length;
+    const dualIds = new Set(
+      targets
+        .filter((skill) => skill.piVisibility?.state === "native-shared")
+        .map((skill) => skill.id),
+    );
+    return { ids, excludedCount, dualIds };
+  };
+
+  const handleColumnBulk = (app: AppId, enabled: boolean) => {
+    const targets = scope.rows.filter(
+      (skill) => Boolean(skill.apps[app]) !== enabled,
+    );
+    const isPiDisable = app === "pi" && !enabled;
+    const { ids, excludedCount, dualIds } = isPiDisable
+      ? classifyPiBulkDisable(targets)
+      : { ids: targets.map((s) => s.id), excludedCount: 0, dualIds: new Set<string>() };
+    if (ids.length === 0 && excludedCount === 0) return;
+    void bulkToggle(
+      ids,
+      app,
+      enabled,
+      {
+        on: "appMatrix.toast.enabled",
+        off: "appMatrix.toast.disabled",
+      },
+      isPiDisable ? { excludedCount, dualIds } : undefined,
+    );
   };
 
   const handleSelectionToggle = (app: AppId, enabled: boolean) => {
     const chosen = installedSkills.filter((skill) => selected.has(skill.id));
-    const ids = chosen
-      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
-      .map((skill) => skill.id);
-    if (ids.length === 0) {
+    const isPiDisable = app === "pi" && !enabled;
+    const { ids, excludedCount, dualIds } = isPiDisable
+      ? classifyPiBulkDisable(chosen)
+      : {
+          ids: chosen
+            .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+            .map((skill) => skill.id),
+          excludedCount: 0,
+          dualIds: new Set<string>(),
+        };
+    if (ids.length === 0 && excludedCount === 0) {
       toast.info(
         enabled
           ? t("skillsPage.toast.selectionAlreadyOn", {
@@ -512,10 +555,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       );
       return;
     }
-    void bulkToggle(ids, app, enabled, {
-      on: "appMatrix.toast.enabled",
-      off: "skillsPage.toast.disabledSelection",
-    });
+    void bulkToggle(
+      ids,
+      app,
+      enabled,
+      {
+        on: "appMatrix.toast.enabled",
+        off: "skillsPage.toast.disabledSelection",
+      },
+      isPiDisable ? { excludedCount, dualIds } : undefined,
+    );
   };
 
   // ─── 卸载 / 更新 ────────────────────────────────────────────────────

@@ -4269,6 +4269,7 @@
       "enabled": "Enabled {{count}} {{noun}} in {{app}}",
       "disabled": "Turned off {{count}} {{noun}} in {{app}}",
       "partialFail": "; {{count}} could not be written and are marked in the list",
+      "skippedShared": ", skipped {{count}} (provided by shared directories, still enabled)",
       "undone": "Undone"
     },
     "undo": "Undo",

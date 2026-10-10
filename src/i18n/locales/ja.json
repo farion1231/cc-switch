@@ -4269,6 +4269,7 @@
       "enabled": "{{app}} で {{count}} 件の {{noun}} を有効化しました",
       "disabled": "{{app}} で {{count}} 件の {{noun}} をオフにしました",
       "partialFail": "。うち {{count}} 件は書き込めず、リストに印を付けました",
+      "skippedShared": "、{{count}} 件をスキップ（共有ディレクトリ由来のため有効のまま）",
       "undone": "元に戻しました"
     },
     "undo": "元に戻す",

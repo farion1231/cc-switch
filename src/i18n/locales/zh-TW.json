@@ -4270,6 +4270,7 @@
       "enabled": "已在 {{app}} 啟用 {{count}} 個 {{noun}}",
       "disabled": "已在 {{app}} 關閉 {{count}} 個 {{noun}}",
       "partialFail": "，其中 {{count}} 個沒有寫入，已在列表裡標出",
+      "skippedShared": "，跳過 {{count}} 個（由共享目錄提供，仍保持啟用）",
       "undone": "已復原"
     },
     "undo": "復原",
