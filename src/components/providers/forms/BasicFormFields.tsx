@@ -21,6 +21,8 @@ import {
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { IconPicker } from "@/components/IconPicker";
 import { getIconMetadata } from "@/icons/extracted/metadata";
+import { cn } from "@/lib/utils";
+import { isMac } from "@/lib/platform";
 import type { UseFormReturn } from "react-hook-form";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 
@@ -92,7 +94,14 @@ export function BasicFormFields({
       >
         <div className="flex h-full flex-col">
           <div className="flex-shrink-0 py-4 border-b border-border bg-subtle">
-            <div className="px-6 flex items-center gap-4">
+            {/* macOS 红绿灯浮在窗口左上角约 70px 处，全屏态下要给它让出位置，
+                否则返回按钮会压在红绿灯下面 */}
+            <div
+              className={cn(
+                "flex items-center gap-4",
+                isMac() ? "ps-[78px] pe-6" : "px-6",
+              )}
+            >
               <DialogClose asChild>
                 <Button
                   type="button"
