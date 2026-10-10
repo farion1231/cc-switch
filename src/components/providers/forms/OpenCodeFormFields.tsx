@@ -535,10 +535,22 @@ export function OpenCodeFormFields({
 
   const handleExtraOptionKeyChange = (oldKey: string, newKey: string) => {
     if (oldKey === newKey) return;
+    const trimmed = newKey.trim();
+    // Renaming onto an existing key collapses two rows into one string map,
+    // which can no longer tell "the target row was replaced" from "it was
+    // untouched", so the merge would silently keep the target's stale value
+    // type. Reject like the model extra-field editor does.
+    if (
+      trimmed &&
+      trimmed !== oldKey &&
+      Object.prototype.hasOwnProperty.call(extraOptions, trimmed)
+    ) {
+      return false;
+    }
     const newOptions: Record<string, string> = {};
     for (const [k, v] of Object.entries(extraOptions)) {
       if (k === oldKey) {
-        newOptions[newKey.trim() || oldKey] = v;
+        newOptions[trimmed || oldKey] = v;
       } else {
         newOptions[k] = v;
       }
