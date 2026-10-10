@@ -34,9 +34,16 @@ const OPENCLAW_TOOLS_PROFILES: &[&str] = &["minimal", "coding", "messaging", "fu
 /// 默认路径: `~/.openclaw/`，非默认 profile 使用 `~/.openclaw-<profile>/`。
 /// settings.openclaw_config_dir 优先，其次是 OPENCLAW_STATE_DIR。
 pub fn get_openclaw_dir() -> PathBuf {
+    // Tests set CC_SWITCH_TEST_HOME and must never inherit the user's
+    // persistent settings override or write outside their temporary root.
+    let override_dir = if env::var_os("CC_SWITCH_TEST_HOME").is_some() {
+        None
+    } else {
+        get_openclaw_override_dir()
+    };
     resolve_openclaw_dir(
         &crate::config::get_home_dir(),
-        get_openclaw_override_dir(),
+        override_dir,
         std::env::var("OPENCLAW_STATE_DIR").ok().as_deref(),
         std::env::var("OPENCLAW_PROFILE").ok().as_deref(),
     )
