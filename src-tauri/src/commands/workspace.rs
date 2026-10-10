@@ -383,13 +383,39 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
-    struct TestHome(Option<std::ffi::OsString>);
+    struct TestEnvironment {
+        values: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
 
-    impl Drop for TestHome {
+    impl TestEnvironment {
+        fn isolated(home: &std::path::Path) -> Self {
+            let names = [
+                "CC_SWITCH_TEST_HOME",
+                "HOME",
+                "OPENCLAW_STATE_DIR",
+                "OPENCLAW_PROFILE",
+                "OPENCLAW_WORKSPACE_DIR",
+            ];
+            let values = names
+                .into_iter()
+                .map(|name| (name, std::env::var_os(name)))
+                .collect();
+            std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            std::env::set_var("HOME", home);
+            for name in names.into_iter().skip(2) {
+                std::env::remove_var(name);
+            }
+            Self { values }
+        }
+    }
+
+    impl Drop for TestEnvironment {
         fn drop(&mut self) {
-            match self.0.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            for (name, value) in self.values.drain(..) {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
             }
         }
     }
@@ -398,8 +424,7 @@ mod tests {
     #[serial]
     async fn workspace_commands_use_configured_root_for_files_and_memory() {
         let temp = tempfile::tempdir().unwrap();
-        let _restore = TestHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let _environment = TestEnvironment::isolated(temp.path());
         let root = temp.path().join("custom-workspace");
         let config_dir = crate::openclaw_config::get_openclaw_dir();
         std::fs::create_dir_all(&config_dir).unwrap();
@@ -457,8 +482,7 @@ mod tests {
     #[serial]
     async fn workspace_commands_reject_invalid_config_and_unsafe_filenames() {
         let temp = tempfile::tempdir().unwrap();
-        let _restore = TestHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let _environment = TestEnvironment::isolated(temp.path());
         let config_dir = crate::openclaw_config::get_openclaw_dir();
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(config_dir.join("openclaw.json"), "{ broken").unwrap();
@@ -479,5 +503,31 @@ mod tests {
         assert!(delete_daily_memory_file("../2026-10-09.md".into())
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn workspace_tests_do_not_touch_an_inherited_state_directory() {
+        let inherited = tempfile::tempdir().unwrap();
+        std::fs::write(
+            inherited.path().join("openclaw.json"),
+            r#"{"reviewSentinel":"must-survive"}"#,
+        )
+        .unwrap();
+        std::env::set_var("OPENCLAW_STATE_DIR", inherited.path());
+
+        let temp = tempfile::tempdir().unwrap();
+        let _environment = TestEnvironment::isolated(temp.path());
+        let config_dir = crate::openclaw_config::get_openclaw_dir();
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("openclaw.json"), "{}").unwrap();
+        write_workspace_file("MEMORY.md".into(), "isolated".into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(inherited.path().join("openclaw.json")).unwrap(),
+            r#"{"reviewSentinel":"must-survive"}"#
+        );
     }
 }

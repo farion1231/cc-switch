@@ -16,6 +16,7 @@ use json_five::rt::parser::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -62,7 +63,7 @@ fn resolve_openclaw_dir(
         return dir;
     }
     if let Some(dir) = non_empty_path(state_dir) {
-        return expand_workspace_path(dir, home);
+        return expand_config_path(dir, home);
     }
     match non_empty_path(profile).filter(|value| !value.eq_ignore_ascii_case("default")) {
         Some(profile) => home.join(format!(".openclaw-{profile}")),
@@ -76,7 +77,7 @@ fn resolve_openclaw_dir(
 /// then defaults to `<OpenClaw state directory>/workspace` (including profiles).
 /// Propagate configuration errors so writes never silently target a fallback.
 pub fn get_openclaw_workspace_dir() -> Result<PathBuf, AppError> {
-    let config = read_openclaw_config()?;
+    let config = read_effective_workspace_config()?;
     Ok(resolve_openclaw_workspace_dir(
         &config,
         &get_openclaw_dir(),
@@ -94,13 +95,16 @@ fn resolve_openclaw_workspace_dir(
     let configured = config
         .pointer("/agents/defaults/workspace")
         .and_then(Value::as_str);
-    match non_empty_path(configured).or_else(|| non_empty_path(workspace_env)) {
-        Some(path) => expand_workspace_path(path, home),
-        None => state_dir.join("workspace"),
+    if let Some(path) = non_empty_path(configured) {
+        return expand_config_path(path, home);
     }
+    if let Some(path) = non_empty_path(workspace_env) {
+        return resolve_env_path(path);
+    }
+    state_dir.join("workspace")
 }
 
-fn expand_workspace_path(path: &str, home: &Path) -> PathBuf {
+fn expand_config_path(path: &str, home: &Path) -> PathBuf {
     if path == "~" {
         home.to_path_buf()
     } else if let Some(relative) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
@@ -108,6 +112,238 @@ fn expand_workspace_path(path: &str, home: &Path) -> PathBuf {
     } else {
         PathBuf::from(path)
     }
+}
+
+/// Match Node's `path.resolve()` semantics used for OPENCLAW_*_DIR values.
+/// A literal `~/workspace` is relative to the process cwd and is not expanded.
+fn resolve_env_path(path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(candidate)
+    }
+}
+
+fn read_effective_workspace_config() -> Result<Value, AppError> {
+    let path = get_openclaw_config_path();
+    if !path.exists() {
+        return Ok(default_openclaw_config_value());
+    }
+
+    let source = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
+    let parsed: Value = json5::from_str(&source)
+        .map_err(|e| AppError::Config(format!("Failed to parse OpenClaw config as JSON5: {e}")))?;
+    let root = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut chain = vec![path.clone()];
+    let mut included = resolve_workspace_includes(parsed, root, root, &mut chain)?;
+    if let Some(workspace) = included.pointer("/agents/defaults/workspace").cloned() {
+        let resolved = resolve_workspace_env(workspace)?;
+        if let Some(defaults) = included
+            .get_mut("agents")
+            .and_then(Value::as_object_mut)
+            .and_then(|agents| agents.get_mut("defaults"))
+            .and_then(Value::as_object_mut)
+        {
+            defaults.insert("workspace".to_string(), resolved);
+        }
+    }
+    Ok(included)
+}
+
+fn resolve_workspace_includes(
+    value: Value,
+    base_dir: &Path,
+    root_dir: &Path,
+    chain: &mut Vec<PathBuf>,
+) -> Result<Value, AppError> {
+    match value {
+        Value::Array(values) => Ok(Value::Array(
+            values
+                .into_iter()
+                .map(|item| resolve_workspace_includes(item, base_dir, root_dir, chain))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        Value::Object(mut object) => {
+            let include = object.remove("$include");
+            let mut merged = Map::new();
+            if let Some(include) = include {
+                let paths = match include {
+                    Value::String(path) => vec![path],
+                    Value::Array(paths) => paths
+                        .into_iter()
+                        .map(|path| {
+                            path.as_str().map(str::to_owned).ok_or_else(|| {
+                                AppError::Config(
+                                    "OpenClaw $include entries must be strings".to_string(),
+                                )
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    _ => {
+                        return Err(AppError::Config(
+                            "OpenClaw $include must be a string or array of strings".to_string(),
+                        ));
+                    }
+                };
+                for include_path in paths {
+                    let include_file = resolve_include_path(&include_path, base_dir, root_dir)?;
+                    if chain.contains(&include_file) {
+                        return Err(AppError::Config(format!(
+                            "Circular OpenClaw $include detected: {}",
+                            include_file.display()
+                        )));
+                    }
+                    let include_source = fs::read_to_string(&include_file).map_err(|e| {
+                        AppError::Config(format!(
+                            "Failed to read OpenClaw include {}: {e}",
+                            include_file.display()
+                        ))
+                    })?;
+                    let parsed: Value = json5::from_str(&include_source).map_err(|e| {
+                        AppError::Config(format!(
+                            "Failed to parse OpenClaw include {}: {e}",
+                            include_file.display()
+                        ))
+                    })?;
+                    chain.push(include_file.clone());
+                    let resolved = resolve_workspace_includes(
+                        parsed,
+                        include_file.parent().unwrap_or(root_dir),
+                        root_dir,
+                        chain,
+                    )?;
+                    chain.pop();
+                    let resolved = resolved.as_object().ok_or_else(|| {
+                        AppError::Config(format!(
+                            "OpenClaw include {} must contain an object",
+                            include_file.display()
+                        ))
+                    })?;
+                    merge_workspace_objects(&mut merged, resolved.clone());
+                }
+            }
+            let mut siblings = Map::new();
+            for (key, child) in object {
+                siblings.insert(
+                    key,
+                    resolve_workspace_includes(child, base_dir, root_dir, chain)?,
+                );
+            }
+            merge_workspace_objects(&mut merged, siblings);
+            Ok(Value::Object(merged))
+        }
+        other => Ok(other),
+    }
+}
+
+fn resolve_include_path(path: &str, base_dir: &Path, root_dir: &Path) -> Result<PathBuf, AppError> {
+    if path.is_empty() || path.contains('\0') || path.len() >= 4096 {
+        return Err(AppError::Config(format!(
+            "Invalid OpenClaw include path: {path}"
+        )));
+    }
+    let candidate = if Path::new(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        base_dir.join(path)
+    };
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|e| AppError::Config(format!("Failed to resolve OpenClaw include {path}: {e}")))?;
+    let root = root_dir
+        .canonicalize()
+        .unwrap_or_else(|_| root_dir.to_path_buf());
+    if !canonical.starts_with(&root) {
+        return Err(AppError::Config(format!(
+            "OpenClaw include escapes config directory: {path}"
+        )));
+    }
+    Ok(canonical)
+}
+
+fn merge_workspace_objects(target: &mut Map<String, Value>, source: Map<String, Value>) {
+    for (key, value) in source {
+        match (target.get_mut(&key), value) {
+            (Some(Value::Object(existing)), Value::Object(incoming)) => {
+                merge_workspace_objects(existing, incoming)
+            }
+            (_, value) => {
+                target.insert(key, value);
+            }
+        }
+    }
+}
+
+fn resolve_workspace_env(value: Value) -> Result<Value, AppError> {
+    match value {
+        Value::String(value) => Ok(Value::String(resolve_workspace_env_string(&value)?)),
+        Value::Array(values) => Ok(Value::Array(
+            values
+                .into_iter()
+                .map(resolve_workspace_env)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        Value::Object(object) => Ok(Value::Object(
+            object
+                .into_iter()
+                .map(|(key, value)| Ok((key, resolve_workspace_env(value)?)))
+                .collect::<Result<Map<_, _>, AppError>>()?,
+        )),
+        other => Ok(other),
+    }
+}
+
+fn resolve_workspace_env_string(value: &str) -> Result<String, AppError> {
+    let mut output = String::with_capacity(value.len());
+    let mut cursor = 0;
+    while cursor < value.len() {
+        let rest = &value[cursor..];
+        if rest.starts_with("$${") {
+            let end = rest.find('}').ok_or_else(|| {
+                AppError::Config("Unterminated escaped OpenClaw environment reference".to_string())
+            })?;
+            output.push_str(&rest[1..=end]);
+            cursor += end + 1;
+            continue;
+        }
+        if !rest.starts_with("${") {
+            let ch = rest.chars().next().expect("non-empty string");
+            output.push(ch);
+            cursor += ch.len_utf8();
+            continue;
+        }
+        let end = rest.find('}').ok_or_else(|| {
+            AppError::Config("Unterminated OpenClaw environment reference".to_string())
+        })?;
+        let expression = &rest[2..end];
+        let (name, fallback) = expression
+            .split_once(":-")
+            .map_or((expression, None), |(name, fallback)| {
+                (name, Some(fallback))
+            });
+        let valid_name = !name.is_empty()
+            && name.chars().enumerate().all(|(index, ch)| {
+                ch == '_' || ch.is_ascii_uppercase() || (index > 0 && ch.is_ascii_digit())
+            });
+        if !valid_name || fallback.is_some_and(|fallback| fallback.contains(['$', '{'])) {
+            output.push_str(&rest[..=end]);
+            cursor += end + 1;
+            continue;
+        }
+        let resolved = env::var(name)
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| fallback.map(str::to_owned))
+            .ok_or_else(|| {
+                AppError::Config(format!("Missing OpenClaw environment variable: {name}"))
+            })?;
+        output.push_str(&resolved);
+        cursor += end + 1;
+    }
+    Ok(output)
 }
 
 fn default_openclaw_config_value() -> Value {
@@ -987,6 +1223,44 @@ mod tests {
             .unwrap_or_else(|err| err.into_inner())
     }
 
+    struct TestEnvironment {
+        values: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl TestEnvironment {
+        fn isolated(home: &Path) -> Self {
+            let names = [
+                "CC_SWITCH_TEST_HOME",
+                "HOME",
+                "OPENCLAW_STATE_DIR",
+                "OPENCLAW_PROFILE",
+                "OPENCLAW_WORKSPACE_DIR",
+                "PR_REVIEW_WORKSPACE",
+            ];
+            let values = names
+                .into_iter()
+                .map(|name| (name, std::env::var_os(name)))
+                .collect();
+            std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            std::env::set_var("HOME", home);
+            for name in names.into_iter().skip(2) {
+                std::env::remove_var(name);
+            }
+            Self { values }
+        }
+    }
+
+    impl Drop for TestEnvironment {
+        fn drop(&mut self) {
+            for (name, value) in self.values.drain(..) {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+
     fn with_test_paths<T>(source: &str, test: impl FnOnce(&Path) -> T) -> T {
         let _guard = test_guard();
         let temp = tempfile::tempdir().unwrap();
@@ -994,20 +1268,8 @@ mod tests {
         fs::create_dir_all(&openclaw_dir).unwrap();
         let config_path = openclaw_dir.join("openclaw.json");
         fs::write(&config_path, source).unwrap();
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        let old_home = std::env::var_os("HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
-        std::env::set_var("HOME", temp.path());
-        let result = test(&config_path);
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        match old_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
-        result
+        let _environment = TestEnvironment::isolated(temp.path());
+        test(&config_path)
     }
 
     #[test]
@@ -1047,7 +1309,7 @@ mod tests {
             );
             assert_eq!(
                 resolve_openclaw_workspace_dir(&config, &state, home.path(), Some(" ~/from-env ")),
-                home.path().join("from-env")
+                std::env::current_dir().unwrap().join("~/from-env")
             );
         }
     }
@@ -1071,6 +1333,55 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_dir_resolves_env_substitution_and_includes() {
+        with_test_paths("{ agents: { $include: 'agents.json5' } }", |config_path| {
+            let include_path = config_path.parent().unwrap().join("agents.json5");
+            std::fs::write(
+                include_path,
+                "{ defaults: { workspace: '${PR_REVIEW_WORKSPACE}/agent' } }",
+            )
+            .unwrap();
+            std::env::set_var("PR_REVIEW_WORKSPACE", "~/included-root");
+            assert_eq!(
+                get_openclaw_workspace_dir().unwrap(),
+                crate::config::get_home_dir().join("included-root/agent")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_dir_reports_missing_env_and_include_errors() {
+        with_test_paths(
+            "{ agents: { defaults: { workspace: '${MISSING_REVIEW_WORKSPACE}/agent' } } }",
+            |_| assert!(get_openclaw_workspace_dir().is_err()),
+        );
+        with_test_paths("{ agents: { $include: 'missing-agents.json5' } }", |_| {
+            assert!(get_openclaw_workspace_dir().is_err())
+        });
+        with_test_paths(
+            "{ env: { token: '${MISSING_UNRELATED_VAR}' }, agents: { defaults: { workspace: '~/safe' } } }",
+            |_| {
+                assert_eq!(
+                    get_openclaw_workspace_dir().unwrap(),
+                    crate::config::get_home_dir().join("safe")
+                );
+            },
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_env_tilde_is_literal_and_resolved_from_cwd() {
+        with_test_paths("{}", |_| {
+            std::env::set_var("OPENCLAW_WORKSPACE_DIR", "~/literal-workspace");
+            let expected = std::env::current_dir().unwrap().join("~/literal-workspace");
+            assert_eq!(get_openclaw_workspace_dir().unwrap(), expected);
+        });
     }
 
     #[test]
