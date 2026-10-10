@@ -4233,6 +4233,9 @@
     "usedUp": "使い切り",
     "balance": "残高 {{value}}",
     "balanceUsedUp": "残高なし",
+    "usedPercent": "{{percent}}% 使用済み",
+    "usedAndRemainingPercent": "{{usedPercent}}% 使用済み / 残り {{remainingPercent}}%",
+    "usedValueAndRemaining": "{{usedValue}} 使用済み / 残り {{remainingValue}}",
     "planExpired": "プラン期限切れ",
     "failed": "残量を取得できません",
     "reason": {

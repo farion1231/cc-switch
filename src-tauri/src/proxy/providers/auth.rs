@@ -13,6 +13,9 @@ pub struct AuthInfo {
     pub strategy: AuthStrategy,
     /// OAuth access_token（用于 GoogleOAuth 策略）
     pub access_token: Option<String>,
+    /// Codex OAuth 客户端版本号（仅 CodexOAuth 策略使用）。
+    /// 用于 ChatGPT 后端 API 的模型 cohort 路由。
+    pub codex_oauth_client_version: Option<String>,
 }
 
 impl AuthInfo {
@@ -22,6 +25,7 @@ impl AuthInfo {
             api_key,
             strategy,
             access_token: None,
+            codex_oauth_client_version: None,
         }
     }
 
@@ -31,6 +35,7 @@ impl AuthInfo {
             api_key,
             strategy: AuthStrategy::GoogleOAuth,
             access_token: Some(access_token),
+            codex_oauth_client_version: None,
         }
     }
 

@@ -4,8 +4,9 @@
 //! which is not an OpenAI-compatible `/v1/models` endpoint.
 
 use crate::proxy::providers::codex_oauth_auth::{
-    CODEX_OAUTH_CLIENT_VERSION, CODEX_OAUTH_ORIGINATOR,
+    resolve_oauth_client_version, CODEX_OAUTH_ORIGINATOR,
 };
+use crate::provider::ProviderMeta;
 use crate::services::model_fetch::FetchedModel;
 use serde_json::Value;
 use std::time::Duration;
@@ -17,9 +18,10 @@ const ERROR_BODY_MAX_CHARS: usize = 512;
 pub async fn fetch_models_with_token(
     token: &str,
     account_id: &str,
+    provider_meta: &ProviderMeta,
 ) -> Result<Vec<FetchedModel>, String> {
     let client = crate::proxy::http_client::get();
-    let response = build_models_request(&client, token, account_id)
+    let response = build_models_request(&client, token, account_id, provider_meta)
         .send()
         .await
         .map_err(|e| format!("Request failed: {e}"))?;
@@ -42,13 +44,15 @@ fn build_models_request(
     client: &reqwest::Client,
     token: &str,
     account_id: &str,
+    provider_meta: &ProviderMeta,
 ) -> reqwest::RequestBuilder {
+    let version = resolve_oauth_client_version(provider_meta);
     client
         .get(CODEX_OAUTH_MODELS_URL)
-        .query(&[("client_version", CODEX_OAUTH_CLIENT_VERSION)])
+        .query(&[("client_version", version)])
         .header("Authorization", format!("Bearer {token}"))
         .header("originator", CODEX_OAUTH_ORIGINATOR)
-        .header("version", CODEX_OAUTH_CLIENT_VERSION)
+        .header("version", version)
         .header("chatgpt-account-id", account_id)
         .timeout(Duration::from_secs(CODEX_OAUTH_FETCH_TIMEOUT_SECS))
 }
@@ -144,9 +148,14 @@ mod tests {
 
     #[test]
     fn codex_oauth_model_discovery_uses_gpt6_compatible_identity() {
-        let request = build_models_request(&reqwest::Client::new(), "test-token", "test-account")
-            .build()
-            .unwrap();
+        let request = build_models_request(
+            &reqwest::Client::new(),
+            "test-token",
+            "test-account",
+            &crate::provider::ProviderMeta::default(),
+        )
+        .build()
+        .unwrap();
         assert_eq!(request.headers()["authorization"], "Bearer test-token");
         assert_eq!(request.headers()["chatgpt-account-id"], "test-account");
         assert_eq!(request.headers()["originator"], "codex_cli_rs");

@@ -65,6 +65,7 @@ interface AppConfigSectionProps {
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
   onSaveDirectories: () => Promise<void>;
+  onFlushAutoSave: () => boolean;
 }
 
 /**
@@ -81,6 +82,7 @@ export function AppConfigSection({
   onBrowseDirectory,
   onResetDirectory,
   onSaveDirectories,
+  onFlushAutoSave,
 }: AppConfigSectionProps) {
   const { t } = useTranslation();
 
@@ -112,6 +114,7 @@ export function AppConfigSection({
         onChange={(value) => onDirectoryChange(app, value)}
         onBrowse={() => onBrowseDirectory(app)}
         onReset={() => onResetDirectory(app)}
+        onBlur={onFlushAutoSave}
       />
     </SettingsRow>
   );

@@ -17,6 +17,7 @@ use crate::error::AppError;
 use crate::live::floor;
 use crate::live::patch::toml::{same_value, shape_error, TomlDocPatch};
 use crate::live::patch::LiveWriteError;
+use crate::provider::ProviderMeta;
 
 /// CC Switch 写入的路由表 id。
 pub const ROUTE_ID: &str = "custom";
@@ -192,16 +193,24 @@ impl CodexProjection {
 
     /// 给模型目录和 `web_search` 判定用的归一化配置：选路、路由表地址、模型名、窗口。
     /// 这两个判定按「Codex 实际会用的地址和模型」算，和行里原来的写法无关。
-    pub fn catalog_input_text(&self) -> String {
+    ///
+    /// `provider_meta` 里的 `codex_model_provider_id` 若已设置，就沿用该值作为
+    /// `model_provider` 和 `[model_providers.<id>]` 的节名；未设置时回退到 `ROUTE_ID`（`"custom"`）。
+    pub fn catalog_input_text(&self, provider_meta: Option<&ProviderMeta>) -> String {
         let mut doc = DocumentMut::new();
         for (key, value) in self.top.iter().chain(&self.exclusive) {
             doc[key.as_str()] = Item::Value(value.clone());
         }
         if let Route::Custom { table, .. } = &self.route {
-            doc["model_provider"] = toml_edit::value(ROUTE_ID);
+            // 优先使用用户配置的 codex_model_provider_id，保持和初始创建一致
+            let provider_id = provider_meta
+                .and_then(|m| m.codex_model_provider_id.as_deref())
+                .filter(|v| !v.is_empty())
+                .unwrap_or(ROUTE_ID);
+            doc["model_provider"] = toml_edit::value(provider_id);
             let mut providers = Table::new();
             providers.set_implicit(true);
-            providers.insert(ROUTE_ID, Item::Table(table.clone()));
+            providers.insert(provider_id, Item::Table(table.clone()));
             doc["model_providers"] = Item::Table(providers);
         }
         doc.to_string()

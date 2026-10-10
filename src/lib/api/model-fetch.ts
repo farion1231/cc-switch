@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import { toast } from "@/lib/toast";
+import type { ProviderMeta } from "@/types";
 
 export interface FetchedModel {
   id: string;
@@ -61,9 +62,11 @@ export async function getOpenCodeModels(): Promise<OpenCodeModelRef[]> {
  */
 export async function fetchCodexOauthModels(
   accountId?: string | null,
+  providerMeta?: ProviderMeta,
 ): Promise<FetchedModel[]> {
   return invoke("get_codex_oauth_models", {
     accountId: accountId || null,
+    providerMeta: providerMeta ?? null,
   });
 }
 

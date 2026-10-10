@@ -99,6 +99,7 @@ export function SettingsPage({
     resetAppConfigDir,
     saveSettings,
     autoSaveSettings,
+    flushAutoSaveSettings,
     requiresRestart,
     acknowledgeRestart,
   } = useSettings();
@@ -243,6 +244,7 @@ export function SettingsPage({
             onBrowseDirectory={browseDirectory}
             onResetDirectory={resetDirectory}
             onSaveDirectories={handleSave}
+            onFlushAutoSave={flushAutoSaveSettings}
           />
         );
       case "routing":
@@ -298,6 +300,7 @@ export function SettingsPage({
                     onChange={updateAppConfigDir}
                     onBrowse={browseAppConfigDir}
                     onReset={resetAppConfigDir}
+                    onBlur={flushAutoSaveSettings}
                   />
                 </SettingsRow>
               </SettingsCard>

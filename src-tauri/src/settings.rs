@@ -436,6 +436,9 @@ pub struct AppSettings {
     /// User has confirmed the common config first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub common_config_confirmed: Option<bool>,
+    /// 用量显示模式：remaining（默认，显示剩余百分比）、used（显示已使用百分比）、both（同时显示）
+    #[serde(default = "default_usage_display_mode", skip_serializing_if = "Option::is_none")]
+    pub usage_display_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
@@ -540,6 +543,10 @@ fn default_session_auto_sync_enabled() -> bool {
     true
 }
 
+fn default_usage_display_mode() -> Option<String> {
+    Some("remaining".to_string())
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -569,6 +576,7 @@ impl Default for AppSettings {
             new_layout_notice_confirmed: None,
             whats_new_seen_version: None,
             common_config_confirmed: None,
+            usage_display_mode: Some("remaining".to_string()),
             language: None,
             visible_apps: None,
             claude_config_dir: None,

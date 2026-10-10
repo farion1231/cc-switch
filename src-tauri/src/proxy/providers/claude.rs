@@ -14,7 +14,7 @@
 //! - **OpenRouter**: 已支持 Claude Code 兼容接口，默认透传
 //! - **GitHubCopilot**: GitHub Copilot (OAuth + Copilot Token)
 
-use super::codex_oauth_auth::{CODEX_OAUTH_CLIENT_VERSION, CODEX_OAUTH_ORIGINATOR};
+use super::codex_oauth_auth::{resolve_oauth_client_version, CODEX_OAUTH_CLIENT_VERSION, CODEX_OAUTH_ORIGINATOR};
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
@@ -779,10 +779,13 @@ impl ProviderAdapter for ClaudeAdapter {
         // Codex OAuth (ChatGPT Plus/Pro) 同样使用占位符
         // 实际的 access_token 由 CodexOAuthManager 动态提供
         if provider_type == ProviderType::CodexOAuth {
-            return Some(AuthInfo::new(
+            let mut auth = AuthInfo::new(
                 "codex_oauth_placeholder".to_string(),
                 AuthStrategy::CodexOAuth,
-            ));
+            );
+            auth.codex_oauth_client_version =
+                provider.meta.as_ref().and_then(|m| m.codex_oauth_client_version.clone());
+            return Some(auth);
         }
 
         if provider_type == ProviderType::XaiOAuth {
@@ -914,6 +917,11 @@ impl ProviderAdapter for ClaudeAdapter {
             AuthStrategy::CodexOAuth => {
                 // 注意：bearer token 由 forwarder 动态注入到 auth.api_key
                 // ChatGPT-Account-Id 由 forwarder 注入额外 header
+                let version = auth
+                    .codex_oauth_client_version
+                    .as_deref()
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or(CODEX_OAUTH_CLIENT_VERSION);
                 vec![
                     (HeaderName::from_static("authorization"), hv(&bearer)?),
                     (
@@ -922,7 +930,8 @@ impl ProviderAdapter for ClaudeAdapter {
                     ),
                     (
                         HeaderName::from_static("version"),
-                        HeaderValue::from_static(CODEX_OAUTH_CLIENT_VERSION),
+                        HeaderValue::from_str(version)
+                            .map_err(|e| ProxyError::AuthError(format!("invalid version: {e}")))?,
                     ),
                 ]
             }

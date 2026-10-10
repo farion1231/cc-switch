@@ -2167,7 +2167,13 @@ impl RequestForwarder {
 
                     match token_result {
                         Ok(token) => {
-                            auth = AuthInfo::new(token, AuthStrategy::CodexOAuth);
+                            let mut new_auth =
+                                AuthInfo::new(token, AuthStrategy::CodexOAuth);
+                            new_auth.codex_oauth_client_version = provider
+                                .meta
+                                .as_ref()
+                                .and_then(|m| m.codex_oauth_client_version.clone());
+                            auth = new_auth;
                             should_send_codex_oauth_session_headers = true;
                             // 本地账号 ID 只用于绑定；请求头必须使用上游 workspace ID。
                             codex_oauth_account_id = match resolved_account_id.as_deref() {
