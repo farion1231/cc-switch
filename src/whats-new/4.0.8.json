@@ -1,0 +1,33 @@
+{
+  "version": "4.0.8",
+  "items": [
+    {
+      "type": "fix",
+      "zh": "只装了 Codex 桌面版也能用 Codex 聚合模式",
+      "zh-TW": "只安裝 Codex 桌面版也能使用 Codex 聚合模式",
+      "en": "Codex aggregation now works when only the Codex desktop app is installed",
+      "ja": "Codex デスクトップ版だけでも Codex の集約モードを使えるように"
+    },
+    {
+      "type": "improve",
+      "zh": "读不到官方模型列表时提示写明原因，恢复后自动消失",
+      "zh-TW": "讀不到官方模型列表時提示會寫明原因，恢復後自動消失",
+      "en": "When the official model list is unavailable, the notice says why and clears once it is back",
+      "ja": "公式モデル一覧を読めないときは理由を表示し、復旧すると自動で消えるように"
+    },
+    {
+      "type": "fix",
+      "zh": "获取模型列表时会带上供应商配置的请求头",
+      "zh-TW": "取得模型列表時會帶上供應商設定的請求標頭",
+      "en": "Fetching model lists now sends the provider's configured request headers",
+      "ja": "モデル一覧の取得時にプロバイダーで設定したリクエストヘッダーを送信"
+    },
+    {
+      "type": "improve",
+      "zh": "深色模式的文字调暗一些，不再刺眼",
+      "zh-TW": "深色模式的文字調暗一些，不再刺眼",
+      "en": "Dark-mode text is softer and less glaring",
+      "ja": "ダークモードの文字を少し暗くし、まぶしさを軽減"
+    }
+  ]
+}
