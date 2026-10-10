@@ -6195,6 +6195,15 @@ impl ProviderService {
                 return Self::save_mcode_provider(state, &provider, live_config_managed, false);
             }
 
+            if app_type == AppType::OpenCode {
+                return Self::update_opencode(
+                    state,
+                    &provider,
+                    existing_provider.as_ref(),
+                    live_config_managed,
+                );
+            }
+
             // Save to database after live-config presence is resolved so parse errors
             // do not report failure after already mutating DB state.
             state.db.save_provider(app_type.as_str(), &provider)?;
@@ -6302,6 +6311,84 @@ impl ProviderService {
             return Err(error);
         }
         Ok(true)
+    }
+
+    /// 保存 OpenCode 供应商（additive 模式的普通路径，不含 OMO 变体）。OpenCode 只做 additive
+    /// 写、不进代理发布，没有 pending，失败不会是部分发布。
+    ///
+    /// 注意 OpenCode 不支持代理，没有切换锁（见 [`crate::mode::controller::lock_settled_blocking`]），
+    /// 两条更新命令可以并发交错在「读旧行→存行→写 live」的任意间隙里。
+    ///
+    /// 已托管进 live 的那家先存行、再写 opencode.json；写失败就把行恢复原样（行是本次才建的
+    /// 就删掉），数据库卡片不会和 live 文件失步（同 [`Self::update_codex`] 的失败语义）。其余
+    /// 只存行。
+    fn update_opencode(
+        state: &AppState,
+        provider: &Provider,
+        existing: Option<&Provider>,
+        live_config_managed: bool,
+    ) -> Result<bool, AppError> {
+        let app_type = AppType::OpenCode;
+        state.db.save_provider(app_type.as_str(), provider)?;
+        // 记下本次写入后的行：回滚前再读一次，两行不一致就是有并发更新落在我们的写入之后。
+        let written = state
+            .db
+            .get_provider_by_id(&provider.id, app_type.as_str())?;
+        if !live_config_managed {
+            return Ok(true);
+        }
+        if let Err(error) = write_live_for_state(state, &app_type, provider) {
+            match Self::rollback_failed_update_row(state, written.as_ref(), existing, &provider.id)
+            {
+                Ok(true) => {}
+                Ok(false) => log::warn!(
+                    "OpenCode 供应商 '{}' 写 live 失败，但数据库行已被并发更新修改，跳过回滚以保留对方写入",
+                    provider.id
+                ),
+                Err(rollback) => {
+                    return Err(AppError::Message(format!(
+                        "更新 OpenCode 供应商失败: {error}; 恢复供应商数据同时失败: {rollback}"
+                    )));
+                }
+            }
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    /// live 写失败后恢复数据库行：只有当前行仍是本次刚写入的行时才回滚（恢复旧快照；行是
+    /// 本次新建的就删掉）。OpenCode 没有切换锁，并发更新可以落在「存行→写 live→回滚」的
+    /// 间隙里：后来者已把自己成功的写入落库时，回滚会把它覆盖掉，此时放弃回滚、保留对方
+    /// 的行，只让调用方返回原始错误。返回是否执行了回滚。
+    fn rollback_failed_update_row(
+        state: &AppState,
+        written: Option<&Provider>,
+        existing: Option<&Provider>,
+        provider_id: &str,
+    ) -> Result<bool, AppError> {
+        let app = AppType::OpenCode.as_str();
+        let unchanged = match (written, state.db.get_provider_by_id(provider_id, app)?) {
+            (Some(written), Some(current)) => Self::provider_row_unchanged(written, &current),
+            // 行不见了或拿不到本次写入的行：都不是「只有我们在动这行」的状态，不回滚。
+            _ => false,
+        };
+        if !unchanged {
+            return Ok(false);
+        }
+        match existing {
+            Some(existing) => state.db.save_provider(app, existing)?,
+            None => state.db.delete_provider(app, provider_id)?,
+        }
+        Ok(true)
+    }
+
+    /// 两行是否等价：两次读都走同一条 DAO 反序列化路径，整行 JSON 比较即可；序列化失败按
+    /// 已变化处理，宁可放弃回滚也不覆盖并发写入。
+    fn provider_row_unchanged(left: &Provider, right: &Provider) -> bool {
+        match (serde_json::to_value(left), serde_json::to_value(right)) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => false,
+        }
     }
 
     pub(crate) fn update_pi_usage_script(
