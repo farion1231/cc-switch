@@ -1773,7 +1773,20 @@
     "retry": "Retry",
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
-    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
+    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate.",
+    "quotaRefresh": {
+      "refreshAll": "Refresh all quotas",
+      "refreshing": "Refreshing quotas…",
+      "background": "Background refresh",
+      "off": "Off",
+      "interval": "Every {{minutes}} minutes",
+      "hint": "Refresh all signed-in ChatGPT accounts while CC Switch is running. Accounts requiring sign-in are skipped.",
+      "noEligible": "No accounts available for quota refresh.",
+      "complete": "Refreshed quotas for {{count}} accounts.",
+      "partial": "Refreshed {{succeeded}} accounts; {{failed}} failed.",
+      "failed": "Quota refresh failed: {{error}}",
+      "saveFailed": "Could not save background refresh: {{error}}"
+    }
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth authentication",

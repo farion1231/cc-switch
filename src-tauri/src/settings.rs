@@ -383,6 +383,9 @@ pub struct AppSettings {
     pub usage_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_dashboard_refresh_interval_ms: Option<u32>,
+    /// Background quota refresh for all managed Codex accounts. None/0 disables it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_account_quota_refresh_minutes: Option<u32>,
     /// 会话用量自动扫描开关（默认开启=自动模式）。关闭后停止后台定时扫描
     /// 各客户端会话日志，仅在用户点击"立即同步"时手动扫描；只管扫描时机，
     /// 代理接管记账与启动费用回填（不读会话文件）不受此开关影响。
@@ -555,6 +558,7 @@ impl Default for AppSettings {
             proxy_confirmed: None,
             usage_confirmed: None,
             usage_dashboard_refresh_interval_ms: None,
+            codex_account_quota_refresh_minutes: None,
             session_auto_sync_enabled: true,
             enable_failover_toggle: false,
             show_profile_switcher: false,
@@ -1229,6 +1233,23 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn codex_quota_refresh_is_opt_in_and_round_trips() {
+        let mut settings: AppSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.codex_account_quota_refresh_minutes, None);
+        assert_eq!(
+            AppSettings::default().codex_account_quota_refresh_minutes,
+            None
+        );
+        for minutes in [0, 1, 5, 15, 30, 60] {
+            settings.codex_account_quota_refresh_minutes = Some(minutes);
+            let serialized = serde_json::to_value(&settings).unwrap();
+            assert_eq!(serialized["codexAccountQuotaRefreshMinutes"], minutes);
+            let restored: AppSettings = serde_json::from_value(serialized).unwrap();
+            assert_eq!(restored.codex_account_quota_refresh_minutes, Some(minutes));
+        }
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {
