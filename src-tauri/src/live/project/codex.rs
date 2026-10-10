@@ -2,7 +2,7 @@
 //!
 //! 行的形状是 `{auth, config}`（`config` 是 TOML 文本）。投影只取关键字段，第三方路由
 //! 一律写成 `[model_providers.custom]`：行里用别的 id（`deepseek`）、旧形态的顶层
-//! `openai_base_url`、旧版留下的保留 id 表（`[model_providers.openai]`），都在这里归一。
+//! `openai_base_url` / `base_url`、旧版留下的保留 id 表（`[model_providers.openai]`），都在这里归一。
 //! 行里其余内容（旧版回填进来的 MCP、projects、插件）不投影，归用户和 Codex。
 //!
 //! Key 写成路由表的 `experimental_bearer_token`：Codex 0.149 起自定义 provider 不再读
@@ -318,7 +318,22 @@ fn third_party_route(doc: &DocumentMut, input: &RowInput<'_>) -> Result<Route, A
                 table.insert("wire_api", toml_edit::value("responses"));
                 (table, "Custom".to_string())
             }
-            None if selector.is_none() => return default_route(doc, input),
+            None if selector.is_none() => {
+                // 更早的行把地址和协议直接放在顶层，编辑器和切换同样要先归一路由，
+                // 否则它们被当作无路由的行，清理关键字段时就会丢掉地址。
+                let Some(base_url) = non_empty_str(doc.get("base_url")) else {
+                    return default_route(doc, input);
+                };
+                let mut table = Table::new();
+                table.insert("base_url", toml_edit::value(base_url));
+                table.insert(
+                    "wire_api",
+                    toml_edit::value(
+                        non_empty_str(doc.get("wire_api")).unwrap_or_else(|| "responses".to_string()),
+                    ),
+                );
+                (table, "Custom".to_string())
+            }
             None => return built_in_route("openai", providers, doc, input),
         },
         Some(id) => return built_in_route(id, providers, doc, input),
@@ -1054,6 +1069,86 @@ mod tests {
             Some("responses")
         );
         assert_eq!(table.get("name").and_then(Item::as_str), Some("Custom"));
+    }
+
+    #[test]
+    fn legacy_top_level_route_preserves_the_endpoint_and_protocol() {
+        for wire_api in ["responses", "chat"] {
+            let settings = row(
+                json!({ "OPENAI_API_KEY": "sk-legacy" }),
+                &format!(
+                    "base_url = \"https://legacy.example/v1\"\nwire_api = \"{wire_api}\"\nmodel = \"gpt-5\"\n"
+                ),
+            );
+            let projection = project(&settings).unwrap();
+            let (table, auth) = custom(&projection);
+            assert_eq!(
+                table["base_url"].as_str(),
+                Some("https://legacy.example/v1")
+            );
+            assert_eq!(table["wire_api"].as_str(), Some(wire_api));
+            assert_eq!(
+                table["experimental_bearer_token"].as_str(),
+                Some("sk-legacy")
+            );
+            assert_eq!(auth, RouteAuth::Bearer);
+        }
+    }
+
+    #[test]
+    fn legacy_top_level_route_does_not_override_explicit_routes() {
+        let legacy = "base_url = \"https://legacy.example/v1\"\nwire_api = \"chat\"\n";
+        let settings = row(
+            json!({ "OPENAI_API_KEY": "sk" }),
+            &format!("{legacy}{RELAY}"),
+        );
+        let projection = project(&settings).unwrap();
+        let (table, _) = custom(&projection);
+        assert_eq!(table["base_url"].as_str(), Some("https://relay.example/v1"));
+        assert_eq!(table["wire_api"].as_str(), Some("responses"));
+
+        let settings = row(
+            json!({ "OPENAI_API_KEY": "sk" }),
+            &format!("{legacy}openai_base_url = \"https://reroute.example/v1\"\n"),
+        );
+        let projection = project(&settings).unwrap();
+        let (table, _) = custom(&projection);
+        assert_eq!(
+            table["base_url"].as_str(),
+            Some("https://reroute.example/v1")
+        );
+        assert_eq!(table["wire_api"].as_str(), Some("responses"));
+
+        let settings = row(json!({}), &format!("{legacy}model_provider = \"ollama\"\n"));
+        assert!(
+            matches!(project(&settings).unwrap().route, Route::BuiltIn { id, .. } if id == "ollama")
+        );
+        assert!(matches!(
+            CodexProjection::of(&RowInput {
+                settings: &settings,
+                official: true,
+                proxy_injected_oauth: false,
+            })
+            .unwrap()
+            .route,
+            Route::Official
+        ));
+    }
+
+    #[test]
+    fn missing_or_empty_legacy_endpoint_still_has_no_route() {
+        for config in [
+            "model = \"gpt-5\"\n",
+            "model = \"gpt-5\"\nwire_api = \"responses\"\n",
+            "model = \"gpt-5\"\nbase_url = \" \"\nwire_api = \"responses\"\n",
+        ] {
+            assert!(matches!(
+                project(&row(json!({ "OPENAI_API_KEY": "sk" }), config))
+                    .unwrap()
+                    .route,
+                Route::Default
+            ));
+        }
     }
 
     fn apply(route: RouteWrite, live: &str) -> DocumentMut {

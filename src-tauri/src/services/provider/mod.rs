@@ -314,6 +314,168 @@ mod tests {
         })
     }
 
+    fn assert_codex_editor_round_trips_legacy_top_level_route(current: bool) {
+        with_test_home(|state, _home| {
+            crate::settings::reload_settings().unwrap();
+            let settings = json!({
+                "auth": { "OPENAI_API_KEY": "sk-legacy" },
+                "config": "base_url = \"https://legacy.example/v1\"\nwire_api = \"responses\"\nmodel = \"gpt-5\"\n"
+            });
+            let mut provider = Provider::with_id(
+                "legacy-editor".to_string(),
+                "Legacy".to_string(),
+                settings.clone(),
+                None,
+            );
+            state.db.save_provider("codex", &provider).unwrap();
+            if current {
+                state
+                    .db
+                    .set_current_provider("codex", &provider.id)
+                    .unwrap();
+                crate::settings::set_current_provider(&AppType::Codex, Some(&provider.id)).unwrap();
+                let path = crate::codex_config::get_codex_config_path();
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(
+                    &path,
+                    format!(
+                        "approval_policy = \"on-request\"\n{}",
+                        settings["config"].as_str().unwrap()
+                    ),
+                )
+                .unwrap();
+            }
+            let view =
+                ProviderService::editor_view(state, AppType::Codex, &settings, None).unwrap();
+            // Saving the view without edits must retain the route, in its canonical table.
+            provider.settings_config = view.settings.clone();
+            ProviderService::update_from_editor(
+                state,
+                AppType::Codex,
+                None,
+                provider.clone(),
+                Some(EditorSave {
+                    base: view.settings.clone(),
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+            .unwrap();
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, "codex")
+                .unwrap()
+                .unwrap();
+            let saved_config: toml::Value =
+                toml::from_str(saved.settings_config["config"].as_str().unwrap()).unwrap();
+            let displayed: toml::Value =
+                toml::from_str(view.settings["config"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                displayed
+                    .get("model_providers")
+                    .and_then(|providers| providers.get("custom"))
+                    .and_then(|route| route.get("base_url"))
+                    .and_then(toml::Value::as_str),
+                Some("https://legacy.example/v1"),
+                "current={current}; view={displayed:?}; saved={saved_config:?}"
+            );
+            assert_eq!(
+                displayed["model_providers"]["custom"]["wire_api"].as_str(),
+                Some("responses")
+            );
+            assert!(!view.settings["config"]
+                .as_str()
+                .unwrap()
+                .contains("sk-legacy"));
+
+            assert_eq!(saved_config["model_provider"].as_str(), Some("custom"));
+            assert_eq!(
+                saved_config["model_providers"]["custom"]["base_url"].as_str(),
+                Some("https://legacy.example/v1")
+            );
+            assert_eq!(
+                saved_config["model_providers"]["custom"]["wire_api"].as_str(),
+                Some("responses")
+            );
+            assert_eq!(saved_config["model"].as_str(), Some("gpt-5"));
+            assert_eq!(saved.settings_config["auth"], settings["auth"]);
+            assert!(saved_config.get("base_url").is_none());
+            if current {
+                let live =
+                    std::fs::read_to_string(crate::codex_config::get_codex_config_path()).unwrap();
+                let live: toml::Value = toml::from_str(&live).unwrap();
+                assert_eq!(
+                    live["model_providers"]["custom"]["base_url"].as_str(),
+                    Some("https://legacy.example/v1")
+                );
+                assert_eq!(
+                    live["model_providers"]["custom"]["wire_api"].as_str(),
+                    Some("responses")
+                );
+                assert_eq!(live["model"].as_str(), Some("gpt-5"));
+                assert_eq!(live["approval_policy"].as_str(), Some("on-request"));
+                assert!(live.get("base_url").is_none());
+            }
+
+            // Clearing the endpoint is an intentional edit, even if the stored row is legacy.
+            state
+                .db
+                .save_provider(
+                    "codex",
+                    &Provider {
+                        settings_config: settings,
+                        ..provider.clone()
+                    },
+                )
+                .unwrap();
+            let mut cleared: toml::Table =
+                toml::from_str(view.settings["config"].as_str().unwrap()).unwrap();
+            cleared["model_providers"]["custom"]
+                .as_table_mut()
+                .unwrap()
+                .remove("base_url");
+            provider.settings_config["config"] = Value::String(toml::to_string(&cleared).unwrap());
+            ProviderService::update_from_editor(
+                state,
+                AppType::Codex,
+                None,
+                provider.clone(),
+                Some(EditorSave {
+                    base: view.settings,
+                    draft: None,
+                    on_conflict: Default::default(),
+                }),
+            )
+            .unwrap();
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, "codex")
+                .unwrap()
+                .unwrap();
+            assert!(!saved.settings_config["config"]
+                .as_str()
+                .unwrap()
+                .contains("base_url"));
+            if current {
+                let live =
+                    std::fs::read_to_string(crate::codex_config::get_codex_config_path()).unwrap();
+                assert!(!live.contains("base_url"));
+            }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn codex_editor_round_trips_legacy_top_level_route_inactive() {
+        assert_codex_editor_round_trips_legacy_top_level_route(false);
+    }
+
+    #[test]
+    #[serial]
+    fn codex_editor_round_trips_legacy_top_level_route_current() {
+        assert_codex_editor_round_trips_legacy_top_level_route(true);
+    }
+
     #[test]
     #[serial]
     fn codex_editor_view_preserves_draft_and_stored_copilot_metadata() {
