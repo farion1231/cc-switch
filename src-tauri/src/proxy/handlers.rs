@@ -10,7 +10,7 @@
 use super::{
     content_encoding::{decompress_body, get_content_encoding, is_supported_content_encoding},
     error_mapper::{get_error_message, map_proxy_error_to_status},
-    forwarder::ActiveConnectionGuard,
+    forwarder::{ActiveConnectionGuard, CodexUpstreamFormat},
     handler_config::{
         claude_stream_usage_event_filter, codex_stream_usage_event_filter, CLAUDE_PARSER_CONFIG,
         CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
@@ -1077,11 +1077,12 @@ async fn handle_responses_for_app(
     };
 
     let connection_guard = result.connection_guard.take();
+    let codex_upstream_format = result.codex_upstream_format;
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    if super::providers::should_convert_codex_responses_to_anthropic(&ctx.provider, &endpoint) {
+    if codex_upstream_format == Some(CodexUpstreamFormat::Anthropic) {
         return handle_codex_anthropic_to_responses_transform(
             response,
             &ctx,
@@ -1093,7 +1094,7 @@ async fn handle_responses_for_app(
         .await;
     }
 
-    if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
+    if codex_upstream_format == Some(CodexUpstreamFormat::ChatCompletions) {
         return handle_codex_chat_to_responses_transform(
             response,
             &ctx,
@@ -1405,11 +1406,12 @@ async fn handle_responses_compact_for_app(
     };
 
     let connection_guard = result.connection_guard.take();
+    let codex_upstream_format = result.codex_upstream_format;
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    if super::providers::should_convert_codex_responses_to_anthropic(&ctx.provider, &endpoint) {
+    if codex_upstream_format == Some(CodexUpstreamFormat::Anthropic) {
         return handle_codex_anthropic_to_responses_transform(
             response,
             &ctx,
@@ -1421,7 +1423,7 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
+    if codex_upstream_format == Some(CodexUpstreamFormat::ChatCompletions) {
         return handle_codex_chat_to_responses_transform(
             response,
             &ctx,

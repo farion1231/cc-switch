@@ -1057,6 +1057,43 @@ export const getCodexBaseUrl = (
   }
 };
 
+// 从任一应用的 settingsConfig 中取出请求地址：各应用存法不同（env 变量 / baseUrl /
+// base_url / options.baseURL / models[].baseUrl / Codex 风格 TOML），按已知形态依次找
+export const extractProviderBaseUrl = (
+  settingsConfig: unknown,
+): string | undefined => {
+  if (!settingsConfig || typeof settingsConfig !== "object") return undefined;
+  const object = settingsConfig as Record<string, any>;
+
+  const envBase =
+    object.env?.ANTHROPIC_BASE_URL || object.env?.GOOGLE_GEMINI_BASE_URL;
+  if (typeof envBase === "string" && envBase.trim()) {
+    return envBase;
+  }
+
+  const directBaseUrl =
+    object.baseUrl ||
+    object.base_url ||
+    object.options?.baseURL ||
+    (Array.isArray(object.models)
+      ? object.models.find(
+          (model: unknown) =>
+            model &&
+            typeof model === "object" &&
+            typeof (model as Record<string, unknown>).baseUrl === "string",
+        )?.baseUrl
+      : undefined);
+  if (typeof directBaseUrl === "string" && directBaseUrl.trim()) {
+    return directBaseUrl;
+  }
+
+  if (typeof object.config === "string" && object.config.includes("base_url")) {
+    return extractCodexBaseUrl(object.config) || undefined;
+  }
+
+  return undefined;
+};
+
 // 在 Codex 的 TOML 配置文本中写入或更新 base_url 字段
 export const setCodexBaseUrl = (
   configText: string,

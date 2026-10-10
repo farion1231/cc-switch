@@ -126,6 +126,7 @@
     "stackDefaultHint": "デフォルトのプロバイダーです：一覧の先頭のモデルが Claude Code の起動時とバックグラウンドタスクを担当します",
     "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
     "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、集約したモデルは現在使用できません",
+    "officialModelsOutdated": "このコンピューターの Codex が古いため、公式モデル一覧を完全に取得できません。Codex（CLI を含む）を最新版に更新してください",
     "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、集約したモデルは Codex に表示されません",
     "adoptCatalog": "CC Switch のモデルカタログを使う",
     "adoptCatalogDone": "CC Switch のモデルカタログに切り替えました。Codex を再起動すると反映されます",
@@ -157,7 +158,8 @@
     "dragHandle": "ドラッグで並べ替え",
     "searchPlaceholder": "名前・メモ・URLで検索...",
     "searchAriaLabel": "プロバイダーを検索",
-    "searchScopeHint": "名前・メモ・URL を対象に検索します。",
+    "searchScopeHint": "名前・メモ・公式サイト・API アドレスを対象に検索します。",
+    "searchButtonTip": "プロバイダーを検索（{{shortcut}}）",
     "searchCloseHint": "Esc で閉じる",
     "searchCloseAriaLabel": "検索を閉じる",
     "noSearchResults": "一致するプロバイダーがありません。",
@@ -815,6 +817,9 @@
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",
     "unifyCodexSessionHistoryDescription": "オンにすると、公式サブスクリプションも共有の custom プロバイダー ID で動作し、公式とサードパーティのセッションが同じ履歴リストに表示されます。既存の公式セッションの移行も選択できます（移行前に自動バックアップ）。オフにする際はバックアップから復元できます。注意：プロバイダーをまたいで古いセッションを再開すると、encrypted_content の推論内容を相手のバックエンドが復号できず、再開に失敗する場合があります。",
+    "codexStackClassicSubagents": "集約モードでサブエージェントにクラシックツールを使う",
+    "codexStackClassicSubagentsDescription": "Codex の集約モードで、メインエージェントとサブエージェントが別のプロバイダーのモデルを使うと、サブエージェントがタスクを読めないことがあります。新しい Codex のサブエージェントツールはタスクをメインエージェント側のプロバイダーで暗号化させるため、別のプロバイダーでは復号できません。オンにすると、集約されたすべてのモデルが Codex のクラシックなサブエージェントツールを使い、タスクを平文で渡します。その代わり followup_task や interrupt_agent などの新機能は使えません。集約モードにのみ影響し、変更後は Codex の再起動が必要です。",
+    "codexStackClassicSubagentsForcedV2": "Codex の config.toml で [features] multi_agent_v2 がオンになっています。こちらが優先されるため、この設定は効きません。",
     "unifyCodexHistoryRestoreCompleted": "バックアップから公式セッション履歴を復元しました（セッションファイル {{files}} 件、インデックス {{rows}} 行）",
     "unifyCodexHistoryRestoreFailed": "公式セッション履歴の復元に失敗しました。もう一度お試しください",
     "unifyCodexHistoryRestoreNothing": "現在の Codex ディレクトリに復元可能な移行バックアップはありません",
@@ -827,7 +832,9 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "プロジェクト切り替えを表示",
-      "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します"
+      "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します",
+      "showProviderSearch": "プロバイダー検索を表示",
+      "showProviderSearchDescription": "プロバイダー画面の上部に検索ボタンを表示し、名前・メモ・公式サイト・API アドレスで検索できます。非表示にしても ⌘F / Ctrl+F で検索を開けます"
     },
     "terminal": {
       "title": "優先ターミナル",
@@ -1854,6 +1861,9 @@
     "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます",
     "modelName": "モデル名",
     "upstreamFormatLabel": "上流フォーマット",
+    "upstreamFormatAuto": "自動（モデルの対応状況）",
+    "upstreamFormatCopilotResponses": "Responses（ルーティング必須）",
+    "upstreamFormatCopilotHint": "自動モードでは、モデルが対応していれば Responses を優先し、それ以外は Chat Completions を使用します。プロトコルを指定することもできますが、非対応のモデルではエラーになります。すべてのモードで Copilot アカウントの認証情報を付与するために Codex のルーティング引き継ぎが必要です。",
     "upstreamFormatHint": "プロバイダーがネイティブ Responses API なら Responses を選択（直結、フォーマット変換なし）。Chat Completions プロトコルなら Chat を選択。ネイティブ Anthropic Messages プロトコルのみ提供する場合は Anthropic Messages を選択。Chat と Anthropic Messages はどちらも Responses への変換にルーティング引き継ぎの有効化が必要です。",
     "upstreamFormatChat": "Chat Completions（ルーティング必須）",
     "upstreamFormatResponses": "Responses（ネイティブ）",
@@ -2318,7 +2328,10 @@
     },
     "heatmap": {
       "title": "使用量ヒートマップ",
-      "subtitle": "過去 53 週間の日別使用量",
+      "subtitle": "過去 53 週間の日別使用量。展開すると 53 週間ずつさかのぼり、色の濃さは期間をまたいで比較できます",
+      "spanSummary": "{{tokens}} トークン · {{requests}} リクエスト · {{cost}}",
+      "showMore": "もっと見る",
+      "showLess": "折りたたむ",
       "less": "少",
       "more": "多"
     },
@@ -3143,7 +3156,6 @@
     "checkUpdates": "更新を確認",
     "checkingUpdates": "確認中...",
     "noUpdates": "すべてのスキルは最新です",
-    "updatesFound": "{{count}} 個のスキルに更新があります",
     "updateAll": "すべて更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "{{count}} 個のスキルを更新しました",
@@ -3573,15 +3585,16 @@
       "ariaLabel": "{{appLabel}} の集約モード",
       "failoverUnavailable": "{{appLabel}} は集約モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります",
       "codexStale": {
+        "authTitle": "Codex が以前のアカウントをキャッシュしている可能性があります。新しいログインを読み込むにはバックグラウンドサーバーを再起動してください",
         "title": "Codex が古いモデル一覧を使っているため、集約したモデルが表示されません",
         "daemon": "CLI：codex を開き直すだけでは反映されません。バックグラウンドのデーモンを再起動する必要があります。",
         "others": "デスクトップ版：完全に終了してから開き直してください（macOS では ⌘Q。ウィンドウを閉じるだけでは不十分です）。エディター拡張：エディターのウィンドウを開き直してください。",
         "restart": "Codex デーモンを再起動",
         "confirmTitle": "Codex デーモンを再起動しますか？",
-        "confirmMessage": "ターミナルで動いているすべての codex がこのデーモンを共有しているため、実行中のタスクは中断されます。再起動後に codex を開き直すと集約したモデルが表示されます。",
+        "confirmMessage": "ターミナルで動いているすべての codex がこのデーモンを共有しているため、実行中のタスクは中断されます。再起動後に codex を開き直して現在のアカウントとモデル一覧を読み込んでください。",
         "confirm": "再起動",
-        "restarted": "Codex デーモンを再起動しました。codex を開き直すと集約したモデルが表示されます",
-        "notRunning": "Codex デーモンは動いていません。次に codex を起動したときに新しいモデル一覧が読み込まれます",
+        "restarted": "Codex デーモンを再起動しました。codex を開き直して現在のアカウントとモデル一覧を読み込んでください",
+        "notRunning": "Codex デーモンは動いていません。次に起動したときに現在のログインとモデル一覧が読み込まれます",
         "failed": "Codex デーモンの再起動に失敗しました：{{error}}"
       }
     },
@@ -4542,7 +4555,8 @@
       "uninstallManyButton": "{{count}} 件をアンインストール",
       "updateAll": "{{count}} 件の Skill を更新しますか？",
       "updateBody": "更新するとローカルのフォルダーをリポジトリの内容で置き換えます。ローカルの変更はバックアップ（{{path}}）にだけ残ります。",
-      "updateAllButton": "{{count}} 件を更新"
+      "updateAllButton": "{{count}} 件を更新",
+      "updateListAria": "更新する Skill"
     },
     "toast": {
       "installed": "{{name}} をインストールし、{{apps}} で有効にしました",
@@ -4631,7 +4645,8 @@
     "headerUpdates": "{{count}} 件の更新",
     "headerUpdatesShow": "更新がある Skill だけを表示",
     "headerUpdatesClear": "すべての Skill を表示",
-    "updateAllCount": "すべて更新（{{count}} 件）"
+    "updateAllCount": "すべて更新（{{count}} 件）",
+    "updatingProgress": "更新中 {{done}}/{{total}}…"
   },
   "newLayoutNotice": {
     "title": "画面が新しくなりました",

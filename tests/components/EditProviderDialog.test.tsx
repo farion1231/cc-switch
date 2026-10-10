@@ -197,6 +197,7 @@ describe("EditProviderDialog", () => {
       provider.settingsConfig,
       "aggregator",
       provider.id,
+      undefined,
     );
     expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
 
@@ -207,6 +208,57 @@ describe("EditProviderDialog", () => {
     expect(payload.provider.settingsConfig).toEqual(view);
     expect(payload.editorSave).toEqual({ base: view, onConflict: "refuse" });
   });
+
+  it.each([undefined, "openai_responses"] as const)(
+    "passes stored Copilot metadata to the edit projection (%s)",
+    async (format) => {
+      const provider: Provider = {
+        id: "copilot-card",
+        name: "GitHub Copilot",
+        category: "third_party",
+        settingsConfig: {
+          auth: {},
+          config:
+            'model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://api.githubcopilot.com"\nrequires_openai_auth = true\n',
+        },
+        meta: {
+          providerType: "github_copilot",
+          apiFormat: format ?? "openai_chat",
+          ...(format ? { codexCopilotApiFormat: format } : {}),
+          authBinding: {
+            source: "managed_account",
+            authProvider: "github_copilot",
+            accountId: "copilot-account",
+          },
+        },
+      };
+      const handleSubmit = vi.fn().mockResolvedValue(undefined);
+      render(
+        <EditProviderDialog
+          open
+          provider={provider}
+          onOpenChange={vi.fn()}
+          onSubmit={handleSubmit}
+          appId="codex"
+        />,
+      );
+      await waitFor(() =>
+        expect(apiMocks.getEditorView).toHaveBeenCalledWith(
+          "codex",
+          provider.settingsConfig,
+          provider.category,
+          provider.id,
+          provider.meta,
+        ),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+      await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+      const payload = handleSubmit.mock.calls[0][0];
+      expect(payload.originalId).toBe(provider.id);
+      expect(payload.provider.meta).toEqual(provider.meta);
+      expect(payload.editorSave.base).toEqual(provider.settingsConfig);
+    },
+  );
 
   it.each([
     [
@@ -234,7 +286,10 @@ describe("EditProviderDialog", () => {
         category: "custom",
         settingsConfig: settingsConfig as Record<string, unknown>,
       };
-      apiMocks.getEditorView.mockResolvedValue({ settings: view, inactive: [] });
+      apiMocks.getEditorView.mockResolvedValue({
+        settings: view,
+        inactive: [],
+      });
       const handleSubmit = vi.fn().mockResolvedValue(undefined);
 
       render(
@@ -257,6 +312,7 @@ describe("EditProviderDialog", () => {
         provider.settingsConfig,
         "custom",
         provider.id,
+        undefined,
       );
       expect(apiMocks.getCurrent).not.toHaveBeenCalled();
       expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
@@ -343,6 +399,7 @@ describe("EditProviderDialog", () => {
       provider.settingsConfig,
       "custom",
       provider.id,
+      undefined,
     );
   });
 
