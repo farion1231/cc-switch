@@ -1728,6 +1728,7 @@ fn codex_bundled_models_command(candidate: &Path) -> Command {
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
+    crate::appimage_env::scrub_command(&mut command);
     command
 }
 

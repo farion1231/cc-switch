@@ -161,10 +161,12 @@ pub(crate) fn reset_test_env() {
 #[cfg(unix)]
 fn read_process_table() -> Option<String> {
     // `-ww`：输出不是终端时 Linux 的 procps 也会截断命令行。
-    let output = std::process::Command::new("ps")
-        .args(["-ww", "-Ao", "pid=,etime=,command="])
+    let mut cmd = std::process::Command::new("ps");
+    cmd.args(["-ww", "-Ao", "pid=,etime=,command="])
         .env("LC_ALL", "C")
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null());
+    crate::appimage_env::scrub_command(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|error| log::debug!("读取进程表失败: {error}"))
         .ok()?;

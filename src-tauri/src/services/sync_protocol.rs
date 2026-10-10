@@ -408,7 +408,9 @@ pub(crate) fn detect_system_device_name() -> Option<String> {
         return env_name;
     }
 
-    let output = Command::new("hostname").output().ok()?;
+    let mut cmd = Command::new("hostname");
+    crate::appimage_env::scrub_command(&mut cmd);
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }

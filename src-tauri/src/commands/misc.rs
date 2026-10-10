@@ -292,6 +292,7 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
         let inherited = std::env::var("PATH").unwrap_or_default();
         cmd.env("PATH", merge_path_segments(&login_path, &inherited));
     }
+    crate::appimage_env::scrub_command(&mut cmd);
     let output = cmd.output().map_err(|e| format!("启动安装进程失败: {e}"))?;
     finish_lifecycle_output(&output)
 }
@@ -1432,10 +1433,10 @@ fn try_get_version(tool: &str) -> ShellProbe {
             .filter(|s| is_valid_shell(s))
             .unwrap_or_else(|| "sh".to_string());
         let flag = default_flag_for_shell(&shell);
-        Command::new(shell)
-            .arg(flag)
-            .arg(format!("{tool} --version"))
-            .output()
+        let mut cmd = Command::new(shell);
+        cmd.arg(flag).arg(format!("{tool} --version"));
+        crate::appimage_env::scrub_command(&mut cmd);
+        cmd.output()
     };
 
     match output {
@@ -2451,10 +2452,10 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
 
             #[cfg(not(target_os = "windows"))]
             let output = {
-                Command::new(&tool_path)
-                    .arg("--version")
-                    .env("PATH", &new_path)
-                    .output()
+                let mut cmd = Command::new(&tool_path);
+                cmd.arg("--version").env("PATH", &new_path);
+                crate::appimage_env::scrub_command(&mut cmd);
+                cmd.output()
             };
 
             if let Ok(out) = output {
@@ -2625,11 +2626,10 @@ fn login_shell_path() -> Option<String> {
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
     let flag = default_flag_for_shell(&shell);
-    let out = Command::new(shell)
-        .arg(flag)
-        .arg("/usr/bin/env")
-        .output()
-        .ok()?;
+    let mut cmd = Command::new(shell);
+    cmd.arg(flag).arg("/usr/bin/env");
+    crate::appimage_env::scrub_command(&mut cmd);
+    let out = cmd.output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -2659,6 +2659,7 @@ fn resolve_path_default(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    crate::appimage_env::scrub_command(&mut cmd);
     isolate_child_process_group(&mut cmd);
     let child = cmd
         .spawn()
@@ -2765,6 +2766,7 @@ fn run_probe_version_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    crate::appimage_env::scrub_command(&mut cmd);
     isolate_child_process_group(&mut cmd);
     let child = cmd.spawn().map_err(|e| e.to_string())?;
     wait_child_output(
@@ -3846,6 +3848,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         apply_extra_env(&mut cmd, extra_env);
+        crate::appimage_env::scrub_command(&mut cmd);
         isolate_child_process_group(&mut cmd);
         let child = cmd
             .spawn()
@@ -5016,11 +5019,12 @@ echo "{config_path}"
             || which_command(terminal);
 
         if terminal_exists {
-            let result = Command::new(terminal)
-                .args(&args)
+            let mut cmd = Command::new(terminal);
+            cmd.args(&args)
                 .arg("sh")
-                .arg(script_file.to_string_lossy().as_ref())
-                .spawn();
+                .arg(script_file.to_string_lossy().as_ref());
+            crate::appimage_env::scrub_command(&mut cmd);
+            let result = cmd.spawn();
 
             match result {
                 Ok(_) => return Ok(()),
@@ -5041,11 +5045,10 @@ echo "{config_path}"
 #[cfg(target_os = "linux")]
 fn which_command(cmd: &str) -> bool {
     use std::process::Command;
-    Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    let mut which = Command::new("which");
+    which.arg(cmd);
+    crate::appimage_env::scrub_command(&mut which);
+    which.output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Windows: 根据用户首选终端启动
@@ -5334,11 +5337,12 @@ read -r _
                     .any(|dir| std::path::Path::new(&format!("{}/{}", dir, terminal)).exists());
 
             if terminal_exists {
-                let spawn_result = Command::new(terminal)
-                    .args(&args)
+                let mut cmd = Command::new(terminal);
+                cmd.args(&args)
                     .arg("sh")
-                    .arg(script_file.to_string_lossy().as_ref())
-                    .spawn();
+                    .arg(script_file.to_string_lossy().as_ref());
+                crate::appimage_env::scrub_command(&mut cmd);
+                let spawn_result = cmd.spawn();
                 match spawn_result {
                     Ok(_) => return Ok(()),
                     Err(e) => {
