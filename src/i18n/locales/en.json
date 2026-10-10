@@ -368,7 +368,7 @@
       "quotaDisplay": "Quota display",
       "quotaDisplayLeft": "Left",
       "quotaDisplayUsed": "Used",
-      "quotaDisplayHelp": "Whether each quota window on provider cards, in the auth center and in the tray shows how much is left or how much is used. Balances and Credits always show what is left.",
+      "quotaDisplayHelp": "Whether each quota window on provider cards, in Accounts and in the tray shows how much is left or how much is used. Balances and Credits always show what is left.",
       "sidebarAndHeader": "Sidebar and header",
       "visibleApps": "Apps shown in the sidebar",
       "goToApps": "Open Apps",
@@ -561,7 +561,7 @@
         },
         "codexHistoryUnify": {
           "name": "Codex session unify migration backups",
-          "hint": "Session copies kept when \"Unify Codex session history\" migrated existing sessions. \"Restore backup\" when turning that switch off depends on them; after deleting, migrated official sessions can no longer be moved back to their original group."
+          "hint": "Session copies kept when \"Unified Codex session history\" migrated existing sessions. \"Restore backup\" when turning that switch off depends on them; after deleting, migrated official sessions can no longer be moved back to their original group."
         },
         "codexHistoryUnifyRestore": {
           "name": "Codex session unify restore backups",
