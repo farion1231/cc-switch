@@ -296,7 +296,7 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
     finish_lifecycle_output(&output)
 }
 
-/// Windows 静默执行：command_line 是 .bat 内容（@echo off + call/wsl 行，CRLF 分隔），
+/// Windows 静默执行：command_line 是 .bat 内容（chcp 65001 + @echo off + call/wsl 行，CRLF 分隔），
 /// 写临时 .bat 后用 `cmd /C` 执行，`CREATE_NO_WINDOW` 抑制 console 窗口。
 #[cfg(target_os = "windows")]
 fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), String> {
@@ -466,8 +466,15 @@ fn build_tool_lifecycle_command(
         lines.push("set -o pipefail".to_string());
     }
 
+    // .bat 以 UTF-8 写入，cmd 却按控制台代码页（中文系统 936、西文 437/850）解析，
+    // 用户名含非 ASCII 字符时锚定的 npm.cmd 路径会乱码（#8034）。首行是纯 ASCII，
+    // 任何代码页都能正确解析；chcp 之后的行按 UTF-8 读。CREATE_NO_WINDOW 下这是
+    // 独立的隐藏控制台，不影响用户终端。
     #[cfg(target_os = "windows")]
-    lines.push("@echo off".to_string());
+    {
+        lines.push("@chcp 65001>nul".to_string());
+        lines.push("@echo off".to_string());
+    }
 
     for tool in tools {
         let label = tool_display_name(tool);
@@ -3068,7 +3075,7 @@ fn quote_path_if_spaced(p: &str) -> String {
 /// token 边界字符在引号内是字面)。
 ///
 /// `!`(delayed expansion)只在 `setlocal enabledelayedexpansion` 下生效——我们
-/// .bat 头只有 `@echo off`、没开,所以不需要处理。`'` 在 cmd 中无特殊意义。
+/// .bat 头只有 `chcp 65001` 和 `@echo off`、没开,所以不需要处理。`'` 在 cmd 中无特殊意义。
 ///
 /// 镜像 POSIX `quote_path_if_spaced` 的"轻量条件包装"语义:不含任何特殊字符就保持
 /// 裸路径(命令展示更干净),否则用 `win_double_quote` 包并做必要转义。
@@ -5052,14 +5059,25 @@ fn launch_windows_terminal(
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
-    let cwd_command = build_windows_cwd_command(cwd);
+    // 配置文件和 .bat 同在 temp_dir（%TEMP% 含用户名），用 %~dp0 引用：目录由 cmd
+    // 运行时展开，不进 .bat 字节，非 ASCII 用户名下也不会乱码（#8034）。
+    let config_name = config_file
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let config_path_for_batch = format!("%~dp0{}", escape_windows_batch_value(&config_name));
+    let (cwd_command, cwd_env) = build_windows_cwd_command(cwd);
+    let launch_env: Vec<(&str, &str)> = cwd_env
+        .as_deref()
+        .map(|value| (WINDOWS_CWD_ENV, value))
+        .into_iter()
+        .collect();
 
     let content = format!(
         "@echo off
 {cwd_command}
 echo Using provider-specific claude config:
-echo {}
+echo \"{}\"
 claude --settings \"{}\"
 del \"{}\" >nul 2>&1
 del \"%~f0\" >nul 2>&1
@@ -5077,12 +5095,18 @@ del \"%~f0\" >nul 2>&1
 
     // Try the preferred terminal first
     let result = match terminal {
-        "powershell" => run_windows_start_command(
+        "powershell" => run_windows_start_command_with_env(
             &["powershell", "-NoExit", "-Command", &ps_cmd],
             "PowerShell",
+            &launch_env,
         ),
-        "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
-        _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
+        "wt" => run_windows_start_command_with_env(
+            &["wt", "cmd", "/K", &bat_path],
+            "Windows Terminal",
+            &launch_env,
+        ),
+        // "cmd" or default
+        _ => run_windows_start_command_with_env(&["cmd", "/K", &bat_path], "cmd", &launch_env),
     };
 
     // If preferred terminal fails and it's not the default, try cmd as fallback
@@ -5092,7 +5116,7 @@ del \"%~f0\" >nul 2>&1
             terminal,
             result.as_ref().err()
         );
-        return run_windows_start_command(&["cmd", "/K", &bat_path], "cmd");
+        return run_windows_start_command_with_env(&["cmd", "/K", &bat_path], "cmd", &launch_env);
     }
 
     result
@@ -5108,20 +5132,38 @@ fn is_windows_unc_path(path: &str) -> bool {
     path.starts_with(r"\\")
 }
 
+/// 非 ASCII 的项目目录经这个环境变量传给 Claude 启动 .bat。
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn build_windows_cwd_command_str(path: &str) -> String {
-    let escaped = escape_windows_batch_value(path);
+const WINDOWS_CWD_ENV: &str = "CC_SWITCH_INTERNAL_CWD";
 
-    if is_windows_unc_path(path) {
-        // `cmd.exe` cannot make a UNC path current via `cd`; `pushd` maps it first.
-        format!("pushd \"{escaped}\" || exit /b 1\r\n")
+/// 生成切到项目目录的 .bat 行，第二项是需要给启动进程设置的 `WINDOWS_CWD_ENV` 值。
+///
+/// cmd 按控制台代码页解码 .bat 字节，非 ASCII 路径以 UTF-8 写进文件会乱码（#8034）；
+/// 环境变量在 Windows 内部保持 Unicode，所以这类路径改由环境变量传入。纯 ASCII
+/// 路径照旧写进文件，不依赖终端继承环境变量（旧版 Windows Terminal 不继承）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_windows_cwd_command_str(path: &str) -> (String, Option<String>) {
+    let (target, env_value, cleanup) = if path.is_ascii() {
+        (escape_windows_batch_value(path), None, String::new())
     } else {
-        format!("cd /d \"{escaped}\" || exit /b 1\r\n")
-    }
+        (
+            format!("%{WINDOWS_CWD_ENV}%"),
+            Some(path.to_string()),
+            format!("set \"{WINDOWS_CWD_ENV}=\"\r\n"),
+        )
+    };
+
+    let command = if is_windows_unc_path(path) {
+        // `cmd.exe` cannot make a UNC path current via `cd`; `pushd` maps it first.
+        format!("pushd \"{target}\" || exit /b 1\r\n{cleanup}")
+    } else {
+        format!("cd /d \"{target}\" || exit /b 1\r\n{cleanup}")
+    };
+    (command, env_value)
 }
 
 #[cfg(target_os = "windows")]
-fn build_windows_cwd_command(cwd: Option<&Path>) -> String {
+fn build_windows_cwd_command(cwd: Option<&Path>) -> (String, Option<String>) {
     cwd.map(|dir| build_windows_cwd_command_str(&dir.to_string_lossy()))
         .unwrap_or_default()
 }
@@ -5141,6 +5183,16 @@ fn escape_windows_batch_value(value: &str) -> String {
 /// Windows: Run a start command with common error handling
 #[cfg(target_os = "windows")]
 fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), String> {
+    run_windows_start_command_with_env(args, terminal_name, &[])
+}
+
+/// 同 `run_windows_start_command`，额外给启动的终端设置环境变量（`start` 会继承）。
+#[cfg(target_os = "windows")]
+fn run_windows_start_command_with_env(
+    args: &[&str],
+    terminal_name: &str,
+    envs: &[(&str, &str)],
+) -> Result<(), String> {
     use std::process::Command;
 
     let mut full_args = vec!["/C", "start"];
@@ -5148,6 +5200,7 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
 
     let output = Command::new("cmd")
         .args(&full_args)
+        .envs(envs.iter().copied())
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
@@ -8983,14 +9036,15 @@ mod tests {
 
     #[test]
     fn build_windows_cwd_command_str_uses_cd_for_drive_paths() {
-        let command = build_windows_cwd_command_str(r"C:\work\repo");
+        let (command, env) = build_windows_cwd_command_str(r"C:\work\repo");
 
         assert_eq!(command, "cd /d \"C:\\work\\repo\" || exit /b 1\r\n");
+        assert_eq!(env, None);
     }
 
     #[test]
     fn build_windows_cwd_command_str_uses_pushd_for_unc_paths() {
-        let command = build_windows_cwd_command_str(r"\\wsl$\Ubuntu\home\coder\repo");
+        let (command, _) = build_windows_cwd_command_str(r"\\wsl$\Ubuntu\home\coder\repo");
 
         assert_eq!(
             command,
@@ -9000,11 +9054,29 @@ mod tests {
 
     #[test]
     fn build_windows_cwd_command_str_escapes_batch_metacharacters() {
-        let command = build_windows_cwd_command_str(r"\\server\share\100%&(test)");
+        let (command, _) = build_windows_cwd_command_str(r"\\server\share\100%&(test)");
 
         assert_eq!(
             command,
             "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
         );
+    }
+
+    #[test]
+    fn build_windows_cwd_command_str_passes_non_ascii_paths_via_env() {
+        // cmd 按控制台代码页解码 .bat，中文路径不能写进文件（#8034）。
+        let path = r"C:\Users\林增文\项目";
+        let (command, env) = build_windows_cwd_command_str(path);
+
+        assert!(command.is_ascii(), "batch line must stay ASCII: {command}");
+        assert_eq!(
+            command,
+            "cd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\nset \"CC_SWITCH_INTERNAL_CWD=\"\r\n"
+        );
+        assert_eq!(env.as_deref(), Some(path));
+
+        let (unc_command, unc_env) = build_windows_cwd_command_str(r"\\server\共享\repo");
+        assert!(unc_command.starts_with("pushd \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\n"));
+        assert_eq!(unc_env.as_deref(), Some(r"\\server\共享\repo"));
     }
 }
