@@ -1697,6 +1697,7 @@ export function CodexFormFields({
       {/* Codex API Key 输入框（托管 OAuth 预设无需 Key） */}
       {!isCopilotPreset && !isCodexOauthPreset && !isXaiOauthPreset && (
         <ApiKeySection
+          allowVarRef
           id="codexApiKey"
           label="API Key"
           value={codexApiKey}

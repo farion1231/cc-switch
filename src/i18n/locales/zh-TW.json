@@ -1042,7 +1042,8 @@
       "routing": "本地路由",
       "network": "網路",
       "data": "資料",
-      "about": "關於"
+      "about": "關於",
+      "apiKeyVars": "API Key 變數"
     },
     "appConfig": {
       "configDir": "設定目錄"
@@ -4781,5 +4782,68 @@
       "refresh": "重新整理額度",
       "refreshAria": "重新整理 {{login}} 的額度"
     }
+  },
+  "apiKeyVars": {
+    "title": "API Key 變數",
+    "description": "定義由本機指令碼自動重新整理的 API Key。在 Claude、Codex、Gemini、Grok 供應商的 API Key 輸入框中填寫以兩層大括號包住的變數名即可引用；變數重新整理後，正在使用它的供應商設定會自動更新。指令碼目錄中依 index.mjs、index.js 的順序尋找進入點並以 node 執行，stdout 輸出 JSON：apiKey、expiresAt（選填）、refreshAfter（選填）、message（選填）。結束碼 2 表示需要人工處理，其他非 0 結束碼會自動重試。變數的值只儲存在本機，不會被匯出或同步。",
+    "add": "新增變數",
+    "empty": "還沒有變數。新增一個變數並指定指令碼目錄，然後在供應商的 API Key 中引用它。",
+    "status": {
+      "ok": "正常",
+      "expired": "已過期",
+      "failed": "重新整理失敗",
+      "attention": "需要處理",
+      "disabled": "已停用",
+      "pending": "等待取得"
+    },
+    "valueLine": "目前值 {{value}} · 到期時間 {{time}}",
+    "noValue": "尚無值",
+    "noScriptDir": "未設定指令碼目錄",
+    "referencedBy": "被引用：{{list}}",
+    "unreferenced": "未被任何供應商引用",
+    "refreshNow": "立即重新整理",
+    "deleteBlocked": "仍被供應商引用，無法刪除",
+    "advanced": "指令碼執行環境",
+    "nodePath": "node 路徑",
+    "nodePathHelp": "執行重新整理指令碼使用的 node 可執行檔。留空時自動從 PATH 和常見安裝位置尋找。",
+    "nodePathPlaceholder": "留空自動尋找",
+    "saved": "已儲存變數 {{name}}",
+    "deleted": "已刪除變數 {{name}}",
+    "deleteTitle": "刪除變數",
+    "deleteMessage": "確定刪除變數 {{name}} 嗎？它的目前值也會一併刪除。",
+    "refreshSuccess": "變數 {{name}} 已重新整理：{{value}}",
+    "refreshFailed": "變數 {{name}} 重新整理失敗：{{error}}",
+    "noExpiry": "未提供",
+    "editTitle": "編輯 API Key 變數",
+    "addTitle": "新增 API Key 變數",
+    "name": "變數名",
+    "nameInvalid": "只能包含大寫字母、數字和底線，不能以數字或 CC_SWITCH_ 開頭，最長 64 個字元",
+    "nameDuplicate": "變數名已存在",
+    "nameHint": "在供應商的 API Key 中填寫 {{ref}} 引用此變數",
+    "renameRewrites": "改名後會自動更新 {{count}} 個供應商中的引用",
+    "scriptDir": "指令碼目錄",
+    "scriptDirPlaceholder": "包含 index.mjs 或 index.js 的目錄",
+    "chooseDir": "選擇",
+    "willRun": "將執行 {{file}}",
+    "indexJsIgnored": "同時存在 index.js，已忽略",
+    "enable": "啟用自動重新整理",
+    "timeout": "逾時（秒，5–300）",
+    "leadTime": "提前重新整理（分鐘）",
+    "test": "測試指令碼",
+    "testSuccess": "成功：{{value}} · 到期時間 {{time}} · {{file}}",
+    "securityTitle": "允許執行本機指令碼？",
+    "securityWarning": "CC Switch 將在背景以 node 定期執行 {{dir}} 中的指令碼，並把它輸出的 Key 寫入正在使用的用戶端設定。請只啟用你信任的指令碼。",
+    "securityConfirm": "啟用",
+    "refOk": "引用變數 {{name}}：{{value}} · 到期時間 {{time}}",
+    "ref": {
+      "unknown": "變數 {{name}} 未定義，請先在「設定 → API Key 變數」中新增",
+      "disabled": "變數 {{name}} 已停用，無法切換到此供應商",
+      "noValue": "變數 {{name}} 尚無可用值，請先重新整理",
+      "malformed": "引用格式不正確：整個欄位必須是以兩層大括號包住的變數名，例如 MY_KEY"
+    },
+    "inputHint": "輸入 {{ 可引用 API Key 變數",
+    "liveUpdateFailed": "變數 {{name}} 已重新整理，但更新用戶端設定失敗：{{error}}",
+    "autoRefreshFailed": "變數 {{name}} 自動重新整理失敗，正在使用的 Key 仍然有效：{{error}}",
+    "autoRefreshFailedExpired": "變數 {{name}} 自動重新整理失敗，目前的 Key 已過期：{{error}}"
   }
 }

@@ -1041,7 +1041,8 @@
       "routing": "Local routing",
       "network": "Network",
       "data": "Data",
-      "about": "About"
+      "about": "About",
+      "apiKeyVars": "API Key Variables"
     },
     "appConfig": {
       "configDir": "Config directory"
@@ -4780,5 +4781,68 @@
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}"
     }
+  },
+  "apiKeyVars": {
+    "title": "API Key Variables",
+    "description": "Define API keys that a local script refreshes automatically. Reference one in the API key field of a Claude, Codex, Gemini or Grok provider by typing the variable name wrapped in double curly braces; when it refreshes, providers in use are updated automatically. The script directory is searched for index.mjs, then index.js, run with node, and must print JSON to stdout: apiKey, expiresAt (optional), refreshAfter (optional), message (optional). Exit code 2 means manual action is needed; other non-zero codes are retried. Values stay on this device and are never exported or synced.",
+    "add": "Add variable",
+    "empty": "No variables yet. Add one with a script directory, then reference it in a provider's API key.",
+    "status": {
+      "ok": "OK",
+      "expired": "Expired",
+      "failed": "Refresh failed",
+      "attention": "Needs attention",
+      "disabled": "Disabled",
+      "pending": "Waiting"
+    },
+    "valueLine": "Current {{value}} · expires {{time}}",
+    "noValue": "No value yet",
+    "noScriptDir": "No script directory",
+    "referencedBy": "Used by: {{list}}",
+    "unreferenced": "Not used by any provider",
+    "refreshNow": "Refresh now",
+    "deleteBlocked": "Still used by providers; cannot delete",
+    "advanced": "Script runtime",
+    "nodePath": "node path",
+    "nodePathHelp": "The node executable used to run refresh scripts. Leave empty to search PATH and common install locations.",
+    "nodePathPlaceholder": "Leave empty to auto-detect",
+    "saved": "Saved variable {{name}}",
+    "deleted": "Deleted variable {{name}}",
+    "deleteTitle": "Delete variable",
+    "deleteMessage": "Delete variable {{name}}? Its current value will be deleted too.",
+    "refreshSuccess": "Variable {{name}} refreshed: {{value}}",
+    "refreshFailed": "Variable {{name}} failed to refresh: {{error}}",
+    "noExpiry": "not provided",
+    "editTitle": "Edit API key variable",
+    "addTitle": "Add API key variable",
+    "name": "Name",
+    "nameInvalid": "Use A–Z, 0–9 and _, not starting with a digit or CC_SWITCH_, at most 64 characters",
+    "nameDuplicate": "This name already exists",
+    "nameHint": "Type {{ref}} in a provider's API key to use this variable",
+    "renameRewrites": "Renaming updates the reference in {{count}} provider(s)",
+    "scriptDir": "Script directory",
+    "scriptDirPlaceholder": "Directory containing index.mjs or index.js",
+    "chooseDir": "Browse",
+    "willRun": "Will run {{file}}",
+    "indexJsIgnored": "index.js also exists and is ignored",
+    "enable": "Auto refresh",
+    "timeout": "Timeout (s, 5–300)",
+    "leadTime": "Refresh early (min)",
+    "test": "Test script",
+    "testSuccess": "Success: {{value}} · expires {{time}} · {{file}}",
+    "securityTitle": "Allow running a local script?",
+    "securityWarning": "CC Switch will periodically run the script in {{dir}} with node in the background and write the key it prints into the client configuration in use. Only enable scripts you trust.",
+    "securityConfirm": "Enable",
+    "refOk": "Uses variable {{name}}: {{value}} · expires {{time}}",
+    "ref": {
+      "unknown": "Variable {{name}} is not defined; add it in Settings → API Key Variables",
+      "disabled": "Variable {{name}} is disabled; this provider cannot be activated",
+      "noValue": "Variable {{name}} has no value yet; refresh it first",
+      "malformed": "Invalid reference: the whole field must be a variable name such as MY_KEY wrapped in double curly braces"
+    },
+    "inputHint": "Type {{ to use an API key variable",
+    "liveUpdateFailed": "Variable {{name}} refreshed, but updating the client configuration failed: {{error}}",
+    "autoRefreshFailed": "Variable {{name}} failed to refresh; the key in use is still valid: {{error}}",
+    "autoRefreshFailedExpired": "Variable {{name}} failed to refresh and the current key has expired: {{error}}"
   }
 }

@@ -1041,7 +1041,8 @@
       "routing": "本地路由",
       "network": "网络",
       "data": "数据",
-      "about": "关于"
+      "about": "关于",
+      "apiKeyVars": "API Key 变量"
     },
     "appConfig": {
       "configDir": "配置目录"
@@ -4780,5 +4781,68 @@
       "refresh": "刷新额度",
       "refreshAria": "刷新 {{login}} 的额度"
     }
+  },
+  "apiKeyVars": {
+    "title": "API Key 变量",
+    "description": "定义由本机脚本自动刷新的 API Key。在 Claude、Codex、Gemini、Grok 供应商的 API Key 输入框中填写以两层花括号包住的变量名即可引用；变量刷新后，正在使用它的供应商配置会自动更新。脚本目录中按 index.mjs、index.js 的顺序查找入口并用 node 运行，stdout 输出 JSON：apiKey、expiresAt（可选）、refreshAfter（可选）、message（可选）。退出码 2 表示需要人工处理，其他非 0 退出码会自动重试。变量的值只保存在本机，不会被导出或同步。",
+    "add": "添加变量",
+    "empty": "还没有变量。添加一个变量并指定脚本目录，然后在供应商的 API Key 中引用它。",
+    "status": {
+      "ok": "正常",
+      "expired": "已过期",
+      "failed": "刷新失败",
+      "attention": "需要处理",
+      "disabled": "已停用",
+      "pending": "等待获取"
+    },
+    "valueLine": "当前值 {{value}} · 过期时间 {{time}}",
+    "noValue": "尚无值",
+    "noScriptDir": "未设置脚本目录",
+    "referencedBy": "被引用：{{list}}",
+    "unreferenced": "未被任何供应商引用",
+    "refreshNow": "立即刷新",
+    "deleteBlocked": "仍被供应商引用，无法删除",
+    "advanced": "脚本运行环境",
+    "nodePath": "node 路径",
+    "nodePathHelp": "运行刷新脚本使用的 node 可执行文件。留空时自动从 PATH 和常见安装位置查找。",
+    "nodePathPlaceholder": "留空自动查找",
+    "saved": "已保存变量 {{name}}",
+    "deleted": "已删除变量 {{name}}",
+    "deleteTitle": "删除变量",
+    "deleteMessage": "确定删除变量 {{name}} 吗？它的当前值也会一并删除。",
+    "refreshSuccess": "变量 {{name}} 已刷新：{{value}}",
+    "refreshFailed": "变量 {{name}} 刷新失败：{{error}}",
+    "noExpiry": "未提供",
+    "editTitle": "编辑 API Key 变量",
+    "addTitle": "添加 API Key 变量",
+    "name": "变量名",
+    "nameInvalid": "只能包含大写字母、数字和下划线，不能以数字或 CC_SWITCH_ 开头，最长 64 个字符",
+    "nameDuplicate": "变量名已存在",
+    "nameHint": "在供应商的 API Key 中填写 {{ref}} 引用此变量",
+    "renameRewrites": "改名后会自动更新 {{count}} 个供应商中的引用",
+    "scriptDir": "脚本目录",
+    "scriptDirPlaceholder": "包含 index.mjs 或 index.js 的目录",
+    "chooseDir": "选择",
+    "willRun": "将运行 {{file}}",
+    "indexJsIgnored": "同时存在 index.js，已忽略",
+    "enable": "启用自动刷新",
+    "timeout": "超时（秒，5–300）",
+    "leadTime": "提前刷新（分钟）",
+    "test": "测试脚本",
+    "testSuccess": "成功：{{value}} · 过期时间 {{time}} · {{file}}",
+    "securityTitle": "允许运行本机脚本？",
+    "securityWarning": "CC Switch 将在后台用 node 定期运行 {{dir}} 中的脚本，并把它输出的 Key 写入正在使用的客户端配置。请只启用你信任的脚本。",
+    "securityConfirm": "启用",
+    "refOk": "引用变量 {{name}}：{{value}} · 过期时间 {{time}}",
+    "ref": {
+      "unknown": "变量 {{name}} 未定义，请先在「设置 → API Key 变量」中添加",
+      "disabled": "变量 {{name}} 已停用，无法切换到此供应商",
+      "noValue": "变量 {{name}} 尚无可用值，请先刷新",
+      "malformed": "引用格式不正确：整个字段必须是以两层花括号包住的变量名，例如 MY_KEY"
+    },
+    "inputHint": "输入 {{ 可引用 API Key 变量",
+    "liveUpdateFailed": "变量 {{name}} 已刷新，但更新客户端配置失败：{{error}}",
+    "autoRefreshFailed": "变量 {{name}} 自动刷新失败，正在使用的 Key 仍然有效：{{error}}",
+    "autoRefreshFailedExpired": "变量 {{name}} 自动刷新失败，当前 Key 已过期：{{error}}"
   }
 }
