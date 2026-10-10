@@ -710,6 +710,31 @@ impl SkillService {
         })
     }
 
+    /// 获取应用 Skill 扫描与导入的候选目录（始终全量扫描以防遗漏）
+    ///
+    /// 注意：Gemini 的扫描口径故意大于写入口径。前端“导入已有”需要发现
+    /// `~/.gemini/config/skills/` 以及 `~/.gemini/antigravity*/skills/` 中的既有
+    /// Skill；但安装、同步、禁用和删除仍只通过 [`Self::get_app_skills_dir`] 处理
+    /// gemini-cli 专属目录，避免误动 Antigravity 原生私有目录。
+    pub fn get_app_skills_scan_dirs(app: &AppType) -> Result<Vec<PathBuf>> {
+        let primary = Self::get_app_skills_dir(app)?;
+        if !matches!(app, AppType::Gemini) {
+            return Ok(vec![primary]);
+        }
+
+        let gemini_dir = crate::gemini_config::get_gemini_dir();
+        let mut dirs = vec![primary, gemini_dir.join("config").join("skills")];
+        dirs.extend(
+            crate::gemini_config::ANTIGRAVITY_ROOTS
+                .iter()
+                .map(|root| gemini_dir.join(root).join("skills")),
+        );
+
+        dirs.sort();
+        dirs.dedup();
+        Ok(dirs)
+    }
+
     fn paths_alias(left: &Path, right: &Path) -> bool {
         if left == right {
             return true;
@@ -2139,8 +2164,10 @@ impl SkillService {
         // 收集所有待扫描的目录及其来源标签
         let mut scan_sources: Vec<(PathBuf, String)> = Vec::new();
         for app in AppType::all() {
-            if let Ok(d) = Self::get_app_skills_dir(&app) {
-                scan_sources.push((d, app.as_str().to_string()));
+            if let Ok(dirs) = Self::get_app_skills_scan_dirs(&app) {
+                for d in dirs {
+                    scan_sources.push((d, app.as_str().to_string()));
+                }
             }
         }
         if let Some(agents_dir) = get_agents_skills_dir() {
@@ -2213,8 +2240,10 @@ impl SkillService {
         // 收集所有候选搜索目录
         let mut search_sources: Vec<(PathBuf, String)> = Vec::new();
         for app in AppType::all() {
-            if let Ok(d) = Self::get_app_skills_dir(&app) {
-                search_sources.push((d, app.as_str().to_string()));
+            if let Ok(dirs) = Self::get_app_skills_scan_dirs(&app) {
+                for d in dirs {
+                    search_sources.push((d, app.as_str().to_string()));
+                }
             }
         }
         if let Some(agents_dir) = get_agents_skills_dir() {
@@ -4619,44 +4648,46 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
     // 扫描各应用目录
     for app in AppType::all() {
-        let app_dir = match SkillService::get_app_skills_dir(&app) {
-            Ok(d) => d,
+        let app_dirs = match SkillService::get_app_skills_scan_dirs(&app) {
+            Ok(dirs) => dirs,
             Err(_) => continue,
         };
 
-        let entries = match fs::read_dir(&app_dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+        for app_dir in app_dirs {
+            let entries = match fs::read_dir(&app_dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
 
-            let dir_name = entry.file_name().to_string_lossy().to_string();
-            if dir_name.starts_with('.') {
-                continue;
-            }
-            if !path.join("SKILL.md").exists() {
-                continue;
-            }
-            if has_snapshot && !discovered.contains_key(&dir_name) {
-                continue;
-            }
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+                if !path.join("SKILL.md").exists() {
+                    continue;
+                }
+                if has_snapshot && !discovered.contains_key(&dir_name) {
+                    continue;
+                }
 
-            // 复制到 SSOT（如果不存在）
-            let ssot_path = ssot_dir.join(&dir_name);
-            if !ssot_path.exists() {
-                SkillService::copy_dir_recursive(&path, &ssot_path)?;
-            }
+                // 复制到 SSOT（如果不存在）
+                let ssot_path = ssot_dir.join(&dir_name);
+                if !ssot_path.exists() {
+                    SkillService::copy_dir_recursive(&path, &ssot_path)?;
+                }
 
-            if !has_snapshot {
-                discovered
-                    .entry(dir_name)
-                    .or_default()
-                    .set_enabled_for(&app, true);
+                if !has_snapshot {
+                    discovered
+                        .entry(dir_name)
+                        .or_default()
+                        .set_enabled_for(&app, true);
+                }
             }
         }
     }
@@ -6001,6 +6032,62 @@ mod tests {
         assert_eq!(imported.len(), 1);
         assert!(imported[0].apps.pi);
         assert!(SkillService::get_all_installed(&db).unwrap()[0].apps.pi);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn importing_an_antigravity_private_skill_uses_scan_sources_without_writing_private_dir() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let private_skill = temp
+            .path()
+            .join(".gemini")
+            .join("antigravity-ide")
+            .join("skills")
+            .join("private-skill");
+        write_skill(&private_skill, "Antigravity private skill");
+        let original = fs::read_to_string(private_skill.join("SKILL.md"))
+            .expect("read private skill before import");
+
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "private-skill".to_string(),
+                apps: SkillApps::default(),
+            }],
+        )
+        .expect("import Antigravity private skill");
+
+        assert_eq!(imported.len(), 1);
+        let ssot_skill = SkillService::get_ssot_dir()
+            .expect("resolve SSOT dir")
+            .join("private-skill");
+        assert!(ssot_skill.join("SKILL.md").is_file());
+        assert_eq!(
+            fs::read_to_string(private_skill.join("SKILL.md"))
+                .expect("read private skill after import"),
+            original,
+            "Antigravity private skill directory must remain read-only"
+        );
+    }
+
+    #[test]
+    fn gemini_skills_scan_dirs_include_cli_and_antigravity_roots() {
+        let dirs =
+            SkillService::get_app_skills_scan_dirs(&AppType::Gemini).expect("gemini dirs resolve");
+        let expected_cli_suffix = Path::new(".gemini").join("skills");
+        let expected_agy_config = Path::new(".gemini").join("config").join("skills");
+        assert!(dirs.iter().any(|d| d.ends_with(&expected_cli_suffix)));
+        assert!(dirs.iter().any(|d| d.ends_with(&expected_agy_config)));
+        for root in crate::gemini_config::ANTIGRAVITY_ROOTS {
+            let expected_root = Path::new(".gemini").join(root).join("skills");
+            assert!(dirs.iter().any(|d| d.ends_with(&expected_root)));
+        }
+
+        let write_dir =
+            SkillService::get_app_skills_dir(&AppType::Gemini).expect("write dir resolve");
+        assert!(write_dir.ends_with(&expected_cli_suffix));
     }
 
     #[test]

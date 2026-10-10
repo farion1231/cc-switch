@@ -306,6 +306,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_session' THEN 'Claude (Session)' \
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
+         WHEN '_gemini_antigravity_session' THEN 'Antigravity (Session)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
@@ -401,9 +402,11 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let proxy_data_source = data_source_expr("proxy_dedup");
     let app_type_match =
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
+    let proxy_model = effective_model_sql("proxy_dedup");
+    let log_model = effective_model_sql(log_alias);
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            {data_source} IN ({DEDUP_SESSION_SOURCES_SQL})
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -418,7 +421,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
                       OR (
                           {log_alias}.cache_creation_tokens = 0
-                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session', 'antigravity_session')
                       )
                       OR (
                           proxy_dedup.cache_creation_tokens = 0
@@ -430,7 +433,10 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       {log_alias}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
                       AND {log_alias}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
                   AND (
-                      LOWER(proxy_dedup.model) = LOWER({log_alias}.model)
+                      LOWER({proxy_model}) = LOWER({log_model})
+                      OR LOWER(proxy_dedup.model) = LOWER({log_alias}.model)
+                      OR LOWER({proxy_model}) = 'unknown'
+                      OR LOWER({log_model}) = 'unknown'
                       OR LOWER(proxy_dedup.model) = 'unknown'
                       OR LOWER({log_alias}.model) = 'unknown'
                   )
@@ -441,7 +447,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
 
 /// 参与跨源去重的会话日志来源（和 [`effective_usage_log_filter`] 同口径）。
 const DEDUP_SESSION_SOURCES_SQL: &str =
-    "'session_log', 'codex_session', 'gemini_session', 'opencode_session'";
+    "'session_log', 'codex_session', 'gemini_session', 'opencode_session', 'antigravity_session'";
 
 /// Dashboard 读路径用的去重条件：语义和 [`effective_usage_log_filter`] 完全一致，
 /// 只是先看时间窗口里两类日志各有多少，再挑便宜的写法。
@@ -489,6 +495,8 @@ pub(crate) fn effective_usage_log_filter_for_range(
 
     let dp_source = data_source_expr("dedup_p");
     let ds_source = data_source_expr("dedup_s");
+    let proxy_model = effective_model_sql("dedup_p");
+    let log_model = effective_model_sql("dedup_s");
     Ok(format!(
         "{log_alias}.rowid NOT IN (
             SELECT dedup_s.rowid
@@ -509,7 +517,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
                  dedup_p.cache_creation_tokens = dedup_s.cache_creation_tokens
                  OR (
                      dedup_s.cache_creation_tokens = 0
-                     AND {ds_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                     AND {ds_source} IN ('codex_session', 'gemini_session', 'opencode_session', 'antigravity_session')
                  )
                  OR (
                      dedup_p.cache_creation_tokens = 0
@@ -518,7 +526,10 @@ pub(crate) fn effective_usage_log_filter_for_range(
                  )
              )
              AND (
-                 LOWER(dedup_p.model) = LOWER(dedup_s.model)
+                 LOWER({proxy_model}) = LOWER({log_model})
+                 OR LOWER(dedup_p.model) = LOWER(dedup_s.model)
+                 OR LOWER({proxy_model}) = 'unknown'
+                 OR LOWER({log_model}) = 'unknown'
                  OR LOWER(dedup_p.model) = 'unknown'
                  OR LOWER(dedup_s.model) = 'unknown'
              )
@@ -634,6 +645,7 @@ fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, 
 static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
     let l_data_source = data_source_expr("l");
     let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
+    let l_model = effective_model_sql("l");
     format!(
         "SELECT EXISTS (
             SELECT 1
@@ -656,7 +668,9 @@ static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
               )
               AND l.created_at BETWEEN ?7 - ?8 AND ?7 + ?8
               AND (
-                  LOWER(l.model) = LOWER(?2)
+                  LOWER({l_model}) = LOWER(?2)
+                  OR LOWER(l.model) = LOWER(?2)
+                  OR LOWER({l_model}) = 'unknown'
                   OR LOWER(l.model) = 'unknown'
                   OR LOWER(?2) = 'unknown'
               )
@@ -2479,6 +2493,136 @@ pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<Mo
         })
 }
 
+// Only names that identify Flash can generalize to future versions. Bare
+// versions and preview/experiment labels retain the established legacy scope.
+fn antigravity_flash_candidate(model: &str) -> Option<String> {
+    let name = model.strip_prefix("gemini-").unwrap_or(model);
+    let (version, suffix) = if let Some((version, suffix)) = name.split_once("-flash") {
+        (version, Some(suffix))
+    } else if let Some(version) = name.strip_prefix("flash-") {
+        (version, Some(""))
+    } else if let Some(version) = name.strip_suffix("flash") {
+        (version, Some(""))
+    } else {
+        (name, None)
+    };
+    let (major, minor) = version.split_once('.')?;
+    if major.is_empty()
+        || minor.is_empty()
+        || !major.bytes().all(|b| b.is_ascii_digit())
+        || !minor.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let legacy = matches!(version, "3.6" | "3.7" | "3.8");
+    match suffix {
+        Some("" | "-low" | "-medium" | "-high" | "-tiered") => {}
+        None | Some("-a" | "-b" | "-exp-a" | "-exp-b" | "-preview") if legacy => {}
+        _ => return None,
+    }
+    Some(format!("gemini-{version}-flash"))
+}
+
+pub(crate) fn resolve_antigravity_pricing(
+    conn: &Connection,
+    raw_model: &str,
+) -> (Option<ModelPricing>, String) {
+    let trimmed = raw_model.trim();
+    if trimmed.is_empty()
+        || matches!(
+            trimmed.to_ascii_lowercase().as_str(),
+            "unknown" | "null" | "none"
+        )
+    {
+        return (None, "unknown".to_string());
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+
+    // 1. Exact match on raw model ID (protecting user custom pricing on variants)
+    if let Ok(Some(row)) = query_model_pricing_exact(conn, &normalized) {
+        if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+            return (Some(pricing), normalized);
+        }
+    }
+
+    // 2. Reuse standard pricing candidates (namespaces, dates, reasoning efforts, dot versions)
+    let candidates = model_pricing_candidates(&normalized);
+    for candidate in &candidates {
+        if let Ok(Some(row)) = query_model_pricing_exact(conn, candidate) {
+            if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+                return (Some(pricing), candidate.clone());
+            }
+        }
+    }
+
+    // 3. AGY-specific syntax variant rules
+    // 3a. Strip -thinking suffix and re-evaluate candidates without thinking
+    if let Some(base) = normalized.strip_suffix("-thinking") {
+        if let Ok(Some(row)) = query_model_pricing_exact(conn, base) {
+            if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+                return (Some(pricing), base.to_string());
+            }
+        }
+        let base_candidates = model_pricing_candidates(base);
+        for candidate in &base_candidates {
+            if let Ok(Some(row)) = query_model_pricing_exact(conn, candidate) {
+                if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+                    return (Some(pricing), candidate.clone());
+                }
+            }
+        }
+    }
+
+    // 3b. Same-version Flash syntax; ambiguous legacy labels stay bounded.
+    let without_thinking = normalized.strip_suffix("-thinking").unwrap_or(&normalized);
+    if let Some(target) = antigravity_flash_candidate(without_thinking) {
+        if let Ok(Some(row)) = query_model_pricing_exact(conn, &target) {
+            if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+                return (Some(pricing), target);
+            }
+        }
+        // Keep the established identity even before a price is available, so
+        // adding that price can backfill already finalized session imports.
+        return (None, target);
+    }
+
+    // 4. Explicit AGY aliases and verified opaque placeholder exceptions
+    let placeholder_target = match without_thinking {
+        "gemini-3.8-flash-n" => Some("gemini-3.8-flash"),
+        "model_placeholder_m187" | "model_placeholder_m20" | "gemini-default" => {
+            Some("gemini-3.5-flash")
+        }
+        "model_placeholder_m132" | "gemini-3-flash-a" => Some("gemini-3.5-flash"),
+        "model_placeholder_m36"
+        | "gemini-3.1-pro-low"
+        | "model_placeholder_m16"
+        | "gemini-pro-default" => Some("gemini-3.1-pro-preview"),
+        "model_placeholder_m35" => Some("claude-sonnet-4-6-20260217"),
+        "model_placeholder_m26" => Some("claude-opus-4-6-20260206"),
+        "gpt-oss-120b-medium" => Some("gpt-oss-120b-medium"),
+        _ => None,
+    };
+    if let Some(target) = placeholder_target {
+        if let Ok(Some(row)) = query_model_pricing_exact(conn, target) {
+            if let Ok(pricing) = ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3) {
+                return (Some(pricing), target.to_string());
+            }
+        }
+        return (None, target.to_string());
+    }
+
+    // 5. Unpriced: normalize formatting (e.g. dot to dash for Claude) but preserve original ID without guessing
+    let resolved_name = if without_thinking.starts_with("claude-") && without_thinking.contains('.')
+    {
+        without_thinking.replace('.', "-")
+    } else {
+        without_thinking.to_string()
+    };
+
+    (None, resolved_name)
+}
+
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
@@ -2531,7 +2675,9 @@ fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String
 
 pub(crate) fn is_placeholder_pricing_model(model_id: &str) -> bool {
     let normalized = model_id.trim().to_ascii_lowercase();
-    normalized.is_empty() || matches!(normalized.as_str(), "unknown" | "null" | "none")
+    normalized.is_empty()
+        || matches!(normalized.as_str(), "unknown" | "null" | "none")
+        || normalized.starts_with("model_placeholder_")
 }
 
 fn query_model_pricing_exact(
@@ -2854,12 +3000,57 @@ mod tests {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn insert_usage_log_with_pricing_model(
+        conn: &Connection,
+        request_id: &str,
+        app_type: &str,
+        provider_id: &str,
+        model: &str,
+        pricing_model: Option<&str>,
+        data_source: &str,
+        created_at: i64,
+        input_tokens: i64,
+        output_tokens: i64,
+        cache_read_tokens: i64,
+        cache_creation_tokens: i64,
+        status_code: i64,
+        total_cost_usd: &str,
+    ) -> Result<(), AppError> {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model, pricing_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                total_cost_usd, latency_ms, status_code, created_at, data_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '0', '0', '0', '0', ?, 100, ?, ?, ?)",
+            params![
+                request_id,
+                provider_id,
+                app_type,
+                model,
+                model,
+                pricing_model,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                total_cost_usd,
+                status_code,
+                created_at,
+                data_source
+            ],
+        )?;
+        Ok(())
+    }
+
     fn create_legacy_nullable_logs_table(conn: &Connection) -> Result<(), AppError> {
         conn.execute(
             "CREATE TABLE proxy_request_logs (
                 request_id TEXT PRIMARY KEY,
                 app_type TEXT NOT NULL,
                 model TEXT NOT NULL,
+                pricing_model TEXT,
                 input_tokens INTEGER NOT NULL,
                 output_tokens INTEGER NOT NULL,
                 cache_read_tokens INTEGER NOT NULL,
@@ -5174,6 +5365,42 @@ mod tests {
     }
 
     #[test]
+    fn test_get_provider_stats_labels_gemini_antigravity_session_provider() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "gemini-agy-session",
+                "gemini",
+                "_gemini_antigravity_session",
+                "gemini-2.5-pro",
+                "antigravity_session",
+                1000,
+                100,
+                50,
+                0,
+                0,
+                200,
+                "0.01",
+            )?;
+        }
+
+        let stats = db.get_provider_stats(None, None, Some("gemini"), None, None)?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].provider_id, "_gemini_antigravity_session");
+        assert_eq!(stats[0].provider_name, "Antigravity (Session)");
+
+        let summary =
+            db.get_usage_summary(None, None, None, Some("Antigravity (Session)"), None)?;
+        assert_eq!(summary.total_requests, 1);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_get_provider_stats_excludes_partial_rollup_boundary_days() -> Result<(), AppError> {
         let db = Database::memory()?;
         let start = local_ts(2024, 2, 1, 12, 0, 0);
@@ -5733,6 +5960,125 @@ mod tests {
         // 测试不存在的模型
         let result = find_model_pricing_row(&conn, "unknown-model-123")?;
         assert!(result.is_none(), "不应该匹配不存在的模型");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_usage_dedup_antigravity_session_when_proxy_log_arrives_later(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            // 1. 会话行先到达：存入归一化的 pricing_model，且 model 列也为 gemini-3.5-flash
+            insert_usage_log_with_pricing_model(
+                &conn,
+                "agy-session-1",
+                "gemini",
+                "_gemini_antigravity_session",
+                "gemini-3.5-flash",
+                Some("gemini-3.5-flash"),
+                "antigravity_session",
+                10_000,
+                100,
+                50,
+                20,
+                0,
+                200,
+                "0.05",
+            )?;
+
+            // 2. 代理日志后到达：晚 10 秒写入，同一次请求拥有相同的 token 指纹
+            insert_usage_log(
+                &conn,
+                "proxy-1",
+                "gemini",
+                "google",
+                "gemini-3.5-flash",
+                "proxy",
+                10_010,
+                100,
+                50,
+                20,
+                0,
+                200,
+                "0.05",
+            )?;
+        }
+
+        let summary = db.get_usage_summary(None, None, None, None, None)?;
+        assert_eq!(
+            summary.total_requests, 1,
+            "代理日志后到时，同一请求的会话行与代理行应当去重，统计只计入 1 次"
+        );
+        // gemini-proxy 是 cache-inclusive：100 - 20 = 80 fresh input
+        assert_eq!(summary.total_input_tokens, 80);
+        assert_eq!(summary.total_output_tokens, 50);
+        assert_eq!(summary.total_cache_read_tokens, 20);
+
+        let model_stats = db.get_model_stats(None, None, None, None, None)?;
+        assert_eq!(model_stats.len(), 1);
+        assert_eq!(model_stats[0].model, "gemini-3.5-flash");
+        assert_eq!(model_stats[0].request_count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_usage_dedup_antigravity_session_placeholder_model_late_proxy(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            // 模拟存量/占位符数据：model 存有原始占位符，pricing_model 存有解析出的规范模型
+            insert_usage_log_with_pricing_model(
+                &conn,
+                "agy-placeholder-session",
+                "gemini",
+                "_gemini_antigravity_session",
+                "model_placeholder_m187",
+                Some("gemini-3.5-flash"),
+                "antigravity_session",
+                20_000,
+                200,
+                80,
+                30,
+                0,
+                200,
+                "0.08",
+            )?;
+
+            // 代理日志后到达，使用规范模型名 gemini-3.5-flash
+            insert_usage_log(
+                &conn,
+                "proxy-late",
+                "gemini",
+                "google",
+                "gemini-3.5-flash",
+                "proxy",
+                20_015,
+                200,
+                80,
+                30,
+                0,
+                200,
+                "0.08",
+            )?;
+        }
+
+        let summary = db.get_usage_summary(None, None, None, None, None)?;
+        assert_eq!(
+            summary.total_requests, 1,
+            "即使会话行 model 存有占位符，基于 effective_model 也应与代理日志正确去重"
+        );
+        assert_eq!(summary.total_input_tokens, 170); // 200 - 30 = 170
+        assert_eq!(summary.total_output_tokens, 80);
+        assert_eq!(summary.total_cache_read_tokens, 30);
+
+        let model_stats = db.get_model_stats(None, None, None, None, None)?;
+        assert_eq!(model_stats.len(), 1);
+        assert_eq!(model_stats[0].model, "gemini-3.5-flash");
+        assert_eq!(model_stats[0].request_count, 1);
 
         Ok(())
     }

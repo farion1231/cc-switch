@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -12,11 +12,30 @@ use super::blocks::{
     assign_turn_ids, count_diff_lines, single_file_diff, thinking_block, tool_call_block,
     tool_result_block, ToolSource,
 };
-use super::utils::{parse_timestamp_to_ms, truncate_summary};
+use super::utils::{
+    parse_timestamp_to_ms, remove_dir_all_if_exists, remove_file_if_exists, truncate_summary,
+};
 
 const PROVIDER_ID: &str = "gemini";
 
+pub fn session_roots() -> Vec<PathBuf> {
+    let gemini_dir = crate::gemini_config::get_gemini_dir();
+    let mut roots = vec![gemini_dir.join("tmp")];
+    roots.extend(
+        crate::gemini_config::ANTIGRAVITY_ROOTS
+            .iter()
+            .map(|root| gemini_dir.join(root)),
+    );
+    roots
+}
+
 pub fn scan_sessions() -> Vec<SessionMeta> {
+    let mut sessions = scan_gemini_sessions();
+    sessions.extend(scan_antigravity_sessions());
+    sessions
+}
+
+fn scan_gemini_sessions() -> Vec<SessionMeta> {
     let gemini_dir = crate::gemini_config::get_gemini_dir();
     let tmp_dir = gemini_dir.join("tmp");
     if !tmp_dir.exists() {
@@ -179,6 +198,10 @@ fn read_session_document(path: &Path) -> Result<Value, String> {
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
+    if is_antigravity_transcript(path) {
+        return load_antigravity_messages(path);
+    }
+
     let value = read_session_document(path)?;
 
     let messages = value
@@ -473,7 +496,11 @@ fn gemini_meta(msg: &Value) -> Option<MessageMeta> {
     (meta != MessageMeta::default()).then_some(meta)
 }
 
-pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    if is_antigravity_transcript(path) {
+        return delete_antigravity_session(root, path, session_id);
+    }
+
     let meta = parse_session(path).ok_or_else(|| {
         format!(
             "Failed to parse Gemini session metadata: {}",
@@ -544,6 +571,825 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         source_path: Some(source_path),
         resume_command: Some(format!("gemini --resume {session_id}")),
     })
+}
+
+fn scan_antigravity_sessions() -> Vec<SessionMeta> {
+    let mut by_id: HashMap<String, SessionMeta> = HashMap::new();
+    let mut project_cache: HashMap<String, Option<String>> = HashMap::new();
+
+    for root in antigravity_roots() {
+        let brain_dir = root.join("brain");
+        let entries = match std::fs::read_dir(&brain_dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        let summaries = load_root_conversation_summaries(&root);
+
+        for entry in entries.flatten() {
+            let session_path = entry.path();
+            let transcript = session_path
+                .join(".system_generated")
+                .join("logs")
+                .join("transcript.jsonl");
+            if !transcript.is_file() {
+                continue;
+            }
+            let session_id = match entry.file_name().to_str() {
+                Some(id) if is_safe_id_component(id) => id.to_string(),
+                _ => continue,
+            };
+
+            let project_dir = resolve_antigravity_workspace_dir(
+                &root,
+                &session_id,
+                summaries.get(&session_id),
+                &mut project_cache,
+            );
+
+            let Some(meta) =
+                parse_antigravity_session_with_project_dir(&transcript, &session_id, project_dir)
+            else {
+                continue;
+            };
+
+            let incoming_ts = meta.last_active_at.or(meta.created_at).unwrap_or(0);
+            match by_id.get(&meta.session_id) {
+                Some(existing)
+                    if existing.last_active_at.or(existing.created_at).unwrap_or(0)
+                        >= incoming_ts => {}
+                _ => {
+                    by_id.insert(meta.session_id.clone(), meta);
+                }
+            }
+        }
+    }
+
+    by_id.into_values().collect()
+}
+
+fn antigravity_roots() -> Vec<PathBuf> {
+    let gemini_dir = crate::gemini_config::get_gemini_dir();
+    crate::gemini_config::ANTIGRAVITY_ROOTS
+        .iter()
+        .map(|root| gemini_dir.join(root))
+        .collect()
+}
+
+fn is_antigravity_transcript(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some("transcript.jsonl")
+        && path
+            .components()
+            .any(|component| component.as_os_str() == ".system_generated")
+}
+
+fn is_safe_id_component(id: &str) -> bool {
+    if id.is_empty() || id == "." || id == ".." {
+        return false;
+    }
+    if id.contains('/') || id.contains('\\') || id.contains('\0') {
+        return false;
+    }
+    let mut comps = Path::new(id).components();
+    matches!(comps.next(), Some(std::path::Component::Normal(_))) && comps.next().is_none()
+}
+
+fn url_decode_simple(s: &str) -> String {
+    let mut result = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(b) = u8::from_str_radix(hex, 16) {
+                    result.push(b);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&result).to_string()
+}
+
+fn normalize_workspace_path(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if raw.starts_with("file://") {
+        let url = url::Url::parse(raw).ok()?;
+        if url.scheme() != "file" {
+            return None;
+        }
+        let raw_path = if let Ok(file_path) = url.to_file_path() {
+            file_path.to_string_lossy().to_string()
+        } else {
+            portable_file_workspace_path(&url)?
+        };
+
+        // If the path looks like "/C:/...", strip the leading slash for Windows drive compatibility
+        let bytes = raw_path.as_bytes();
+        let path = if bytes.len() >= 3
+            && bytes[0] == b'/'
+            && bytes[1].is_ascii_alphabetic()
+            && bytes[2] == b':'
+        {
+            raw_path[1..].to_string()
+        } else {
+            raw_path
+        };
+
+        return Some(normalize_workspace_separators(&path));
+    }
+
+    if raw.contains("://") {
+        return None;
+    }
+
+    let is_abs = Path::new(raw).is_absolute()
+        || raw.starts_with('/')
+        || raw.starts_with(r"\\")
+        || (raw.len() >= 3
+            && raw.as_bytes()[0].is_ascii_alphabetic()
+            && raw.as_bytes()[1] == b':'
+            && (raw.as_bytes()[2] == b'/' || raw.as_bytes()[2] == b'\\'));
+
+    if is_abs {
+        Some(normalize_workspace_separators(raw))
+    } else {
+        None
+    }
+}
+
+// Mirrors file URI semantics when the host OS cannot represent this path.
+fn portable_file_workspace_path(url: &url::Url) -> Option<String> {
+    let path = url_decode_simple(url.path());
+    if let Some(host) = url.host_str().filter(|host| !host.is_empty()) {
+        Some(format!(r"\\{host}{path}"))
+    } else if path.len() >= 3
+        && path.as_bytes()[0] == b'/'
+        && path.as_bytes()[1].is_ascii_alphabetic()
+        && path.as_bytes()[2] == b':'
+    {
+        Some(path[1..].to_string())
+    } else if path.starts_with('/') {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+// Normalize lexically: metadata may refer to projects that no longer exist.
+fn normalize_workspace_separators(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let drive = bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    let unc = path.starts_with(r"\\") || path.starts_with("//");
+    let normalized = if drive {
+        path.replace('\\', "/")
+    } else if unc {
+        path.replace('/', r"\")
+    } else {
+        path.to_string()
+    };
+    let trimmed = if drive || unc {
+        normalized.trim_end_matches(['/', '\\'])
+    } else {
+        normalized.trim_end_matches('/')
+    };
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else if drive && trimmed.len() == 2 {
+        format!("{trimmed}/")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn extract_path_from_workspace_uris_json(json_str: &str) -> Option<String> {
+    let uris: Vec<String> = serde_json::from_str(json_str).ok()?;
+    for uri in uris {
+        if let Some(path) = normalize_workspace_path(&uri) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+#[derive(Debug, Clone, Default)]
+struct AntigravitySummary {
+    workspace_uris: Option<String>,
+    project_id: Option<String>,
+}
+
+fn load_root_conversation_summaries(root: &Path) -> HashMap<String, AntigravitySummary> {
+    let db_path = root.join("conversation_summaries.db");
+    if !db_path.is_file() {
+        return HashMap::new();
+    }
+    let conn = match rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(c) => c,
+        Err(_) => return HashMap::new(),
+    };
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
+
+    let mut stmt = match conn
+        .prepare("SELECT conversation_id, workspace_uris, project_id FROM conversation_summaries")
+    {
+        Ok(s) => s,
+        Err(_) => return HashMap::new(),
+    };
+
+    let rows = match stmt.query_map([], |row| {
+        let conv_id: Option<String> = row.get(0)?;
+        let uris: Option<String> = row.get(1)?;
+        let project_id: Option<String> = row.get(2)?;
+        Ok((conv_id, uris, project_id))
+    }) {
+        Ok(r) => r,
+        Err(_) => return HashMap::new(),
+    };
+
+    let mut summaries = HashMap::new();
+    for row in rows.flatten() {
+        if let (Some(id), uris, project_id) = row {
+            summaries.insert(
+                id,
+                AntigravitySummary {
+                    workspace_uris: uris.filter(|s| !s.trim().is_empty()),
+                    project_id: project_id.filter(|s| !s.trim().is_empty()),
+                },
+            );
+        }
+    }
+    summaries
+}
+
+#[allow(dead_code)]
+fn load_single_conversation_summary(root: &Path, session_id: &str) -> Option<AntigravitySummary> {
+    let db_path = root.join("conversation_summaries.db");
+    if !db_path.is_file() {
+        return None;
+    }
+    let conn = rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
+    let mut stmt = conn
+        .prepare(
+            "SELECT workspace_uris, project_id FROM conversation_summaries WHERE conversation_id = ?1 LIMIT 1",
+        )
+        .ok()?;
+    stmt.query_row([session_id], |row| {
+        let uris: Option<String> = row.get(0)?;
+        let project_id: Option<String> = row.get(1)?;
+        Ok(AntigravitySummary {
+            workspace_uris: uris.filter(|s| !s.trim().is_empty()),
+            project_id: project_id.filter(|s| !s.trim().is_empty()),
+        })
+    })
+    .ok()
+}
+
+fn resolve_project_dir_from_config(
+    project_id: &str,
+    project_cache: &mut HashMap<String, Option<String>>,
+) -> Option<String> {
+    if !is_safe_id_component(project_id)
+        || project_id == "outside-of-project"
+        || project_id == "default-cli-project"
+    {
+        return None;
+    }
+
+    if let Some(cached) = project_cache.get(project_id) {
+        return cached.clone();
+    }
+
+    let resolved = read_project_config_dir(project_id);
+    project_cache.insert(project_id.to_string(), resolved.clone());
+    resolved
+}
+
+fn read_project_config_dir(project_id: &str) -> Option<String> {
+    let gemini_dir = crate::gemini_config::get_gemini_dir();
+    let config_path = gemini_dir
+        .join("config")
+        .join("projects")
+        .join(format!("{project_id}.json"));
+    if !config_path.is_file() {
+        return None;
+    }
+
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let value: Value = serde_json::from_str(&content).ok()?;
+    let resources = value
+        .get("projectResources")?
+        .get("resources")?
+        .as_array()?;
+
+    for item in resources {
+        if let Some(uri) = item.get("folderUri").and_then(Value::as_str) {
+            if let Some(path) = normalize_workspace_path(uri) {
+                return Some(path);
+            }
+        }
+        if let Some(uri) = item
+            .get("gitFolder")
+            .and_then(|g| g.get("folderUri"))
+            .and_then(Value::as_str)
+        {
+            if let Some(path) = normalize_workspace_path(uri) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn read_acp_meta_cwd(root: &Path, session_id: &str) -> Option<String> {
+    if !is_safe_id_component(session_id) {
+        return None;
+    }
+    let meta_path = root
+        .join("conversations")
+        .join(format!("{session_id}.meta"));
+    if !meta_path.is_file() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&meta_path).ok()?;
+    let value: Value = serde_json::from_str(&content).ok()?;
+    let cwd = value.get("cwd").and_then(Value::as_str)?;
+    normalize_workspace_path(cwd)
+}
+
+fn read_proto_varint(buf: &[u8], offset: &mut usize) -> Option<u64> {
+    let mut value = 0u64;
+    for index in 0..10 {
+        let byte = *buf.get(*offset)?;
+        *offset += 1;
+        // A u64 has only one remaining bit in its tenth protobuf byte.
+        if index == 9 && byte > 1 {
+            return None;
+        }
+        value |= u64::from(byte & 0x7f) << (index * 7);
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn read_proto_tag(buf: &[u8], offset: &mut usize) -> Option<(u32, u32)> {
+    let key = read_proto_varint(buf, offset)?;
+    let field_num = u32::try_from(key >> 3).ok()?;
+    let wire_type = (key & 0x7) as u32;
+    Some((field_num, wire_type))
+}
+
+fn read_proto_length_delimited<'a>(buf: &'a [u8], offset: &mut usize) -> Option<&'a [u8]> {
+    let len = read_proto_varint(buf, offset)?;
+    let len = usize::try_from(len).ok()?;
+    let end = offset.checked_add(len)?;
+    if end > buf.len() {
+        return None;
+    }
+    let slice = &buf[*offset..end];
+    *offset = end;
+    Some(slice)
+}
+
+fn parse_workspace_from_trajectory_metadata_blob(data: &[u8]) -> Option<String> {
+    let mut offset = 0;
+    let mut candidate_f7 = None;
+
+    while offset < data.len() {
+        let (field_num, wire_type) = read_proto_tag(data, &mut offset)?;
+        match wire_type {
+            0 => {
+                read_proto_varint(data, &mut offset)?;
+            }
+            1 => {
+                offset = offset.checked_add(8)?;
+                if offset > data.len() {
+                    return None;
+                }
+            }
+            5 => {
+                offset = offset.checked_add(4)?;
+                if offset > data.len() {
+                    return None;
+                }
+            }
+            2 => {
+                let bytes = read_proto_length_delimited(data, &mut offset)?;
+                if field_num == 1 {
+                    let mut sub_offset = 0;
+                    while sub_offset < bytes.len() {
+                        let (sub_fn, sub_wt) = match read_proto_tag(bytes, &mut sub_offset) {
+                            Some(tag) => tag,
+                            None => break,
+                        };
+                        match sub_wt {
+                            0 => {
+                                if read_proto_varint(bytes, &mut sub_offset).is_none() {
+                                    break;
+                                }
+                            }
+                            1 => {
+                                sub_offset = match sub_offset.checked_add(8) {
+                                    Some(o) if o <= bytes.len() => o,
+                                    _ => break,
+                                };
+                            }
+                            5 => {
+                                sub_offset = match sub_offset.checked_add(4) {
+                                    Some(o) if o <= bytes.len() => o,
+                                    _ => break,
+                                };
+                            }
+                            2 => {
+                                let sub_bytes =
+                                    match read_proto_length_delimited(bytes, &mut sub_offset) {
+                                        Some(b) => b,
+                                        None => break,
+                                    };
+                                if sub_fn == 1 {
+                                    if let Ok(s) = std::str::from_utf8(sub_bytes) {
+                                        if let Some(path) = normalize_workspace_path(s) {
+                                            return Some(path);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => break,
+                        }
+                    }
+                } else if field_num == 7 {
+                    if let Ok(s) = std::str::from_utf8(bytes) {
+                        if let Some(path) = normalize_workspace_path(s) {
+                            candidate_f7 = Some(path);
+                        }
+                    }
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    candidate_f7
+}
+
+fn read_trajectory_metadata_workspace(root: &Path, session_id: &str) -> Option<String> {
+    if !is_safe_id_component(session_id) {
+        return None;
+    }
+    let db_path = root.join("conversations").join(format!("{session_id}.db"));
+    if !db_path.is_file() {
+        return None;
+    }
+    let conn = rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
+
+    let mut stmt = conn
+        .prepare("SELECT data FROM trajectory_metadata_blob WHERE id = 'main' LIMIT 1")
+        .ok()?;
+    let data: Vec<u8> = stmt.query_row([], |row| row.get(0)).ok()?;
+    parse_workspace_from_trajectory_metadata_blob(&data)
+}
+
+fn resolve_antigravity_workspace_dir(
+    root: &Path,
+    session_id: &str,
+    summary: Option<&AntigravitySummary>,
+    project_cache: &mut HashMap<String, Option<String>>,
+) -> Option<String> {
+    // 1. conversation_summaries.db workspace_uris
+    if let Some(summary) = summary {
+        if let Some(uris_str) = &summary.workspace_uris {
+            if let Some(path) = extract_path_from_workspace_uris_json(uris_str) {
+                return Some(path);
+            }
+        }
+        // 2. project_id -> config/projects/<id>.json
+        if let Some(project_id) = &summary.project_id {
+            if let Some(path) = resolve_project_dir_from_config(project_id, project_cache) {
+                return Some(path);
+            }
+        }
+    }
+
+    // 3. ACP conversations/<session_id>.meta -> cwd
+    if let Some(path) = read_acp_meta_cwd(root, session_id) {
+        return Some(path);
+    }
+
+    // 4. conversations/<session_id>.db -> trajectory_metadata_blob
+    if let Some(path) = read_trajectory_metadata_workspace(root, session_id) {
+        return Some(path);
+    }
+
+    // 5. None
+    None
+}
+
+fn find_antigravity_root_and_id_for_transcript(
+    transcript_path: &Path,
+) -> Option<(PathBuf, String)> {
+    let mut current = transcript_path.parent();
+    while let Some(dir) = current {
+        if let Some(parent) = dir.parent() {
+            if parent.file_name().and_then(|n| n.to_str()) == Some("brain") {
+                let session_id = dir.file_name()?.to_str()?.to_string();
+                let root = parent.parent()?.to_path_buf();
+                return Some((root, session_id));
+            }
+        }
+        current = dir.parent();
+    }
+    None
+}
+
+fn antigravity_session_id_from_transcript(path: &Path) -> Option<String> {
+    find_antigravity_root_and_id_for_transcript(path)
+        .map(|(_, id)| id)
+        .or_else(|| {
+            path.parent()?
+                .parent()?
+                .parent()?
+                .file_name()?
+                .to_str()
+                .map(|value| value.to_string())
+        })
+}
+
+fn parse_antigravity_timestamp(value: &Value) -> Option<i64> {
+    value
+        .get("ts")
+        .and_then(parse_timestamp_to_ms)
+        .or_else(|| value.get("created_at").and_then(parse_timestamp_to_ms))
+}
+
+fn antigravity_resume_command(session_id: &str) -> Option<String> {
+    // Resume commands are executed by a shell or copied into a terminal. Keep
+    // identifiers safe for both POSIX shells and Windows terminals, while still
+    // allowing sessions with unusual directory names to be read and deleted.
+    if !is_safe_id_component(session_id)
+        || session_id.starts_with('-')
+        || !session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return None;
+    }
+    Some(format!("agy --conversation {session_id}"))
+}
+
+#[allow(dead_code)]
+pub(crate) fn parse_antigravity_session(path: &Path) -> Option<SessionMeta> {
+    let (root, session_id) = find_antigravity_root_and_id_for_transcript(path).or_else(|| {
+        let id = antigravity_session_id_from_transcript(path)?;
+        let root = path.parent()?.parent()?.parent()?.parent()?.to_path_buf();
+        Some((root, id))
+    })?;
+    let mut project_cache = HashMap::new();
+    let summary = load_single_conversation_summary(&root, &session_id);
+    let project_dir =
+        resolve_antigravity_workspace_dir(&root, &session_id, summary.as_ref(), &mut project_cache);
+    parse_antigravity_session_with_project_dir(path, &session_id, project_dir)
+}
+
+fn parse_antigravity_session_with_project_dir(
+    path: &Path,
+    session_id: &str,
+    project_dir: Option<String>,
+) -> Option<SessionMeta> {
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    use std::io::BufRead;
+    let mut created_at = None;
+    let mut last_active_at = None;
+    let mut title = None;
+
+    for line in reader.lines().map_while(Result::ok) {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if let Some(ts) = parse_antigravity_timestamp(&value) {
+            created_at.get_or_insert(ts);
+            last_active_at = Some(ts);
+        }
+        if title.is_none()
+            && value.get("source").and_then(Value::as_str) == Some("USER_EXPLICIT")
+            && value.get("type").and_then(Value::as_str) == Some("USER_INPUT")
+        {
+            let content = clean_antigravity_content(extract_antigravity_content(&value));
+            if !content.trim().is_empty() {
+                title = Some(truncate_summary(&content, 160));
+            }
+        }
+    }
+    let last_active_at = last_active_at.or(created_at);
+
+    Some(SessionMeta {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: session_id.to_string(),
+        title: title.clone(),
+        summary: title,
+        project_dir,
+        created_at,
+        last_active_at,
+        source_path: Some(path.to_string_lossy().to_string()),
+        resume_command: antigravity_resume_command(session_id),
+    })
+}
+
+fn load_antigravity_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
+    let data = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read Antigravity transcript: {e}"))?;
+    let mut result = Vec::new();
+
+    for line in data.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        let source = value.get("source").and_then(Value::as_str);
+        let message_type = value.get("type").and_then(Value::as_str);
+        let role = match (source, message_type) {
+            (Some("USER_EXPLICIT"), Some("USER_INPUT")) => "user",
+            (Some("MODEL"), Some("PLANNER_RESPONSE") | Some("GENERIC")) => "assistant",
+            _ => continue,
+        };
+
+        let content = clean_antigravity_content(extract_antigravity_content(&value));
+        if content.trim().is_empty() {
+            continue;
+        }
+
+        let ts = parse_antigravity_timestamp(&value);
+        let mut message = SessionMessage::from_blocks(role, ts, vec![SessionBlock::text(content)]);
+        message.id = value
+            .get("step_index")
+            .and_then(|v| v.as_i64())
+            .map(|n| n.to_string());
+        result.push(message);
+    }
+
+    assign_turn_ids(&mut result);
+    Ok(result)
+}
+
+fn extract_antigravity_content(value: &Value) -> String {
+    match value.get("content") {
+        Some(Value::String(text)) => text.to_string(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Some(Value::Object(map)) => map
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        _ => String::new(),
+    }
+}
+
+fn clean_antigravity_content(content: String) -> String {
+    let mut cleaned = content;
+    if let Some(after) = cleaned.split("<USER_REQUEST>").nth(1) {
+        cleaned = after.to_string();
+        if let Some((before, _)) = cleaned.split_once("</USER_REQUEST>") {
+            cleaned = before.to_string();
+        }
+    }
+    if let Some((before, _)) = cleaned.split_once("<ADDITIONAL_METADATA>") {
+        cleaned = before.to_string();
+    }
+    cleaned.trim().to_string()
+}
+
+fn delete_antigravity_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    if !is_safe_id_component(session_id) {
+        return Err("Invalid Antigravity session ID".to_string());
+    }
+    let parsed_id = antigravity_session_id_from_transcript(path).ok_or_else(|| {
+        format!(
+            "Failed to parse Antigravity session ID from {}",
+            path.display()
+        )
+    })?;
+    if parsed_id != session_id {
+        return Err(format!(
+            "Antigravity session ID mismatch: expected {session_id}, found {parsed_id}"
+        ));
+    }
+
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve Antigravity session root: {e}"))?;
+    let brain_dir = root.join("brain").join(session_id);
+    let expected_source = brain_dir.join(".system_generated/logs/transcript.jsonl");
+    let source = path
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve Antigravity transcript: {e}"))?;
+    let expected_source = expected_source
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve expected Antigravity transcript: {e}"))?;
+    if source != expected_source || !source.starts_with(&root) {
+        return Err("Antigravity transcript does not belong to the selected session root".into());
+    }
+
+    let conversation_base = root.join("conversations");
+    let files: Vec<_> = ["db", "db-shm", "db-wal", "db-journal", "pb", "meta"]
+        .iter()
+        .map(|suffix| conversation_base.join(format!("{session_id}.{suffix}")))
+        .collect();
+
+    // Check every target before deleting anything, including absent sidecars:
+    // their existing parent directories may be symlinks outside this root.
+    for target in files.iter().chain(std::iter::once(&brain_dir)) {
+        validate_antigravity_delete_target(&root, target)?;
+    }
+
+    for file in files {
+        remove_file_if_exists(&file).map_err(|e| {
+            format!(
+                "Failed to delete Antigravity conversation file {}: {e}",
+                file.display()
+            )
+        })?;
+    }
+
+    remove_dir_all_if_exists(&brain_dir).map_err(|e| {
+        format!(
+            "Failed to delete Antigravity brain directory {}: {e}",
+            brain_dir.display()
+        )
+    })?;
+
+    Ok(true)
+}
+
+fn validate_antigravity_delete_target(root: &Path, target: &Path) -> Result<(), String> {
+    let mut existing = target;
+    loop {
+        match std::fs::symlink_metadata(existing) {
+            Ok(_) => {
+                let resolved = existing.canonicalize().map_err(|e| {
+                    format!(
+                        "Failed to resolve Antigravity deletion target {}: {e}",
+                        target.display()
+                    )
+                })?;
+                if !resolved.starts_with(root) {
+                    return Err(format!(
+                        "Antigravity deletion target is outside the session root: {}",
+                        target.display()
+                    ));
+                }
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                existing = existing.parent().ok_or_else(|| {
+                    format!(
+                        "Cannot resolve Antigravity deletion target: {}",
+                        target.display()
+                    )
+                })?;
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Failed to inspect Antigravity deletion target {}: {e}",
+                    target.display()
+                ));
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -893,5 +1739,624 @@ mod tests {
         assert!(a
             .content
             .starts_with("Done.\n\n[Tool: run_shell_command] npm run build"));
+    }
+
+    #[test]
+    fn parse_antigravity_timestamp_prefers_ts_over_created_at() {
+        let value = serde_json::json!({
+            "ts": 1771061953123i64,
+            "created_at": "2026-07-10T13:22:44Z"
+        });
+        assert_eq!(parse_antigravity_timestamp(&value), Some(1_771_061_953_123));
+    }
+
+    #[test]
+    fn parse_antigravity_timestamp_normalizes_seconds_and_iso_to_millis() {
+        let val_sec = serde_json::json!({ "ts": 1771061953i64 });
+        assert_eq!(
+            parse_antigravity_timestamp(&val_sec),
+            Some(1_771_061_953_000)
+        );
+
+        let val_iso = serde_json::json!({ "created_at": "2026-07-10T13:22:44Z" });
+        assert_eq!(
+            parse_antigravity_timestamp(&val_iso),
+            Some(1_783_689_764_000)
+        );
+    }
+
+    #[test]
+    fn delete_antigravity_session_removes_auxiliary_files_and_brain() {
+        let temp = tempdir().expect("tempdir");
+        let session_id = "agy-session-123";
+        let transcript = temp
+            .path()
+            .join("brain")
+            .join(session_id)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl");
+        std::fs::create_dir_all(transcript.parent().expect("transcript parent"))
+            .expect("create brain");
+        std::fs::write(&transcript, "{}\n").expect("write transcript");
+
+        let conv_dir = temp.path().join("conversations");
+        std::fs::create_dir_all(&conv_dir).expect("create conv_dir");
+        let db_file = conv_dir.join(format!("{session_id}.db"));
+        std::fs::write(&db_file, "db").expect("write db");
+        let meta_file = conv_dir.join(format!("{session_id}.meta"));
+        std::fs::write(&meta_file, "meta").expect("write meta");
+
+        let deleted = delete_antigravity_session(temp.path(), &transcript, session_id)
+            .expect("delete antigravity session");
+        assert!(deleted);
+        assert!(!db_file.exists());
+        assert!(!meta_file.exists());
+        assert!(!temp.path().join("brain").join(session_id).exists());
+    }
+
+    #[test]
+    fn delete_antigravity_session_keeps_brain_when_conversation_cleanup_fails() {
+        let temp = tempdir().expect("tempdir");
+        let session_id = "agy-session-123";
+        let transcript = temp
+            .path()
+            .join("brain")
+            .join(session_id)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl");
+        std::fs::create_dir_all(transcript.parent().expect("transcript parent"))
+            .expect("create brain");
+        std::fs::write(&transcript, "{}\n").expect("write transcript");
+
+        let blocking_db = temp
+            .path()
+            .join("conversations")
+            .join(format!("{session_id}.db"));
+        std::fs::create_dir_all(&blocking_db).expect("create blocking db directory");
+
+        delete_antigravity_session(temp.path(), &transcript, session_id)
+            .expect_err("conversation cleanup should fail");
+
+        assert!(
+            transcript.is_file(),
+            "brain transcript must remain retryable"
+        );
+    }
+
+    fn write_antigravity_delete_fixture(root: &Path, session_id: &str) -> PathBuf {
+        let transcript = root
+            .join("brain")
+            .join(session_id)
+            .join(".system_generated/logs/transcript.jsonl");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, "{}\n").unwrap();
+        transcript
+    }
+
+    #[cfg(any(unix, windows))]
+    fn create_test_directory_link(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+
+        #[cfg(windows)]
+        {
+            // Junctions cover Windows directory reparse points without
+            // requiring Developer Mode or symbolic-link privileges on CI.
+            let target = if target.is_absolute() {
+                target.to_path_buf()
+            } else {
+                link.parent().unwrap().join(target)
+            };
+            let result = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .expect("create Windows directory junction");
+            assert!(
+                result.status.success(),
+                "failed to create junction: {} {}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn delete_antigravity_session_rejects_external_and_dangling_conversation_directories() {
+        for target_kind in ["existing", "empty", "dangling"] {
+            let root = tempdir().unwrap();
+            let outside = tempdir().unwrap();
+            let session_id = "agy-session-123";
+            let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+            let external_db = outside.path().join(format!("{session_id}.db"));
+            if target_kind == "existing" {
+                std::fs::write(&external_db, "outside database").unwrap();
+            }
+            let target = if target_kind == "dangling" {
+                outside.path().join("missing")
+            } else {
+                outside.path().to_path_buf()
+            };
+            create_test_directory_link(&target, &root.path().join("conversations"));
+
+            assert!(delete_antigravity_session(root.path(), &transcript, session_id).is_err());
+            assert!(
+                transcript.exists(),
+                "validation must preserve the transcript"
+            );
+            if target_kind == "existing" {
+                assert_eq!(
+                    std::fs::read_to_string(external_db).unwrap(),
+                    "outside database"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_antigravity_session_validates_late_targets_before_deleting_any_files() {
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let session_id = "agy-session-123";
+        let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+        let conversations = root.path().join("conversations");
+        std::fs::create_dir(&conversations).unwrap();
+        let db = conversations.join(format!("{session_id}.db"));
+        std::fs::write(&db, "session database").unwrap();
+        let external_meta = outside.path().join("metadata");
+        std::fs::write(&external_meta, "external metadata").unwrap();
+        std::os::unix::fs::symlink(
+            &external_meta,
+            conversations.join(format!("{session_id}.meta")),
+        )
+        .unwrap();
+
+        let error = delete_antigravity_session(root.path(), &transcript, session_id).unwrap_err();
+        assert!(error.contains("outside the session root"));
+        assert!(transcript.exists());
+        assert_eq!(std::fs::read_to_string(db).unwrap(), "session database");
+        assert_eq!(
+            std::fs::read_to_string(external_meta).unwrap(),
+            "external metadata"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn delete_antigravity_session_validates_late_junctions_before_deleting_any_files() {
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let session_id = "agy-session-123";
+        let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+        let conversations = root.path().join("conversations");
+        std::fs::create_dir(&conversations).unwrap();
+        let db = conversations.join(format!("{session_id}.db"));
+        std::fs::write(&db, "session database").unwrap();
+        let external_meta = outside.path().join("metadata");
+        std::fs::write(&external_meta, "external metadata").unwrap();
+        create_test_directory_link(
+            outside.path(),
+            &conversations.join(format!("{session_id}.meta")),
+        );
+
+        let error = delete_antigravity_session(root.path(), &transcript, session_id).unwrap_err();
+        assert!(error.contains("outside the session root"));
+        assert!(transcript.exists());
+        assert_eq!(std::fs::read_to_string(db).unwrap(), "session database");
+        assert_eq!(
+            std::fs::read_to_string(external_meta).unwrap(),
+            "external metadata"
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn delete_antigravity_session_accepts_conversation_symlinks_inside_the_root() {
+        let root = tempdir().unwrap();
+        let session_id = "agy-session-123";
+        let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+        let conversations = root.path().join("stored-conversations");
+        std::fs::create_dir(&conversations).unwrap();
+        let db = conversations.join(format!("{session_id}.db"));
+        std::fs::write(&db, "session database").unwrap();
+        create_test_directory_link(
+            Path::new("stored-conversations"),
+            &root.path().join("conversations"),
+        );
+
+        assert!(delete_antigravity_session(root.path(), &transcript, session_id).unwrap());
+        assert!(!transcript.exists());
+        assert!(!db.exists());
+        assert!(conversations.is_dir());
+    }
+
+    #[test]
+    fn delete_antigravity_session_rejects_a_transcript_from_another_root() {
+        let root = tempdir().unwrap();
+        let other_root = tempdir().unwrap();
+        let session_id = "agy-session-123";
+        let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+        let other_transcript = write_antigravity_delete_fixture(other_root.path(), session_id);
+
+        assert!(delete_antigravity_session(root.path(), &other_transcript, session_id).is_err());
+        assert!(transcript.exists());
+        assert!(other_transcript.exists());
+    }
+
+    #[test]
+    fn delete_antigravity_session_handles_unicode_paths_without_conversation_files() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("Antigravity sessions 中文");
+        let session_id = "会话 session-123";
+        let transcript = write_antigravity_delete_fixture(&root, session_id);
+        let other = write_antigravity_delete_fixture(&root, "other-session");
+
+        assert!(delete_antigravity_session(&root, &transcript, session_id).unwrap());
+        assert!(!transcript.exists());
+        assert!(other.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn delete_antigravity_session_preserves_brain_when_database_is_locked() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let root = tempdir().unwrap();
+        let session_id = "agy-session-123";
+        let transcript = write_antigravity_delete_fixture(root.path(), session_id);
+        let conversations = root.path().join("conversations");
+        std::fs::create_dir(&conversations).unwrap();
+        let db = conversations.join(format!("{session_id}.db"));
+        std::fs::write(&db, "locked database").unwrap();
+        let locked = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&db)
+            .unwrap();
+
+        assert!(delete_antigravity_session(root.path(), &transcript, session_id).is_err());
+        assert!(transcript.exists());
+        drop(locked);
+        assert_eq!(std::fs::read_to_string(db).unwrap(), "locked database");
+    }
+
+    #[test]
+    fn test_normalize_workspace_path_handles_uris_and_local_paths() {
+        assert_eq!(
+            normalize_workspace_path("file:///home/example/Documents/Lab%20report/"),
+            Some("/home/example/Documents/Lab report".to_string())
+        );
+        assert_eq!(normalize_workspace_path("file:///"), Some("/".to_string()));
+        assert_eq!(
+            normalize_workspace_path("file:///home/example/my-project"),
+            Some("/home/example/my-project".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_path("file:///C:/Users/example/Project%20A"),
+            Some("C:/Users/example/Project A".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_path("/var/log/app"),
+            Some("/var/log/app".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_path(r"\\server\share\folder"),
+            Some(r"\\server\share\folder".to_string())
+        );
+        assert_eq!(
+            normalize_workspace_path("https://github.com/org/repo"),
+            None
+        );
+        assert_eq!(normalize_workspace_path("ssh://git@github.com/repo"), None);
+        assert_eq!(normalize_workspace_path("relative/path/to/folder"), None);
+        assert_eq!(normalize_workspace_path(""), None);
+        assert_eq!(normalize_workspace_path("   "), None);
+    }
+
+    #[test]
+    fn file_uri_fallback_is_portable_across_windows_and_unix() {
+        for (uri, expected) in [
+            ("file:///", "/"),
+            (
+                "file:///Users/example/Project%20A/",
+                "/Users/example/Project A",
+            ),
+            (
+                "file:///home/example/%E4%B8%AD%E6%96%87/",
+                "/home/example/中文",
+            ),
+            ("file:///C:/", "C:/"),
+            ("file:///C%3A/Work/", "C:/Work"),
+            ("file://server/share/", r"\\server\share"),
+            ("file://server/C:/Work/", "C:/Work"),
+        ] {
+            let url = url::Url::parse(uri).unwrap();
+            let fallback = portable_file_workspace_path(&url).unwrap();
+            assert_eq!(normalize_workspace_separators(&fallback), expected);
+            assert_eq!(normalize_workspace_path(uri).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn workspace_metadata_sources_use_the_same_directory_key() {
+        for (uri, local, expected) in [
+            ("file:///work/p/", "/work/p", "/work/p"),
+            ("file:///C:/Work/p/", r"C:\Work\p\", "C:/Work/p"),
+            (
+                "file://server/share/p/",
+                r"\\server\share\p\",
+                r"\\server\share\p",
+            ),
+            ("file:///", "/", "/"),
+            ("file:///C:/", r"C:\", "C:/"),
+            ("file://server/share/", r"\\server\share", r"\\server\share"),
+        ] {
+            assert_eq!(normalize_workspace_path(uri).as_deref(), Some(expected));
+            assert_eq!(normalize_workspace_path(local).as_deref(), Some(expected));
+        }
+        // Backslashes can be literal characters in POSIX directory names.
+        assert_eq!(
+            normalize_workspace_path("/work/p\\"),
+            Some("/work/p\\".into())
+        );
+    }
+
+    #[test]
+    fn workspace_varints_reject_overflow_and_truncation() {
+        for value in [0, 127, 128, u64::MAX] {
+            let bytes = encode_proto_varint_test(value);
+            let mut offset = 0;
+            assert_eq!(read_proto_varint(&bytes, &mut offset), Some(value));
+            assert_eq!(offset, bytes.len());
+        }
+        for bytes in [
+            vec![0xff; 9],
+            [vec![0xff; 9], vec![2]].concat(),
+            [vec![0x80; 10], vec![0]].concat(),
+        ] {
+            assert_eq!(read_proto_varint(&bytes, &mut 0), None);
+            let mut blob = vec![0x0a];
+            blob.extend(bytes);
+            assert_eq!(parse_workspace_from_trajectory_metadata_blob(&blob), None);
+        }
+    }
+
+    #[test]
+    fn test_is_safe_id_component_rejects_traversals() {
+        assert!(!is_safe_id_component(""));
+        assert!(!is_safe_id_component("."));
+        assert!(!is_safe_id_component(".."));
+        assert!(!is_safe_id_component("foo/bar"));
+        assert!(!is_safe_id_component(r"foo\bar"));
+        assert!(!is_safe_id_component("../escape"));
+        assert!(!is_safe_id_component("foo\0bar"));
+        assert!(is_safe_id_component("valid-id-123"));
+        assert!(is_safe_id_component("0b5bc2e5-c309-4e7a-9468-caf34402bf01"));
+    }
+
+    fn encode_proto_varint_test(val: u64) -> Vec<u8> {
+        let mut v = Vec::new();
+        let mut n = val;
+        while n >= 0x80 {
+            v.push(((n & 0x7f) | 0x80) as u8);
+            n >>= 7;
+        }
+        v.push(n as u8);
+        v
+    }
+
+    fn encode_proto_tag_test(field_num: u32, wire_type: u32) -> Vec<u8> {
+        encode_proto_varint_test(((field_num as u64) << 3) | (wire_type as u64))
+    }
+
+    fn encode_proto_len_delimited_test(field_num: u32, data: &[u8]) -> Vec<u8> {
+        let mut v = encode_proto_tag_test(field_num, 2);
+        v.extend(encode_proto_varint_test(data.len() as u64));
+        v.extend_from_slice(data);
+        v
+    }
+
+    #[test]
+    fn test_protobuf_workspace_parsing_order_and_corruption_resilience() {
+        // Construct Protobuf: field 3 (dummy string) followed by field 1 (subfield 1 = uri)
+        let sub1 = encode_proto_len_delimited_test(1, b"file:///home/example/Workspace/Project");
+        let f1 = encode_proto_len_delimited_test(1, &sub1);
+        let f3 = encode_proto_len_delimited_test(3, b"dummy-metadata");
+
+        let mut blob = Vec::new();
+        blob.extend(f3);
+        blob.extend(f1);
+
+        let parsed = parse_workspace_from_trajectory_metadata_blob(&blob);
+        assert_eq!(parsed, Some("/home/example/Workspace/Project".to_string()));
+
+        // Field 7 fallback
+        let f7 = encode_proto_len_delimited_test(7, b"file:///home/example/FallbackF7");
+        let parsed_f7 = parse_workspace_from_trajectory_metadata_blob(&f7);
+        assert_eq!(parsed_f7, Some("/home/example/FallbackF7".to_string()));
+
+        // Corrupted slice / invalid wire type / truncated varint
+        assert_eq!(
+            parse_workspace_from_trajectory_metadata_blob(&[0xFF, 0xFF]),
+            None
+        );
+        assert_eq!(
+            parse_workspace_from_trajectory_metadata_blob(&[0x0A, 0x50, 0x01]),
+            None
+        );
+        assert_eq!(parse_workspace_from_trajectory_metadata_blob(&[]), None);
+    }
+
+    #[test]
+    fn test_resolve_antigravity_workspace_dir_full_priority_chain() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let session_id = "test-session-priority";
+        let mut cache = HashMap::new();
+
+        // 1. Summaries workspace_uris with multiple entries (first valid wins)
+        let summary1 = AntigravitySummary {
+            workspace_uris: Some(
+                "[\"not-a-valid-path\", \"file:///home/example/FirstValidWS\", \"file:///home/example/SecondWS\"]"
+                    .to_string(),
+            ),
+            project_id: Some("ignored-project-id".to_string()),
+        };
+        let res1 = resolve_antigravity_workspace_dir(root, session_id, Some(&summary1), &mut cache);
+        assert_eq!(res1, Some("/home/example/FirstValidWS".to_string()));
+
+        // 2. Fallback to ACP .meta
+        let conv_dir = root.join("conversations");
+        std::fs::create_dir_all(&conv_dir).expect("create conv_dir");
+        let meta_file = conv_dir.join(format!("{session_id}.meta"));
+        std::fs::write(&meta_file, r#"{"cwd": "/home/example/ACPCwd"}"#).expect("write meta");
+
+        let res2 = resolve_antigravity_workspace_dir(root, session_id, None, &mut cache);
+        assert_eq!(res2, Some("/home/example/ACPCwd".to_string()));
+
+        // 3. Fallback to trajectory_metadata_blob in .db
+        std::fs::remove_file(&meta_file).expect("remove meta");
+        let db_file = conv_dir.join(format!("{session_id}.db"));
+        let conn = rusqlite::Connection::open(&db_file).expect("open db");
+        conn.execute(
+            "CREATE TABLE trajectory_metadata_blob (id text DEFAULT 'main', data blob, PRIMARY KEY(id))",
+            [],
+        )
+        .expect("create table");
+
+        let sub1 = encode_proto_len_delimited_test(1, b"file:///home/example/TrajectoryBlobWS");
+        let f1 = encode_proto_len_delimited_test(1, &sub1);
+        conn.execute(
+            "INSERT INTO trajectory_metadata_blob (id, data) VALUES ('main', ?1)",
+            rusqlite::params![f1],
+        )
+        .expect("insert blob");
+
+        let res3 = resolve_antigravity_workspace_dir(root, session_id, None, &mut cache);
+        assert_eq!(res3, Some("/home/example/TrajectoryBlobWS".to_string()));
+
+        // 4. Traversal session ID is rejected
+        let res_traversal = resolve_antigravity_workspace_dir(root, "../sneaky", None, &mut cache);
+        assert_eq!(res_traversal, None);
+
+        // 5. None when all sources exhausted
+        conn.execute("DELETE FROM trajectory_metadata_blob", [])
+            .expect("delete blob");
+        let res_none = resolve_antigravity_workspace_dir(root, session_id, None, &mut cache);
+        assert_eq!(res_none, None);
+    }
+
+    #[test]
+    fn test_parse_antigravity_session_directly() {
+        let temp = tempdir().expect("tempdir");
+        let session_id = "direct-parse-session";
+        let transcript = temp
+            .path()
+            .join("brain")
+            .join(session_id)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl");
+        std::fs::create_dir_all(transcript.parent().expect("parent")).expect("create brain");
+        std::fs::write(
+            &transcript,
+            r#"{"ts": 1783689764000, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Direct test message"}"#,
+        )
+        .expect("write transcript");
+
+        let meta = parse_antigravity_session(&transcript).expect("parse session");
+        assert_eq!(meta.session_id, session_id);
+        assert_eq!(meta.title.as_deref(), Some("Direct test message"));
+    }
+
+    #[test]
+    fn antigravity_metadata_disables_resume_for_unsafe_session_ids() {
+        let temp = tempdir().expect("tempdir");
+        let transcript = temp.path().join("transcript.jsonl");
+        std::fs::write(
+            &transcript,
+            r#"{"source":"USER_EXPLICIT","type":"USER_INPUT","content":"Example"}"#,
+        )
+        .expect("write transcript");
+
+        for session_id in [
+            "session; printf unexpected",
+            "session$(printf unexpected)",
+            "session`printf unexpected`",
+            "session\nprintf unexpected",
+            "session with spaces",
+            "session'quote",
+            "session\"quote",
+            "session&command",
+            "session|command",
+            "session>file",
+            "session%VARIABLE%",
+            "session!VARIABLE!",
+            "session^command",
+            "-option",
+            "",
+            ".",
+            "..",
+        ] {
+            let meta = parse_antigravity_session_with_project_dir(&transcript, session_id, None)
+                .expect("session remains readable");
+            assert_eq!(meta.session_id, session_id);
+            assert_eq!(meta.title.as_deref(), Some("Example"));
+            assert!(meta.resume_command.is_none(), "{session_id:?}");
+        }
+    }
+
+    #[test]
+    fn antigravity_resume_command_preserves_safe_session_ids() {
+        for session_id in [
+            "12345678-1234-1234-1234-123456789abc",
+            "agy-session-123",
+            "session_with_underscores.v2",
+        ] {
+            assert_eq!(
+                antigravity_resume_command(session_id),
+                Some(format!("agy --conversation {session_id}"))
+            );
+        }
+    }
+    // Opt-in validation of copied client metadata; never runs against user data in CI.
+    #[test]
+    #[ignore = "requires copied AGY metadata under CC_SWITCH_TEST_HOME"]
+    fn validate_platform_workspace_metadata_copy() {
+        assert!(std::env::var_os("CC_SWITCH_TEST_HOME").is_some());
+        let base = crate::gemini_config::get_gemini_dir();
+        let mut cache = HashMap::new();
+        let mut total = 0;
+        let mut resolved = 0;
+        let mut blobs = 0;
+        for name in crate::gemini_config::ANTIGRAVITY_ROOTS {
+            let root = base.join(name);
+            let summaries = load_root_conversation_summaries(&root);
+            for (id, summary) in &summaries {
+                total += 1;
+                if let Some(path) =
+                    resolve_antigravity_workspace_dir(&root, id, Some(summary), &mut cache)
+                {
+                    assert_eq!(
+                        normalize_workspace_path(&path).as_deref(),
+                        Some(path.as_str())
+                    );
+                    resolved += 1;
+                }
+                if read_trajectory_metadata_workspace(&root, id).is_some() {
+                    blobs += 1;
+                }
+            }
+        }
+        assert!(total > 0, "fixture must contain summaries");
+        assert!(resolved > 0, "fixture must contain a resolvable workspace");
+        println!(
+            "platform metadata: summaries={total}, resolved={resolved}, blob_workspaces={blobs}"
+        );
     }
 }

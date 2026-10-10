@@ -18,6 +18,11 @@ describe("getUsageProviderLabel", () => {
     expect(getUsageProviderLabel("Gemini (Session)", t).label).toBe(
       "usage.sessionProvider.label:Gemini CLI",
     );
+    expect(getUsageProviderLabel("Antigravity (Session)", t)).toEqual({
+      label: "usage.sessionProvider.label:Antigravity",
+      shortLabel: "usage.sessionProvider.short",
+      hint: "usage.sessionProvider.hint",
+    });
   });
 
   it("keeps real provider names as-is", () => {
