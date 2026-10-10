@@ -4270,6 +4270,7 @@
       "disabled": "Turned off {{count}} {{noun}} in {{app}}",
       "partialFail": "; {{count}} could not be written and are marked in the list",
       "skippedShared": ", skipped {{count}} (provided by shared directories, still enabled)",
+      "skippedExcluded": ", skipped {{count}} (hit by Pi exclusion rules, cannot be enabled yet)",
       "undone": "Undone"
     },
     "undo": "Undo",
@@ -4613,7 +4614,7 @@
       "dualTooltip": "{{name}} is loaded from both the native directory {{native}} and shared directories ({{roots}}); Pi picks one by its own rules.",
       "dualConsistent": " Contents are identical — redundant but harmless.",
       "dualInconsistent": " Contents differ — consider removing one of the copies.",
-      "excludedTooltip": "{{name}}'s Pi projection path is hit by an exclusion rule. Enabling it will not make Pi load it; adjust the skills config in pi's settings.json.",
+      "excludedTooltip": "{{name}}'s Pi projection path is hit by an exclusion rule and cannot be enabled here; adjust the skills config in pi's settings.json — once the rule is removed it can be enabled normally.",
       "approximateSuffix": " (Contains config Pi-side that cannot be parsed precisely; actual Pi loading takes precedence.)"
     }
   },

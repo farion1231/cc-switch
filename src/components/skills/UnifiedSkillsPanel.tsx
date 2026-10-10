@@ -465,7 +465,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         noun,
       });
       if (skipped > 0)
-        text += t("appMatrix.toast.skippedShared", { count: skipped });
+        text += t(
+          enabled
+            ? "appMatrix.toast.skippedExcluded"
+            : "appMatrix.toast.skippedShared",
+          { count: skipped },
+        );
       if (failed) text += t("appMatrix.toast.partialFail", { count: failed });
       showUndoToast(
         text,
@@ -491,29 +496,40 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
   };
 
-  // Pi 批量关闭的共享态分类（#4 仅共享 / #5 双来源）：
-  // #4 不调用（无可操作副本，no-op 谎报成功）；#5 照常调用（删除原生副本）；
-  // 两者均由 bulkToggle 记为"跳过"，关闭计数只含真正会被关掉的技能。
-  const classifyPiBulkDisable = (targets: InstalledSkill[]) => {
+  // Pi 批量操作的共享/排除态分类（计数原则：只有开关能真正改变 pi 加载
+  // 状态的技能计入成功数）：
+  // - 关闭方向：#4 仅共享不调用（无可操作副本，no-op 谎报成功）；#5 双来源
+  //   照常调用（删原生副本）但记跳过（pi 仍经共享加载）；
+  // - 开启方向：#2 被排除不调用（pi 不加载，投影无效）记跳过。
+  const classifyPiBulk = (targets: InstalledSkill[], enabled: boolean) => {
+    if (!enabled) {
+      const ids = targets
+        .filter((skill) => skill.piVisibility?.state !== "shared")
+        .map((skill) => skill.id);
+      const dualIds = new Set(
+        targets
+          .filter((skill) => skill.piVisibility?.state === "native-shared")
+          .map((skill) => skill.id),
+      );
+      return { ids, excludedCount: targets.length - ids.length, dualIds };
+    }
     const ids = targets
-      .filter((skill) => skill.piVisibility?.state !== "shared")
+      .filter((skill) => skill.piVisibility?.state !== "inactive-excluded")
       .map((skill) => skill.id);
-    const excludedCount = targets.length - ids.length;
-    const dualIds = new Set(
-      targets
-        .filter((skill) => skill.piVisibility?.state === "native-shared")
-        .map((skill) => skill.id),
-    );
-    return { ids, excludedCount, dualIds };
+    return {
+      ids,
+      excludedCount: targets.length - ids.length,
+      dualIds: new Set<string>(),
+    };
   };
 
   const handleColumnBulk = (app: AppId, enabled: boolean) => {
     const targets = scope.rows.filter(
       (skill) => Boolean(skill.apps[app]) !== enabled,
     );
-    const isPiDisable = app === "pi" && !enabled;
-    const { ids, excludedCount, dualIds } = isPiDisable
-      ? classifyPiBulkDisable(targets)
+    const isPi = app === "pi";
+    const { ids, excludedCount, dualIds } = isPi
+      ? classifyPiBulk(targets, enabled)
       : { ids: targets.map((s) => s.id), excludedCount: 0, dualIds: new Set<string>() };
     if (ids.length === 0 && excludedCount === 0) return;
     void bulkToggle(
@@ -524,19 +540,20 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         on: "appMatrix.toast.enabled",
         off: "appMatrix.toast.disabled",
       },
-      isPiDisable ? { excludedCount, dualIds } : undefined,
+      isPi ? { excludedCount, dualIds } : undefined,
     );
   };
 
   const handleSelectionToggle = (app: AppId, enabled: boolean) => {
     const chosen = installedSkills.filter((skill) => selected.has(skill.id));
-    const isPiDisable = app === "pi" && !enabled;
-    const { ids, excludedCount, dualIds } = isPiDisable
-      ? classifyPiBulkDisable(chosen)
+    const isPi = app === "pi";
+    const chosenTargets = chosen.filter(
+      (skill) => Boolean(skill.apps[app]) !== enabled,
+    );
+    const { ids, excludedCount, dualIds } = isPi
+      ? classifyPiBulk(chosenTargets, enabled)
       : {
-          ids: chosen
-            .filter((skill) => Boolean(skill.apps[app]) !== enabled)
-            .map((skill) => skill.id),
+          ids: chosenTargets.map((skill) => skill.id),
           excludedCount: 0,
           dualIds: new Set<string>(),
         };
@@ -563,7 +580,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         on: "appMatrix.toast.enabled",
         off: "skillsPage.toast.disabledSelection",
       },
-      isPiDisable ? { excludedCount, dualIds } : undefined,
+      isPi ? { excludedCount, dualIds } : undefined,
     );
   };
 
@@ -1789,6 +1806,8 @@ function PiCell({ skill, fail, disabled, onClick }: PiCellProps) {
         : t("skillsPage.piState.dualConsistent");
     } else if (vis.state === "inactive-excluded") {
       badge = <AlertTriangle className="h-2 w-2 text-warning-text" strokeWidth={2.5} />;
+      // 与 #4 对称：开关无法改变 pi 加载状态的一律锁定（开了 pi 也不加载）
+      locked = true;
       label =
         t("skillsPage.piState.excludedTooltip", { name: skill.name }) +
         approximate;

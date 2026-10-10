@@ -245,7 +245,7 @@ describe("UnifiedSkillsPanel", () => {
       (await screen.findAllByText(/piState.sharedTooltip/)).length,
     ).toBeGreaterThan(0);
 
-    // excluded：off + 可点击 + 排除角标悬浮
+    // excluded：off + 锁定（与 shared 对称：开关无法改变 pi 加载状态）+ 排除角标悬浮
     const excluded = cells.find((el) =>
       (el.getAttribute("aria-label") ?? "").includes(
         "skillsPage.piState.excludedTooltip",
@@ -253,7 +253,7 @@ describe("UnifiedSkillsPanel", () => {
     );
     expect(excluded).toBeDefined();
     expect(excluded).toHaveAttribute("aria-pressed", "false");
-    expect(excluded).not.toBeDisabled();
+    expect(excluded).toBeDisabled();
 
     // native-shared：on + 可点击关闭 + 内容不一致分档文案
     const dual = cells.find((el) =>
@@ -365,6 +365,45 @@ describe("UnifiedSkillsPanel", () => {
     const text = m.toastSuccess.mock.calls[0][0] as string;
     expect(text).toContain("appMatrix.toast.disabled");
     expect(text).toContain("appMatrix.toast.skippedShared");
+  });
+
+  it("bulk-enabling Pi skips excluded skills in the count", async () => {
+    m.installed = [
+      // #1 普通未启用：正常启用
+      makeSkill({
+        id: "normal",
+        name: "Normal",
+        directory: "normal",
+        piVisibility: { state: "inactive" },
+      }),
+      // #2 被排除：不调用（pi 不加载，投影无效）记跳过
+      makeSkill({
+        id: "excluded",
+        name: "Excluded",
+        directory: "excluded",
+        piVisibility: { state: "inactive-excluded", excludedByPattern: true },
+      }),
+    ];
+    renderPanel();
+    // Pi 列 = 第 3 列；点列头 → 启用其余
+    await userEvent.click(columns()[2]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
+    );
+
+    // 调用集只含 #1
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["normal"],
+        app: "pi",
+        enabled: true,
+      }),
+    );
+    // toast：启用计数只含 #1，跳过 1 个（被排除）
+    await waitFor(() => expect(m.toastSuccess).toHaveBeenCalled());
+    const text = m.toastSuccess.mock.calls[0][0] as string;
+    expect(text).toContain("appMatrix.toast.enabled");
+    expect(text).toContain("appMatrix.toast.skippedExcluded");
   });
 
   it("bulk-enables only the disabled Skills in a column and offers undo", async () => {

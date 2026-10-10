@@ -4271,6 +4271,7 @@
       "disabled": "已在 {{app}} 關閉 {{count}} 個 {{noun}}",
       "partialFail": "，其中 {{count}} 個沒有寫入，已在列表裡標出",
       "skippedShared": "，跳過 {{count}} 個（由共享目錄提供，仍保持啟用）",
+      "skippedExcluded": "，跳過 {{count}} 個（被 Pi 排除規則命中，暫無法啟用）",
       "undone": "已復原"
     },
     "undo": "復原",
@@ -4614,7 +4615,7 @@
       "dualTooltip": "{{name}} 同時被原生目錄 {{native}} 與共享目錄（{{roots}}）載入，Pi 按其內部規則取其一。",
       "dualConsistent": " 內容一致，冗餘但無衝突。",
       "dualInconsistent": " 內容不一致，建議移除其中一份。",
-      "excludedTooltip": "{{name}} 的 Pi 投影路徑被排除規則命中，即使啟用也不會被 Pi 載入，請調整 Pi settings.json 的 skills 設定。",
+      "excludedTooltip": "{{name}} 的 Pi 投影路徑被排除規則命中，無法在此啟用；請調整 pi settings.json 的 skills 設定，移除相關規則後即可正常啟用。",
       "approximateSuffix": "（含 Pi 無法精確解析的設定，實際以 Pi 載入結果為準）"
     }
   },

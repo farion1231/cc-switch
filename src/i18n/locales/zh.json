@@ -4270,6 +4270,7 @@
       "disabled": "已在 {{app}} 关闭 {{count}} 个 {{noun}}",
       "partialFail": "，其中 {{count}} 个没有写入，已在列表里标出",
       "skippedShared": "，跳过 {{count}} 个（由共享目录提供，仍保持启用）",
+      "skippedExcluded": "，跳过 {{count}} 个（被 Pi 排除规则命中，暂无法启用）",
       "undone": "已撤销"
     },
     "undo": "撤销",
@@ -4613,7 +4614,7 @@
       "dualTooltip": "{{name}} 同时被 {{native}} 与 {{roots}} 加载，Pi 按其内部规则选择。",
       "dualConsistent": " 内容一致，冗余但无冲突。",
       "dualInconsistent": " 内容不一致，建议移除其中一份。",
-      "excludedTooltip": "{{name}} 的 Pi 投影路径被排除规则命中，即使启用也不会被 Pi 加载，请调整 Pi settings.json 的 skills 配置。",
+      "excludedTooltip": "{{name}} 的 Pi 投影路径被排除规则命中，无法在此启用；请调整 pi settings.json 的 skills 配置，移除相关规则后即可正常启用。",
       "approximateSuffix": "（含 Pi 无法精确解析的配置，实际以 Pi 加载结果为准）"
     }
   },
