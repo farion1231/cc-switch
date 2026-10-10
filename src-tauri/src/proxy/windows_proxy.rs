@@ -201,6 +201,16 @@ impl ProxyBypassMatcher {
             lower.trim_start_matches('.').to_string(),
         ));
     }
+
+    #[cfg(test)]
+    pub(crate) fn push_windows_rule_for_test(&mut self, entry: &str) {
+        self.push_windows_rule(entry);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn push_no_proxy_rule_for_test(&mut self, entry: &str) {
+        self.push_no_proxy_rule(entry);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -434,8 +444,8 @@ mod tests {
     #[test]
     fn no_proxy_rules_match_domains_and_cidrs() {
         let mut matcher = ProxyBypassMatcher::default();
-        matcher.push_no_proxy_rule(".example.com");
-        matcher.push_no_proxy_rule("192.168.0.0/16");
+        matcher.push_no_proxy_rule_for_test(".example.com");
+        matcher.push_no_proxy_rule_for_test("192.168.0.0/16");
 
         assert!(matcher.matches_host("api.example.com"));
         assert!(matcher.matches_host("example.com"));
@@ -446,7 +456,7 @@ mod tests {
     #[test]
     fn no_proxy_exact_ipv6_matches_equivalent_forms() {
         let mut matcher = ProxyBypassMatcher::default();
-        matcher.push_no_proxy_rule("0:0:0:0:0:0:0:1");
+        matcher.push_no_proxy_rule_for_test("0:0:0:0:0:0:0:1");
 
         assert!(matcher.matches_host("::1"));
         assert!(matcher.matches_host("0:0:0:0:0:0:0:1"));
@@ -515,8 +525,8 @@ mod tests {
     #[test]
     fn no_proxy_ipv6_matches_expanded_compressed_and_embedded_ipv4_forms() {
         let mut matcher = ProxyBypassMatcher::default();
-        matcher.push_no_proxy_rule("0:0:0:0:0:0:0:1");
-        matcher.push_no_proxy_rule("0:0:0:0:0:ffff:c000:201");
+        matcher.push_no_proxy_rule_for_test("0:0:0:0:0:0:0:1");
+        matcher.push_no_proxy_rule_for_test("0:0:0:0:0:ffff:c000:201");
 
         assert!(matcher.matches_url(&Url::parse("http://[::1]").unwrap()));
         assert!(matcher.matches_url(&Url::parse("http://[0:0:0:0:0:0:0:1]").unwrap()));
