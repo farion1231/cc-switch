@@ -299,6 +299,8 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        Self::create_hermes_usage_tables_on_conn(conn)?;
+
         // 18. Session Log Sync 表 (会话日志同步状态)
         //
         // last_byte_offset：Claude 路径的字节游标（seek 增量读）；NULL 表示
@@ -576,6 +578,12 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    // v20/v21 include prior Hermes PR candidates. Preserve their
+                    // tables; this feature only creates/repairs aggregate storage.
+                    20 | 21 => {
+                        Self::migrate_hermes_aggregate_to_v22(conn)?;
+                        Self::set_user_version(conn, 22)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1603,6 +1611,198 @@ impl Database {
              ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
         )
         .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))
+    }
+
+    /// Add aggregate tables while preserving prior candidate and Pi migration data.
+    fn migrate_hermes_aggregate_to_v22(conn: &Connection) -> Result<(), AppError> {
+        Self::migrate_v17_to_v18(conn)?;
+        Self::migrate_v16_to_v17(conn)?;
+        Self::create_hermes_usage_tables_on_conn(conn)?;
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_pi",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_mcode",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn create_hermes_usage_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS hermes_usage_snapshots (
+                source_id TEXT NOT NULL,
+                source_incarnation TEXT NOT NULL,
+                profile_name TEXT NOT NULL,
+                row_key TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                billing_provider TEXT NOT NULL,
+                billing_base_url_digest TEXT NOT NULL,
+                billing_mode TEXT NOT NULL,
+                task TEXT NOT NULL,
+                api_call_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                estimated_cost_usd TEXT NOT NULL DEFAULT '0',
+                actual_cost_usd TEXT,
+                selected_cost_usd TEXT NOT NULL DEFAULT '0',
+                cost_baseline_usd TEXT NOT NULL DEFAULT '0',
+                emitted_cost_balance_usd TEXT NOT NULL DEFAULT '0',
+                selected_cost_kind TEXT NOT NULL DEFAULT 'none',
+                cost_status TEXT,
+                cost_source TEXT,
+                first_seen TEXT,
+                last_seen TEXT,
+                observed_at INTEGER NOT NULL,
+                PRIMARY KEY (source_id, row_key)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        let snapshots_had_cost_baseline =
+            Self::has_column(conn, "hermes_usage_snapshots", "cost_baseline_usd")?;
+        let snapshots_had_emitted_balance =
+            Self::has_column(conn, "hermes_usage_snapshots", "emitted_cost_balance_usd")?;
+        Self::add_column_if_missing(
+            conn,
+            "hermes_usage_snapshots",
+            "cost_baseline_usd",
+            "TEXT NOT NULL DEFAULT '0'",
+        )?;
+        Self::add_column_if_missing(
+            conn,
+            "hermes_usage_snapshots",
+            "emitted_cost_balance_usd",
+            "TEXT NOT NULL DEFAULT '0'",
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_hermes_snapshots_profile
+             ON hermes_usage_snapshots(profile_name, model, billing_provider)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS hermes_usage_deltas (
+                delta_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id TEXT NOT NULL,
+                source_incarnation TEXT NOT NULL,
+                profile_name TEXT NOT NULL,
+                row_key TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                billing_base_url_digest TEXT NOT NULL,
+                billing_mode TEXT NOT NULL,
+                task TEXT NOT NULL,
+                sync_window_start INTEGER NOT NULL,
+                sync_window_end INTEGER NOT NULL,
+                api_call_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                cost_usd TEXT NOT NULL DEFAULT '0',
+                cost_kind TEXT NOT NULL DEFAULT 'none',
+                cost_delta_kind TEXT NOT NULL DEFAULT 'none',
+                cost_status TEXT,
+                cost_source TEXT,
+                data_source TEXT NOT NULL DEFAULT 'hermes_session',
+                precision TEXT NOT NULL DEFAULT 'aggregate_delta'
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        let deltas_had_cost_delta_kind =
+            Self::has_column(conn, "hermes_usage_deltas", "cost_delta_kind")?;
+        Self::add_column_if_missing(
+            conn,
+            "hermes_usage_deltas",
+            "cost_delta_kind",
+            "TEXT NOT NULL DEFAULT 'none'",
+        )?;
+        if !snapshots_had_emitted_balance || !snapshots_had_cost_baseline {
+            // Without a proven balance, start a safe baseline rather than replaying
+            // historical deltas across counter resets. Preserve full Decimal precision.
+            let snapshots = {
+                let mut stmt = conn.prepare(
+                    "SELECT source_id, row_key, selected_cost_usd, emitted_cost_balance_usd
+                     FROM hermes_usage_snapshots",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+            for (source_id, row_key, selected, emitted) in snapshots {
+                let selected = selected.parse::<rust_decimal::Decimal>().map_err(|err| {
+                    AppError::Database(format!("Invalid Hermes snapshot cost: {err}"))
+                })?;
+                let emitted = if snapshots_had_emitted_balance {
+                    emitted.parse::<rust_decimal::Decimal>().map_err(|err| {
+                        AppError::Database(format!("Invalid Hermes emitted balance: {err}"))
+                    })?
+                } else {
+                    rust_decimal::Decimal::ZERO
+                };
+                let baseline = (selected - emitted).max(rust_decimal::Decimal::ZERO);
+                conn.execute(
+                    "UPDATE hermes_usage_snapshots SET cost_baseline_usd = ?1,
+                     emitted_cost_balance_usd = ?2 WHERE source_id = ?3 AND row_key = ?4",
+                    params![
+                        baseline.to_string(),
+                        emitted.to_string(),
+                        source_id,
+                        row_key
+                    ],
+                )?;
+            }
+        }
+        if !deltas_had_cost_delta_kind {
+            conn.execute(
+                "UPDATE hermes_usage_deltas
+                 SET cost_delta_kind = CASE
+                     WHEN CAST(cost_usd AS REAL) < 0 THEN 'reconciliation'
+                     WHEN CAST(cost_usd AS REAL) > 0 THEN 'increase'
+                     ELSE 'none'
+                 END",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_hermes_deltas_window
+             ON hermes_usage_deltas(sync_window_start, sync_window_end)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_hermes_deltas_dimensions
+             ON hermes_usage_deltas(profile_name, provider, model, task)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
     }
 
     /// v17 -> v18: Claude 会话日志的字节游标列与尾部指纹列。
@@ -3744,7 +3944,90 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn aggregate_candidate_missing_cost_fields_keeps_sub_micro_baseline() -> Result<(), AppError> {
+        for has_balance in [false, true] {
+            let conn = Connection::open_in_memory()?;
+            Database::create_hermes_usage_tables_on_conn(&conn)?;
+            conn.execute_batch("INSERT INTO hermes_usage_snapshots (source_id, source_incarnation, profile_name, row_key, session_id, model, billing_provider, billing_base_url_digest, billing_mode, task, selected_cost_usd, emitted_cost_balance_usd, observed_at) VALUES ('source', 'inc', 'default', 'row', 'session', 'model', 'provider', 'digest', 'mode', '', '1.0000008', '0.0000004', 100); ALTER TABLE hermes_usage_snapshots DROP COLUMN cost_baseline_usd;")?;
+            if !has_balance {
+                conn.execute_batch(
+                    "ALTER TABLE hermes_usage_snapshots DROP COLUMN emitted_cost_balance_usd;",
+                )?;
+            }
+            Database::create_hermes_usage_tables_on_conn(&conn)?;
+            let baseline: String = conn.query_row(
+                "SELECT cost_baseline_usd FROM hermes_usage_snapshots",
+                [],
+                |row| row.get(0),
+            )?;
+            let expected = if has_balance {
+                "1.0000004"
+            } else {
+                "1.0000008"
+            };
+            assert_eq!(
+                baseline.parse::<rust_decimal::Decimal>().unwrap(),
+                expected.parse::<rust_decimal::Decimal>().unwrap()
+            );
+        }
+        Ok(())
+    }
     use super::*;
+
+    #[test]
+    fn aggregate_only_fresh_schema_has_no_capture_subsystem() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        for table in ["hermes_usage_snapshots", "hermes_usage_deltas"] {
+            assert!(Database::table_exists(&conn, table)?);
+        }
+        for table in [
+            "hermes_request_events",
+            "hermes_capture_cursors",
+            "hermes_history_estimates",
+        ] {
+            assert!(!Database::table_exists(&conn, table)?);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn aggregate_migration_keeps_pi_flags_and_prior_candidate_data() -> Result<(), AppError> {
+        for version in [20, 21, 22] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch("CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_codex INTEGER DEFAULT 0, enabled_pi INTEGER DEFAULT 0);
+                INSERT INTO mcp_servers VALUES ('existing', 1, 1);
+                CREATE TABLE hermes_capture_cursors (source_id TEXT PRIMARY KEY, last_event_id INTEGER);
+                INSERT INTO hermes_capture_cursors VALUES ('existing', 42);")?;
+            Database::create_hermes_usage_tables_on_conn(&conn)?;
+            conn.execute("INSERT INTO hermes_usage_deltas (source_id,source_incarnation,profile_name,row_key,session_id,provider,model,billing_base_url_digest,billing_mode,task,sync_window_start,sync_window_end,api_call_count)
+                VALUES ('s','i','default','r','session','p','m','d','mode','main',1,2,3)", [])?;
+            Database::set_user_version(&conn, version)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            assert_eq!(
+                conn.query_row("SELECT enabled_pi FROM mcp_servers", [], |r| r
+                    .get::<_, i64>(0))?,
+                1
+            );
+            assert_eq!(
+                conn.query_row(
+                    "SELECT last_event_id FROM hermes_capture_cursors",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )?,
+                42
+            );
+            assert_eq!(
+                conn.query_row("SELECT api_call_count FROM hermes_usage_deltas", [], |r| {
+                    r.get::<_, i64>(0)
+                })?,
+                3
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {

@@ -2080,6 +2080,26 @@
     "regionLabel": "地域"
   },
   "usage": {
+    "countLabel": {
+      "requests": "リクエスト数",
+      "hermesApiCalls": "集計 API 呼び出し数",
+      "mixedActivity": "集計アクティビティ数"
+    },
+    "averageCostLabel": {
+      "perRequest": "平均コスト",
+      "perApiCall": "API 呼び出しあたりの平均コスト",
+      "perActivity": "集計アクティビティあたりの平均コスト"
+    },
+    "hermes": {
+      "mainTask": "メインタスク",
+      "precisionNotice": "カウントは Hermes の累積 api_call_count の差分であり、物理 HTTP リクエスト、リトライ、フォールバックの正確な回数ではありません。",
+      "syncWindowNotice": "トレンドの時刻は同期ウィンドウを示し、正確なリクエスト時刻ではありません。",
+      "profile": "プロファイル",
+      "profilePlaceholder": "すべてのプロファイル",
+      "task": "タスク",
+      "taskPlaceholder": "すべてのタスク",
+      "aggregateOnlyNotice": "この Hermes データソースは累積使用量カウンターであり、個別のリクエスト記録を含みません。リクエストの状態とレイテンシーは利用できません。"
+    },
     "title": "利用統計",
     "subtitle": "AI モデルの利用状況とコスト統計を表示",
     "today": "24時間",

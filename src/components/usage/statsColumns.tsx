@@ -54,7 +54,7 @@ export function SuccessSpeedHeaders() {
 export function SuccessSpeedCells({
   stat,
 }: {
-  stat: SpeedTotals & { successRate: number };
+  stat: SpeedTotals & { successRate: number; statusAvailable?: boolean };
 }) {
   const exactSpeed = getStatsSpeed(stat);
   const estimatedSpeed =
@@ -63,7 +63,9 @@ export function SuccessSpeedCells({
   return (
     <>
       <td className={usageTable.tdEnd}>
-        {stat.successRate.toFixed(stat.successRate >= 99.95 ? 0 : 1)}%
+        {stat.statusAvailable === false
+          ? "—"
+          : `${stat.successRate.toFixed(stat.successRate >= 99.95 ? 0 : 1)}%`}
       </td>
       <td className={cn(usageTable.tdEnd, speed == null && usageTable.muted)}>
         {speed == null ? (
