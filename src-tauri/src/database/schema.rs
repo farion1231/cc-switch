@@ -102,11 +102,20 @@ impl Database {
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
-            updated_at INTEGER NOT NULL DEFAULT 0
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            category_id TEXT REFERENCES skill_categories(id) ON DELETE SET NULL
         )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS skill_categories (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            name_key TEXT NOT NULL UNIQUE
+        );",
+        )?;
 
         // 6. Skill Repos 表
         conn.execute(
@@ -576,6 +585,24 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        conn.execute_batch(
+                            "CREATE TABLE IF NOT EXISTS skill_categories (
+                            id TEXT PRIMARY KEY,
+                            name TEXT NOT NULL,
+                            name_key TEXT NOT NULL UNIQUE
+                        );",
+                        )?;
+                        if Self::table_exists(conn, "skills")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "skills",
+                                "category_id",
+                                "TEXT REFERENCES skill_categories(id) ON DELETE SET NULL",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 21)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3835,6 +3862,26 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(values, (1, 1, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_adds_categories_without_changing_existing_skills() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE skills (id TEXT PRIMARY KEY, directory TEXT, enabled_codex INTEGER);
+            INSERT INTO skills VALUES ('local:alpha', 'alpha', 1);",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let values: (String, i64, Option<String>) = conn.query_row(
+            "SELECT directory, enabled_codex, category_id FROM skills",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(values, ("alpha".into(), 1, None));
+        assert!(Database::table_exists(&conn, "skill_categories")?);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         Ok(())
     }
 

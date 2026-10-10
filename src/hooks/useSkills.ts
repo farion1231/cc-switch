@@ -34,6 +34,47 @@ export function useInstalledSkills() {
   });
 }
 
+export function useSkillCategories() {
+  return useQuery({
+    queryKey: ["skills", "categories"],
+    queryFn: skillsApi.getCategories,
+    staleTime: Infinity,
+  });
+}
+
+export type SkillCategoryAction =
+  | { kind: "create"; name: string }
+  | { kind: "rename"; id: string; name: string }
+  | { kind: "delete"; id: string }
+  | { kind: "assign"; ids: string[]; categoryId: string | null };
+
+export function useMutateSkillCategories() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (action: SkillCategoryAction) => {
+      switch (action.kind) {
+        case "create":
+          await skillsApi.createCategory(action.name);
+          break;
+        case "rename":
+          await skillsApi.renameCategory(action.id, action.name);
+          break;
+        case "delete":
+          await skillsApi.deleteCategory(action.id);
+          break;
+        case "assign":
+          await skillsApi.setCategories(action.ids, action.categoryId);
+          break;
+      }
+    },
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["skills", "categories"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+      ]),
+  });
+}
+
 export function useSkillBackups() {
   return useQuery({
     queryKey: ["skills", "backups"],

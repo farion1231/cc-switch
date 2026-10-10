@@ -23,7 +23,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
+                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, category_id
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -31,6 +31,7 @@ impl Database {
         let skill_iter = stmt
             .query_map([], |row| {
                 Ok(InstalledSkill {
+                    category_id: row.get(18)?,
                     id: row.get(0)?,
                     name: row.get(1)?,
                     description: row.get(2)?,
@@ -71,13 +72,14 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
+                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, category_id
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let result = stmt.query_row([id], |row| {
             Ok(InstalledSkill {
+                category_id: row.get(18)?,
                 id: row.get(0)?,
                 name: row.get(1)?,
                 description: row.get(2)?,
@@ -116,8 +118,8 @@ impl Database {
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
-              installed_at, content_hash, updated_at, enabled_mcode)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+              installed_at, content_hash, updated_at, enabled_mcode, category_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 skill.id,
                 skill.name,
@@ -137,6 +139,7 @@ impl Database {
                 skill.content_hash,
                 skill.updated_at,
                 skill.apps.mcode,
+                skill.category_id,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -315,6 +318,7 @@ mod tests {
 
     fn skill(id: &str, name: &str, apps: SkillApps) -> InstalledSkill {
         InstalledSkill {
+            category_id: None,
             id: id.to_string(),
             name: name.to_string(),
             description: Some(format!("{name} description")),
@@ -336,6 +340,9 @@ mod tests {
         let installed_apps = SkillApps::only(&AppType::Codex);
         let original = skill("owner/repo:skill", "original", installed_apps.clone());
         db.save_skill(&original).expect("seed skill");
+        let category = db.create_skill_category("Development").unwrap();
+        db.set_skill_categories(&[original.id.clone()], Some(&category.id))
+            .unwrap();
 
         let mut candidate = skill(&original.id, "updated", SkillApps::only(&AppType::Claude));
         candidate.repo_branch = Some("next".to_string());
@@ -357,6 +364,7 @@ mod tests {
         assert_eq!(stored.content_hash, candidate.content_hash);
         assert_eq!(stored.updated_at, candidate.updated_at);
         assert_eq!(stored.apps, installed_apps);
+        assert_eq!(stored.category_id, Some(category.id));
     }
 
     #[test]
