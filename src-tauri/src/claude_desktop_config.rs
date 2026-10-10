@@ -1498,25 +1498,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn proxy_gateway_base_url_uses_the_client_host_when_set() {
-        let db = test_db();
-        let mut config = futures::executor::block_on(db.get_global_proxy_config()).unwrap();
-        config.listen_address = "0.0.0.0".to_string();
-        futures::executor::block_on(db.update_global_proxy_config(config.clone())).unwrap();
-        assert_eq!(
-            proxy_gateway_base_url_from_db(&db).unwrap(),
-            "http://127.0.0.1:15721/claude-desktop"
-        );
-
-        config.client_host = " 172.25.144.1 ".to_string();
-        futures::executor::block_on(db.update_global_proxy_config(config)).unwrap();
-        assert_eq!(
-            proxy_gateway_base_url_from_db(&db).unwrap(),
-            "http://172.25.144.1:15721/claude-desktop"
-        );
-    }
-
     fn official_provider() -> Provider {
         let mut provider = Provider::with_id(
             CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID.to_string(),

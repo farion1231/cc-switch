@@ -231,43 +231,56 @@ pub async fn get_global_proxy_config(
 /// 更新统一的全局配置字段，四行镜像写，各应用自己的重试和超时不碰。设置页的按钮写着
 /// 「保存并重启服务」：服务在跑时地址或端口变了就重启、再按新地址重写接上路由的客户端
 /// （含 Claude Desktop 的模型映射卡），日志开关实时生效；只写库的话服务还在旧端口上听、
-/// 客户端也还指着旧端口。客户端地址只影响写给客户端的地址，变了不用重启，直接重写。
+/// 客户端也还指着旧端口。
 #[tauri::command]
 pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
-    save_global_proxy_config(state.inner(), config).await
-}
-
-/// [`update_global_proxy_config`] 的实现。重写客户端失败时库里已经是新地址，记下待重写，
-/// 改好客户端文件后原样再保存一次也会重写，而不是因为地址「没变」直接返回成功。
-pub(crate) async fn save_global_proxy_config(
-    state: &AppState,
-    config: GlobalProxyConfig,
-) -> Result<(), String> {
-    let previous_client_host = state
-        .db
-        .get_global_proxy_config()
-        .await
-        .map_err(|e| e.to_string())?
-        .client_host;
     let restarted = state.proxy_service.update_global_config(&config).await?;
-    let pending = state.proxy_service.take_client_resync_pending();
-    if pending || restarted || config.client_host.trim() != previous_client_host {
-        let mut failures = Vec::new();
-        if let Err(error) = crate::mode::controller::resync_routes(state).await {
-            failures.push(error);
-        }
-        if let Err(error) = resync_claude_desktop_gateway(&state.db) {
-            failures.push(format!("claude-desktop: {error}"));
-        }
-        if !failures.is_empty() {
-            state.proxy_service.mark_client_resync_pending();
-            return Err(failures.join("; "));
-        }
+    if restarted {
+        resync_proxy_clients(state.inner()).await?;
     }
     Ok(())
+}
+
+/// 获取客户端地址：写进客户端配置的代理主机，空表示按监听地址推。
+#[tauri::command]
+pub async fn get_proxy_client_host() -> Result<String, String> {
+    Ok(crate::settings::get_proxy_client_host().unwrap_or_default())
+}
+
+/// 保存客户端地址，再按新地址重写接上路由的客户端，不用重启服务。存在本机的
+/// settings.json 里：这个地址只对这台机器有意义，不能随数据库同步到别的设备。
+/// 每次保存都重写一遍：上次重写失败、改好客户端文件后原样再保存就是重试；
+/// 客户端已经是这个地址时重写不碰文件。
+#[tauri::command]
+pub async fn set_proxy_client_host(
+    state: tauri::State<'_, AppState>,
+    host: String,
+) -> Result<(), String> {
+    save_proxy_client_host(state.inner(), &host).await
+}
+
+pub(crate) async fn save_proxy_client_host(state: &AppState, host: &str) -> Result<(), String> {
+    crate::settings::set_proxy_client_host(host).map_err(|e| e.to_string())?;
+    resync_proxy_clients(state).await
+}
+
+/// 按当前的代理地址重写接上路由的客户端，含 Claude Desktop 的模型映射卡。
+async fn resync_proxy_clients(state: &AppState) -> Result<(), String> {
+    let mut failures = Vec::new();
+    if let Err(error) = crate::mode::controller::resync_routes(state).await {
+        failures.push(error);
+    }
+    if let Err(error) = resync_claude_desktop_gateway(&state.db) {
+        failures.push(format!("claude-desktop: {error}"));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 /// Claude Desktop 的模型映射卡把本地网关地址写死在 profile 里，不在 `resync_routes` 的

@@ -9,7 +9,9 @@ import { proxyApi } from "@/lib/api/proxy";
 import { useProvidersQuery } from "@/lib/query";
 import {
   useGlobalProxyConfig,
+  useProxyClientHost,
   useProxyStatusQuery,
+  useSetProxyClientHost,
   useUpdateGlobalProxyConfig,
 } from "@/lib/query/proxy";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
@@ -93,6 +95,8 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     useProxyStatus();
   const { data: config } = useGlobalProxyConfig();
   const updateConfig = useUpdateGlobalProxyConfig();
+  const { data: savedClientHost } = useProxyClientHost();
+  const saveClientHostMutation = useSetProxyClientHost();
   const [address, setAddress] = useState("127.0.0.1");
   const [port, setPort] = useState("15721");
   const [addressError, setAddressError] = useState<string | null>(null);
@@ -106,9 +110,12 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     if (config) {
       setAddress(config.listenAddress);
       setPort(String(config.listenPort));
-      setClientHost(config.clientHost ?? "");
     }
   }, [config]);
+
+  useEffect(() => {
+    if (savedClientHost !== undefined) setClientHost(savedClientHost);
+  }, [savedClientHost]);
 
   const modeQueries = useQueries({
     queries: PROXY_APP_IDS.map((app) => ({
@@ -166,20 +173,16 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
       port.trim() !== String(config.listenPort));
 
   const saveClientHost = async () => {
-    if (!config) return;
     const trimmed = clientHost.trim();
     const ok = isValidClientHost(trimmed);
     setClientHostError(ok ? null : t("routingSettings.clientHostInvalid"));
     if (!ok) return;
     try {
-      await updateConfig.mutateAsync({ ...config, clientHost: trimmed });
+      await saveClientHostMutation.mutateAsync(trimmed);
     } catch {
-      // useUpdateGlobalProxyConfig 的 onSuccess / onError 已经弹过 toast
+      // useSetProxyClientHost 的 onSuccess / onError 已经弹过 toast
     }
   };
-
-  const clientHostDirty =
-    !!config && clientHost.trim() !== (config.clientHost ?? "");
 
   const toggleLogging = async (enabled: boolean) => {
     if (!config) return;
@@ -360,7 +363,10 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
                 <Button
                   variant="neutral"
                   size="regular"
-                  disabled={!clientHostDirty || updateConfig.isPending}
+                  disabled={
+                    savedClientHost === undefined ||
+                    saveClientHostMutation.isPending
+                  }
                   onClick={() => void saveClientHost()}
                 >
                   {t("common.save")}
