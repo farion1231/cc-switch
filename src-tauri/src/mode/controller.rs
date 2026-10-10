@@ -5180,6 +5180,47 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
+    async fn stack_rows_carry_their_own_window_into_the_max_env() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        set_member(&state, "kimi", true).await;
+        // kimi env 里的 128000 是当前 MAX。
+        assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
+
+        // kimi 换成列表行：行窗口参与 MAX 的最小值计算，env 里的 128000 不再参与。
+        let mut kimi = state
+            .db
+            .get_provider_by_id("kimi", "claude")
+            .unwrap()
+            .unwrap();
+        kimi.meta.get_or_insert_with(Default::default).stack_models =
+            serde_json::from_value(json!([{ "model": "kimi-k3", "contextWindow": 160000 }]))
+                .unwrap();
+        ProviderService::update(&state, AppType::Claude, None, kimi).expect("update kimi");
+        assert_eq!(
+            settings()["env"][CLAUDE_MAX_CONTEXT_ENV],
+            "160000",
+            "{:?}",
+            settings()["env"]
+        );
+        // kimi 的行窗口抬到 800000：默认那家（a，映射发布、没配窗口=200K）把最小值压回
+        // 默认 200K，MAX 不再写。
+        kimi = state
+            .db
+            .get_provider_by_id("kimi", "claude")
+            .unwrap()
+            .unwrap();
+        kimi.meta.as_mut().unwrap().stack_models =
+            serde_json::from_value(json!([{ "model": "kimi-k3", "contextWindow": 800000 }]))
+                .unwrap();
+        ProviderService::update(&state, AppType::Claude, None, kimi).expect("raise kimi window");
+        assert!(settings()["env"].get(CLAUDE_MAX_CONTEXT_ENV).is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn a_users_own_model_discovery_switch_survives_switches_and_proxy_mode() {
         let _home = Home::new();
         let mut user: Value = serde_json::from_str(USER_SETTINGS).unwrap();

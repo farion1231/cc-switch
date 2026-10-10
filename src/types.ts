@@ -249,6 +249,8 @@ export interface ClaudeStackModel {
   displayName?: string;
   // 上游是 1M 窗口
   oneM?: boolean;
+  // 行自己的上下文窗口（token 数）：非 1M 模型按这个算，缺省沿用供应商 env
+  contextWindow?: number;
 }
 
 // Skill 同步方式

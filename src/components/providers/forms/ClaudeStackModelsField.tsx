@@ -29,7 +29,7 @@ export function createClaudeStackModelRow(
 
 /**
  * 存进 `meta.stackModels` 的样子：去掉空行，模型名里写的 `[1M]` 换成 `oneM`，同名的合并
- * （有一处勾了 1M 就按 1M，显示名取第一个填了的）。
+ * （有一处勾了 1M 就按 1M，显示名和窗口取第一个填了的）。
  */
 export function normalizeClaudeStackModels(
   rows: ClaudeStackModel[],
@@ -41,11 +41,20 @@ export function normalizeClaudeStackModels(
     if (!model) continue;
     const oneM = row.oneM === true || hasClaudeOneMMarker(raw);
     const displayName = row.displayName?.trim() || undefined;
+    const contextWindow =
+      typeof row.contextWindow === "number" &&
+      Number.isFinite(row.contextWindow) &&
+      row.contextWindow > 0
+        ? Math.floor(row.contextWindow)
+        : undefined;
     const existing = result.find((entry) => entry.model === model);
     if (existing) {
       if (oneM) existing.oneM = true;
       if (!existing.displayName && displayName) {
         existing.displayName = displayName;
+      }
+      if (existing.contextWindow == null && contextWindow != null) {
+        existing.contextWindow = contextWindow;
       }
       continue;
     }
@@ -53,9 +62,25 @@ export function normalizeClaudeStackModels(
       model,
       ...(displayName ? { displayName } : {}),
       ...(oneM ? { oneM: true } : {}),
+      ...(contextWindow != null ? { contextWindow } : {}),
     });
   }
   return result;
+}
+
+/**
+ * 输入框字符串 → `contextWindow`：对完整输入按数值解析，`8e5`、`800000.0` 都按本意取值。
+ * 只收 1 到 MAX_SAFE_INTEGER 的整数（后端是 u64，超出安全整数 JSON 会写成指数记法）；
+ * 空串、带尾巴的非数值、负数、小数一律清空。不做「删掉非数字字符」的清洗——那会改变
+ * 数值含义（`8e5` 变 85、`800000.0` 变 8000000）。
+ */
+export function parseContextWindowInput(value: string): number | undefined {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) &&
+    parsed >= 1 &&
+    parsed <= Number.MAX_SAFE_INTEGER
+    ? parsed
+    : undefined;
 }
 
 /** 模型映射里的字段：`ANTHROPIC_MODEL` 和各档，按后端 `mode::stack::mapped_models` 的顺序。 */
@@ -194,7 +219,7 @@ export function ClaudeStackModelsField({
         </p>
       ) : (
         <div className="space-y-2">
-          <div className="hidden grid-cols-[36px_1fr_minmax(0,1fr)_64px_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
+          <div className="hidden grid-cols-[36px_1fr_minmax(0,1fr)_120px_64px_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
             <span />
             <span>
               {t("providerForm.modelDisplayNameLabel", {
@@ -204,6 +229,11 @@ export function ClaudeStackModelsField({
             <span>
               {t("providerForm.requestModelLabel", {
                 defaultValue: "实际请求模型",
+              })}
+            </span>
+            <span>
+              {t("providerForm.modelContextWindowLabel", {
+                defaultValue: "上下文窗口",
               })}
             </span>
             <span>
@@ -224,7 +254,7 @@ export function ClaudeStackModelsField({
             return (
               <div
                 key={row.rowId}
-                className="grid grid-cols-1 gap-2 md:grid-cols-[36px_1fr_minmax(0,1fr)_64px_36px]"
+                className="grid grid-cols-1 gap-2 md:grid-cols-[36px_1fr_minmax(0,1fr)_120px_64px_36px]"
               >
                 <HoverTip content={defaultLabel}>
                   <Button
@@ -284,6 +314,31 @@ export function ClaudeStackModelsField({
                     />
                   )}
                 </div>
+                <Input
+                  type="number"
+                  min={1}
+                  inputMode="numeric"
+                  value={row.contextWindow ?? ""}
+                  onChange={(event) =>
+                    updateRow(row.rowId, {
+                      contextWindow: parseContextWindowInput(
+                        event.target.value,
+                      ),
+                    })
+                  }
+                  placeholder={t("providerForm.modelContextWindowPlaceholder", {
+                    defaultValue: "留空继承全局",
+                  })}
+                  aria-label={t("providerForm.modelContextWindowLabel", {
+                    defaultValue: "上下文窗口",
+                  })}
+                  autoComplete="off"
+                  className="h-9"
+                  title={t("providerForm.modelContextWindowHint", {
+                    defaultValue:
+                      "非 1M 模型的上下文窗口（token 数）。留空用这家 env 里的 CLAUDE_CODE_MAX_CONTEXT_TOKENS，再没有按 200K。",
+                  })}
+                />
                 <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
                   <Checkbox
                     checked={
