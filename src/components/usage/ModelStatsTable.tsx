@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { useModelStats } from "@/lib/query/usage";
 import { TablePagination, useClientPagination } from "./TablePagination";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,21 @@ import {
 import { usageTable } from "./usageTable";
 import { SuccessSpeedCells, SuccessSpeedHeaders } from "./statsColumns";
 import type { UsageRangeSelection } from "@/types/usage";
+
+type SortKey =
+  | "requestCount"
+  | "totalTokens"
+  | "totalCost"
+  | "avgCostPerRequest";
+type SortDirection = "asc" | "desc";
+type SortState = { key: SortKey; direction: SortDirection };
+
+const DEFAULT_SORT: SortState = { key: "totalCost", direction: "desc" };
+
+const numericValue = (value: number | string) => {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
 interface ModelStatsTableProps {
   range: UsageRangeSelection;
@@ -31,6 +47,7 @@ export function ModelStatsTable({
 }: ModelStatsTableProps) {
   const { t, i18n } = useTranslation();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const { data: stats, isLoading } = useModelStats(
     range,
     { appType, providerName, model },
@@ -40,17 +57,51 @@ export function ModelStatsTable({
   );
 
   const rows = useMemo(
-    () => [...(stats ?? [])].sort((a, b) => b.requestCount - a.requestCount),
-    [stats],
+    () =>
+      [...(stats ?? [])].sort((left, right) => {
+        const difference =
+          numericValue(left[sort.key]) - numericValue(right[sort.key]);
+        if (difference !== 0) {
+          return sort.direction === "asc" ? difference : -difference;
+        }
+        return left.model.localeCompare(right.model);
+      }),
+    [sort, stats],
   );
   const pagination = useClientPagination(
     rows,
-    JSON.stringify([range, appType, providerName, model]),
+    JSON.stringify([range, appType, providerName, model, sort]),
   );
+
+  const toggleSort = (key: SortKey) => {
+    setSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === "desc" ? "asc" : "desc",
+    }));
+  };
+
+  const sortIcon = (key: SortKey) => {
+    if (sort.key !== key) {
+      return <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />;
+    }
+    return sort.direction === "asc" ? (
+      <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+    ) : (
+      <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+    );
+  };
 
   if (isLoading) {
     return <div className={usageTable.skeleton} />;
   }
+
+  const sortableColumns: ReadonlyArray<readonly [SortKey, string]> = [
+    ["requestCount", t("usage.requests")],
+    ["totalTokens", t("usage.tokens")],
+    ["totalCost", t("usage.cost")],
+    ["avgCostPerRequest", t("usage.avgCost")],
+  ];
 
   return (
     <div className="flex flex-col">
@@ -62,16 +113,35 @@ export function ModelStatsTable({
           <thead>
             <tr className={usageTable.headRow}>
               <th className={usageTable.th}>{t("usage.model")}</th>
-              <th className={usageTable.thEnd}>{t("usage.requests")}</th>
-              <th className={usageTable.thEnd}>{t("usage.tokens")}</th>
-              <th className={usageTable.thEnd}>{t("usage.cost")}</th>
+              {sortableColumns.map(([key, label]) => (
+                <th
+                  key={key}
+                  className={usageTable.thEnd}
+                  aria-sort={
+                    sort.key === key
+                      ? sort.direction === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                >
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 hover:text-fg-1"
+                    onClick={() => toggleSort(key)}
+                  >
+                    {label}
+                    {sortIcon(key)}
+                  </button>
+                </th>
+              ))}
               <SuccessSpeedHeaders />
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className={usageTable.empty}>
+                <td colSpan={7} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>
@@ -97,9 +167,15 @@ export function ModelStatsTable({
                   </td>
                   <td
                     className={cn(usageTable.tdEnd, "font-medium")}
-                    title={`${fmtUsd(stat.totalCost, 6)} · ${t("usage.avgCost")} ${fmtUsd(stat.avgCostPerRequest, 4)}`}
+                    title={fmtUsd(stat.totalCost, 6)}
                   >
                     {fmtUsd(stat.totalCost, 2)}
+                  </td>
+                  <td
+                    className={cn(usageTable.tdEnd, "font-medium")}
+                    title={fmtUsd(stat.avgCostPerRequest, 6)}
+                  >
+                    {fmtUsd(stat.avgCostPerRequest, 4)}
                   </td>
                   <SuccessSpeedCells stat={stat} />
                 </tr>
