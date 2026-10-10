@@ -3582,7 +3582,7 @@
       "failoverUnavailable": "{{appLabel}} 在聚合模式下不做故障轉移。佇列和設定保留，回到路由模式後恢復",
       "codexStale": {
         "authTitle": "Codex 可能仍快取著切換前的帳號；重新啟動背景服務才能載入新登入",
-        "title": "Codex 還在用舊的模型清單，聚合的模型不會出現",
+        "title": "Codex 還在用舊的模型清單，切換後的模型不會出現",
         "daemon": "命令列：重開 codex 不夠，要重新啟動背景的守護行程。",
         "others": "桌面版：要完全結束再重開（macOS 上按 ⌘Q，只關視窗不行）；編輯器擴充功能要重開編輯器視窗。",
         "restart": "重新啟動 Codex 守護行程",

@@ -3581,7 +3581,7 @@
       "failoverUnavailable": "{{appLabel}} 在聚合模式下不做故障转移。队列和设置保留，回到路由模式后恢复",
       "codexStale": {
         "authTitle": "Codex 可能仍缓存着切换前的账号；重启后台服务才能载入新登录",
-        "title": "Codex 还在用旧的模型列表，聚合的模型不会出现",
+        "title": "Codex 还在用旧的模型列表，切换后的模型不会出现",
         "daemon": "命令行：重开 codex 不够，要重启后台的守护进程。",
         "others": "桌面版：要彻底退出再重开（macOS 上按 ⌘Q，只关窗口不行）；编辑器插件要重开编辑器窗口。",
         "restart": "重启 Codex 守护进程",
