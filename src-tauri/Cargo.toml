@@ -27,7 +27,7 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
-tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset", "image-png"] }
+tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
@@ -107,6 +107,9 @@ windows-sys = { version = "0.61", features = [
 rquickjs = { version = "0.8", features = ["bindgen"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# 托盘面板的 Liquid Glass（NSGlassEffectView，macOS 26 SDK 公开 API）；0.2 那套没有这个类
+objc2-06 = { package = "objc2", version = "0.6" }
+objc2-app-kit-03 = { package = "objc2-app-kit", version = "0.3", default-features = false, features = ["std", "NSGlassEffectView", "NSGraphics", "NSResponder", "NSView", "NSWindow"] }
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 

@@ -4696,5 +4696,23 @@
       "refresh": "残量を更新",
       "refreshAria": "{{login}} の残量を更新"
     }
+  },
+  "trayPanel": {
+    "range": "集計期間",
+    "ranges": {
+      "day": "今日",
+      "month": "今月",
+      "total": "全期間"
+    },
+    "totalTokens": "トークン合計",
+    "requests": "リクエスト {{count}} 件",
+    "resetIn": "{{time}} 後にリセット",
+    "accounts": "アカウント {{count}} 件",
+    "noUsageQuery": "残量の取得はオフです",
+    "openMain": "CC Switch を開く",
+    "refresh": "更新",
+    "rightClickHint": "右クリックで切り替え",
+    "inUseBy": "{{app}} で使用中",
+    "reauthRequired": "再ログインが必要です"
   }
 }

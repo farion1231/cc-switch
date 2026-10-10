@@ -4696,5 +4696,23 @@
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}"
     }
+  },
+  "trayPanel": {
+    "range": "Range",
+    "ranges": {
+      "day": "Day",
+      "month": "Month",
+      "total": "Total"
+    },
+    "totalTokens": "Total tokens",
+    "requests": "Requests: {{count}}",
+    "resetIn": "Resets in {{time}}",
+    "accounts": "Accounts: {{count}}",
+    "noUsageQuery": "Quota lookup is off",
+    "openMain": "Open CC Switch",
+    "refresh": "Refresh",
+    "rightClickHint": "Right-click to switch",
+    "inUseBy": "In use by {{app}}",
+    "reauthRequired": "Sign in again"
   }
 }

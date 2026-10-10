@@ -31,7 +31,7 @@ interface UsageFooterProps {
 }
 
 /** UsageData → QuotaTier 转换（Token Plan 使用） */
-function toQuotaTier(data: UsageData): QuotaTier {
+export function toQuotaTier(data: UsageData): QuotaTier {
   const extra = data.extra;
   if (extra && extra.startsWith("{")) {
     try {
@@ -56,7 +56,7 @@ function toQuotaTier(data: UsageData): QuotaTier {
 }
 
 /** 脚本用量的一个套餐 → 一行（名字和明细进悬停说明） */
-function planLine(
+export function planLine(
   t: TFunction,
   data: UsageData,
   index: number,
