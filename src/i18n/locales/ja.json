@@ -127,6 +127,17 @@
     "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
     "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、集約したモデルは現在使用できません",
     "officialModelsOutdated": "このコンピューターの Codex が古いため、公式モデル一覧を完全に取得できません。Codex（CLI を含む）を最新版に更新してください",
+    "officialModelsReason": {
+      "noLogin": "公式一覧：Codex に使える ChatGPT ログインがありません。Codex で ChatGPT アカウントにログインしてください",
+      "loginStale": "公式一覧：Codex のログインが 8 日以上更新されていません。Codex を一度使うと自動で更新されます",
+      "loginIncomplete": "公式一覧：Codex のログイン情報が不完全です（ワークスペースまたはユーザー ID がありません）。Codex でもう一度ログインしてください",
+      "noVersion": "公式一覧：このコンピューターの Codex のバージョンを読み取れません。Codex で会話を始めると自動で再試行します",
+      "fetchFailed": "公式一覧：取得に失敗しました。15 分ごとに自動で再試行します（詳細はログを参照）",
+      "invalidList": "公式一覧：返されたデータが不完全です（詳細はログを参照）",
+      "noCli": "Codex 内蔵の一覧：このコンピューターに Codex CLI が見つかりません",
+      "cliFailed": "Codex 内蔵の一覧：Codex CLI がモデル一覧を出力しませんでした（詳細はログを参照）",
+      "nothingUsable": "Codex 内蔵の一覧：使えるモデルがありません。Codex を最新版に更新してください"
+    },
     "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、集約したモデルは Codex に表示されません",
     "adoptCatalog": "CC Switch のモデルカタログを使う",
     "adoptCatalogDone": "CC Switch のモデルカタログに切り替えました。Codex を再起動すると反映されます",

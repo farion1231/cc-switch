@@ -1811,10 +1811,29 @@ fn codex_bundled_models_command(candidate: &Path) -> Command {
     command
 }
 
+/// 没跑出 Codex 自带的模型列表。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CodexBundledModelsError {
+    /// 每个候选都启动不了：本机找不到 Codex 命令行。
+    NoCli,
+    /// 找到了命令行，但没跑出能用的列表（退出码非零、输出不是 JSON、列表为空）。带最后
+    /// 一个候选的情况，写日志用。
+    Failed(String),
+}
+
+impl std::fmt::Display for CodexBundledModelsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoCli => f.write_str("本机找不到 Codex 命令行"),
+            Self::Failed(detail) => f.write_str(detail),
+        }
+    }
+}
+
 /// 本机 Codex 自带的完整模型列表（`codex debug models --bundled`）。和账号无关，版本和
 /// 那个二进制一致。不能用不带 `--bundled` 的版本：那会读到 CC Switch 自己写的目录。
-pub(crate) fn load_codex_bundled_models() -> Option<Vec<Value>> {
-    first_bundled_catalog(|catalog| {
+pub(crate) fn load_codex_bundled_models() -> Result<Vec<Value>, CodexBundledModelsError> {
+    first_bundled_catalog(codex_cli_candidates(), |catalog| {
         catalog
             .get("models")
             .and_then(Value::as_array)
@@ -1824,13 +1843,21 @@ pub(crate) fn load_codex_bundled_models() -> Option<Vec<Value>> {
 }
 
 /// 依次跑各个候选的 `codex debug models --bundled`，返回第一份 `pick` 取得出东西的结果。
-fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
-    for candidate in codex_cli_candidates() {
+/// 候选里有不存在的路径（固定位置、PATH 上的裸名），启动不了不算失败；一个都启动不了才是
+/// 找不到命令行。
+fn first_bundled_catalog<T>(
+    candidates: Vec<PathBuf>,
+    pick: impl Fn(&Value) -> Option<T>,
+) -> Result<T, CodexBundledModelsError> {
+    let mut failure = None;
+    for candidate in candidates {
         let candidate_label = candidate.to_string_lossy();
         let output = match codex_bundled_models_command(&candidate).output() {
             Ok(output) => output,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => {
                 log::debug!("failed to run `{candidate_label} debug models --bundled`: {err}");
+                failure = Some(format!("`{candidate_label}` 启动失败: {err}"));
                 continue;
             }
         };
@@ -1838,6 +1865,11 @@ fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::debug!("`{candidate_label} debug models --bundled` failed: {stderr}");
+            failure = Some(format!(
+                "`{candidate_label} debug models --bundled` 失败（{}）: {}",
+                output.status,
+                stderr.trim()
+            ));
             continue;
         }
 
@@ -1847,15 +1879,24 @@ fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
                 log::debug!(
                     "Failed to parse `{candidate_label} debug models --bundled` output: {e}"
                 );
+                failure = Some(format!(
+                    "`{candidate_label} debug models --bundled` 的输出不是 JSON: {e}"
+                ));
                 continue;
             }
         };
         if let Some(found) = pick(&catalog) {
-            return Some(found);
+            return Ok(found);
         }
+        failure = Some(format!(
+            "`{candidate_label} debug models --bundled` 的输出里没有模型"
+        ));
     }
 
-    None
+    Err(failure.map_or(
+        CodexBundledModelsError::NoCli,
+        CodexBundledModelsError::Failed,
+    ))
 }
 
 /// 官方原生行：逐行补 Codex 解析器必需的字段（不覆盖已有值）、补旧的指令字段，再校验。
@@ -2165,6 +2206,7 @@ fn codex_openai_official_models() -> Vec<Value> {
     CODEX_OPENAI_OFFICIAL_MODELS_CACHE
         .get_or_try_init(|| {
             load_codex_bundled_models()
+                .ok()
                 .and_then(normalize_codex_native_rows)
                 .ok_or(())
         })
@@ -5512,6 +5554,42 @@ wire_api = "responses"
                 .any(|candidate| candidate == Path::new("codex")),
             "codex CLI candidates must include the PATH entry"
         );
+    }
+
+    #[test]
+    fn bundled_models_tell_a_missing_cli_apart_from_a_failing_one() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let missing = dir.path().join("missing-codex");
+        let pick = |catalog: &Value| catalog.get("models").cloned();
+        assert_eq!(
+            first_bundled_catalog(vec![missing.clone()], pick).err(),
+            Some(CodexBundledModelsError::NoCli)
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let script = |name: &str, body: &str| {
+                let path = dir.path().join(name);
+                fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                    .expect("chmod script");
+                path
+            };
+            let failing = script("failing-codex", "echo boom >&2; exit 1");
+            let working = script("working-codex", r#"echo '{"models":[{"slug":"x"}]}'"#);
+
+            // 找到了命令行但跑失败：不能报成找不到。
+            assert!(matches!(
+                first_bundled_catalog(vec![missing.clone(), failing.clone()], pick),
+                Err(CodexBundledModelsError::Failed(detail)) if detail.contains("boom")
+            ));
+            // 前面的失败不影响后面能用的候选。
+            assert_eq!(
+                first_bundled_catalog(vec![missing, failing, working], pick).ok(),
+                Some(json!([{ "slug": "x" }]))
+            );
+        }
     }
 
     #[test]

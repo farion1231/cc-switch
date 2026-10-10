@@ -127,6 +127,17 @@
     "officialModelsBundled": "官方模型列表暂未取到，暂用 Codex 内置列表，可能缺少账号专属模型",
     "officialModelsUnavailable": "聚合的模型暂不可用：读取不到 Codex 模型列表",
     "officialModelsOutdated": "本机 Codex 版本过旧，拿不到完整的官方模型列表：请把 Codex（包括命令行）升级到最新版",
+    "officialModelsReason": {
+      "noLogin": "官方列表：Codex 没有可用的 ChatGPT 登录，请在 Codex 里用 ChatGPT 账号登录",
+      "loginStale": "官方列表：Codex 的登录超过 8 天没有刷新，打开 Codex 用一下即可自动刷新",
+      "loginIncomplete": "官方列表：Codex 的登录信息不完整（缺少工作区或用户 ID），请在 Codex 里重新登录",
+      "noVersion": "官方列表：读不到本机 Codex 的版本，用 Codex 开始一次对话后会自动重试",
+      "fetchFailed": "官方列表：联网获取失败，会每 15 分钟自动重试（详情见日志）",
+      "invalidList": "官方列表：返回的数据不完整（详情见日志）",
+      "noCli": "Codex 自带列表：本机找不到 Codex 命令行",
+      "cliFailed": "Codex 自带列表：Codex 命令行没能输出模型列表（详情见日志）",
+      "nothingUsable": "Codex 自带列表：里面没有能用的模型，请把 Codex 升级到最新版"
+    },
     "routeOwnsCatalog": "聚合的模型不会出现在 Codex 里：路由供应商使用自己的模型目录文件（model_catalog_json）",
     "adoptCatalog": "改用 CC Switch 的模型目录",
     "adoptCatalogDone": "已改用 CC Switch 的模型目录，重启 Codex 后生效",

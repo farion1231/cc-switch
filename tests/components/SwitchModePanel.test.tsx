@@ -150,6 +150,31 @@ describe("SwitchModePanel — Stack mode", () => {
     ]);
   });
 
+  it("says why the Codex model list could not be read", async () => {
+    mockMode("stack", "route");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: true,
+          members: [{ providerId: "route", modelIds: [], route: true }],
+          notice: "officialModelsUnavailable",
+          noticeReasons: ["loginStale", "noCli"],
+        }),
+      ),
+    );
+    renderPanel("codex", { route: provider("route") });
+
+    expect(
+      await screen.findByText("provider.officialModelsUnavailable"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("provider.officialModelsReason.loginStale"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("provider.officialModelsReason.noCli"),
+    ).toBeInTheDocument();
+  });
+
   it("warns about Codex clients on an old model list in every mode", async () => {
     const stack = (active: boolean) =>
       http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>

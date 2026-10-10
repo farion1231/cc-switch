@@ -1201,14 +1201,18 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
     let mode = current::mode_state(app);
     let route = mode.proxy_route.as_deref().filter(|_| mode.is_proxy());
     let members = stack::members(&state.db, app, &stack, route).map_err(err)?;
-    let notice = match app {
-        AppType::Codex => codex_stack_notice(state, &stack),
-        _ => None,
+    let (notice, notice_reasons) = match app {
+        AppType::Codex => codex_stack_notice_with_reasons(state, &stack)
+            .map_or((None, Vec::new()), |(notice, reasons)| {
+                (Some(notice), reasons)
+            }),
+        _ => (None, Vec::new()),
     };
     Ok(StackView {
         active: mode.is_proxy() && stack.enabled,
         members: stack::member_views(&members),
         notice,
+        notice_reasons,
         stale_clients: None,
         stale_revision: None,
     })
@@ -1239,6 +1243,15 @@ pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<
 /// 目录文件（Stack 模型不发布）；或者官方做默认、最近一次写目录时没拿到官方列表，或者拿到的
 /// 列表里没有能选的模型（本机 Codex 太旧）。
 fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static str> {
+    codex_stack_notice_with_reasons(state, stack).map(|(notice, _)| notice)
+}
+
+/// [`codex_stack_notice`] 再加上没取到列表的原因码（见 [`StackView::notice_reasons`]）。
+fn codex_stack_notice_with_reasons(
+    state: &AppState,
+    stack: &StackState,
+) -> Option<(&'static str, Vec<&'static str>)> {
+    use codex_official_models::NativeSource;
     let (_, route) = attached_route(state, &AppType::Codex).ok()??;
     let published =
         stack::published_members(&state.db, &AppType::Codex, stack, Some(&route.id)).ok()?;
@@ -1246,16 +1259,19 @@ fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static s
         return None;
     }
     if codex_direct::route_owns_catalog(&route) {
-        return Some("routeOwnsCatalog");
+        return Some(("routeOwnsCatalog", Vec::new()));
     }
     if !codex_direct::is_official(&route) {
         return None;
     }
     match codex_official_models::last_source()? {
-        codex_official_models::NativeSource::Fetched => None,
-        codex_official_models::NativeSource::Bundled => Some("officialModelsBundled"),
-        codex_official_models::NativeSource::Unavailable => Some("officialModelsUnavailable"),
-        codex_official_models::NativeSource::Outdated => Some("officialModelsOutdated"),
+        NativeSource::Fetched => None,
+        NativeSource::Bundled(official) => Some(("officialModelsBundled", vec![official.code()])),
+        NativeSource::Unavailable { official, bundled } => Some((
+            "officialModelsUnavailable",
+            vec![official.code(), bundled.code()],
+        )),
+        NativeSource::Outdated => Some(("officialModelsOutdated", Vec::new())),
     }
 }
 
@@ -1362,6 +1378,7 @@ async fn refresh_codex_official_models(state: &AppState) {
             }
         };
         let Some(version) = codex_official_models::needs_refresh(&login) else {
+            codex_official_models::catch_up_after_fallback(&login);
             return;
         };
         if let Err(error) = codex_official_models::refresh(&login, &version) {
@@ -1404,7 +1421,9 @@ fn codex_official_login_now(
         stack: &members,
     };
     let prepared = codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
-    codex_direct::predicted_official_login(&state.db, &owner, &spec, &prepared).map_err(err)
+    codex_direct::predicted_official_login(&state.db, &owner, &spec, &prepared)
+        .map(Result::ok)
+        .map_err(err)
 }
 
 /// 代理换了地址之后，按新地址重写每个接上代理的应用。一个应用失败（比如配置文件解析
@@ -6720,6 +6739,41 @@ model_provider = "c"
         rows
     }
 
+    /// 写目录那一刻钥匙串没读出来，聚合的模型暂不可用；钥匙串又读得出时缓存里的条目还新，
+    /// 后台检查不联网、直接按它重写（不等条目过了新鲜期）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_a_fallback_recovers_from_a_fresh_entry_once_the_login_is_back() {
+        let _home = Home::new();
+        seed_codex(
+            "cli_auth_credentials_store = \"auto\"\n",
+            Some(&chatgpt("ws", "alice")),
+        );
+        let keychain = Arc::new(std::sync::Mutex::new(CodexKeychainLogin::Missing));
+        let fake = fake_models_sharing(vec![official_list(&[])], keychain.clone(), None);
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert!(catalog_slugs().contains(&"gpt-6-sol".to_string()));
+
+        *keychain.lock().unwrap() = CodexKeychainLogin::Unknown;
+        resync_route(&state, &AppType::Codex).await.expect("resync");
+        let view = stack_views(&state, &AppType::Codex).unwrap();
+        assert_eq!(view.notice, Some("officialModelsUnavailable"));
+        assert_eq!(view.notice_reasons, vec!["noLogin", "noCli"]);
+
+        *keychain.lock().unwrap() = CodexKeychainLogin::Missing;
+        *fake.now.lock().unwrap() = NOW + 3600;
+        check_codex_official_models(&state).await;
+        assert_eq!(fake.calls.lock().unwrap().len(), 1, "no new fetch");
+        assert!(catalog_slugs().contains(&"gpt-6-sol".to_string()));
+        assert!(stack_views(&state, &AppType::Codex)
+            .unwrap()
+            .notice
+            .is_none());
+    }
+
     #[tokio::test]
     #[serial]
     async fn codex_official_route_lists_every_official_model_before_the_stacked_ones() {
@@ -6958,10 +7012,9 @@ model_provider = "c"
         enter(&state, &AppType::Codex, true).await.expect("enter");
         set_codex_member(&state, "deepseek", true).await;
         assert!(fake.calls.lock().unwrap().is_empty());
-        assert_eq!(
-            stack_views(&state, &AppType::Codex).unwrap().notice,
-            Some("officialModelsUnavailable")
-        );
+        let view = stack_views(&state, &AppType::Codex).unwrap();
+        assert_eq!(view.notice, Some("officialModelsUnavailable"));
+        assert_eq!(view.notice_reasons, vec!["noLogin", "noCli"]);
         exit(&state, &AppType::Codex).await.expect("exit");
         set_codex_member(&state, "deepseek", false).await;
         drop(fake);
@@ -6993,6 +7046,21 @@ model_provider = "c"
             stack_views(&state, &AppType::Codex).unwrap().notice,
             Some("officialModelsUnavailable")
         );
+        exit(&state, &AppType::Codex).await.expect("exit");
+        set_codex_member(&state, "deepseek", false).await;
+        drop(fake);
+
+        // 登录超过 8 天没刷新：不拉取，提示里说清是登录过期，而不是笼统的「读取不到」。
+        let mut stale = chatgpt("ws", "alice");
+        stale["last_refresh"] = serde_json::json!("2026-01-01T00:00:00Z");
+        seed_codex("", Some(&stale));
+        let fake = fake_models(vec![official_list(&[])], CodexKeychainLogin::Missing, None);
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert!(fake.calls.lock().unwrap().is_empty());
+        let view = stack_views(&state, &AppType::Codex).unwrap();
+        assert_eq!(view.notice, Some("officialModelsUnavailable"));
+        assert_eq!(view.notice_reasons, vec!["loginStale", "noCli"]);
     }
 
     #[tokio::test]
