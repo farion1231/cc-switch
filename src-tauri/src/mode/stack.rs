@@ -382,7 +382,8 @@ pub struct Member {
     pub model_ids: Vec<String>,
 }
 
-/// 名单里还在库里的成员，按加入顺序。库里已经没有的跳过（删除供应商会先把它移出名单，
+/// 名单里还在库里的成员，按供应商排序；未指定排序、或排序相同时保持加入顺序。
+/// 库里已经没有的跳过（删除供应商会先把它移出名单，
 /// 删行前失败才会留下）。`route` 是代理模式下的路由供应商（不在代理模式时为 `None`）。
 pub fn members(
     db: &Database,
@@ -408,6 +409,12 @@ pub fn members(
             model_ids,
         });
     }
+    members.sort_by_key(|member| {
+        (
+            member.provider.sort_index.is_none(),
+            member.provider.sort_index,
+        )
+    });
     Ok(members)
 }
 
@@ -418,7 +425,7 @@ pub fn is_published(member: &Member) -> bool {
     !member.route || !member.model_ids.is_empty()
 }
 
-/// 发布 Stack 模型的成员（按名单顺序，见 [`is_published`]）。Stack 模式关着（路由模式）时
+/// 发布 Stack 模型的成员（按供应商排序，见 [`members`]、[`is_published`]）。Stack 模式关着（路由模式）时
 /// 没有：名单留着，下次进入 Stack 模式时恢复。
 pub fn published_members(
     db: &Database,
@@ -434,7 +441,7 @@ pub fn published_members(
     Ok(members)
 }
 
-/// Claude 的这些成员发布给客户端的模型，按名单顺序。
+/// Claude 的这些成员发布给客户端的模型，按成员顺序。
 pub fn claude_published(members: &[Member]) -> Vec<StackModel> {
     members
         .iter()
@@ -1013,6 +1020,44 @@ mod tests {
             .map(|view| (view.provider_id.as_str(), view.route, view.model_ids.len()))
             .collect();
         assert_eq!(route_flags, vec![("kimi", true, 1), ("zhipu", false, 1)]);
+    }
+
+    #[test]
+    fn stack_members_follow_provider_sort_order_without_changing_keys() {
+        let fx = fixture();
+        let stack = state::stack(&fx.store, "claude").unwrap();
+        let mut zhipu = fx
+            .db
+            .get_provider_by_id("zhipu", "claude")
+            .unwrap()
+            .unwrap();
+        zhipu.sort_index = Some(0);
+        fx.db.save_provider("claude", &zhipu).unwrap();
+        let ordered = members(&fx.db, &AppType::Claude, &stack, Some("kimi")).unwrap();
+        assert_eq!(
+            ordered
+                .iter()
+                .map(|m| m.provider.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["zhipu", "kimi"]
+        );
+        assert_eq!(ordered[0].key, "zhipu");
+        assert_eq!(
+            claude_route_default(&ordered).unwrap().id,
+            "ccs-claude-kimi--kimi-k3"
+        );
+
+        // Equal indices and legacy rows without indices keep their join order.
+        let mut kimi = fx.db.get_provider_by_id("kimi", "claude").unwrap().unwrap();
+        kimi.sort_index = Some(0);
+        fx.db.save_provider("claude", &kimi).unwrap();
+        let tied = members(&fx.db, &AppType::Claude, &stack, None).unwrap();
+        assert_eq!(
+            tied.iter()
+                .map(|m| m.provider.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["kimi", "zhipu"]
+        );
     }
 
     #[test]

@@ -5727,6 +5727,126 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
+    async fn sorting_providers_outside_stack_mode_keeps_live_files() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        for proxy in [false, true] {
+            if proxy {
+                enter(&state, &AppType::Claude, false).await.unwrap();
+            }
+            let before = fs::read(settings_path()).unwrap();
+            ProviderService::update_sort_order(
+                &state,
+                AppType::Claude,
+                vec![
+                    crate::services::provider::ProviderSortUpdate {
+                        id: "kimi".into(),
+                        sort_index: 0,
+                    },
+                    crate::services::provider::ProviderSortUpdate {
+                        id: "a".into(),
+                        sort_index: 1,
+                    },
+                ],
+            )
+            .unwrap();
+            assert_eq!(fs::read(settings_path()).unwrap(), before);
+            assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sorting_stacked_claude_providers_rewrites_the_picker() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        enter(&state, &AppType::Claude, true).await.unwrap();
+        set_member(&state, "kimi", true).await;
+        let before = stack_state();
+        ProviderService::update_sort_order(
+            &state,
+            AppType::Claude,
+            vec![
+                crate::services::provider::ProviderSortUpdate {
+                    id: "kimi".into(),
+                    sort_index: 0,
+                },
+                crate::services::provider::ProviderSortUpdate {
+                    id: "a".into(),
+                    sort_index: 1,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            picker().unwrap(),
+            vec![
+                "ccs-claude-kimi--kimi-k3",
+                "ccs-claude-a--claude-sonnet-4-6"
+            ]
+        );
+        assert_eq!(stack_state(), before);
+        assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            "ccs-claude-a--claude-sonnet-4-6"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sorting_stacked_codex_providers_rewrites_catalog_priorities() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
+        enter(&state, &AppType::Codex, true).await.unwrap();
+        set_codex_member(&state, "deepseek", true).await;
+        set_codex_member(&state, "zhipu", true).await;
+        let before = stack_state_of(&AppType::Codex);
+        ProviderService::update_sort_order(
+            &state,
+            AppType::Codex,
+            vec![
+                crate::services::provider::ProviderSortUpdate {
+                    id: "zhipu".into(),
+                    sort_index: 0,
+                },
+                crate::services::provider::ProviderSortUpdate {
+                    id: "deepseek".into(),
+                    sort_index: 1,
+                },
+                crate::services::provider::ProviderSortUpdate {
+                    id: "a".into(),
+                    sort_index: 2,
+                },
+            ],
+        )
+        .unwrap();
+        // Codex keeps the default route's native models before Stack models.
+        assert_eq!(
+            catalog_slugs(),
+            vec![
+                "gpt-a",
+                "ccs-zhipu/gpt-zhipu",
+                "ccs-deepseek/deepseek-v4-pro"
+            ]
+        );
+        let catalog = codex_catalog();
+        let priorities = catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["priority"].as_u64().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(priorities, vec![1, 2, 3]);
+        assert_eq!(stack_state_of(&AppType::Codex), before);
+        assert_eq!(in_use(&state, &AppType::Codex).as_deref(), Some("a"));
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn editing_or_deleting_an_stacked_provider_rewrites_the_contract() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);

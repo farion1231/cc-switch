@@ -7509,6 +7509,15 @@ impl ProviderService {
         app_type: AppType,
         updates: Vec<ProviderSortUpdate>,
     ) -> Result<bool, AppError> {
+        // Stack ordering is part of the proxy contract. Serialize the database
+        // update and live rewrite with mode switches and provider edits.
+        let _switch_guard = if crate::mode::stack::supports_stack(&app_type) {
+            Some(crate::mode::controller::lock_settled_blocking(
+                state, &app_type,
+            )?)
+        } else {
+            None
+        };
         let mut providers = state.db.get_all_providers(app_type.as_str())?;
 
         for update in updates {
@@ -7516,6 +7525,13 @@ impl ProviderService {
                 provider.sort_index = Some(update.sort_index);
                 state.db.save_provider(app_type.as_str(), provider)?;
             }
+        }
+
+        if crate::mode::stack::stack_mode_now(&app_type) {
+            futures::executor::block_on(crate::mode::controller::resync_route_locked(
+                state, &app_type,
+            ))
+            .map_err(AppError::Message)?;
         }
 
         Ok(true)
