@@ -218,6 +218,20 @@ export function useRestartCodexAppServerDaemon() {
   });
 }
 
+/**
+ * 关掉看不到进程时出的「Codex 可能还在用旧的」提示：后端记下现在这份，之后再变才提示。
+ */
+export function useAcknowledgeCodexStaleClients() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => proxyApi.acknowledgeCodexStaleClients(),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
+    },
+  });
+}
+
 // ========== 代理服务器控制 Hooks ==========
 
 /**

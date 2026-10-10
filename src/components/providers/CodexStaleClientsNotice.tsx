@@ -4,7 +4,10 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { useRestartCodexAppServerDaemon } from "@/lib/query/proxy";
+import {
+  useAcknowledgeCodexStaleClients,
+  useRestartCodexAppServerDaemon,
+} from "@/lib/query/proxy";
 import type { CodexStaleClients } from "@/types/proxy";
 
 interface CodexStaleClientsNoticeProps {
@@ -15,7 +18,8 @@ interface CodexStaleClientsNoticeProps {
 /**
  * Codex 客户端可能缓存着旧账号或模型列表（模型目录只在启动时读，切换账号或直连、路由、聚合
  * 模式后都会变）。命令行连的守护进程确认后一键重启；桌面版、编辑器插件只提示用户彻底退出再
- * 开。重启会中断守护进程里正在运行的任务，执行期间确认框保持打开。
+ * 开。重启会中断守护进程里正在运行的任务，执行期间确认框保持打开。看不到桌面版、编辑器插件
+ * 进程时（Windows），只能说「可能」，关掉提示时让后端记下现在这份，同一份不再提示。
  */
 export function CodexStaleClientsNotice({
   staleClients,
@@ -24,17 +28,24 @@ export function CodexStaleClientsNotice({
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
   const restart = useRestartCodexAppServerDaemon();
+  const acknowledge = useAcknowledgeCodexStaleClients();
+  const dismiss = () => {
+    if (staleClients.unverified) acknowledge.mutate();
+    onDismiss?.();
+  };
 
   return (
     <>
       <Notice
         tone="warning"
         title={t(
-          staleClients.auth
-            ? "proxy.stackMode.codexStale.authTitle"
-            : "proxy.stackMode.codexStale.title",
+          staleClients.unverified
+            ? "proxy.stackMode.codexStale.unverifiedTitle"
+            : staleClients.auth
+              ? "proxy.stackMode.codexStale.authTitle"
+              : "proxy.stackMode.codexStale.title",
         )}
-        onDismiss={onDismiss}
+        onDismiss={onDismiss || staleClients.unverified ? dismiss : undefined}
         dismissLabel={t("common.close")}
         actions={
           staleClients.daemon ? (
@@ -60,6 +71,11 @@ export function CodexStaleClientsNotice({
         {staleClients.others && (
           <span className="block">
             {t("proxy.stackMode.codexStale.others")}
+          </span>
+        )}
+        {staleClients.unverified && (
+          <span className="block">
+            {t("proxy.stackMode.codexStale.unverifiedHint")}
           </span>
         )}
       </Notice>

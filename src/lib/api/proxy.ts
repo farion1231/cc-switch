@@ -114,6 +114,12 @@ export const proxyApi = {
     return invoke("restart_codex_app_server_daemon");
   },
 
+  // 关掉看不到进程时出的「Codex 可能还在用旧的」提示：后端记下现在的模型目录和登录，同一份
+  // 不再提示
+  async acknowledgeCodexStaleClients(): Promise<void> {
+    return invoke("acknowledge_codex_stale_clients");
+  },
+
   // ========== v3+ 全局/应用级配置 API ==========
 
   // 获取全局代理配置

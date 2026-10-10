@@ -144,6 +144,8 @@ export function AppConfigSection({
       {DIRECTORY_APPS.map((app) => (
         <SettingsBlock
           key={app}
+          id={`app-config-${app}`}
+          className="rounded-panel"
           title={blockTitle(app)}
           actions={saveButton(app)}
         >

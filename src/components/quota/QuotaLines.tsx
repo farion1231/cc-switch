@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
+  barPercent,
   cardRows,
   FAILED_LINE_KEY,
   countdownStr,
@@ -522,7 +523,7 @@ interface QuotaBarsProps {
 
 const BAR_ROW_CLASS = "flex h-[18px] items-center gap-2 text-caption";
 
-/** 展开的额度条（授权中心、多套餐展开）：条越短剩得越少 */
+/** 展开的额度条（授权中心、多套餐展开）：条长跟着数值（剩余或已用，见 barPercent） */
 export function QuotaBars({
   rows,
   title,
@@ -573,9 +574,7 @@ export function QuotaBars({
       )}
       <div className="flex flex-col gap-1">
         {rows.map(({ label, line, note }) => {
-          const width = Number.isFinite(line.left)
-            ? Math.max(0, Math.min(100, line.left))
-            : 100;
+          const width = barPercent(line);
           // 展开时地方够，重置时间直接写在数值后面（卡片上只在悬停说明里）
           const trailing = [resetText(t, line, now), note]
             .filter(Boolean)

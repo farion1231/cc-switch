@@ -130,6 +130,7 @@ pub struct TrayTexts {
     pub tier_gemini_flash_lite: &'static str,
     pub tier_premium: &'static str,
     pub tier_left: &'static str,
+    pub tier_used: &'static str,
     pub tier_used_up: &'static str,
     pub balance: &'static str,
     pub balance_used_up: &'static str,
@@ -142,6 +143,8 @@ pub struct TrayTexts {
     pub reset_at_time: &'static str,
     /// chrono 格式串：重置日期
     pub date_format: &'static str,
+    /// 按档的额度写已用百分比（设置里「额度显示」选了已用）；不是文案，跟着文案一起传下去
+    pub quota_used: bool,
 }
 
 /// 将系统区域标识映射为托盘支持的语言码。
@@ -229,6 +232,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "Premium",
                 tier_left: "{label} {value}% left",
+                tier_used: "{label} {value}% used",
                 tier_used_up: "{label} used up",
                 balance: "Balance {value}",
                 balance_used_up: "Balance used up",
@@ -240,6 +244,7 @@ impl TrayTexts {
                 reset_on_date: "{label} quota resets {when}",
                 reset_at_time: "{label} quota resets at {when}",
                 date_format: "%b %-d",
+                quota_used: false,
             },
             "ja" => Self {
                 show_main: "CC Switch を開く",
@@ -288,6 +293,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "プレミアム",
                 tier_left: "{label} 残り {value}%",
+                tier_used: "{label} 使用済み {value}%",
                 tier_used_up: "{label} 使い切り",
                 balance: "残高 {value}",
                 balance_used_up: "残高なし",
@@ -299,6 +305,7 @@ impl TrayTexts {
                 reset_on_date: "{label}の枠は {when} にリセット",
                 reset_at_time: "{label}の枠は {when} にリセット",
                 date_format: "%-m月%-d日",
+                quota_used: false,
             },
             "zh-TW" => Self {
                 show_main: "開啟 CC Switch",
@@ -344,6 +351,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "進階請求",
                 tier_left: "{labelSp}剩餘 {value}%",
+                tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "餘額 {value}",
                 balance_used_up: "餘額已用完",
@@ -355,6 +363,7 @@ impl TrayTexts {
                 reset_on_date: "{labelSp}額度 {when}重置",
                 reset_at_time: "{labelSp}額度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
+                quota_used: false,
             },
             _ => Self {
                 show_main: "打开 CC Switch",
@@ -400,6 +409,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "高级请求",
                 tier_left: "{labelSp}剩余 {value}%",
+                tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "余额 {value}",
                 balance_used_up: "余额已用完",
@@ -411,6 +421,7 @@ impl TrayTexts {
                 reset_on_date: "{labelSp}额度 {when}重置",
                 reset_at_time: "{labelSp}额度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
+                quota_used: false,
             },
         }
     }
@@ -422,7 +433,10 @@ impl TrayTexts {
             Some(lang) => lang,
             None => detect_system_tray_language(),
         };
-        Self::from_language(language)
+        Self {
+            quota_used: settings.quota_shows_used(),
+            ..Self::from_language(language)
+        }
     }
 }
 
@@ -457,7 +471,7 @@ fn truncate_chars(text: &str, max: usize) -> String {
     out
 }
 
-// ─── 额度文字（和供应商卡片同一套：一律写剩余，快用完 / 已用完才多说一句）────────────
+// ─── 额度文字（和供应商卡片同一套：按设置写剩余或已用，快用完 / 已用完才多说一句）────────────
 
 /// 托盘里合并的档：周限额的几个别名取最高利用率，Fable 单列；月窗口里 Codex 免费版的 30 天
 /// 窗口也算（#3651）。
@@ -554,6 +568,9 @@ fn tier_line(
     let left = (100.0 - utilization).round().max(0.0);
     let text = if left <= 0.0 {
         fill_label(texts.tier_used_up, label, &[])
+    } else if texts.quota_used {
+        let value = format!("{}", (100.0 - left) as i64);
+        fill_label(texts.tier_used, label, &[("value", value.as_str())])
     } else {
         let value = format!("{}", left as i64);
         fill_label(texts.tier_left, label, &[("value", value.as_str())])
@@ -3022,6 +3039,41 @@ mod tests {
         assert_eq!(
             sub_title(&tw, &quota).as_deref(),
             Some("5 小時剩餘 69% · 每週剩餘 5%")
+        );
+    }
+
+    #[test]
+    fn subscription_quota_is_written_as_what_is_used_when_chosen() {
+        let used = |texts: TrayTexts| TrayTexts {
+            quota_used: true,
+            ..texts
+        };
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![tier(TIER_FIVE_HOUR, 31.0), tier(TIER_SEVEN_DAY, 95.0)],
+        );
+        // 「快用完」仍按剩余判断
+        assert_eq!(
+            title(format_subscription_quota(&used(zh()), &quota)),
+            Some(("5 小时已用 31% · 每周已用 95%".to_string(), true))
+        );
+        // 用完照旧写「已用完」
+        assert_eq!(
+            sub_title(
+                &used(zh()),
+                &make_quota("claude", true, vec![tier(TIER_FIVE_HOUR, 100.0)])
+            )
+            .as_deref(),
+            Some("5 小时已用完")
+        );
+        assert_eq!(
+            sub_title(
+                &used(en()),
+                &make_quota("gemini", true, vec![tier(TIER_GEMINI_PRO, 15.4)])
+            )
+            .as_deref(),
+            Some("Pro 15% used")
         );
     }
 
