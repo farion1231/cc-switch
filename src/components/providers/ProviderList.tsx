@@ -13,7 +13,6 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -452,74 +451,71 @@ export function ProviderList({
   return (
     <div className="space-y-4">
       {piStateErrorNotice}
-      {/* 面板挂到 body：留在 space-y 容器里会被算作兄弟元素，下面的列表多出 margin-top 往下挤 */}
-      {createPortal(
-        <AnimatePresence>
-          {isSearchOpen && (
-            <motion.div
-              key="provider-search"
-              initial={{ opacity: 0, y: -8, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -8, scale: 0.98 }}
-              transition={{ duration: 0.18, ease: "easeOut" }}
-              className="fixed end-6 top-[6.5rem] z-40 w-[min(90vw,26rem)]"
-            >
-              <div className="space-y-3 rounded-panel border border-border bg-surface p-4 shadow-v7-lg">
-                <div className="relative flex items-center gap-2">
-                  <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-3" />
-                  <Input
-                    ref={searchInputRef}
-                    value={searchTerm}
-                    onChange={(event) => setSearchTerm(event.target.value)}
-                    placeholder={t("provider.searchPlaceholder", {
-                      defaultValue: "Search name, notes, or URL...",
-                    })}
-                    aria-label={t("provider.searchAriaLabel", {
-                      defaultValue: "Search providers",
-                    })}
-                    className="pe-16 ps-9"
-                  />
-                  {searchTerm && (
-                    <Button
-                      variant="quiet"
-                      size="compact"
-                      className="absolute end-11 top-1/2 -translate-y-1/2"
-                      onClick={() => setSearchTerm("")}
-                    >
-                      {t("common.clear", { defaultValue: "Clear" })}
-                    </Button>
-                  )}
+      {/* 搜索面板参与列表布局，给自身高度留出空间，避免遮挡首张卡片的操作按钮。 */}
+      <AnimatePresence>
+        {isSearchOpen && (
+          <motion.div
+            key="provider-search"
+            initial={{ opacity: 0, y: -8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.98 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="ms-auto w-full max-w-[26rem]"
+          >
+            <div className="space-y-3 rounded-panel border border-border bg-surface p-4 shadow-v7-lg">
+              <div className="relative flex items-center gap-2">
+                <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-3" />
+                <Input
+                  ref={searchInputRef}
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder={t("provider.searchPlaceholder", {
+                    defaultValue: "Search name, notes, or URL...",
+                  })}
+                  aria-label={t("provider.searchAriaLabel", {
+                    defaultValue: "Search providers",
+                  })}
+                  className="pe-16 ps-9"
+                />
+                {searchTerm && (
                   <Button
                     variant="quiet"
-                    size="icon-compact"
-                    className="ms-auto"
-                    onClick={() => setIsSearchOpen(false)}
-                    aria-label={t("provider.searchCloseAriaLabel", {
-                      defaultValue: "Close provider search",
-                    })}
+                    size="compact"
+                    className="absolute end-11 top-1/2 -translate-y-1/2"
+                    onClick={() => setSearchTerm("")}
                   >
-                    <X className="h-4 w-4" />
+                    {t("common.clear", { defaultValue: "Clear" })}
                   </Button>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 text-caption text-fg-3">
-                  <span>
-                    {t("provider.searchScopeHint", {
-                      defaultValue:
-                        "Matches provider name, notes, website, and API address.",
-                    })}
-                  </span>
-                  <span>
-                    {t("provider.searchCloseHint", {
-                      defaultValue: "Press Esc to close",
-                    })}
-                  </span>
-                </div>
+                )}
+                <Button
+                  variant="quiet"
+                  size="icon-compact"
+                  className="ms-auto"
+                  onClick={() => setIsSearchOpen(false)}
+                  aria-label={t("provider.searchCloseAriaLabel", {
+                    defaultValue: "Close provider search",
+                  })}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>,
-        document.body,
-      )}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-caption text-fg-3">
+                <span>
+                  {t("provider.searchScopeHint", {
+                    defaultValue:
+                      "Matches provider name, notes, website, and API address.",
+                  })}
+                </span>
+                <span>
+                  {t("provider.searchCloseHint", {
+                    defaultValue: "Press Esc to close",
+                  })}
+                </span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {filteredProviders.length === 0 ? (
         <div className="rounded-panel border border-dashed border-border px-6 py-8 text-center text-body text-fg-2">

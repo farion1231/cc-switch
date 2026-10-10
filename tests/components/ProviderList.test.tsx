@@ -342,6 +342,68 @@ describe("ProviderList Component", () => {
     expect(onSwitch).toHaveBeenCalledWith(providerA);
   });
 
+  it.each([{ ctrlKey: true }, { metaKey: true }])(
+    "keeps search in the list flow and restores cards on close (%o)",
+    async (shortcut) => {
+      const alpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+      const beta = createProvider({ id: "beta", name: "Beta Works" });
+      const onEdit = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [alpha, beta],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+
+      const { container } = renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ alpha, beta }}
+          appId="codex"
+          switchMode={switchMode()}
+          onEdit={onEdit}
+        />,
+      );
+
+      fireEvent.keyDown(window, { key: "f", ...shortcut });
+      const input = screen.getByRole("textbox", { name: "Search providers" });
+      // A body portal with fixed positioning covers the first card's actions.
+      // Keep the panel before the cards in the list's normal document flow.
+      expect(container).toContainElement(input);
+      const list = container.firstElementChild!;
+      const panel = list.firstElementChild!;
+      expect(panel).toContainElement(input);
+      expect(panel).not.toHaveClass("fixed");
+      expect(panel).not.toHaveClass("absolute");
+      expect(panel.nextElementSibling).toContainElement(
+        screen.getByTestId("provider-card-alpha"),
+      );
+      await waitFor(() => expect(input).toHaveFocus());
+
+      fireEvent.change(input, { target: { value: "beta" } });
+      expect(
+        screen.queryByTestId("provider-card-alpha"),
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("edit-beta"));
+      expect(onEdit).toHaveBeenCalledWith(beta);
+
+      fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() => expect(input).not.toBeInTheDocument());
+      expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: "f", ...shortcut });
+      const reopened = screen.getByRole("textbox", {
+        name: "Search providers",
+      });
+      expect(reopened).toHaveValue("beta");
+      fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+      expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Close provider search" }),
+      );
+      await waitFor(() => expect(reopened).not.toBeInTheDocument());
+    },
+  );
+
   it("filters providers with the search input", () => {
     const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
