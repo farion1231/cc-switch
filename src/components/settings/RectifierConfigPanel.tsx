@@ -15,6 +15,7 @@ export function RectifierConfigPanel() {
     enabled: true,
     requestThinkingSignature: true,
     requestThinkingBudget: true,
+    requestAdaptiveThinking: true,
     requestMediaFallback: true,
     requestMediaHeuristic: true,
   });
@@ -109,6 +110,21 @@ export function RectifierConfigPanel() {
             disabled={!config.enabled}
             onCheckedChange={(checked) =>
               handleChange({ requestThinkingBudget: checked })
+            }
+          />
+        </div>
+        <div className="flex items-center justify-between pl-4">
+          <div className="space-y-0.5">
+            <Label>{t("settings.advanced.rectifier.adaptiveThinking")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.adaptiveThinkingDescription")}
+            </p>
+          </div>
+          <Switch
+            checked={config.requestAdaptiveThinking}
+            disabled={!config.enabled}
+            onCheckedChange={(checked) =>
+              handleChange({ requestAdaptiveThinking: checked })
             }
           />
         </div>

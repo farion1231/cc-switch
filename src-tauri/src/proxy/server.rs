@@ -1295,4 +1295,151 @@ mod tests {
             "full URL"
         );
     }
+
+    /// Claude Code 按客户端模型（claude-opus-5）组装 WebSearch 辅助请求：`thinking: disabled`
+    /// + 强制 tool_choice。供应商把 opus 映射到只支持 adaptive thinking 的 claude-opus-5-5 后，
+    /// 上游会依次拒绝这两项；adaptive thinking 整流器应一次性修正并对同一供应商重试成功。
+    #[tokio::test]
+    async fn claude_adaptive_thinking_rectifier_recovers_mapped_websearch_side_query() {
+        let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+        let mock_app = Router::new().route(
+            "/v1/messages",
+            post({
+                let captured = captured.clone();
+                move |request: axum::extract::Request| {
+                    let captured = captured.clone();
+                    async move {
+                        let (parts, body) = request.into_parts();
+                        let body = axum::body::to_bytes(body, 1024 * 1024)
+                            .await
+                            .expect("read mock request body");
+                        let body: Value =
+                            serde_json::from_slice(&body).expect("parse mock request body");
+                        let model = body["model"].as_str().unwrap_or_default().to_string();
+                        let thinking_disabled = body["thinking"]["type"] == "disabled";
+                        let forced_tool_choice =
+                            matches!(body["tool_choice"]["type"].as_str(), Some("tool" | "any"));
+                        captured.lock().await.push(CapturedRequest {
+                            path_and_query: parts.uri.path().to_string(),
+                            authorization: None,
+                            body,
+                        });
+
+                        // 报错文本与真实上游（claude-opus-5-5）实测返回逐字一致
+                        if thinking_disabled {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                [(header::CONTENT_TYPE, "application/json")],
+                                format!(
+                                    r#"{{"error":{{"message":"{model} requires adaptive thinking; omit thinking or use thinking.type=adaptive and output_config.effort","type":"invalid_request_error"}},"type":"error"}}"#
+                                ),
+                            );
+                        }
+                        if forced_tool_choice {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                [(header::CONTENT_TYPE, "application/json")],
+                                format!(
+                                    r#"{{"error":{{"message":"{model} does not support forced tool_choice; use auto or none","type":"invalid_request_error"}},"type":"error"}}"#
+                                ),
+                            );
+                        }
+                        (
+                            StatusCode::OK,
+                            [(header::CONTENT_TYPE, "application/json")],
+                            format!(
+                                r#"{{"id":"msg_test","type":"message","role":"assistant","model":"{model}","content":[{{"type":"text","text":"ok"}}],"stop_reason":"end_turn","stop_sequence":null,"usage":{{"input_tokens":3,"output_tokens":1}}}}"#
+                            ),
+                        )
+                    }
+                }
+            }),
+        );
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "mapped-opus".to_string(),
+            "mapped-opus".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": format!("http://{mock_addr}"),
+                    "ANTHROPIC_AUTH_TOKEN": "upstream-secret",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save claude provider");
+        db.set_current_provider("claude", &provider.id)
+            .expect("select claude provider");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+
+        // Claude Code 在客户端模型为 claude-opus-5 时发出的 WebSearch 辅助请求形态
+        let side_query = json!({
+            "model": "claude-opus-5",
+            "max_tokens": 32000,
+            "thinking": {"type": "disabled"},
+            "output_config": {"effort": "high"},
+            "tool_choice": {"type": "tool", "name": "web_search"},
+            "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}],
+            "messages": [{"role": "user", "content": "Perform a web search for the query: cc-switch"}]
+        });
+        let send = || {
+            client
+                .post(format!("http://127.0.0.1:{}/v1/messages", proxy_info.port))
+                .header("x-api-key", "client-secret")
+                .header("anthropic-version", "2023-06-01")
+                .json(&side_query)
+                .send()
+        };
+
+        let response = send().await.expect("send side query");
+        assert_eq!(response.status(), StatusCode::OK);
+        {
+            let requests = captured.lock().await;
+            assert_eq!(requests.len(), 2, "整流后只应对同一供应商重试一次");
+            let (first, retry) = (&requests[0].body, &requests[1].body);
+            assert_eq!(first["model"], "claude-opus-5-5", "供应商模型映射应生效");
+            assert_eq!(first["thinking"], json!({"type": "disabled"}));
+            assert_eq!(retry["model"], "claude-opus-5-5");
+            assert!(retry.get("thinking").is_none(), "重试应省略 thinking");
+            assert_eq!(retry["tool_choice"], json!({"type": "auto"}));
+            assert_eq!(retry["output_config"], json!({"effort": "high"}));
+            assert_eq!(retry["tools"], side_query["tools"]);
+        }
+
+        // 关闭子开关后不整流：上游 400 原样返回，也不重试
+        db.set_rectifier_config(&crate::proxy::types::RectifierConfig {
+            request_adaptive_thinking: false,
+            ..crate::proxy::types::RectifierConfig::default()
+        })
+        .expect("disable adaptive thinking rectifier");
+        let response = send().await.expect("send side query with rectifier off");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(captured.lock().await.len(), 3, "关闭整流器后不应重试");
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
 }
