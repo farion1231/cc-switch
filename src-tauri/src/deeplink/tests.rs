@@ -929,6 +929,21 @@ fn test_parse_grokbuild_mcp_deeplink() {
     assert_eq!(request.apps.as_deref(), Some("grokbuild"));
 }
 
+/// 入口白名单要和下层 `parse_mcp_apps` 一致，支持 MCP 的 MiniMax Code、Pi 不能在这里被拒
+#[test]
+fn test_parse_mcode_and_pi_mcp_deeplink() {
+    let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
+    let config_b64 = BASE64_STANDARD.encode(config);
+    let url =
+        format!("ccswitch://v1/import?resource=mcp&apps=mcode,pi&config={config_b64}&enabled=true");
+
+    let request = parse_deeplink_url(&url).expect("parse MiniMax Code / Pi MCP deeplink");
+    let apps = request.apps.as_deref().unwrap();
+    assert_eq!(apps, "mcode,pi");
+    let parsed = crate::deeplink::mcp::parse_mcp_apps(apps).unwrap();
+    assert!(parsed.mcode && parsed.pi);
+}
+
 #[test]
 fn test_parse_skill_deeplink() {
     let url = "ccswitch://v1/import?resource=skill&repo=owner/repo&directory=skills&branch=dev";

@@ -2687,6 +2687,9 @@
       "tomlInvalid": "TOML 格式錯誤，請檢查",
       "commandRequired": "請填寫命令",
       "singleServerObjectRequired": "此處只需單個伺服器物件，請不要貼上包含 mcpServers 的整份設定",
+      "piSseUnsupported": "Pi 不支援 SSE 連線方式的 MCP 伺服器，請改用 HTTP（streamable HTTP）",
+      "piInvalidName": "Pi 的 MCP 伺服器名稱只能包含字母、數字、_ 和 -：{{id}}",
+      "piNameConflict": "Pi 會把只差 - 和 _ 的伺服器名稱視為同一個：{{id}} 與已有的 {{other}} 衝突",
       "saveFailed": "儲存失敗",
       "deleteFailed": "刪除失敗"
     },

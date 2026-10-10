@@ -39,6 +39,7 @@ impl McpService {
         let save_with_pi = || {
             if server.apps.pi || prev_apps.pi {
                 mcp::pi::sync_and_commit(
+                    &state.db,
                     &server.id,
                     mcp::pi::PiChange::from_enabled(server.apps.pi.then_some(&server.server)),
                     || state.db.save_mcp_server(&server),
@@ -90,7 +91,7 @@ impl McpService {
         if let Some(server) = server {
             let delete_with_pi = || {
                 if server.apps.pi {
-                    mcp::pi::sync_and_commit(id, mcp::pi::PiChange::Remove, || {
+                    mcp::pi::sync_and_commit(&state.db, id, mcp::pi::PiChange::Remove, || {
                         state.db.delete_mcp_server(id)
                     })
                 } else {
@@ -136,6 +137,7 @@ impl McpService {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
                 } else {
                     mcp::pi::sync_and_commit(
+                        &state.db,
                         server_id,
                         mcp::pi::PiChange::from_enabled(spec),
                         commit,

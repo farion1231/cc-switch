@@ -10,6 +10,7 @@
 
 use crate::app_config::{McpApps, McpServer};
 use crate::config::atomic_write_private;
+use crate::database::Database;
 use crate::error::AppError;
 use crate::store::AppState;
 use serde_json::{json, Value};
@@ -53,6 +54,13 @@ pub(crate) fn config_path() -> Result<PathBuf, AppError> {
     Ok(crate::pi_config::get_pi_agent_dir()?.join("mcp.json"))
 }
 
+/// Pi 没装（没有 Pi 配置目录）时不写文件，和 Claude / Codex / Gemini 一致：
+/// 不为同步新建 `<Pi 配置目录>/mcp.json`
+fn installed_config_path() -> Result<Option<PathBuf>, AppError> {
+    let dir = crate::pi_config::get_pi_agent_dir()?;
+    Ok(dir.is_dir().then(|| dir.join("mcp.json")))
+}
+
 fn read(path: &Path) -> Result<Value, AppError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
@@ -86,6 +94,52 @@ fn normalized_name(id: &str) -> String {
     id.replace('-', "_")
 }
 
+/// `names` 里有和 `id` 只差 `-` / `_` 的另一个名字就拒绝
+fn check_name_collision<'a>(
+    id: &str,
+    names: impl IntoIterator<Item = &'a String>,
+) -> Result<(), AppError> {
+    let key = normalized_name(id);
+    match names
+        .into_iter()
+        .find(|name| name.as_str() != id && normalized_name(name) == key)
+    {
+        Some(other) => Err(AppError::McpValidation(format!(
+            "Pi 把只差 - 和 _ 的服务器名视为同一个：{id} 与已有的 {other} 冲突"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// 在 Pi 上启用前对照数据库里已勾选 Pi 的服务器查重名。
+/// Pi 没装时没有文件可对照，不查的话两个只差 - 和 _ 的服务器都能勾上，装上 Pi 后每次同步都报错
+fn check_enabled_name_collision(
+    id: &str,
+    servers: &indexmap::IndexMap<String, McpServer>,
+) -> Result<(), AppError> {
+    check_name_collision(
+        id,
+        servers
+            .iter()
+            .filter(|(_, server)| server.apps.pi)
+            .map(|(name, _)| name),
+    )
+}
+
+/// Pi 不接受的条目（不看文件里的其他条目）：非法名、SSE、无效连接
+fn validate_entry(id: &str, spec: &Value) -> Result<(), AppError> {
+    validate_name(id)?;
+    native_transport(spec).map(|_| ())
+}
+
+/// Pi 没装时不写文件，但仍按 Pi 的规则拒绝，免得装上 Pi 后每次同步都报错
+fn validate_change(id: &str, change: PiChange<'_>) -> Result<(), AppError> {
+    match change {
+        PiChange::Enable(spec) => validate_entry(id, spec),
+        PiChange::Disable | PiChange::Remove => Ok(()),
+    }
+}
+
 /// CC Switch 的统一格式 → 写进 Pi 的连接字段。SSE 直接拒绝
 fn native_transport(spec: &Value) -> Result<Value, AppError> {
     super::validation::validate_server_spec(spec)?;
@@ -106,7 +160,11 @@ pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    sync_file(&config_path()?, id, PiChange::from_enabled(spec))
+    let change = PiChange::from_enabled(spec);
+    match installed_config_path()? {
+        Some(path) => sync_file(&path, id, change),
+        None => validate_change(id, change),
+    }
 }
 
 /// 删除服务器时清掉 Pi 里由 CC Switch 写入、后来被取消勾选的条目：
@@ -115,10 +173,9 @@ pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), A
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    let path = config_path()?;
-    if !path.exists() {
+    let Some(path) = installed_config_path()?.filter(|path| path.exists()) else {
         return Ok(());
-    }
+    };
     let managed = read(&path)?["mcpServers"].get(id).is_some_and(|entry| {
         entry.get("enabled") == Some(&json!(false)) && transport_spec(entry) == transport_spec(spec)
     });
@@ -128,8 +185,11 @@ pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), A
     Ok(())
 }
 
-/// 先写 Pi 的 `mcp.json` 再提交数据库；数据库失败就把文件恢复原样
+/// 先写 Pi 的 `mcp.json` 再提交数据库；数据库失败就把文件恢复原样。
+/// 启用时在同一把写锁里重新读数据库查重名：锁外读的快照挡不住两个并发请求分别勾上
+/// dev-tools 和 dev_tools（Pi 没装时没有文件可对照）
 pub(crate) fn sync_and_commit<T>(
+    db: &Database,
     id: &str,
     change: PiChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
@@ -137,7 +197,13 @@ pub(crate) fn sync_and_commit<T>(
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    let path = config_path()?;
+    if let PiChange::Enable(_) = change {
+        check_enabled_name_collision(id, &db.get_all_mcp_servers()?)?;
+    }
+    let Some(path) = installed_config_path()? else {
+        validate_change(id, change)?;
+        return commit();
+    };
     crate::mcode_config::write_and_commit(&path, || sync_file(&path, id, change), commit)
 }
 
@@ -149,16 +215,8 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
     let servers = document["mcpServers"].as_object_mut().unwrap();
     match change {
         PiChange::Enable(spec) => {
-            validate_name(id)?;
-            let key = normalized_name(id);
-            if let Some(other) = servers
-                .keys()
-                .find(|name| name.as_str() != id && normalized_name(name) == key)
-            {
-                return Err(AppError::McpValidation(format!(
-                    "Pi 把只差 - 和 _ 的服务器名视为同一个：{id} 与已有的 {other} 冲突"
-                )));
-            }
+            validate_entry(id, spec)?;
+            check_name_collision(id, servers.keys())?;
             let transport = native_transport(spec)?;
             // 条目还在就沿用它（用户在 Pi 里改过的设置优先）；不在就从保存的 Pi 字段重建
             let mut merged = servers.get(id).cloned().unwrap_or_else(|| pi_fields(spec));
@@ -196,20 +254,43 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
 /// 从 Pi 的 `mcp.json` 导入。Pi 自己的字段（`timeout`、`exposure` 等）留在连接定义里原样保存；
 /// `enabled: false` 的条目导入后不勾选 Pi。和已有服务器连接方式不同的同名条目跳过并报告。
 pub fn import(state: &AppState) -> Result<usize, AppError> {
+    // 和勾选共用写锁：重名检查读到的数据库在导入写完前不会被并发勾选改掉
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
     let document = read(&config_path()?)?;
     let mut existing = state.db.get_all_mcp_servers()?;
+    let before = existing.clone();
     let mut count = 0;
     let mut skipped = Vec::new();
-    for (id, native) in document["mcpServers"].as_object().into_iter().flatten() {
+    let natives = document["mcpServers"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    for (id, native) in &natives {
         let mut spec = unified_spec(native);
-        if super::validation::validate_server_spec(&spec).is_err() {
-            skipped.push(format!("'{id}': invalid transport configuration"));
+        // 按 Pi 的规则校验：导入后会勾上 Pi，不合规的条目之后每次同步都会报错
+        if validate_entry(id, &spec).is_err() {
+            skipped.push(format!("'{id}': not accepted by Pi"));
+            continue;
+        }
+        // 只差 - 和 _ 的几个条目在 Pi 里是同一个服务器，分不清该导哪个，都跳过
+        if let Some(other) = natives
+            .keys()
+            .find(|name| *name != id && normalized_name(name) == normalized_name(id))
+        {
+            skipped.push(format!("'{id}': same Pi server name as '{other}'"));
             continue;
         }
         let enabled = native
             .get("enabled")
             .and_then(Value::as_bool)
             .unwrap_or(true);
+        // 也不能和数据库里已勾选 Pi 的服务器只差 - 和 _（比如 Pi 没装时勾上的）
+        if enabled && check_enabled_name_collision(id, &before).is_err() {
+            skipped.push(format!("'{id}': same Pi server name as an enabled server"));
+            continue;
+        }
         spec.as_object_mut().unwrap().remove("enabled");
         let server = if let Some(mut server) = existing.shift_remove(id) {
             if transport_spec(&server.server) != transport_spec(&spec) {
