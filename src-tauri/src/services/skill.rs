@@ -1192,11 +1192,24 @@ impl SkillService {
     ///
     /// 递归遍历目录下所有非隐藏文件，按相对路径字典序排列，
     /// 将 "相对路径\0内容\0" 逐文件 feed 给同一个 hasher。
+    /// Python 运行缓存（`__pycache__/`、`*.pyc`）不参与：见
+    /// `collect_files_for_hash`。基线、现算与远端哈希都走本函数，
+    /// 口径保持一致。
     pub fn compute_dir_hash(dir: &Path) -> Result<String> {
+        Self::compute_dir_hash_inner(dir, true)
+    }
+
+    /// 不过滤运行缓存的旧口径哈希。仅用于复核旧版本登记的基线：
+    /// 导入/恢复/补记时目录里可能已有运行缓存，旧基线把它们一起哈希了。
+    fn compute_dir_hash_with_runtime_cache(dir: &Path) -> Result<String> {
+        Self::compute_dir_hash_inner(dir, false)
+    }
+
+    fn compute_dir_hash_inner(dir: &Path, ignore_runtime_cache: bool) -> Result<String> {
         use sha2::{Digest, Sha256};
 
         let mut files: Vec<PathBuf> = Vec::new();
-        Self::collect_files_for_hash(dir, dir, &mut files)?;
+        Self::collect_files_for_hash(dir, dir, &mut files, ignore_runtime_cache)?;
         files.sort();
 
         let mut hasher = Sha256::new();
@@ -1215,8 +1228,18 @@ impl SkillService {
     }
 
     /// 递归收集目录下所有非隐藏文件
+    ///
+    /// `ignore_runtime_cache` 时跳过 Python 运行缓存：`__pycache__/` 目录与
+    /// `*.pyc`。默认 symlink 部署下，应用运行 Python Skill 产生的字节码缓存
+    /// 会穿过链接落进 SSOT；它们是运行产物而非源码，若计入哈希，源码未动的
+    /// Skill 会被误判「本地修改」并永久挡在更新列表外（Astra P2，#7781）。
     #[allow(clippy::only_used_in_recursion)]
-    fn collect_files_for_hash(base: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    fn collect_files_for_hash(
+        base: &Path,
+        current: &Path,
+        files: &mut Vec<PathBuf>,
+        ignore_runtime_cache: bool,
+    ) -> Result<()> {
         let entries = fs::read_dir(current)
             .with_context(|| format!("读取目录失败: {}", current.display()))?;
         for entry in entries {
@@ -1225,9 +1248,12 @@ impl SkillService {
             if name.starts_with('.') {
                 continue;
             }
+            if ignore_runtime_cache && (name == "__pycache__" || name.ends_with(".pyc")) {
+                continue;
+            }
             let path = entry.path();
             if path.is_dir() {
-                Self::collect_files_for_hash(base, &path, files)?;
+                Self::collect_files_for_hash(base, &path, files, ignore_runtime_cache)?;
             } else {
                 files.push(path);
             }
@@ -1323,6 +1349,88 @@ impl SkillService {
             Ok(h) => Some((h, true)),
             Err(_) => None,
         }
+    }
+
+    /// 现算 SSOT 目录的过滤口径内容哈希。目录非法、缺失或现算失败时为 None。
+    fn current_filtered_hash(ssot_dir: &Path, raw_directory: &str) -> Option<String> {
+        let directory = Self::require_valid_directory(raw_directory).ok()?;
+        let local_dir = ssot_dir.join(directory);
+        if !local_dir.exists() {
+            return None;
+        }
+        Self::compute_dir_hash(&local_dir).ok()
+    }
+
+    /// 本地目录相对基线是否算「已改动」，`current_filtered` 为本轮现算的
+    /// 过滤口径哈希（None 表示现算失败或目录不可用，不认定改动）。
+    ///
+    /// 先按过滤运行缓存的新口径比较；不一致时再用不过滤的旧口径复核一次：
+    /// 旧版本登记的基线可能把运行缓存一起哈希了（导入/恢复/补记时目录里
+    /// 已有 .pyc）。只差缓存（旧口径与基线一致）不算本地改动，避免旧基线
+    /// 把 Skill 永久挡在更新列表外；两种口径都不等才是真改过。
+    fn dir_differs_from_baseline(
+        ssot_dir: &Path,
+        raw_directory: &str,
+        baseline: &str,
+        current_filtered: Option<&str>,
+    ) -> bool {
+        let Some(current) = current_filtered else {
+            return false;
+        };
+        if current == baseline {
+            return false;
+        }
+        match Self::require_valid_directory(raw_directory) {
+            Ok(directory) => {
+                let local_dir = ssot_dir.join(directory);
+                Self::compute_dir_hash_with_runtime_cache(&local_dir)
+                    .map(|raw| raw != baseline)
+                    .unwrap_or(false)
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// 现算 SSOT 目录内容哈希并与基线比较，识别本地改动。
+    /// 目录非法或现算失败时不认定改动（回退到登记哈希比较的旧路径）。
+    fn local_dir_differs_from(ssot_dir: &Path, raw_directory: &str, baseline: &str) -> bool {
+        let current = Self::current_filtered_hash(ssot_dir, raw_directory);
+        Self::dir_differs_from_baseline(ssot_dir, raw_directory, baseline, current.as_deref())
+    }
+
+    /// 判定是否把 Skill 列入更新列表（#7772）。纯本地判定，单独成函数便于测试。
+    ///
+    /// `local_hash` 是 `local_hash_for_update_check` 的结果：登记哈希或本轮
+    /// 现场补记的目录哈希；目录缺失时为 None。`current_filtered` 是本轮
+    /// 现算的过滤口径哈希，本地改动判定与「有更新」比较都以它为准。
+    fn should_report_skill_update(
+        ssot_dir: &Path,
+        directory: &str,
+        registered_hash: Option<&str>,
+        local_hash: Option<&str>,
+        current_filtered: Option<&str>,
+        freshly_computed: bool,
+        remote_hash: &str,
+    ) -> bool {
+        // 本轮哈希是现场补记的：没有「安装时」基线，无法区分「本地改过」和
+        // 「上游真变了」，不得作为「有更新」的依据。目录缺失走不到这里
+        // （None 且 freshly_computed 必为 false），保持缺失重建语义：进更新
+        // 列表，点更新即重建。
+        if freshly_computed {
+            return false;
+        }
+        // 登记哈希存在且本地目录在：现算目录内容哈希识别本地改动。改过的
+        // Skill 一律不进更新列表——报了就会诱导「全部更新」把用户改动整
+        // 目录覆盖，只剩备份区快照。需要放弃改动时卸载重装即可强制刷新。
+        if let Some(baseline) = registered_hash {
+            if Self::dir_differs_from_baseline(ssot_dir, directory, baseline, current_filtered) {
+                return false;
+            }
+        }
+        // 「有更新」的本地侧用过滤口径现算哈希：登记哈希（尤其旧版本登记的）
+        // 可能把运行缓存一起哈希了，直接与过滤口径的远端哈希比较，会把
+        // 「内容与上游完全相同、只差缓存」误报成有更新（funkpopo P2，#7781）。
+        current_filtered.or(local_hash) != Some(remote_hash)
     }
 
     /// 检查所有已安装 Skill 的更新
@@ -1424,6 +1532,7 @@ impl SkillService {
                     }
                 };
 
+                let mut freshly_backfilled = false;
                 let local_hash = match Self::local_hash_for_update_check(
                     &ssot_dir,
                     &skill.directory,
@@ -1431,14 +1540,34 @@ impl SkillService {
                 ) {
                     Some((h, freshly_computed)) => {
                         if freshly_computed {
-                            let _ = db.update_skill_hash(&skill.id, &h, 0);
+                            freshly_backfilled = true;
                         }
                         Some(h)
                     }
                     None => None,
                 };
+                // 现场补算的哈希不回填数据库（funkpopo P2，#7781 讨论）：
+                // 补记的内容可能含用户本地改动，落库后下一轮就成了「原始
+                // 基线」，与远端的任何差异都会被当成上游更新，诱导「全部
+                // 更新」覆盖本地改动。无登记基线的 Skill 保持不进更新列表，
+                // 直到真正的安装/更新流程登记基线；需要刷新时卸载重装。
+                let current_filtered = if freshly_backfilled {
+                    local_hash.clone()
+                } else {
+                    Self::current_filtered_hash(&ssot_dir, &skill.directory)
+                };
 
-                if local_hash.as_deref() != Some(&remote_hash) {
+                // 补记轮与本地已改动两种状态不得报「有更新」（#7772）：
+                // 报了就会诱导「全部更新」把用户改动整目录覆盖。
+                if Self::should_report_skill_update(
+                    &ssot_dir,
+                    &skill.directory,
+                    skill.content_hash.as_deref(),
+                    local_hash.as_deref(),
+                    current_filtered.as_deref(),
+                    freshly_backfilled,
+                    &remote_hash,
+                ) {
                     updates.push(SkillUpdateInfo {
                         id: skill.id.clone(),
                         name: skill.name.clone(),
@@ -1601,6 +1730,20 @@ impl SkillService {
         let skill = current_skill;
 
         let dest = ssot_dir.join(&skill.directory);
+
+        // 替换前按「检查更新」同一口径复查本地改动（funkpopo P2，#7781 讨论）：
+        // 检查与点击更新之间可能隔着任意长时间，期间用户对 SSOT 的修改不能被
+        // 静默覆盖。目录缺失保持重建语义；无登记基线（老版本安装）无从判定，
+        // 维持原行为。需要放弃本地改动时卸载重装。
+        if let Some(baseline) = skill.content_hash.as_deref().filter(|h| !h.is_empty()) {
+            if dest.exists() && Self::local_dir_differs_from(&ssot_dir, &skill.directory, baseline)
+            {
+                return Err(anyhow!(
+                    "本地 Skill 相对安装基线已有改动，已跳过更新以保护这些改动；如需放弃本地改动，请卸载后重新安装 (local changes detected since install; update skipped)"
+                ));
+            }
+        }
+
         let mut deployments = Vec::new();
         for app in [AppType::Pi, AppType::Mcode] {
             if skill.apps.is_enabled_for(&app) {
@@ -6468,6 +6611,256 @@ mod tests {
     }
 
     #[test]
+    fn compute_dir_hash_ignores_python_runtime_cache() {
+        // Astra P2（#7781）：__pycache__/ 目录与 *.pyc 是运行产物而非源码，
+        // 不得参与哈希；否则基线、现算与远端三端口径互相打架。
+        let dir = tempdir().expect("tempdir").path().join("my-skill");
+        fs::create_dir_all(dir.join("scripts")).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "pristine").expect("write skill");
+        fs::write(dir.join("scripts").join("helper.py"), "print(1)").expect("write script");
+        let clean = SkillService::compute_dir_hash(&dir).expect("hash");
+
+        fs::create_dir_all(dir.join("scripts").join("__pycache__")).expect("create __pycache__");
+        fs::write(
+            dir.join("scripts")
+                .join("__pycache__")
+                .join("helper.cpython-313.pyc"),
+            b"bytecode",
+        )
+        .expect("write pycache entry");
+        fs::write(dir.join("helper.pyc"), b"bytecode").expect("write plain pyc");
+
+        assert_eq!(
+            SkillService::compute_dir_hash(&dir).expect("hash after cache"),
+            clean,
+            "runtime cache artifacts must not change the directory hash"
+        );
+    }
+
+    #[test]
+    fn should_report_skill_update_reports_pristine_local_when_remote_changed() {
+        // 基线路径防回归：本地未改、上游变了，必须照常报更新。
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir(&dir).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "pristine").expect("write skill");
+        let baseline = SkillService::compute_dir_hash(&dir).expect("hash");
+
+        assert!(SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            Some(&baseline),
+            Some(&baseline),
+            Some(&baseline),
+            false,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
+    fn should_report_skill_update_rebuilds_when_dir_missing() {
+        // 目录缺失保持缺失重建语义（967daa1a）：进更新列表，点更新即重建。
+        let ssot = tempdir().expect("tempdir");
+        assert!(SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            Some("cached"),
+            None,
+            None,
+            false,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
+    fn should_report_skill_update_skips_freshly_backfilled() {
+        // #7772 建议 1：本轮哈希是现场补记的，缺「安装时」基线，
+        // 无法区分本地改过与上游真变了，不得作为「有更新」依据。
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir(&dir).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "content").expect("write skill");
+        let current = SkillService::compute_dir_hash(&dir).expect("hash");
+
+        assert!(!SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            None,
+            Some(&current),
+            Some(&current),
+            true,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
+    fn should_report_skill_update_skips_locally_modified() {
+        // #7772 建议 2：现算目录哈希 ≠ 登记基线 = 本地已修改，
+        // 无论上游变没变都不报，防「全部更新」整目录覆盖。
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir(&dir).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "pristine").expect("write skill");
+        let baseline = SkillService::compute_dir_hash(&dir).expect("hash");
+        fs::write(dir.join("SKILL.md"), "locally edited").expect("edit skill");
+        let current = SkillService::compute_dir_hash(&dir).expect("current hash");
+
+        // 上游未变也不报（此时报更新毫无收益，纯覆盖风险）。
+        assert!(!SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            Some(&baseline),
+            Some(&baseline),
+            Some(&current),
+            false,
+            &baseline
+        ));
+        // 上游变了同样不报（防诱导覆盖）。
+        assert!(!SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            Some(&baseline),
+            Some(&baseline),
+            Some(&current),
+            false,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
+    fn should_report_skill_update_falls_back_for_invalid_directory() {
+        // 目录非法识别不了本地改动：不认定改动，沿用登记哈希比较的旧路径。
+        let ssot = tempdir().expect("tempdir");
+        assert!(SkillService::should_report_skill_update(
+            ssot.path(),
+            "../evil",
+            Some("cached"),
+            Some("cached"),
+            None,
+            false,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
+    fn should_report_skill_update_ignores_cache_only_gap_for_legacy_baseline() {
+        // funkpopo P2（#7781 讨论）：旧口径基线含运行缓存，「有更新」的本地侧
+        // 必须用过滤口径现算哈希与远端比较——「内容与上游完全相同、只差缓存」
+        // 不得误报成有更新。
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir_all(dir.join("__pycache__")).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "pristine").expect("write skill");
+        fs::write(dir.join("__pycache__").join("helper.pyc"), b"bytecode").expect("write pyc");
+        let legacy_baseline =
+            SkillService::compute_dir_hash_with_runtime_cache(&dir).expect("legacy hash");
+        let filtered_current = SkillService::compute_dir_hash(&dir).expect("filtered hash");
+        assert_ne!(legacy_baseline, filtered_current, "fixture must differ");
+
+        // 远端内容与本地源码完全相同（过滤口径一致）。
+        assert!(!SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            Some(&legacy_baseline),
+            Some(&legacy_baseline),
+            Some(&filtered_current),
+            false,
+            &filtered_current
+        ));
+    }
+
+    #[test]
+    fn should_report_skill_update_keeps_conservative_skip_for_evolved_legacy_cache() {
+        // 已知残余（funkpopo P2，#7781 讨论）：旧口径基线登记后缓存又发生
+        // 演变（新增/重写/清理 .pyc）时，单哈希基线无法区分「缓存噪音」与
+        // 「源码改动」，保守判「已修改」不报更新——数据安全优先。根治需要
+        // 安装时逐文件快照；需要刷新时卸载重装。此测试钉住该取舍防无声翻转。
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir_all(dir.join("__pycache__")).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "pristine").expect("write skill");
+        fs::write(dir.join("__pycache__").join("helper.pyc"), b"bytecode").expect("write pyc");
+        let legacy_baseline = SkillService::compute_dir_hash_with_runtime_cache(&dir)
+            .expect("legacy hash (cache baked in)");
+        // 基线登记后缓存被清理（纯运行现象，非源码改动）。
+        fs::remove_file(dir.join("__pycache__").join("helper.pyc")).expect("clear cache");
+        let filtered_current = SkillService::compute_dir_hash(&dir).expect("filtered hash");
+        assert_ne!(legacy_baseline, filtered_current, "fixture must differ");
+
+        // 上游有真实更新，但两种口径都无法证明源码未动：不报（保守跳过）。
+        assert!(!SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            Some(&legacy_baseline),
+            Some(&legacy_baseline),
+            Some(&filtered_current),
+            false,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
+    fn local_dir_differs_from_tolerates_runtime_cache_and_legacy_cache_baselines() {
+        // 新口径基线（过滤缓存）与旧口径基线（旧版本导入/恢复/补记时目录里
+        // 已有 .pyc）下，运行缓存的存在与增减都不得算「本地修改」；源码真
+        // 改动时两种口径都必须判「已改动」。
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir_all(dir.join("scripts").join("__pycache__")).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "pristine").expect("write skill");
+        fs::write(dir.join("scripts").join("helper.py"), "print(1)").expect("write script");
+        fs::write(
+            dir.join("scripts")
+                .join("__pycache__")
+                .join("helper.cpython-313.pyc"),
+            b"bytecode",
+        )
+        .expect("write pyc");
+        let legacy_baseline =
+            SkillService::compute_dir_hash_with_runtime_cache(&dir).expect("legacy hash");
+        let clean_baseline = SkillService::compute_dir_hash(&dir).expect("clean hash");
+        assert_ne!(legacy_baseline, clean_baseline, "fixture must differ");
+
+        // 两种基线口径下，现有缓存都不算改动。
+        assert!(!SkillService::local_dir_differs_from(
+            ssot.path(),
+            "my-skill",
+            &legacy_baseline
+        ));
+        assert!(!SkillService::local_dir_differs_from(
+            ssot.path(),
+            "my-skill",
+            &clean_baseline
+        ));
+
+        // 缓存增减也不算改动（python 重写/用户清理 .pyc 均属运行现象）。
+        fs::remove_file(
+            dir.join("scripts")
+                .join("__pycache__")
+                .join("helper.cpython-313.pyc"),
+        )
+        .expect("remove pyc");
+        assert!(!SkillService::local_dir_differs_from(
+            ssot.path(),
+            "my-skill",
+            &clean_baseline
+        ));
+
+        // 真改了源码：必须仍判「已改动」。
+        fs::write(dir.join("SKILL.md"), "locally edited").expect("edit skill");
+        assert!(SkillService::local_dir_differs_from(
+            ssot.path(),
+            "my-skill",
+            &legacy_baseline
+        ));
+        assert!(SkillService::local_dir_differs_from(
+            ssot.path(),
+            "my-skill",
+            &clean_baseline
+        ));
+    }
+
+    #[test]
     #[serial_test::serial]
     fn restore_from_backup_rejects_traversal_directory_in_metadata() {
         let temp = tempdir().expect("tempdir");
@@ -7099,6 +7492,274 @@ mod tests {
                 assert!(service.check_updates(&db).await.unwrap().is_empty());
             }
         }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_updates_skips_freshly_backfilled_hash_cycle() {
+        // #7772 主现场：登记哈希为空（老版本安装、或本地导入后关联仓库），
+        // 本地目录被用户改过，上游未变。旧逻辑现场补记哈希后直接与远端比较，
+        // 必然误报「有更新」；点更新会把本地改动整目录覆盖，只剩备份。
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).expect("isolated config directory");
+        // Keep Windows' legacy-HOME fallback out of this destructive test.
+        fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+        let _home = TestHomeGuard::set(home.path());
+        let remote = tempdir().expect("remote repo");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+
+        let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+        db.save_skill(&installed).expect("seed installed skill");
+
+        let local = SkillService::get_ssot_dir().unwrap().join("my-skill");
+        write_skill(&local, "my-skill");
+        // 用户改动了本地文件；上游保持安装时的内容不变。
+        fs::write(local.join("NOTES.md"), "user edits").expect("edit local skill");
+        write_skill(&remote.path().join("my-skill"), "my-skill");
+
+        let updates = service.check_updates(&db).await.expect("check updates");
+        assert!(
+            updates.is_empty(),
+            "补记轮不得作为「有更新」依据: {updates:?}"
+        );
+        // funkpopo P2（#7781 讨论）：补记的内容可能含用户本地改动，落库后下一轮
+        // 就成了「原始基线」，与远端的任何差异都会被当成上游更新，第二次检查起
+        // 误报「有更新」并诱导「全部更新」覆盖本地改动。现场补算的哈希只在
+        // 本轮使用，不得回填数据库；无登记基线的 Skill 保持不进更新列表。
+        for round in 2..=3 {
+            let updates = service
+                .check_updates(&db)
+                .await
+                .unwrap_or_else(|e| panic!("check updates round {round}: {e}"));
+            assert!(
+                updates.is_empty(),
+                "第 {round} 轮检查不得把补记内容当成原始基线报「有更新」: {updates:?}"
+            );
+        }
+        let saved = db.get_installed_skill(&installed.id).unwrap().unwrap();
+        assert!(
+            saved.content_hash.is_none(),
+            "现场补算的哈希不得回填数据库: {:?}",
+            saved.content_hash
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_updates_no_phantom_update_for_legacy_cache_baseline_when_content_matches() {
+        // funkpopo P2（#7781 讨论）：旧口径登记的基线把运行缓存一起哈希了，
+        // 「有更新」的本地侧若直接拿它与过滤口径的远端哈希比较，「本地与上游
+        // 内容完全相同、只差缓存」也会被误报成有更新。
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).expect("isolated config directory");
+        fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+        let _home = TestHomeGuard::set(home.path());
+        let remote = tempdir().expect("remote repo");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+
+        let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+
+        let local = SkillService::get_ssot_dir().unwrap().join("my-skill");
+        write_skill(&local, "my-skill");
+        // 旧版本登记基线时目录里已有运行缓存：旧口径基线。
+        let pycache = local.join("__pycache__");
+        fs::create_dir_all(&pycache).expect("create __pycache__");
+        fs::write(pycache.join("helper.cpython-313.pyc"), b"bytecode").expect("write pyc");
+        let legacy_baseline =
+            SkillService::compute_dir_hash_with_runtime_cache(&local).expect("legacy baseline");
+        installed.content_hash = Some(legacy_baseline);
+        db.save_skill(&installed).expect("seed installed skill");
+
+        // 上游内容与本地源码完全相同（仓库里没有缓存）。
+        write_skill(&remote.path().join("my-skill"), "my-skill");
+
+        let updates = service.check_updates(&db).await.expect("check updates");
+        assert!(
+            updates.is_empty(),
+            "内容与上游完全相同、只差运行缓存不得误报「有更新」: {updates:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn update_skill_refuses_to_overwrite_local_changes() {
+        // funkpopo P2（#7781 讨论）：本地改动判定只发生在「检查更新」时，
+        // 真正替换文件前不复查。检查之后用户再改文件，点更新仍会整目录覆盖。
+        // 替换前必须按同一口径复查；发现改动时拒绝并保住本地文件。
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).expect("isolated config directory");
+        fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+        let _home = TestHomeGuard::set(home.path());
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let remote = tempdir().expect("remote repo");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+
+        let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+        installed.apps = SkillApps::only(&AppType::Claude);
+
+        let local = SkillService::get_ssot_dir().unwrap().join("my-skill");
+        write_skill(&local, "my-skill");
+        let baseline = SkillService::compute_dir_hash(&local).expect("hash");
+        installed.content_hash = Some(baseline.clone());
+        db.save_skill(&installed).expect("seed installed skill");
+
+        // 上游发布真实更新（本地未改时检查应能发现），随后用户改了本地文件。
+        write_skill(&remote.path().join("my-skill"), "my-skill");
+        fs::write(
+            remote.path().join("my-skill").join("CHANGELOG.md"),
+            "upstream v2",
+        )
+        .expect("upstream moves on");
+        fs::write(local.join("NOTES.md"), "user edits").expect("edit local skill");
+
+        let result = service.update_skill(&db, &installed.id).await;
+        assert!(result.is_err(), "本地相对基线有改动时更新必须拒绝执行");
+        assert!(
+            local.join("NOTES.md").exists(),
+            "拒绝更新后用户的本地文件必须原样保留"
+        );
+        let saved = db.get_installed_skill(&installed.id).unwrap().unwrap();
+        assert_eq!(
+            saved.content_hash.as_deref(),
+            Some(baseline.as_str()),
+            "拒绝更新不得改写登记基线"
+        );
+
+        // 用户放弃改动后，同一入口照常更新。
+        fs::remove_file(local.join("NOTES.md")).expect("discard local edit");
+        let updated = service
+            .update_skill(&db, &installed.id)
+            .await
+            .expect("update after discarding local edits");
+        assert_eq!(updated.name, "my-skill");
+        assert!(
+            local.join("CHANGELOG.md").exists(),
+            "更新必须把上游新内容落到本地"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_updates_skips_locally_modified_skill_even_when_remote_changed() {
+        // #7772 建议 2：登记哈希（安装/更新时记录）在、本地目录被改过时，
+        // 即使上游有新提交也不进更新列表——报了就会诱导「全部更新」把用户
+        // 改动整目录覆盖。需要放弃改动时卸载重装即可强制刷新。
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).expect("isolated config directory");
+        fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+        let _home = TestHomeGuard::set(home.path());
+        let remote = tempdir().expect("remote repo");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+
+        let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+
+        let local = SkillService::get_ssot_dir().unwrap().join("my-skill");
+        write_skill(&local, "my-skill");
+        let baseline = SkillService::compute_dir_hash(&local).expect("hash");
+        // 安装时登记过基线哈希，随后用户改动了本地文件；上游此后有新提交。
+        installed.content_hash = Some(baseline);
+        db.save_skill(&installed).expect("seed installed skill");
+
+        fs::write(local.join("NOTES.md"), "user edits").expect("edit local skill");
+        write_skill(&remote.path().join("my-skill"), "my-skill");
+        fs::write(
+            remote.path().join("my-skill").join("CHANGELOG.md"),
+            "upstream v2",
+        )
+        .expect("upstream moves on");
+
+        let updates = service.check_updates(&db).await.expect("check updates");
+        assert!(
+            updates.is_empty(),
+            "本地已改动的 Skill 不得进更新列表: {updates:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_updates_treats_python_runtime_cache_as_pristine() {
+        // Astra P2（#7781）：默认 symlink 部署下，运行 Python Skill 产生的
+        // __pycache__/*.pyc 会穿过应用目录链接落进 SSOT。它们是运行产物而非
+        // 用户改动：源码未动时不得据此判「本地修改」，否则 Skill 被永久挡在
+        // 更新列表外，上游真实更新收不到。
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).expect("isolated config directory");
+        fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+        let _home = TestHomeGuard::set(home.path());
+        let remote = tempdir().expect("remote repo");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+
+        let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+
+        let local = SkillService::get_ssot_dir().unwrap().join("my-skill");
+        write_skill(&local, "my-skill");
+        // 安装时登记过基线（安装目录里没有运行缓存）。
+        let baseline = SkillService::compute_dir_hash(&local).expect("hash");
+        installed.content_hash = Some(baseline);
+        db.save_skill(&installed).expect("seed installed skill");
+
+        // 运行产物落进 SSOT：源码未动，只多出 Python 字节码缓存。
+        let pycache = local.join("scripts").join("__pycache__");
+        fs::create_dir_all(&pycache).expect("create __pycache__");
+        fs::write(pycache.join("helper.cpython-313.pyc"), b"bytecode").expect("write pyc");
+        fs::write(local.join("helper.pyc"), b"bytecode").expect("write plain pyc");
+        write_skill(&remote.path().join("my-skill"), "my-skill");
+
+        let updates = service.check_updates(&db).await.expect("check updates");
+        assert!(
+            updates.is_empty(),
+            "只多了运行缓存不得误报「有更新」: {updates:?}"
+        );
+
+        // 上游随后发布真实更新：必须照常可见，不得被运行缓存挡住。
+        fs::write(
+            remote.path().join("my-skill").join("CHANGELOG.md"),
+            "upstream v2",
+        )
+        .expect("upstream moves on");
+        let updates = service
+            .check_updates(&db)
+            .await
+            .expect("check updates again");
+        assert!(
+            !updates.is_empty(),
+            "运行缓存不得把真实上游更新挡在更新列表外: {updates:?}"
+        );
     }
 
     #[test]
