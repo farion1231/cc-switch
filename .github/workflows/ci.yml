@@ -225,6 +225,8 @@ jobs:
       - name: Prepare WSL2-backed test environment
         shell: pwsh
         run: |
+          wsl.exe -d Ubuntu-24.04 -u root --exec sh -c "apt-get update -qq && apt-get install -y -qq fish"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           wsl.exe -d Ubuntu-24.04 -- bash -lc "rm -rf /tmp/cc-switch-windows-test-root && mkdir -p /tmp/cc-switch-windows-test-root/{home,temp} && chmod -R 0777 /tmp/cc-switch-windows-test-root"
           $testRoot = "\\wsl.localhost\Ubuntu-24.04\tmp\cc-switch-windows-test-root"
           $testHome = Join-Path $testRoot "home"
@@ -273,6 +275,29 @@ jobs:
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
+          $testList = & $env:CC_SWITCH_TEST_EXE --list --ignored
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $expected = "${testName}: test"
+          if ($testList -notcontains $expected) {
+            throw "Expected ignored test was not discovered: $testName"
+          }
+          & $env:CC_SWITCH_TEST_EXE $testName --ignored --exact --nocapture
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Run WSL2 Claude update command regression
+        # Batch launchers used by the fallback need Windows-native temp paths.
+        # Reuse the test binary to avoid rebuilding after the filesystem contract.
+        env:
+          CC_SWITCH_WSL_DISTRO: Ubuntu-24.04
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        shell: pwsh
+        run: |
+          $testName = "commands::misc::tests::claude_update_wsl::wsl_claude_update_preserves_scope_and_fallback"
           $testList = & $env:CC_SWITCH_TEST_EXE --list --ignored
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
