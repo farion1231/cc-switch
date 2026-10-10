@@ -21,7 +21,7 @@ use crate::live::patch::LiveWriteError;
 /// CC Switch 写入的路由表 id。
 pub const ROUTE_ID: &str = "custom";
 /// 旧版代理官方路由写的表 id。会话按选中的 id 分桶，它让代理下的官方会话自成一桶，
-/// 表一删就 resume 不了，新版不再写；live 里留着的只清理。
+/// 表一删就 resume 不了：新版不再选它，但保留无密钥的官方兼容镜像。
 pub const OFFICIAL_PROXY_ROUTE_ID: &str = "cc-switch-official";
 /// 把内置 openai 改道到别的地址的顶层键。
 const OPENAI_BASE_URL: &str = "openai_base_url";
@@ -692,6 +692,19 @@ impl CodexConfigPatch {
     }
 
     fn write_route(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
+        LegacyOfficialMirrorPatch {
+            base_url: match &self.route {
+                RouteWrite::OfficialProxy { base_url, .. } => Some(base_url.clone()),
+                _ => None,
+            },
+            seed: matches!(
+                self.route,
+                RouteWrite::Official { .. }
+                    | RouteWrite::OfficialMirror
+                    | RouteWrite::OfficialProxy { .. }
+            ),
+        }
+        .apply_to(path, doc)?;
         let root = doc.as_table_mut();
         match self.route.selector() {
             Some(id) => put_value(root, "model_provider", &TomlValue::from(id)),
@@ -706,7 +719,6 @@ impl CodexConfigPatch {
         let referenced = profile_selectors(root);
         let container_inline = matches!(root.get("model_providers"), Some(Item::Value(_)));
         let Some(container) = root.get_mut("model_providers") else {
-            // 没有 model_providers：只有要写表时才建。
             let owned = self.owned_table();
             if let Some((id, table)) = owned {
                 let mut providers = Table::new();
@@ -743,10 +755,9 @@ impl CodexConfigPatch {
             .iter()
             .filter(|(id, item)| {
                 *id != ROUTE_ID
+                    && *id != OFFICIAL_PROXY_ROUTE_ID
                     && !referenced.iter().any(|name| name == id)
-                    && (*id == OFFICIAL_PROXY_ROUTE_ID
-                        || holds_placeholder(item)
-                        || self.is_retired(id, item))
+                    && (holds_placeholder(item) || self.is_retired(id, item))
             })
             .map(|(id, _)| id.to_string())
             .collect();
@@ -840,6 +851,78 @@ impl CodexConfigPatch {
         self.retired
             .iter()
             .any(|known| known.id == id && base_url.as_deref() == Some(known.base_url.as_str()))
+    }
+}
+
+/// 旧官方会话保留原桶，只修官方兼容入口，不改当前选路或真实会话数据。
+/// 全量投影和 settled 直连启动都使用同一补丁，覆盖旧版本已经删表的设备。
+pub(crate) struct LegacyOfficialMirrorPatch {
+    pub base_url: Option<String>,
+    pub seed: bool,
+}
+
+impl TomlDocPatch for LegacyOfficialMirrorPatch {
+    fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
+        let root = doc.as_table_mut();
+        if profile_selectors(root)
+            .iter()
+            .any(|id| id == OFFICIAL_PROXY_ROUTE_ID)
+        {
+            return Ok(());
+        }
+        let container_inline = matches!(root.get("model_providers"), Some(Item::Value(_)));
+        let legacy = root
+            .get("model_providers")
+            .and_then(Item::as_table_like)
+            .and_then(|providers| providers.get(OFFICIAL_PROXY_ROUTE_ID));
+        if !(legacy.is_some_and(is_legacy_official_mirror) || (legacy.is_none() && self.seed)) {
+            return Ok(());
+        }
+        if !root.contains_key("model_providers") {
+            let mut providers = Table::new();
+            providers.set_implicit(true);
+            root.insert("model_providers", Item::Table(providers));
+        }
+        let providers = root
+            .get_mut("model_providers")
+            .and_then(Item::as_table_like_mut)
+            .ok_or_else(|| shape_error(path, &["model_providers".to_string()]))?;
+        put_table(
+            providers,
+            OFFICIAL_PROXY_ROUTE_ID,
+            official_mirror_table(self.base_url.as_deref(), self.base_url.is_none()),
+            container_inline,
+        );
+        Ok(())
+    }
+}
+
+/// 只认旧接管的官方本地路由，或我们写出的无地址兼容镜像；远端/手写表归用户。
+fn is_legacy_official_mirror(item: &Item) -> bool {
+    let Some(table) = item.as_table_like() else {
+        return false;
+    };
+    if table.get("name").and_then(Item::as_str) != Some("OpenAI")
+        || table.get("requires_openai_auth").and_then(Item::as_bool) != Some(true)
+        || table.get("wire_api").and_then(Item::as_str) != Some("responses")
+    {
+        return false;
+    }
+    match table.get("base_url").and_then(Item::as_str) {
+        Some(base_url) => url::Url::parse(base_url.trim()).ok().is_some_and(|url| {
+            url.scheme() == "http"
+                && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
+                && url.path().trim_end_matches('/') == "/v1"
+        }),
+        None => {
+            table.get("supports_websockets").and_then(Item::as_bool) == Some(true)
+                && table.iter().all(|(key, _)| {
+                    matches!(
+                        key,
+                        "name" | "requires_openai_auth" | "wire_api" | "supports_websockets"
+                    )
+                })
+        }
     }
 }
 
@@ -1084,13 +1167,19 @@ mod tests {
 
     #[test]
     fn the_official_proxy_route_stays_in_the_built_in_openai_bucket() {
-        // 旧版写的 cc-switch-official 表删掉；第三方留下的 custom 表改成休眠形态。
+        // 旧版写的 cc-switch-official 表保留官方认证；第三方 custom 表改成休眠形态。
         let live = "model_provider = \"cc-switch-official\"\nopenai_base_url = \"https://stale.example/v1\"\nmodel = \"gpt-5.5\"\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"https://relay.example/v1\"\nexperimental_bearer_token = \"sk-relay\"\n";
         let doc = apply(official_proxy(false), live);
         assert!(doc.get("model_provider").is_none(), "{doc}");
         assert_eq!(doc["openai_base_url"].as_str(), Some(PROXY));
         let providers = doc["model_providers"].as_table().unwrap();
-        assert!(!providers.contains_key(OFFICIAL_PROXY_ROUTE_ID), "{doc}");
+        assert_eq!(
+            providers[OFFICIAL_PROXY_ROUTE_ID]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+        assert!(providers[OFFICIAL_PROXY_ROUTE_ID]
+            .get("experimental_bearer_token")
+            .is_none());
         let dormant = providers[ROUTE_ID].as_table().unwrap();
         assert_eq!(dormant["base_url"].as_str(), Some(PROXY));
         assert_eq!(
@@ -1102,12 +1191,79 @@ mod tests {
         // 已有的改道原位改值，重写不挪位置。
         let settled =
             "openai_base_url = \"http://127.0.0.1:15721/v1\"\napproval_policy = \"never\"\n";
-        assert_eq!(apply(official_proxy(false), settled).to_string(), settled);
+        let rewritten = apply(official_proxy(false), settled).to_string();
+        assert!(rewritten.starts_with(settled));
+        assert_eq!(
+            apply(official_proxy(false), &rewritten).to_string(),
+            rewritten
+        );
 
-        // 没有 model_providers 时不建表。
+        // 没有 model_providers 时也补官方历史兼容入口。
         let bare = apply(official_proxy(false), "model = \"gpt-5.5\"\n");
-        assert!(bare.get("model_providers").is_none(), "{bare}");
+        assert_eq!(
+            bare["model_providers"][OFFICIAL_PROXY_ROUTE_ID]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
         assert_eq!(bare["openai_base_url"].as_str(), Some(PROXY));
+    }
+
+    #[test]
+    fn legacy_official_sessions_keep_an_authenticated_route_across_switches() {
+        let live = "model_provider = \"cc-switch-official\"\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nexperimental_bearer_token = \"PROXY_MANAGED\"\n";
+        for unified in [false, true] {
+            let proxied = apply(official_proxy(unified), live);
+            let legacy = proxied["model_providers"][OFFICIAL_PROXY_ROUTE_ID]
+                .as_table()
+                .unwrap();
+            assert_eq!(legacy["base_url"].as_str(), Some(PROXY));
+            assert_eq!(legacy["requires_openai_auth"].as_bool(), Some(true));
+            assert_eq!(legacy["supports_websockets"].as_bool(), Some(false));
+            assert!(legacy.get("experimental_bearer_token").is_none());
+
+            let direct = apply(
+                RouteWrite::Official {
+                    dormant_base_url: PROXY.to_string(),
+                },
+                &proxied.to_string(),
+            );
+            let legacy = direct["model_providers"][OFFICIAL_PROXY_ROUTE_ID]
+                .as_table()
+                .unwrap();
+            assert!(legacy.get("base_url").is_none());
+            assert!(legacy.get("experimental_bearer_token").is_none());
+            assert_eq!(legacy["requires_openai_auth"].as_bool(), Some(true));
+
+            let mut relay = Table::new();
+            relay.insert("name", toml_edit::value("relay"));
+            relay.insert("base_url", toml_edit::value("https://relay.example/v1"));
+            relay.insert("experimental_bearer_token", toml_edit::value("sk-relay"));
+            let switched = apply(RouteWrite::Custom(relay), &proxied.to_string());
+            let legacy = switched["model_providers"][OFFICIAL_PROXY_ROUTE_ID]
+                .as_table()
+                .unwrap();
+            assert!(
+                legacy.get("base_url").is_none(),
+                "official history must not follow a third-party route"
+            );
+            assert!(legacy.get("experimental_bearer_token").is_none());
+            assert_eq!(legacy["requires_openai_auth"].as_bool(), Some(true));
+            assert_eq!(
+                apply(official_proxy(unified), &proxied.to_string()).to_string(),
+                proxied.to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn switching_preserves_user_repaired_legacy_official_tables() {
+        for table in [
+            "[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\nbase_url = \"https://official-relay.example/v1\"\n",
+            "[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\n",
+        ] {
+            let before = table.parse::<DocumentMut>().unwrap();
+            let after = apply(RouteWrite::Default, table);
+            assert_eq!(after["model_providers"][OFFICIAL_PROXY_ROUTE_ID].to_string(), before["model_providers"][OFFICIAL_PROXY_ROUTE_ID].to_string());
+        }
     }
 
     #[test]

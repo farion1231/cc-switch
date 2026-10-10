@@ -168,6 +168,11 @@ pub struct AppLiveState {
     pub pending: Option<Pending>,
     #[serde(default, skip_serializing_if = "StackState::is_empty")]
     pub stack: StackState,
+    /// 旧版（v3.17–v3.20）接管遗留物的启动归一化已在哪些 Codex 配置目录做过（目录的规范
+    /// 化字符串）：换 `codex_config_dir` 后新目录的残留仍要修，修过的目录（即使切走再切
+    /// 回）不再重做，之后用户对 live 的手改不被覆盖（issue #7948）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub legacy_takeover_repaired_in: Vec<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -177,6 +182,7 @@ impl AppLiveState {
         self.pending.is_none()
             && self.written.is_none()
             && self.stack.is_empty()
+            && self.legacy_takeover_repaired_in.is_empty()
             && self.mode_state() == ModeState::default()
             && self.extra.is_empty()
     }
@@ -389,6 +395,38 @@ pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppErr
         .apps
         .get(app)
         .and_then(|state| state.written.clone()))
+}
+
+/// 旧版接管遗留物的启动归一化已在哪些 Codex 配置目录做过。
+pub fn legacy_takeover_repaired_in(
+    store: &DeviceStore,
+    app: &str,
+) -> Result<Vec<String>, AppError> {
+    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(load(store)?
+        .apps
+        .get(app)
+        .map(|state| state.legacy_takeover_repaired_in.clone())
+        .unwrap_or_default())
+}
+
+/// 记下这台设备上旧版接管遗留物的归一化在 `dir_key`（Codex 配置目录的规范化字符串）
+/// 已完成（每个目录只记一次）。
+pub fn mark_legacy_takeover_repaired_in(
+    store: &DeviceStore,
+    app: &str,
+    dir_key: &str,
+) -> Result<(), AppError> {
+    update(store, |state| {
+        let repaired = &mut state
+            .apps
+            .entry(app.to_string())
+            .or_default()
+            .legacy_takeover_repaired_in;
+        if !repaired.iter().any(|done| done == dir_key) {
+            repaired.push(dir_key.to_string());
+        }
+    })
 }
 
 /// 这个应用的 Stack 模型（成员和 key 登记簿）。

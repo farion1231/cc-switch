@@ -295,6 +295,7 @@
     "skipClaudeOnboardingFailed": "跳過 Claude Code 初次安裝確認失敗",
     "clearClaudeOnboardingSkipFailed": "還原 Claude Code 初次安裝確認失敗",
     "updateSuccess": "供應商更新成功",
+    "providerSavedNotLive": "已儲存到卡片，將在切換到該卡片或重寫代理契約時生效（本次關鍵欄位修改未更新目前生效設定）",
     "updateFailed": "更新供應商失敗：{{error}}",
     "deleteSuccess": "供應商已刪除",
     "deleteFailed": "刪除供應商失敗：{{error}}",
