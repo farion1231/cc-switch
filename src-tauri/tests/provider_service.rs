@@ -169,6 +169,7 @@ command = "say"
                 hermes: false,
                 mcode: false,
                 pi: false,
+                zcode: false,
             },
             description: None,
             homepage: None,
@@ -1459,6 +1460,108 @@ fn reapply_codex_official_live_rewrites_only_the_session_routing() {
     let user_part =
         "approval_policy = \"on-request\"\n\n[mcp_servers.echo-server]\ncommand = \"echo\"\n";
     write_codex_live_atomic(&live_auth, Some(user_part)).expect("seed official live");
+    write_codex_live_atomic(&live_auth, Some("")).expect("seed official live auth");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        let official = Provider::with_id(
+            "codex-official".to_string(),
+            "Official".to_string(),
+            json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "OPENAI_API_KEY": null,
+                    "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
+                },
+                "config": ""
+            }),
+            None,
+        );
+        manager
+            .providers
+            .insert("codex-official".to_string(), official);
+    }
+    let servers = initial_config
+        .mcp
+        .servers
+        .get_or_insert_with(Default::default);
+    servers.insert(
+        "echo-server".into(),
+        McpServer {
+            id: "echo-server".into(),
+            name: "Echo Server".into(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                grokbuild: false,
+                opencode: false,
+                hermes: false,
+                mcode: false,
+                pi: false,
+                zcode: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    );
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "codex-official")
+        .expect("switch to official provider");
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after switch");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "switch should sync enabled MCP servers into live"
+    );
+
+    // 统一会话开关变更触发的 reapply 会整体重写 live config.toml（有意设计），
+    // 写完必须重新投影 DB 里启用的 MCP，否则用户的 MCP 会静默失效。
+    let reapplied =
+        cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply official live");
+    assert!(
+        reapplied,
+        "current provider is official, reapply should run"
+    );
+
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after reapply");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "reapply must re-project enabled MCP servers after the full live rewrite, got: {live}"
+    );
+}
+
+/// reapply 走到 MCP 投影时 live 已按新开关状态落盘、开关事实上已生效：
+/// ① 投影失败若上抛，save_settings 会回滚开关设置，制造"设置=旧值、
+/// live=新桶"的会话分裂——必须降级为警告而不是失败；
+/// ② 投影必须只针对 Codex：sync_all_enabled 按 AppType::all() 顺序短路，
+/// Claude 排在 Codex 前面，损坏的 ~/.claude.json 会在轮到 Codex 之前
+/// 报错——若吞错了事，刚被整体重写清掉的 [mcp_servers] 就无人补回，
+/// Codex MCP 静默消失。这里用坏 JSON 的 ~/.claude.json 复现该场景。
+#[test]
+fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
+    });
+    write_codex_live_atomic(&live_auth, Some("")).expect("seed official live auth");
 
     let mut initial_config = MultiAppConfig::default();
     {
@@ -1476,6 +1579,37 @@ fn reapply_codex_official_live_rewrites_only_the_session_routing() {
             .providers
             .insert("official-provider".to_string(), official);
     }
+    let servers = initial_config
+        .mcp
+        .servers
+        .get_or_insert_with(Default::default);
+    servers.insert(
+        "echo-server".into(),
+        McpServer {
+            id: "echo-server".into(),
+            name: "Echo Server".into(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                grokbuild: false,
+                opencode: false,
+                hermes: false,
+                mcode: false,
+                pi: false,
+                zcode: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    );
+
     let state = create_test_state_with_config(&initial_config).expect("create test state");
     ProviderService::switch(&state, AppType::Codex, "official-provider")
         .expect("switch to official provider");
@@ -1579,6 +1713,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 hermes: false,
                 mcode: false,
                 pi: false,
+                zcode: false,
             },
             description: None,
             homepage: None,
@@ -1642,6 +1777,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 hermes: false,
                 mcode: false,
                 pi: false,
+                zcode: false,
             },
             description: None,
             homepage: None,

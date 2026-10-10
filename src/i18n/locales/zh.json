@@ -1014,7 +1014,10 @@
     },
     "data": {
       "location": "存储位置"
-    }
+    },
+    "browsePlaceholderZcode": "例如：/home/<你的用户名>/.zcode",
+    "zcodeConfigDir": "ZCode 配置目录",
+    "zcodeConfigDirDescription": "覆盖 ZCode 配置目录（默认：~/.zcode）"
   },
   "apps": {
     "claude": "Claude",
@@ -1185,7 +1188,8 @@
     }
   },
   "appSwitcher": {
-    "more": "更多应用"
+    "more": "更多应用",
+    "zcode": "ZCode"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -2138,7 +2142,8 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
-      "label": "按应用筛选"
+      "label": "按应用筛选",
+      "zcode": "ZCode"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
@@ -2577,7 +2582,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "zcode": "ZCode"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -4688,5 +4694,43 @@
       "refresh": "刷新额度",
       "refreshAria": "刷新 {{login}} 的额度"
     }
+  },
+  "zcode": {
+    "addExtraOption": "添加",
+    "addModel": "添加模型",
+    "apiKeyRequired": "API Key 不能为空",
+    "baseUrl": "基础 URL",
+    "baseUrlHint": "自定义 API 端点地址",
+    "baseUrlRequired": "基础 URL 不能为空",
+    "extraOptionKey": "键",
+    "extraOptionKeyPlaceholder": "timeout",
+    "extraOptionValue": "值",
+    "extraOptionValuePlaceholder": "600000",
+    "extraOptions": "额外选项",
+    "extraOptionsHint": "配置额外的供应商选项。值会自动解析为合适的类型（数字、布尔等）。",
+    "kind": "供应商类型",
+    "kindHint": "该供应商使用的 API 协议格式",
+    "kindPlaceholder": "选择供应商类型",
+    "limitContext": "上下文",
+    "limitOutput": "输出",
+    "modelId": "模型 ID",
+    "modelLimits": "Token 限制",
+    "modelName": "显示名称",
+    "models": "模型",
+    "modelsHint": "配置可用模型及其显示名称",
+    "noExtraOptions": "未配置任何额外选项",
+    "noModels": "未配置任何模型",
+    "providerKey": "供应商标识",
+    "providerKeyDuplicate": "该标识已被使用",
+    "providerKeyHint": "在 ~/.zcode/v2/config.json 中的唯一标识。只能使用小写字母、数字、冒号和连字符。",
+    "providerKeyInvalid": "格式无效。只能使用小写字母、数字、冒号和连字符。",
+    "providerKeyLockedHint": "该供应商已添加到 ZCode 配置中，因此其标识无法再修改。",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyRequired": "供应商标识不能为空",
+    "providerKeyStatusLoading": "正在加载供应商标识状态，请稍后再试",
+    "providerName": "供应商名称",
+    "providerNameHint": "在 ZCode 中显示的名称",
+    "providerNamePlaceholder": "我的供应商",
+    "toggleModelDetails": "切换模型详情"
   }
 }

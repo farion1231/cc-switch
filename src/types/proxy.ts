@@ -50,6 +50,7 @@ export interface ProxyTakeoverStatus {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  zcode?: boolean;
 }
 
 /** 应用当前的连接方式。 */

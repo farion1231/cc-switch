@@ -310,6 +310,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
          WHEN '_pi_session' THEN 'Pi (Session)' \
+         WHEN '_zcode_session' THEN 'ZCode (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -403,7 +404,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session', 'zcode_session')
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -418,7 +419,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
                       OR (
                           {log_alias}.cache_creation_tokens = 0
-                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session', 'zcode_session')
                       )
                       OR (
                           proxy_dedup.cache_creation_tokens = 0
@@ -669,7 +670,8 @@ pub(crate) fn has_matching_proxy_usage_log(
     key: &DedupKey,
 ) -> Result<bool, AppError> {
     let allow_missing_cache_creation =
-        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+        matches!(key.app_type, "codex" | "gemini" | "opencode" | "zcode")
+            && key.cache_creation_tokens == 0;
     let allow_legacy_proxy_cache_creation = key.app_type == "codex";
 
     conn.prepare_cached(&MATCHING_PROXY_USAGE_LOG_SQL)

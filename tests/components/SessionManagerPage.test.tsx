@@ -288,6 +288,7 @@ describe("SessionManagerPage", () => {
         hermes: false,
         pi: false,
         mcode: false,
+        zcode: false,
       },
     });
     renderPage("codex");
