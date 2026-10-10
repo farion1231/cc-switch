@@ -436,10 +436,7 @@ impl Database {
     ///
     /// 用于 `ProfileService::apply` 等 sync 路径判断是否需要停止代理服务。
     pub fn is_live_takeover_active_sync(&self) -> bool {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
+        let conn = lock_conn!(self.conn);
         conn.query_row(
             "SELECT COUNT(*) FROM proxy_config WHERE enabled = 1",
             [],
@@ -792,9 +789,7 @@ impl Database {
             let defaults = crate::proxy::types::ProxyConfig::default();
             (defaults.listen_address, defaults.listen_port)
         };
-        let Ok(conn) = self.conn.lock() else {
-            return fallback();
-        };
+        let conn = lock_conn!(self.conn);
         conn.query_row(
             "SELECT listen_address, listen_port FROM proxy_config WHERE app_type = 'claude'",
             [],
@@ -804,10 +799,7 @@ impl Database {
     }
 
     pub fn get_proxy_flags_sync(&self, app_type: &str) -> (bool, bool) {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return (false, false),
-        };
+        let conn = lock_conn!(self.conn);
 
         conn.query_row(
             "SELECT enabled, auto_failover_enabled FROM proxy_config WHERE app_type = ?1",
@@ -826,10 +818,7 @@ impl Database {
         enabled: bool,
         auto_failover_enabled: bool,
     ) -> Result<(), AppError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(format!("Mutex lock failed: {e}")))?;
+        let conn = lock_conn!(self.conn);
 
         conn.execute(
             "UPDATE proxy_config SET enabled = ?2, auto_failover_enabled = ?3, updated_at = datetime('now') WHERE app_type = ?1",
