@@ -329,6 +329,7 @@ function MainDirectory({
           label={t("nav.settings")}
           title={hasUpdate ? t("nav.settingsHasUpdate") : t("nav.settings")}
           dot={hasUpdate}
+          dotTone="success"
           onClick={() => onSelectPage("settings")}
         />
       </div>
@@ -493,6 +494,7 @@ function NavItem({
   trailing,
   alert,
   dot = false,
+  dotTone = "neutral",
   endDot = false,
   onClick,
 }: {
@@ -506,13 +508,16 @@ function NavItem({
   trailing?: string;
   /** 红点：需要处理，内容是给读屏的说明 */
   alert?: string;
-  /** 中性圆点：有更新 */
+  /** 圆点：有更新 */
   dot?: boolean;
+  /** 工具更新用中性色（很多人不想追新）；CC Switch 自己的更新用绿色，和工具更新分开 */
+  dotTone?: "neutral" | "success";
   /** 圆点放在行尾（设置目录里的「关于」），而不是图标角上 */
   endDot?: boolean;
   onClick: () => void;
 }) {
   const ring = selected ? "border-selected" : "border-sidebar";
+  const dotFill = dotTone === "success" ? "bg-success" : "bg-fg-1";
   const accessibleName = [label, trailing, alert].filter(Boolean).join(" · ");
   const glyph = (size: number) => (
     <span aria-hidden="true" className="relative flex shrink-0 text-fg-2">
@@ -520,7 +525,8 @@ function NavItem({
       {dot && (collapsed || !endDot) && (
         <span
           className={cn(
-            "absolute -end-1 -top-[3px] h-2.5 w-2.5 rounded-full border-2 bg-fg-1",
+            "absolute -end-1 -top-[3px] h-2.5 w-2.5 rounded-full border-2",
+            dotFill,
             ring,
           )}
         />
@@ -596,7 +602,7 @@ function NavItem({
         {dot && endDot && (
           <span
             aria-hidden="true"
-            className="h-1.5 w-1.5 shrink-0 rounded-full bg-fg-1"
+            className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotFill)}
           />
         )}
       </button>
@@ -667,6 +673,7 @@ function SettingsDirectory({
             icon={icon}
             label={t(`settings.sections.${section}`)}
             dot={section === "about" && hasUpdate}
+            dotTone="success"
             endDot
             title={
               section === "about" && hasUpdate

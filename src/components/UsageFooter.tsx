@@ -88,7 +88,7 @@ function planLine(
     return {
       key,
       left: Infinity,
-      tone: "normal",
+      tone: "plain",
       text: `${t("usage.used")} ${amount(data.used)}`,
       detail: detail || undefined,
     };

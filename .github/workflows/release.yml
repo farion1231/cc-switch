@@ -307,34 +307,32 @@ jobs:
           echo "AppImage copied: $NEW_APPIMAGE"
           # 额外上传 .deb（用于 Debian/Ubuntu 自动更新）
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
-          if [ -n "$DEB" ]; then
-            NEW_DEB="CC-Switch-${VERSION}-Linux-${ARCH}.deb"
-            cp "$DEB" "release-assets/$NEW_DEB"
-            if [ -f "$DEB.sig" ]; then
-              cp "$DEB.sig" "release-assets/$NEW_DEB.sig"
-            else
-              echo ".sig for deb not found" >&2
-              exit 1
-            fi
-            echo "Deb package copied: $NEW_DEB"
-          else
-            echo "No .deb found (optional)"
+          if [ -z "$DEB" ]; then
+            echo "❌ No .deb found under target/release/bundle" >&2
+            exit 1
           fi
+          if [ ! -f "$DEB.sig" ]; then
+            echo "❌ Updater signature not found: $DEB.sig" >&2
+            exit 1
+          fi
+          NEW_DEB="CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+          cp "$DEB" "release-assets/$NEW_DEB"
+          cp "$DEB.sig" "release-assets/$NEW_DEB.sig"
+          echo "Deb package copied: $NEW_DEB"
           # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等自动更新）
           RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
-          if [ -n "$RPM" ]; then
-            NEW_RPM="CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
-            cp "$RPM" "release-assets/$NEW_RPM"
-            if [ -f "$RPM.sig" ]; then
-              cp "$RPM.sig" "release-assets/$NEW_RPM.sig"
-            else
-              echo ".sig for RPM not found" >&2
-              exit 1
-            fi
-            echo "RPM package copied: $NEW_RPM"
-          else
-            echo "No .rpm found (optional)"
+          if [ -z "$RPM" ]; then
+            echo "❌ No .rpm found under target/release/bundle" >&2
+            exit 1
           fi
+          if [ ! -f "$RPM.sig" ]; then
+            echo "❌ Updater signature not found: $RPM.sig" >&2
+            exit 1
+          fi
+          NEW_RPM="CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+          cp "$RPM" "release-assets/$NEW_RPM"
+          cp "$RPM.sig" "release-assets/$NEW_RPM.sig"
+          echo "RPM package copied: $NEW_RPM"
 
       - name: List prepared assets
         shell: bash
@@ -868,6 +866,10 @@ jobs:
           [ -n "$win_arm64_sig" ] || missing="$missing windows-aarch64"
           [ -n "$linux_x64_sig" ] || missing="$missing linux-x86_64"
           [ -n "$linux_arm64_sig" ] || missing="$missing linux-aarch64"
+          [ -n "$linux_x64_deb_sig" ] || missing="$missing linux-x86_64-deb"
+          [ -n "$linux_arm64_deb_sig" ] || missing="$missing linux-aarch64-deb"
+          [ -n "$linux_x64_rpm_sig" ] || missing="$missing linux-x86_64-rpm"
+          [ -n "$linux_arm64_rpm_sig" ] || missing="$missing linux-aarch64-rpm"
           if [ -n "$missing" ]; then
             echo "❌ Missing updater signatures for:$missing" >&2
             exit 1

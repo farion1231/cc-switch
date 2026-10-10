@@ -2031,23 +2031,21 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         "total_tokens": total_tokens
     });
 
-    let direct_cache_read = usage.get("cache_read_input_tokens").and_then(Value::as_u64);
+    // 每环要求「存在且非 0」：显式 0 按未上报处理继续向后找（#8041：部分中转把
+    // 靠前字段硬编码为桩 0，真值只在低顺位字段）。官方端点同值非 0 不受影响；
+    // 真 0 命中时各候选同为 0/缺失，结果不变。
+    fn provided_nonzero(value: Option<&Value>) -> Option<u64> {
+        value.and_then(Value::as_u64).filter(|tokens| *tokens > 0)
+    }
+    let direct_cache_read = provided_nonzero(usage.get("cache_read_input_tokens"));
     let cached = direct_cache_read
-        .or_else(|| {
-            usage
-                .pointer("/prompt_tokens_details/cached_tokens")
-                .and_then(Value::as_u64)
-        })
-        .or_else(|| {
-            usage
-                .pointer("/input_tokens_details/cached_tokens")
-                .and_then(Value::as_u64)
-        })
+        .or_else(|| provided_nonzero(usage.pointer("/prompt_tokens_details/cached_tokens")))
+        .or_else(|| provided_nonzero(usage.pointer("/input_tokens_details/cached_tokens")))
         // DeepSeek Chat 的文档化缓存命中字段（与 usage/parser.rs 的处理对应），末位兜底。
         // 官方端点目前把同值镜像进未文档化的 prompt_tokens_details.cached_tokens（上面的
         // 标准字段已命中），故仅当上游只发文档字段、不发镜像时此兜底生效（如部分中转），
         // 并防御未文档化镜像将来消失；上游发任一标准字段时行为零变化。
-        .or_else(|| usage.get("prompt_cache_hit_tokens").and_then(Value::as_u64))
+        .or_else(|| provided_nonzero(usage.get("prompt_cache_hit_tokens")))
         .unwrap_or(0);
     let cache_write = usage
         .pointer("/prompt_tokens_details/cache_write_tokens")
@@ -2794,6 +2792,25 @@ mod tests {
         assert_eq!(result["output_tokens"], 100);
         assert_eq!(result["input_tokens_details"]["cached_tokens"], 600);
         assert_eq!(result["input_tokens_details"]["cache_write_tokens"], 0);
+    }
+
+    #[test]
+    fn chat_usage_to_responses_usage_stub_zero_cache_read_falls_through_to_deepseek_hit_tokens() {
+        // #8041 报告者 payload：桩 0 不能短路候选链——合成 response.completed 后
+        // from_codex_response_auto 只能看到这个重建对象，真值必须经
+        // input_tokens_details.cached_tokens 存活到落库/计费（Responses 形态的
+        // input_tokens 保持含缓存的总量，缓存命中进 details）。
+        let usage = json!({
+            "prompt_tokens": 6650,
+            "completion_tokens": 16,
+            "total_tokens": 6666,
+            "cache_read_input_tokens": 0,
+            "prompt_cache_hit_tokens": 6400
+        });
+
+        let result = chat_usage_to_responses_usage(Some(&usage));
+        assert_eq!(result["input_tokens"], 6650);
+        assert_eq!(result["input_tokens_details"]["cached_tokens"], 6400);
     }
 
     #[test]
@@ -4696,13 +4713,16 @@ mod tests {
         assert_eq!(converted["input_tokens_details"]["cached_tokens"], 40);
         assert_eq!(converted["cache_read_input_tokens"], 40);
 
+        // #8041 行为反转：显式 0 按「未上报」处理让位给嵌套标准字段（与
+        // usage/parser.rs、流式 extract_cache_read_tokens 同规则）；重建对象
+        // 只镜像非 0 直传字段，桩 0 不再上抛。
         let direct_zero = json!({
             "prompt_tokens_details": { "cached_tokens": 12 },
             "cache_read_input_tokens": 0
         });
         let converted = chat_usage_to_responses_usage(Some(&direct_zero));
-        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 0);
-        assert_eq!(converted["cache_read_input_tokens"], 0);
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 12);
+        assert!(converted.get("cache_read_input_tokens").is_none());
 
         let invalid_direct = json!({
             "prompt_tokens_details": { "cached_tokens": 12 },

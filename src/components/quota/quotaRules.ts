@@ -2,11 +2,12 @@ import type { TFunction } from "i18next";
 import type { QuotaTier, ResetCredits } from "@/types/subscription";
 
 /**
- * 额度的文字和颜色（v7 QuotaSpec）：一律写「剩余」，平时灰色；任一档剩余不到 10% 加深加粗
- * （不用橙色，见 TONE_TEXT；余额不算，见 balanceLine）；用完 / 过期 / 没查到红色。卡片最多两行：
+ * 额度的文字和颜色（v7 QuotaSpec）：一律写「剩余」，只给数值上色（见 emphasis）：平时绿色；
+ * 任一档剩余不到 20% 橙色（余额不算，见 balanceLine）；用完 / 过期 / 没查到整句红色。卡片最多两行：
  * 档数更多时，第一行固定写窗口最短的那档，其余并成一行（见 cardRows）。
  */
-export type QuotaTone = "normal" | "warning" | "danger" | "muted";
+/** plain：数值不表示额度好坏（「已用 $3.20」），不上色 */
+export type QuotaTone = "normal" | "warning" | "danger" | "muted" | "plain";
 
 export interface QuotaLine {
   key: string;
@@ -14,6 +15,8 @@ export interface QuotaLine {
   /** 不带档名的值（「剩余 62%」），额度条里档名单独一列 */
   value?: string;
   tone: QuotaTone;
+  /** 句子里按 tone 上色的那段数值（「62%」「¥82.10」），其余字保持灰色；没有时整句上色 */
+  emphasis?: string;
   /** 剩余百分比；余额没有总额时是 Infinity，失败 / 过期是负数（排在最前） */
   left: number;
   /** 悬停时补充的一句（套餐名、失败原因）；重置时间不写这里，见 resetsAt */
@@ -52,7 +55,7 @@ export interface QuotaBreakdownItem {
   tone: QuotaTone;
 }
 
-export const WARN_BELOW_PERCENT = 10;
+export const WARN_BELOW_PERCENT = 20;
 
 export function toneForLeft(left: number): QuotaTone {
   if (left <= 0) return "danger";
@@ -114,6 +117,7 @@ export function tierLine(
     key: tier.name,
     left,
     tone: toneForLeft(left),
+    emphasis: left <= 0 ? undefined : `${left}%`,
     text:
       left <= 0
         ? t("quota.tierUsedUp", params)
@@ -203,6 +207,7 @@ export function resetCreditsLine(
     key: "reset_credits",
     left: Infinity,
     tone: expiringSoon ? "warning" : "normal",
+    emphasis: String(count),
     text: t("quota.resetCredits.left", { count }),
     value: t("quota.resetCredits.value", { count }),
     short: t("quota.resetCredits.short", { count }),
@@ -262,6 +267,7 @@ export function creditsLine(
     key: "credits_balance",
     left: Infinity,
     tone: "normal",
+    emphasis: dollars,
     text: t("quota.credits.text", { usd: dollars }),
     value: t("quota.credits.usd", { usd: dollars }),
     short: dollars,
@@ -346,6 +352,7 @@ export function balanceLine(
     key,
     left,
     tone: remaining <= 0 ? "danger" : "normal",
+    emphasis: remaining <= 0 ? undefined : value,
     text:
       remaining <= 0 ? t("quota.balanceUsedUp") : t("quota.balance", { value }),
     detail,

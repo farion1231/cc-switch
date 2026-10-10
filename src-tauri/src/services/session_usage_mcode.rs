@@ -49,6 +49,7 @@ fn sync_from_database(
             output_tokens: row.get::<_, u32>(5)?.saturating_add(row.get(6)?),
             cache_read_tokens: row.get(7)?,
             cache_creation_tokens: row.get(8)?,
+            cache_creation_1h_tokens: 0,
             model: Some(model.into()),
             message_id: None,
         };
