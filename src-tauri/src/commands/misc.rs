@@ -8068,6 +8068,70 @@ printf 'all automatic fish update cases passed\n'
         }
 
         #[cfg(target_os = "windows")]
+        // WSL can retain this test user's systemd sessions after the command
+        // exits. Drain only that account before deleting it; keep failures strict.
+        fn wsl_auto_fish_cleanup_script(fixture_user: &str, fixture_home: &str) -> String {
+            let script = r#"set -eu
+fixture_user=__CCS_USER__
+fixture_home=__CCS_HOME__
+fixture_pid=${fixture_user#ccs-fish-}
+case "$fixture_user" in ccs-fish-*) ;; *) exit 96 ;; esac
+case "$fixture_pid" in ''|*[!0-9]*) exit 96 ;; esac
+[ "$fixture_home" = "/tmp/$fixture_user" ] || exit 96
+fixture_uid=$(id -u "$fixture_user")
+if ! [ "$fixture_uid" -gt 0 ] 2>/dev/null; then
+  printf 'refusing cleanup for fixture account %s with uid %s\n' "$fixture_user" "$fixture_uid" >&2
+  exit 96
+fi
+fixture_list_processes() {
+  fixture_process_table=$(ps -eLo pid=,ppid=,ruid=,euid=,suid=,stat=,comm=) || return "$?"
+  printf '%s\n' "$fixture_process_table" | awk -v fixture_uid="$fixture_uid" '$3 == fixture_uid || $4 == fixture_uid || $5 == fixture_uid'
+}
+fixture_report_processes() {
+  printf 'fixture account %s uid %s: PID PPID RUID EUID SUID STAT COMMAND\n' "$fixture_user" "$fixture_uid" >&2
+  printf '%s\n' "$fixture_processes" >&2
+}
+fixture_processes=$(fixture_list_processes)
+if [ -n "$fixture_processes" ]; then
+  if timeout --kill-after=5s 15s loginctl terminate-user "$fixture_user"; then
+    :
+  else
+    fixture_status=$?
+    printf 'fixture account session termination failed\n' >&2
+    fixture_report_processes
+    exit "$fixture_status"
+  fi
+  fixture_remaining=30
+  while :; do
+    fixture_processes=$(fixture_list_processes)
+    [ -n "$fixture_processes" ] || break
+    if [ "$fixture_remaining" -eq 0 ]; then
+      printf 'timed out waiting 30 seconds for fixture account processes\n' >&2
+      fixture_report_processes
+      exit 124
+    fi
+    fixture_remaining=$((fixture_remaining - 1))
+    sleep 1
+  done
+fi
+if userdel "$fixture_user"; then
+  rm -rf "$fixture_home"
+else
+  fixture_status=$?
+  if fixture_processes=$(fixture_list_processes); then
+    fixture_report_processes
+  else
+    printf 'fixture account process diagnostics unavailable\n' >&2
+  fi
+  exit "$fixture_status"
+fi
+"#;
+            script
+                .replace("__CCS_USER__", &shell_single_quote(fixture_user))
+                .replace("__CCS_HOME__", &shell_single_quote(fixture_home))
+        }
+
+        #[cfg(target_os = "windows")]
         fn assert_wsl_auto_fish_batch_roundtrip(distro: &str) {
             use std::os::windows::process::CommandExt;
 
@@ -8113,9 +8177,7 @@ printf 'all automatic fish update cases passed\n'
                 .output();
             let cleanup = run_wsl_script_as(
                 distro,
-                &format!(
-                    "set -e\nuid=$(id -u {user})\nif userdel {user}; then\n  rm -rf {home}\nelse\n  status=$?\n  ps -u \"$uid\" -o pid,ppid,stat,comm >&2 || true\n  exit \"$status\"\nfi\n"
-                ),
+                &wsl_auto_fish_cleanup_script(&user, &home),
                 Some("root"),
             );
             // Cleanup still runs before assertions, but retain both results so
