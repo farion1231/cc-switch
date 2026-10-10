@@ -1,7 +1,20 @@
 import { useTranslation } from "react-i18next";
-import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
+import {
+  ChevronRight,
+  Minus,
+  Monitor,
+  Moon,
+  Plus,
+  RotateCcw,
+  Sun,
+} from "lucide-react";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { useTheme } from "@/components/theme-provider";
+import {
+  FONT_FAMILY_OPTIONS,
+  FONT_SIZE_OPTIONS,
+  useAppearance,
+} from "@/components/appearance-provider";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Select,
@@ -42,6 +55,15 @@ export function GeneralSection({
 }: GeneralSectionProps) {
   const { t } = useTranslation();
   const { theme, setTheme } = useTheme();
+  const {
+    fontFamily,
+    fontSize,
+    pageZoom,
+    setFontFamily,
+    setFontSize,
+    setPageZoom,
+    resetPageZoom,
+  } = useAppearance();
 
   return (
     <>
@@ -70,6 +92,103 @@ export function GeneralSection({
                   ))}
                 </SelectContent>
               </Select>
+            }
+          />
+          <SettingsRow
+            label={t("settings.fontFamily")}
+            control={
+              <Select
+                value={fontFamily}
+                onValueChange={(value) =>
+                  setFontFamily(value as typeof fontFamily)
+                }
+              >
+                <SelectTrigger
+                  className="h-8 w-[180px]"
+                  aria-label={t("settings.fontFamily")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {FONT_FAMILY_OPTIONS.map((font) => (
+                    <SelectItem
+                      key={font.value}
+                      value={font.value}
+                      style={{ fontFamily: font.css }}
+                    >
+                      {t(font.labelKey)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            label={t("settings.fontSize")}
+            control={
+              <Select
+                value={String(fontSize)}
+                onValueChange={(value) => setFontSize(Number(value))}
+              >
+                <SelectTrigger
+                  className="h-8 w-[120px]"
+                  aria-label={t("settings.fontSize")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {FONT_SIZE_OPTIONS.map((size) => (
+                    <SelectItem key={size} value={String(size)}>
+                      {size}px
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+          <SettingsRow
+            label={t("settings.pageZoom")}
+            help={{
+              title: t("settings.pageZoom"),
+              body: t("settings.pageZoomHint"),
+            }}
+            control={
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="quiet"
+                  size="icon-compact"
+                  aria-label={t("settings.zoomOut")}
+                  onClick={() => setPageZoom(pageZoom - 0.2)}
+                  disabled={pageZoom <= 0.5}
+                >
+                  <Minus className="h-4 w-4" />
+                </Button>
+                <button
+                  type="button"
+                  className="min-w-[56px] rounded-control px-2 py-1 text-body font-medium text-fg-1 hover:bg-subtle"
+                  onClick={resetPageZoom}
+                  aria-label={t("settings.resetZoom")}
+                >
+                  {Math.round(pageZoom * 100)}%
+                </button>
+                <Button
+                  variant="quiet"
+                  size="icon-compact"
+                  aria-label={t("settings.zoomIn")}
+                  onClick={() => setPageZoom(pageZoom + 0.2)}
+                  disabled={pageZoom >= 2}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="quiet"
+                  size="icon-compact"
+                  aria-label={t("settings.resetZoom")}
+                  onClick={resetPageZoom}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             }
           />
           <SettingsRow

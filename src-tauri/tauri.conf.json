@@ -15,7 +15,10 @@
         "label": "main",
         "title": "",
         "titleBarStyle": "Overlay",
-        "trafficLightPosition": { "x": 14, "y": 16 },
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 16
+        },
         "width": 1000,
         "height": 650,
         "minWidth": 900,
@@ -23,7 +26,8 @@
         "visible": false,
         "resizable": true,
         "fullscreen": false,
-        "center": true
+        "center": true,
+        "zoomHotkeysEnabled": false
       }
     ],
     "security": {
@@ -57,7 +61,9 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ccswitch"]
+        "schemes": [
+          "ccswitch"
+        ]
       }
     },
     "updater": {

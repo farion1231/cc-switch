@@ -4,6 +4,7 @@ import "@testing-library/jest-dom";
 import type { ComponentProps } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SettingsPage } from "@/components/settings/SettingsPage";
+import { AppearanceProvider } from "@/components/appearance-provider";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -170,7 +171,9 @@ const renderSettingsPage = (
   };
   const view = render(
     <QueryClientProvider client={client}>
-      <SettingsPage {...allProps} />
+      <AppearanceProvider>
+        <SettingsPage {...allProps} />
+      </AppearanceProvider>
     </QueryClientProvider>,
   );
   return {
@@ -179,7 +182,9 @@ const renderSettingsPage = (
     rerenderWith: (next: Partial<ComponentProps<typeof SettingsPage>>) =>
       view.rerender(
         <QueryClientProvider client={client}>
-          <SettingsPage {...allProps} {...next} />
+          <AppearanceProvider>
+            <SettingsPage {...allProps} {...next} />
+          </AppearanceProvider>
         </QueryClientProvider>,
       ),
   };

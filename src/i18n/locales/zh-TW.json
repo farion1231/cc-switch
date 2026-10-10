@@ -1019,7 +1019,20 @@
     },
     "data": {
       "location": "儲存位置"
-    }
+    },
+    "fontFamily": "介面字型",
+    "fontSize": "字型大小",
+    "pageZoom": "頁面縮放",
+    "pageZoomHint": "以 20% 為單位調整整體介面縮放，也可以使用 Ctrl/Cmd + =、Ctrl/Cmd + - 與 Ctrl/Cmd + 0。",
+    "zoomIn": "放大",
+    "zoomOut": "縮小",
+    "resetZoom": "重設縮放",
+    "fontFamilySystem": "系統 UI",
+    "fontFamilyInter": "Inter",
+    "fontFamilySegoeUI": "Segoe UI",
+    "fontFamilySFPro": "SF Pro",
+    "fontFamilyNotoSans": "Noto Sans",
+    "fontFamilyIBMPlexSans": "IBM Plex Sans"
   },
   "apps": {
     "claude": "Claude",

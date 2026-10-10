@@ -1018,7 +1018,20 @@
     },
     "data": {
       "location": "Location"
-    }
+    },
+    "fontFamily": "UI font",
+    "fontSize": "Font size",
+    "pageZoom": "Page zoom",
+    "pageZoomHint": "Adjusts the whole interface in 20% steps. You can also use Ctrl/Cmd + =, Ctrl/Cmd + -, and Ctrl/Cmd + 0.",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "resetZoom": "Reset zoom",
+    "fontFamilySystem": "System UI",
+    "fontFamilyInter": "Inter",
+    "fontFamilySegoeUI": "Segoe UI",
+    "fontFamilySFPro": "SF Pro",
+    "fontFamilyNotoSans": "Noto Sans",
+    "fontFamilyIBMPlexSans": "IBM Plex Sans"
   },
   "apps": {
     "claude": "Claude",
