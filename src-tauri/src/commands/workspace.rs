@@ -383,42 +383,7 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
-    struct TestEnvironment {
-        values: Vec<(&'static str, Option<std::ffi::OsString>)>,
-    }
-
-    impl TestEnvironment {
-        fn isolated(home: &std::path::Path) -> Self {
-            let names = [
-                "CC_SWITCH_TEST_HOME",
-                "HOME",
-                "OPENCLAW_STATE_DIR",
-                "OPENCLAW_PROFILE",
-                "OPENCLAW_WORKSPACE_DIR",
-            ];
-            let values = names
-                .into_iter()
-                .map(|name| (name, std::env::var_os(name)))
-                .collect();
-            std::env::set_var("CC_SWITCH_TEST_HOME", home);
-            std::env::set_var("HOME", home);
-            for name in names.into_iter().skip(2) {
-                std::env::remove_var(name);
-            }
-            Self { values }
-        }
-    }
-
-    impl Drop for TestEnvironment {
-        fn drop(&mut self) {
-            for (name, value) in self.values.drain(..) {
-                match value {
-                    Some(value) => std::env::set_var(name, value),
-                    None => std::env::remove_var(name),
-                }
-            }
-        }
-    }
+    use crate::openclaw_config::test_environment::TestEnvironment;
 
     #[tokio::test]
     #[serial]
@@ -508,16 +473,18 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn workspace_tests_do_not_touch_an_inherited_state_directory() {
+        let original_state = std::env::var_os("OPENCLAW_STATE_DIR");
         let inherited = tempfile::tempdir().unwrap();
         std::fs::write(
             inherited.path().join("openclaw.json"),
             r#"{"reviewSentinel":"must-survive"}"#,
         )
         .unwrap();
+        let original_environment = TestEnvironment::capture();
         std::env::set_var("OPENCLAW_STATE_DIR", inherited.path());
 
         let temp = tempfile::tempdir().unwrap();
-        let _environment = TestEnvironment::isolated(temp.path());
+        let environment = TestEnvironment::isolated(temp.path());
         let config_dir = crate::openclaw_config::get_openclaw_dir();
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(config_dir.join("openclaw.json"), "{}").unwrap();
@@ -529,5 +496,40 @@ mod tests {
             std::fs::read_to_string(inherited.path().join("openclaw.json")).unwrap(),
             r#"{"reviewSentinel":"must-survive"}"#
         );
+        drop(environment);
+        assert_eq!(
+            std::env::var_os("OPENCLAW_STATE_DIR").as_deref(),
+            Some(inherited.path().as_os_str())
+        );
+        drop(original_environment);
+        assert_eq!(std::env::var_os("OPENCLAW_STATE_DIR"), original_state);
+    }
+
+    #[test]
+    #[serial]
+    fn workspace_test_environment_restores_unset_and_set_values_after_unwind() {
+        let _original_environment = TestEnvironment::capture();
+        let temp = tempfile::tempdir().unwrap();
+        for original in [None, Some(std::ffi::OsString::from("external-state"))] {
+            match &original {
+                Some(value) => std::env::set_var("OPENCLAW_STATE_DIR", value),
+                None => std::env::remove_var("OPENCLAW_STATE_DIR"),
+            }
+            for panic in [false, true] {
+                let result = std::panic::catch_unwind(|| {
+                    let _environment = TestEnvironment::isolated(temp.path());
+                    assert!(std::env::var_os("OPENCLAW_STATE_DIR").is_none());
+                    assert_eq!(
+                        crate::openclaw_config::get_openclaw_dir(),
+                        temp.path().join(".openclaw")
+                    );
+                    if panic {
+                        panic!("exercise environment cleanup");
+                    }
+                });
+                assert_eq!(result.is_err(), panic);
+                assert_eq!(std::env::var_os("OPENCLAW_STATE_DIR"), original);
+            }
+        }
     }
 }
