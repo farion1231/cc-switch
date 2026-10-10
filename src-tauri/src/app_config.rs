@@ -223,6 +223,9 @@ impl SkillApps {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledSkill {
+    /// CC Switch 分类元数据，不影响文件路径。
+    #[serde(default)]
+    pub category_id: Option<String>,
     /// 唯一标识符（格式："owner/repo:directory" 或 "local:directory"）
     pub id: String,
     /// 显示名称
@@ -254,6 +257,13 @@ pub struct InstalledSkill {
     /// 最近更新时间（Unix 时间戳，0 = 从未更新）
     #[serde(default)]
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCategory {
+    pub id: String,
+    pub name: String,
 }
 
 /// 未管理的 Skill（在应用目录中发现但未被 CC Switch 管理）

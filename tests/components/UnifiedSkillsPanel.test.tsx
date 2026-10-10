@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { settingsApi, skillsApi } from "@/lib/api";
@@ -10,6 +10,8 @@ import type {
   SkillRepoFailure,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
+
+const LAYOUT_STORAGE_KEY = "cc-switch:skills:layout";
 
 const m = vi.hoisted(() => ({
   scanUnmanaged: vi.fn(),
@@ -27,6 +29,11 @@ const m = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   toastWarning: vi.fn(),
   toastInfo: vi.fn(),
+  categories: [] as { id: string; name: string }[],
+  categoriesReady: true,
+  categoriesError: false,
+  refetchCategories: vi.fn(),
+  categoryAction: vi.fn(),
   installed: [] as InstalledSkill[],
   backups: [] as SkillBackupEntry[],
   updates: [] as SkillUpdateInfo[],
@@ -55,6 +62,17 @@ vi.mock("@/components/skills/SkillsStorageSheet", () => ({
 }));
 
 vi.mock("@/hooks/useSkills", () => ({
+  useSkillCategories: () => ({
+    data: m.categories,
+    isSuccess: m.categoriesReady,
+    isError: m.categoriesError,
+    isFetching: false,
+    refetch: m.refetchCategories,
+  }),
+  useMutateSkillCategories: () => ({
+    mutateAsync: m.categoryAction,
+    isPending: false,
+  }),
   useInstalledSkills: () => ({
     data: m.installed,
     isLoading: false,
@@ -161,9 +179,22 @@ async function openMenu(trigger: string, item: string) {
   await userEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
 
+function groupToggles(name: string) {
+  const group = screen.getByRole("button", { name }).closest("li")!;
+  return within(group).getAllByRole("checkbox", {
+    name: /skillsPage.categories.(enable|disable)Matching/,
+  });
+}
+
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    window.localStorage.removeItem(LAYOUT_STORAGE_KEY);
     m.installed = [];
+    m.categories = [];
+    m.categoriesReady = true;
+    m.categoriesError = false;
+    m.refetchCategories.mockReset().mockResolvedValue({ data: [] });
+    m.categoryAction.mockReset().mockResolvedValue(undefined);
     m.backups = [];
     m.updates = [];
     m.repoFailures = [];
@@ -792,5 +823,565 @@ describe("UnifiedSkillsPanel", () => {
     );
     expect(m.toastError).not.toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.removeItem(LAYOUT_STORAGE_KEY);
+  });
+
+  it.each([null, "invalid", "GROUP"])(
+    "defaults to list when the saved layout is %s",
+    (stored) => {
+      if (stored !== null)
+        window.localStorage.setItem(LAYOUT_STORAGE_KEY, stored);
+      renderPanel();
+      expect(
+        screen.getByRole("button", { name: "skillsPage.categories.list" }),
+      ).toHaveAttribute("aria-pressed", "true");
+    },
+  );
+
+  it.each(["list", "group"] as const)(
+    "restores the saved %s layout on the initial render",
+    (layout) => {
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, layout);
+      m.categories = [{ id: "dev", name: "Development" }];
+      m.installed = [makeSkill({ categoryId: "dev" })];
+      renderPanel();
+      expect(
+        screen.getByRole("button", { name: `skillsPage.categories.${layout}` }),
+      ).toHaveAttribute("aria-pressed", "true");
+      const group = screen.queryByRole("button", { name: "Development 1" });
+      if (layout === "group") expect(group).toBeInTheDocument();
+      else expect(group).not.toBeInTheDocument();
+    },
+  );
+
+  it("persists both layout choices and restores them when the page remounts", async () => {
+    let panel = renderPanel();
+    for (const layout of ["group", "list"] as const) {
+      await userEvent.click(
+        screen.getByRole("button", { name: `skillsPage.categories.${layout}` }),
+      );
+      expect(window.localStorage.getItem(LAYOUT_STORAGE_KEY)).toBe(layout);
+      panel.unmount();
+      panel = renderPanel();
+      expect(
+        screen.getByRole("button", { name: `skillsPage.categories.${layout}` }),
+      ).toHaveAttribute("aria-pressed", "true");
+    }
+  });
+
+  it("defaults to list and can still switch when reading storage fails", async () => {
+    vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
+      throw new Error("Storage unavailable");
+    });
+    renderPanel();
+    expect(
+      screen.getByRole("button", { name: "skillsPage.categories.list" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.categories.group" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "skillsPage.categories.group" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps switching layouts when writing storage fails", async () => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("Storage unavailable");
+    });
+    renderPanel();
+    for (const layout of ["group", "list"] as const) {
+      await userEvent.click(
+        screen.getByRole("button", { name: `skillsPage.categories.${layout}` }),
+      );
+      expect(
+        screen.getByRole("button", { name: `skillsPage.categories.${layout}` }),
+      ).toHaveAttribute("aria-pressed", "true");
+    }
+  });
+
+  it("preserves the saved group preference during category loading failures and recovers", () => {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, "group");
+    m.categoriesReady = false;
+    m.categoriesError = true;
+    m.installed = [makeSkill({ name: "Alpha", categoryId: "dev" })];
+    const panel = renderPanel();
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    expect(window.localStorage.getItem(LAYOUT_STORAGE_KEY)).toBe("group");
+    m.categoriesReady = true;
+    m.categoriesError = false;
+    m.categories = [{ id: "dev", name: "Development" }];
+    panel.rerender(<UnifiedSkillsPanel />);
+    expect(
+      screen.getByRole("button", { name: "Development 1" }),
+    ).toBeInTheDocument();
+    expect(window.localStorage.getItem(LAYOUT_STORAGE_KEY)).toBe("group");
+  });
+
+  it("keeps categorized skills visible and disables assignment when categories fail to load", async () => {
+    m.categoriesReady = false;
+    m.categoriesError = true;
+    m.installed = [makeSkill({ name: "Alpha", categoryId: "dev" })];
+    renderPanel();
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.categories.group" }),
+    );
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    expect(
+      screen.getByText("skillsPage.categories.loadFailed"),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(m.refetchCategories).toHaveBeenCalledOnce();
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.moreActions" }),
+    );
+    expect(
+      screen.getByRole("menuitem", { name: "skillsPage.categories.manage" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.rowMoreAria" }),
+    );
+    expect(
+      screen.getByRole("menuitem", { name: "skillsPage.categories.assign" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(m.categoryAction).not.toHaveBeenCalled();
+  });
+
+  it("switches to groups, collapses rows, and selects filtered rows across collapsed groups", async () => {
+    m.categories = [{ id: "dev", name: "Development" }];
+    m.installed = [
+      makeSkill({ id: "a", name: "Alpha", categoryId: "dev" }),
+      makeSkill({ id: "b", name: "Beta" }),
+    ];
+    renderPanel();
+    expect(
+      screen.getByRole("button", { name: "skillsPage.categories.list" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.categories.group" }),
+    );
+    const group = screen.getByRole("button", { name: "Development 1" });
+    expect(group).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(group);
+    expect(screen.queryByText("Alpha")).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "skillsPage.selectAllAria" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.categories.assign" }),
+    );
+    await userEvent.selectOptions(
+      screen.getByLabelText("skillsPage.categories.label"),
+      "dev",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() =>
+      expect(m.categoryAction).toHaveBeenCalledWith({
+        kind: "assign",
+        ids: ["a", "b"],
+        categoryId: "dev",
+      }),
+    );
+    await userEvent.click(group);
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "skillsPage.selectAllAria" }),
+    ).toBeChecked();
+  });
+
+  it("filters by category and keeps search and selection scoped in group view", async () => {
+    m.categories = [{ id: "dev", name: "Development" }];
+    m.installed = [
+      makeSkill({ id: "a", name: "Alpha", categoryId: "dev" }),
+      makeSkill({ id: "b", name: "Beta", categoryId: "dev" }),
+      makeSkill({ id: "c", name: "Gamma" }),
+    ];
+    renderPanel();
+    await openMenu("skillsPage.categories.filter", "Development 2");
+    expect(screen.queryByText("Gamma")).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.categories.group" }),
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText("skillsPage.searchPlaceholder"),
+      "Beta",
+    );
+    expect(screen.queryByText("Alpha")).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "skillsPage.selectAllAria" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.categories.assign" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() =>
+      expect(m.categoryAction).toHaveBeenCalledWith({
+        kind: "assign",
+        ids: ["b"],
+        categoryId: "dev",
+      }),
+    );
+  });
+
+  it.each([
+    {
+      state: "off",
+      apps: [false, false],
+      checked: false,
+      ids: ["a", "b"],
+      enabled: true,
+    },
+    {
+      state: "mixed",
+      apps: [true, false],
+      checked: "mixed",
+      ids: ["b"],
+      enabled: true,
+    },
+    {
+      state: "on",
+      apps: [true, true],
+      checked: true,
+      ids: ["a", "b"],
+      enabled: false,
+    },
+  ])(
+    "toggles a category from $state without changing other categories or agents",
+    async ({ apps, checked, ids, enabled }) => {
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, "group");
+      m.categories = [{ id: "dev", name: "Development" }];
+      m.installed = [
+        makeSkill({
+          id: "a",
+          name: "Alpha",
+          categoryId: "dev",
+          apps: { codex: apps[0], claude: true },
+        }),
+        makeSkill({
+          id: "b",
+          name: "Beta",
+          categoryId: "dev",
+          apps: { codex: apps[1] },
+        }),
+        makeSkill({ id: "c", name: "Gamma" }),
+      ];
+      renderPanel();
+      const control = groupToggles("Development 2")[1];
+      if (checked === "mixed") expect(control).toBePartiallyChecked();
+      else if (checked) expect(control).toBeChecked();
+      else expect(control).not.toBeChecked();
+      await userEvent.click(control);
+      await waitFor(() =>
+        expect(m.bulkToggle).toHaveBeenCalledWith({
+          ids,
+          app: "codex",
+          enabled,
+        }),
+      );
+      expect(m.bulkToggle).toHaveBeenCalledTimes(1);
+      expect(m.toggle).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole("button", { name: "Development 2" }),
+      ).toHaveAttribute("aria-expanded", "true");
+    },
+  );
+
+  it("operates filtered category members while collapsed and ignores selected rows", async () => {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, "group");
+    m.categories = [{ id: "dev", name: "Development" }];
+    m.installed = [
+      makeSkill({ id: "a", name: "Alpha", categoryId: "dev" }),
+      makeSkill({ id: "b", name: "Beta", categoryId: "dev" }),
+      makeSkill({ id: "c", name: "Gamma" }),
+    ];
+    renderPanel();
+    await userEvent.click(
+      screen.getAllByRole("checkbox", { name: "skillsPage.selectAria" })[2],
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText("skillsPage.searchPlaceholder"),
+      "Beta",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Development 1" }),
+    );
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    await userEvent.click(groupToggles("Development 1")[1]);
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["b"],
+        app: "codex",
+        enabled: true,
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Development 1" }),
+    ).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("respects status and source filters and removes a group when its last match is disabled", async () => {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, "group");
+    m.categories = [{ id: "dev", name: "Development" }];
+    m.installed = [
+      makeSkill({
+        id: "a",
+        name: "Alpha",
+        categoryId: "dev",
+        apps: { codex: true },
+      }),
+      makeSkill({ id: "b", name: "Beta", categoryId: "dev" }),
+      makeSkill({
+        id: "c",
+        name: "Gamma",
+        categoryId: "dev",
+        repoName: "other",
+        apps: { codex: true },
+      }),
+    ];
+    const view = renderPanel();
+    await userEvent.click(columns()[1]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.pop.onlyApp" }),
+    );
+    await openMenu("skillsPage.filter.sourceButton", "owner/repo 2");
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    expect(screen.queryByText("Gamma")).not.toBeInTheDocument();
+    await userEvent.click(groupToggles("Development 1")[1]);
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["a"],
+        app: "codex",
+        enabled: false,
+      }),
+    );
+    m.installed = m.installed.map((skill) =>
+      skill.id === "a"
+        ? { ...skill, apps: { ...skill.apps, codex: false } }
+        : skill,
+    );
+    view.rerender(<UnifiedSkillsPanel />);
+    expect(
+      screen.queryByRole("button", { name: /Development/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("skillsPage.noFilterMatch")).toBeInTheDocument();
+  });
+
+  it("toggles uncategorized Pi skills using the keyboard and hides unavailable agent controls", async () => {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, "group");
+    m.visibleApps = ["codex", "pi"];
+    m.installed = [makeSkill()];
+    const view = renderPanel();
+    const controls = groupToggles("skillsPage.categories.uncategorized 1");
+    expect(controls).toHaveLength(2);
+    controls[1].focus();
+    await userEvent.keyboard(" ");
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: [m.installed[0].id],
+        app: "pi",
+        enabled: true,
+      }),
+    );
+    m.installed = [makeSkill({ apps: { pi: true } })];
+    view.rerender(<UnifiedSkillsPanel />);
+    expect(
+      groupToggles("skillsPage.categories.uncategorized 1")[1],
+    ).toBeChecked();
+    await userEvent.click(
+      groupToggles("skillsPage.categories.uncategorized 1")[1],
+    );
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenLastCalledWith({
+        ids: [m.installed[0].id],
+        app: "pi",
+        enabled: false,
+      }),
+    );
+  });
+
+  it("reports partial category failures and undoes only successfully changed skills", async () => {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, "group");
+    m.categories = [{ id: "dev", name: "Development" }];
+    m.installed = [
+      makeSkill({
+        id: "a",
+        name: "Alpha",
+        categoryId: "dev",
+        apps: { codex: true },
+      }),
+      makeSkill({ id: "b", name: "Beta", categoryId: "dev" }),
+      makeSkill({ id: "c", name: "Gamma", categoryId: "dev" }),
+    ];
+    m.bulkToggle.mockResolvedValueOnce({
+      succeeded: ["b"],
+      failed: [{ item: "c", error: new Error("symlink failed") }],
+    });
+    renderPanel();
+    await userEvent.click(groupToggles("Development 3")[1]);
+    await waitFor(() => expect(m.toastSuccess).toHaveBeenCalled());
+    expect(m.bulkToggle).toHaveBeenCalledWith({
+      ids: ["b", "c"],
+      app: "codex",
+      enabled: true,
+    });
+    expect(
+      screen.getByRole("button", { name: "appMatrix.cell.fail" }),
+    ).toBeInTheDocument();
+    expect(m.toastSuccess.mock.calls[0][0]).toContain(
+      "appMatrix.toast.partialFail",
+    );
+    const [, options] = m.toastSuccess.mock.calls[0];
+    act(() => options.action.onClick());
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenLastCalledWith({
+        ids: ["b"],
+        app: "codex",
+        enabled: false,
+      }),
+    );
+  });
+
+  it("reports complete category failures without offering undo", async () => {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, "group");
+    m.installed = [makeSkill()];
+    m.bulkToggle.mockRejectedValueOnce(new Error("permission denied"));
+    renderPanel();
+    await userEvent.click(
+      groupToggles("skillsPage.categories.uncategorized 1")[0],
+    );
+    await waitFor(() => expect(m.toastSuccess).toHaveBeenCalled());
+    expect(m.toastSuccess.mock.calls[0][0]).toContain(
+      "appMatrix.toast.partialFail",
+    );
+    expect(m.toastSuccess.mock.calls[0][1].action).toBeUndefined();
+    expect(
+      screen.getByRole("button", { name: "appMatrix.cell.fail" }),
+    ).toBeInTheDocument();
+    expect(
+      groupToggles("skillsPage.categories.uncategorized 1")[0],
+    ).not.toBeChecked();
+  });
+
+  it("blocks repeated category clicks immediately and re-enables controls after completion", async () => {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, "group");
+    m.installed = [makeSkill()];
+    let finish!: (result: { succeeded: string[]; failed: never[] }) => void;
+    m.bulkToggle.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderPanel();
+    const controls = groupToggles("skillsPage.categories.uncategorized 1");
+    await userEvent.dblClick(controls[0]);
+    expect(m.bulkToggle).toHaveBeenCalledTimes(1);
+    expect(controls[0]).toBeDisabled();
+    expect(controls[1]).toBeDisabled();
+    await userEvent.click(controls[1]);
+    expect(m.bulkToggle).toHaveBeenCalledTimes(1);
+    await act(async () =>
+      finish({ succeeded: [m.installed[0].id], failed: [] }),
+    );
+    expect(controls[0]).not.toBeDisabled();
+  });
+
+  it("sets the category from the row menu without toggling apps", async () => {
+    m.categories = [{ id: "dev", name: "Development" }];
+    m.installed = [makeSkill({ categoryId: "dev", apps: { codex: true } })];
+    renderPanel();
+    await openMenu("skillsPage.rowMoreAria", "skillsPage.categories.assign");
+    expect(screen.getByLabelText("skillsPage.categories.label")).toHaveValue(
+      "dev",
+    );
+    await userEvent.selectOptions(
+      screen.getByLabelText("skillsPage.categories.label"),
+      "",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() =>
+      expect(m.categoryAction).toHaveBeenCalledWith({
+        kind: "assign",
+        ids: [m.installed[0].id],
+        categoryId: null,
+      }),
+    );
+    expect(m.toggle).not.toHaveBeenCalled();
+    expect(m.uninstall).not.toHaveBeenCalled();
+  });
+
+  it("manages categories, validates duplicate names, and confirms deletion with affected count", async () => {
+    m.categories = [{ id: "dev", name: "Development" }];
+    m.installed = [makeSkill({ categoryId: "dev" })];
+    renderPanel();
+    await openMenu("skills.moreActions", "skillsPage.categories.manage");
+    const input = screen.getByLabelText("skillsPage.categories.name");
+    await userEvent.type(input, "  DEVELOPMENT  ");
+    expect(
+      screen.getByRole("button", { name: "skillsPage.categories.create" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText("skillsPage.categories.duplicate"),
+    ).toBeInTheDocument();
+    await userEvent.clear(input);
+    await userEvent.type(input, "  Writing  ");
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.categories.create" }),
+    );
+    await waitFor(() =>
+      expect(m.categoryAction).toHaveBeenCalledWith({
+        kind: "create",
+        name: "Writing",
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.categories.renameAria" }),
+    );
+    await userEvent.clear(input);
+    await userEvent.type(input, "Engineering");
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() =>
+      expect(m.categoryAction).toHaveBeenCalledWith({
+        kind: "rename",
+        id: "dev",
+        name: "Engineering",
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.categories.deleteAria" }),
+    );
+    const confirm = screen
+      .getByText("skillsPage.categories.deleteTitle")
+      .closest<HTMLElement>('[role="dialog"]')!;
+    expect(
+      within(confirm).getByText("skillsPage.categories.deleteBody"),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      within(confirm).getByRole("button", { name: "common.cancel" }),
+    );
+    expect(m.categoryAction).not.toHaveBeenCalledWith({
+      kind: "delete",
+      id: "dev",
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.categories.deleteAria" }),
+    );
+    const nextConfirm = screen
+      .getByText("skillsPage.categories.deleteTitle")
+      .closest<HTMLElement>('[role="dialog"]')!;
+    await userEvent.click(
+      within(nextConfirm).getByRole("button", { name: "common.delete" }),
+    );
+    await waitFor(() =>
+      expect(m.categoryAction).toHaveBeenCalledWith({
+        kind: "delete",
+        id: "dev",
+      }),
+    );
+    expect(m.uninstall).not.toHaveBeenCalled();
   });
 });

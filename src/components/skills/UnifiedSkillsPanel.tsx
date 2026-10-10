@@ -1,3 +1,7 @@
+import {
+  SkillCategoryManager,
+  SkillCategoryPicker,
+} from "./SkillCategoryDialogs";
 import { createPortal } from "react-dom";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/hooks/useDelayedFlag";
@@ -40,6 +44,9 @@ import {
   useImportSkillsFromApps,
   useInstallSkillsFromZip,
   useInstalledSkills,
+  useSkillCategories,
+  useMutateSkillCategories,
+  type SkillCategoryAction,
   useRestoreSkillBackup,
   useScanUnmanagedSkills,
   useSkillBackups,
@@ -75,8 +82,20 @@ import { describeRepoFailures } from "./repoFailures";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
 
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
+const LAYOUT_STORAGE_KEY = "cc-switch:skills:layout";
 
 type SkillsView = "installed" | "discover";
+type SkillsLayout = "list" | "group";
+
+function readLayout(): SkillsLayout {
+  try {
+    return window.localStorage.getItem(LAYOUT_STORAGE_KEY) === "group"
+      ? "group"
+      : "list";
+  } catch {
+    return "list";
+  }
+}
 type StatusFilter = "all" | "updates" | "none" | `app:${AppId}`;
 
 interface WriteFailure {
@@ -137,6 +156,24 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sourceFilter, setSourceFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [layout, setLayout] = useState<SkillsLayout>(readLayout);
+  const selectLayout = (value: SkillsLayout) => {
+    setLayout(value);
+    try {
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, value);
+    } catch {
+      // 存不了仍可切换，本次会话内保留选择。
+    }
+  };
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(
+    new Set(),
+  );
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
+  const [categoryTargets, setCategoryTargets] = useState<string[] | null>(null);
+  const categoryQuery = useSkillCategories();
+  const categories = categoryQuery.data ?? [];
+  const categoryMutation = useMutateSkillCategories();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -195,6 +232,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const updateSkillMutation = useUpdateSkill();
 
   const mutationPending =
+    categoryMutation.isPending ||
     deleteBackupMutation.isPending ||
     toggleAppMutation.isPending ||
     bulkToggleAppMutation.isPending ||
@@ -205,7 +243,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     updateSkillMutation.isPending ||
     isUpdatingMany;
   const dialogOpen =
-    importOpen || restoreOpen || confirm !== null || repoManagerOpen;
+    importOpen ||
+    restoreOpen ||
+    confirm !== null ||
+    repoManagerOpen ||
+    categoryManagerOpen ||
+    categoryTargets !== null;
   const navigationBlocked = writePending || mutationPending || dialogOpen;
   const interactionBlocked = navigationBlocked || isCheckingUpdates;
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
@@ -253,6 +296,35 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     apps.map((app) => APP_DISPLAY_NAME[app]).join(listSeparator);
   const noun = t("skillsPage.noun");
   const installedSkills = skills ?? [];
+  const categoryName = (id: string | null | undefined) =>
+    categories.find((category) => category.id === id)?.name ??
+    t("skillsPage.categories.uncategorized");
+  const categoryKey = (skill: InstalledSkill) =>
+    skill.categoryId ?? "uncategorized";
+  const handleCategoryAction = async (
+    action: SkillCategoryAction,
+  ): Promise<boolean> => {
+    if (!beginWrite(true)) return false;
+    try {
+      await categoryMutation.mutateAsync(action);
+      toast.success(t("skillsPage.categories.saved"));
+      return true;
+    } catch (error) {
+      toast.error(extractErrorMessage(error));
+      return false;
+    } finally {
+      endWrite();
+    }
+  };
+  useEffect(() => {
+    if (
+      categoryQuery.isSuccess &&
+      categoryFilter !== "all" &&
+      categoryFilter !== "uncategorized" &&
+      !categories.some((category) => category.id === categoryFilter)
+    )
+      setCategoryFilter("all");
+  }, [categories, categoryFilter, categoryQuery.isSuccess]);
 
   // ─── 更新 ───────────────────────────────────────────────────────────
   const applicableSkillUpdates = useMemo(() => {
@@ -319,6 +391,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       if (sourceFilter !== "all" && sourceKey(skill) !== sourceFilter) {
         return false;
       }
+      if (categoryFilter !== "all" && categoryKey(skill) !== categoryFilter)
+        return false;
       if (!normalizedQuery) return true;
       return [
         skill.name,
@@ -336,6 +410,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     installedSkills,
     statusFilter,
     sourceFilter,
+    categoryFilter,
     normalizedQuery,
     updatesMap,
   ]);
@@ -354,7 +429,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     prevUpdatesRef.current = nApplicableUpdates;
   }, [nApplicableUpdates, statusFilter]);
 
-  const filtersActive = statusFilter !== "all" || sourceFilter !== "all";
+  const filtersActive =
+    statusFilter !== "all" ||
+    sourceFilter !== "all" ||
+    categoryFilter !== "all";
   const scope = resolveBulkScope(
     installedSkills,
     filteredSkills,
@@ -372,10 +450,24 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   // 从「发现」跳回来时定位到那一行
   useEffect(() => {
     if (!highlightId || view !== "installed") return;
+    const highlightedSkill = installedSkills.find(
+      (skill) => skill.id === highlightId,
+    );
+    if (
+      highlightedSkill &&
+      collapsedCategories.has(categoryKey(highlightedSkill))
+    ) {
+      setCollapsedCategories((prev) => {
+        const next = new Set(prev);
+        next.delete(categoryKey(highlightedSkill));
+        return next;
+      });
+      return;
+    }
     const row = document.getElementById(`sk-row-${highlightId}`);
     row?.scrollIntoView?.({ block: "center" });
     row?.focus?.({ preventScroll: true });
-  }, [highlightId, view]);
+  }, [highlightId, view, collapsedCategories, layout, installedSkills]);
 
   // 在「发现」段按 Escape 回到「已安装」
   useEffect(() => {
@@ -449,7 +541,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     ids: string[],
     app: AppId,
     enabled: boolean,
-    toastKey: { on: string; off: string },
+    toastKey: { on: string; off: string; category?: string },
   ) => {
     if (!beginWrite()) return;
     try {
@@ -458,6 +550,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         app: APP_DISPLAY_NAME[app],
         count: succeeded.length,
         noun,
+        category: toastKey.category,
       });
       if (failed) text += t("appMatrix.toast.partialFail", { count: failed });
       showUndoToast(
@@ -518,6 +611,23 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     void bulkToggle(ids, app, enabled, {
       on: "appMatrix.toast.enabled",
       off: "skillsPage.toast.disabledSelection",
+    });
+  };
+
+  const handleCategoryBulk = (
+    rows: InstalledSkill[],
+    category: string,
+    app: AppId,
+  ) => {
+    if (interactionBlocked || rows.length === 0) return;
+    const enabled = !rows.every((skill) => Boolean(skill.apps[app]));
+    const ids = rows
+      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+      .map((skill) => skill.id);
+    void bulkToggle(ids, app, enabled, {
+      on: "skillsPage.categories.enabled",
+      off: "skillsPage.categories.disabled",
+      category,
     });
   };
 
@@ -872,6 +982,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     setSearchQuery("");
     setStatusFilter("all");
     setSourceFilter("all");
+    setCategoryFilter("all");
     setView("installed");
     setHighlightId(skillId);
   };
@@ -991,6 +1102,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               >
                 {t("skillsPage.moreMenu.repos")}
               </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={controlsDisabled || !categoryQuery.isSuccess}
+                onSelect={() => setCategoryManagerOpen(true)}
+              >
+                {t("skillsPage.categories.manage")}
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setStorageOpen(true)}>
                 {t("skills.storageSheet.open")}
               </DropdownMenuItem>
@@ -1031,7 +1148,32 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
           label: t("skillsPage.viewDiscover"),
         },
       ]}
-      trailing={<div ref={setTabsTrailingSlot} className="flex items-center" />}
+      trailing={
+        <div className="flex items-center gap-3">
+          {view === "installed" && (
+            <div
+              role="group"
+              aria-label={t("skillsPage.categories.view")}
+              className="flex rounded-md border border-border p-0.5"
+            >
+              {(["list", "group"] as const).map((value) => (
+                <Button
+                  key={value}
+                  type="button"
+                  variant={layout === value ? "neutral" : "quiet"}
+                  size="compact"
+                  aria-pressed={layout === value}
+                  disabled={controlsDisabled}
+                  onClick={() => selectLayout(value)}
+                >
+                  {t(`skillsPage.categories.${value}`)}
+                </Button>
+              ))}
+            </div>
+          )}
+          <div ref={setTabsTrailingSlot} className="flex items-center" />
+        </div>
+      }
     />
   );
 
@@ -1045,6 +1187,60 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       });
     return t("skillsPage.filter.all");
   };
+
+  const renderSkillRow = (skill: InstalledSkill, index: number) => (
+    <InstalledRow
+      key={skill.id}
+      skill={skill}
+      categoryText={categoryName(skill.categoryId)}
+      onSetCategory={() => {
+        if (!interactionBlocked && categoryQuery.isSuccess)
+          setCategoryTargets([skill.id]);
+      }}
+      first={index === 0}
+      appIds={appIds}
+      checked={selected.has(skill.id)}
+      hasUpdate={Boolean(updatesMap[skill.id])}
+      isUpdating={
+        updateSkillMutation.isPending &&
+        updateSkillMutation.variables === skill.id
+      }
+      highlighted={highlightId === skill.id}
+      fails={fails}
+      disabled={controlsDisabled}
+      categoryDisabled={!categoryQuery.isSuccess}
+      sourceText={
+        skill.repoOwner && skill.repoName
+          ? `${skill.repoOwner}/${skill.repoName}`
+          : t("skillsPage.source.local")
+      }
+      onPick={(checked) =>
+        setSelected((prev) => {
+          const next = new Set(prev);
+          if (checked) next.add(skill.id);
+          else next.delete(skill.id);
+          return next;
+        })
+      }
+      onCell={(app) => {
+        const failure = fails[failKey(skill.id, app)];
+        void writeOne(
+          skill.id,
+          app,
+          failure ? failure.desired : !skill.apps[app],
+        );
+      }}
+      onOpenSource={() => void openDocs(skill)}
+      onFixSync={() => setStorageOpen(true)}
+      onUpdate={() => void updateIds([skill.id])}
+      onOpenDocs={() => void openDocs(skill)}
+      onCopyDir={() => void copyDirectory(skill)}
+      onUninstall={() => {
+        if (writeLockRef.current || interactionBlocked) return;
+        setConfirm({ kind: "uninstall", ids: [skill.id] });
+      }}
+    />
+  );
 
   const renderInstalledBody = () => {
     if (isLoading) {
@@ -1118,7 +1314,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         className="min-h-0 overflow-auto scroll-stable rounded-panel border border-border bg-surface"
       >
         <MatrixColumnHighlight>
-          <div className="min-w-[600px]">
+          <div style={{ minWidth: 580 + appIds.length * 36 }}>
             <div className="sticky top-0 z-10 flex h-11 items-center border-b border-border bg-subtle px-2">
               <span className="flex w-6 shrink-0 justify-center">
                 <Checkbox
@@ -1196,6 +1392,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       type="button"
                       variant="quiet"
                       size="compact"
+                      className="px-2"
+                      disabled={controlsDisabled || !categoryQuery.isSuccess}
+                      onClick={() => setCategoryTargets([...selected])}
+                    >
+                      {t("skillsPage.categories.assign")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      size="compact"
                       className="px-2 text-danger-text hover:text-danger-text"
                       disabled={controlsDisabled}
                       onClick={() =>
@@ -1251,6 +1457,38 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                           count,
                           checked: sourceFilter === key,
                           onSelect: () => setSourceFilter(key),
+                        })),
+                      ]}
+                    />
+                    <FilterMenu
+                      label={t("skillsPage.categories.filter", {
+                        name:
+                          categoryFilter === "all"
+                            ? t("skillsPage.filter.all")
+                            : categoryName(categoryFilter),
+                      })}
+                      active={categoryFilter !== "all"}
+                      items={[
+                        {
+                          key: "all",
+                          label: t("skillsPage.filter.all"),
+                          checked: categoryFilter === "all",
+                          onSelect: () => setCategoryFilter("all"),
+                        },
+                        ...[
+                          ...categories,
+                          {
+                            id: "uncategorized",
+                            name: t("skillsPage.categories.uncategorized"),
+                          },
+                        ].map((category) => ({
+                          key: category.id,
+                          label: category.name,
+                          checked: categoryFilter === category.id,
+                          count: installedSkills.filter(
+                            (skill) => categoryKey(skill) === category.id,
+                          ).length,
+                          onSelect: () => setCategoryFilter(category.id),
                         })),
                       ]}
                     />
@@ -1354,6 +1592,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       onClick={() => {
                         setStatusFilter("all");
                         setSourceFilter("all");
+                        setCategoryFilter("all");
                       }}
                     >
                       {t("skillsPage.clearFilters")}
@@ -1366,53 +1605,125 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                 aria-label={t("skillsPage.listLabel")}
                 className="m-0 list-none p-0"
               >
-                {filteredSkills.map((skill, index) => (
-                  <InstalledRow
-                    key={skill.id}
-                    skill={skill}
-                    first={index === 0}
-                    appIds={appIds}
-                    checked={selected.has(skill.id)}
-                    hasUpdate={Boolean(updatesMap[skill.id])}
-                    isUpdating={
-                      updateSkillMutation.isPending &&
-                      updateSkillMutation.variables === skill.id
-                    }
-                    highlighted={highlightId === skill.id}
-                    fails={fails}
-                    disabled={controlsDisabled}
-                    sourceText={
-                      skill.repoOwner && skill.repoName
-                        ? `${skill.repoOwner}/${skill.repoName}`
-                        : t("skillsPage.source.local")
-                    }
-                    onPick={(checked) =>
-                      setSelected((prev) => {
-                        const next = new Set(prev);
-                        if (checked) next.add(skill.id);
-                        else next.delete(skill.id);
-                        return next;
-                      })
-                    }
-                    onCell={(app) => {
-                      const failure = fails[failKey(skill.id, app)];
-                      void writeOne(
-                        skill.id,
-                        app,
-                        failure ? failure.desired : !skill.apps[app],
+                {layout === "list" || !categoryQuery.isSuccess
+                  ? filteredSkills.map(renderSkillRow)
+                  : [
+                      ...categories.map((category) => ({
+                        id: category.id,
+                        name: category.name,
+                      })),
+                      {
+                        id: "uncategorized",
+                        name: t("skillsPage.categories.uncategorized"),
+                      },
+                    ].map((category) => {
+                      const rows = filteredSkills.filter(
+                        (skill) => categoryKey(skill) === category.id,
                       );
-                    }}
-                    onOpenSource={() => void openDocs(skill)}
-                    onFixSync={() => setStorageOpen(true)}
-                    onUpdate={() => void updateIds([skill.id])}
-                    onOpenDocs={() => void openDocs(skill)}
-                    onCopyDir={() => void copyDirectory(skill)}
-                    onUninstall={() => {
-                      if (writeLockRef.current || interactionBlocked) return;
-                      setConfirm({ kind: "uninstall", ids: [skill.id] });
-                    }}
-                  />
-                ))}
+                      if (!rows.length) return null;
+                      const collapsed = collapsedCategories.has(category.id);
+                      const groupId = `skill-category-group-${category.id}`;
+                      return (
+                        <li
+                          key={category.id}
+                          className="border-t border-border"
+                        >
+                          <div className="flex items-center bg-subtle px-2">
+                            <h3 className="m-0 min-w-0 flex-1">
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 px-2 py-2 text-left text-body font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                                aria-expanded={!collapsed}
+                                aria-controls={groupId}
+                                onClick={() =>
+                                  setCollapsedCategories((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(category.id))
+                                      next.delete(category.id);
+                                    else next.add(category.id);
+                                    return next;
+                                  })
+                                }
+                              >
+                                <ChevronDown
+                                  aria-hidden="true"
+                                  className={cn(
+                                    "h-4 w-4",
+                                    collapsed && "-rotate-90",
+                                  )}
+                                />
+                                <span
+                                  className="min-w-0 truncate"
+                                  title={category.name}
+                                >
+                                  {category.name}
+                                </span>
+                                <span className="text-caption text-fg-2">
+                                  {rows.length}
+                                </span>
+                              </button>
+                            </h3>
+                            <div className="flex shrink-0">
+                              {appIds.map((app) => {
+                                const onCount = rows.filter(
+                                  (skill) => skill.apps[app],
+                                ).length;
+                                const allOn = onCount === rows.length;
+                                const label = t(
+                                  allOn
+                                    ? "skillsPage.categories.disableMatching"
+                                    : "skillsPage.categories.enableMatching",
+                                  {
+                                    category: category.name,
+                                    app: APP_DISPLAY_NAME[app],
+                                    on: onCount,
+                                    total: rows.length,
+                                  },
+                                );
+                                return (
+                                  <span
+                                    key={app}
+                                    className="flex h-9 w-9 shrink-0 items-center justify-center"
+                                  >
+                                    <HoverTip content={label}>
+                                      <Checkbox
+                                        aria-label={label}
+                                        disabled={interactionBlocked}
+                                        checked={
+                                          allOn
+                                            ? true
+                                            : onCount > 0
+                                              ? "indeterminate"
+                                              : false
+                                        }
+                                        onCheckedChange={() =>
+                                          handleCategoryBulk(
+                                            rows,
+                                            category.name,
+                                            app,
+                                          )
+                                        }
+                                      />
+                                    </HoverTip>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                            <span
+                              aria-hidden="true"
+                              className="w-16 shrink-0"
+                            />
+                          </div>
+                          <ul
+                            id={groupId}
+                            hidden={collapsed}
+                            className="m-0 list-none p-0"
+                          >
+                            {!collapsed && rows.map(renderSkillRow)}
+                          </ul>
+                        </li>
+                      );
+                    })}
               </ul>
             )}
           </div>
@@ -1549,9 +1860,29 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 
           <NoticeSlot
             className={cn(
-              (showUnmanagedBanner || showUpdateRepoFailBanner) && "px-6 pt-3",
+              (showUnmanagedBanner ||
+                showUpdateRepoFailBanner ||
+                categoryQuery.isError) &&
+                "px-6 pt-3",
             )}
           >
+            {categoryQuery.isError && (
+              <Notice
+                tone="warning"
+                title={t("skillsPage.categories.loadFailed")}
+                actions={
+                  <Button
+                    type="button"
+                    variant="neutral"
+                    size="compact"
+                    disabled={categoryQuery.isFetching}
+                    onClick={() => void categoryQuery.refetch()}
+                  >
+                    {t("common.retry")}
+                  </Button>
+                }
+              />
+            )}
             {showUpdateRepoFailBanner && (
               <Notice
                 tone="warning"
@@ -1741,6 +2072,38 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 
       <SkillsStorageSheet open={storageOpen} onOpenChange={setStorageOpen} />
 
+      {categoryManagerOpen && (
+        <SkillCategoryManager
+          categories={categories}
+          skills={installedSkills}
+          pending={writePending || categoryMutation.isPending}
+          onAction={handleCategoryAction}
+          onClose={() => setCategoryManagerOpen(false)}
+        />
+      )}
+      {categoryTargets && (
+        <SkillCategoryPicker
+          categories={categories}
+          currentId={
+            categoryTargets.length === 1
+              ? (installedSkills.find(
+                  (skill) => skill.id === categoryTargets[0],
+                )?.categoryId ?? null)
+              : null
+          }
+          count={categoryTargets.length}
+          pending={writePending || categoryMutation.isPending}
+          onAssign={(categoryId) =>
+            handleCategoryAction({
+              kind: "assign",
+              ids: categoryTargets,
+              categoryId,
+            })
+          }
+          onClose={() => setCategoryTargets(null)}
+        />
+      )}
+
       {repoManagerOpen && (
         <RepoManagerContainer onClose={() => setRepoManagerOpen(false)} />
       )}
@@ -1752,6 +2115,9 @@ UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
 // ─── 已安装的一行 ────────────────────────────────────────────────────────
 interface InstalledRowProps {
+  categoryText: string;
+  categoryDisabled: boolean;
+  onSetCategory: () => void;
   skill: InstalledSkill;
   first: boolean;
   appIds: AppId[];
@@ -1773,6 +2139,9 @@ interface InstalledRowProps {
 }
 
 function InstalledRow({
+  categoryText,
+  categoryDisabled,
+  onSetCategory,
   skill,
   first,
   appIds,
@@ -1843,6 +2212,12 @@ function InstalledRow({
               {t("skills.updateAvailable")}
             </span>
           )}
+          <span
+            className="max-w-28 truncate text-caption text-fg-2"
+            title={categoryText}
+          >
+            {categoryText}
+          </span>
           {!enabled && <NeutralBadge>{t("mcpPage.notEnabled")}</NeutralBadge>}
         </div>
         <div className="flex min-w-0 whitespace-nowrap text-caption text-fg-2">
@@ -1944,6 +2319,12 @@ function InstalledRow({
                 {t("mcpPage.openDocs")}
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem
+              disabled={categoryDisabled}
+              onSelect={onSetCategory}
+            >
+              {t("skillsPage.categories.assign")}
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={onCopyDir}>
               {t("skillsPage.copyDir")}
             </DropdownMenuItem>

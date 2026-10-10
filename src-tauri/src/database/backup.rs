@@ -1325,6 +1325,54 @@ mod tests {
 
     #[test]
     #[serial]
+    fn skill_categories_round_trip_and_old_snapshots_migrate() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let source = Database::memory()?;
+        let category = source.create_skill_category("Development")?;
+        {
+            let conn = crate::database::lock_conn!(source.conn);
+            conn.execute(
+                "INSERT INTO skills (id, name, directory, category_id, enabled_codex)
+                VALUES ('local:alpha', 'Alpha', 'alpha', ?1, 1)",
+                [&category.id],
+            )?;
+        }
+        for sql in [
+            source.export_sql_string()?,
+            source.export_sql_string_for_sync()?,
+        ] {
+            let target = Database::memory()?;
+            target.import_sql_string_for_sync(&sql)?;
+            assert_eq!(target.get_skill_categories()?[0].id, category.id);
+            let skill = target.get_installed_skill("local:alpha")?.unwrap();
+            assert_eq!(skill.category_id.as_deref(), Some(category.id.as_str()));
+            assert!(skill.apps.codex);
+            assert_eq!(skill.directory, "alpha");
+        }
+        // Export an actual pre-feature schema, rather than merely lowering user_version.
+        {
+            let conn = crate::database::lock_conn!(source.conn);
+            conn.execute_batch(
+                "ALTER TABLE skills DROP COLUMN category_id;
+                DROP TABLE skill_categories; PRAGMA user_version = 20;",
+            )?;
+        }
+        let old_sql = source.export_sql_string_for_sync()?;
+        let target = Database::memory()?;
+        target.import_sql_string_for_sync(&old_sql)?;
+        assert!(target.get_skill_categories()?.is_empty());
+        assert_eq!(
+            target
+                .get_installed_skill("local:alpha")?
+                .unwrap()
+                .category_id,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
     fn import_accepts_genuine_export_without_provider_or_mcp_rows() -> Result<(), AppError> {
         let _test_home = TestHomeGuard::new();
         let source = Database::memory()?;

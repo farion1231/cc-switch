@@ -68,6 +68,7 @@ fn prompt(id: &str, enabled: bool) -> Prompt {
 
 fn installed_skill(id: &str, directory: &str, claude_enabled: bool) -> InstalledSkill {
     InstalledSkill {
+        category_id: None,
         id: id.to_string(),
         name: id.to_string(),
         description: None,

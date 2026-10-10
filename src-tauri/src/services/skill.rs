@@ -1000,6 +1000,7 @@ impl SkillService {
         });
 
         let installed_skill = InstalledSkill {
+            category_id: None,
             id: skill.key.clone(),
             name: skill.name.clone(),
             description: if skill.description.is_empty() {
@@ -1639,6 +1640,7 @@ impl SkillService {
         let readme_url = Self::build_skill_doc_url(&owner, &name, &used_branch, &doc_path);
 
         let updated_metadata = InstalledSkill {
+            category_id: skill.category_id.clone(),
             id: skill.id.clone(),
             name: new_name,
             description: new_description,
@@ -1671,6 +1673,11 @@ impl SkillService {
             }
             Self::persist_updated_skill_metadata(db, &updated_metadata)?
         };
+        // Return the authoritative category even if assignment changed during download.
+        updated_skill.category_id = db
+            .get_installed_skill(&updated_skill.id)?
+            .ok_or_else(|| anyhow!("Skill no longer installed: {}", updated_skill.id))?
+            .category_id;
         updated_skill.apps.pi = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Pi);
 
         // 同步到所有已启用的应用目录
@@ -2065,6 +2072,15 @@ impl SkillService {
         restored_skill.installed_at = Utc::now().timestamp();
         restored_skill.apps = SkillApps::only(current_app);
         restored_skill.updated_at = 0;
+        if let Some(id) = restored_skill.category_id.as_deref() {
+            if !db
+                .get_skill_categories()?
+                .iter()
+                .any(|category| category.id == id)
+            {
+                restored_skill.category_id = None;
+            }
+        }
 
         Self::copy_dir_recursive(&backup_skill_dir, &restore_path)?;
 
@@ -2339,6 +2355,7 @@ impl SkillService {
 
             // 创建记录
             let skill = InstalledSkill {
+                category_id: None,
                 id,
                 name,
                 description,
@@ -4234,6 +4251,7 @@ impl SkillService {
 
             // 创建 InstalledSkill 记录
             let skill = InstalledSkill {
+                category_id: None,
                 id: format!("local:{install_name}"),
                 name,
                 description,
@@ -4680,6 +4698,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
         let content_hash = SkillService::compute_dir_hash(&ssot_path).ok();
 
         let skill = InstalledSkill {
+            category_id: None,
             id,
             name,
             description,
@@ -6317,6 +6336,7 @@ mod tests {
 
     fn poisoned_skill(id: &str, directory: &str) -> InstalledSkill {
         InstalledSkill {
+            category_id: None,
             id: id.to_string(),
             name: "poisoned".to_string(),
             description: None,
@@ -6345,6 +6365,9 @@ mod tests {
         let authoritative_apps = SkillApps::only(&AppType::Codex);
         db.update_skill_apps(&installed.id, &authoritative_apps)
             .expect("toggle apps");
+        let category = db.create_skill_category("During update").unwrap();
+        db.set_skill_categories(&[installed.id.clone()], Some(&category.id))
+            .unwrap();
 
         let mut updated_metadata = installed.clone();
         updated_metadata.name = "new name".to_string();
@@ -6358,6 +6381,7 @@ mod tests {
         assert_eq!(persisted.content_hash.as_deref(), Some("new hash"));
         assert_eq!(persisted.updated_at, 42);
         assert_eq!(persisted.apps, authoritative_apps);
+        assert_eq!(persisted.category_id.as_deref(), Some(category.id.as_str()));
         assert_eq!(
             db.get_installed_skill(&installed.id)
                 .expect("query skill")

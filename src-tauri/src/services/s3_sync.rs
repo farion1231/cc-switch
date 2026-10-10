@@ -17,7 +17,8 @@ use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
     validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
     RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
-    PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    PREVIOUS_DB_COMPAT_VERSION, PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST,
+    REMOTE_SKILLS_ZIP,
 };
 
 #[cfg(test)]
@@ -86,10 +87,8 @@ pub async fn download(
     settings.validate()?;
     let creds = creds_for(settings);
 
-    let manifest_key = s3_key(settings, REMOTE_MANIFEST);
-    let (manifest_bytes, etag) = s3::get_object(&creds, &manifest_key, MAX_MANIFEST_BYTES)
-        .await?
-        .ok_or_else(|| {
+    let (db_version, manifest_bytes, etag) =
+        fetch_manifest(settings, &creds).await?.ok_or_else(|| {
             localized(
                 "s3.sync.remote_empty",
                 "远端没有可下载的同步数据",
@@ -103,12 +102,30 @@ pub async fn download(
             source: e,
         })?;
 
-    validate_manifest_compat(&manifest, RemoteLayout::Current)?;
+    let layout = if db_version == DB_COMPAT_VERSION {
+        RemoteLayout::Current
+    } else {
+        RemoteLayout::Previous
+    };
+    validate_manifest_compat(&manifest, layout)?;
 
     // Download and verify artifacts
-    let db_sql = download_and_verify(settings, &creds, REMOTE_DB_SQL, &manifest.artifacts).await?;
-    let skills_zip =
-        download_and_verify(settings, &creds, REMOTE_SKILLS_ZIP, &manifest.artifacts).await?;
+    let db_sql = download_and_verify(
+        settings,
+        &creds,
+        db_version,
+        REMOTE_DB_SQL,
+        &manifest.artifacts,
+    )
+    .await?;
+    let skills_zip = download_and_verify(
+        settings,
+        &creds,
+        db_version,
+        REMOTE_SKILLS_ZIP,
+        &manifest.artifacts,
+    )
+    .await?;
 
     // Apply snapshot
     apply_snapshot(db, &db_sql, &skills_zip)?;
@@ -123,9 +140,7 @@ pub async fn download(
 pub async fn fetch_remote_info(settings: &S3SyncSettings) -> Result<Option<Value>, AppError> {
     settings.validate()?;
     let creds = creds_for(settings);
-    let manifest_key = s3_key(settings, REMOTE_MANIFEST);
-
-    let Some((bytes, _)) = s3::get_object(&creds, &manifest_key, MAX_MANIFEST_BYTES).await? else {
+    let Some((db_version, bytes, _)) = fetch_manifest(settings, &creds).await? else {
         return Ok(None);
     };
 
@@ -134,7 +149,12 @@ pub async fn fetch_remote_info(settings: &S3SyncSettings) -> Result<Option<Value
         source: e,
     })?;
 
-    let compatible = validate_manifest_compat(&manifest, RemoteLayout::Current).is_ok();
+    let layout = if db_version == DB_COMPAT_VERSION {
+        RemoteLayout::Current
+    } else {
+        RemoteLayout::Previous
+    };
+    let compatible = validate_manifest_compat(&manifest, layout).is_ok();
 
     let payload = serde_json::json!({
         "deviceName": manifest.device_name,
@@ -145,8 +165,8 @@ pub async fn fetch_remote_info(settings: &S3SyncSettings) -> Result<Option<Value
         "dbCompatVersion": manifest.db_compat_version,
         "compatible": compatible,
         "artifacts": manifest.artifacts.keys().collect::<Vec<_>>(),
-        "layout": RemoteLayout::Current.as_str(),
-        "remotePath": s3_dir_display(settings),
+        "layout": layout.as_str(),
+        "remotePath": if db_version == DB_COMPAT_VERSION { s3_dir_display(settings) } else { s3_key_for_version(settings, "", db_version).trim_end_matches('/').to_string() },
     });
 
     Ok(Some(payload))
@@ -171,11 +191,26 @@ fn persist_sync_success(
     update_s3_sync_status(status)
 }
 
+// Prefer the newest snapshot; only fall back when that manifest is absent.
+async fn fetch_manifest(
+    settings: &S3SyncSettings,
+    creds: &S3Credentials,
+) -> Result<Option<(u32, Vec<u8>, Option<String>)>, AppError> {
+    for version in [DB_COMPAT_VERSION, PREVIOUS_DB_COMPAT_VERSION] {
+        let key = s3_key_for_version(settings, REMOTE_MANIFEST, version);
+        if let Some((bytes, etag)) = s3::get_object(creds, &key, MAX_MANIFEST_BYTES).await? {
+            return Ok(Some((version, bytes, etag)));
+        }
+    }
+    Ok(None)
+}
+
 // ─── Download & verify ───────────────────────────────────────
 
 async fn download_and_verify(
     settings: &S3SyncSettings,
     creds: &S3Credentials,
+    db_version: u32,
     artifact_name: &str,
     artifacts: &BTreeMap<String, ArtifactMeta>,
 ) -> Result<Vec<u8>, AppError> {
@@ -188,7 +223,7 @@ async fn download_and_verify(
     })?;
     validate_artifact_size_limit(artifact_name, meta.size)?;
 
-    let key = s3_key(settings, artifact_name);
+    let key = s3_key_for_version(settings, artifact_name, db_version);
     let (bytes, _) = s3::get_object(creds, &key, MAX_SYNC_ARTIFACT_BYTES as usize)
         .await?
         .ok_or_else(|| {
@@ -208,11 +243,15 @@ async fn download_and_verify(
 /// Build the S3 object key for a given artifact.
 ///
 /// Format: `{remote_root}/v{PROTOCOL_VERSION}/db-v{DB_COMPAT_VERSION}/{profile}/{artifact}`
-/// Example: `cc-switch-sync/v2/db-v6/default/manifest.json`
+/// Example: `cc-switch-sync/v2/db-v7/default/manifest.json`
 fn s3_key(settings: &S3SyncSettings, artifact: &str) -> String {
+    s3_key_for_version(settings, artifact, DB_COMPAT_VERSION)
+}
+
+fn s3_key_for_version(settings: &S3SyncSettings, artifact: &str, db_version: u32) -> String {
     format!(
         "{}/v{}/db-v{}/{}/{}",
-        settings.remote_root, PROTOCOL_VERSION, DB_COMPAT_VERSION, settings.profile, artifact
+        settings.remote_root, PROTOCOL_VERSION, db_version, settings.profile, artifact
     )
 }
 
@@ -239,6 +278,36 @@ fn creds_for(settings: &S3SyncSettings) -> S3Credentials {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn discovers_previous_snapshot_and_downloads_artifacts_from_its_path() {
+        let (endpoint, server) = super::super::sync_protocol::previous_snapshot_fixture(
+            "/bucket/cc-switch-sync/v2/db-v6/default",
+        )
+        .await;
+        let settings = S3SyncSettings {
+            endpoint,
+            bucket: "bucket".into(),
+            access_key_id: "fixture".into(),
+            secret_access_key: "fixture".into(),
+            ..test_settings()
+        };
+        let creds = creds_for(&settings);
+        let (version, bytes, _) = fetch_manifest(&settings, &creds).await.unwrap().unwrap();
+        assert_eq!(version, PREVIOUS_DB_COMPAT_VERSION);
+        let manifest: SyncManifest = serde_json::from_slice(&bytes).unwrap();
+        let artifact = download_and_verify(
+            &settings,
+            &creds,
+            version,
+            REMOTE_DB_SQL,
+            &manifest.artifacts,
+        )
+        .await
+        .unwrap();
+        assert_eq!(artifact, b"previous database snapshot");
+        server.abort();
+    }
+
     fn test_settings() -> S3SyncSettings {
         S3SyncSettings {
             remote_root: "cc-switch-sync".to_string(),
@@ -251,7 +320,7 @@ mod tests {
     fn s3_key_uses_v2_and_correct_format() {
         let settings = test_settings();
         let key = s3_key(&settings, "manifest.json");
-        assert_eq!(key, "cc-switch-sync/v2/db-v6/default/manifest.json");
+        assert_eq!(key, "cc-switch-sync/v2/db-v7/default/manifest.json");
     }
 
     #[test]
@@ -261,7 +330,7 @@ mod tests {
             profile: "work".to_string(),
             ..S3SyncSettings::default()
         };
-        assert_eq!(s3_key(&settings, "db.sql"), "my-root/v2/db-v6/work/db.sql");
+        assert_eq!(s3_key(&settings, "db.sql"), "my-root/v2/db-v7/work/db.sql");
     }
 
     #[test]
@@ -273,7 +342,7 @@ mod tests {
         assert_eq!(parts.len(), 5);
         assert_eq!(parts[0], "cc-switch-sync");
         assert_eq!(parts[1], "v2");
-        assert_eq!(parts[2], "db-v6");
+        assert_eq!(parts[2], "db-v7");
         assert_eq!(parts[3], "default");
         assert_eq!(parts[4], "skills.zip");
     }
