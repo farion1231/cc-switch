@@ -24,6 +24,7 @@ vi.mock("@/lib/api/copilot", () => ({
 vi.mock("@/lib/api/model-fetch", () => ({
   fetchModelsForConfig: vi.fn(),
   fetchXaiOauthModels: vi.fn(),
+  modelFetchRequestHeaders: vi.fn(),
   showFetchModelsError: vi.fn(),
 }));
 vi.mock("sonner", () => ({
@@ -235,6 +236,7 @@ describe("Codex model-fetch lifecycle", () => {
           false,
           undefined,
           "",
+          { requestHeaders: undefined },
         );
       }
 
