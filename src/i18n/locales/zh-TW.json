@@ -1774,7 +1774,20 @@
     "retry": "重試",
     "copyCode": "複製程式碼",
     "fastMode": "FAST 模式",
-    "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。"
+    "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。",
+    "quotaRefresh": {
+      "refreshAll": "重新整理全部配額",
+      "refreshing": "正在重新整理配額…",
+      "background": "背景更新",
+      "off": "關閉",
+      "interval": "每 {{minutes}} 分鐘",
+      "hint": "CC Switch 執行期間更新所有已登入 ChatGPT 帳號的配額，略過需要重新登入的帳號。",
+      "noEligible": "沒有可更新配額的帳號。",
+      "complete": "已更新 {{count}} 個帳號的配額。",
+      "partial": "已更新 {{succeeded}} 個帳號，{{failed}} 個失敗。",
+      "failed": "配額更新失敗：{{error}}",
+      "saveFailed": "背景更新設定儲存失敗：{{error}}"
+    }
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 驗證",

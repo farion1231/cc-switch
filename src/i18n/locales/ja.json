@@ -1773,7 +1773,20 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "fastMode": "FAST モード",
-    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
+    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。",
+    "quotaRefresh": {
+      "refreshAll": "すべての利用枠を更新",
+      "refreshing": "利用枠を更新中…",
+      "background": "バックグラウンド更新",
+      "off": "オフ",
+      "interval": "{{minutes}} 分ごと",
+      "hint": "CC Switch の実行中、ログイン済みのすべての ChatGPT アカウントの利用枠を更新します。再ログインが必要なアカウントはスキップします。",
+      "noEligible": "利用枠を更新できるアカウントがありません。",
+      "complete": "{{count}} 件のアカウントの利用枠を更新しました。",
+      "partial": "{{succeeded}} 件を更新しました。{{failed}} 件は失敗しました。",
+      "failed": "利用枠の更新に失敗しました：{{error}}",
+      "saveFailed": "バックグラウンド更新の設定を保存できませんでした：{{error}}"
+    }
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 認証",

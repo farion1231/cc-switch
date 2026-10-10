@@ -286,6 +286,12 @@ struct CodexAccountData {
     pub token_updated_at_ms: i64,
 }
 
+/// Internal quota request identity; never serialized or logged.
+pub(crate) struct CodexQuotaCredentialSnapshot {
+    account: CodexAccountData,
+    access_token: Option<String>,
+}
+
 /// 公开的账号信息（返回给前端，复用 GitHubAccount 结构）
 impl From<&CodexAccountData> for GitHubAccount {
     fn from(data: &CodexAccountData) -> Self {
@@ -763,6 +769,54 @@ impl CodexOAuthManager {
         let _lifecycle = self.lifecycle_lock.read().await;
         self.ensure_account_ready_for_use(account_id).await?;
         Ok(self.resolve_valid_cached_token(account_id).await?.token)
+    }
+
+    /// Capture the credential generation paired with a quota request's token.
+    /// A re-login between token resolution and this read rejects the request.
+    pub(crate) async fn quota_credential_snapshot(
+        &self,
+        account_id: &str,
+        expected_token: Option<&str>,
+    ) -> Option<CodexQuotaCredentialSnapshot> {
+        let accounts = self.accounts.read().await;
+        let account = accounts.get(account_id)?;
+        let tokens = self.access_tokens.read().await;
+        let access_token = tokens.get(account_id).map(|cached| cached.token.clone());
+        if expected_token.is_some_and(|expected| access_token.as_deref() != Some(expected)) {
+            return None;
+        }
+        Some(CodexQuotaCredentialSnapshot {
+            account: account.clone(),
+            access_token,
+        })
+    }
+
+    /// Publish synchronously under short read guards, preventing re-login/removal
+    /// between generation validation and cache/event publication. No network I/O.
+    pub(crate) async fn with_current_quota_credentials<R>(
+        &self,
+        account_id: &str,
+        snapshot: &CodexQuotaCredentialSnapshot,
+        publish: impl FnOnce() -> R,
+    ) -> Option<R> {
+        let accounts = self.accounts.read().await;
+        let account = accounts.get(account_id)?;
+        let previous = &snapshot.account;
+        if account.authenticated_at != previous.authenticated_at
+            || account.token_updated_at_ms != previous.token_updated_at_ms
+            || account.refresh_token != previous.refresh_token
+            || account.id_token != previous.id_token
+            || account.chatgpt_account_id != previous.chatgpt_account_id
+        {
+            return None;
+        }
+        let tokens = self.access_tokens.read().await;
+        if tokens.get(account_id).map(|cached| cached.token.as_str())
+            != snapshot.access_token.as_deref()
+        {
+            return None;
+        }
+        Some(publish())
     }
 
     async fn ensure_account_ready_for_use(&self, account_id: &str) -> Result<(), CodexOAuthError> {
@@ -2201,6 +2255,85 @@ mod tests {
                 .is_err(),
             "an account still on disk cannot be treated as deleted"
         );
+    }
+
+    #[tokio::test]
+    async fn quota_publication_discards_response_after_same_id_reauth_or_deletion() {
+        for change in ["reauth", "delete"] {
+            let temp = tempfile::tempdir().unwrap();
+            let manager = Arc::new(CodexOAuthManager::new(temp.path().to_path_buf()));
+            manager
+                .add_test_account_with_user_identity("account", "old-access", "user")
+                .await
+                .unwrap();
+            let snapshot = manager
+                .quota_credential_snapshot("account", Some("old-access"))
+                .await
+                .unwrap();
+            let published = Arc::new(AtomicU64::new(0));
+            let (response_ready, response) = tokio::sync::oneshot::channel();
+            let request = {
+                let manager = manager.clone();
+                let published = published.clone();
+                tokio::spawn(async move {
+                    // A request is paused outside all manager locks.
+                    response.await.unwrap();
+                    manager
+                        .with_current_quota_credentials("account", &snapshot, || {
+                            published.fetch_add(1, Ordering::SeqCst);
+                        })
+                        .await
+                })
+            };
+            {
+                let mut accounts = manager.accounts.write().await;
+                if change == "delete" {
+                    accounts.remove("account");
+                } else {
+                    // Preserve both timestamps: even same-millisecond reauthentication
+                    // is a different generation when credentials rotate.
+                    accounts.get_mut("account").unwrap().refresh_token = "new-refresh".to_string();
+                }
+            }
+            response_ready.send(()).unwrap();
+            assert!(request.await.unwrap().is_none(), "{change}");
+            assert_eq!(published.load(Ordering::SeqCst), 0, "{change}");
+        }
+    }
+
+    #[tokio::test]
+    async fn quota_snapshot_pairs_token_and_allows_current_generation_publication() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+        manager
+            .add_test_account_with_user_identity("account", "access", "user")
+            .await
+            .unwrap();
+        assert!(manager
+            .quota_credential_snapshot("account", Some("old-access"))
+            .await
+            .is_none());
+        let snapshot = manager
+            .quota_credential_snapshot("account", Some("access"))
+            .await
+            .unwrap();
+        assert_eq!(
+            manager
+                .with_current_quota_credentials("account", &snapshot, || 42)
+                .await,
+            Some(42)
+        );
+        manager
+            .access_tokens
+            .write()
+            .await
+            .get_mut("account")
+            .unwrap()
+            .token = "replacement".to_string();
+        assert!(manager
+            .with_current_quota_credentials("account", &snapshot, || 42)
+            .await
+            .is_none());
     }
 
     #[test]

@@ -1258,6 +1258,7 @@ pub fn run() {
                 crate::mode::controller::startup(&state).await;
                 // 启动流程走完：托盘这时才开始报「路由服务没在运行」，并记下退回直连的应用。
                 crate::tray::mark_startup_settled(&app_handle);
+                crate::services::codex_quota_refresh::start(app_handle.clone());
                 // Codex 官方做路由、发布了 Stack 模型时，官方模型列表过期就在后台刷新。
                 crate::services::provider::codex_official_models::start_background_checks(
                     state.inner().clone(),
@@ -1469,6 +1470,7 @@ pub fn run() {
             // subscription quota
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
+            commands::refresh_codex_oauth_quotas,
             commands::get_codex_oauth_models,
             commands::get_xai_oauth_models,
             commands::get_xai_oauth_quota,

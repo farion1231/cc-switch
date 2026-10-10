@@ -6,8 +6,11 @@
 //! 此处定义 State wrapper 以及 Codex OAuth 专属的订阅额度和模型列表查询命令。
 
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+use crate::services::codex_quota_refresh::{
+    query_codex_oauth_quota_for, CodexAccountQuotaRefreshResult,
+};
 use crate::services::model_fetch::FetchedModel;
-use crate::services::subscription::{query_codex_quota, CredentialStatus, SubscriptionQuota};
+use crate::services::subscription::SubscriptionQuota;
 use std::sync::Arc;
 use tauri::State;
 
@@ -53,34 +56,12 @@ pub async fn get_codex_oauth_quota(
     result
 }
 
-async fn query_codex_oauth_quota_for(
-    manager: &CodexOAuthManager,
-    id: &str,
-) -> Result<SubscriptionQuota, String> {
-    // 获取（必要时自动刷新）access_token
-    let token = match manager.get_valid_token_for_account(id).await {
-        Ok(t) => t,
-        Err(e) => {
-            return Ok(SubscriptionQuota::error(
-                "codex_oauth",
-                CredentialStatus::Expired,
-                format!("Codex OAuth token unavailable: {e}"),
-            ));
-        }
-    };
-    let chatgpt_account_id = manager
-        .chatgpt_account_id_for_account(id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // 瞬时传输失败以 Err 传播（前端 reject → retry + 保留上次成功值）。
-    query_codex_quota(
-        &token,
-        Some(&chatgpt_account_id),
-        "codex_oauth",
-        "Codex OAuth access token expired or rejected. Please re-login via cc-switch.",
-    )
-    .await
+/// Refresh all managed accounts without changing the active login.
+#[tauri::command]
+pub async fn refresh_codex_oauth_quotas(
+    app: tauri::AppHandle,
+) -> Result<Vec<CodexAccountQuotaRefreshResult>, String> {
+    crate::services::codex_quota_refresh::refresh_all(&app).await
 }
 
 /// 获取 Codex OAuth (ChatGPT Plus/Pro) 可用模型列表
