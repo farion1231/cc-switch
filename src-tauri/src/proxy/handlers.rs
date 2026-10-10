@@ -108,15 +108,23 @@ pub async fn handle_models(
         active_catalog_path.as_ref().filter(|path| path.exists())
     {
         match crate::codex_config::read_codex_model_catalog_text(catalog_path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or(json!({"models": []})),
+            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|error| {
+                log::warn!("[models] 目录文件不是合法 JSON，返回空目录: {error}");
+                json!({"models": []})
+            }),
             Err(error) => {
                 log::warn!("[models] 拒绝读取越界或过大的目录文件: {error}");
                 json!({"models": []})
             }
         }
     } else {
-        if active_catalog_path.is_none() {
-            log::debug!(
+        if let Some(catalog_path) = active_catalog_path.as_ref() {
+            log::warn!(
+                "[models] 目录文件不存在，返回空目录: {}",
+                catalog_path.display()
+            );
+        } else {
+            log::info!(
                 "[models] stale guard: catalog not served (model_catalog_json not set to cc-switch catalog)"
             );
         }
