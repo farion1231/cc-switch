@@ -579,33 +579,60 @@ fn with_index_in<T>(
         if let Some(dir) = path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        let index = SessionIndex::open(path).or_else(|first| {
+        let open =
+            || SessionIndex::open(path).map_err(|e| format!("Failed to open session index: {e}"));
+        let index = open().or_else(|first| {
             // 索引只是缓存：打不开（损坏、格式不认识）就删掉重建
             log::warn!("会话正文索引无法打开，重建: {first}");
-            remove_index_files(path);
-            SessionIndex::open(path)
+            remove_index_files(path).map_err(|e| e.to_string())?;
+            open()
         });
-        *guard = Some(index.map_err(|e| format!("Failed to open session index: {e}"))?);
+        *guard = Some(index?);
     }
     let index = guard.as_mut().expect("index opened above");
     f(index).map_err(|e| format!("Session index error: {e}"))
 }
 
-fn remove_index_files(path: &Path) {
+fn remove_index_files(path: &Path) -> std::io::Result<()> {
+    remove_index_files_with(path, |file| fs::remove_file(file))
+}
+
+fn remove_index_files_with(
+    path: &Path,
+    mut remove: impl FnMut(&Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let mut first_error = None;
     for suffix in ["", "-wal", "-shm"] {
         let mut file = path.as_os_str().to_owned();
         file.push(suffix);
-        let _ = fs::remove_file(PathBuf::from(file));
+        if let Err(error) = remove(Path::new(&file)) {
+            // 文件不存在说明已经清理；其他失败要上报，但仍尝试清理剩余文件。
+            if error.kind() != std::io::ErrorKind::NotFound && first_error.is_none() {
+                first_error = Some(error);
+            }
+        }
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 
 /// 删除整个索引文件（关闭功能时调用）
 pub fn clear() -> Result<(), String> {
-    let mut guard = lock(&INDEX);
+    clear_in(&INDEX, &STATUS, &index_path())
+}
+
+fn clear_in(
+    slot: &Mutex<Option<SessionIndex>>,
+    status: &Mutex<IndexStatus>,
+    path: &Path,
+) -> Result<(), String> {
+    let mut guard = lock(slot);
     *guard = None;
-    remove_index_files(&index_path());
-    *lock(&STATUS) = IndexStatus::default();
-    Ok(())
+    let result = remove_index_files(path);
+    *lock(status) = IndexStatus::default();
+    result.map_err(|e| e.to_string())
 }
 
 /// 会话删除后同步移除索引行；索引没开或功能关闭时什么也不做
@@ -1069,6 +1096,83 @@ mod tests {
     }
 
     #[test]
+    fn removing_index_files_ignores_only_missing_files_and_attempts_every_file() {
+        use std::io::{Error, ErrorKind};
+
+        for failure in [
+            None,
+            Some(ErrorKind::PermissionDenied),
+            Some(ErrorKind::Other),
+        ] {
+            for failed_file in 0..3 {
+                let path = Path::new(INDEX_FILE);
+                let mut attempted = Vec::new();
+                let result = remove_index_files_with(path, |file| {
+                    let position = attempted.len();
+                    attempted.push(file.to_path_buf());
+                    if position == failed_file {
+                        if let Some(kind) = failure {
+                            return Err(Error::from(kind));
+                        }
+                    }
+                    Err(Error::from(ErrorKind::NotFound))
+                });
+                assert_eq!(result.err().map(|e| e.kind()), failure);
+                assert_eq!(
+                    attempted,
+                    [
+                        INDEX_FILE.to_string(),
+                        format!("{INDEX_FILE}-wal"),
+                        format!("{INDEX_FILE}-shm")
+                    ]
+                    .map(PathBuf::from),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clear_failure_drops_index_resets_status_and_keeps_disabled_writers_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        // 目录无法用 remove_file 删除，避免依赖 chmod 或测试进程的权限。
+        fs::create_dir(&path).unwrap();
+        for suffix in ["-wal", "-shm"] {
+            fs::write(dir.path().join(format!("{INDEX_FILE}{suffix}")), b"fixture").unwrap();
+        }
+        let slot = Mutex::new(Some(SessionIndex::open_in_memory().unwrap()));
+        let status = Mutex::new(IndexStatus {
+            running: true,
+            processed: 1,
+            total: 2,
+        });
+        let enabled = AtomicBool::new(false);
+
+        assert!(clear_in(&slot, &status, &path).is_err());
+        assert!(lock(&slot).is_none());
+        assert_eq!(*lock(&status), IndexStatus::default());
+        assert!(!dir.path().join(format!("{INDEX_FILE}-wal")).exists());
+        assert!(!dir.path().join(format!("{INDEX_FILE}-shm")).exists());
+        assert!(
+            with_index_in(&slot, &path, || enabled.load(Ordering::SeqCst), |_| Ok(())).is_err()
+        );
+        assert!(!enabled.load(Ordering::SeqCst));
+        assert!(path.is_dir());
+    }
+
+    #[test]
+    fn removing_index_files_deletes_existing_files_and_can_be_repeated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        for suffix in ["", "-wal", "-shm"] {
+            fs::write(dir.path().join(format!("{INDEX_FILE}{suffix}")), b"fixture").unwrap();
+        }
+        remove_index_files(&path).unwrap();
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+        remove_index_files(&path).unwrap();
+    }
+
+    #[test]
     fn disabling_while_a_writer_waits_for_the_lock_keeps_the_index_deleted() {
         use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
@@ -1095,7 +1199,7 @@ mod tests {
         };
         std::thread::sleep(std::time::Duration::from_millis(50));
         enabled.store(false, Ordering::SeqCst);
-        remove_index_files(&path);
+        remove_index_files(&path).unwrap();
         drop(guard);
 
         assert!(writer.join().unwrap().is_err());
