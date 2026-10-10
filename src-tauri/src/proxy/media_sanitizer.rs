@@ -73,9 +73,22 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
     // "Model only support text input"，全程不出现 image（issue #5025）。
     // 国产网关的英文常缺三单 s，因此带 s / 不带 s 两种形式都要列。
     const TEXT_ONLY_SELF_EVIDENT_HINTS: &[&str] = &["only support text", "only supports text"];
+    // 中文自证性表述（issue #7616）：阿里云 MaaS 等网关按中文校验报错，
+    // 如「messages.content.type 参数非法，取值范围 ['text']」——允许值集合
+    // 只剩 text 本身就断言了仅接受文本，同样无需提到图片字样。
+    const TEXT_ONLY_SELF_EVIDENT_HINTS_CN: &[&str] =
+        &["只支持文本", "仅支持文本", "只接受文本", "仅接受文本"];
     if TEXT_ONLY_SELF_EVIDENT_HINTS
         .iter()
         .any(|hint| message.contains(hint))
+        || TEXT_ONLY_SELF_EVIDENT_HINTS_CN
+            .iter()
+            .any(|hint| message.contains(hint))
+        // 参数校验形状「取值范围 ['text']」：「取值范围」与 text 同时出现即视为
+        // 内容块只收文本；但允许值集合里若还列出 image 一类取值（如
+        // ['text', 'image_url']），说明模态未被拒绝，不认——避免其它字段
+        // 校验错误被误判成模态拒绝而触发一次无谓的降级重试。
+        || (message.contains("取值范围") && message.contains("text") && !message.contains("image"))
     {
         return true;
     }
@@ -87,7 +100,13 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         || message.contains("modality")
         || message.contains("modalities")
         || message.contains("media")
-        || message.contains("attachment");
+        || message.contains("attachment")
+        // 中文报错里的模态词（issue #7616）。
+        || message.contains("图片")
+        || message.contains("图像")
+        || message.contains("视觉")
+        || message.contains("多模态")
+        || message.contains("附件");
 
     if !mentions_image {
         return false;
@@ -112,6 +131,10 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         "can't process",
         "can't handle",
         "unable to process",
+        // 中文「不支持图片输入 / 无法处理图像」一类表述（issue #7616）。
+        "不支持",
+        "无法处理",
+        "不能处理",
     ];
 
     UNSUPPORTED_HINTS.iter().any(|hint| message.contains(hint))
@@ -1181,6 +1204,69 @@ mod tests {
         };
 
         assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn detects_cn_parameter_validation_text_only_errors() {
+        // 阿里云 MaaS 真实报错（issue #7616）：中文校验文本，全程不出现
+        // image/图片字样——「取值范围」与 text 同时出现即断言内容块只收文本。
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"messages.content.type 参数非法，取值范围 ['text']"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn detects_cn_direct_text_only_phrasings() {
+        // 中文直述「仅/只支持|接受文本」：自证性表述，无需提到图片。
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(r#"{"error":{"message":"该模型仅支持文本输入"}}"#.to_string()),
+        };
+
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn detects_cn_unsupported_image_phrasings() {
+        // 第二层：提到图片 + 中文「不支持」短语。
+        let error = ProxyError::UpstreamError {
+            status: 422,
+            body: Some(r#"{"error":{"message":"当前模型不支持图片输入"}}"#.to_string()),
+        };
+
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn allowed_set_with_image_value_is_not_text_only_rejection() {
+        // 允许值集合里明确列出 image_url：模态未被拒绝，属其它字段的校验
+        // 错误，不能触发降级重试。
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"messages.content.type 参数非法，取值范围 ['text', 'image_url']"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(!is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn cn_parameter_errors_without_text_only_assertion_are_ignored() {
+        // 中文参数校验错误，但与模态无关（无文本断言、无图片字样）。
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(r#"{"error":{"message":"参数非法：temperature 取值超出限制"}}"#.to_string()),
+        };
+
+        assert!(!is_unsupported_image_error(&error));
     }
 
     #[test]
