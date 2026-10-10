@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { isLinux } from "@/lib/platform";
 import { TerminalSelect } from "@/components/settings/TerminalSettings";
+import { ClaudeDesktopDisplaySettings } from "@/components/settings/ClaudeDesktopDisplaySettings";
 import {
   SettingsBlock,
   SettingsCard,
@@ -129,6 +130,11 @@ export function GeneralSection({
           />
         </SettingsCard>
       </SettingsBlock>
+
+      <ClaudeDesktopDisplaySettings
+        value={settings.claudeDesktopDisplay ?? null}
+        onChange={(v) => void onAutoSave({ claudeDesktopDisplay: v })}
+      />
 
       <SettingsBlock title={t("settings.general.sidebarAndHeader")}>
         <SettingsCard>
