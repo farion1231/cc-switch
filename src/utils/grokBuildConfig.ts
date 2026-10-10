@@ -72,6 +72,29 @@ export function parseGrokBuildConfig(
   }
 }
 
+/**
+ * Which profile generates session titles.
+ *
+ * Grok Build resolves `[models].session_summary` separately from
+ * `[models].default`, so leaving it unset sent the title request to the
+ * client's own fallback model — a custom provider could answer the
+ * conversation while titles quietly went somewhere else, or failed on their
+ * own where that fallback is unavailable.
+ *
+ * A summary profile the user pointed somewhere else is left alone. One that
+ * was tracking the default profile keeps tracking it through a rename,
+ * rather than being stranded on a table that no longer exists.
+ */
+export function resolveSessionSummaryProfile(
+  existingSummary: string,
+  previousProfile: string,
+  profile: string,
+): string {
+  const current = existingSummary.trim();
+  if (!current || current === previousProfile) return profile;
+  return current;
+}
+
 export function buildGrokBuildConfig(values: GrokBuildConfigValues): string {
   return updateGrokBuildConfig(undefined, values);
 }
@@ -92,7 +115,15 @@ export function updateGrokBuildConfig(
 
   const existingModels = asRecord(config.models) ?? {};
   const previousProfile = asString(existingModels.default, profile);
-  config.models = { ...existingModels, default: profile };
+  config.models = {
+    ...existingModels,
+    default: profile,
+    session_summary: resolveSessionSummaryProfile(
+      asString(existingModels.session_summary),
+      previousProfile,
+      profile,
+    ),
+  };
 
   const modelTables = asRecord(config.model) ?? {};
   const existingSelected =
