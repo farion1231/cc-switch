@@ -4698,6 +4698,10 @@
     }
   },
   "ohmypi": {
+    "empty": {
+      "title": "尚未新增自訂供應商",
+      "description": "Oh My Pi 內建供應商由 Oh My Pi 自行管理。點擊右上角 +，從預設或自訂設定新增供應商。"
+    },
     "form": {
       "modelsToggle": "設定模型列表",
       "modelsHiddenHint": "未啟用模型列表：儲存後將以 override-only 型態寫入（不寫 models 鍵）",

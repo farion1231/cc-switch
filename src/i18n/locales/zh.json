@@ -4698,6 +4698,10 @@
     }
   },
   "ohmypi": {
+    "empty": {
+      "title": "还没有添加自定义供应商",
+      "description": "Oh My Pi 内置供应商由 Oh My Pi 自行管理。点击右上角 +，从预设或自定义配置添加供应商。"
+    },
     "form": {
       "modelsToggle": "配置模型列表",
       "modelsHiddenHint": "未启用模型列表：保存后将以 override-only 形态写入（不写 models 键）",

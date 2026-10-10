@@ -4698,6 +4698,10 @@
     }
   },
   "ohmypi": {
+    "empty": {
+      "title": "カスタムプロバイダーはまだ追加されていません",
+      "description": "Oh My Pi の組み込みプロバイダーは Oh My Pi が管理します。右上の + をクリックして、プリセットまたはカスタム設定からプロバイダーを追加してください。"
+    },
     "form": {
       "modelsToggle": "モデルリストを設定",
       "modelsHiddenHint": "モデルリスト無効：保存時は override-only 形式で書き込みます（models キーを書きません）",
