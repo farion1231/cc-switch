@@ -1078,8 +1078,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://opencode.ai/zen/go",
     mode: "proxy",
     // Go 网关 /messages 收除 grok-4.5 外全部模型（Chat 组靠服务端转换），
-    // anthropic 透传即可；上游只认 x-api-key，apiKey 直填默认即该头。
+    // anthropic 透传即可；上游只认 x-api-key，显式使用 API_KEY 认证。
     apiFormat: "anthropic",
+    apiKeyField: "ANTHROPIC_API_KEY",
     // supports1m：deepseek-v4-flash 窗口 1M（本仓 Go 网关 Codex catalog
     // 记 1048576）。[1m] 只是 Claude Desktop 本地标记，匹配前会被剥掉，
     // 不会随请求发往上游

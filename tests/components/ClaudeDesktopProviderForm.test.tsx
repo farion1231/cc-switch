@@ -155,6 +155,23 @@ describe("ClaudeDesktopProviderForm", () => {
     ).not.toHaveProperty("claude-sonnet-5");
   });
 
+  it("saves the OpenCode Go preset with x-api-key credentials", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    renderForm(undefined, onSubmit);
+
+    await user.click(screen.getByRole("button", { name: /OpenCode Go/ }));
+    await user.type(screen.getByLabelText("API Key"), "sk-test");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const { env } = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    expect(env).toMatchObject({
+      ANTHROPIC_API_KEY: "sk-test",
+    });
+    expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+  });
+
   it("直连与模型映射分别保留自己的模型列表", async () => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
