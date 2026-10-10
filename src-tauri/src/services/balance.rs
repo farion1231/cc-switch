@@ -1,6 +1,6 @@
 //! 供应商余额查询服务
 //!
-//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI 的账户余额查询。
+//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI、Zhipu 的账户余额查询。
 //! 返回 UsageResult 格式，与现有用量系统无缝对接。
 //!
 //! 错误通道语义（与 coding_plan / subscription 两个服务保持一致）：
@@ -21,6 +21,7 @@ enum BalanceProvider {
     SiliconFlowEn,
     OpenRouter,
     NovitaAI,
+    Zhipu,
 }
 
 fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
@@ -37,6 +38,8 @@ fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
         Some(BalanceProvider::OpenRouter)
     } else if url.contains("api.novita.ai") {
         Some(BalanceProvider::NovitaAI)
+    } else if url.contains("open.bigmodel.cn") || url.contains("www.bigmodel.cn") {
+        Some(BalanceProvider::Zhipu)
     } else {
         None
     }
@@ -280,6 +283,87 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
     })
 }
 
+// ── Zhipu ───────────────────────────────────────────────────
+// GET https://open.bigmodel.cn/api/biz/account/query-customer-account-report
+// Response: { code: 200, data: { balance, availableBalance, rechargeAmount, totalSpendAmount } }
+
+fn zhipu_usage_from_response(body: &serde_json::Value) -> UsageResult {
+    if body.get("code").and_then(serde_json::Value::as_i64) != Some(200) {
+        let message = body
+            .get("msg")
+            .or_else(|| body.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Unknown Zhipu balance API error");
+        return make_error(format!("Zhipu API error: {message}"));
+    }
+
+    let Some(data) = body.get("data") else {
+        return make_error("Missing 'data' field in Zhipu balance response".to_string());
+    };
+
+    let Some(remaining) =
+        parse_f64_field(data, "availableBalance").or_else(|| parse_f64_field(data, "balance"))
+    else {
+        return make_error("Missing available balance in Zhipu response".to_string());
+    };
+
+    UsageResult {
+        success: true,
+        data: Some(vec![UsageData {
+            plan_name: Some("Zhipu Pay-as-you-go".to_string()),
+            remaining: Some(remaining),
+            total: parse_f64_field(data, "rechargeAmount"),
+            used: parse_f64_field(data, "totalSpendAmount"),
+            unit: Some("CNY".to_string()),
+            is_valid: Some(remaining > 0.0),
+            invalid_message: if remaining <= 0.0 {
+                Some("No balance remaining".to_string())
+            } else {
+                None
+            },
+            extra: None,
+        }]),
+        error: None,
+    }
+}
+
+async fn query_zhipu(api_key: &str) -> Result<UsageResult, String> {
+    let client = crate::proxy::http_client::get();
+
+    let resp = client
+        .get("https://open.bigmodel.cn/api/biz/account/query-customer-account-report")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(make_auth_error(status));
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
+    }
+
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+    };
+
+    Ok(zhipu_usage_from_response(&body))
+}
+
 // ── OpenRouter ──────────────────────────────────────────────
 // GET https://openrouter.ai/api/v1/credits
 // Response: { data: { total_credits, total_usage } }
@@ -450,5 +534,61 @@ pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, S
         BalanceProvider::SiliconFlowEn => query_siliconflow(api_key, false).await,
         BalanceProvider::OpenRouter => query_openrouter(api_key).await,
         BalanceProvider::NovitaAI => query_novita(api_key).await,
+        BalanceProvider::Zhipu => query_zhipu(api_key).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_zhipu_data_and_console_hosts() {
+        assert!(matches!(
+            detect_provider("https://open.bigmodel.cn/api/paas/v4/chat/completions"),
+            Some(BalanceProvider::Zhipu)
+        ));
+        assert!(matches!(
+            detect_provider("https://www.bigmodel.cn"),
+            Some(BalanceProvider::Zhipu)
+        ));
+        assert!(detect_provider("https://api.example.com").is_none());
+    }
+
+    #[test]
+    fn parses_zhipu_account_report() {
+        let body = serde_json::json!({
+            "code": 200,
+            "msg": "操作成功",
+            "data": {
+                "balance": "493.465825960",
+                "rechargeAmount": "500.000000",
+                "totalSpendAmount": "6.534174040",
+                "availableBalance": "493.465825960"
+            }
+        });
+
+        let result = zhipu_usage_from_response(&body);
+        assert!(result.success);
+        let item = &result.data.unwrap()[0];
+        assert_eq!(item.remaining, Some(493.465_825_96));
+        assert_eq!(item.total, Some(500.0));
+        assert_eq!(item.used, Some(6.534_174_04));
+        assert_eq!(item.unit.as_deref(), Some("CNY"));
+        assert_eq!(item.is_valid, Some(true));
+    }
+
+    #[test]
+    fn reports_zhipu_api_error_without_data_panic() {
+        let body = serde_json::json!({
+            "code": 401,
+            "msg": "invalid api key"
+        });
+
+        let result = zhipu_usage_from_response(&body);
+        assert!(!result.success);
+        assert!(result
+            .error
+            .is_some_and(|error| error.contains("invalid api key")));
     }
 }
