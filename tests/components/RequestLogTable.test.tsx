@@ -1,11 +1,18 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RequestLogTable,
   appShortName,
   formatLogTime,
 } from "@/components/usage/RequestLogTable";
-import type { UsageRangeSelection } from "@/types/usage";
+import type { RequestLog, UsageRangeSelection } from "@/types/usage";
+import { REQUEST_LOG_COLUMNS } from "@/components/usage/tableColumns";
 
 const useRequestLogsMock = vi.hoisted(() => vi.fn());
 
@@ -15,8 +22,12 @@ vi.mock("react-i18next", () => ({
       key: string,
       options?: {
         defaultValue?: string;
+        value?: string;
       },
-    ) => options?.defaultValue ?? key,
+    ) =>
+      key === "usage.firstTokenMilliseconds"
+        ? `${key}:${options?.value}`
+        : (options?.defaultValue ?? key),
     i18n: {
       resolvedLanguage: "en",
       language: "en",
@@ -27,6 +38,37 @@ vi.mock("react-i18next", () => ({
 vi.mock("@/lib/query/usage", () => ({
   useRequestLogs: (args: unknown) => useRequestLogsMock(args),
 }));
+
+const requestLog = (overrides: Partial<RequestLog> = {}): RequestLog => ({
+  requestId: "r1",
+  providerId: "p1",
+  providerName: "DeepSeek",
+  appType: "codex",
+  model: "deepseek-v4-pro",
+  costMultiplier: "1",
+  inputTokens: 1_000,
+  outputTokens: 1_100,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  inputCostUsd: "0",
+  outputCostUsd: "0",
+  cacheReadCostUsd: "0",
+  cacheCreationCostUsd: "0",
+  totalCostUsd: "0.0114",
+  isStreaming: true,
+  statusCode: 200,
+  createdAt: 1_759_212_000,
+  latencyMs: 12_900,
+  firstTokenMs: 1_800,
+  ...overrides,
+});
+
+const showLogs = (logs: RequestLog[]) => {
+  useRequestLogsMock.mockReturnValue({
+    data: { data: logs, total: logs.length, page: 0, pageSize: 20 },
+    isLoading: false,
+  });
+};
 
 describe("RequestLogTable", () => {
   beforeEach(() => {
@@ -42,6 +84,162 @@ describe("RequestLogTable", () => {
         isLoading: false,
       }),
     );
+  });
+
+  it("shows nine columns by default without first-token timing", () => {
+    showLogs([requestLog()]);
+    render(
+      <RequestLogTable range={{ preset: "today" }} refreshIntervalMs={0} />,
+    );
+
+    const headers = screen.getAllByRole("columnheader");
+    expect(headers).toHaveLength(9);
+    expect(headers[8]).toHaveTextContent("usage.speed");
+    expect(
+      screen.queryByRole("columnheader", { name: "usage.firstToken" }),
+    ).toBeNull();
+    expect(
+      within(screen.getAllByRole("row")[1]).getAllByRole("cell"),
+    ).toHaveLength(9);
+    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "620px" });
+  });
+
+  it("shows first-token timing after speed when explicitly enabled", () => {
+    showLogs([requestLog()]);
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        refreshIntervalMs={0}
+        columnVisibility={{ firstToken: true }}
+      />,
+    );
+
+    const headers = screen.getAllByRole("columnheader");
+    expect(headers).toHaveLength(10);
+    expect(headers[8]).toHaveTextContent("usage.speed");
+    expect(headers[9]).toHaveTextContent("usage.firstToken");
+    const cells = within(screen.getAllByRole("row")[1]).getAllByRole("cell");
+    expect(cells).toHaveLength(10);
+    expect(cells[9]).toHaveTextContent("1.8s");
+    expect(cells[9]).toHaveAttribute(
+      "title",
+      "usage.firstTokenMilliseconds:1,800",
+    );
+    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "692px" });
+  });
+
+  it.each([
+    [0, "0.0s", "usage.firstTokenMilliseconds:0"],
+    [1_800.5, "1.8s", "usage.firstTokenMilliseconds:1,800.5"],
+    [undefined, "—", null],
+    [null, "—", null],
+    [-1, "—", null],
+    [Number.NaN, "—", null],
+    [Number.POSITIVE_INFINITY, "—", null],
+  ])(
+    "renders firstTokenMs=%s without inventing timing",
+    (value, text, title) => {
+      showLogs([requestLog({ firstTokenMs: value as number | undefined })]);
+      render(
+        <RequestLogTable
+          range={{ preset: "today" }}
+          refreshIntervalMs={0}
+          columnVisibility={{ firstToken: true }}
+        />,
+      );
+
+      const cell = within(screen.getAllByRole("row")[1]).getAllByRole(
+        "cell",
+      )[9];
+      expect(cell).toHaveTextContent(text);
+      expect(cell.getAttribute("title")).toBe(title);
+    },
+  );
+
+  it("keeps headers, data cells, empty state and width aligned with visibility", () => {
+    showLogs([requestLog()]);
+    const visibility = { provider: false, model: false, firstToken: false };
+    const { rerender } = render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        refreshIntervalMs={0}
+        columnVisibility={visibility}
+      />,
+    );
+
+    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
+    expect(
+      within(screen.getAllByRole("row")[1]).getAllByRole("cell"),
+    ).toHaveLength(7);
+    expect(
+      screen.queryByRole("columnheader", { name: "usage.firstToken" }),
+    ).toBeNull();
+    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "404px" });
+
+    showLogs([]);
+    rerender(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        refreshIntervalMs={0}
+        columnVisibility={visibility}
+      />,
+    );
+    expect(screen.getByRole("cell", { name: "usage.noData" })).toHaveAttribute(
+      "colspan",
+      "7",
+    );
+  });
+
+  it("preserves the time and detail entry when every column is requested hidden", () => {
+    showLogs([requestLog()]);
+    const onOpenDetail = vi.fn();
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        refreshIntervalMs={0}
+        columnVisibility={Object.fromEntries(
+          REQUEST_LOG_COLUMNS.map(({ id }) => [id, false]),
+        )}
+        onOpenDetail={onOpenDetail}
+      />,
+    );
+
+    expect(screen.getAllByRole("columnheader")).toHaveLength(1);
+    expect(screen.getByRole("columnheader")).toHaveTextContent("usage.time");
+    const row = screen.getAllByRole("row")[1];
+    expect(within(row).getAllByRole("cell")).toHaveLength(1);
+    fireEvent.click(
+      within(row).getByRole("button", { name: "usage.openRequestDetail" }),
+    );
+    expect(onOpenDetail).toHaveBeenCalledTimes(1);
+    expect(onOpenDetail).toHaveBeenCalledWith("r1");
+    fireEvent.click(row);
+    expect(onOpenDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not reset pagination when only column visibility changes", async () => {
+    const range: UsageRangeSelection = { preset: "today" };
+    const { rerender } = render(
+      <RequestLogTable range={range} refreshIntervalMs={0} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "usage.nextPage" }));
+    await waitFor(() =>
+      expect(useRequestLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 1 }),
+      ),
+    );
+
+    rerender(
+      <RequestLogTable
+        range={range}
+        refreshIntervalMs={0}
+        columnVisibility={{ firstToken: true }}
+      />,
+    );
+    expect(useRequestLogsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1 }),
+    );
+    expect(screen.getAllByRole("columnheader")).toHaveLength(10);
   });
 
   it("resets pagination when the dashboard range changes", async () => {
@@ -200,23 +398,22 @@ describe("RequestLogTable", () => {
         range={{ preset: "7d" }}
         refreshIntervalMs={0}
         onOpenDetail={onOpenDetail}
+        columnVisibility={{ firstToken: true }}
       />,
     );
 
     const rows = screen.getAllByRole("row").slice(1);
+    const cells = rows.map((row) => within(row).getAllByRole("cell"));
     expect(rows).toHaveLength(4);
-    expect(rows[0].lastElementChild).toHaveTextContent("99tok/s");
-    expect(rows[0].lastElementChild).toHaveAttribute(
-      "title",
-      "usage.timingTip",
-    );
-    expect(rows[1].lastElementChild).toHaveTextContent("—");
-    expect(rows[2].lastElementChild).toHaveTextContent("—");
-    expect(rows[3].lastElementChild).toHaveTextContent("≈90tok/s");
-    expect(rows[3].lastElementChild).toHaveAttribute(
-      "title",
-      "usage.estimatedTimingTip",
-    );
+    expect(cells[0][8]).toHaveTextContent("99tok/s");
+    expect(cells[0][8]).toHaveAttribute("title", "usage.timingTip");
+    expect(cells[1][8]).toHaveTextContent("—");
+    expect(cells[1][9]).toHaveTextContent("1.9s");
+    expect(cells[2][8]).toHaveTextContent("—");
+    expect(cells[2][9]).toHaveTextContent("—");
+    expect(cells[3][8]).toHaveTextContent("≈90tok/s");
+    expect(cells[3][9]).toHaveTextContent("—");
+    expect(cells[3][8]).toHaveAttribute("title", "usage.estimatedTimingTip");
     expect(
       screen.getByRole("columnheader", { name: /usage.speed/ }),
     ).toBeInTheDocument();

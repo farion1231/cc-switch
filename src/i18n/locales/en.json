@@ -4,6 +4,11 @@
     "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
   },
   "common": {
+    "columnVisibility": {
+      "label": "Show columns",
+      "reset": "Restore defaults",
+      "required": "Always visible"
+    },
     "unsavedLeaveTitle": "Unsaved changes",
     "unsavedLeaveMessage": "If you leave, the changes on this editor page will not be saved.",
     "unsavedLeaveConfirm": "Discard and leave",
@@ -2362,6 +2367,8 @@
     "speedHelp": "Output tokens per second, from the first token to the end. Only requests through the routing service with at least 100 output tokens count; for models that hide their reasoning it's an approximation. A value with ≈ is estimated from session-log timestamps when routing is off: there is no first-token timing, so the wait for the first token is included and the number reads low. Only requests with at least 200 output tokens are estimated.",
     "speedSumHelpTitle": "How overall speed is calculated",
     "speedSumHelp": "Total output tokens divided by total generation time, not an average of per-request speeds, so short requests don't skew it. Only requests through the routing service with at least 100 output tokens count. A value with ≈ is estimated from session logs (it includes the wait for the first token, and only requests with at least 200 output tokens count) and is shown only when the row has no routed data.",
+    "firstToken": "First token",
+    "firstTokenMilliseconds": "{{value}} ms",
     "timingTip": "Duration {{duration}}s · first token {{ttft}}s",
     "estimatedTimingTip": "About {{duration}}s (estimated from session-log timestamps, including the wait for the first token)",
     "cacheTip": "Cache hits {{read}} · cache writes {{write}}",
