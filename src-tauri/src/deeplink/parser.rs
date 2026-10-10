@@ -120,6 +120,11 @@ fn parse_provider_deeplink(
     let haiku_model = params.get("haikuModel").cloned();
     let sonnet_model = params.get("sonnetModel").cloned();
     let opus_model = params.get("opusModel").cloned();
+    // Optional Codex model provider id (issue #7856). Absent or blank keeps `custom`.
+    let model_provider = params
+        .get("modelProvider")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
     let icon = params
         .get("icon")
         .map(|v| v.trim().to_lowercase())
@@ -157,6 +162,7 @@ fn parse_provider_deeplink(
         haiku_model,
         sonnet_model,
         opus_model,
+        model_provider,
         content: None,
         description: None,
         apps: None,
@@ -229,6 +235,7 @@ fn parse_prompt_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        model_provider: None,
         apps: None,
         repo: None,
         directory: None,
@@ -302,6 +309,7 @@ fn parse_mcp_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        model_provider: None,
         content: None,
         description: None,
         repo: None,
@@ -357,6 +365,7 @@ fn parse_skill_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        model_provider: None,
         content: None,
         description: None,
         apps: None,

@@ -29,6 +29,8 @@ export interface DeepLinkImportRequest {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  /** Optional Codex model provider id (Codex only); absent keeps `custom` */
+  modelProvider?: string;
 
   // Prompt fields
   content?: string;

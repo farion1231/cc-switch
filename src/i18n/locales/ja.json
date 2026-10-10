@@ -1934,7 +1934,12 @@
     "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
     "keyFieldsHint": "エンドポイント、キー、モデル、推論レベル、コンテキストウィンドウ、互換スイッチはプロバイダーに合わせて切り替わります。それ以外は Codex のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
     "inactiveFieldsHint": "このプロバイダーには切り替え時に適用されない設定が {{count}} 件保存されています。クリックすると TOML をコピーできるので、必要なら上に貼り付けてください。保存済みの値は削除されません。",
-    "inactiveFieldCopied": "コピーしました"
+    "inactiveFieldCopied": "コピーしました",
+    "providerIdLabel": "Provider ID",
+    "providerIdPlaceholder": "デフォルトは custom、空欄可",
+    "providerIdHint": "config.toml の model_provider とプロバイダーテーブルキーを表示名とは別に書き込みます。空欄の場合はデフォルトの custom を維持します。変更すると Codex の過去セッションは ID ごとに分かれ、自動移行されません。ローカルルーティング（集約/プロキシ）では custom が使われます。",
+    "providerIdReservedError": "この ID は Codex の予約名です。別の ID を指定してください（大文字小文字を区別。OpenAI は有効なカスタム ID です）。",
+    "providerIdControlError": "Provider ID に制御文字は使えません。"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
@@ -3416,7 +3421,8 @@
       "envHijack": "この設定には、プロセスの読み込み動作を変える環境変数（ライブラリの注入、CA 証明書の差し替えなど）が含まれています。信頼できる提供元か確認してください。",
       "privateEndpoint": "このアドレスはローカルホストまたは内部ネットワークを指しています。自分で立てたローカルサービス以外はインポートしないでください。",
       "shellCommand": "この設定はシェル経由でコマンド全体を実行します。実際に動作する内容は引数にあります。1 行ずつ確認してください。"
-    }
+    },
+    "modelProvider": "Provider ID"
   },
   "iconPicker": {
     "search": "アイコンを検索",

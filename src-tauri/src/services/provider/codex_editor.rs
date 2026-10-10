@@ -119,14 +119,18 @@ pub fn view(
     let planned = plan_for_view(&state.db, &live_owner.owner(), &provider)?;
     planned.config().apply_to(&path, &mut doc)?;
 
-    // Key 在 API Key 输入框里（行的 auth），TOML 里不再重复显示。
+    // Key 在 API Key 输入框里（行的 auth），TOML 里不再重复显示。路由表按显式指定的
+    // Provider ID 写（缺省 custom），所以从生效的选路取表。
     let row_key = settings_config
         .get("auth")
         .and_then(crate::codex_config::extract_codex_auth_api_key);
+    let route_id = selected_route(&doc)
+        .map(str::to_string)
+        .unwrap_or_else(|| ROUTE_ID.to_string());
     if let Some(route) = doc
         .get_mut("model_providers")
         .and_then(Item::as_table_like_mut)
-        .and_then(|providers| providers.get_mut(ROUTE_ID))
+        .and_then(|providers| providers.get_mut(route_id.as_str()))
         .and_then(Item::as_table_like_mut)
     {
         let injected = route
@@ -370,17 +374,22 @@ pub(crate) fn plan_save(
     let mut base_entries = entries(&base_doc, &routes);
     base_entries.extend(removed_from_live);
     Ok(CodexEditorPlan {
-        row_settings: store_into_row(stored_row, edited, &projection)?,
+        row_settings: store_into_row(stored_row, edited, &projection, selected_route(&edited_doc))?,
         edits: TomlEdits::between(&base_entries, &entries(&edited_doc, &routes), on_conflict),
     })
 }
 
 /// 把编辑器里的关键字段、独有字段存回行：行的 `config` 里这两类键换成编辑器的，其余内容
 /// 原样保留（降级后旧版会整份使用这些行）；`auth`、模型目录等表单字段取编辑器的。
+///
+/// `edited_selector` 是编辑器最终配置里的选路：第三方路由按它写行（issue #7856），
+/// 并把它记进行 JSON 的 `modelProvider`；是 `custom`（或保留名，按旧规则归一）就清掉
+/// 标记，存量形态不变。
 fn store_into_row(
     stored_row: Option<&Value>,
     edited: &Value,
     projection: &CodexProjection,
+    edited_selector: Option<&str>,
 ) -> Result<Value, AppError> {
     let mut row = edited.clone();
     let stored_text = stored_row.map(config_text).unwrap_or("");
@@ -437,12 +446,23 @@ fn store_into_row(
             if token.is_some() && token == key {
                 table.remove("experimental_bearer_token");
             }
-            doc["model_provider"] = toml_edit::value(ROUTE_ID);
+            // 编辑器最终配置里的选路就是用户要的表标识；保留名按旧规则归一回 custom。
+            let route_id = edited_selector
+                .filter(|id| crate::codex_config::is_custom_codex_model_provider_id(id))
+                .unwrap_or(ROUTE_ID);
+            doc["model_provider"] = toml_edit::value(route_id);
             insert_at(
                 &mut doc,
-                &["model_providers".to_string(), ROUTE_ID.to_string()],
+                &["model_providers".to_string(), route_id.to_string()],
                 Item::Table(table),
             );
+            if route_id == ROUTE_ID {
+                if let Some(fields) = row.as_object_mut() {
+                    fields.remove("modelProvider");
+                }
+            } else {
+                row["modelProvider"] = Value::String(route_id.to_string());
+            }
         }
         Route::BuiltIn { id, table } => {
             doc["model_provider"] = toml_edit::value(id.as_str());
@@ -452,6 +472,10 @@ fn store_into_row(
                     &["model_providers".to_string(), id.clone()],
                     Item::Table(table.clone()),
                 );
+            }
+            // 标记只描述第三方路由表；内置/官方行清掉，避免留下失效的旧值。
+            if let Some(fields) = row.as_object_mut() {
+                fields.remove("modelProvider");
             }
         }
         Route::Official | Route::Default => {}
@@ -611,6 +635,104 @@ mod tests {
             !text.contains("approval_policy"),
             "global settings go to live, not the row: {text}"
         );
+    }
+
+    /// 编辑器里显式指定的 Provider ID（issue #7856）：按它写行，并记进行 JSON 的
+    /// `modelProvider`，切换/重启的投影按标记放行。
+    #[test]
+    fn saving_keeps_an_explicit_provider_id_in_the_row_and_marks_it() {
+        let stored = json!({
+            "auth": { "OPENAI_API_KEY": "sk-old" },
+            "config": "model_provider = \"custom\"\nmodel = \"gpt-a\"\n\n[model_providers.custom]\nname = \"Relay\"\nbase_url = \"https://old.example/v1\"\n"
+        });
+        let edited = json!({
+            "auth": { "OPENAI_API_KEY": "sk-new" },
+            "config": "model_provider = \"BenszAPI\"\nmodel = \"gpt-b\"\n\n[model_providers.BenszAPI]\nname = \"Relay\"\nbase_url = \"https://new.example/v1\"\n"
+        });
+        let plan = plan_save(
+            Some(&stored),
+            &edited,
+            &edited,
+            &Origin::row(&stored).unwrap(),
+            false,
+            false,
+            ConflictPolicy::Refuse,
+        )
+        .unwrap();
+        let row = &plan.row_settings;
+        let text = row["config"].as_str().unwrap();
+        let parsed: toml::Table = toml::from_str(text).unwrap();
+        assert_eq!(
+            parsed["model_provider"].as_str(),
+            Some("BenszAPI"),
+            "{text}"
+        );
+        assert_eq!(
+            parsed["model_providers"]["BenszAPI"]["base_url"].as_str(),
+            Some("https://new.example/v1"),
+            "{text}"
+        );
+        assert!(parsed["model_providers"].get("custom").is_none(), "{text}");
+        assert_eq!(
+            row.get("modelProvider").and_then(|value| value.as_str()),
+            Some("BenszAPI"),
+            "{row}"
+        );
+    }
+
+    /// 改回 `custom` 等于放弃显式标识：标记清掉，存量形态保持一致。
+    #[test]
+    fn saving_a_custom_selector_clears_the_marker() {
+        let stored = json!({
+            "auth": { "OPENAI_API_KEY": "sk-old" },
+            "modelProvider": "BenszAPI",
+            "config": "model_provider = \"BenszAPI\"\nmodel = \"gpt-a\"\n\n[model_providers.BenszAPI]\nname = \"Relay\"\nbase_url = \"https://old.example/v1\"\n"
+        });
+        let edited = json!({
+            "auth": { "OPENAI_API_KEY": "sk-new" },
+            "config": "model_provider = \"custom\"\nmodel = \"gpt-b\"\n\n[model_providers.custom]\nname = \"Relay\"\nbase_url = \"https://new.example/v1\"\n"
+        });
+        let plan = plan_save(
+            Some(&stored),
+            &edited,
+            &edited,
+            &Origin::row(&stored).unwrap(),
+            false,
+            false,
+            ConflictPolicy::Refuse,
+        )
+        .unwrap();
+        let row = &plan.row_settings;
+        assert!(
+            row.get("modelProvider").is_none(),
+            "the marker must be cleared: {row}"
+        );
+        let parsed: toml::Table = toml::from_str(row["config"].as_str().unwrap()).unwrap();
+        assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+        assert!(parsed["model_providers"].get("BenszAPI").is_none());
+    }
+
+    /// 保留名（精确小写）在编辑器保存时按旧规则归一回 `custom`，不留标记。
+    #[test]
+    fn saving_a_reserved_selector_falls_back_to_custom() {
+        let edited = json!({
+            "auth": { "OPENAI_API_KEY": "sk-new" },
+            "config": "model_provider = \"ollama\"\nmodel = \"gpt-b\"\n\n[model_providers.ollama]\nname = \"Local\"\nbase_url = \"http://127.0.0.1:11434/v1\"\n"
+        });
+        let plan = plan_save(
+            None,
+            &edited,
+            &edited,
+            &Origin::row(&edited).unwrap(),
+            false,
+            false,
+            ConflictPolicy::Refuse,
+        )
+        .unwrap();
+        let row = &plan.row_settings;
+        assert!(row.get("modelProvider").is_none(), "{row}");
+        let parsed: toml::Table = toml::from_str(row["config"].as_str().unwrap()).unwrap();
+        assert_eq!(parsed["model_provider"].as_str(), Some("custom"), "{row}");
     }
 
     /// #8039：顶层 base_url 的旧形态行原样保存，地址不能丢，归一成 custom 表。

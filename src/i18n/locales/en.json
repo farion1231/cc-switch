@@ -1934,7 +1934,12 @@
     "advancedSectionHint": "Includes upstream format, model mapping, reasoning overrides and custom User-Agent. Providers using the Chat Completions protocol require routing takeover to be enabled.",
     "keyFieldsHint": "The endpoint, key, model, reasoning effort, context window and compatibility switches follow the provider; everything else is a global Codex setting that applies to every provider once saved.",
     "inactiveFieldsHint": "This provider still stores {{count}} settings that are not applied when switching. Click one to copy its TOML and paste it above if you need it; the stored values are kept.",
-    "inactiveFieldCopied": "Copied"
+    "inactiveFieldCopied": "Copied",
+    "providerIdLabel": "Provider ID",
+    "providerIdPlaceholder": "Defaults to custom; leave empty",
+    "providerIdHint": "Writes model_provider and the provider table key into config.toml, separate from the display name. Leave empty to keep the default custom. Changing it re-buckets Codex sessions by the new id (history is not migrated). Local routing (aggregation/proxy) still uses custom.",
+    "providerIdReservedError": "This id is reserved by Codex. Pick another one (case-sensitive; \"OpenAI\" is a valid custom id).",
+    "providerIdControlError": "The Provider ID must not contain control characters."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
@@ -3416,7 +3421,8 @@
       "envHijack": "This config sets environment variables that change how processes load code (e.g. injecting libraries or replacing CA certificates). Import only from a source you trust.",
       "privateEndpoint": "This address points at localhost or a private network. Do not import unless it is your own local service.",
       "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line."
-    }
+    },
+    "modelProvider": "Provider ID"
   },
   "iconPicker": {
     "search": "Search Icons",

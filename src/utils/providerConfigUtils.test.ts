@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
+import { parse as parseToml } from "smol-toml";
 import {
   codexApiFormatFromWireApi,
-  isCodexAnthropicWireApi,
+  codexModelProviderIdError,
+  extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
+  extractCodexProviderId,
+  extractCodexWireApi,
+  isCodexAnthropicWireApi,
   isCodexRemoteCompactionEnabled,
+  setCodexBaseUrl,
   setCodexModelName,
+  setCodexProviderId,
   setCodexRemoteCompaction,
+  setCodexWireApi,
 } from "./providerConfigUtils";
 
 describe("Codex wire API helpers", () => {
@@ -185,5 +193,111 @@ name = "Example"
 
     const singleQuoted = `model = 'kimi-k2.7'\n`;
     expect(extractCodexModelName(singleQuoted)).toBe("kimi-k2.7");
+  });
+});
+
+describe("Codex provider id helpers (issue #7856)", () => {
+  const template = `model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "Example"
+base_url = "https://example.com/v1"
+`;
+
+  it("extracts the current provider id", () => {
+    expect(extractCodexProviderId(template)).toBe("custom");
+    expect(extractCodexProviderId('model = "m"\n')).toBeUndefined();
+  });
+
+  it("renames the selector and the table key together", () => {
+    const result = setCodexProviderId(template, "BenszAPI");
+    expect(extractCodexProviderId(result)).toBe("BenszAPI");
+    // 裸键不加引号
+    expect(result).toContain("[model_providers.BenszAPI]");
+    expect(result).not.toContain("[model_providers.custom]");
+    // 表体原样跟随
+    expect(result).toContain('base_url = "https://example.com/v1"');
+  });
+
+  it("quotes and escapes ids that are not bare TOML keys", () => {
+    for (const id of ["My Provider", "中文名", 'A"B']) {
+      const result = setCodexProviderId(template, id);
+      expect(extractCodexProviderId(result)).toBe(id);
+      // 写出的 TOML 能被解析（表键带引号转义）
+      expect(result).toContain("[model_providers.");
+    }
+    const spaced = setCodexProviderId(template, "My Provider");
+    expect(spaced).toContain('[model_providers."My Provider"]');
+  });
+
+  it("falls back to custom when cleared", () => {
+    const renamed = setCodexProviderId(template, "BenszAPI");
+    const restored = setCodexProviderId(renamed, "");
+    expect(extractCodexProviderId(restored)).toBe("custom");
+    expect(restored).toContain("[model_providers.custom]");
+    expect(restored).not.toContain("BenszAPI");
+  });
+
+  it("returns the text unchanged when no route anchors exist", () => {
+    const withoutRoute = `model = "gpt-5.5"\n`;
+    expect(setCodexProviderId(withoutRoute, "BenszAPI")).toBe(withoutRoute);
+  });
+
+  it("validates reserved ids case-sensitively and control characters", () => {
+    expect(codexModelProviderIdError("openai")).toBe("reserved");
+    expect(codexModelProviderIdError("ollama")).toBe("reserved");
+    expect(codexModelProviderIdError("lmstudio")).toBe("reserved");
+    expect(codexModelProviderIdError("OpenAI")).toBeNull();
+    expect(codexModelProviderIdError("BenszAPI")).toBeNull();
+    expect(codexModelProviderIdError("")).toBeNull();
+    expect(codexModelProviderIdError("a\nb")).toBe("control");
+  });
+
+  // 保存链路（setCodexWireApi、Base URL 等）必须和改名 helper 认同一张表：带引号的
+  // 表键找不到时，追加未转义表头会让后端整份拒绝解析（issue #7856 review）。
+  it("reads and writes the same quoted table after an explicit id is set", () => {
+    for (const id of ["My Provider", "中文名", 'A"B']) {
+      const renamed = setCodexProviderId(template, id);
+
+      const wired = setCodexWireApi(renamed, "chat");
+      expect(() => parseToml(wired)).not.toThrow();
+      expect(extractCodexProviderId(wired)).toBe(id);
+      expect(extractCodexWireApi(wired)).toBe("chat");
+      expect(
+        wired
+          .match(/^\[model_providers\..*\]$/gm)
+          ?.filter((header) => header.startsWith("[model_providers.")),
+      ).toHaveLength(1);
+
+      const based = setCodexBaseUrl(wired, "https://moved.example/v1");
+      expect(() => parseToml(based)).not.toThrow();
+      expect(extractCodexBaseUrl(based)).toBe("https://moved.example/v1");
+      expect(extractCodexWireApi(based)).toBe("chat");
+    }
+  });
+
+  // 改名必须整表迁移：http_headers、auth、aws 等子表跟着走，只改父表头会把路由配置
+  // 拆成两个 provider（靠 http_headers 认证的供应商改名后丢失认证头）。
+  it("moves sub-tables together with the renamed provider table", () => {
+    const withHeaders = `${template}
+[model_providers.custom.http_headers]
+Authorization = "Bearer token-x"
+`;
+    const result = setCodexProviderId(withHeaders, "BenszAPI");
+    expect(() => parseToml(result)).not.toThrow();
+    expect(extractCodexProviderId(result)).toBe("BenszAPI");
+    expect(result).toContain("[model_providers.BenszAPI.http_headers]");
+    expect(result).toContain('"Bearer token-x"');
+    expect(result).not.toContain("[model_providers.custom");
+  });
+
+  it("leaves the config untouched when the target id already exists", () => {
+    const conflicting = `${template}
+[model_providers.BenszAPI]
+name = "Other"
+base_url = "https://other.example/v1"
+`;
+    expect(setCodexProviderId(conflicting, "BenszAPI")).toBe(conflicting);
   });
 });

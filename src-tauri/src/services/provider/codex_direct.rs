@@ -425,6 +425,52 @@ struct RowFacts {
     official_logins: Vec<Value>,
 }
 
+/// 一行 Codex 配置能证明的表：显式选路的表和旧版顶层改道地址（都可能是 CC Switch
+/// 写的，里面可能有真实 Key）。
+fn retired_tables_of(settings: &Value) -> Vec<KnownTable> {
+    let Some(doc) = settings
+        .get("config")
+        .and_then(Value::as_str)
+        .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
+    else {
+        return Vec::new();
+    };
+    let providers = doc.get("model_providers").and_then(Item::as_table_like);
+    let base_url_of = |id: &str| {
+        providers
+            .and_then(|table| table.get(id))
+            .and_then(Item::as_table_like)
+            .and_then(|table| table.get("base_url"))
+            .and_then(Item::as_str)
+            .map(|url| url.trim().to_string())
+    };
+    let mut known = Vec::new();
+    // 旧版整份写入时，路由表用的是行自己的 id（custom 是 CC Switch 现在写的，不算）。
+    let selector = doc
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && *id != ROUTE_ID);
+    if let Some((id, base_url)) = selector.and_then(|id| Some((id, base_url_of(id)?))) {
+        known.push(KnownTable {
+            id: id.to_string(),
+            base_url,
+        });
+    }
+    if let Some(base_url) = doc
+        .get("openai_base_url")
+        .and_then(Item::as_str)
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+    {
+        known.push(KnownTable {
+            id: "cc-switch".to_string(),
+            base_url,
+        });
+    }
+    known
+}
+
 fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
     let mut facts = RowFacts {
         retired: Vec::new(),
@@ -446,46 +492,9 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
         if let Some(key) = auth.and_then(extract_codex_auth_api_key) {
             facts.third_party_keys.push(key);
         }
-        let Some(doc) = provider
-            .settings_config
-            .get("config")
-            .and_then(Value::as_str)
-            .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
-        else {
-            continue;
-        };
-        let providers = doc.get("model_providers").and_then(Item::as_table_like);
-        let base_url_of = |id: &str| {
-            providers
-                .and_then(|table| table.get(id))
-                .and_then(Item::as_table_like)
-                .and_then(|table| table.get("base_url"))
-                .and_then(Item::as_str)
-                .map(|url| url.trim().to_string())
-        };
-        // 旧版整份写入时，路由表用的是行自己的 id（custom 是 CC Switch 现在写的，不算）。
-        let selector = doc
-            .get("model_provider")
-            .and_then(Item::as_str)
-            .map(str::trim)
-            .filter(|id| !id.is_empty() && *id != ROUTE_ID);
-        if let Some((id, base_url)) = selector.and_then(|id| Some((id, base_url_of(id)?))) {
-            facts.retired.push(KnownTable {
-                id: id.to_string(),
-                base_url,
-            });
-        }
-        if let Some(base_url) = doc
-            .get("openai_base_url")
-            .and_then(Item::as_str)
-            .map(|url| url.trim().to_string())
-            .filter(|url| !url.is_empty())
-        {
-            facts.retired.push(KnownTable {
-                id: "cc-switch".to_string(),
-                base_url,
-            });
-        }
+        facts
+            .retired
+            .extend(retired_tables_of(&provider.settings_config));
     }
     Ok(facts)
 }
@@ -575,7 +584,21 @@ pub(crate) fn plan(
                     auth,
                 ),
                 Route::Custom { table, auth: kind } => {
-                    (RouteWrite::Custom(table.clone()), Some(*kind), auth)
+                    // 行里显式指定了 Provider ID（settings_config.modelProvider）就跟到那个
+                    // id；缺省（含全部存量行）保持 custom，行为零变化（issue #7856）。
+                    let id = crate::codex_config::explicit_codex_model_provider_id(
+                        &provider.settings_config,
+                    )
+                    .unwrap_or_else(|| ROUTE_ID.to_string());
+                    (
+                        RouteWrite::Custom {
+                            id,
+                            table: table.clone(),
+                            dormant_base_url: configured_proxy_base_url(db),
+                        },
+                        Some(*kind),
+                        auth,
+                    )
                 }
                 Route::BuiltIn { id, table } => (
                     RouteWrite::BuiltIn {
@@ -608,8 +631,14 @@ pub(crate) fn plan(
                     auth,
                 )
             } else {
+                // 本地代理路由固定 `custom`（issue #7856 第 5 点：本地路由模式用固定
+                // 标识，界面说明生效规则，不静默跟随显式配置）。
                 (
-                    RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false)),
+                    RouteWrite::Custom {
+                        id: ROUTE_ID.to_string(),
+                        table: proxy_route_table(ROUTE_ID, base_url, false),
+                        dormant_base_url: configured_proxy_base_url(db),
+                    },
                     Some(RouteAuth::Bearer),
                     AuthGoal::KeepNative,
                 )
@@ -650,6 +679,18 @@ pub(crate) fn plan(
         .filter(|provider| is_official(provider) && managed_account(provider).is_none())
         .map(row_auth);
 
+    // 编辑器保存先把新行写进数据库再写 live（provider/mod.rs）：上一家行里能证明的表
+    // 从 row_facts 里已经看不见了。从 owner（编辑前的行）补回来，改名/清空显式 Provider
+    // ID 时旧表才能连同真实 Key 一起清掉（issue #7856 review）。
+    let mut retired = facts.retired;
+    if let Some(prev) = owner.provider() {
+        for known in retired_tables_of(&prev.settings_config) {
+            if !retired.contains(&known) {
+                retired.push(known);
+            }
+        }
+    }
+
     let config = CodexConfigPatch {
         top,
         nested,
@@ -657,7 +698,7 @@ pub(crate) fn plan(
         outgoing: outgoing_exclusive(owner),
         route,
         catalog: catalog.is_some(),
-        retired: facts.retired,
+        retired,
     };
     let official_login = match &auth {
         AuthGoal::Official(row_auth) => codex_login::official_login_requirement(row_auth),
@@ -821,7 +862,7 @@ fn contract_of(
         Target::Direct(_) => "",
     };
     let (selector, table) = match &config.route {
-        RouteWrite::Custom(table) => (ROUTE_ID, table_text(table)),
+        RouteWrite::Custom { id, table, .. } => (id.as_str(), table_text(table)),
         RouteWrite::OfficialProxy {
             base_url,
             unified: true,
@@ -1029,7 +1070,7 @@ pub(crate) fn run_with_edits(
         }
     };
     let mut config = planned.config;
-    if let (Some(kind), RouteWrite::Custom(table)) = (planned.stamp, &mut config.route) {
+    if let (Some(kind), RouteWrite::Custom { table, .. }) = (planned.stamp, &mut config.route) {
         if matches!(kind, RouteAuth::Bearer | RouteAuth::EnvKey) {
             table.insert(
                 "requires_openai_auth",

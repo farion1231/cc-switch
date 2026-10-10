@@ -1935,7 +1935,12 @@
     "advancedSectionHint": "包含上游格式、模型映射、思考能力與自訂 User-Agent。使用 Chat Completions 協定的供應商需開啟路由接管才能使用。",
     "keyFieldsHint": "位址、Key、模型、推理檔位、上下文視窗和相容開關隨供應商切換；其餘是 Codex 全域設定，儲存後對所有供應商生效。",
     "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊可複製它的 TOML，依需要貼到上方；供應商裡保存的原值不會刪除。",
-    "inactiveFieldCopied": "已複製"
+    "inactiveFieldCopied": "已複製",
+    "providerIdLabel": "Provider ID",
+    "providerIdPlaceholder": "預設 custom，可留空",
+    "providerIdHint": "寫入 config.toml 的 model_provider 與提供商表鍵，和顯示名稱分開。留空保持預設 custom；修改後 Codex 歷史會話按標識分桶，不會自動遷移。本地路由（聚合/代理）模式下仍使用 custom。",
+    "providerIdReservedError": "該標識是 Codex 保留名，請換一個（區分大小寫，OpenAI 是合法的自定義 ID）。",
+    "providerIdControlError": "Provider ID 不能包含控制字元。"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
@@ -3417,7 +3422,8 @@
       "envHijack": "該設定包含可改變處理程序載入行為的環境變數（例如注入動態程式庫、替換 CA 憑證），請確認來源可信。",
       "privateEndpoint": "該位址指向本機或內部網路。若非你自建的本機服務，請勿匯入。",
       "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。"
-    }
+    },
+    "modelProvider": "Provider ID"
   },
   "iconPicker": {
     "search": "搜尋圖示",

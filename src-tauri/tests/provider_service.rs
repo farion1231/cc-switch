@@ -344,6 +344,247 @@ requires_openai_auth = true
     );
 }
 
+/// issue #7856：显式指定 Provider ID 的行（settings_config.modelProvider），切换写 live
+/// 时选路和表键都跟到该 id；切走旧表按 retired 清理；切回来标识还原。没有标记的行仍写
+/// `custom`（上面那条测试锁定）。
+#[test]
+fn provider_service_switch_codex_honors_an_explicit_model_provider_marker() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let markered_config = r#"model_provider = "BenszAPI"
+model = "gpt-5.4"
+
+[model_providers.BenszAPI]
+name = "BenszAPI"
+base_url = "https://bensz.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    let custom_config = r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "plain-provider".to_string();
+        manager.providers.insert(
+            "markered-provider".to_string(),
+            Provider::with_id(
+                "markered-provider".to_string(),
+                "BenszAPI".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "bensz-key"},
+                    "modelProvider": "BenszAPI",
+                    "config": markered_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "plain-provider".to_string(),
+            Provider::with_id(
+                "plain-provider".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "fresh-key"},
+                    "config": custom_config
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+    let live = || {
+        let text = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+            .expect("read config.toml");
+        let parsed: toml::Value = toml::from_str(&text).expect("parse config.toml");
+        (text, parsed)
+    };
+
+    // 切到显式标识的供应商：选路和表键都是 BenszAPI。
+    ProviderService::switch(&state, AppType::Codex, "markered-provider")
+        .expect("switch to marked provider");
+    let (text, parsed) = live();
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("BenszAPI"),
+        "{text}"
+    );
+    assert_eq!(
+        parsed["model_providers"]["BenszAPI"]["base_url"].as_str(),
+        Some("https://bensz.example/v1"),
+        "{text}"
+    );
+
+    // 切走：custom 照旧，BenszAPI 表按 retired 清掉（里面的真实 Key 不能留在 live）。
+    ProviderService::switch(&state, AppType::Codex, "plain-provider")
+        .expect("switch back to plain provider");
+    let (text, parsed) = live();
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("custom"),
+        "{text}"
+    );
+    assert!(
+        parsed["model_providers"].get("BenszAPI").is_none(),
+        "the retired explicit-id table must not linger with its key: {text}"
+    );
+
+    // 再切回来：标识还原（重启/切换往返用的同一条投影路径）。
+    ProviderService::switch(&state, AppType::Codex, "markered-provider")
+        .expect("switch to marked provider again");
+    let (text, parsed) = live();
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("BenszAPI"),
+        "{text}"
+    );
+    assert_eq!(
+        parsed["model_providers"]["BenszAPI"]["base_url"].as_str(),
+        Some("https://bensz.example/v1"),
+        "{text}"
+    );
+    // 留守的 custom 席位是休眠形态：本地代理地址加占位 Key，不带真实 Key，也不拉
+    // requires_openai_auth（否则恢复旧会话会拿官方登录去访问遗留地址）。
+    let custom = parsed["model_providers"]
+        .get("custom")
+        .expect("the custom seat must survive for old sessions");
+    assert_eq!(
+        custom.get("base_url").and_then(|v| v.as_str()),
+        Some("http://127.0.0.1:15721/v1"),
+        "the leftover seat must be dormant, not the previous third party: {text}"
+    );
+    assert_eq!(
+        custom
+            .get("experimental_bearer_token")
+            .and_then(|v| v.as_str()),
+        Some("PROXY_MANAGED"),
+        "only the placeholder token may remain in the custom seat: {text}"
+    );
+    assert!(
+        custom.get("requires_openai_auth").is_none(),
+        "the dormant seat must not pull the official login in: {text}"
+    );
+    assert!(
+        !text.contains("fresh-key"),
+        "the previous provider's key must not linger in the custom seat: {text}"
+    );
+}
+
+/// 切到显式 Provider ID 后，遗留的 custom 表必须是安全休眠形态（本地代理地址 + 占位
+/// Key）：开「保留官方登录」时只剥真实 Key 会留下「第三方地址 + requires_openai_auth
+/// = true + 无凭据」，恢复旧会话时 Codex 会拿 auth.json 里的官方登录去访问那个地址。
+#[test]
+fn provider_service_switch_codex_explicit_id_dormants_the_leftover_custom_table() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    let custom_config = r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+"#;
+    let markered_config = r#"model_provider = "BenszAPI"
+model = "gpt-5.4"
+
+[model_providers.BenszAPI]
+name = "BenszAPI"
+base_url = "https://bensz.example/v1"
+wire_api = "responses"
+"#;
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "plain-provider".to_string();
+        manager.providers.insert(
+            "plain-provider".to_string(),
+            Provider::with_id(
+                "plain-provider".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "aihubmix-key"},
+                    "config": custom_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "markered-provider".to_string(),
+            Provider::with_id(
+                "markered-provider".to_string(),
+                "BenszAPI".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "bensz-key"},
+                    "modelProvider": "BenszAPI",
+                    "config": markered_config
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    // 先切到 custom 第三方（保留登录开启时它带 requires_openai_auth = true），
+    // 再切到显式标识的供应商。
+    ProviderService::switch(&state, AppType::Codex, "plain-provider")
+        .expect("switch to custom provider");
+    ProviderService::switch(&state, AppType::Codex, "markered-provider")
+        .expect("switch to marked provider");
+
+    let text =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let parsed: toml::Value = toml::from_str(&text).expect("parse config.toml");
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("BenszAPI"),
+        "{text}"
+    );
+    let custom = parsed
+        .get("model_providers")
+        .and_then(|p| p.get("custom"))
+        .cloned()
+        .expect("the custom seat must survive for old sessions");
+    assert_eq!(
+        custom.get("base_url").and_then(|v| v.as_str()),
+        Some("http://127.0.0.1:15721/v1"),
+        "the leftover seat must point at the local proxy, not the old third party: {text}"
+    );
+    assert!(
+        custom.get("requires_openai_auth").is_none(),
+        "the leftover seat must not pull the official login in: {text}"
+    );
+    assert!(
+        custom
+            .get("experimental_bearer_token")
+            .and_then(|v| v.as_str())
+            == Some("PROXY_MANAGED"),
+        "only the placeholder token may remain: {text}"
+    );
+    assert!(
+        !text.contains("aihubmix-key"),
+        "the previous provider's key must not linger: {text}"
+    );
+}
+
 #[test]
 fn provider_service_switch_codex_preserves_oauth_and_keeps_rows_untouched() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
