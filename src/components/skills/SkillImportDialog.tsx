@@ -100,8 +100,8 @@ export function SkillImportDialog({
               openclaw: false,
               hermes: chosen.has("hermes"),
               pi: false,
-              ohmypi: chosen.has("ohmypi"),
               mcode: chosen.has("mcode"),
+              ohmypi: chosen.has("ohmypi"),
             },
           };
         }),

@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import {
-  ChevronDown,
-  ChevronRight,
-  Download,
-  Loader2,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { ChevronRight, Download, Loader2, Plus, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Form,
   FormField,
@@ -23,6 +21,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -975,7 +974,7 @@ export function OhMyPiProviderForm({
                       placeholder="my-provider"
                       autoComplete="off"
                     />
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-fg-2">
                       {isEdit
                         ? t("opencode.providerKeyLockedHint", {
                             defaultValue:
@@ -1015,7 +1014,7 @@ export function OhMyPiProviderForm({
                   )}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t("opencode.npmPackageHint", {
                   defaultValue: "选择 AI 服务的 API 接口格式",
                 })}
@@ -1040,7 +1039,7 @@ export function OhMyPiProviderForm({
                 onChange={handleBaseUrlChange}
                 placeholder="https://api.example.com/v1"
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t("opencode.baseUrlHint", {
                   defaultValue: "自定义 API 端点地址",
                 })}
@@ -1083,7 +1082,7 @@ export function OhMyPiProviderForm({
             <div
               id="ohmypi-models-section"
               tabIndex={-1}
-              className="space-y-3 border-l border-border-default pl-3 outline-none"
+              className="space-y-3 border-l border-border pl-3 outline-none"
             >
               <div className="flex items-center justify-between gap-3">
                 <FormLabel>
@@ -1120,21 +1119,21 @@ export function OhMyPiProviderForm({
               </div>
 
               {!includeModels ? (
-                <p role="status" className="py-2 text-sm text-muted-foreground">
+                <p role="status" className="py-2 text-sm text-fg-2">
                   {t("ohmypi.form.modelsHiddenHint", {
                     defaultValue:
                       "未启用模型列表：保存后将以 override-only 形态写入（不写 models 键）",
                   })}
                 </p>
               ) : models.length === 0 ? (
-                <p role="status" className="py-2 text-sm text-muted-foreground">
+                <p role="status" className="py-2 text-sm text-fg-2">
                   {t("ohmypi.form.noModels", {
                     defaultValue: "暂无模型配置",
                   })}
                 </p>
               ) : (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 px-1 text-xs text-fg-2">
                     <span className="w-9" />
                     <span className="flex-1">
                       {t("ohmypi.form.modelId")}
@@ -1207,7 +1206,7 @@ export function OhMyPiProviderForm({
                             size="icon"
                             onClick={() => removeModel(model.key)}
                             aria-label={t("ohmypi.form.removeModel")}
-                            className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                            className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -1360,7 +1359,7 @@ export function OhMyPiProviderForm({
                 </div>
               )}
 
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t("opencode.modelsHint", {
                   defaultValue: "配置可用的模型及其显示名称。",
                 })}
@@ -1370,32 +1369,37 @@ export function OhMyPiProviderForm({
         )}
 
         {hasConfigurationSelection && (
-          <div className="space-y-2 rounded-lg border border-border-default p-4">
-            <Button
-              type="button"
-              variant={null}
-              size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
-              onClick={() => setShowAdvanced((current) => !current)}
-              aria-expanded={showAdvanced}
-            >
-              {showAdvanced ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
-              )}
-              {t("providerForm.advancedOptionsToggle", {
-                defaultValue: "高级选项",
-              })}
-            </Button>
+          <Collapsible
+            open={showAdvanced}
+            onOpenChange={setShowAdvanced}
+            className="rounded-lg border border-border p-4"
+          >
+            <CollapsibleTrigger asChild>
+              <Button
+                type="button"
+                variant={null}
+                size="sm"
+                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
+                aria-expanded={showAdvanced}
+              >
+                <ChevronRight
+                  className={`h-4 w-4 shrink-0 transition-transform motion-reduce:transition-none ${
+                    showAdvanced ? "rotate-90" : ""
+                  }`}
+                />
+                {t("providerForm.advancedOptionsToggle", {
+                  defaultValue: "高级选项",
+                })}
+              </Button>
+            </CollapsibleTrigger>
             {!showAdvanced && (
-              <p className="mt-1 ml-1 text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2 mt-1 ml-1">
                 {t("ohmypi.form.advancedHint", {
                   defaultValue: "包含其他配置字段（YAML，原样保留）。",
                 })}
               </p>
             )}
-            {showAdvanced && (
+            <CollapsibleContent className="space-y-2 pt-2">
               <FormField
                 control={form.control}
                 name="settingsConfig"
@@ -1406,8 +1410,8 @@ export function OhMyPiProviderForm({
                         defaultValue: "其他字段（YAML，原样保留）",
                       })}
                     </FormLabel>
-                    <textarea
-                      className="min-h-32 w-full rounded-md border bg-transparent px-3 py-2 font-mono text-xs"
+                    <Textarea
+                      className="min-h-32 resize-y font-mono text-xs"
                       value={passthroughText}
                       onChange={(event) =>
                         handlePassthroughChange(event.target.value)
@@ -1423,8 +1427,8 @@ discovery:
                   </FormItem>
                 )}
               />
-            )}
-          </div>
+            </CollapsibleContent>
+          </Collapsible>
         )}
 
         {showButtons && (

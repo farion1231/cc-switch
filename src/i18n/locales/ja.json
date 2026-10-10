@@ -884,6 +884,8 @@
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "piConfigDir": "Pi 設定ディレクトリ",
     "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
+    "ohmypiConfigDir": "Oh My Pi 設定ディレクトリ",
+    "ohmypiConfigDirDescription": "Oh My Pi の設定ディレクトリ（models.yml、config.yml、プロンプト、Skills、セッション）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
@@ -892,6 +894,7 @@
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
+    "browsePlaceholderOhMyPi": "例: /home/<your-username>/.omp/agent",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -1024,7 +1027,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "ohmypi": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -4683,6 +4687,51 @@
       "loading": "残量を確認中…",
       "refresh": "残量を更新",
       "refreshAria": "{{login}} の残量を更新"
+    }
+  },
+  "ohmypi": {
+    "form": {
+      "modelsToggle": "モデルリストを設定",
+      "modelsHiddenHint": "モデルリスト無効：保存時は override-only 形式で書き込みます（models キーを書きません）",
+      "thinking": "思考設定",
+      "imageInputDecoder": "画像入力デコーダー",
+      "cost": "コスト",
+      "passthroughLabel": "その他のフィールド（YAML、そのまま保持）",
+      "fixYamlFirst": "下の設定 YAML を修正してから、構造化フィールドを編集してください。",
+      "providerKeyDuplicate": "このキーは既に使用されています",
+      "absoluteHttpUrlRequired": "{{label}} は絶対 HTTP または HTTPS URL で指定してください",
+      "addCompatibilityOption": "追加",
+      "addModel": "モデルを追加",
+      "compatibility": "互換性",
+      "compatibilityHint": "互換エンドポイントやローカル環境向けにリクエスト動作を調整します。",
+      "contextWindow": "コンテキストウィンドウ",
+      "credential": "API キー",
+      "duplicateModel": "モデル ID {{id}} が重複しています",
+      "imageInput": "画像入力に対応",
+      "maxTokens": "最大出力トークン数",
+      "modelId": "モデル ID",
+      "modelIdRequired": "モデル {{index}} に ID が必要です",
+      "modelName": "表示名",
+      "modelNamePlaceholder": "表示名",
+      "nameRequired": "表示名を入力してください",
+      "noCompatibilityOptions": "互換性オプションはありません",
+      "noModels": "モデルはまだ設定されていません",
+      "optionKey": "オプション",
+      "optionValue": "値",
+      "positiveNumberRequired": "{{label}} は 0 より大きい数値で指定してください",
+      "providerKey": "プロバイダーキー",
+      "providerKeyRequired": "プロバイダーキーを入力してください",
+      "reasoning": "拡張思考に対応",
+      "removeCompatibilityOption": "互換性オプションを削除",
+      "removeModel": "モデルを削除",
+      "toggleModelDetails": "モデル詳細を開閉",
+      "advancedHint": "その他の設定フィールド（YAML、そのまま保持）。"
+    },
+    "provider": {
+      "enabled": "Oh My Pi で有効化しました",
+      "enableFailed": "Oh My Pi でこのプロバイダーを有効化できません",
+      "removed": "Oh My Pi から削除しました",
+      "writeConflict": "別のプロセスが Oh My Pi の設定を更新しています。しばらくしてから再試行してください。"
     }
   }
 }

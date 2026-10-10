@@ -26,8 +26,8 @@ export const APP_IDS: AppId[] = [
   "openclaw",
   "hermes",
   "pi",
-  "ohmypi",
   "mcode",
+  "ohmypi",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -40,8 +40,8 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   openclaw: true,
   hermes: true,
   pi: true,
-  ohmypi: false,
   mcode: true,
+  ohmypi: false,
 };
 
 /** App IDs shown in Skills panels. */
@@ -53,8 +53,8 @@ export const SKILLS_APP_IDS: AppId[] = [
   "opencode",
   "hermes",
   "pi",
-  "ohmypi",
   "mcode",
+  "ohmypi",
 ];
 
 export type ProxyAppId = Extract<
@@ -85,7 +85,7 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "ohmypi" | "mcode"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "ohmypi"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -126,8 +126,8 @@ export const MCP_APP_IDS: McpAppId[] = [
   "opencode",
   "hermes",
   "pi",
-  "ohmypi",
   "mcode",
+  "ohmypi",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {

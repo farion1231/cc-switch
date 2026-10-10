@@ -884,6 +884,8 @@
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
     "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
+    "ohmypiConfigDir": "Oh My Pi 設定目錄",
+    "ohmypiConfigDirDescription": "覆寫 Oh My Pi 設定目錄（models.yml、config.yml、提示、Skills 與工作階段）。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -892,6 +894,7 @@
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
     "browsePlaceholderPi": "例如：/home/<您的帳號>/.pi/agent",
+    "browsePlaceholderOhMyPi": "例如：/home/<您的帳號>/.omp/agent",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
     "checkForUpdates": "檢查更新",
@@ -1025,7 +1028,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "ohmypi": "Oh My Pi"
   },
   "mcode": {
     "empty": {
@@ -4684,6 +4688,51 @@
       "loading": "正在查詢額度…",
       "refresh": "重新整理額度",
       "refreshAria": "重新整理 {{login}} 的額度"
+    }
+  },
+  "ohmypi": {
+    "form": {
+      "modelsToggle": "設定模型列表",
+      "modelsHiddenHint": "未啟用模型列表：儲存後將以 override-only 型態寫入（不寫 models 鍵）",
+      "thinking": "思考設定",
+      "imageInputDecoder": "影像輸入解碼器",
+      "cost": "價格",
+      "passthroughLabel": "其他欄位（YAML，原樣保留）",
+      "fixYamlFirst": "請先修正下方的設定 YAML，再編輯結構化欄位。",
+      "providerKeyDuplicate": "此標識已被使用，請更換",
+      "absoluteHttpUrlRequired": "{{label}} 必須是絕對 HTTP 或 HTTPS URL",
+      "addCompatibilityOption": "新增",
+      "addModel": "新增模型",
+      "compatibility": "介面相容性",
+      "compatibilityHint": "調整相容端點或本機服務的請求行為。",
+      "contextWindow": "上下文長度",
+      "credential": "API Key",
+      "duplicateModel": "模型 ID {{id}} 重複",
+      "imageInput": "支援圖片輸入",
+      "maxTokens": "最大輸出 Token 數",
+      "modelId": "模型 ID",
+      "modelIdRequired": "模型 {{index}} 需要 ID",
+      "modelName": "顯示名稱",
+      "modelNamePlaceholder": "顯示名稱",
+      "nameRequired": "顯示名稱為必填",
+      "noCompatibilityOptions": "暫無相容性選項",
+      "noModels": "暫無模型設定",
+      "optionKey": "選項",
+      "optionValue": "值",
+      "positiveNumberRequired": "{{label}} 必須是大於 0 的數字",
+      "providerKey": "供應商識別碼",
+      "providerKeyRequired": "供應商識別碼為必填",
+      "reasoning": "支援擴展思考",
+      "removeCompatibilityOption": "移除相容性選項",
+      "removeModel": "移除模型",
+      "toggleModelDetails": "展開或收合模型詳細資料",
+      "advancedHint": "包含其他設定欄位（YAML，原樣保留）。"
+    },
+    "provider": {
+      "enabled": "已在 Oh My Pi 中啟用",
+      "enableFailed": "無法在 Oh My Pi 中啟用此供應商",
+      "removed": "已從 Oh My Pi 移除",
+      "writeConflict": "Oh My Pi 設定正由其他程序修改，請稍後再試。"
     }
   }
 }

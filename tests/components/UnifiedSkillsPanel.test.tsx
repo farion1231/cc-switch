@@ -734,8 +734,8 @@ describe("UnifiedSkillsPanel", () => {
           openclaw: false,
           hermes: false,
           pi: false,
-      ohmypi: false,
           mcode: false,
+          ohmypi: false,
         },
       },
     ]);
