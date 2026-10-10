@@ -260,6 +260,23 @@ describe("flattenModels", () => {
           },
         },
       },
+      stepfun: {
+        name: "StepFun",
+        models: {
+          "step-3": {
+            release_date: "2026-07-01",
+            cost: { input: 0.6, output: 2.4 },
+          },
+          "step-tts-mini": {
+            release_date: "2026-06-01",
+            cost: { input: 0.1, output: 0.4 },
+          },
+          "step-audio-2": {
+            release_date: "2026-05-01",
+            cost: { input: 0.2, output: 0.8 },
+          },
+        },
+      },
     });
 
     const common = getCommonModelKeys(entries);
@@ -272,6 +289,16 @@ describe("flattenModels", () => {
     expect(common.has("xiaomi/mimo-v2.5")).toBe(true);
     expect(common.has("xiaomi/mimo-v2.5-tts")).toBe(false);
     expect(common.has("longcat/LongCat-2.0")).toBe(true);
+    expect(common.has("stepfun/step-3")).toBe(true);
+    // Audio/TTS models are filtered out before they can join a family bucket.
+    expect(common.has("stepfun/step-tts-mini")).toBe(false);
+    expect(common.has("stepfun/step-audio-2")).toBe(false);
+    expect(entries.some((entry) => entry.key === "stepfun/step-tts-mini")).toBe(
+      false,
+    );
+    expect(entries.some((entry) => entry.key === "stepfun/step-audio-2")).toBe(
+      false,
+    );
   });
 
   it("combines common and explicit selections and deduplicates normalized ids", () => {
