@@ -19,8 +19,9 @@
 //! `item`、`function_call_arguments.done` 的顶层 `name`、`response.completed` 的 `response.output[]`。
 //! 三处只有第一处是 Codex 的定单点（它把整个 `item` 反序列化成一次调用，报错文本拼的是 `name`），
 //! 后两处是保持一致性的防御：Codex 解析 `response.completed` 时不吃 `output`，两类参数事件则被它
-//! 一并归入未处理事件。三条铁律：已有非空值一律不覆盖；没有依据就不改，绝不凭空造值；真的改过字段
-//! 才重新序列化，否则原样发出上游字节。顺序正常的流原样放行。
+//! 一并归入未处理事件。身份一律以非空的条目 `id` 为键：上游把 `id` 也吐空就整块不动，绝不拿空键
+//! 去猜关联（多个空 id 的调用会挤进同一格互相串用工具名）。三条铁律：已有非空值一律不覆盖；
+//! 没有依据就不改，绝不凭空造值；真的改过字段才重新序列化，否则原样发出上游字节。顺序正常的流原样放行。
 //! 请求一个字节不改。
 
 use std::collections::HashMap;
@@ -103,7 +104,7 @@ impl Block {
     }
 
     /// `response.output_item.added` 里函数调用的身份，按条目 id 返回。
-    /// `name` 和 `call_id` 都是空的条目没有可记的，返回 None。
+    /// 条目 `id` 为空就没有可靠的关联键，`name` 与 `call_id` 都为空的条目也没有可记的，都返回 None。
     fn function_call_identity(&self) -> Option<(String, FunctionCallIdentity)> {
         if self.event_type()? != "response.output_item.added" {
             return None;
@@ -112,6 +113,8 @@ impl Block {
         if item.get("type")?.as_str()? != "function_call" {
             return None;
         }
+        // 空 `id` 不作键：多个这类调用会挤进同一格，后到的结束事件借到先到那条的工具名（铁律二）。
+        let item_id = item.get("id")?.as_str().filter(|id| !id.is_empty())?;
         let text = |key: &str| {
             item.get(key)
                 .and_then(Value::as_str)
@@ -122,8 +125,8 @@ impl Block {
             name: text("name"),
             call_id: text("call_id"),
         };
-        let item_id = item.get("id")?.as_str()?.to_string();
-        (!identity.name.is_empty() || !identity.call_id.is_empty()).then_some((item_id, identity))
+        (!identity.name.is_empty() || !identity.call_id.is_empty())
+            .then(|| (item_id.to_string(), identity))
     }
 
     /// 把参数写进结束事件。
@@ -178,7 +181,8 @@ struct Repair {
     /// 每个条目累积的参数增量。
     arguments: HashMap<String, String>,
     /// 每个条目在 `output_item.added` 里报出的身份，键是条目的 `id`。回填全靠结束事件里的 `id`
-    /// （参数事件是顶层 `item_id`）与它相等：上游把 `id` 也吐空就整块不动，这是铁律二。
+    /// （参数事件是顶层 `item_id`）与它相等：上游把 `id` 也吐空就整块不动，这是铁律二。空 `id`
+    /// 因此不作为键——多个这种调用会共用同一格，互相串用身份。
     identity: HashMap<String, FunctionCallIdentity>,
     /// 扣住的结束事件，保持原来的顺序。
     held: Vec<(String, Block)>,
@@ -299,7 +303,7 @@ fn fill_function_call_identities(
     }
 }
 
-/// 补一个 `function_call` 条目，按它的 `id` 找身份。
+/// 补一个 `function_call` 条目，按它的 `id` 找身份。空 `id` 不成键，直接不动。
 fn fill_one_identity(
     obj: &mut Map<String, Value>,
     identity: &HashMap<String, FunctionCallIdentity>,
@@ -307,6 +311,7 @@ fn fill_one_identity(
     let Some(record) = obj
         .get("id")
         .and_then(Value::as_str)
+        .filter(|item_id| !item_id.is_empty())
         .and_then(|item_id| identity.get(item_id))
     else {
         return false;
@@ -318,7 +323,7 @@ fn fill_one_identity(
 }
 
 /// `response.function_call_arguments.done` 的条目 id 在顶层 `item_id`，带 `name` 不带 `call_id`，
-/// 所以只补名，不往这个事件里塞 `call_id`。
+/// 所以只补名，不往这个事件里塞 `call_id`。空 `item_id` 不成键，直接不动。
 fn fill_arguments_done_name(
     event: &mut Value,
     identity: &HashMap<String, FunctionCallIdentity>,
@@ -326,6 +331,7 @@ fn fill_arguments_done_name(
     let Some(name) = event
         .get("item_id")
         .and_then(Value::as_str)
+        .filter(|item_id| !item_id.is_empty())
         .and_then(|item_id| identity.get(item_id))
         .map(|record| record.name.clone())
     else {
@@ -835,6 +841,50 @@ mod tests {
         );
         assert_eq!(events[2]["item"]["name"], "shell");
         assert_eq!(events[2]["item"]["call_id"], "call_9");
+    }
+
+    /// #7912 评审：上游把多个调用的 `id` 都吐成空串时，空键不能拿来猜身份——否则第二个调用的
+    /// 结束事件会借到第一个调用的 `name`（反之亦然），把一回调用的参数交给另一个工具名。参数完整
+    /// （MiMo 那类），所以与 MiniMax 的迟到参数无关。两个 `added` 不同 `output_index`、同为空 `id`。
+    #[test]
+    fn never_borrows_identity_across_empty_ids() {
+        let item = |name: &str, call_id: &str, arguments: &str| {
+            json!({ "type": "function_call", "id": "", "call_id": call_id,
+                    "name": name, "arguments": arguments })
+        };
+        let events = run(vec![
+            json!({ "type": "response.output_item.added", "output_index": 0,
+                    "item": item("shell", "call_a", "") }),
+            json!({ "type": "response.output_item.added", "output_index": 1,
+                    "item": item("read_file", "call_b", "") }),
+            json!({ "type": "response.function_call_arguments.done", "output_index": 1,
+                    "item_id": "", "name": "", "arguments": "{\"path\":\"a\"}" }),
+            json!({ "type": "response.output_item.done", "output_index": 1,
+                    "item": item("", "call_b", "{\"path\":\"a\"}") }),
+            json!({ "type": "response.completed",
+                    "response": { "output": [item("", "", "{\"path\":\"a\"}")] } }),
+        ]);
+        assert_eq!(
+            types(&events),
+            vec![
+                "response.output_item.added",
+                "response.output_item.added",
+                "response.function_call_arguments.done",
+                "response.output_item.done",
+                "response.completed",
+            ]
+        );
+        // 两个 added 原样透传。
+        assert_eq!(events[0]["item"]["name"], "shell");
+        assert_eq!(events[1]["item"]["name"], "read_file");
+        // arguments.done 的 name 保持空，不许借到 shell。
+        assert_eq!(events[2]["name"], "");
+        // output_item.done 自己留着的 call_id 不许被改，name 不许借到 shell。
+        assert_eq!(events[3]["item"]["call_id"], "call_b");
+        assert_eq!(events[3]["item"]["name"], "");
+        // completed 的 output[] 同上。
+        assert_eq!(events[4]["response"]["output"][0]["name"], "");
+        assert_eq!(events[4]["response"]["output"][0]["call_id"], "");
     }
 
     /// 第三条铁律真正测得动的样子：一个字段都没改就**不许**重新序列化。上面几条字节断言用的是 `sse()`
