@@ -2,6 +2,7 @@ pub mod backup_storage;
 pub mod balance;
 pub mod claude_history;
 pub mod codex_oauth_models;
+pub mod codex_session_compression;
 pub mod coding_plan;
 pub mod config;
 pub mod env_checker;

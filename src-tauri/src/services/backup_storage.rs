@@ -144,6 +144,13 @@ fn walk(path: &Path, usage: &mut Usage) {
     }
 }
 
+/// 目录（或文件）的总字节数，口径同各备份位置的统计。
+pub(crate) fn path_size(path: &Path) -> u64 {
+    let mut usage = Usage::default();
+    walk(path, &mut usage);
+    usage.size
+}
+
 fn matched_files(dir: &Path, matcher: fn(&str) -> bool) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();

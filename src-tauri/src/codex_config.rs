@@ -901,13 +901,16 @@ pub fn read_codex_config_text() -> Result<String, AppError> {
 /// 或写成带 `enabled = true` 的表（codex-rs `features` 的 `FeatureToml`）。Codex 先看它再看
 /// 模型目录，打开了它，目录里写的 [`CODEX_CLASSIC_SUBAGENTS`] 就不生效。解析不了时按没有。
 pub(crate) fn codex_config_forces_multi_agent_v2(text: &str) -> bool {
+    codex_config_feature_enabled(text, "multi_agent_v2")
+}
+
+/// `config.toml` 的 `[features] <key>` 是否开启：写成 `true`，或写成带 `enabled = true`
+/// 的表（codex-rs `features` 的 `FeatureToml`）。解析不了时按没开。
+pub(crate) fn codex_config_feature_enabled(text: &str, key: &str) -> bool {
     let Ok(doc) = text.parse::<DocumentMut>() else {
         return false;
     };
-    let Some(item) = doc
-        .get("features")
-        .and_then(|features| features.get("multi_agent_v2"))
-    else {
+    let Some(item) = doc.get("features").and_then(|features| features.get(key)) else {
         return false;
     };
     item.as_bool()

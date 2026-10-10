@@ -170,6 +170,37 @@ pub async fn codex_forces_multi_agent_v2() -> Result<bool, String> {
     ))
 }
 
+/// Codex 会话压缩开关（`[features] local_thread_store_compression`）当前是否开启。
+#[tauri::command]
+pub async fn get_codex_session_compression() -> Result<bool, String> {
+    crate::services::codex_session_compression::is_enabled().map_err(|e| e.to_string())
+}
+
+/// 开关 Codex 会话压缩，返回写入后的状态。
+#[tauri::command]
+pub async fn set_codex_session_compression(
+    state: tauri::State<'_, crate::store::AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::codex_session_compression::set_enabled(&db, enabled)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+/// Codex 会话目录（sessions + archived_sessions）当前占用的字节数。
+#[tauri::command]
+pub async fn get_codex_sessions_disk_usage() -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(
+        crate::services::codex_session_compression::sessions_disk_usage,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// 按迁移备份账本把当时迁入共享桶的官方会话还原回 "openai" 桶。
 /// 由关闭统一会话开关的确认弹窗触发；幂等，可安全重试。
 #[tauri::command]

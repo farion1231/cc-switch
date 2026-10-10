@@ -6,6 +6,7 @@ mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
 mod codex_history_migration;
+mod codex_rollout_file;
 mod codex_state_db;
 mod commands;
 mod config;
@@ -1432,6 +1433,9 @@ pub fn run() {
             commands::save_settings,
             commands::has_codex_unify_history_backup,
             commands::codex_forces_multi_agent_v2,
+            commands::get_codex_session_compression,
+            commands::set_codex_session_compression,
+            commands::get_codex_sessions_disk_usage,
             commands::restore_codex_unified_history,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
