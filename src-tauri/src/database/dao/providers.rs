@@ -268,7 +268,63 @@ impl Database {
         let tx = conn
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::save_provider_row(&tx, app_type, provider)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))
+    }
 
+    /// Import an optional new row and change selection in one transaction. The
+    /// device-local pointer is published only after every SQL statement succeeds;
+    /// its failure rolls back both the row and DB pointer. The caller restores
+    /// that local pointer if the final database commit fails.
+    pub(crate) fn save_provider_selection(
+        &self,
+        app_type: &str,
+        imported: Option<&Provider>,
+        id: &str,
+        publish_local: impl FnOnce() -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM providers WHERE app_type = ?1 AND id = ?2)",
+                params![app_type, id],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if let Some(provider) = imported {
+            if exists || provider.id != id {
+                return Err(AppError::Database(
+                    "Imported provider ID already exists or does not match selection".into(),
+                ));
+            }
+            Self::save_provider_row(&tx, app_type, provider)?;
+        } else if !exists {
+            return Err(AppError::Database(
+                "Selected provider no longer exists".into(),
+            ));
+        }
+        tx.execute(
+            "UPDATE providers SET is_current = 0 WHERE app_type = ?1",
+            [app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
+            "UPDATE providers SET is_current = 1 WHERE app_type = ?1 AND id = ?2",
+            params![app_type, id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        publish_local()?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    fn save_provider_row(
+        tx: &rusqlite::Transaction<'_>,
+        app_type: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
@@ -359,7 +415,6 @@ impl Database {
             }
         }
 
-        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 

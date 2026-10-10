@@ -9,6 +9,7 @@ pub(crate) mod codex_direct;
 mod codex_editor;
 mod codex_login;
 pub(crate) mod codex_official_models;
+mod codex_reconcile;
 mod editor_toml;
 mod endpoints;
 mod gemini_auth;
@@ -7457,6 +7458,10 @@ impl ProviderService {
         app_type: &AppType,
     ) -> Result<bool, AppError> {
         should_import_default_config_on_startup(state, app_type)
+    }
+
+    pub fn reconcile_codex_current_on_startup(state: &AppState) -> Result<bool, AppError> {
+        codex_reconcile::startup(state)
     }
 
     /// Read current live settings (re-export)

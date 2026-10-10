@@ -92,7 +92,7 @@ pub(crate) fn routes_official_to_proxy(db: &Database, config_text: &str) -> bool
 
 /// `url`（去掉末尾 `/`）是不是本地代理给 Codex 的地址。端口配成 0 时代理用系统分配的
 /// 端口，只核对主机和路径。
-fn is_proxy_base_url(url: &str, address: &str, port: u16) -> bool {
+pub(crate) fn is_proxy_base_url(url: &str, address: &str, port: u16) -> bool {
     let origin = crate::services::proxy::proxy_origin(address, port);
     if port != 0 {
         return url == format!("{origin}/v1");
