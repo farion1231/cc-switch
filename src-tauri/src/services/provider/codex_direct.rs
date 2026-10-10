@@ -426,6 +426,34 @@ struct RowFacts {
     official_logins: Vec<Value>,
 }
 
+/// 行当时选中的路由表（id 和地址都要有）：编辑前的那张，改名后靠它认领。
+fn selected_route_table(provider: &Provider) -> Option<KnownTable> {
+    let doc = provider
+        .settings_config
+        .get("config")
+        .and_then(Value::as_str)?
+        .parse::<toml_edit::DocumentMut>()
+        .ok()?;
+    let id = doc
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && *id != ROUTE_ID)?;
+    let base_url = doc
+        .get("model_providers")
+        .and_then(Item::as_table_like)
+        .and_then(|table| table.get(id))
+        .and_then(Item::as_table_like)
+        .and_then(|table| table.get("base_url"))
+        .and_then(Item::as_str)
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())?;
+    Some(KnownTable {
+        id: id.to_string(),
+        base_url,
+    })
+}
+
 fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
     let mut facts = RowFacts {
         retired: Vec::new(),
@@ -473,6 +501,15 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
         if let Some((id, base_url)) = selector.and_then(|id| Some((id, base_url_of(id)?))) {
             facts.retired.push(KnownTable {
                 id: id.to_string(),
+                base_url,
+            });
+        }
+        // 开过统一会话历史的行，live 里写的是 custom 表：关开关后按行自己的 id 写，
+        // 切走时那张 custom 表也是 CC Switch 留下的，同样算遗留（写路由时 custom 不删，
+        // 改成休眠形态）。
+        if let Some(base_url) = base_url_of(ROUTE_ID) {
+            facts.retired.push(KnownTable {
+                id: ROUTE_ID.to_string(),
                 base_url,
             });
         }
@@ -575,9 +612,18 @@ pub(crate) fn plan(
                     None,
                     auth,
                 ),
-                Route::Custom { table, auth: kind } => {
-                    (RouteWrite::Custom(table.clone()), Some(*kind), auth)
-                }
+                Route::Custom {
+                    table,
+                    auth: kind,
+                    id,
+                } => (
+                    RouteWrite::Custom {
+                        table: table.clone(),
+                        id: id.clone(),
+                    },
+                    Some(*kind),
+                    auth,
+                ),
                 Route::BuiltIn { id, table } => (
                     RouteWrite::BuiltIn {
                         id: id.clone(),
@@ -610,7 +656,12 @@ pub(crate) fn plan(
                 )
             } else {
                 (
-                    RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false)),
+                    // 代理契约是 CC Switch 自己的路由，不沿用供应商的 id：统一会话
+                    // 历史按共享桶分，关着时也固定 custom，避免和用户的表撞名。
+                    RouteWrite::Custom {
+                        table: proxy_route_table(ROUTE_ID, base_url, false),
+                        id: None,
+                    },
                     Some(RouteAuth::Bearer),
                     AuthGoal::KeepNative,
                 )
@@ -651,14 +702,39 @@ pub(crate) fn plan(
         .filter(|provider| is_official(provider) && managed_account(provider).is_none())
         .map(row_auth);
 
+    // 编辑前的行当时选中的路由表：用户在编辑器里把表改名后，旧名字不在任何行里，
+    // 只有这里能证明它是 CC Switch 写的，切走时才清得掉里面的 Key。
+    let previous = owner.provider().and_then(selected_route_table);
     let config = CodexConfigPatch {
+        // 代理契约里，残留的 custom 表改成指向本地代理的休眠形态（切回官方路由时还要
+        // 在）。直连下这张表没人用，不改成休眠表：占位 Key 留在直连配置里没有意义，
+        // 写路由时只摘掉真实 Key 和 requires_openai_auth。
+        dormant_base_url: match target {
+            Target::Proxy { .. } => configured_proxy_base_url(db),
+            Target::Direct(_) => String::new(),
+        },
         top,
         nested,
         exclusive,
         outgoing: outgoing_exclusive(owner),
-        route,
         catalog: catalog.is_some(),
-        retired: facts.retired,
+        // 这次要写的表不算遗留：关着统一会话历史时它就是行自己的 id，标成遗留会被
+        // 写完立刻删掉，上一家的 Key 也清不掉。
+        retired: {
+            let written = route.selector().unwrap_or("");
+            let mut retired: Vec<KnownTable> = facts
+                .retired
+                .into_iter()
+                .filter(|known| known.id != written)
+                .collect();
+            if let Some(previous) = previous {
+                if previous.id != written && !retired.contains(&previous) {
+                    retired.push(previous);
+                }
+            }
+            retired
+        },
+        route,
     };
     let official_login = match &auth {
         AuthGoal::Official(row_auth) => codex_login::official_login_requirement(row_auth),
@@ -822,7 +898,7 @@ fn contract_of(
         Target::Direct(_) => "",
     };
     let (selector, table) = match &config.route {
-        RouteWrite::Custom(table) => (ROUTE_ID, table_text(table)),
+        RouteWrite::Custom { table, id } => (id.as_deref().unwrap_or(ROUTE_ID), table_text(table)),
         RouteWrite::OfficialProxy {
             base_url,
             unified: true,
@@ -1029,7 +1105,7 @@ pub(crate) fn run_with_edits(
         }
     };
     let mut config = planned.config;
-    if let (Some(kind), RouteWrite::Custom(table)) = (planned.stamp, &mut config.route) {
+    if let (Some(kind), RouteWrite::Custom { table, .. }) = (planned.stamp, &mut config.route) {
         if matches!(kind, RouteAuth::Bearer | RouteAuth::EnvKey) {
             table.insert(
                 "requires_openai_auth",

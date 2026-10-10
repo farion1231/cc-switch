@@ -68,9 +68,13 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
         && crate::proxy::providers::is_codex_official_provider(provider)
 }
 
-/// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的选路（关键字段），
-/// 使开关即时生效，无需等下一次切换。当前供应商非官方（或不存在）时为 no-op：开关只
-/// 影响官方直连的选路。代理模式下 live 是代理契约，不受这个开关影响。
+/// 统一会话开关变更后，立即按新开关状态重写当前 Codex 供应商的选路（关键字段），
+/// 使开关即时生效，无需等下一次切换。
+///
+/// 官方卡：开着时选路写共享的 custom 桶，关着时撤掉选路回到内置 openai。
+/// 第三方卡：开着时收成 custom，关着时按行自己的 `model_provider` 写，不再把
+/// 用户改的名字强制覆盖成 custom。当前没有供应商时为 no-op。代理模式下 live
+/// 是代理契约，不受这个开关影响。
 pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
     let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &AppType::Codex)?;
     let current_id = ProviderService::current(state, AppType::Codex)?;
@@ -81,9 +85,6 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     let Some(provider) = providers.get(&current_id) else {
         return Ok(false);
     };
-    if !codex_direct::is_official(provider) {
-        return Ok(false);
-    }
     live::sync_live_for_provider_respecting_mode(state, &AppType::Codex, provider, None)?;
     Ok(true)
 }
@@ -359,8 +360,8 @@ mod tests {
                 .expect("keyless managed Copilot preview");
                 let text = view.settings["config"].as_str().expect("config text");
                 let parsed: toml::Value = toml::from_str(text).expect("preview TOML");
-                let route = &parsed["model_providers"]["custom"];
-                assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+                let route = &parsed["model_providers"]["copilot"];
+                assert_eq!(parsed["model_provider"].as_str(), Some("copilot"));
                 assert_eq!(route["wire_api"].as_str(), Some("responses"));
                 assert!(route.get("requires_openai_auth").is_none());
                 assert!(route.get("experimental_bearer_token").is_none());

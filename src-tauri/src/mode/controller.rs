@@ -3205,17 +3205,30 @@ command = "fs-server"
         ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
         let on_b = codex_text();
         let doc = codex_doc();
-        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        // 统一会话历史关着：按行自己的 model_provider 写，不再收成 custom。
+        assert_eq!(doc["model_provider"].as_str(), Some("b"));
         assert_eq!(doc["model"].as_str(), Some("gpt-b"));
-        let route = &doc["model_providers"]["custom"];
+        let route = &doc["model_providers"]["b"];
         assert_eq!(route["base_url"].as_str(), Some("https://b.example/v1"));
         assert_eq!(route["experimental_bearer_token"].as_str(), Some("sk-b"));
-        assert!(!on_b.contains("sk-a"), "A's key is gone: {on_b}");
         // A 带进来的独有字段（值没被改过）删掉；嵌在 [agents] 里的模型名只删那一个键。
         assert!(doc.get("model_context_window").is_none(), "{on_b}");
         assert!(doc["agents"].get("default_subagent_model").is_none());
         assert_eq!(doc["agents"]["max_threads"].as_integer(), Some(4));
         assert_eq!(codex_user_parts(&on_b).len(), 6, "{on_b}");
+        // 统一历史留下的 custom 表不再被选中：直连下不留真实 Key，也不留
+        // requires_openai_auth，免得之后被选中回退用官方登录访问第三方。
+        let leftover = &doc["model_providers"]["custom"];
+        assert!(
+            leftover.get("experimental_bearer_token").is_none(),
+            "{on_b}"
+        );
+        assert!(leftover.get("requires_openai_auth").is_none(), "{on_b}");
+        assert_eq!(
+            leftover["base_url"].as_str(),
+            Some("https://a.example/v1"),
+            "the table itself stays so the old custom bucket can still resolve"
+        );
 
         ProviderService::switch(&state, AppType::Codex, "a").expect("back to a");
         let on_a = codex_text();
@@ -3233,6 +3246,61 @@ command = "fs-server"
         assert_eq!(codex_text(), on_b);
         ProviderService::switch(&state, AppType::Codex, "a").expect("to a again");
         assert_eq!(codex_text(), on_a);
+    }
+
+    /// 用户自己维护、没导入 CC Switch 的路由表（带 bearer）不归 CC Switch：切换任何
+    /// 供应商都不能因为它带 Key 就整张删掉。
+    #[tokio::test]
+    #[serial]
+    async fn codex_switch_keeps_a_user_owned_route_table_it_never_wrote() {
+        let _home = Home::new();
+        set_preservation(true);
+        let manual = r#"
+[model_providers.manual]
+name = "Manual"
+base_url = "https://manual.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "sk-manual"
+"#;
+        seed_codex(&format!("{CODEX_USER_LIVE}{manual}"), None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+
+        ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
+        let text = codex_text();
+        let manual = &codex_doc()["model_providers"]["manual"];
+        assert_eq!(
+            manual["base_url"].as_str(),
+            Some("https://manual.example/v1")
+        );
+        assert_eq!(
+            manual["experimental_bearer_token"].as_str(),
+            Some("sk-manual"),
+            "a table CC Switch never wrote survives the switch: {text}"
+        );
+    }
+
+    /// 开了「统一 Codex 会话历史」：第三方选路收成共享的 custom 桶，官方和第三方会话
+    /// 才落在同一份历史里。关着时的行为见上面的往返。
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_session_history_collapses_third_party_routes_into_custom() {
+        let _home = Home::new();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: true,
+            unify_codex_session_history: true,
+            ..Default::default()
+        })
+        .unwrap();
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+
+        ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
+        let doc = codex_doc();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            doc["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://b.example/v1")
+        );
     }
 
     /// 行里自己指定的模型目录指针跟着这一家走：切走时删掉，切到生成了目录的那家就换成
@@ -3758,7 +3826,7 @@ model_provider = "c"
             ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
             let doc = codex_doc();
             assert_eq!(
-                doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+                doc["model_providers"]["b"]["requires_openai_auth"].as_bool(),
                 Some(preserve),
                 "the login lives in the keyring, auth.json says nothing (preserve={preserve})"
             );
@@ -3823,10 +3891,9 @@ model_provider = "c"
         exit(&state, &AppType::Codex).await.expect("exit");
         let back = codex_text();
         assert_eq!(codex_doc()["model"].as_str(), Some("gpt-b"));
-        assert!(
-            back.contains("sk-b") && !back.contains(PROXY_TOKEN_PLACEHOLDER),
-            "{back}"
-        );
+        assert!(back.contains("sk-b"), "{back}");
+        // 直连用行自己的表，残留的 custom 表不再被选中，也不能留代理占位 Key。
+        assert!(!back.contains(PROXY_TOKEN_PLACEHOLDER), "{back}");
         assert_eq!(codex_user_parts(&back).len(), 6, "{back}");
     }
 
@@ -4032,7 +4099,8 @@ model_provider = "c"
             "model = \"gpt-a\"\nmodel_verbosity = \"high\"\n",
         );
         seed_codex(
-            &format!("profile = \"work\"\n{live}\n[profiles.work]\nmodel_provider = \"custom\"\n"),
+            // profile 选中的就是关着统一会话历史时实际写入的路由表，才会构成覆盖。
+            &format!("profile = \"work\"\n{live}\n[profiles.work]\nmodel_provider = \"a\"\n"),
             None,
         );
         let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
@@ -4067,7 +4135,7 @@ model_provider = "c"
         );
         assert_eq!(
             doc["profiles"]["work"]["model_provider"].as_str(),
-            Some("custom")
+            Some("a")
         );
         let stored = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
         assert!(!stored.settings_config["config"]
@@ -4075,6 +4143,16 @@ model_provider = "c"
             .unwrap()
             .contains("model_verbosity"));
 
+        // 关着统一会话历史时各家选路不同，不再共用 custom：profile 选中新增这家的
+        // id 才不算覆盖选路。
+        fs::write(
+            codex_config_path(),
+            codex_text().replace(
+                "[profiles.work]\nmodel_provider = \"a\"",
+                "[profiles.work]\nmodel_provider = \"c\"",
+            ),
+        )
+        .unwrap();
         let draft = codex_row("c", "https://c.example/v1", "");
         let view =
             ProviderService::editor_view(&state, AppType::Codex, &draft.settings_config, None)
@@ -4177,8 +4255,8 @@ model_provider = "c"
         );
     }
 
-    /// 编辑器里把路由表从 custom 改名成别的表：那张表归供应商（按内容收成 custom 表），
-    /// 不当成全局设置写进 live，切走后表和里面的 Key 都不会留下。
+    /// 编辑器里把路由表改名：关着统一会话历史时改名直接生效（live 选路跟着变），
+    /// 那张表归供应商，不当成全局设置留下——切走后表和里面的 Key 都消失。
     #[tokio::test]
     #[serial]
     async fn codex_editor_route_table_renamed_in_the_editor_stays_with_the_provider() {
@@ -4191,16 +4269,15 @@ model_provider = "c"
         let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
             .expect("view a");
         let shown = view.settings["config"].as_str().unwrap();
-        assert!(shown.contains("[model_providers.custom]\n"), "{shown}");
+        // 统一会话历史关着：显示的是行自己的表，而不是收成的 custom。
+        assert!(shown.contains("[model_providers.a]\n"), "{shown}");
         let mut edited = view.settings.clone();
         edited["config"] = json!(shown
+            .replace("model_provider = \"a\"", "model_provider = \"deepseek\"")
+            .replace("[model_providers.a]", "[model_providers.deepseek]")
             .replace(
-                "model_provider = \"custom\"",
-                "model_provider = \"deepseek\""
-            )
-            .replace(
-                "[model_providers.custom]\n",
-                "[model_providers.deepseek]\nexperimental_bearer_token = \"sk-secret\"\n",
+                "experimental_bearer_token = \"sk-a\"",
+                "experimental_bearer_token = \"sk-secret\"",
             ));
         row.settings_config = edited;
         ProviderService::update_from_editor(
@@ -4216,7 +4293,8 @@ model_provider = "c"
         )
         .expect("save");
         let live = codex_text();
-        assert!(!live.contains("[model_providers.deepseek]"), "{live}");
+        // 关着统一会话历史：改的名字直接写进 live，不再被收成 custom。
+        assert!(live.contains("model_provider = \"deepseek\""), "{live}");
         assert!(live.contains("[model_providers.ollama_local]"), "{live}");
 
         ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
@@ -7192,7 +7270,7 @@ model_provider = "c"
             .expect("view")
             .settings;
         let mut doc: toml_edit::DocumentMut = base["config"].as_str().unwrap().parse().unwrap();
-        doc["model_providers"]["custom"]["requires_openai_auth"] = toml_edit::value(true);
+        doc["model_providers"]["a"]["requires_openai_auth"] = toml_edit::value(true);
         let mut edited = base.clone();
         edited["config"] = json!(doc.to_string());
         edited["auth"]["OPENAI_API_KEY"] = json!("");

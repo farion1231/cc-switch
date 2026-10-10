@@ -232,7 +232,8 @@ command = "say"
 }
 
 #[test]
-/// 第三方路由一律写成 `custom`：行里用什么 id 都一样，行本身不改写。
+/// 统一会话历史关着时，第三方路由按行自己的 `model_provider` 写，不再收成
+/// `custom`；行本身不改写。
 fn provider_service_switch_codex_writes_every_third_party_route_as_custom() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -302,8 +303,8 @@ requires_openai_auth = true
 
     assert_eq!(
         parsed.get("model_provider").and_then(|v| v.as_str()),
-        Some("custom"),
-        "every third-party route is written as the custom table"
+        Some("aihubmix"),
+        "with unified session history off the route keeps the row's own id"
     );
 
     let model_providers = parsed
@@ -312,15 +313,11 @@ requires_openai_auth = true
         .expect("model_providers table exists");
     assert_eq!(
         model_providers
-            .get("custom")
+            .get("aihubmix")
             .and_then(|v| v.get("base_url"))
             .and_then(|v| v.as_str()),
         Some("https://aihubmix.example/v1"),
-        "the custom table points at the newly selected supplier endpoint"
-    );
-    assert!(
-        model_providers.get("aihubmix").is_none(),
-        "the row's own table id is not written"
+        "the row's own table points at the newly selected supplier endpoint"
     );
     assert!(
         model_providers.get("rightcode").is_none(),
@@ -467,13 +464,13 @@ requires_openai_auth = true
     let parsed_live: toml::Value = toml::from_str(&live_config).expect("parse live config");
     assert_eq!(
         parsed_live.get("model_provider").and_then(|v| v.as_str()),
-        Some("custom"),
-        "third-party routes are always written as the custom table"
+        Some("aihubmix"),
+        "with unified session history off the route keeps the row's own id"
     );
     assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("custom"))
+            .and_then(|v| v.get("aihubmix"))
             .and_then(|v| v.get("experimental_bearer_token"))
             .and_then(|v| v.as_str()),
         Some("bridge-key"),
@@ -482,7 +479,7 @@ requires_openai_auth = true
     assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("custom"))
+            .and_then(|v| v.get("aihubmix"))
             .and_then(|v| v.get("requires_openai_auth"))
             .and_then(|v| v.as_bool()),
         Some(true)
