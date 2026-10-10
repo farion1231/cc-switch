@@ -85,6 +85,10 @@ impl ClaudeProjection {
 /// - 独有字段：先删 `prev` 带进来、而且值没被改过的，再写 `target` 的；
 /// - 残留清理：删掉旧版下发过的有害窗口值，`target` 自己要写的键除外。
 ///
+/// 这是切换的形状补丁，不含热加载中和（那属于真正写 live 的时刻，见
+/// [`direct_live_patch`]）：编辑器显示和这个补丁相同，把中和空串显示成供应商自己的
+/// 配置会截获前端的凭据读写。
+///
 /// `prev` 是 live 当前对应的供应商（直连指针指向的那家）；没有就只做残留清理。
 pub fn direct_patch(prev: Option<&ClaudeProjection>, target: &ClaudeProjection) -> JsonPatch {
     let env = KeyPath::new(&["env"]);
@@ -113,8 +117,28 @@ pub fn direct_patch(prev: Option<&ClaudeProjection>, target: &ClaudeProjection) 
     }
 }
 
+/// 写客户端 live 的直连补丁：[`direct_patch`] 之外，把上一家带进来、这一家没有的关键
+/// 字段写成空串而不是删掉。Claude Code 热加载 env 相当于 Object.assign，删掉的键留在
+/// 进程里，切走后开着的会话仍走上一家；它读到空串等于没设，开着的会话立即生效（#7808）。
+///
+/// 只用于真正写 live 的路径（切换、编辑当前供应商保存、代理进出）。编辑视图用
+/// [`direct_patch`]：中和键是切换瞬间的过渡产物，不是供应商的配置，前端按「存在的键
+/// 优先」选凭据字段，空串键会把只有 `ANTHROPIC_API_KEY` 的行显示成没有 Key，改 Key
+/// 还会写进空串的 `ANTHROPIC_AUTH_TOKEN` / `AWS_BEARER_TOKEN_BEDROCK`。
+pub fn direct_live_patch(prev: Option<&ClaudeProjection>, target: &ClaudeProjection) -> JsonPatch {
+    let mut patch = direct_patch(prev, target);
+    let env = KeyPath::new(&["env"]);
+    let blanks = prev
+        .into_iter()
+        .flat_map(|prev| &prev.env)
+        .filter(|(key, _)| !target.env.contains_key(key.as_str()))
+        .map(|(key, _)| (env.child(key), Value::String(String::new())));
+    patch.set.extend(blanks);
+    patch
+}
+
 /// 在内存里算出「切到 `target` 之后 `settings.json` 会是什么样」，不写盘。
-/// 编辑器显示和切换用的是同一个补丁。
+/// 编辑器显示和切换用的是同一个补丁的形状（不含切换瞬间的热加载中和空串）。
 pub fn project_onto(
     path: &Path,
     live: &Value,
@@ -447,6 +471,16 @@ mod tests {
         .expect("project")
     }
 
+    /// 真正写 live 的结果：`direct_live_patch`（带热加载中和）。
+    fn project_live(live: &Value, prev: Option<&Value>, target: &Value) -> Value {
+        let prev = prev.map(ClaudeProjection::of);
+        let mut doc = live.clone();
+        direct_live_patch(prev.as_ref(), &ClaudeProjection::of(target))
+            .apply_to(Path::new("settings.json"), &mut doc)
+            .expect("project live");
+        doc
+    }
+
     fn qwen() -> Value {
         json!({ "env": {
             "ANTHROPIC_BASE_URL": "https://qwen.example",
@@ -548,6 +582,91 @@ mod tests {
     }
 
     #[test]
+    fn switching_back_to_official_blanks_prev_env_key_fields() {
+        // 写 live 时，上一家带进来、这一家没有的关键字段写成空串而不是删除：
+        // Claude Code 热加载 env 相当于 Object.assign，删掉的键留在进程里，
+        // 切回官方后开着的会话仍走上一家；它读到空串等于没设，开着的会话立即生效（#7808）。
+        let third_party = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-kimi",
+            "ANTHROPIC_MODEL": "kimi-k2",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2"
+        }});
+        let live = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-kimi",
+            "ANTHROPIC_MODEL": "kimi-k2",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2"
+        }});
+        let out = project_live(&live, Some(&third_party), &json!({ "env": {} }));
+        let env = out["env"].as_object().unwrap();
+        for key in [
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        ] {
+            assert_eq!(env[key], json!(""), "{key} 应写成空串而不是删除");
+        }
+        assert_eq!(env.len(), 4);
+    }
+
+    #[test]
+    fn switching_between_third_parties_blanks_key_fields_the_next_one_lacks() {
+        // 三方互切同理：下一家没有的上一家关键字段写空串，开着的会话不会继续用上一家的值。
+        let kimi_with_model = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-kimi",
+            "ANTHROPIC_MODEL": "kimi-k2"
+        }});
+        let live = kimi_with_model.clone();
+        let out = project_live(&live, Some(&kimi_with_model), &qwen());
+        assert_eq!(
+            out["env"]["ANTHROPIC_BASE_URL"],
+            json!("https://qwen.example")
+        );
+        assert_eq!(out["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-qwen"));
+        assert_eq!(out["env"]["ANTHROPIC_MODEL"], json!(""));
+    }
+
+    #[test]
+    fn editor_view_does_not_inherit_prev_auth_key_blanks() {
+        // 编辑视图显示的是供应商自己的配置：上一家带进来、这一家没有的关键字段不在这里
+        // 中和成空串。前端凭据读写按「存在的键优先」（AUTH_TOKEN 优先于 API_KEY，
+        // AWS_BEARER_TOKEN_BEDROCK 截获 Bedrock Key），空串键会把只有 ANTHROPIC_API_KEY
+        // 的行显示成没有 Key，改 Key 还会写进 AUTH_TOKEN 而不是原字段。
+        // 真正写 live 的补丁才带中和空串（见 direct_live_patch 的测试）。
+        let with_auth_token = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-kimi"
+        }});
+        let api_key_provider = json!({ "env": { "ANTHROPIC_API_KEY": "sk-b" } });
+        let view = project(
+            &with_auth_token.clone(),
+            Some(&with_auth_token),
+            &api_key_provider,
+        );
+        assert_eq!(
+            view["env"],
+            json!({ "ANTHROPIC_API_KEY": "sk-b" }),
+            "编辑视图不出现上一家的 AUTH_TOKEN 空串"
+        );
+
+        // Bedrock 当前供应商同理：AWS_BEARER_TOKEN_BEDROCK 不截获普通供应商的 Key。
+        let bedrock = json!({ "env": {
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            "AWS_REGION": "us-west-2",
+            "AWS_BEARER_TOKEN_BEDROCK": "sk-bedrock"
+        }});
+        let view = project(&bedrock.clone(), Some(&bedrock), &api_key_provider);
+        assert_eq!(
+            view["env"],
+            json!({ "ANTHROPIC_API_KEY": "sk-b" }),
+            "编辑视图不出现 Bedrock 中和键"
+        );
+    }
+
+    #[test]
     fn exclusive_fields_leave_only_when_unchanged() {
         let official = json!({ "env": {} });
         let live = json!({ "env": {
@@ -555,16 +674,23 @@ mod tests {
             "CLAUDE_CODE_DISABLE_ARTIFACT": "1",
             "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144"
         }});
+        // 写 live 时关键字段切回官方写成空串（热加载中的会话读到空串等于没设，#7808）；
+        // 独有字段照旧按「值没改过」删除。
         assert_eq!(
-            project(&live, Some(&kimi()), &official),
-            json!({ "env": {} })
+            project_live(&live, Some(&kimi()), &official),
+            json!({ "env": { "ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "" } })
         );
 
         // 用户在 live 里把它改成了 0：不是 CC Switch 写的，保留。
+        // live 里被手动删掉的上一家关键字段补回空串：进程里可能还留着旧值（#7808）。
         let edited = json!({ "env": { "CLAUDE_CODE_DISABLE_ARTIFACT": "0" } });
         assert_eq!(
-            project(&edited, Some(&kimi()), &official),
-            json!({ "env": { "CLAUDE_CODE_DISABLE_ARTIFACT": "0" } })
+            project_live(&edited, Some(&kimi()), &official),
+            json!({ "env": {
+                "CLAUDE_CODE_DISABLE_ARTIFACT": "0",
+                "ANTHROPIC_BASE_URL": "",
+                "ANTHROPIC_AUTH_TOKEN": ""
+            }})
         );
     }
 
@@ -601,15 +727,17 @@ mod tests {
     #[test]
     fn residue_goes_but_the_targets_own_value_stays_in_place() {
         // 旧版给 Kimi 注入的 262144，上一家行里没有：残留清理兜住。
+        // 上一家自己的 BASE_URL 写成空串（#7808）。
         let live = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
             "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
             "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 262144,
             "DEBUG": "1"
         }});
         let bare_kimi = json!({ "env": { "ANTHROPIC_BASE_URL": "https://kimi.example" } });
         assert_eq!(
-            project(&live, Some(&bare_kimi), &json!({})),
-            json!({ "env": { "DEBUG": "1" } })
+            project_live(&live, Some(&bare_kimi), &json!({})),
+            json!({ "env": { "DEBUG": "1", "ANTHROPIC_BASE_URL": "" } })
         );
 
         // 切入千问：它自己要写 983616，不能被残留清理删掉，也不挪位置。
@@ -617,7 +745,7 @@ mod tests {
             "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "983616",
             "DEBUG": "1"
         }});
-        let out = project(&live, None, &qwen());
+        let out = project_live(&live, None, &qwen());
         assert_eq!(
             out["env"]
                 .as_object()

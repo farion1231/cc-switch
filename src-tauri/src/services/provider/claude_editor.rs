@@ -20,7 +20,9 @@ use crate::live::engine::read_current;
 use crate::live::floor;
 use crate::live::patch::json::{self as patch_json, JsonPatch};
 use crate::live::patch::{KeyPath, LivePatch, LiveWriteError};
-use crate::live::project::claude::{direct_patch, project_onto, store_into_row, ClaudeProjection};
+use crate::live::project::claude::{
+    direct_live_patch, project_onto, store_into_row, ClaudeProjection,
+};
 use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
 use crate::provider::Provider;
@@ -365,7 +367,7 @@ pub(crate) fn write_live(
         let prev = write
             .prev
             .map(|provider| ClaudeProjection::of(&provider.settings_config));
-        direct_patch(
+        direct_live_patch(
             prev.as_ref(),
             &ClaudeProjection::of(&write.target.settings_config),
         )
