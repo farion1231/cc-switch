@@ -45,6 +45,7 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
 
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
+const ORPHAN_TOOL_OUTPUT_MARKER: &str = "[tool_result without a matching tool_call]";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
@@ -618,6 +619,14 @@ fn append_responses_input_as_chat_messages(
     let mut pending_media = Vec::new();
     let mut pending_reasoning: Option<String> = None;
     let mut last_assistant_index: Option<usize> = None;
+    // 已登记的 tool_call id：用于识别「孤儿工具结果」。Codex 历史（例如新建
+    // 桌面端会话时注入的 create_thread 回执）可能携带一个没有配对
+    // function_call、call_id 为空的 function_call_output。若把它原样序列化成
+    // Chat 的 role=tool 消息，严格上游（DeepSeek/OpenCode 等）会判定
+    // 「tool message must be a response to a preceding message with tool_calls」
+    // 而直接 400。
+    let mut known_tool_call_ids: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     match input {
         Value::String(text) => {
@@ -635,6 +644,7 @@ fn append_responses_input_as_chat_messages(
                     &mut pending_media,
                     &mut pending_reasoning,
                     &mut last_assistant_index,
+                    &mut known_tool_call_ids,
                     tool_context,
                 )?;
             }
@@ -647,6 +657,7 @@ fn append_responses_input_as_chat_messages(
                 &mut pending_media,
                 &mut pending_reasoning,
                 &mut last_assistant_index,
+                &mut known_tool_call_ids,
                 tool_context,
             )?;
         }
@@ -677,6 +688,7 @@ fn append_responses_input_as_chat_messages(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_responses_item_as_chat_message(
     item: &Value,
     messages: &mut Vec<Value>,
@@ -684,26 +696,42 @@ fn append_responses_item_as_chat_message(
     pending_media: &mut Vec<Value>,
     pending_reasoning: &mut Option<String>,
     last_assistant_index: &mut Option<usize>,
+    known_tool_call_ids: &mut std::collections::HashSet<String>,
     tool_context: &CodexToolContext,
 ) -> Result<(), ProxyError> {
     let item_type = item.get("type").and_then(|v| v.as_str());
     match item_type {
         Some("function_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            pending_tool_calls.push(responses_function_call_to_chat_tool_call(
-                item,
-                tool_context,
-            ));
+            let tool_call = responses_function_call_to_chat_tool_call(item, tool_context);
+            register_known_tool_call_id(known_tool_call_ids, &tool_call);
+            pending_tool_calls.push(tool_call);
         }
         Some("custom_tool_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            pending_tool_calls.push(responses_custom_tool_call_to_chat_tool_call(item));
+            let tool_call = responses_custom_tool_call_to_chat_tool_call(item);
+            register_known_tool_call_id(known_tool_call_ids, &tool_call);
+            pending_tool_calls.push(tool_call);
         }
         Some("tool_search_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            pending_tool_calls.push(responses_tool_search_call_to_chat_tool_call(item));
+            let tool_call = responses_tool_search_call_to_chat_tool_call(item);
+            register_known_tool_call_id(known_tool_call_ids, &tool_call);
+            pending_tool_calls.push(tool_call);
         }
         Some("function_call_output") => {
+            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+            if call_id.is_empty() || !known_tool_call_ids.contains(call_id) {
+                // 没有配对 tool_calls 的孤儿结果：转成 user 消息保留信息，
+                // 而不是发出一条会让严格上游 400 的 role=tool 消息。
+                append_orphan_tool_output_as_user_message(
+                    messages,
+                    call_id,
+                    item,
+                    last_assistant_index,
+                );
+                return Ok(());
+            }
             flush_pending_tool_calls(
                 messages,
                 pending_tool_calls,
@@ -711,7 +739,6 @@ fn append_responses_item_as_chat_message(
                 pending_reasoning,
                 last_assistant_index,
             );
-            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
             let media_plan = item
                 .get("output")
                 .cloned()
@@ -735,6 +762,16 @@ fn append_responses_item_as_chat_message(
             }));
         }
         Some("custom_tool_call_output") | Some("tool_search_output") => {
+            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+            if call_id.is_empty() || !known_tool_call_ids.contains(call_id) {
+                append_orphan_tool_output_as_user_message(
+                    messages,
+                    call_id,
+                    item,
+                    last_assistant_index,
+                );
+                return Ok(());
+            }
             flush_pending_tool_calls(
                 messages,
                 pending_tool_calls,
@@ -742,7 +779,6 @@ fn append_responses_item_as_chat_message(
                 pending_reasoning,
                 last_assistant_index,
             );
-            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
             let mut transformed_item = item.clone();
             let replacement_block = json!({
                 "type": "text",
@@ -794,6 +830,7 @@ fn append_responses_item_as_chat_message(
                 pending_media,
                 pending_reasoning,
                 last_assistant_index,
+                known_tool_call_ids,
                 tool_context,
             )?;
         }
@@ -806,6 +843,7 @@ fn append_responses_item_as_chat_message(
                     pending_media,
                     pending_reasoning,
                     last_assistant_index,
+                    known_tool_call_ids,
                     tool_context,
                 )?;
             }
@@ -921,6 +959,47 @@ fn append_responses_item_as_chat_message(
     }
 
     Ok(())
+}
+
+/// 登记一个即将进入 Chat 历史的 tool_call id。统一的取值顺序与
+/// `responses_*_to_chat_tool_call` 保持一致（call_id 优先，回退 id）。
+fn register_known_tool_call_id(
+    known_tool_call_ids: &mut std::collections::HashSet<String>,
+    tool_call: &Value,
+) {
+    if let Some(id) = tool_call.get("id").and_then(Value::as_str) {
+        if !id.is_empty() {
+            known_tool_call_ids.insert(id.to_string());
+        }
+    }
+}
+
+/// 孤儿工具结果降级为 user 消息。这类条目没有可配对的 `tool_calls`
+/// （典型来源：call_id 为空的 function_call_output），保留内容以避免丢失
+/// 上下文，但不能以 role=tool 的形式发给严格上游。
+fn append_orphan_tool_output_as_user_message(
+    messages: &mut Vec<Value>,
+    call_id: &str,
+    item: &Value,
+    last_assistant_index: &mut Option<usize>,
+) {
+    let output = match item.get("output") {
+        Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
+        Some(v) => canonical_json_string(v),
+        None => String::new(),
+    };
+    let marker = if call_id.is_empty() {
+        ORPHAN_TOOL_OUTPUT_MARKER.to_string()
+    } else {
+        format!("{ORPHAN_TOOL_OUTPUT_MARKER} (call_id: {call_id})")
+    };
+    messages.push(json!({
+        "role": "user",
+        "content": format!("{marker}\n{output}")
+    }));
+    // 该条目不属于任何模型回合的 assistant 消息，追加后最后一条仍是 user，
+    // 因此显式清掉可能指向更早 assistant 的索引，避免 reasoning 被回溯错挂。
+    *last_assistant_index = None;
 }
 
 fn flush_pending_tool_calls(
@@ -2225,6 +2304,134 @@ mod tests {
 
     fn result_messages(result: &Value) -> &[Value] {
         result["messages"].as_array().unwrap()
+    }
+
+    /// 回归：没有配对 function_call、call_id 为空的工具结果（Codex 桌面端
+    /// 新建会话时注入的 create_thread 回执就是这个形态）不能序列化成 role=tool，
+    /// 否则严格上游会以「Messages with role 'tool' must be a response to a
+    /// preceding message with 'tool_calls'」400 拒掉整个请求。
+    #[test]
+    fn responses_request_to_chat_rewrites_orphan_tool_output_without_call_id() {
+        let result = convert_test_input(vec![
+            json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+            json!({"type": "function_call_output", "output": "delegation-result"}),
+        ]);
+
+        assert!(
+            result_messages(&result)
+                .iter()
+                .all(|message| message.get("role").and_then(Value::as_str) != Some("tool")),
+            "orphan tool output must not stay as role=tool: {result}"
+        );
+        let last = result_messages(&result).last().unwrap();
+        assert_eq!(last["role"], "user");
+        let content = last["content"].as_str().unwrap_or_default();
+        assert!(
+            content.contains("delegation-result"),
+            "content lost: {content}"
+        );
+    }
+
+    /// 回归：call_id 非空但没有对应 tool_call 的孤儿结果同样要降级为 user 消息。
+    #[test]
+    fn responses_request_to_chat_rewrites_orphan_tool_output_with_unknown_call_id() {
+        let result = convert_test_input(vec![
+            json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+            json!({"type": "function_call_output", "call_id": "call_missing", "output": "stale-result"}),
+        ]);
+
+        assert!(result_messages(&result)
+            .iter()
+            .all(|message| message.get("role").and_then(Value::as_str) != Some("tool")));
+        let last = result_messages(&result).last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert!(last["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("stale-result"));
+        assert!(last["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("call_missing"));
+    }
+
+    /// 正常配对不受影响：function_call -> function_call_output 必须保持 role=tool。
+    #[test]
+    fn responses_request_to_chat_keeps_paired_tool_output() {
+        let result = convert_test_input(vec![
+            json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+            test_function_call("call_pair_1"),
+            test_function_output("call_pair_1", json!("tool-result")),
+        ]);
+
+        let messages = result_messages(&result);
+        let tool_message = messages
+            .iter()
+            .find(|message| message.get("role").and_then(Value::as_str) == Some("tool"))
+            .expect("paired output must stay as role=tool");
+        assert_eq!(tool_message["tool_call_id"], "call_pair_1");
+        assert_eq!(tool_message["content"], "tool-result");
+    }
+
+    /// 并行工具调用只回灌部分结果：已配对的那条保持 role=tool，
+    /// 没有配对记录的多余结果降级为 user，整体仍然是合法序列。
+    #[test]
+    fn responses_request_to_chat_rewrites_extra_tool_output_without_call() {
+        let result = convert_test_input(vec![
+            json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+            test_function_call("call_a"),
+            test_function_output("call_a", json!("ok-a")),
+            test_function_output("call_b", json!("orphan-b")),
+        ]);
+
+        let messages = result_messages(&result);
+        let tools: Vec<&Value> = messages
+            .iter()
+            .filter(|message| message.get("role").and_then(Value::as_str) == Some("tool"))
+            .collect();
+        assert_eq!(
+            tools.len(),
+            1,
+            "only the paired output stays as tool: {result}"
+        );
+        assert_eq!(tools[0]["tool_call_id"], "call_a");
+        assert!(messages.iter().any(|message| {
+            message.get("role").and_then(Value::as_str) == Some("user")
+                && message
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .is_some_and(|content| content.contains("orphan-b"))
+        }));
+    }
+
+    /// 复刻 Codex 桌面端新建会话的首轮历史：孤立的 create_thread 回执
+    /// 出现在 user 环境消息之后、且没有任何 function_call。
+    #[test]
+    fn responses_request_to_chat_rewrites_desktop_delegation_receipt() {
+        let result = convert_test_input(vec![
+            json!({"role": "user", "content": [{"type": "input_text", "text": "environment-context"}]}),
+            json!({
+                "type": "function_call_output",
+                "name": "create_thread",
+                "namespace": "codex_app",
+                "call_id": null,
+                "output": "<codex_delegation>...</codex_delegation>"
+            }),
+        ]);
+
+        let messages = result_messages(&result);
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.get("role").and_then(Value::as_str) != Some("tool")),
+            "desktop receipt must not surface as role=tool: {result}"
+        );
+        assert!(messages.iter().any(|message| {
+            message
+                .get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| content.contains("codex_delegation"))
+        }));
     }
 
     #[test]
@@ -4271,23 +4478,41 @@ mod tests {
             assert_eq!(result["messages"][1]["content"], expected);
         }
 
-        for item in [
-            json!({
-                "type": "custom_tool_call_output",
-                "call_id": "call_custom",
-                "status": "completed",
-                "output": {"text": "unchanged"}
-            }),
-            json!({
-                "type": "tool_search_output",
-                "call_id": "call_search",
-                "status": "completed",
-                "output": []
-            }),
+        // 输出必须与前面的 call 配对，否则会被降级成 user 消息（孤儿清洗）。
+        for (call, item) in [
+            (
+                json!({
+                    "type": "custom_tool_call",
+                    "call_id": "call_custom",
+                    "name": "render",
+                    "input": "draw"
+                }),
+                json!({
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_custom",
+                    "status": "completed",
+                    "output": {"text": "unchanged"}
+                }),
+            ),
+            (
+                json!({
+                    "type": "tool_search_call",
+                    "call_id": "call_search",
+                    "arguments": {"query": "noop"}
+                }),
+                json!({
+                    "type": "tool_search_output",
+                    "call_id": "call_search",
+                    "status": "completed",
+                    "output": []
+                }),
+            ),
         ] {
             let expected = canonical_json_string(&item);
-            let result = convert_test_input(vec![item]);
-            assert_eq!(result["messages"][0]["content"], expected);
+            let result = convert_test_input(vec![call, item]);
+            let messages = result_messages(&result);
+            assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+            assert_eq!(messages[1]["content"], expected);
         }
     }
 
