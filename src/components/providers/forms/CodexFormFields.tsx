@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { FormLabel } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+import { fieldClass, Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -43,7 +43,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  ChevronsUpDown,
   Download,
   Loader2,
   Plus,
@@ -417,14 +416,18 @@ function ReasoningLevelsEditor({
             type="button"
             role="combobox"
             aria-expanded={open}
-            className="flex h-9 w-full items-center justify-between gap-1 rounded-md border border-border bg-surface px-3 py-1 text-sm shadow-sm focus:outline-none focus-visible:outline-none focus:border-border focus-visible:border-border focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+            // 和同一行的 Input、Select 同一套外观，行高才对得齐。
+            className={cn(
+              fieldClass,
+              "flex h-8 items-center justify-between gap-1 whitespace-nowrap text-start data-[state=open]:border-ring data-[state=open]:ring-[3px] data-[state=open]:ring-ring/20",
+            )}
           >
             <span
-              className={cn("truncate", selected.length === 0 && "text-fg-2")}
+              className={cn("truncate", selected.length === 0 && "text-fg-3")}
             >
               {triggerLabel}
             </span>
-            <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+            <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
           </button>
         </PopoverTrigger>
       </HoverTip>
@@ -1611,7 +1614,7 @@ export function CodexFormFields({
               type="button"
               variant="ghost"
               size="icon"
-              className="h-9 w-9 text-fg-2 hover:text-destructive"
+              className="text-fg-2 hover:text-destructive"
               onClick={() => handleRemoveCatalogRow(index)}
             >
               <Trash2 className="h-4 w-4" />
