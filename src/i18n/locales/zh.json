@@ -1659,11 +1659,11 @@
     "modelMappingHint": "显示名称只影响 /model 菜单；1M 只是给 Claude Code 的上下文能力声明。",
     "stackModelsLabel": "模型列表",
     "addStackModel": "手动添加",
-    "stackModelsHint": "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。",
+    "stackModelsHint": "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。",
+    "stackModelDefaultHelp": "第一行是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。",
     "stackModelsEmpty": "未配置模型：把这家加入聚合后，模型选择器里不会多出它的模型",
     "stackModelPlaceholder": "例如 deepseek-v4-pro",
     "stackModelDefault": "默认模型",
-    "stackModelMakeDefault": "设为默认模型",
     "stackLayout": {
       "advancedHint": "自定义 User-Agent 与请求覆盖，一般无需修改。",
       "noModels": "模型列表为空：把这家加入聚合后，模型选择器里不会多出它的模型"
@@ -1925,7 +1925,8 @@
     "modelMappingHint": "生成 Codex model_catalog_json，让 /model 命令显示这些第三方模型名；表中条目按填写内容原样保存。修改后需要重启 Codex 才能刷新模型列表。",
     "addCatalogModel": "手动添加",
     "modelListTitle": "模型列表",
-    "stackModelListHint": "这些模型会出现在 Codex 的 /model 里，选中后请求直达这家。★ 是这家的默认模型：这家被设为默认时 Codex 默认用它。修改后需要重启 Codex。",
+    "stackModelListHint": "这些模型会出现在 Codex 的 /model 里，选中后请求直达这家。修改后需要重启 Codex。",
+    "stackModelDefaultHelp": "第一行是这家的默认模型：这家被设为默认时，Codex 默认用它。",
     "stackDefaultNotInList": "默认模型 {{model}} 不在列表里：Codex 默认仍请求它，但 /model 里没有这一项。",
     "addToModelList": "加入列表",
     "modelListEmpty": "未配置模型：聚合模式下只发布这家的默认模型（config.toml 的 model）。",

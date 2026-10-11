@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
-import { Download, Loader2, Plus, Star, Trash2 } from "lucide-react";
+import { Download, Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
@@ -124,19 +125,25 @@ export function ClaudeStackModelsField({
     onRowsChange([...rows, ...additions]);
   };
 
-  const makeDefault = (rowId: string) => {
-    const row = rows.find((other) => other.rowId === rowId);
-    if (!row) return;
-    onRowsChange([row, ...rows.filter((other) => other.rowId !== rowId)]);
-  };
-
   return (
     <div className="space-y-3">
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-3">
-          <FormLabel>
-            {t("providerForm.stackModelsLabel", { defaultValue: "模型列表" })}
-          </FormLabel>
+          <div className="flex items-center gap-0.5">
+            <FormLabel>
+              {t("providerForm.stackModelsLabel", { defaultValue: "模型列表" })}
+            </FormLabel>
+            <HelpTip
+              title={t("providerForm.stackModelDefault", {
+                defaultValue: "默认模型",
+              })}
+            >
+              {t("providerForm.stackModelDefaultHelp", {
+                defaultValue:
+                  "第一行是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。",
+              })}
+            </HelpTip>
+          </div>
           <div className="flex gap-2">
             <Button
               type="button"
@@ -170,7 +177,7 @@ export function ClaudeStackModelsField({
         <p className="text-xs leading-relaxed text-fg-2">
           {t("providerForm.stackModelsHint", {
             defaultValue:
-              "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一个（★）是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。",
+              "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。",
           })}
         </p>
       </div>
@@ -194,8 +201,7 @@ export function ClaudeStackModelsField({
         </p>
       ) : (
         <div className="space-y-2">
-          <div className="hidden grid-cols-[36px_1fr_minmax(0,1fr)_64px_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
-            <span />
+          <div className="hidden grid-cols-[1fr_minmax(0,1fr)_64px_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
             <span>
               {t("providerForm.modelDisplayNameLabel", {
                 defaultValue: "显示名称",
@@ -211,41 +217,13 @@ export function ClaudeStackModelsField({
             </span>
             <span />
           </div>
-          {rows.map((row, index) => {
+          {rows.map((row) => {
             const modelBase = stripClaudeOneMMarker(row.model).trim();
-            const isDefault = index === 0;
-            const defaultLabel = isDefault
-              ? t("providerForm.stackModelDefault", {
-                  defaultValue: "默认模型",
-                })
-              : t("providerForm.stackModelMakeDefault", {
-                  defaultValue: "设为默认模型",
-                });
             return (
               <div
                 key={row.rowId}
-                className="grid grid-cols-1 gap-2 md:grid-cols-[36px_1fr_minmax(0,1fr)_64px_36px]"
+                className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,1fr)_64px_36px]"
               >
-                <HoverTip content={defaultLabel}>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => makeDefault(row.rowId)}
-                    disabled={isDefault}
-                    aria-label={defaultLabel}
-                    aria-pressed={isDefault}
-                    className="h-9 w-9 text-fg-2 hover:text-warning-text disabled:opacity-100"
-                  >
-                    <Star
-                      className={
-                        isDefault
-                          ? "h-4 w-4 fill-warning text-warning-text"
-                          : "h-4 w-4"
-                      }
-                    />
-                  </Button>
-                </HoverTip>
                 <ImeSafeInput
                   value={row.displayName ?? ""}
                   onValueChange={(value) =>

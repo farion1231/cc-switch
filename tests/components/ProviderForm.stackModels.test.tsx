@@ -101,11 +101,11 @@ function renderForm(
   );
 }
 
-/** 每一行 ★ 按钮的 aria-label，按行的顺序。 */
-function starLabels() {
+/** Codex 模型列表每一行的「实际请求模型」，按显示顺序。 */
+function codexRowModels() {
   return screen
-    .getAllByRole("button", { name: /默认模型$/ })
-    .map((button) => button.getAttribute("aria-label"));
+    .getAllByPlaceholderText("例如: deepseek-v4-flash")
+    .map((input) => (input as HTMLInputElement).value);
 }
 
 async function save(onSubmit: ReturnType<typeof vi.fn>) {
@@ -127,10 +127,8 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
     expect(screen.getByDisplayValue("m-a")).toBeInTheDocument();
     expect(screen.getByDisplayValue("m-s")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Model S")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "默认模型" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    // 没有 ★：第一行是默认模型，写在「模型列表」旁的「?」里。
+    expect(screen.getByRole("button", { name: "默认模型" })).toBeInTheDocument();
     expect(screen.queryByText("providerForm.modelMappingLabel")).toBeNull();
     expect(screen.queryByText("默认兜底模型")).toBeNull();
   });
@@ -144,21 +142,17 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
     expect(settings.env.ANTHROPIC_MODEL).toBe("m-a");
   });
 
-  it("设为默认把这一行移到第一位，保存时 ANTHROPIC_MODEL 跟着第一行", async () => {
+  it("删掉第一行，保存时 ANTHROPIC_MODEL 跟着新的第一行", async () => {
     const onSubmit = vi.fn();
     renderForm("claude", onSubmit);
 
-    fireEvent.click(screen.getByRole("button", { name: "设为默认模型" }));
-    const inputs = screen.getAllByPlaceholderText("例如 deepseek-v4-pro");
-    expect(inputs.map((input) => (input as HTMLInputElement).value)).toEqual([
-      "m-s",
-      "m-a",
-    ]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "common.delete" })[0],
+    );
 
     const { values, settings } = await save(onSubmit);
     expect(values.meta?.stackModels).toEqual([
       { model: "m-s", displayName: "Model S", oneM: true },
-      { model: "m-a" },
     ]);
     expect(settings.env.ANTHROPIC_MODEL).toBe("m-s[1M]");
     expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("m-s[1M]");
@@ -286,17 +280,21 @@ describe("ProviderForm Stack layout (Codex)", () => {
       ],
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "设为默认模型" }));
+    expect(screen.getByRole("button", { name: "默认模型" })).toBeInTheDocument();
+    fireEvent.change(screen.getByDisplayValue("m-1"), {
+      target: { value: "m-9" },
+    });
+
     const { settings } = await save(onSubmit);
     expect(
       settings.modelCatalog.models.map(
         (model: { model: string }) => model.model,
       ),
-    ).toEqual(["m-2", "m-1"]);
-    expect(settings.config).toContain('model = "m-2"');
+    ).toEqual(["m-9", "m-2"]);
+    expect(settings.config).toContain('model = "m-9"');
   });
 
-  it("加载时 ★ 跟着原来的 model，不改动保存时 model 和顺序都不变", async () => {
+  it("加载时把原来的 model 挪到第一行显示，不改动保存时 model 和顺序都不变", async () => {
     const onSubmit = vi.fn();
     renderForm("codex", onSubmit, {
       codexCatalog: [
@@ -305,7 +303,7 @@ describe("ProviderForm Stack layout (Codex)", () => {
       ],
     });
 
-    expect(starLabels()).toEqual(["设为默认模型", "默认模型"]);
+    expect(codexRowModels()).toEqual(["m-1", "m-2"]);
 
     const { settings } = await save(onSubmit);
     expect(
@@ -316,35 +314,20 @@ describe("ProviderForm Stack layout (Codex)", () => {
     expect(settings.config).toContain('model = "m-1"');
   });
 
-  it("在简化表单换了默认，保存时 model 也跟着", async () => {
-    const onSubmit = vi.fn();
-    renderForm("codex", onSubmit, {
-      codexCatalog: [
-        { model: "m-1", displayName: "M1" },
-        { model: "m-2", displayName: "M2" },
-      ],
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "设为默认模型" }));
-
-    const { settings } = await save(onSubmit);
-    expect(settings.config).toContain('model = "m-2"');
-  });
-
   it("默认模型不在列表里时提示，可以加进列表", async () => {
     const onSubmit = vi.fn();
     renderForm("codex", onSubmit, {
       codexCatalog: [{ model: "m-2", displayName: "M2" }],
     });
 
-    expect(starLabels()).toEqual(["设为默认模型"]);
+    expect(codexRowModels()).toEqual(["m-2"]);
     expect(
       screen.getByText(
         "默认模型 m-1 不在列表里：Codex 默认仍请求它，但 /model 里没有这一项。",
       ),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "加入列表" }));
-    expect(starLabels()).toEqual(["默认模型", "设为默认模型"]);
+    expect(codexRowModels()).toEqual(["m-1", "m-2"]);
 
     const { settings } = await save(onSubmit);
     expect(
@@ -365,8 +348,10 @@ describe("ProviderForm Stack layout (Codex)", () => {
       ],
     });
 
-    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[1]);
-    expect(starLabels()).toEqual(["默认模型", "设为默认模型"]);
+    // 默认的 m-1 加载时已挪到第一行。
+    expect(codexRowModels()).toEqual(["m-1", "m-2", "m-3"]);
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
+    expect(codexRowModels()).toEqual(["m-2", "m-3"]);
 
     const { settings } = await save(onSubmit);
     expect(settings.config).toContain('model = "m-2"');

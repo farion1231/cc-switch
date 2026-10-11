@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -39,7 +40,6 @@ import {
   Download,
   Loader2,
   Plus,
-  Star,
   Trash2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
@@ -238,6 +238,20 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
       ? { defaultReasoningLevel: seed.defaultReasoningLevel }
       : {}),
   };
+}
+
+// Stack 布局里第一行就是默认模型（`model`）。直连表单里默认模型可以是列表的任意一行，
+// 这样的行在 Stack 布局里挪到最前面；不在列表里时不动。
+function withDefaultModelFirst<T extends CodexCatalogModel>(
+  models: T[],
+  defaultModel: string,
+): T[] {
+  const target = defaultModel.trim();
+  const index = target
+    ? models.findIndex((model) => model.model.trim() === target)
+    : -1;
+  if (index <= 0) return models;
+  return [models[index], ...models.filter((_, i) => i !== index)];
 }
 
 // Compares rows (with rowId) to incoming models (without) by data fields only,
@@ -638,22 +652,30 @@ export function CodexFormFields({
     !!customUserAgent || hasRequestOverrides,
   );
 
+  // 显示用的顺序。挪动默认那一行不算修改：没动过列表时保存仍是原来的顺序。
+  const orderCatalogModels = (models: CodexCatalogModel[]) =>
+    variant === "stack" ? withDefaultModelFirst(models, codexModel) : models;
+
   const [catalogRows, setCatalogRows] = useState<CodexCatalogRow[]>(() =>
-    catalogModels.map((m) => createCatalogRow(m)),
+    orderCatalogModels(catalogModels).map((m) => createCatalogRow(m)),
   );
 
   // 记录上次发送给父组件的数据，避免重复触发
-  const lastSentModelsRef = useRef<CodexCatalogModel[]>(catalogModels);
+  const lastSentModelsRef = useRef<CodexCatalogModel[]>(
+    orderCatalogModels(catalogModels),
+  );
 
   // 父 → 子：仅当 prop 数据真的变化（预设切换 / 编辑加载）时才重建 rowId；
   // 同 shape 时保留现有 rowId，避免编辑过程中焦点丢失。
   useEffect(() => {
+    const models = orderCatalogModels(catalogModels);
     setCatalogRows((current) => {
-      if (catalogRowsMatchModels(current, catalogModels)) return current;
-      return catalogModels.map((m) => createCatalogRow(m));
+      if (catalogRowsMatchModels(current, models)) return current;
+      return models.map((m) => createCatalogRow(m));
     });
     // 同步更新 ref，避免父组件传入新数据时子→父 effect 误判为本地修改
-    lastSentModelsRef.current = catalogModels;
+    lastSentModelsRef.current = models;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalogModels]);
 
   // 子 → 父：rowId 是视图层概念，不应进入持久化数据；剥离后再回传。
@@ -668,6 +690,20 @@ export function CodexFormFields({
     lastSentModelsRef.current = next;
     onCatalogModelsChange(next);
   }, [catalogRows, onCatalogModelsChange]);
+
+  // `model` 比列表晚到（编辑加载时父组件先给列表、再从 TOML 读出 `model`）：在当前行上把它
+  // 挪到第一行，行 id 不变，也不回传父组件。编辑中 `model` 只会跟着第一行变，这里不会动。
+  // 放在子 → 父 effect 之后：同一次渲染里改了的行先回传，再看要不要挪。
+  useEffect(() => {
+    if (variant !== "stack") return;
+    const ordered = withDefaultModelFirst(catalogRows, codexModel);
+    if (ordered === catalogRows) return;
+    lastSentModelsRef.current = ordered.map(
+      ({ rowId: _rowId, ...rest }) => rest,
+    );
+    setCatalogRows(ordered);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codexModel, variant]);
 
   const handleReasoningThinkingChange = useCallback(
     (checked: boolean) => {
@@ -898,8 +934,8 @@ export function CodexFormFields({
     setCatalogRows((current) => [...current, createCatalogRow()]);
   }, [onCatalogModelsChange]);
 
-  // Stack 布局没有默认模型字段，★ 标出的就是 `model`：它不在列表里时哪一行都不标；没填时
-  // 保存会用第一行，所以标第一行。
+  // Stack 布局没有默认模型字段，第一行就是 `model`（加载时已挪到最前面）：它不在列表里时
+  // 没有这样的行；没填时保存会用第一行。
   const trimmedDefaultModel = codexModel.trim();
   const stackDefaultIndex = trimmedDefaultModel
     ? catalogRows.findIndex((row) => row.model.trim() === trimmedDefaultModel)
@@ -964,21 +1000,6 @@ export function CodexFormFields({
       setCatalogRows((current) => current.filter((_, i) => i !== index));
     },
     [catalogRows, linkedDefaultIndex, onModelChange],
-  );
-
-  // Stack 布局：把这一行设为默认模型（写进 `model`），并移到第一位。
-  const handleMakeCatalogRowDefault = useCallback(
-    (index: number) => {
-      const model = catalogRows[index]?.model.trim();
-      if (!model) return;
-      onModelChange?.(model);
-      setCatalogRows((current) =>
-        index <= 0 || index >= current.length
-          ? current
-          : [current[index], ...current.filter((_, i) => i !== index)],
-      );
-    },
-    [catalogRows, onModelChange],
   );
 
   // 批量勾选拉取到的模型加入列表（Stack 布局）。
@@ -1412,49 +1433,11 @@ export function CodexFormFields({
     </>
   );
 
-  // Stack 布局：★ 是这家的默认模型（`model`），点 ☆ 把这一行设为默认并移到第一位。
-  const renderDefaultStar = (index: number) => {
-    const isDefault = index === stackDefaultIndex;
-    const label = isDefault
-      ? t("providerForm.stackModelDefault", { defaultValue: "默认模型" })
-      : t("providerForm.stackModelMakeDefault", {
-          defaultValue: "设为默认模型",
-        });
-    return (
-      <HoverTip content={label}>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => handleMakeCatalogRowDefault(index)}
-          disabled={isDefault || !catalogRows[index]?.model.trim()}
-          aria-label={label}
-          aria-pressed={isDefault}
-          className="h-9 w-9 text-fg-2 hover:text-warning-text disabled:opacity-100"
-        >
-          <Star
-            className={
-              isDefault ? "h-4 w-4 fill-warning text-warning-text" : "h-4 w-4"
-            }
-          />
-        </Button>
-      </HoverTip>
-    );
-  };
-
-  // 模型映射 / 模型列表的行。Stack 布局多一列 ★（见 renderDefaultStar）。
-  const renderCatalogRows = (withDefault: boolean) => (
+  // 模型映射 / 模型列表的行。
+  const renderCatalogRows = () => (
     <div className="space-y-2">
       {/* 列头：md+ 显示 */}
-      <div
-        className={cn(
-          "hidden gap-2 px-1 text-xs font-medium text-fg-2 md:grid",
-          withDefault
-            ? "grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]"
-            : "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]",
-        )}
-      >
-        {withDefault && <span />}
+      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
         <span>
           {t("codexConfig.catalogColumnDisplay", {
             defaultValue: "菜单显示名",
@@ -1481,14 +1464,8 @@ export function CodexFormFields({
       {catalogRows.map((row, index) => (
         <div
           key={row.rowId}
-          className={cn(
-            "grid grid-cols-1 gap-2",
-            withDefault
-              ? "md:grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]"
-              : "md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]",
-          )}
+          className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]"
         >
-          {withDefault && renderDefaultStar(index)}
           <Input
             value={row.displayName ?? ""}
             onChange={(event) =>
@@ -1709,11 +1686,23 @@ export function CodexFormFields({
           <div className="space-y-3">
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-3">
-                <FormLabel>
-                  {t("codexConfig.modelListTitle", {
-                    defaultValue: "模型列表",
-                  })}
-                </FormLabel>
+                <div className="flex items-center gap-0.5">
+                  <FormLabel>
+                    {t("codexConfig.modelListTitle", {
+                      defaultValue: "模型列表",
+                    })}
+                  </FormLabel>
+                  <HelpTip
+                    title={t("providerForm.stackModelDefault", {
+                      defaultValue: "默认模型",
+                    })}
+                  >
+                    {t("codexConfig.stackModelDefaultHelp", {
+                      defaultValue:
+                        "第一行是这家的默认模型：这家被设为默认时，Codex 默认用它。",
+                    })}
+                  </HelpTip>
+                </div>
                 {renderCatalogActionButtons(
                   handleAddCatalogRow,
                   t("codexConfig.addCatalogModel", {
@@ -1724,7 +1713,7 @@ export function CodexFormFields({
               <p className="text-xs leading-relaxed text-fg-2">
                 {t("codexConfig.stackModelListHint", {
                   defaultValue:
-                    "这些模型会出现在 Codex 的 /model 里，选中后请求直达这家。★ 是这家的默认模型：这家被设为默认时 Codex 默认用它。修改后需要重启 Codex。",
+                    "这些模型会出现在 Codex 的 /model 里，选中后请求直达这家。修改后需要重启 Codex。",
                 })}
               </p>
             </div>
@@ -1756,7 +1745,7 @@ export function CodexFormFields({
               </p>
             )}
             {catalogRows.length > 0 ? (
-              renderCatalogRows(true)
+              renderCatalogRows()
             ) : (
               <p className="text-xs leading-relaxed text-fg-2">
                 {t("codexConfig.modelListEmpty", {
@@ -2115,7 +2104,7 @@ export function CodexFormFields({
                     onAdd={handleAddFetchedCatalogRows}
                   />
                 )}
-                {catalogRows.length > 0 && renderCatalogRows(false)}
+                {catalogRows.length > 0 && renderCatalogRows()}
               </div>
             )}
 
