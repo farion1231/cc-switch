@@ -318,8 +318,9 @@ export function RequestLogTable({
   return (
     <div className="flex flex-col">
       <div className={usageTable.scroller}>
+        {/* 最小窗口（900）展开侧栏时表格区只有 644px：最小宽度超过它，最右的速度列就被挤到横向滚动里看不见 */}
         <table
-          className={cn(usageTable.table, "min-w-[700px]")}
+          className={cn(usageTable.table, "min-w-[620px]")}
           aria-label={t("usage.requestLogs")}
         >
           <thead>

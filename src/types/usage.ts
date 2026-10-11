@@ -113,6 +113,7 @@ export interface DailyStats {
 
 export interface ProviderStats {
   providerId: string;
+  appType: string;
   providerName: string;
   requestCount: number;
   /** 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径 */

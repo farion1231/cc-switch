@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { useTranslation } from "react-i18next";
 import {
+  ArrowUpCircle,
   Check,
   ChevronDown,
   Loader2,
@@ -153,6 +154,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [writePending, setWritePending] = useState(false);
   const [isUpdatingMany, setIsUpdatingMany] = useState(false);
+  // 更新进度：确认框点完就关，进度显示在搜索框旁的按钮上
+  const [updateProgress, setUpdateProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   const writeLockRef = useRef(false);
   const checkUpdatesLockRef = useRef(false);
 
@@ -569,10 +575,13 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 
   const updateIds = async (ids: string[], allowOpenDialog = false) => {
     if (ids.length === 0 || !beginWrite(allowOpenDialog)) return;
+    // 不让确认框等着整批更新跑完：点了确认就关，每行的 ⋯ 和页头按钮显示进度
+    setConfirm(null);
     setIsUpdatingMany(ids.length > 1);
+    setUpdateProgress({ done: 0, total: ids.length });
     const updated: string[] = [];
     try {
-      for (const id of ids) {
+      for (const [index, id] of ids.entries()) {
         try {
           const result = await updateSkillMutation.mutateAsync(id);
           updated.push(result.name);
@@ -582,10 +591,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
             description: `${name ?? id}: ${String(error)}`,
           });
         }
+        setUpdateProgress({ done: index + 1, total: ids.length });
       }
-      setConfirm(null);
     } finally {
       setIsUpdatingMany(false);
+      setUpdateProgress(null);
       endWrite();
     }
     if (updated.length === 1) {
@@ -610,7 +620,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     checkUpdatesLockRef.current = true;
     try {
       const result = await checkUpdates();
-      const updates = result.data?.updates ?? [];
+      const installedIds = new Set(installedSkills.map((skill) => skill.id));
+      const updates = (result.data?.updates ?? []).filter((update) =>
+        installedIds.has(update.id),
+      );
       const failures = result.data?.failures ?? [];
       setDismissedRepoFailAt(null);
       if (updates.length === 0 && failures.length > 0) {
@@ -622,9 +635,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       } else if (updates.length === 0) {
         toast.success(t("skills.noUpdates"), { closeButton: true });
       } else {
-        toast.info(t("skills.updatesFound", { count: updates.length }), {
-          closeButton: true,
-        });
+        // 查到就直接问要不要全部更新，不用再去筛选里找「全部更新」
+        setConfirm({ kind: "updateAll" });
       }
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
@@ -891,7 +903,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
           {/* 已安装数量只写在页签上；页头只留可点的「N 个可更新」 */}
           {loadOk && nUpdates > 0 && (
             <span className="ms-2 flex items-center whitespace-nowrap text-body">
-              {/* 可点：把表格筛到可更新的项（筛选状态下列头那一行给「全部更新」），再点恢复 */}
+              {/* 可点：把表格筛到可更新的项，再点恢复；「全部更新」在搜索框旁 */}
               <HoverTip
                 content={
                   updatesOnly
@@ -1242,18 +1254,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                         })),
                       ]}
                     />
-                    {statusFilter === "updates" && nUpdates > 0 && (
-                      <Button
-                        type="button"
-                        variant="neutral"
-                        size="compact"
-                        className="ms-1.5 shrink-0"
-                        disabled={controlsDisabled}
-                        onClick={() => setConfirm({ kind: "updateAll" })}
-                      >
-                        {t("skillsPage.updateAllCount", { count: nUpdates })}
-                      </Button>
-                    )}
                   </>
                 )}
               </div>
@@ -1493,23 +1493,55 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       : undefined
                   }
                 >
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="regular"
-                    className="shrink-0"
-                    disabled={controlsDisabled}
-                    onClick={() => void handleCheckUpdates()}
-                  >
-                    {isCheckingUpdates ? (
+                  {/* 已知有更新时这颗按钮就是「全部更新」；想重新检查走「⋯」菜单 */}
+                  {updateProgress ? (
+                    <Button
+                      type="button"
+                      variant="neutral"
+                      size="regular"
+                      className="shrink-0"
+                      disabled
+                    >
                       <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" strokeWidth={2} />
-                    )}
-                    {isCheckingUpdates
-                      ? t("skills.checkingUpdates")
-                      : t("skills.checkUpdates")}
-                  </Button>
+                      {t("skillsPage.updatingProgress", {
+                        done: Math.min(
+                          updateProgress.done + 1,
+                          updateProgress.total,
+                        ),
+                        total: updateProgress.total,
+                      })}
+                    </Button>
+                  ) : nUpdates > 0 && !isCheckingUpdates ? (
+                    <Button
+                      type="button"
+                      variant="neutral"
+                      size="regular"
+                      className="shrink-0"
+                      disabled={controlsDisabled}
+                      onClick={() => setConfirm({ kind: "updateAll" })}
+                    >
+                      <ArrowUpCircle className="h-4 w-4" strokeWidth={2} />
+                      {t("skillsPage.updateAllCount", { count: nUpdates })}
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      size="regular"
+                      className="shrink-0"
+                      disabled={controlsDisabled}
+                      onClick={() => void handleCheckUpdates()}
+                    >
+                      {isCheckingUpdates ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" strokeWidth={2} />
+                      )}
+                      {isCheckingUpdates
+                        ? t("skills.checkingUpdates")
+                        : t("skills.checkUpdates")}
+                    </Button>
+                  )}
                 </HoverTip>
               </div>
             ) : null,
@@ -1614,6 +1646,42 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         danger={false}
         title={t("skillsPage.confirm.updateAll", { count: nUpdates })}
         body={t("skillsPage.confirm.updateBody", { path: BACKUP_DIR })}
+        details={
+          <ul
+            aria-label={t("skillsPage.confirm.updateListAria")}
+            className="max-h-60 divide-y divide-border overflow-y-auto rounded-control border border-border"
+          >
+            {applicableSkillUpdates.map((update) => {
+              const skill = installedSkills.find(
+                (item) => item.id === update.id,
+              );
+              const repo =
+                skill?.repoOwner && skill.repoName
+                  ? `${skill.repoOwner}/${skill.repoName}`
+                  : null;
+              return (
+                <li
+                  key={update.id}
+                  className="flex items-baseline gap-2 px-3 py-2 text-body"
+                >
+                  <span className="min-w-0 truncate font-medium text-fg-1">
+                    {skill?.name ?? update.name}
+                  </span>
+                  {repo && skill && (
+                    // 和列表行的来源链接一样：有 README 地址开 README，否则开仓库首页
+                    <button
+                      type="button"
+                      onClick={() => void openDocs(skill)}
+                      className="ms-auto shrink-0 rounded-sm font-mono text-caption text-fg-3 underline decoration-border-strong underline-offset-[3px] hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {repo}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        }
         confirmLabel={t("skillsPage.confirm.updateAllButton", {
           count: nUpdates,
         })}

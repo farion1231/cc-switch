@@ -15,6 +15,7 @@ import type {
 const DEFAULT_REFETCH_INTERVAL_MS = 30000;
 
 type UsageQueryOptions = {
+  enabled?: boolean;
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
 };
@@ -90,6 +91,14 @@ export const usageKeys = {
       customStartDate ?? 0,
       customEndDate ?? 0,
       liveEndTime ?? false,
+      filters?.appType ?? null,
+      filters?.providerName ?? null,
+      filters?.model ?? null,
+    ] as const,
+  firstDate: (filters?: UsageScopeFilters) =>
+    [
+      ...usageKeys.all,
+      "first-date",
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
@@ -250,6 +259,27 @@ export function useUsageTrends(
         effective.model,
       );
     },
+    enabled: options?.enabled ?? true,
+    placeholderData: keepPreviousData,
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+/** 最早有用量记录的日期，「全部」的按年热力图据此决定从哪一年画起 */
+export function useUsageFirstDate(
+  filters?: UsageScopeFilters,
+  options?: UsageQueryOptions,
+) {
+  const effective = normalizeScopeFilters(filters);
+  return useQuery({
+    queryKey: usageKeys.firstDate(effective),
+    queryFn: () =>
+      usageApi.getUsageFirstDate(
+        effective.appType,
+        effective.providerName,
+        effective.model,
+      ),
     placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,

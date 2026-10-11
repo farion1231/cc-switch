@@ -157,6 +157,19 @@ pub async fn restart_codex_app_server_daemon(
     .map_err(|error| error.to_string())?
 }
 
+/// 用户关掉「Codex 可能还在用旧的」提示（看不到进程时出的那种）：记下现在的模型目录和文件
+/// 登录，同一份不再提示。
+#[tauri::command]
+pub async fn acknowledge_codex_stale_clients() -> Result<(), String> {
+    crate::services::provider::codex_direct::off_runtime(|| {
+        crate::services::provider::codex_client_catalog::acknowledge(
+            &crate::live::engine::DeviceStore::for_device(),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 /// Stack 模型：把一家加入或移出名单（`enabled` 是目标值）。成功时返回客户端看不到或看不全
 /// Stack 模型的提示；失败时 `partial` 为真表示已部分写入，下次操作或重启 CC Switch 时补完。
 #[tauri::command]
@@ -239,18 +252,48 @@ pub async fn update_global_proxy_config(
 ) -> Result<(), String> {
     let restarted = state.proxy_service.update_global_config(&config).await?;
     if restarted {
-        let mut failures = Vec::new();
-        if let Err(error) = crate::mode::controller::resync_routes(state.inner()).await {
-            failures.push(error);
-        }
-        if let Err(error) = resync_claude_desktop_gateway(&state.db) {
-            failures.push(format!("claude-desktop: {error}"));
-        }
-        if !failures.is_empty() {
-            return Err(failures.join("; "));
-        }
+        resync_proxy_clients(state.inner()).await?;
     }
     Ok(())
+}
+
+/// 获取客户端地址：写进客户端配置的代理主机，空表示按监听地址推。
+#[tauri::command]
+pub async fn get_proxy_client_host() -> Result<String, String> {
+    Ok(crate::settings::get_proxy_client_host().unwrap_or_default())
+}
+
+/// 保存客户端地址，再按新地址重写接上路由的客户端，不用重启服务。存在本机的
+/// settings.json 里：这个地址只对这台机器有意义，不能随数据库同步到别的设备。
+/// 每次保存都重写一遍：上次重写失败、改好客户端文件后原样再保存就是重试；
+/// 客户端已经是这个地址时重写不碰文件。
+#[tauri::command]
+pub async fn set_proxy_client_host(
+    state: tauri::State<'_, AppState>,
+    host: String,
+) -> Result<(), String> {
+    save_proxy_client_host(state.inner(), &host).await
+}
+
+pub(crate) async fn save_proxy_client_host(state: &AppState, host: &str) -> Result<(), String> {
+    crate::settings::set_proxy_client_host(host).map_err(|e| e.to_string())?;
+    resync_proxy_clients(state).await
+}
+
+/// 按当前的代理地址重写接上路由的客户端，含 Claude Desktop 的模型映射卡。
+async fn resync_proxy_clients(state: &AppState) -> Result<(), String> {
+    let mut failures = Vec::new();
+    if let Err(error) = crate::mode::controller::resync_routes(state).await {
+        failures.push(error);
+    }
+    if let Err(error) = resync_claude_desktop_gateway(&state.db) {
+        failures.push(format!("claude-desktop: {error}"));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 /// Claude Desktop 的模型映射卡把本地网关地址写死在 profile 里，不在 `resync_routes` 的

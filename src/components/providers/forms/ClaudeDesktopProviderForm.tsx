@@ -960,15 +960,10 @@ export function ClaudeDesktopProviderForm({
                     })}
                   </Label>
                   <p className="text-xs leading-relaxed text-fg-2">
-                    {needsModelMapping
-                      ? t("claudeDesktop.modelMappingOnHint", {
-                          defaultValue:
-                            "Claude Desktop 只接受 claude-sonnet-* / claude-opus-* / claude-haiku-* 三档角色 ID。选择模型映射后，CC Switch 会把这三档映射到供应商的实际模型，并在使用期间保持本地路由开启。",
-                        })
-                      : t("claudeDesktop.modelMappingOffHint", {
-                          defaultValue:
-                            "仅当供应商直接接受 Claude Desktop 可识别的三档角色 ID（claude-sonnet-* / claude-opus-* / claude-haiku-*）时才适用直连；其他模型名（含 claude-3-5-sonnet-… 等旧式 ID）请选择模型映射。",
-                        })}
+                    {t("claudeDesktop.modelModeHint", {
+                      defaultValue:
+                        "如果你的供应商提供原生 Claude 系列模型，可以使用直连；如果是 DeepSeek、Kimi 等第三方模型，请使用模型映射。",
+                    })}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2 border-l border-border pl-4">

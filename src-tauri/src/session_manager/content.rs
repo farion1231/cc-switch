@@ -7,6 +7,7 @@
 //! - [`resolve_content_ref`]：按 kind 校验后读取全文，单次 ≤ 32MB
 //! - [`load_image`]：内联图片走 ContentRef 校验并解码，本地图片只允许会话相关目录，≤ 20MB
 
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
@@ -102,7 +103,8 @@ pub fn validate_source(provider_id: &str, source_path: &str) -> Result<Validated
         )?,
         _ => {
             let roots = provider_roots(provider_id)?;
-            let (root, path) = resolve_under_roots(provider_id, Path::new(source_path), &roots)?;
+            let source = codex_source_or_sibling(provider_id, Path::new(source_path));
+            let (root, path) = resolve_under_roots(provider_id, &source, &roots)?;
             SourceLocation::Path { path, root }
         }
     };
@@ -111,6 +113,18 @@ pub fn validate_source(provider_id: &str, source_path: &str) -> Result<Validated
         raw: source_path.to_string(),
         location,
     })
+}
+
+/// 前端拿到 `sourcePath` 后 Codex 可能把它压成 `.jsonl.zst`（或在恢复对话时解压回去），
+/// 原路径不在了就换另一种形态；内容相同，按行偏移的引用照样有效。
+pub(super) fn codex_source_or_sibling<'a>(provider_id: &str, source: &'a Path) -> Cow<'a, Path> {
+    if provider_id != "codex" || source.exists() {
+        return Cow::Borrowed(source);
+    }
+    match crate::codex_rollout_file::sibling(source) {
+        Some(sibling) if sibling.exists() => Cow::Owned(sibling),
+        _ => Cow::Borrowed(source),
+    }
 }
 
 /// 要求 `source` 规范化后位于某个（存在的）root 之下，返回 `(root, source)` 的规范化路径。
@@ -304,23 +318,16 @@ fn read_jsonl_line(path: &Path, offset: u64, len: u32) -> Result<Vec<u8>, String
     if u64::from(len) > MAX_TEXT_BYTES {
         return Err(TOO_LARGE_TEXT.to_string());
     }
-    let mut file = File::open(path).map_err(|_| "无法读取会话文件".to_string())?;
-    let file_len = file
-        .metadata()
-        .map_err(|_| "无法读取会话文件".to_string())?
-        .len();
     let end = offset
         .checked_add(u64::from(len))
-        .filter(|end| *end <= file_len)
         .ok_or_else(|| STALE.to_string())?;
-
     // 多读前后各一个字节，用来判断行边界
     let start = offset.saturating_sub(1);
-    let read_end = (end + 1).min(file_len);
-    let mut buf = vec![0u8; (read_end - start) as usize];
-    file.seek(SeekFrom::Start(start))
-        .and_then(|_| file.read_exact(&mut buf))
-        .map_err(|_| STALE.to_string())?;
+    let (buf, more_after_end) = if crate::codex_rollout_file::is_compressed(path) {
+        read_compressed_window(path, start, end)?
+    } else {
+        read_plain_window(path, start, end)?
+    };
 
     let line_start = (offset - start) as usize;
     if offset > 0 && buf[0] != b'\n' {
@@ -329,7 +336,7 @@ fn read_jsonl_line(path: &Path, offset: u64, len: u32) -> Result<Vec<u8>, String
     let mut line = &buf[line_start..line_start + len as usize];
     if line.last() == Some(&b'\n') {
         line = &line[..line.len() - 1];
-    } else if end < file_len {
+    } else if more_after_end {
         let next = buf[buf.len() - 1];
         if next != b'\n' && next != b'\r' {
             return Err(STALE.to_string());
@@ -342,6 +349,47 @@ fn read_jsonl_line(path: &Path, offset: u64, len: u32) -> Result<Vec<u8>, String
         return Err(STALE.to_string());
     }
     Ok(line.to_vec())
+}
+
+/// 读 `[start, end]`（含结尾后一个字节，若有）；第二项表示 `end` 之后还有内容。
+fn read_plain_window(path: &Path, start: u64, end: u64) -> Result<(Vec<u8>, bool), String> {
+    let mut file = File::open(path).map_err(|_| "无法读取会话文件".to_string())?;
+    let file_len = file
+        .metadata()
+        .map_err(|_| "无法读取会话文件".to_string())?
+        .len();
+    if end > file_len {
+        return Err(STALE.to_string());
+    }
+    let read_end = (end + 1).min(file_len);
+    let mut buf = vec![0u8; (read_end - start) as usize];
+    file.seek(SeekFrom::Start(start))
+        .and_then(|_| file.read_exact(&mut buf))
+        .map_err(|_| STALE.to_string())?;
+    Ok((buf, end < file_len))
+}
+
+/// Codex 压缩的 rollout（`.jsonl.zst`）没法随机定位：偏移按解压后的内容算，
+/// 从头解压丢掉 `start` 字节再读窗口。
+fn read_compressed_window(path: &Path, start: u64, end: u64) -> Result<(Vec<u8>, bool), String> {
+    let mut reader =
+        crate::codex_rollout_file::open_reader(path).map_err(|_| "无法读取会话文件".to_string())?;
+    let skipped = std::io::copy(&mut (&mut reader).take(start), &mut std::io::sink())
+        .map_err(|_| STALE.to_string())?;
+    if skipped < start {
+        return Err(STALE.to_string());
+    }
+    let mut buf = Vec::new();
+    reader
+        .take(end + 1 - start)
+        .read_to_end(&mut buf)
+        .map_err(|_| STALE.to_string())?;
+    let wanted = (end - start) as usize;
+    if buf.len() < wanted {
+        return Err(STALE.to_string());
+    }
+    let more_after_end = buf.len() > wanted;
+    Ok((buf, more_after_end))
 }
 
 /// 按 JSON Pointer 取文本：
@@ -631,6 +679,39 @@ pub fn resolve_reveal_path(path: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn jsonl_ref_reads_same_line_from_compressed_rollout() {
+        let temp = tempdir().expect("tempdir");
+        let plain = temp.path().join("rollout-a.jsonl");
+        let compressed = temp.path().join("rollout-a.jsonl.zst");
+        // 最后一行没有换行，覆盖「文件末尾结束」的分支
+        let text = "{\"a\":1}\n{\"b\":\"two\"}\r\n{\"c\":3}";
+        std::fs::write(&plain, text).expect("write plain");
+        std::fs::write(
+            &compressed,
+            zstd::stream::encode_all(text.as_bytes(), 3).expect("encode"),
+        )
+        .expect("write zst");
+
+        let mut offset = 0u64;
+        for segment in text.split_inclusive('\n') {
+            let len = segment.len() as u32;
+            let expected = read_jsonl_line(&plain, offset, len).expect("plain line");
+            assert_eq!(
+                read_jsonl_line(&compressed, offset, len).expect("zst line"),
+                expected
+            );
+            offset += u64::from(len);
+        }
+
+        // 偏移落在行中间或超出内容：都按会话已更新处理
+        assert_eq!(read_jsonl_line(&compressed, 3, 4), Err(STALE.to_string()));
+        assert_eq!(
+            read_jsonl_line(&compressed, offset, 5),
+            Err(STALE.to_string())
+        );
+    }
 
     fn file_source(root: &Path, path: &Path) -> ValidatedSource {
         let roots = vec![root.to_path_buf()];

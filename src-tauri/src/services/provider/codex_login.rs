@@ -14,7 +14,7 @@
 //! 官方卡的行里存着的 OAuth 登录（旧版回填进去的）只在暂存文件第一次建立时读一次，
 //! 作为暂存的初始内容；之后以暂存为准，行里的快照不再使用。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,6 +27,9 @@ use crate::codex_config::{
 
 pub(crate) const STASH_FILENAME: &str = "codex-login-stash.json";
 
+/// 暂存文件的格式版本。1：按用户加 workspace 认人（4.0.7）；没有这个字段的是更早写的。
+const STASH_VERSION: u32 = 1;
+
 /// 这台设备上暂存的原生登录，按身份存。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct LoginStash {
@@ -35,6 +38,8 @@ pub(crate) struct LoginStash {
     /// 最近一次暂存的是谁：切回没有自己登录的官方卡（行里 `auth` 为空）时还它。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last: Option<String>,
+    #[serde(default)]
+    pub version: u32,
     /// 暂存文件已经存在。为 `false` 时内容是刚从官方行里的快照初始化出来的，要写一次。
     #[serde(skip)]
     pub initialized: bool,
@@ -43,13 +48,75 @@ pub(crate) struct LoginStash {
 impl LoginStash {
     /// 暂存文件还不存在：用官方卡行里存着的 OAuth 登录初始化（旧版回填进去的）。
     pub fn seeded_from_rows<'a>(row_auths: impl IntoIterator<Item = &'a Value>) -> Self {
-        let mut stash = Self::default();
+        let mut stash = Self {
+            version: STASH_VERSION,
+            ..Self::default()
+        };
         for auth in row_auths {
             if let Some(id) = oauth_identity(auth) {
                 stash.logins.entry(id).or_insert_with(|| auth.clone());
             }
         }
         stash
+    }
+
+    /// 读到的暂存文件：更早的版本先升级（见 [`Self::upgraded`]），升级过的要写一次。
+    pub fn loaded<'a>(
+        self,
+        row_auths: impl IntoIterator<Item = &'a Value>,
+        live: Option<&Value>,
+    ) -> Self {
+        if self.version >= STASH_VERSION {
+            return Self {
+                initialized: true,
+                ..self
+            };
+        }
+        self.upgraded(row_auths, live)
+    }
+
+    /// 4.0.7 以前只按用户认人：key 没有 workspace，同一个人的几个 workspace 只留下一份，
+    /// 其余的只剩官方卡行里的快照。按现在的 [`identity`] 重算 key，再从行里补回这些
+    /// workspace——只补暂存里或 live 里还有这个人的（他别的 workspace 还在用）。两处都没有
+    /// 说明是在 Codex 里登出了，不补：登出不复活。
+    fn upgraded<'a>(
+        self,
+        row_auths: impl IntoIterator<Item = &'a Value>,
+        live: Option<&Value>,
+    ) -> Self {
+        let last = self
+            .last
+            .as_ref()
+            .and_then(|id| self.logins.get(id))
+            .map(identity);
+        let mut logins: BTreeMap<String, Value> = self
+            .logins
+            .into_values()
+            .map(|auth| (identity(&auth), auth))
+            .collect();
+        let live = live.filter(|auth| codex_auth_has_credential_login_material(auth));
+        let users: BTreeSet<String> = logins
+            .values()
+            .chain(live)
+            .filter_map(extract_codex_auth_user_identity)
+            .collect();
+        let live_id = live.map(identity);
+        for auth in row_auths {
+            let Some(id) = oauth_identity(auth) else {
+                continue;
+            };
+            let same_user =
+                extract_codex_auth_user_identity(auth).is_some_and(|user| users.contains(&user));
+            if same_user && live_id.as_ref() != Some(&id) {
+                logins.entry(id).or_insert_with(|| auth.clone());
+            }
+        }
+        Self {
+            logins,
+            last,
+            version: STASH_VERSION,
+            initialized: false,
+        }
     }
 
     fn put(&mut self, auth: &Value) {
@@ -67,23 +134,22 @@ impl LoginStash {
     }
 }
 
-/// 登录的身份：id_token 里的用户，其次 ChatGPT workspace；API Key 登录共用一个位置。
+/// 登录的身份：id_token 里的用户加 ChatGPT workspace，缺一个就用另一个；API Key 登录共用
+/// 一个位置。同一个人的 Plus 和 Team 是两个登录（codex-rs `same_owner` 也按用户加 workspace 认）。
 fn identity(auth: &Value) -> String {
-    if let Some(user) = extract_codex_auth_user_identity(auth) {
-        return user;
-    }
-    if let Some(account) = auth
+    let user = extract_codex_auth_user_identity(auth);
+    let account = auth
         .pointer("/tokens/account_id")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|id| !id.is_empty())
-    {
-        return format!("account:{account}");
+        .filter(|id| !id.is_empty());
+    match (user, account) {
+        (Some(user), Some(account)) => format!("{user}|account:{account}"),
+        (Some(user), None) => user,
+        (None, Some(account)) => format!("account:{account}"),
+        (None, None) if extract_codex_auth_api_key(auth).is_some() => "api-key".to_string(),
+        (None, None) => "unknown".to_string(),
     }
-    if extract_codex_auth_api_key(auth).is_some() {
-        return "api-key".to_string();
-    }
-    "unknown".to_string()
 }
 
 /// 行里存的是 OAuth 登录（不是 API Key）时，它的身份。
@@ -237,7 +303,8 @@ fn official(
     if let Some(live) = native {
         // 行里没存登录：跟随 Codex 当前的登录。存的就是当前这个人：不动。
         let id = wanted.filter(|id| identity(live) != *id)?;
-        // 行里存的是另一个人：暂存里有他才换，否则不动（行里的快照可能早已作废）。
+        // 行里存的是另一个人：暂存里有他才换，否则不动（行里的快照可能早已作废，也可能是
+        // 在 Codex 里登出了）。旧版漏掉的 workspace 在读暂存时补回（见 `LoginStash::upgraded`）。
         let saved = stash.take(&id)?;
         stash.put(live);
         return Some(Some(saved));
@@ -258,17 +325,26 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// 一个人一个 workspace 的登录（id_token 是真的 JWT，和 Codex 写出的一样能解出用户）。
     fn login(account: &str) -> Value {
+        workspace_login(&format!("user-{account}"), account)
+    }
+
+    fn workspace_login(user: &str, account: &str) -> Value {
         json!({
             "auth_mode": "chatgpt",
             "OPENAI_API_KEY": null,
             "tokens": {
-                "id_token": "id",
+                "id_token": crate::codex_config::test_codex_id_token(user),
                 "access_token": format!("access-{account}"),
                 "refresh_token": format!("refresh-{account}"),
                 "account_id": account,
             },
         })
+    }
+
+    fn key(account: &str) -> String {
+        format!("sub:user-{account}|account:{account}")
     }
 
     fn input<'a>(
@@ -288,6 +364,7 @@ mod tests {
 
     fn ready() -> LoginStash {
         LoginStash {
+            version: STASH_VERSION,
             initialized: true,
             ..LoginStash::default()
         }
@@ -390,7 +467,7 @@ mod tests {
         ));
         assert_eq!(to_bob.auth, Some(Some(bob.clone())));
         let stash = to_bob.stash.unwrap();
-        assert!(stash.logins.contains_key("account:alice"), "alice stashed");
+        assert!(stash.logins.contains_key(&key("alice")), "alice stashed");
 
         // bob 的登录在 live 里被 CLI 轮换过：切回 alice 时存下的是轮换后的那份。
         let mut rotated_bob = bob.clone();
@@ -402,9 +479,118 @@ mod tests {
         ));
         assert_eq!(to_alice.auth, Some(Some(alice)));
         assert_eq!(
-            to_alice.stash.unwrap().logins["account:bob"],
+            to_alice.stash.unwrap().logins[&key("bob")],
             rotated_bob,
             "the rotated login is what gets stashed"
+        );
+    }
+
+    /// #8054：同一个邮箱登录的 Plus 和 Team 用户相同、workspace 不同，是两个登录。
+    #[test]
+    fn workspaces_of_the_same_person_are_separate_logins() {
+        let plus = workspace_login("same-person", "ws-plus");
+        let team = workspace_login("same-person", "ws-team");
+        let stash = LoginStash::seeded_from_rows([&plus, &team]);
+        assert_eq!(stash.logins.len(), 2, "both workspaces are seeded");
+
+        let to_team = plan(input(
+            Some(&plus),
+            AuthTarget::Official { row_auth: &team },
+            stash,
+        ));
+        assert_eq!(to_team.auth, Some(Some(team.clone())));
+        let stash = to_team.stash.unwrap();
+        assert_eq!(
+            stash.logins["sub:same-person|account:ws-plus"], plus,
+            "the Plus login is stashed, not taken for the Team one"
+        );
+
+        let back = plan(input(
+            Some(&team),
+            AuthTarget::Official { row_auth: &plus },
+            stash,
+        ));
+        assert_eq!(back.auth, Some(Some(plus)));
+    }
+
+    /// 在官方卡上登出、切到别人再切回来：行里的旧快照不拿来用，登出不复活。
+    #[test]
+    fn a_logged_out_login_is_not_revived_from_the_row() {
+        let alice = login("alice");
+        let bob = login("bob");
+        let mut stash = ready();
+        stash.put(&bob);
+
+        let to_bob = plan(AuthInput {
+            leaving_official: Some(&alice),
+            ..input(None, AuthTarget::Official { row_auth: &bob }, stash)
+        });
+        assert_eq!(to_bob.auth, Some(Some(bob.clone())));
+
+        let back = plan(input(
+            Some(&bob),
+            AuthTarget::Official { row_auth: &alice },
+            to_bob.stash.unwrap(),
+        ));
+        assert_eq!(back.auth, None, "alice stays logged out");
+    }
+
+    /// 4.0.7 以前写的暂存：key 只有用户，同一个人的几个 workspace 只剩一份。
+    fn stash_file(logins: Value) -> LoginStash {
+        serde_json::from_value(json!({ "logins": logins })).unwrap()
+    }
+
+    #[test]
+    fn older_stash_files_get_the_merged_workspaces_back_from_the_rows() {
+        let plus = workspace_login("same-person", "ws-plus");
+        let team1 = workspace_login("same-person", "ws-team1");
+        let team2 = workspace_login("same-person", "ws-team2");
+        let mut team1_row = team1.clone();
+        team1_row["tokens"]["refresh_token"] = json!("refresh-old");
+
+        let stash = stash_file(json!({ "sub:same-person": team1 }))
+            .loaded([&plus, &team1_row, &team2], Some(&plus));
+        assert_eq!(stash.version, STASH_VERSION);
+        assert!(!stash.initialized, "the upgraded stash is written once");
+        assert_eq!(
+            stash.logins.keys().collect::<Vec<_>>(),
+            [
+                "sub:same-person|account:ws-team1",
+                "sub:same-person|account:ws-team2"
+            ],
+            "the live workspace is not stashed"
+        );
+        assert_eq!(
+            stash.logins["sub:same-person|account:ws-team1"], team1,
+            "the stash beats the row snapshot"
+        );
+
+        let to_team2 = plan(input(
+            Some(&plus),
+            AuthTarget::Official { row_auth: &team2 },
+            stash,
+        ));
+        assert_eq!(to_team2.auth, Some(Some(team2)));
+    }
+
+    #[test]
+    fn upgrading_an_older_stash_does_not_revive_logged_out_people() {
+        let alice = login("alice");
+        let bob = login("bob");
+        // alice 在 Codex 里登出后切到了 bob：暂存里没有她，live 里是 bob。
+        let stash = stash_file(json!({})).loaded([&alice, &bob], Some(&bob));
+        assert!(stash.logins.is_empty());
+    }
+
+    #[test]
+    fn upgraded_stash_files_are_left_as_they_are() {
+        let plus = workspace_login("same-person", "ws-plus");
+        let team = workspace_login("same-person", "ws-team");
+        let stash = ready().loaded([&plus, &team], Some(&plus));
+        assert!(stash.initialized);
+        assert!(
+            stash.logins.is_empty(),
+            "a later logout of the Team login sticks"
         );
     }
 
@@ -430,7 +616,7 @@ mod tests {
             ready(),
         ));
         assert_eq!(plan.auth, Some(Some(api)));
-        assert!(plan.stash.unwrap().logins.contains_key("account:alice"));
+        assert!(plan.stash.unwrap().logins.contains_key(&key("alice")));
     }
 
     #[test]
