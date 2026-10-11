@@ -295,6 +295,7 @@ export interface ProviderFormProps {
     meta?: ProviderMeta;
     icon?: string;
     iconColor?: string;
+    iconSource?: "builtin" | "local" | "url";
   };
   showButtons?: boolean;
   isProxyTakeover?: boolean;
@@ -481,6 +482,7 @@ function ProviderFormFull({
                     : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
+      iconSource: initialData?.iconSource,
     }),
     [initialData, appId, claudeLiveBase],
   );
@@ -2167,6 +2169,7 @@ function ProviderFormFull({
         settingsConfig: JSON.stringify({ auth, config }, null, 2),
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
+        iconSource: "builtin",
       });
       // Preset selection resets Copilot to auto; do not reuse the previous render's metadata.
       projectCodexDraft(
@@ -2193,6 +2196,7 @@ function ProviderFormFull({
         settingsConfig: JSON.stringify(preset.settingsConfig, null, 2),
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
+        iconSource: "builtin",
       });
       projectGeminiDraft(env, config, preset.category);
       return;
@@ -2210,6 +2214,7 @@ function ProviderFormFull({
           settingsConfig: JSON.stringify({}, null, 2),
           icon: preset.icon ?? "",
           iconColor: preset.iconColor ?? "",
+          iconSource: "builtin",
         });
         return;
       }
@@ -2222,6 +2227,7 @@ function ProviderFormFull({
         settingsConfig: JSON.stringify(config, null, 2),
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
+        iconSource: "builtin",
       });
       return;
     }
@@ -2249,6 +2255,7 @@ function ProviderFormFull({
         settingsConfig: JSON.stringify(config, null, 2),
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
+        iconSource: "builtin",
       });
       return;
     }
@@ -2266,6 +2273,7 @@ function ProviderFormFull({
         settingsConfig: JSON.stringify(config, null, 2),
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
+        iconSource: "builtin",
       });
       return;
     }
@@ -2302,6 +2310,7 @@ function ProviderFormFull({
       settingsConfig: JSON.stringify(config, null, 2),
       icon: preset.icon ?? "",
       iconColor: preset.iconColor ?? "",
+      iconSource: "builtin",
     });
   };
 
@@ -2339,6 +2348,7 @@ function ProviderFormFull({
 
           <BasicFormFields
             form={form}
+            providerId={providerId}
             beforeNameSlot={
               appId === "opencode" && !isAnyOmoCategory ? (
                 <div className="space-y-2">

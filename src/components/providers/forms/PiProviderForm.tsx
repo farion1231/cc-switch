@@ -1468,6 +1468,7 @@ export function PiProviderForm({
           >
             <BasicFormFields
               form={form}
+              providerId={providerId}
               beforeNameSlot={
                 isEdit || selectedPresetId === "custom" ? (
                   <div className="space-y-2">

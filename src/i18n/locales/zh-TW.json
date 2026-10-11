@@ -702,7 +702,9 @@
         "warning": "將覆寫雲端已有的同步資料",
         "legacyNotice": "檢測到舊版雲端路徑資料。本次上傳將寫入新路徑 v2/db-v6，不會覆寫舊路徑。",
         "confirm": "確認上傳"
-      }
+      },
+      "includeIconAssets": "同步圖示資產",
+      "includeIconAssetsHint": "把供應商自訂圖示一併打包進同步快照（預設關，避免大圖佔用同步空間）"
     },
     "syncType": {
       "label": "同步方式",
@@ -803,7 +805,9 @@
         "createdAt": "上傳時間",
         "warning": "將覆寫該 S3 路徑下已有的同步資料",
         "confirm": "確認上傳"
-      }
+      },
+      "includeIconAssets": "同步圖示資產",
+      "includeIconAssetsHint": "把供應商自訂圖示一併打包進同步快照（預設關，避免大圖佔用同步空間）"
     },
     "autoReload": "資料已重新整理",
     "languageOptionChinese": "简体中文",
@@ -3441,7 +3445,14 @@
       "cloud": "雲端平台",
       "tool": "開發工具",
       "other": "其他"
-    }
+    },
+    "custom": "自訂圖示",
+    "upload": "上傳本機圖片",
+    "uploading": "上傳中…",
+    "removeCustom": "移除自訂圖示",
+    "customHint": "支援 PNG / JPG / WEBP / SVG，≤256×256，點陣圖 ≤200KB，SVG ≤100KB",
+    "urlPlaceholder": "https://example.com/icon.png",
+    "applyUrl": "使用 URL"
   },
   "providerIcon": {
     "label": "圖示",

@@ -20,7 +20,9 @@ import {
 } from "@/components/ui/dialog";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { IconPicker } from "@/components/IconPicker";
+import type { ProviderIconSource } from "@/components/ProviderIcon";
 import { getIconMetadata } from "@/icons/extracted/metadata";
+import { deleteProviderIcon } from "@/lib/api/providerIcons";
 import type { UseFormReturn } from "react-hook-form";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 
@@ -34,26 +36,42 @@ interface BasicFormFieldsProps {
   form: UseFormReturn<ProviderFormData>;
   /** Slot to render content between icon and name fields */
   beforeNameSlot?: ReactNode;
+  /** 自定义图标资产归属的供应商 ID；新增草稿时可用临时 ID */
+  providerId?: string;
 }
 
 export function BasicFormFields({
   form,
   beforeNameSlot,
+  providerId,
 }: BasicFormFieldsProps) {
   const { t } = useTranslation();
   const [iconDialogOpen, setIconDialogOpen] = useState(false);
 
   const currentIcon = form.watch("icon");
   const currentIconColor = form.watch("iconColor");
+  const currentIconSource = form.watch("iconSource");
   const providerName = form.watch("name") || "Provider";
   const effectiveIconColor =
     currentIconColor ||
-    (currentIcon ? getIconMetadata(currentIcon)?.defaultColor : undefined);
+    (currentIcon && currentIconSource !== "local" && currentIconSource !== "url"
+      ? getIconMetadata(currentIcon)?.defaultColor
+      : undefined);
 
-  const handleIconSelect = (icon: string) => {
-    const meta = getIconMetadata(icon);
+  const handleIconSelect = (icon: string, source: ProviderIconSource) => {
+    const meta = source === "builtin" ? getIconMetadata(icon) : undefined;
     form.setValue("icon", icon);
+    form.setValue("iconSource", source);
     form.setValue("iconColor", meta?.defaultColor ?? "");
+  };
+
+  const handleRemoveCustomIcon = () => {
+    if (currentIconSource === "local" && providerId) {
+      // 尽力清理磁盘资产；失败不影响表单状态
+      void deleteProviderIcon(providerId).catch(() => undefined);
+    }
+    form.setValue("icon", "");
+    form.setValue("iconSource", "builtin");
   };
 
   const iconButton = (
@@ -76,7 +94,8 @@ export function BasicFormFields({
             className="group shrink-0 rounded-[8px]"
           >
             <ProviderIconBox
-              icon={currentIcon}
+              icon={currentIcon || undefined}
+              iconSource={currentIconSource}
               name={providerName}
               color={effectiveIconColor}
               className="bg-surface transition-colors group-hover:bg-subtle"
@@ -114,8 +133,11 @@ export function BasicFormFields({
             <div className="space-y-2 px-6 py-6 w-full">
               <IconPicker
                 value={currentIcon}
+                iconSource={currentIconSource}
                 onValueChange={handleIconSelect}
                 color={effectiveIconColor}
+                providerId={providerId}
+                onRemoveCustom={handleRemoveCustomIcon}
               />
               <div className="flex justify-end gap-2">
                 <DialogClose asChild>

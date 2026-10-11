@@ -702,7 +702,9 @@
         "warning": "将覆盖云端已有的同步数据",
         "legacyNotice": "检测到旧版云端路径数据。本次上传将写入新路径 v2/db-v6，不会覆盖旧路径。",
         "confirm": "确认上传"
-      }
+      },
+      "includeIconAssets": "同步图标资产",
+      "includeIconAssetsHint": "把供应商自定义图标一并打包进同步快照（默认关，避免大图占用同步空间）"
     },
     "syncType": {
       "label": "同步方式",
@@ -803,7 +805,9 @@
         "createdAt": "上传时间",
         "warning": "将覆盖该 S3 路径下已有的同步数据",
         "confirm": "确认上传"
-      }
+      },
+      "includeIconAssets": "同步图标资产",
+      "includeIconAssetsHint": "把供应商自定义图标一并打包进同步快照（默认关，避免大图占用同步空间）"
     },
     "autoReload": "数据已刷新",
     "languageOptionChinese": "简体中文",
@@ -3440,7 +3444,14 @@
       "cloud": "云平台",
       "tool": "开发工具",
       "other": "其他"
-    }
+    },
+    "custom": "自定义图标",
+    "upload": "上传本地图片",
+    "uploading": "上传中…",
+    "removeCustom": "移除自定义图标",
+    "customHint": "支持 PNG / JPG / WEBP / SVG，≤256×256，光栅图 ≤200KB，SVG ≤100KB",
+    "urlPlaceholder": "https://example.com/icon.png",
+    "applyUrl": "使用 URL"
   },
   "providerIcon": {
     "label": "图标",

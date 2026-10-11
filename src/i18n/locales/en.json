@@ -702,7 +702,9 @@
         "warning": "This will overwrite existing sync data on the remote server",
         "legacyNotice": "Legacy remote data was detected. This upload will write to the new v2/db-v6 path and will not overwrite the legacy path.",
         "confirm": "Confirm Upload"
-      }
+      },
+      "includeIconAssets": "Sync icon assets",
+      "includeIconAssetsHint": "Include custom provider icons in the sync snapshot (off by default to save sync space)"
     },
     "syncType": {
       "label": "Sync Type",
@@ -803,7 +805,9 @@
         "createdAt": "Uploaded at",
         "warning": "This will overwrite existing sync data at the S3 path",
         "confirm": "Confirm Upload"
-      }
+      },
+      "includeIconAssets": "Sync icon assets",
+      "includeIconAssetsHint": "Include custom provider icons in the sync snapshot (off by default to save sync space)"
     },
     "autoReload": "Data refreshed",
     "languageOptionChinese": "简体中文",
@@ -3440,7 +3444,14 @@
       "cloud": "Cloud Platforms",
       "tool": "Dev Tools",
       "other": "Other"
-    }
+    },
+    "custom": "Custom Icon",
+    "upload": "Upload local image",
+    "uploading": "Uploading…",
+    "removeCustom": "Remove custom icon",
+    "customHint": "PNG / JPG / WEBP / SVG, ≤256×256, raster ≤200KB, SVG ≤100KB",
+    "urlPlaceholder": "https://example.com/icon.png",
+    "applyUrl": "Use URL"
   },
   "providerIcon": {
     "label": "Icon",

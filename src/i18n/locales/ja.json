@@ -702,7 +702,9 @@
         "warning": "リモートの既存同期データが上書きされます",
         "legacyNotice": "旧レイアウトのリモートデータを検出しました。今回のアップロードは新しい v2/db-v6 パスに書き込み、旧パスは上書きしません。",
         "confirm": "アップロードを実行"
-      }
+      },
+      "includeIconAssets": "アイコン資産を同期",
+      "includeIconAssetsHint": "カスタムプロバイダーアイコンを同期スナップショットに含めます（既定はオフ）"
     },
     "syncType": {
       "label": "同期方式",
@@ -803,7 +805,9 @@
         "createdAt": "アップロード日時",
         "warning": "この S3 パスにある既存の同期データが上書きされます",
         "confirm": "アップロードを実行"
-      }
+      },
+      "includeIconAssets": "アイコン資産を同期",
+      "includeIconAssetsHint": "カスタムプロバイダーアイコンを同期スナップショットに含めます（既定はオフ）"
     },
     "autoReload": "データを更新しました",
     "languageOptionChinese": "简体中文",
@@ -3440,7 +3444,14 @@
       "cloud": "クラウドプラットフォーム",
       "tool": "開発ツール",
       "other": "その他"
-    }
+    },
+    "custom": "カスタムアイコン",
+    "upload": "ローカル画像をアップロード",
+    "uploading": "アップロード中…",
+    "removeCustom": "カスタムアイコンを削除",
+    "customHint": "PNG / JPG / WEBP / SVG 対応、≤256×256、ラスタ ≤200KB、SVG ≤100KB",
+    "urlPlaceholder": "https://example.com/icon.png",
+    "applyUrl": "URL を使用"
   },
   "providerIcon": {
     "label": "アイコン",

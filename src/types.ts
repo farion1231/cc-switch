@@ -24,8 +24,9 @@ export interface Provider {
   // 可选：供应商元数据（仅存于 ~/.cc-switch/config.json，不写入 live 配置）
   meta?: ProviderMeta;
   // 图标配置
-  icon?: string; // 图标名称（如 "openai", "anthropic"）
+  icon?: string; // 图标名称（如 "openai", "anthropic"）；iconSource 为 "local"/"url" 时存资产键 / 图片 URL
   iconColor?: string; // 图标颜色（Hex 格式，如 "#00A67E"）
+  iconSource?: "builtin" | "local" | "url"; // 图标来源；缺省按内建图标语义解析（旧数据零迁移）
   // 是否加入故障转移队列
   inFailoverQueue?: boolean;
 }
@@ -330,6 +331,7 @@ export interface WebDavSyncStatus {
 export interface WebDavSyncSettings {
   enabled?: boolean;
   autoSync?: boolean;
+  includeIconAssets?: boolean;
   baseUrl?: string;
   username?: string;
   password?: string;
@@ -342,6 +344,7 @@ export interface WebDavSyncSettings {
 export interface S3SyncSettings {
   enabled?: boolean;
   autoSync?: boolean;
+  includeIconAssets?: boolean;
   region?: string;
   bucket?: string;
   accessKeyId?: string;

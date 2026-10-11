@@ -1,4 +1,7 @@
-import { ProviderIcon } from "@/components/ProviderIcon";
+import {
+  ProviderIcon,
+  type ProviderIconSource,
+} from "@/components/ProviderIcon";
 import { isTileIcon } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 
@@ -8,6 +11,7 @@ const GLYPH_SIZE = 22;
 
 interface ProviderIconBoxProps {
   icon?: string;
+  iconSource?: ProviderIconSource;
   name: string;
   color?: string;
   /** 框的底色、透明度等 */
@@ -22,6 +26,7 @@ interface ProviderIconBoxProps {
  */
 export function ProviderIconBox({
   icon,
+  iconSource,
   name,
   color,
   className,
@@ -43,6 +48,7 @@ export function ProviderIconBox({
     >
       <ProviderIcon
         icon={icon}
+        iconSource={iconSource}
         name={name}
         color={color}
         size={tile ? 32 : GLYPH_SIZE}

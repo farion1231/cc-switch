@@ -228,6 +228,7 @@ export function McodeProviderForm({
         >
           <BasicFormFields
             form={form}
+            providerId={providerId}
             beforeNameSlot={
               <div className="space-y-2">
                 <Label htmlFor="mcode-provider-key">
