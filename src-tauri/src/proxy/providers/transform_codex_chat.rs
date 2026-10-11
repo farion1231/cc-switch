@@ -1186,7 +1186,30 @@ fn responses_message_item_to_chat_message(
     let chat_role = responses_role_to_chat_role(role);
     let content = item
         .get("content")
-        .map(|value| responses_content_to_chat_content(chat_role, value))
+        .map(|value| {
+            // Codex multi-agent v2 carries task text in encrypted_content parts.
+            // Only agent_message uses this plaintext carrier; ordinary reasoning
+            // ciphertext must not be exposed as chat text.
+            if item.get("type").and_then(Value::as_str) == Some("agent_message") {
+                let mut content = value.clone();
+                if let Some(parts) = content.as_array_mut() {
+                    for part in parts {
+                        if part.get("type").and_then(Value::as_str) == Some("encrypted_content") {
+                            if let Some(text) = part
+                                .get("encrypted_content")
+                                .or_else(|| part.get("text"))
+                                .and_then(Value::as_str)
+                            {
+                                *part = json!({ "type": "input_text", "text": text });
+                            }
+                        }
+                    }
+                }
+                responses_content_to_chat_content(chat_role, &content)
+            } else {
+                responses_content_to_chat_content(chat_role, value)
+            }
+        })
         .unwrap_or(Value::Null);
 
     let mut message = json!({
@@ -2362,6 +2385,38 @@ mod tests {
 
     fn result_messages(result: &Value) -> &[Value] {
         result["messages"].as_array().unwrap()
+    }
+
+    #[test]
+    fn responses_agent_message_preserves_v2_task_text() {
+        let input = json!({
+            "model": "glm-5.2",
+            "input": [{
+                "type": "agent_message",
+                "content": [
+                    {"type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/pong_auditor\nSender: /root\nPayload:\n"},
+                    {"type": "encrypted_content", "encrypted_content": "只回复 PONG，不做别的。"}
+                ]
+            }]
+        });
+        let result = responses_to_chat_completions(input).unwrap();
+        assert_eq!(result["messages"][0]["role"], "user");
+        assert_eq!(result["messages"][0]["content"],
+            "Message Type: NEW_TASK\nTask name: /root/pong_auditor\nSender: /root\nPayload:\n\n只回复 PONG，不做别的。");
+
+        // A regular message must not turn opaque encrypted state into text.
+        let ordinary = json!({
+            "model": "glm-5.2",
+            "input": [{
+                "type": "message", "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "hi"},
+                    {"type": "encrypted_content", "encrypted_content": "gAAAAB-openai-blob"}
+                ]
+            }]
+        });
+        let result = responses_to_chat_completions(ordinary).unwrap();
+        assert_eq!(result["messages"][0]["content"], "hi");
     }
 
     /// 回归：没有配对 function_call、call_id 为空的工具结果（Codex 桌面端
