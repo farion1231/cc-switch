@@ -1,10 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ProviderForm,
-  type ProviderFormValues,
-} from "@/components/providers/forms/ProviderForm";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ProviderForm } from "@/components/providers/forms/ProviderForm";
 import type { ProviderMeta } from "@/types";
 import type { AppMode } from "@/types/proxy";
 import { createTestQueryClient } from "../utils/testQueryClient";
@@ -102,18 +99,14 @@ function expandClaudeAdvanced() {
   expect(toggle).toHaveAttribute("aria-expanded", "true");
 }
 
-function renderCodex(
-  meta?: ProviderMeta,
-  onSubmit: (values: ProviderFormValues) => void = vi.fn(),
-  topLevel = "",
-) {
+function renderCodex(meta?: ProviderMeta) {
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
       <ProviderForm
         appId="codex"
         providerId="relay"
         submitLabel="save-provider"
-        onSubmit={onSubmit}
+        onSubmit={vi.fn()}
         onCancel={vi.fn()}
         initialData={{
           name: "Relay",
@@ -122,7 +115,6 @@ function renderCodex(
             auth: {},
             config:
               'model_provider = "custom"\nmodel = "m-1"\n' +
-              topLevel +
               '\n[model_providers.custom]\nname = "custom"\nbase_url = "https://relay.example/v1"\nexperimental_bearer_token = "sk-test"\n',
           },
           meta,
@@ -269,61 +261,6 @@ describe("完整表单按实际模式提示（Codex）", () => {
 
     expect(document.getElementById("codex-upstream-format")).not.toBeNull();
     expect(screen.queryByText(IN_USE)).toBeNull();
-  });
-});
-
-describe("Codex 主代理推理强度", () => {
-  beforeAll(() => {
-    // jsdom 没有 scrollIntoView，Radix Select 打开已选中值的列表时会调用。
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-      configurable: true,
-      value: () => {},
-    });
-  });
-
-  beforeEach(() => {
-    modeState.mode = "route";
-    modeState.directProviderId = null;
-  });
-
-  it("读出 model_reasoning_effort，选「按模型默认」后保存时删掉这一项", async () => {
-    const onSubmit = vi.fn();
-    renderCodex(undefined, onSubmit, 'model_reasoning_effort = "high"\n');
-
-    const control = screen.getByRole("combobox", { name: "推理强度" });
-    expect(control).toHaveTextContent("high");
-    fireEvent.keyDown(control, { key: "ArrowDown" });
-    fireEvent.click(await screen.findByRole("option", { name: "按模型默认" }));
-
-    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const values = onSubmit.mock.calls[0][0] as ProviderFormValues;
-    const settings = JSON.parse(values.settingsConfig);
-    expect(settings.config).not.toContain("model_reasoning_effort");
-    expect(settings.config).toContain('model = "m-1"');
-  });
-
-  it("选一个档位后保存写进顶层", async () => {
-    const onSubmit = vi.fn();
-    renderCodex(undefined, onSubmit);
-
-    const control = screen.getByRole("combobox", { name: "推理强度" });
-    fireEvent.keyDown(control, { key: "ArrowDown" });
-    fireEvent.click(await screen.findByRole("option", { name: "low" }));
-
-    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const values = onSubmit.mock.calls[0][0] as ProviderFormValues;
-    const settings = JSON.parse(values.settingsConfig);
-    expect(settings.config).toContain('model_reasoning_effort = "low"');
-  });
-
-  it("聚合布局不显示", () => {
-    modeState.mode = "stack";
-    renderCodex();
-
-    expect(screen.queryByRole("combobox", { name: "推理强度" })).toBeNull();
-    expect(screen.getByText("模型列表")).toBeInTheDocument();
   });
 });
 

@@ -1939,10 +1939,7 @@
     "inactiveFieldCopied": "已複製",
     "upstreamFormatCopilotRouteHint": "所有模式都需要開啟路由，由路由注入 Copilot 帳號憑證；手動指定的協定模型不支援時會報錯。",
     "maxOutputTokensWarning": "不要超過模型或閘道的真實輸出上限，否則會回傳 400。",
-    "routeOnlySettingsHint": "以下兩項只在路由、聚合模式下生效。",
-    "mainReasoningEffortLabel": "推理強度",
-    "mainReasoningEffortHelp": "Codex 主代理預設使用的推理強度，會蓋過模型列表裡每行的預設等級。選「依模型預設」就刪掉這一項，各模型用自己的預設等級。",
-    "mainReasoningEffortDefault": "依模型預設"
+    "routeOnlySettingsHint": "以下兩項只在路由、聚合模式下生效。"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",

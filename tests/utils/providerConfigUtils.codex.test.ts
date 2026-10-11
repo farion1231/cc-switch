@@ -6,13 +6,11 @@ import {
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   extractCodexTopLevelInt,
-  extractCodexTopLevelString,
   removeCodexTopLevelField,
   setCodexAgentsString,
   setCodexBaseUrl,
   setCodexModelName,
   setCodexTopLevelInt,
-  setCodexTopLevelString,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
 
@@ -545,70 +543,5 @@ describe("Codex [agents] subagent defaults", () => {
     const updated = setCodexAgentsString(input, "default_subagent_model", "m");
     expect(() => parseToml(updated)).not.toThrow();
     expect((parseToml(updated) as any).agents).toEqual({ max_threads: 4 });
-  });
-});
-
-describe("Codex top-level model_reasoning_effort", () => {
-  const base = [
-    'model_provider = "custom"',
-    'model = "gpt-a"',
-    "",
-    "[model_providers.custom]",
-    'base_url = "https://a.example/v1"',
-  ].join("\n");
-
-  it("inserts after model, replaces in place, and removes on empty", () => {
-    const added = setCodexTopLevelString(
-      base,
-      "model_reasoning_effort",
-      "high",
-    );
-    expect(added.split("\n").slice(0, 3)).toEqual([
-      'model_provider = "custom"',
-      'model = "gpt-a"',
-      'model_reasoning_effort = "high"',
-    ]);
-    expect(extractCodexTopLevelString(added, "model_reasoning_effort")).toBe(
-      "high",
-    );
-
-    const replaced = setCodexTopLevelString(
-      added,
-      "model_reasoning_effort",
-      "low",
-    );
-    expect((parseToml(replaced) as any).model_reasoning_effort).toBe("low");
-    expect(replaced.match(/model_reasoning_effort/g)).toHaveLength(1);
-
-    const removed = setCodexTopLevelString(
-      replaced,
-      "model_reasoning_effort",
-      "",
-    );
-    expect(removed.trimEnd()).toBe(base);
-    expect(
-      extractCodexTopLevelString(removed, "model_reasoning_effort"),
-    ).toBeUndefined();
-  });
-
-  it("does not touch a same-named key inside a table", () => {
-    const input = [
-      'model = "gpt-a"',
-      "",
-      "[profiles.fast]",
-      'model_reasoning_effort = "low"',
-    ].join("\n");
-
-    expect(
-      extractCodexTopLevelString(input, "model_reasoning_effort"),
-    ).toBeUndefined();
-    const updated = setCodexTopLevelString(
-      input,
-      "model_reasoning_effort",
-      "high",
-    );
-    const parsed = parseToml(updated) as any;
-    expect(parsed.model_reasoning_effort).toBe("high");
-    expect(parsed.profiles.fast.model_reasoning_effort).toBe("low");
   });
 });

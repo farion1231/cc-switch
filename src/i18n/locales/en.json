@@ -1938,10 +1938,7 @@
     "inactiveFieldCopied": "Copied",
     "upstreamFormatCopilotRouteHint": "Every mode requires routing, which injects the Copilot account credentials. A protocol you pick explicitly fails for models that don't support it.",
     "maxOutputTokensWarning": "Don't exceed the real output limit of the model or gateway, or requests return 400.",
-    "routeOnlySettingsHint": "The two settings below only apply in routing and Aggregation modes.",
-    "mainReasoningEffortLabel": "Reasoning effort",
-    "mainReasoningEffortHelp": "The reasoning effort Codex's main agent uses by default; it overrides each model list row's default level. Pick \"Model default\" to remove it so each model uses its own default.",
-    "mainReasoningEffortDefault": "Model default"
+    "routeOnlySettingsHint": "The two settings below only apply in routing and Aggregation modes."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",

@@ -179,11 +179,6 @@ interface CodexFormFieldsProps {
   codexModel?: string;
   onModelChange?: (model: string) => void;
 
-  // Main agent reasoning effort (config.toml top-level `model_reasoning_effort`).
-  // Codex only; the Stack layout omits it.
-  reasoningEffort?: string;
-  onReasoningEffortChange?: (effort: string) => void;
-
   // Subagent defaults (config.toml `[agents]`). Codex only: Grok Build has no
   // such keys, and the Stack layout omits them (subagents follow the main model).
   subagentModel?: string;
@@ -561,8 +556,6 @@ export function CodexFormFields({
   onAutoSelectChange,
   codexModel = "",
   onModelChange,
-  reasoningEffort = "",
-  onReasoningEffortChange,
   subagentModel = "",
   onSubagentModelChange,
   subagentReasoningEffort = "",
@@ -1777,7 +1770,7 @@ export function CodexFormFields({
     </p>
   );
 
-  // 推理强度下拉（主代理和子代理共用）：第一项是不写这个键；值不在已知档位里时原样列出，
+  // 子代理推理强度下拉：第一项是不写这个键；值不在已知档位里时原样列出，
   // 免得手写的值被下拉吞掉。
   const renderEffortSelect = (
     value: string,
@@ -1785,13 +1778,12 @@ export function CodexFormFields({
     ariaLabel: string,
     inheritLabel: string,
     className: string,
-    id?: string,
   ) => (
     <Select
       value={value || EFFORT_INHERIT}
       onValueChange={(next) => onChange(next === EFFORT_INHERIT ? "" : next)}
     >
-      <SelectTrigger id={id} aria-label={ariaLabel} className={className}>
+      <SelectTrigger aria-label={ariaLabel} className={className}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -1808,36 +1800,6 @@ export function CodexFormFields({
       </SelectContent>
     </Select>
   );
-
-  // 推理强度 —— config.toml 顶层 model_reasoning_effort，主代理默认用的强度。只在完整表单显示
-  // （Codex 才传）；留空删键，各模型用目录行里自己的默认等级。
-  const reasoningEffortField = category !== "official" &&
-    onReasoningEffortChange && (
-      <div className="space-y-1.5">
-        {labelWithHelp(
-          t("codexConfig.mainReasoningEffortLabel", {
-            defaultValue: "推理强度",
-          }),
-          t("codexConfig.mainReasoningEffortHelp", {
-            defaultValue:
-              "Codex 主代理默认用的推理强度，会盖过模型列表里每行的默认等级。选「按模型默认」就删掉这一项，各模型用自己的默认等级。",
-          }),
-          "codexReasoningEffort",
-        )}
-        {renderEffortSelect(
-          reasoningEffort,
-          onReasoningEffortChange,
-          t("codexConfig.mainReasoningEffortLabel", {
-            defaultValue: "推理强度",
-          }),
-          t("codexConfig.mainReasoningEffortDefault", {
-            defaultValue: "按模型默认",
-          }),
-          "w-full",
-          "codexReasoningEffort",
-        )}
-      </div>
-    );
 
   // 默认模型 —— config.toml 顶层 model，Codex 启动时默认请求的模型。实时写回 TOML；留空则删行。
   // 有模型列表时第一行就是它，不显示这个框（Grok Build 没有列表，一直显示）；列表为空时
@@ -2101,8 +2063,6 @@ export function CodexFormFields({
 
       {/* 默认模型：列表为空（或没有列表）时才显示 */}
       {defaultModelField}
-
-      {reasoningEffortField}
 
       {/* 子代理 —— config.toml 的 [agents] default_subagent_model / default_subagent_reasoning_effort。
           留空删键，子代理跟随主模型；聚合模式下不写进 live。 */}

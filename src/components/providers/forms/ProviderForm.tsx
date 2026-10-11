@@ -712,7 +712,6 @@ function ProviderFormFull({
     codexApiKey,
     codexBaseUrl,
     codexModel,
-    codexReasoningEffort,
     codexSubagentModel,
     codexSubagentReasoningEffort,
     codexCatalogModels,
@@ -723,7 +722,6 @@ function ProviderFormFull({
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
-    handleCodexReasoningEffortChange,
     handleCodexSubagentModelChange,
     handleCodexSubagentReasoningEffortChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
@@ -2684,8 +2682,6 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               codexModel={codexModel}
               onModelChange={handleCodexModelChange}
-              reasoningEffort={codexReasoningEffort}
-              onReasoningEffortChange={handleCodexReasoningEffortChange}
               subagentModel={codexSubagentModel}
               onSubagentModelChange={handleCodexSubagentModelChange}
               subagentReasoningEffort={codexSubagentReasoningEffort}
