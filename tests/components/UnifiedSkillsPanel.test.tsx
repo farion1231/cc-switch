@@ -5,8 +5,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { settingsApi, skillsApi } from "@/lib/api";
 import type {
+  DiscoverableSkill,
   InstalledSkill,
   SkillBackupEntry,
+  SkillRepo,
   SkillRepoFailure,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
@@ -35,6 +37,10 @@ const m = vi.hoisted(() => ({
   refetchCategories: vi.fn(),
   categoryAction: vi.fn(),
   installed: [] as InstalledSkill[],
+  installedLoading: false,
+  installedError: false,
+  discoverable: [] as DiscoverableSkill[],
+  repos: [] as SkillRepo[],
   backups: [] as SkillBackupEntry[],
   updates: [] as SkillUpdateInfo[],
   repoFailures: [] as SkillRepoFailure[],
@@ -61,6 +67,19 @@ vi.mock("@/components/skills/SkillsStorageSheet", () => ({
     open ? <div data-testid="storage-sheet" /> : null,
 }));
 
+// jsdom has no viewport measurements; render the discovery fixtures in full.
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 56,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({
+        index,
+        key: index,
+        start: index * 56,
+      })),
+  }),
+}));
+
 vi.mock("@/hooks/useSkills", () => ({
   useSkillCategories: () => ({
     data: m.categories,
@@ -75,8 +94,8 @@ vi.mock("@/hooks/useSkills", () => ({
   }),
   useInstalledSkills: () => ({
     data: m.installed,
-    isLoading: false,
-    isError: false,
+    isLoading: m.installedLoading,
+    isError: m.installedError,
     refetch: vi.fn(),
   }),
   useSkillBackups: () => ({
@@ -127,9 +146,9 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: m.updateSkill,
     isPending: false,
   }),
-  useDiscoverableSkills: () => ({ data: [], refetch: vi.fn() }),
+  useDiscoverableSkills: () => ({ data: m.discoverable, refetch: vi.fn() }),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
-  useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
+  useSkillRepos: () => ({ data: m.repos, refetch: vi.fn() }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),
@@ -190,6 +209,10 @@ describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
     window.localStorage.removeItem(LAYOUT_STORAGE_KEY);
     m.installed = [];
+    m.installedLoading = false;
+    m.installedError = false;
+    m.discoverable = [];
+    m.repos = [];
     m.categories = [];
     m.categoriesReady = true;
     m.categoriesError = false;
@@ -234,6 +257,214 @@ describe("UnifiedSkillsPanel", () => {
     ]) {
       fn.mockReset();
     }
+  });
+
+  describe("one-time discovery location", () => {
+    const scroll = vi.fn();
+    const originalScroll = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "scrollIntoView",
+    );
+
+    beforeEach(() => {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+        configurable: true,
+        value: scroll,
+      });
+      scroll.mockReset();
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, "group");
+      m.categories = [
+        { id: "dev", name: "Development" },
+        { id: "office", name: "Office" },
+      ];
+      m.installed = [
+        makeSkill({ categoryId: "dev" }),
+        makeSkill({
+          id: "owner/repo:beta-skill",
+          name: "Beta Skill",
+          directory: "beta-skill",
+          categoryId: "office",
+        }),
+      ];
+      m.discoverable = m.installed.map((skill) => ({
+        key: skill.id,
+        name: skill.name,
+        directory: skill.directory,
+        description: skill.description ?? "",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+      }));
+      m.repos = [
+        { owner: "owner", name: "repo", branch: "main", enabled: true },
+      ];
+    });
+
+    afterEach(() => {
+      if (originalScroll) {
+        Object.defineProperty(
+          HTMLElement.prototype,
+          "scrollIntoView",
+          originalScroll,
+        );
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+      }
+    });
+
+    async function discoveryLocation(name = "Alpha Skill") {
+      const tabs = screen.getByRole("tablist", { name: "skillsPage.viewAria" });
+      await userEvent.click(within(tabs).getAllByRole("tab")[1]);
+      const list = screen.getByRole("list", {
+        name: "skillsPage.discover.listLabel",
+      });
+      const row = within(list).getByText(name).closest("li")!;
+      return within(row).getByRole("button", {
+        name: "skillsPage.discover.installedAria",
+      });
+    }
+
+    const alphaRow = () =>
+      document.getElementById("sk-row-owner/repo:alpha-skill")!;
+
+    it.each(["dev", null])(
+      "expands the target category %s once and allows it to stay collapsed afterwards",
+      async (categoryId) => {
+        m.installed[0] = makeSkill({ categoryId });
+        renderPanel();
+        const groupName = categoryId
+          ? "Development 1"
+          : "skillsPage.categories.uncategorized 1";
+        await userEvent.click(screen.getByRole("button", { name: groupName }));
+        await userEvent.click(await discoveryLocation());
+        expect(screen.getByRole("button", { name: groupName })).toHaveAttribute(
+          "aria-expanded",
+          "true",
+        );
+        expect(alphaRow()).toHaveFocus();
+        expect(alphaRow()).toHaveClass("bg-subtle");
+        expect(scroll).toHaveBeenCalledTimes(1);
+
+        const group = screen.getByRole("button", { name: groupName });
+        await userEvent.click(group);
+        expect(group).toHaveAttribute("aria-expanded", "false");
+        expect(group).toHaveFocus();
+        expect(scroll).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("keeps focus on another category when the user folds it after locating", async () => {
+      renderPanel();
+      await userEvent.click(await discoveryLocation());
+      const office = screen.getByRole("button", { name: "Office 1" });
+      await userEvent.click(office);
+      expect(office).toHaveAttribute("aria-expanded", "false");
+      expect(office).toHaveFocus();
+      expect(scroll).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not relocate after layout changes or installed-data refreshes", async () => {
+      const { rerender } = renderPanel();
+      await userEvent.click(await discoveryLocation());
+      const list = screen.getByRole("button", {
+        name: "skillsPage.categories.list",
+      });
+      await userEvent.click(list);
+      expect(list).toHaveFocus();
+      const group = screen.getByRole("button", {
+        name: "skillsPage.categories.group",
+      });
+      await userEvent.click(group);
+      expect(group).toHaveFocus();
+      m.installed = m.installed.map((skill) => ({ ...skill }));
+      rerender(<UnifiedSkillsPanel />);
+      expect(group).toHaveFocus();
+      expect(alphaRow()).toHaveClass("bg-subtle");
+      expect(scroll).toHaveBeenCalledTimes(1);
+    });
+
+    it("locates the same skill again and then a different skill on fresh requests", async () => {
+      renderPanel();
+      await userEvent.click(await discoveryLocation());
+      await userEvent.click(
+        screen.getByRole("button", { name: "Development 1" }),
+      );
+      await userEvent.click(await discoveryLocation());
+      expect(alphaRow()).toHaveFocus();
+      expect(scroll).toHaveBeenCalledTimes(2);
+      await userEvent.click(await discoveryLocation("Beta Skill"));
+      expect(
+        document.getElementById("sk-row-owner/repo:beta-skill"),
+      ).toHaveFocus();
+      expect(alphaRow()).not.toHaveClass("bg-subtle");
+      expect(scroll).toHaveBeenCalledTimes(3);
+    });
+
+    it("locates in the fallback list without changing remembered collapsed categories", async () => {
+      const { rerender } = renderPanel();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Development 1" }),
+      );
+      m.categoriesReady = false;
+      m.categoriesError = true;
+      rerender(<UnifiedSkillsPanel />);
+      await userEvent.click(await discoveryLocation());
+      expect(alphaRow()).toHaveFocus();
+      expect(scroll).toHaveBeenCalledTimes(1);
+      m.categoriesReady = true;
+      m.categoriesError = false;
+      rerender(<UnifiedSkillsPanel />);
+      expect(
+        screen.getByRole("button", { name: "Development 1" }),
+      ).toHaveAttribute("aria-expanded", "false");
+      expect(scroll).toHaveBeenCalledTimes(1);
+    });
+
+    it("waits for installed data before consuming a location request", async () => {
+      const { rerender } = renderPanel();
+      const locate = await discoveryLocation();
+      const installed = m.installed;
+      m.installedLoading = true;
+      m.installed = [];
+      await userEvent.click(locate);
+      expect(scroll).not.toHaveBeenCalled();
+      m.installedLoading = false;
+      m.installed = installed;
+      rerender(<UnifiedSkillsPanel />);
+      expect(alphaRow()).toHaveFocus();
+      expect(scroll).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["missing", "error", "leave"])(
+      "cancels a request on %s instead of unexpectedly locating later",
+      async (reason) => {
+        const { rerender } = renderPanel();
+        const locate = await discoveryLocation();
+        const installed = m.installed;
+        m.installed = [];
+        m.installedLoading = reason === "leave";
+        m.installedError = reason === "error";
+        await userEvent.click(locate);
+        if (reason === "leave") {
+          const tabs = screen.getByRole("tablist", {
+            name: "skillsPage.viewAria",
+          });
+          await userEvent.click(within(tabs).getAllByRole("tab")[1]);
+        }
+        m.installed = installed;
+        m.installedLoading = false;
+        m.installedError = false;
+        rerender(<UnifiedSkillsPanel />);
+        if (reason === "leave") {
+          const tabs = screen.getByRole("tablist", {
+            name: "skillsPage.viewAria",
+          });
+          await userEvent.click(within(tabs).getAllByRole("tab")[0]);
+        }
+        expect(scroll).not.toHaveBeenCalled();
+        expect(alphaRow()).not.toHaveFocus();
+      },
+    );
   });
 
   it("always shows the Pi column and toggles it like the other apps", async () => {

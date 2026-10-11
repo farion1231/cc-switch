@@ -189,6 +189,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     null,
   );
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [pendingLocationId, setPendingLocationId] = useState<string | null>(
+    null,
+  );
   const [writePending, setWritePending] = useState(false);
   const [isUpdatingMany, setIsUpdatingMany] = useState(false);
   // 更新进度：确认框点完就关，进度显示在搜索框旁的按钮上
@@ -447,27 +450,48 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     if (next.size !== selected.size) setSelected(next);
   }, [installedSkills, selected]);
 
-  // 从「发现」跳回来时定位到那一行
+  // 定位是一次性请求；视觉高亮可以保留，但不能再次展开或抢走焦点。
   useEffect(() => {
-    if (!highlightId || view !== "installed") return;
-    const highlightedSkill = installedSkills.find(
-      (skill) => skill.id === highlightId,
+    if (!pendingLocationId) return;
+    if (view !== "installed" || isError) {
+      setPendingLocationId(null);
+      return;
+    }
+    if (isLoading) return;
+    const targetSkill = installedSkills.find(
+      (skill) => skill.id === pendingLocationId,
     );
+    if (!targetSkill) {
+      setPendingLocationId(null);
+      return;
+    }
     if (
-      highlightedSkill &&
-      collapsedCategories.has(categoryKey(highlightedSkill))
+      layout === "group" &&
+      categoryQuery.isSuccess &&
+      collapsedCategories.has(categoryKey(targetSkill))
     ) {
       setCollapsedCategories((prev) => {
         const next = new Set(prev);
-        next.delete(categoryKey(highlightedSkill));
+        next.delete(categoryKey(targetSkill));
         return next;
       });
       return;
     }
-    const row = document.getElementById(`sk-row-${highlightId}`);
-    row?.scrollIntoView?.({ block: "center" });
-    row?.focus?.({ preventScroll: true });
-  }, [highlightId, view, collapsedCategories, layout, installedSkills]);
+    const row = document.getElementById(`sk-row-${pendingLocationId}`);
+    if (!row) return;
+    row.scrollIntoView?.({ block: "center" });
+    row.focus({ preventScroll: true });
+    setPendingLocationId(null);
+  }, [
+    pendingLocationId,
+    view,
+    isLoading,
+    isError,
+    collapsedCategories,
+    layout,
+    categoryQuery.isSuccess,
+    installedSkills,
+  ]);
 
   // 在「发现」段按 Escape 回到「已安装」
   useEffect(() => {
@@ -985,6 +1009,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     setCategoryFilter("all");
     setView("installed");
     setHighlightId(skillId);
+    setPendingLocationId(skillId);
   };
 
   // ─── 渲染：页头 ─────────────────────────────────────────────────────
