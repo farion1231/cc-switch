@@ -235,9 +235,19 @@ export function FloatingUsageWindow() {
             const peek = Math.round(DOCK_PEEK_MIN * scale);
             const h = Math.round(logicalHeight * scale);
             if (edge === "bottom") {
+              const revealedY = wa.y + wa.height - h;
+              revealedPosRef.current = { x: revealed.x, y: revealedY };
+              try {
+                localStorage.setItem(
+                  FLOATING_WINDOW_POSITION_KEY,
+                  JSON.stringify(revealedPosRef.current),
+                );
+              } catch (e) {
+                console.error("Failed to save floating window position", e);
+              }
               const y = dockedPeekedRef.current
                 ? wa.y + wa.height - peek
-                : wa.y + wa.height - h;
+                : revealedY;
               win
                 .setPosition(new PhysicalPosition(revealed.x, y))
                 .catch(console.error);
@@ -400,7 +410,10 @@ export function FloatingUsageWindow() {
       hideTimerRef.current = null;
     }
     const pos = revealedPosRef.current;
-    if (pos) await animateWindowTo(pos, 160);
+    if (pos) {
+      await animateWindowTo(pos, 160);
+      outerPosRef.current = pos;
+    }
   }, [animateWindowTo]);
 
   // 鼠标移开后延迟收回（保持隐藏态）
@@ -411,6 +424,27 @@ export function FloatingUsageWindow() {
       hideTimerRef.current = null;
       const edge = dockEdgeRef.current;
       if (!edge || dockedPeekedRef.current) return;
+
+      // 真正执行收回前，先检查物理光标是否还在悬浮窗外接矩形范围内（含 margin）：
+      // 如果用户鼠标还在窗口上，绝不误收回！
+      try {
+        const cur = await cursorPosition();
+        const rp = outerPosRef.current;
+        const rs = outerSizeRef.current;
+        if (
+          rs.width > 0 &&
+          rs.height > 0 &&
+          cur.x >= rp.x - DOCK_HOVER_MARGIN &&
+          cur.x <= rp.x + rs.width + DOCK_HOVER_MARGIN &&
+          cur.y >= rp.y - DOCK_HOVER_MARGIN &&
+          cur.y <= rp.y + rs.height + DOCK_HOVER_MARGIN
+        ) {
+          return;
+        }
+      } catch (e) {
+        console.error("Failed to check cursor position before hiding", e);
+      }
+
       dockedPeekedRef.current = true;
       setDockedPeeked(true);
       peekedAtRef.current = Date.now();
@@ -418,7 +452,9 @@ export function FloatingUsageWindow() {
       if (pos) {
         const scale = await getCurrentWindow().scaleFactor();
         const minPeek = Math.round(DOCK_PEEK_MIN * scale);
-        await animateWindowTo(await computeHiddenPos(edge, pos, minPeek), 160);
+        const hidden = await computeHiddenPos(edge, pos, minPeek);
+        await animateWindowTo(hidden, 160);
+        outerPosRef.current = hidden;
       }
     }, DOCK_REVEAL_DELAY);
   }, [animateWindowTo, computeHiddenPos]);
@@ -562,6 +598,10 @@ export function FloatingUsageWindow() {
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
     if (!dragStart) return;
     // 悬浮窗用 JS startDragging()（显式 IPC），与主窗口 data-tauri-drag-region
     // attribute 驱动不同，Linux/Wayland 下不受 Tauri #13440 的窗口事件异常影响，
@@ -591,6 +631,10 @@ export function FloatingUsageWindow() {
   };
 
   const handleMouseEnter = () => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
     if (dockEdgeRef.current && dockedPeekedRef.current) {
       void revealWindow();
       revealClickGuardRef.current = Date.now();
@@ -853,7 +897,11 @@ export function FloatingUsageWindow() {
   }, [modelStatsData]);
 
   return (
-    <div className="w-full h-fit flex flex-col items-center justify-start select-none bg-transparent">
+    <div
+      onMouseEnter={handleMouseEnter}
+      onMouseMove={handleMouseMove}
+      className="w-full h-fit flex flex-col items-center justify-start select-none bg-transparent"
+    >
       <div
         ref={cardRef}
         onMouseDown={handleMouseDown}
