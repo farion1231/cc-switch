@@ -23,6 +23,7 @@ import _hermes from "./hermes.png";
 import _huoshan from "./huoshan.png";
 import _ikuncode from "./ikuncode.jpg";
 import _nekocode from "./nekocode-icon.png";
+import _openmodel from "./openmodel.jpg";
 import _pateway from "./pateway.jpg";
 import _pipellm from "./pipellm.png";
 import _qiniu from "./qiniu.png";
@@ -151,6 +152,7 @@ export const iconUrls: Record<string, string> = {
   huoshan: _huoshan,
   ikuncode: _ikuncode,
   nekocode: _nekocode,
+  openmodel: _openmodel,
   pateway: _pateway,
   pipellm: _pipellm,
   qiniu: _qiniu,

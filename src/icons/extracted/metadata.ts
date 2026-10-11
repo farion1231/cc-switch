@@ -758,6 +758,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "#00AAE7",
   },
+  openmodel: {
+    name: "openmodel",
+    displayName: "OpenModel",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["openmodel", "aggregator", "gateway", "claude", "codex"],
+    defaultColor: "currentColor",
+  },
   runapi: {
     name: "runapi",
     displayName: "RunAPI",

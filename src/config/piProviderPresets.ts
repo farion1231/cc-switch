@@ -376,6 +376,28 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "runapi",
   },
   {
+    name: "OpenModel",
+    providerKey: "cc-switch-open-model",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai/campaigns/client-benefits",
+    settingsConfig: {
+      name: "OpenModel",
+      baseUrl: "https://api.openmodel.ai",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5-20251001",
+        }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    icon: "openmodel",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     providerKey: "cc-switch-shengsuanyun",

@@ -178,6 +178,16 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "runapi",
   },
   {
+    name: "OpenModel",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai/campaigns/client-benefits",
+    auth: grokAuth(),
+    config: grokPresetConfig("OpenModel", "https://api.openmodel.ai/v1"),
+    category: "aggregator",
+    isPartner: true,
+    icon: "openmodel",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
