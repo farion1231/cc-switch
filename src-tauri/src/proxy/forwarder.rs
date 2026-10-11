@@ -220,6 +220,38 @@ pub enum CodexUpstreamFormat {
     Anthropic,
 }
 
+/// Called only inside a managed Codex bridge, after the attempt's real protocol
+/// and effective input are known. Native Responses and compact endpoints stay out.
+fn prepare_codex_tool_search_context(
+    app_type: &AppType,
+    provider: &Provider,
+    endpoint: &str,
+    format: Option<CodexUpstreamFormat>,
+    body: &mut Value,
+) -> Option<super::providers::transform_codex_chat::CodexToolContext> {
+    if !matches!(app_type, AppType::Codex)
+        || super::providers::is_codex_official_provider(provider)
+        || !matches!(
+            endpoint.split('?').next(),
+            Some("/responses" | "/v1/responses")
+        )
+        || !matches!(
+            format,
+            Some(CodexUpstreamFormat::ChatCompletions | CodexUpstreamFormat::Anthropic)
+        )
+        // Saved overrides run after conversion; do not synthesize a capability
+        // that a later override could replace or restrict under the same name.
+        || provider.meta.as_ref()
+            .and_then(|meta| meta.local_proxy_request_overrides.as_ref())
+            .and_then(|overrides| overrides.body.as_ref())
+            .is_some_and(|body| body.get("tools").is_some() || body.get("tool_choice").is_some())
+        || !super::providers::transform_codex_chat::inject_missing_tool_search(body)
+    {
+        return None;
+    }
+    Some(super::providers::transform_codex_chat::build_codex_tool_context_from_request(body))
+}
+
 struct CopilotRequestContext {
     classification: super::copilot_optimizer::CopilotClassification,
     request_id: Option<String>,
@@ -277,6 +309,13 @@ impl CopilotRequestContext {
     }
 }
 
+struct ForwardedResponse {
+    response: ProxyResponse,
+    claude_api_format: Option<String>,
+    outbound_model: Option<String>,
+    codex_tool_context: Option<super::providers::transform_codex_chat::CodexToolContext>,
+}
+
 pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
@@ -286,6 +325,9 @@ pub struct ForwardResult {
     /// Copilot chooses this per model, so response handlers must consume this
     /// value rather than re-deriving the format from static provider metadata.
     pub codex_upstream_format: Option<CodexUpstreamFormat>,
+    /// Registry from the successful request that actually received a ToolSearch shim.
+    /// Failed attempts must not authorize restoration on a later provider's response.
+    pub(crate) codex_tool_context: Option<super::providers::transform_codex_chat::CodexToolContext>,
     /// 实际发往上游的模型名（路由接管/模型映射后的真值）。
     ///
     /// usage 归因不能依赖 ctx.request_model（映射前的客户端别名）：上游响应
@@ -614,11 +656,12 @@ impl RequestForwarder {
         provider: &Provider,
         app_type_str: &str,
         used_half_open_permit: bool,
-        (response, claude_api_format, outbound_model): (
-            ProxyResponse,
-            Option<String>,
-            Option<String>,
-        ),
+        ForwardedResponse {
+            response,
+            claude_api_format,
+            outbound_model,
+            codex_tool_context,
+        }: ForwardedResponse,
         codex_upstream_format: Option<CodexUpstreamFormat>,
     ) -> ForwardResult {
         let result = ForwardResult {
@@ -626,6 +669,7 @@ impl RequestForwarder {
             provider: provider.clone(),
             claude_api_format,
             codex_upstream_format,
+            codex_tool_context,
             outbound_model,
             connection_guard: None,
         };
@@ -1366,7 +1410,7 @@ impl RequestForwarder {
 
     /// 转发单个请求（使用适配器）
     ///
-    /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
+    /// 成功时返回响应、实际 wire format、模型和本次注入的工具上下文，其中
     /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
     /// `codex_upstream_format_out` 记下这次实际选中的 Codex 上游格式：成功时交给
     /// `finish_success`，失败时给整流判断用（Copilot 按模型逐次选协议，不能从静态配置推）。
@@ -1382,7 +1426,7 @@ impl RequestForwarder {
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
         codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<ForwardedResponse, ProxyError> {
         *codex_upstream_format_out = None;
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
@@ -1817,6 +1861,7 @@ impl RequestForwarder {
         // suffix and add the context-1m beta header.
         let mut codex_anthropic_one_m = false;
 
+        let mut codex_tool_context = None;
         // 转换请求体（如果需要）
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
@@ -1836,6 +1881,13 @@ impl RequestForwarder {
             if !self.keeps_resolved_model() && !is_copilot_codex_responses {
                 super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             }
+            codex_tool_context = prepare_codex_tool_search_context(
+                app_type,
+                provider,
+                endpoint,
+                codex_upstream_format,
+                &mut mapped_body,
+            );
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
@@ -1877,6 +1929,13 @@ impl RequestForwarder {
             // on the fallback (a too-high default 400s and is non-retryable); 8192 is
             // accepted by every current Claude model and virtually all gateways. The
             // transform clamps any thinking budget below this value.
+            codex_tool_context = prepare_codex_tool_search_context(
+                app_type,
+                provider,
+                endpoint,
+                codex_upstream_format,
+                &mut mapped_body,
+            );
             const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
             let mut anthropic_body =
                 super::providers::transform_codex_anthropic::responses_request_to_anthropic(
@@ -2823,7 +2882,12 @@ impl RequestForwarder {
                     .hold_encrypted_agent_task_stream(response, &filtered_body)
                     .await?;
             }
-            Ok((response, resolved_claude_api_format, outbound_model))
+            Ok(ForwardedResponse {
+                response,
+                claude_api_format: resolved_claude_api_format,
+                outbound_model,
+                codex_tool_context,
+            })
         } else {
             let status_code = status.as_u16();
             // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
@@ -4736,7 +4800,12 @@ mod tests {
                     &provider,
                     "codex",
                     false,
-                    (response, None, Some("resolved-model".to_string())),
+                    ForwardedResponse {
+                        response,
+                        claude_api_format: None,
+                        outbound_model: Some("resolved-model".to_string()),
+                        codex_tool_context: None,
+                    },
                     format,
                 )
                 .await;
@@ -6321,6 +6390,243 @@ mod tests {
             );
             assert_eq!(body["model"], "gpt-6-astra");
         }
+    }
+
+    #[test]
+    fn managed_tool_search_gate_excludes_other_routes_and_overrides() {
+        let body = json!({"tools": [{"type": "function", "name": "existing_tool"}]});
+        let provider = test_provider_with_type(None);
+        let chat = Some(CodexUpstreamFormat::ChatCompletions);
+        for (app, endpoint, format) in [
+            (AppType::GrokBuild, "/responses", chat),
+            (AppType::Claude, "/responses", chat),
+            (
+                AppType::Codex,
+                "/responses",
+                Some(CodexUpstreamFormat::NativeResponses),
+            ),
+            (AppType::Codex, "/responses", None),
+            (AppType::Codex, "/responses/compact", chat),
+            (AppType::Codex, "/v1/responses/compact?beta=true", chat),
+            (AppType::Codex, "/chat/completions", chat),
+        ] {
+            let mut request = body.clone();
+            assert!(prepare_codex_tool_search_context(
+                &app,
+                &provider,
+                endpoint,
+                format,
+                &mut request
+            )
+            .is_none());
+            assert_eq!(request, body);
+        }
+        let mut official = provider.clone();
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        official.category = Some("official".to_string());
+        let mut request = body.clone();
+        assert!(prepare_codex_tool_search_context(
+            &AppType::Codex,
+            &official,
+            "/responses",
+            chat,
+            &mut request
+        )
+        .is_none());
+        assert_eq!(request, body);
+        for override_body in [
+            json!({"tools": []}),
+            json!({"tool_choice": "none"}),
+            json!({"tools": null}),
+        ] {
+            let mut provider = provider.clone();
+            provider.meta = Some(crate::provider::ProviderMeta {
+                local_proxy_request_overrides: Some(LocalProxyRequestOverrides {
+                    body: Some(override_body),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+            let mut request = body.clone();
+            assert!(prepare_codex_tool_search_context(
+                &AppType::Codex,
+                &provider,
+                "/responses",
+                chat,
+                &mut request
+            )
+            .is_none());
+            assert_eq!(request, body);
+        }
+        let mut harmless = provider.clone();
+        harmless.meta = Some(crate::provider::ProviderMeta {
+            local_proxy_request_overrides: Some(LocalProxyRequestOverrides {
+                body: Some(json!({"temperature": 0.5})),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let mut request = body.clone();
+        assert!(prepare_codex_tool_search_context(
+            &AppType::Codex,
+            &harmless,
+            "/responses",
+            chat,
+            &mut request,
+        )
+        .is_some());
+        // A mislabeled API-key card is not a ChatGPT account; use the existing identity guard.
+        let mut provider = provider;
+        provider.category = Some("official".to_string());
+        provider.settings_config =
+            json!({"auth": {"OPENAI_API_KEY": "test-key"}, "base_url": "https://example.test/v1"});
+        let mut request = body;
+        assert!(prepare_codex_tool_search_context(
+            &AppType::Codex,
+            &provider,
+            "/v1/responses?beta=true",
+            chat,
+            &mut request
+        )
+        .is_some());
+    }
+
+    #[tokio::test]
+    async fn managed_tool_search_provenance_follows_successful_failover() {
+        for formats in [
+            ["openai_chat", "openai_responses"],
+            ["openai_responses", "openai_chat"],
+        ] {
+            let captured = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+            let app = axum::Router::new().fallback(axum::routing::post({
+                let captured = captured.clone();
+                move |axum::Json(body): axum::Json<Value>| {
+                    let captured = captured.clone();
+                    async move {
+                        let mut captured = captured.lock().await;
+                        captured.push(body);
+                        (
+                            if captured.len() == 1 {
+                                StatusCode::SERVICE_UNAVAILABLE
+                            } else {
+                                StatusCode::OK
+                            },
+                            axum::Json(json!({"status": "completed", "output": []})),
+                        )
+                    }
+                }
+            }));
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let providers = formats.iter().enumerate().map(|(i, format)| {
+                let mut provider = test_provider_with_type(None);
+                provider.id = format!("toolsearch-{i}");
+                provider.settings_config = json!({"base_url": format!("http://{addr}/v1"), "api_format": format, "auth": {"OPENAI_API_KEY": "test-key"}});
+                provider
+            }).collect();
+            let mut forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+            forwarder.max_attempts = 2;
+            forwarder.current_provider_id_at_start = "toolsearch-1".to_string();
+            let result = forwarder.forward_with_retry(&AppType::Codex, http::Method::POST, "/responses",
+                json!({"model": "test-model", "input": "Find tools", "tools": [{"type": "function", "name": "existing_tool"}]}),
+                HeaderMap::new(), Extensions::new(), providers).await;
+            server.abort();
+            let result =
+                result.unwrap_or_else(|failure| panic!("failover failed: {}", failure.error));
+            assert_eq!(result.provider.id, "toolsearch-1");
+            assert_eq!(
+                result.codex_tool_context.is_some(),
+                formats[1] == "openai_chat"
+            );
+            let captured = captured.lock().await;
+            assert_eq!(captured.len(), 2);
+            for (body, format) in captured.iter().zip(formats) {
+                let has_shim = body["tools"].as_array().unwrap().iter().any(|tool| {
+                    tool["function"]["name"] == "tool_search" || tool["type"] == "tool_search"
+                });
+                assert_eq!(has_shim, format == "openai_chat");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn managed_codex_chat_route_injects_missing_tool_search() {
+        assert_managed_codex_route_injects_missing_tool_search("openai_chat").await;
+    }
+
+    #[tokio::test]
+    async fn managed_codex_anthropic_route_injects_missing_tool_search() {
+        assert_managed_codex_route_injects_missing_tool_search("anthropic").await;
+    }
+
+    async fn assert_managed_codex_route_injects_missing_tool_search(api_format: &str) {
+        let captured = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+        let app = axum::Router::new().fallback(axum::routing::post({
+            let captured = captured.clone();
+            move |axum::Json(body): axum::Json<Value>| {
+                let captured = captured.clone();
+                async move {
+                    captured.lock().await.push(body);
+                    axum::Json(json!({"status": "completed", "output": []}))
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+        let mut provider = test_provider_with_type(None);
+        provider.settings_config = json!({
+            "base_url": format!("http://{addr}/v1"),
+            "api_format": api_format,
+            "auth": {"OPENAI_API_KEY": "test-key"}
+        });
+        let body = json!({
+            "model": "test-model", "input": "Find an available tool", "stream": false,
+            "tools": [{"type": "function", "name": "existing_tool", "parameters": {"type": "object"}}]
+        });
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/v1/responses",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+        server.abort();
+        let result =
+            result.unwrap_or_else(|failure| panic!("forwarding failed: {}", failure.error));
+        assert_eq!(result.response.status(), StatusCode::OK);
+        let context = result
+            .codex_tool_context
+            .expect("successful injection provenance");
+        assert!(matches!(
+            context.lookup_chat_name("tool_search").unwrap().kind,
+            super::super::providers::transform_codex_chat::CodexToolKind::ToolSearch
+        ));
+        let captured = captured.lock().await;
+        let tools = captured[0]["tools"]
+            .as_array()
+            .expect("effective upstream tools");
+        let count = tools
+            .iter()
+            .filter(|tool| {
+                tool["name"] == "tool_search" || tool["function"]["name"] == "tool_search"
+            })
+            .count();
+        assert_eq!(
+            count, 1,
+            "managed {api_format} route must expose one ToolSearch shim: {}",
+            captured[0]
+        );
     }
 
     #[tokio::test]

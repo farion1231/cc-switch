@@ -261,6 +261,68 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     context
 }
 
+/// Supply the existing native ToolSearch declaration for a managed bridge only.
+/// The caller owns the route gate; ordinary conversion must never opt in by itself.
+/// Restrictive tool choices, clean requests, and application-owned names stay intact.
+pub(crate) fn inject_missing_tool_search(body: &mut Value) -> bool {
+    if !body.is_object()
+        || body.get("tools").is_some_and(|tools| !tools.is_array())
+        || body
+            .get("tool_choice")
+            .is_some_and(|choice| choice.as_str() != Some("auto"))
+        || codex_compaction::is_compaction_request(body)
+    {
+        return false;
+    }
+
+    // Only protocol-level declarations establish eligibility. The existing registry
+    // also walks nested history, which must not let ordinary tool output activate us.
+    let mut declared = CodexToolContext::default();
+    if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+        for tool in tools {
+            declared.add_response_tool(tool);
+        }
+    }
+    if let Some(input) = body.get("input").and_then(Value::as_array) {
+        for item in input {
+            if matches!(
+                item.get("type").and_then(Value::as_str),
+                Some("additional_tools" | "tool_search_output")
+            ) {
+                if let Some(tools) = item.get("tools").and_then(Value::as_array) {
+                    for tool in tools {
+                        declared.add_response_tool(tool);
+                    }
+                }
+            }
+        }
+    }
+    let has_effective_tool = declared.chat_tools().iter().any(|tool| {
+        tool.get("function")
+            .and_then(|function| function.get("name"))
+            .and_then(Value::as_str)
+            .is_some_and(|name| !name.trim().is_empty())
+    });
+    // Honor every name the unchanged registry would use, including declarations
+    // carried by history. Never steal an application's function/custom tool name.
+    if !has_effective_tool
+        || build_codex_tool_context_from_request(body)
+            .lookup_chat_name(TOOL_SEARCH_PROXY_NAME)
+            .is_some()
+    {
+        return false;
+    }
+    let tools = body
+        .as_object_mut()
+        .unwrap()
+        .entry("tools")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .unwrap();
+    tools.push(json!({"type": "tool_search"}));
+    true
+}
+
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 #[allow(dead_code)]
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
@@ -2177,6 +2239,111 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
             "param": param,
         }
     })
+}
+
+#[cfg(test)]
+mod missing_tool_search_tests {
+    use super::*;
+
+    #[test]
+    fn missing_tool_search_uses_existing_registry_and_is_idempotent() {
+        let tool = json!({"type": "function", "name": "existing_tool"});
+        for mut body in [
+            json!({"tools": [tool.clone()]}),
+            json!({"tool_choice": "auto", "input": [{"type": "additional_tools", "tools": [tool.clone()]}]}),
+            json!({"input": [{"type": "tool_search_output", "tools": [tool]}]}),
+        ] {
+            assert!(inject_missing_tool_search(&mut body));
+            assert!(!inject_missing_tool_search(&mut body));
+            let context = build_codex_tool_context_from_request(&body);
+            assert_eq!(context.chat_tools().len(), 2);
+            assert_eq!(
+                context.lookup_chat_name("tool_search").unwrap().kind,
+                CodexToolKind::ToolSearch
+            );
+            let item = response_tool_call_item_from_chat_name(
+                "item",
+                "completed",
+                "call_search",
+                "tool_search",
+                r#"{"query":"find tool","limit":2}"#,
+                None,
+                &context,
+            );
+            assert_eq!(
+                item,
+                json!({"type": "tool_search_call", "status": "completed", "call_id": "call_search", "execution": "client", "arguments": {"query": "find tool", "limit": 2}})
+            );
+        }
+    }
+
+    #[test]
+    fn missing_tool_search_preserves_controls_clean_requests_and_owned_names() {
+        let valid = json!({"type": "function", "name": "existing_tool"});
+        let mut cases = vec![
+            json!(null),
+            json!({}),
+            json!({"tools": []}),
+            json!({"tools": null}),
+            json!({"tools": {}}),
+            json!({"tools": [{"type": "function"}]}),
+            json!({"tools": [{"type": "function", "name": "x", "function": null}]}),
+            json!({"tools": [{"type": "web_search"}]}),
+            json!({"tools": [valid.clone()], "input": [{"type": "compaction_trigger"}]}),
+            json!({"tool_choice": "none", "input": [{"type": "tool_search_output", "tools": [valid.clone()]}]}),
+            json!({"input": [{"type": "tool_search_call", "call_id": "call", "arguments": {}}]}),
+            json!({"input": [{"type": "function_call", "name": "tool_search", "arguments": "{}"}]}),
+            json!({"input": [{"type": "function_call_output", "output": {"type": "additional_tools", "tools": [valid.clone()]}}]}),
+        ];
+        for choice in [
+            json!("none"),
+            json!("required"),
+            json!(null),
+            json!(0),
+            json!({"type": "function", "name": "existing_tool"}),
+            json!({"type": "allowed_tools", "mode": "auto", "tools": [valid.clone()]}),
+        ] {
+            cases.push(json!({"tools": [valid.clone()], "tool_choice": choice}));
+        }
+        for collision in [
+            json!({"type": "tool_search"}),
+            json!({"type": "function", "name": "tool_search"}),
+            json!({"type": "custom", "name": "tool_search"}),
+            json!("tool_search"),
+        ] {
+            cases.push(json!({"tools": [valid.clone(), collision.clone()]}));
+            cases.push(json!({"tools": [valid.clone()], "input": [{"type": "additional_tools", "tools": [collision.clone()]}]}));
+            // Even inherited nested registrations must never be displaced by injection.
+            cases.push(json!({"tools": [valid.clone()], "input": [{"type": "function_call_output", "output": {"type": "additional_tools", "tools": [collision]}}]}));
+        }
+        for body in cases {
+            let mut actual = body.clone();
+            assert!(
+                !inject_missing_tool_search(&mut actual),
+                "unexpected injection: {body}"
+            );
+            assert_eq!(actual, body);
+        }
+    }
+
+    #[test]
+    fn ordinary_conversion_does_not_opt_into_missing_tool_search() {
+        let body = json!({"model": "test-model", "input": "Hello", "tools": [{"type": "function", "name": "existing_tool"}]});
+        let converted = responses_to_chat_completions(body.clone()).unwrap();
+        assert_eq!(converted["tools"].as_array().unwrap().len(), 1);
+        let context = build_codex_tool_context_from_request(&body);
+        let item = response_tool_call_item_from_chat_name(
+            "item",
+            "completed",
+            "call",
+            "tool_search",
+            "{}",
+            None,
+            &context,
+        );
+        assert_eq!(item["type"], "function_call");
+        assert!(item.get("execution").is_none());
+    }
 }
 
 #[cfg(test)]
