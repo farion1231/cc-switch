@@ -3730,4 +3730,21 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ],
     icon: "ikuncode",
   },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "runtoken",
+      "https://www.runtoken.ai/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://www.runtoken.ai/v1",
+      "https://fast.runtoken.ai/v1",
+    ],
+    icon: "runtoken",
+  },
 ];

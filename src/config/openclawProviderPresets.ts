@@ -4879,4 +4879,57 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     icon: "ikuncode",
   },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    settingsConfig: {
+      baseUrl: "https://www.runtoken.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "runtoken/claude-opus-5-5",
+        fallbacks: ["runtoken/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "runtoken/claude-opus-5-5": { alias: "Opus" },
+        "runtoken/claude-sonnet-5-5": { alias: "Sonnet" },
+        "runtoken/claude-haiku-4-5-20251001": { alias: "Haiku" },
+      },
+    },
+    icon: "runtoken",
+  },
 ];

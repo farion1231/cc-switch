@@ -2158,4 +2158,18 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "ikuncode",
   },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://www.runtoken.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://www.runtoken.ai", "https://fast.runtoken.ai"],
+    category: "aggregator",
+    icon: "runtoken",
+  },
 ];

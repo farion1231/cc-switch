@@ -125,6 +125,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["ikuncode", "ikun", "aggregator", "relay", "gateway", "claude"],
     defaultColor: "currentColor",
   },
+  runtoken: {
+    name: "runtoken",
+    displayName: "RunToken",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["runtoken", "run", "aggregator", "relay", "gateway", "claude"],
+    defaultColor: "currentColor",
+  },
   soshow: {
     name: "soshow",
     displayName: "Soshow",

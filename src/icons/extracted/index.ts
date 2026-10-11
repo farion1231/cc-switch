@@ -28,6 +28,7 @@ import _pipellm from "./pipellm.png";
 import _qiniu from "./qiniu.png";
 import _relaxcode from "./relaxcode.png";
 import _runapi from "./runapi.jpg";
+import _runtoken from "./runtoken.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
 import _soruxgpt from "./soruxgpt.jpg";
 import _soshow from "./soshow.png";
@@ -155,6 +156,7 @@ export const iconUrls: Record<string, string> = {
   qiniu: _qiniu,
   relaxcode: _relaxcode,
   runapi: _runapi,
+  runtoken: _runtoken,
   shengsuanyun: _shengsuanyun,
   soruxgpt: _soruxgpt,
   soshow: _soshow,
