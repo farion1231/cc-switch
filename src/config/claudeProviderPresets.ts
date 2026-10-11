@@ -2186,4 +2186,17 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "runtoken",
   },
+  {
+    name: "BotCF",
+    websiteUrl: "https://botcf.com",
+    apiKeyUrl: "https://botcf.com/console/token",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://botcf.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    icon: "botcf",
+  },
 ];

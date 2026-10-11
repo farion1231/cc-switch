@@ -1792,4 +1792,19 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://www.runtoken.ai", "https://fast.runtoken.ai"],
     icon: "runtoken",
   },
+  {
+    name: "BotCF",
+    websiteUrl: "https://botcf.com",
+    apiKeyUrl: "https://botcf.com/console/token",
+    category: "aggregator",
+    baseUrl: "https://botcf.com",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5-20251001",
+    ),
+    icon: "botcf",
+  },
 ];

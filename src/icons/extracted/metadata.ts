@@ -133,6 +133,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["runtoken", "run", "aggregator", "relay", "gateway", "claude"],
     defaultColor: "currentColor",
   },
+  botcf: {
+    name: "botcf",
+    displayName: "BotCF",
+    category: "ai-provider",
+    keywords: ["botcf", "bot compute fabric", "aggregator", "relay", "claude"],
+    defaultColor: "#FF6B4A",
+  },
   soshow: {
     name: "soshow",
     displayName: "Soshow",

@@ -3761,4 +3761,17 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ],
     icon: "runtoken",
   },
+  {
+    name: "BotCF",
+    websiteUrl: "https://botcf.com",
+    apiKeyUrl: "https://botcf.com/console/token",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "botcf",
+      "https://botcf.com/v1",
+      "gpt-5.6-sol",
+    ),
+    icon: "botcf",
+  },
 ];

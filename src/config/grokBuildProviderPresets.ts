@@ -689,4 +689,13 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     category: "aggregator",
     icon: "runtoken",
   },
+  {
+    name: "BotCF",
+    websiteUrl: "https://botcf.com",
+    apiKeyUrl: "https://botcf.com/console/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("BotCF", "https://botcf.com/v1"),
+    category: "aggregator",
+    icon: "botcf",
+  },
 ];
