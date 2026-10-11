@@ -18,7 +18,8 @@ use crate::services::skill::{skill_state_read_guard, skill_state_write_guard};
 
 // Re-export archive functions for use by transport layers.
 pub(crate) use super::webdav_sync::archive::{
-    backup_current_skills, restore_skills_from_backup, restore_skills_zip, zip_skills_ssot,
+    backup_current_skills, restore_icons_zip, restore_skills_from_backup, restore_skills_zip,
+    zip_icons_dir, zip_skills_ssot,
 };
 
 // ─── Protocol constants ──────────────────────────────────────
@@ -31,6 +32,7 @@ pub(crate) const DB_COMPAT_VERSION: u32 = 6;
 pub(crate) const LEGACY_DB_COMPAT_VERSION: u32 = 5;
 pub(crate) const REMOTE_DB_SQL: &str = "db.sql";
 pub(crate) const REMOTE_SKILLS_ZIP: &str = "skills.zip";
+pub(crate) const REMOTE_ICONS_ZIP: &str = "icons.zip";
 pub(crate) const REMOTE_MANIFEST: &str = "manifest.json";
 pub(crate) const MAX_DEVICE_NAME_LEN: usize = 64;
 pub(crate) const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
@@ -125,6 +127,9 @@ pub(crate) struct ArtifactMeta {
 pub(crate) struct LocalSnapshot {
     pub db_sql: Vec<u8>,
     pub skills_zip: Vec<u8>,
+    /// 自定义图标资产归档；仅当用户开启"携带图标资产"时存在（issue #8117）。
+    /// 旧版本下载端按名字取工件，不认识多出来的 icons.zip 也不会报错。
+    pub icons_zip: Option<Vec<u8>>,
     pub manifest_bytes: Vec<u8>,
     pub manifest_hash: String,
 }
@@ -148,6 +153,7 @@ impl RemoteLayout {
 
 pub(crate) fn build_local_snapshot(
     db: &crate::database::Database,
+    include_icon_assets: bool,
 ) -> Result<LocalSnapshot, AppError> {
     // Keep the DB's skill rows and the filesystem SSOT at one logical point in
     // time. Skill writers take the matching write guard around both mutations.
@@ -170,6 +176,18 @@ pub(crate) fn build_local_snapshot(
     zip_skills_ssot(&skills_zip_path)?;
     let skills_zip = fs::read(&skills_zip_path).map_err(|e| AppError::io(&skills_zip_path, e))?;
 
+    // 可选：把自定义图标资产打包进快照（默认关）。空目录不产出工件。
+    let icons_zip = if include_icon_assets {
+        let icons_zip_path = tmp.path().join(REMOTE_ICONS_ZIP);
+        zip_icons_dir(&icons_zip_path)?;
+        match fs::read(&icons_zip_path) {
+            Ok(bytes) if !bytes.is_empty() => Some(bytes),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     // Build artifact map and compute hashes
     let mut artifacts = BTreeMap::new();
     artifacts.insert(
@@ -186,6 +204,15 @@ pub(crate) fn build_local_snapshot(
             size: skills_zip.len() as u64,
         },
     );
+    if let Some(icons_zip) = &icons_zip {
+        artifacts.insert(
+            REMOTE_ICONS_ZIP.to_string(),
+            ArtifactMeta {
+                sha256: sha256_hex(icons_zip),
+                size: icons_zip.len() as u64,
+            },
+        );
+    }
 
     let snapshot_id = compute_snapshot_id(&artifacts);
     let manifest = SyncManifest {
@@ -204,6 +231,7 @@ pub(crate) fn build_local_snapshot(
     Ok(LocalSnapshot {
         db_sql,
         skills_zip,
+        icons_zip,
         manifest_bytes,
         manifest_hash,
     })
@@ -358,6 +386,7 @@ pub(crate) fn apply_snapshot(
     db: &crate::database::Database,
     db_sql: &[u8],
     skills_zip: &[u8],
+    icons_zip: Option<&[u8]>,
 ) -> Result<(), AppError> {
     let sql_str = std::str::from_utf8(db_sql).map_err(|e| {
         localized(
@@ -385,6 +414,12 @@ pub(crate) fn apply_snapshot(
             ));
         }
         return Err(db_err);
+    }
+
+    // 图标资产最后落盘：DB 导入失败时不覆盖本地已有的图标资产。
+    // 远端没带 icons.zip（关闭开关 / 旧版本快照）时保留本地资产不动。
+    if let Some(icons_zip) = icons_zip {
+        restore_icons_zip(icons_zip)?;
     }
 
     Ok(())

@@ -21,7 +21,7 @@ use super::sync_protocol::{
     persist_sync_success_best_effort, sha256_hex, validate_artifact_size_limit,
     validate_manifest_compat, verify_artifact, ArtifactMeta, RemoteLayout, SyncManifest,
     DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES, PROTOCOL_VERSION,
-    REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    REMOTE_DB_SQL, REMOTE_ICONS_ZIP, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
 
 #[cfg(test)]
@@ -59,7 +59,7 @@ pub async fn upload(
     let dir_segs = remote_dir_segments(settings, RemoteLayout::Current);
     ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
 
-    let snapshot = build_local_snapshot(db)?;
+    let snapshot = build_local_snapshot(db, settings.include_icon_assets)?;
 
     // Upload order: artifacts first, manifest last (best-effort consistency)
     let db_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_DB_SQL)?;
@@ -67,6 +67,12 @@ pub async fn upload(
 
     let skills_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_SKILLS_ZIP)?;
     put_bytes(&skills_url, &auth, snapshot.skills_zip, "application/zip").await?;
+
+    // 可选工件：仅当用户开启"携带图标资产"时上传；manifest 最后写，保持一致性语义。
+    if let Some(icons_zip) = &snapshot.icons_zip {
+        let icons_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_ICONS_ZIP)?;
+        put_bytes(&icons_url, &auth, icons_zip.clone(), "application/zip").await?;
+    }
 
     let manifest_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_MANIFEST)?;
     put_bytes(
@@ -131,9 +137,19 @@ pub async fn download(
         &snapshot.manifest.artifacts,
     )
     .await?;
+    // icons.zip 是可选工件：远端没带（关闭开关 / 旧版本快照）就保留本地资产。
+    let icons_zip = download_and_verify(
+        settings,
+        &auth,
+        snapshot.layout,
+        REMOTE_ICONS_ZIP,
+        &snapshot.manifest.artifacts,
+    )
+    .await
+    .ok();
 
     // Apply snapshot
-    apply_snapshot(db, &db_sql, &skills_zip)?;
+    apply_snapshot(db, &db_sql, &skills_zip, icons_zip.as_deref())?;
 
     let manifest_hash = sha256_hex(&snapshot.manifest_bytes);
     let _persisted = persist_sync_success_best_effort(

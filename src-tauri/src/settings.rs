@@ -130,6 +130,9 @@ pub struct WebDavSyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    /// 同步归档是否携带自定义图标资产（默认关，避免大图污染同步负载；issue #8117）
+    #[serde(default)]
+    pub include_icon_assets: bool,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -144,6 +147,7 @@ impl Default for WebDavSyncSettings {
             password: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            include_icon_assets: false,
             status: WebDavSyncStatus::default(),
         }
     }
@@ -209,6 +213,9 @@ pub struct S3SyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    /// 同步归档是否携带自定义图标资产（默认关，避免大图污染同步负载；issue #8117）
+    #[serde(default)]
+    pub include_icon_assets: bool,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -225,6 +232,7 @@ impl Default for S3SyncSettings {
             endpoint: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            include_icon_assets: false,
             status: WebDavSyncStatus::default(),
         }
     }

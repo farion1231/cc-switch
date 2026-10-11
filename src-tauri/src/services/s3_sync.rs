@@ -17,7 +17,7 @@ use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
     validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
     RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
-    PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_ICONS_ZIP, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
 
 #[cfg(test)]
@@ -42,7 +42,7 @@ pub async fn upload(
     settings.validate()?;
     let creds = creds_for(settings);
 
-    let snapshot = build_local_snapshot(db)?;
+    let snapshot = build_local_snapshot(db, settings.include_icon_assets)?;
 
     // Upload order: artifacts first, manifest last (best-effort consistency)
     let db_key = s3_key(settings, REMOTE_DB_SQL);
@@ -50,6 +50,12 @@ pub async fn upload(
 
     let skills_key = s3_key(settings, REMOTE_SKILLS_ZIP);
     s3::put_object(&creds, &skills_key, snapshot.skills_zip, "application/zip").await?;
+
+    // 可选工件：仅当用户开启"携带图标资产"时上传。
+    if let Some(icons_zip) = &snapshot.icons_zip {
+        let icons_key = s3_key(settings, REMOTE_ICONS_ZIP);
+        s3::put_object(&creds, &icons_key, icons_zip.clone(), "application/zip").await?;
+    }
 
     let manifest_key = s3_key(settings, REMOTE_MANIFEST);
     s3::put_object(
@@ -109,9 +115,13 @@ pub async fn download(
     let db_sql = download_and_verify(settings, &creds, REMOTE_DB_SQL, &manifest.artifacts).await?;
     let skills_zip =
         download_and_verify(settings, &creds, REMOTE_SKILLS_ZIP, &manifest.artifacts).await?;
+    // icons.zip 是可选工件：远端没带（关闭开关 / 旧版本快照）就保留本地资产。
+    let icons_zip = download_and_verify(settings, &creds, REMOTE_ICONS_ZIP, &manifest.artifacts)
+        .await
+        .ok();
 
     // Apply snapshot
-    apply_snapshot(db, &db_sql, &skills_zip)?;
+    apply_snapshot(db, &db_sql, &skills_zip, icons_zip.as_deref())?;
 
     let manifest_hash = sha256_hex(&manifest_bytes);
     let _persisted =

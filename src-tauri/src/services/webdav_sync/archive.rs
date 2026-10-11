@@ -165,6 +165,136 @@ pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
     Ok(())
 }
 
+/// icons.zip 条目数上限（资产按供应商逐个存，512 足够宽裕）。
+const MAX_ICONS_ZIP_ENTRIES: usize = 512;
+/// icons.zip 解压总字节上限（512 个 × 200 KB 的理论上限远大于实际需要）。
+const MAX_ICONS_ZIP_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
+
+/// 把自定义图标资产目录打包成 icons.zip（issue #8117）。
+/// 目录不存在或为空时不产出文件（调用方按“无工件”处理）。
+pub(crate) fn zip_icons_dir(dest_path: &Path) -> Result<(), AppError> {
+    let source = crate::services::provider_icons::icons_dir()?;
+    let is_empty = fs::read_dir(&source)
+        .map(|mut entries| entries.next().is_none())
+        .unwrap_or(true);
+    if is_empty {
+        return Ok(());
+    }
+
+    if let Some(parent) = dest_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    let file = fs::File::create(dest_path).map_err(|e| AppError::io(dest_path, e))?;
+    let mut writer = zip::ZipWriter::new(file);
+    let options = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .last_modified_time(DateTime::default());
+
+    let canonical_root = fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
+    let mut visited = HashSet::new();
+    mark_visited_dir(&canonical_root, &mut visited)?;
+    zip_dir_recursive(
+        &canonical_root,
+        &canonical_root,
+        &mut writer,
+        options,
+        &mut visited,
+    )?;
+
+    writer.finish().map_err(|e| {
+        localized(
+            "webdav.sync.icons_zip_write_failed",
+            format!("写入 icons.zip 失败: {e}"),
+            format!("Failed to write icons.zip: {e}"),
+        )
+    })?;
+    Ok(())
+}
+
+/// 恢复 icons.zip 到图标资产目录（合并语义：同名覆盖、远端没有的本地资产保留）。
+/// 每个条目都按本地保存同一条校验链（magic bytes / 体积）复核后才落盘。
+pub(crate) fn restore_icons_zip(raw: &[u8]) -> Result<(), AppError> {
+    use std::io::Read as _;
+
+    let reader = std::io::Cursor::new(raw);
+    let mut archive = zip::ZipArchive::new(reader).map_err(|e| {
+        localized(
+            "webdav.sync.icons_zip_parse_failed",
+            format!("解析 icons.zip 失败: {e}"),
+            format!("Failed to parse icons.zip: {e}"),
+        )
+    })?;
+
+    if archive.len() > MAX_ICONS_ZIP_ENTRIES {
+        return Err(localized(
+            "webdav.sync.icons_zip_too_many_entries",
+            format!(
+                "icons.zip 条目数过多（{}），上限 {MAX_ICONS_ZIP_ENTRIES}",
+                archive.len()
+            ),
+            format!(
+                "icons.zip has too many entries ({}), limit is {MAX_ICONS_ZIP_ENTRIES}",
+                archive.len()
+            ),
+        ));
+    }
+
+    let dir = crate::services::provider_icons::icons_dir()?;
+    let mut total_bytes: u64 = 0;
+    for idx in 0..archive.len() {
+        let mut entry = archive.by_index(idx).map_err(|e| {
+            localized(
+                "webdav.sync.icons_zip_entry_read_failed",
+                format!("读取 ZIP 项失败: {e}"),
+                format!("Failed to read ZIP entry: {e}"),
+            )
+        })?;
+        if entry.is_dir() {
+            continue;
+        }
+        // 仅接受扁平、合法的资产键，其余条目静默跳过（与旧版本容忍未知条目一致）。
+        let Some(safe_name) = entry.enclosed_name() else {
+            continue;
+        };
+        if safe_name.components().count() != 1 {
+            continue;
+        }
+        let file_name = safe_name.to_string_lossy().to_string();
+        if !crate::services::provider_icons::is_valid_asset_key(&file_name) {
+            continue;
+        }
+
+        total_bytes += entry.size();
+        if total_bytes > MAX_ICONS_ZIP_TOTAL_BYTES {
+            return Err(localized(
+                "webdav.sync.icons_zip_too_large",
+                format!(
+                    "icons.zip 总体积超过上限（{} MB）",
+                    MAX_ICONS_ZIP_TOTAL_BYTES / 1024 / 1024
+                ),
+                format!(
+                    "icons.zip exceeds the total size limit ({} MB)",
+                    MAX_ICONS_ZIP_TOTAL_BYTES / 1024 / 1024
+                ),
+            ));
+        }
+
+        let mut bytes = Vec::with_capacity(entry.size() as usize);
+        entry.read_to_end(&mut bytes).map_err(|e| {
+            localized(
+                "webdav.sync.icons_zip_entry_read_failed",
+                format!("读取 ZIP 项失败: {e}"),
+                format!("Failed to read ZIP entry: {e}"),
+            )
+        })?;
+        crate::services::provider_icons::validate_icon_bytes(&bytes)?;
+
+        let out_path = dir.join(&file_name);
+        fs::write(&out_path, &bytes).map_err(|e| AppError::io(&out_path, e))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn backup_current_skills() -> Result<SkillsBackup, AppError> {
     let ssot = SkillService::get_ssot_dir().map_err(|e| {
         localized(
