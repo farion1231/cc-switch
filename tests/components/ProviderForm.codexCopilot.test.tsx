@@ -212,7 +212,9 @@ describe("Codex Copilot provider form", () => {
 
   it("defaults to GPT-6 Astra and shows all five preset model mappings", () => {
     renderForm();
-    expect(screen.getAllByDisplayValue("gpt-6-astra")).toHaveLength(2);
+    // 有模型列表时第一行就是默认模型，没有单独的默认模型框。
+    expect(screen.getAllByDisplayValue("gpt-6-astra")).toHaveLength(1);
+    expect(document.getElementById("codexDefaultModel")).toBeNull();
     for (const model of [
       "gpt-5.6-sol",
       "gpt-5.6-terra",
@@ -277,9 +279,6 @@ describe("Codex Copilot provider form", () => {
       screen.getByRole("button", { name: "select-copilot-account" }),
     );
     await selectFormat("openai_responses");
-    fireEvent.change(screen.getByLabelText("默认模型"), {
-      target: { value: "gpt-5.6-luna" },
-    });
     fireEvent.change(screen.getByDisplayValue("gpt-5.6-sol"), {
       target: { value: "custom-copilot-model" },
     });
@@ -305,7 +304,7 @@ describe("Codex Copilot provider form", () => {
     const settings = JSON.parse(saved.settingsConfig);
     expect(settings.auth).toEqual({});
     expect(settings.config).toContain(liveToml);
-    expect(settings.config).toContain('model = "gpt-5.6-luna"');
+    expect(settings.config).toContain('model = "gpt-6-astra"');
     expect(settings.config).toContain('wire_api = "responses"');
     expect(settings.modelCatalog.models).toEqual(
       preset.modelCatalog?.map((model) =>
@@ -416,7 +415,8 @@ describe("Codex Copilot provider form", () => {
     expect(screen.getByTestId("selected-copilot-account")).toHaveTextContent(
       accountId ?? "default",
     );
-    fireEvent.change(screen.getByLabelText("默认模型"), {
+    // 没有模型列表的卡才有默认模型框（「?」按钮也叫默认模型）。
+    fireEvent.change(screen.getByRole("textbox", { name: "默认模型" }), {
       target: { value: "gpt-5.6-luna" },
     });
     fireEvent.click(screen.getByRole("button", { name: "save" }));

@@ -240,8 +240,8 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
   };
 }
 
-// Stack 布局里第一行就是默认模型（`model`）。直连表单里默认模型可以是列表的任意一行，
-// 这样的行在 Stack 布局里挪到最前面；不在列表里时不动。
+// 有模型列表时第一行就是默认模型（`model`）。旧数据里默认模型可以是列表的任意一行，
+// 这样的行挪到最前面显示；不在列表里时不动。
 function withDefaultModelFirst<T extends CodexCatalogModel>(
   models: T[],
   defaultModel: string,
@@ -609,6 +609,9 @@ export function CodexFormFields({
   // 对应词条在 grokBuild.* 下。
   const isGrokBuild = appId === "grokbuild";
   const canEditCatalog = Boolean(onCatalogModelsChange);
+  // 有模型列表的卡（两种布局）：列表第一行就是默认模型，没有单独的默认模型框；列表为空时
+  // 直连布局才显示默认模型框。Grok Build 没有列表，官方卡不显示列表。
+  const firstRowIsDefault = canEditCatalog && category !== "official";
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
     codexChatReasoning.supportsThinking === true ||
@@ -652,7 +655,7 @@ export function CodexFormFields({
 
   // 显示用的顺序。挪动默认那一行不算修改：没动过列表时保存仍是原来的顺序。
   const orderCatalogModels = (models: CodexCatalogModel[]) =>
-    variant === "stack" ? withDefaultModelFirst(models, codexModel) : models;
+    firstRowIsDefault ? withDefaultModelFirst(models, codexModel) : models;
 
   const [catalogRows, setCatalogRows] = useState<CodexCatalogRow[]>(() =>
     orderCatalogModels(catalogModels).map((m) => createCatalogRow(m)),
@@ -693,7 +696,7 @@ export function CodexFormFields({
   // 挪到第一行，行 id 不变，也不回传父组件。编辑中 `model` 只会跟着第一行变，这里不会动。
   // 放在子 → 父 effect 之后：同一次渲染里改了的行先回传，再看要不要挪。
   useEffect(() => {
-    if (variant !== "stack") return;
+    if (!firstRowIsDefault) return;
     const ordered = withDefaultModelFirst(catalogRows, codexModel);
     if (ordered === catalogRows) return;
     lastSentModelsRef.current = ordered.map(
@@ -701,7 +704,7 @@ export function CodexFormFields({
     );
     setCatalogRows(ordered);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [codexModel, variant]);
+  }, [codexModel, firstRowIsDefault]);
 
   const handleReasoningThinkingChange = useCallback(
     (checked: boolean) => {
@@ -927,21 +930,53 @@ export function CodexFormFields({
     [catalogRowsRef, commitCatalogRows, fillModelMetadata],
   );
 
-  const handleAddCatalogRow = useCallback(() => {
-    if (!onCatalogModelsChange) return;
-    setCatalogRows((current) => [...current, createCatalogRow()]);
-  }, [onCatalogModelsChange]);
-
-  // Stack 布局没有默认模型字段，第一行就是 `model`（加载时已挪到最前面）：它不在列表里时
-  // 没有这样的行；没填时保存会用第一行。
+  // 第一行就是 `model`（加载时已挪到最前面）：它不在列表里时没有这样的行；没填时保存会用
+  // 第一行。
   const trimmedDefaultModel = codexModel.trim();
-  const stackDefaultIndex = trimmedDefaultModel
+  const defaultRowIndex = trimmedDefaultModel
     ? catalogRows.findIndex((row) => row.model.trim() === trimmedDefaultModel)
     : 0;
-  // Stack 布局里默认模型那一行就代表 `model`：改它的名字、删掉它，`model` 当场跟着变，
-  // 两种布局共用这份状态。没有这样的行时是 -1。
+  // 默认模型那一行就代表 `model`：改它的名字、删掉它，`model` 当场跟着变。没有这样的行时
+  // 是 -1。
   const linkedDefaultIndex =
-    variant === "stack" && trimmedDefaultModel ? stackDefaultIndex : -1;
+    firstRowIsDefault && trimmedDefaultModel ? defaultRowIndex : -1;
+
+  // 列表从空变成有行时，当前默认模型排第一行（已在新增的行里就挪到最前，否则补一行），
+  // 默认模型框随之隐藏，默认值不会悄悄换掉。
+  const seedWithDefaultModel = useCallback(
+    (additions: CodexCatalogRow[]): CodexCatalogRow[] => {
+      if (!firstRowIsDefault || !trimmedDefaultModel) return additions;
+      const ordered = withDefaultModelFirst(additions, trimmedDefaultModel);
+      if (ordered[0]?.model.trim() === trimmedDefaultModel) return ordered;
+      return [
+        createCatalogRow({
+          model: trimmedDefaultModel,
+          displayName: trimmedDefaultModel,
+        }),
+        ...additions,
+      ];
+    },
+    [firstRowIsDefault, trimmedDefaultModel],
+  );
+
+  const handleAddCatalogRow = useCallback(() => {
+    if (!onCatalogModelsChange) return;
+    const rows = catalogRowsRef.current;
+    const added =
+      rows.length === 0
+        ? seedWithDefaultModel([createCatalogRow()])
+        : [createCatalogRow()];
+    commitCatalogRows([...rows, ...added]);
+    for (const row of added) {
+      if (row.model) fillCatalogRowMetadata(row.rowId, row.model);
+    }
+  }, [
+    catalogRowsRef,
+    commitCatalogRows,
+    fillCatalogRowMetadata,
+    onCatalogModelsChange,
+    seedWithDefaultModel,
+  ]);
 
   const handleUpdateCatalogRow = useCallback(
     (index: number, patch: Partial<CodexCatalogModel>) => {
@@ -1000,19 +1035,26 @@ export function CodexFormFields({
     [catalogRows, linkedDefaultIndex, onModelChange],
   );
 
-  // 批量勾选拉取到的模型加入列表（Stack 布局）。
+  // 批量勾选拉取到的模型加入列表。
   const handleAddFetchedCatalogRows = useCallback(
     (modelIds: string[]) => {
       const current = catalogRowsRef.current;
       const configured = new Set(current.map((row) => row.model.trim()));
-      const additions = modelIds
+      const picked = modelIds
         .filter((id) => !configured.has(id))
         .map((id) => createCatalogRow({ model: id, displayName: id }));
-      if (additions.length === 0) return;
+      if (picked.length === 0) return;
+      const additions =
+        current.length === 0 ? seedWithDefaultModel(picked) : picked;
       commitCatalogRows([...current, ...additions]);
       for (const row of additions) fillCatalogRowMetadata(row.rowId, row.model);
     },
-    [catalogRowsRef, commitCatalogRows, fillCatalogRowMetadata],
+    [
+      catalogRowsRef,
+      commitCatalogRows,
+      fillCatalogRowMetadata,
+      seedWithDefaultModel,
+    ],
   );
 
   // 默认模型下拉建议 = 模型映射的"实际请求模型"列 ∪ 拉取到的 /models 列表
@@ -1050,17 +1092,17 @@ export function CodexFormFields({
       model: trimmedDefaultModel,
       displayName: trimmedDefaultModel,
     });
-    // Stack 布局里默认模型排第一位。
+    // 默认模型排第一位。
     const rows = catalogRowsRef.current;
-    commitCatalogRows(variant === "stack" ? [row, ...rows] : [...rows, row]);
+    commitCatalogRows(firstRowIsDefault ? [row, ...rows] : [...rows, row]);
     fillCatalogRowMetadata(row.rowId, trimmedDefaultModel);
   }, [
     catalogRowsRef,
     commitCatalogRows,
     fillCatalogRowMetadata,
+    firstRowIsDefault,
     onCatalogModelsChange,
     trimmedDefaultModel,
-    variant,
   ]);
 
   // 子代理模型不在模型映射里：Codex 拿不到它的窗口和推理档位；经路由转成 Chat / Anthropic
@@ -1669,6 +1711,28 @@ export function CodexFormFields({
     </>
   );
 
+  // 默认模型（`model`）不在列表里：没有哪一行是默认，提示并给出加入列表（排第一行）。
+  const defaultModelNotInListNotice = isDefaultModelOutsideCatalog && (
+    <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-fg-2">
+      {t("codexConfig.defaultModelNotInList", {
+        model: trimmedDefaultModel,
+        defaultValue:
+          "默认模型 {{model}} 不在列表里：Codex 默认仍请求它，但 /model 里没有这一项。",
+      })}
+      <Button
+        type="button"
+        variant="link"
+        size="sm"
+        className="h-auto p-0 text-xs"
+        onClick={handleAddDefaultModelToCatalog}
+      >
+        {t("codexConfig.addToModelList", {
+          defaultValue: "加入列表",
+        })}
+      </Button>
+    </p>
+  );
+
   if (variant === "stack") {
     const showFormatFields = shouldShowSpeedTest && !isXaiOauthPreset;
     const showReasoning = isChatFormat && canEditReasoning;
@@ -1722,26 +1786,7 @@ export function CodexFormFields({
                 onAdd={handleAddFetchedCatalogRows}
               />
             )}
-            {isDefaultModelOutsideCatalog && (
-              <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-fg-2">
-                {t("codexConfig.stackDefaultNotInList", {
-                  model: trimmedDefaultModel,
-                  defaultValue:
-                    "默认模型 {{model}} 不在列表里：Codex 默认仍请求它，但 /model 里没有这一项。",
-                })}
-                <Button
-                  type="button"
-                  variant="link"
-                  size="sm"
-                  className="h-auto p-0 text-xs"
-                  onClick={handleAddDefaultModelToCatalog}
-                >
-                  {t("codexConfig.addToModelList", {
-                    defaultValue: "加入列表",
-                  })}
-                </Button>
-              </p>
-            )}
+            {defaultModelNotInListNotice}
             {catalogRows.length > 0 ? (
               renderCatalogRows()
             ) : (
@@ -1826,16 +1871,28 @@ export function CodexFormFields({
       {endpointSection}
 
       {/* 模型列表 —— 生成 Codex 的模型目录（model_catalog_json）：/model 菜单列哪些模型，
-          各自的窗口和思考等级。留空不生成。默认模型、子代理从这里选，所以排在它们前面。 */}
-      {category !== "official" && canEditCatalog && (
+          各自的窗口和思考等级。留空不生成。第一行是默认模型，子代理也从这里选。 */}
+      {firstRowIsDefault && (
         <div className="space-y-3">
           <div className="space-y-1">
             <div className="flex items-center justify-between gap-3">
-              <FormLabel>
-                {t("codexConfig.modelListTitle", {
-                  defaultValue: "模型列表",
-                })}
-              </FormLabel>
+              <div className="flex items-center gap-0.5">
+                <FormLabel>
+                  {t("codexConfig.modelListTitle", {
+                    defaultValue: "模型列表",
+                  })}
+                </FormLabel>
+                <HelpTip
+                  title={t("providerForm.stackModelDefault", {
+                    defaultValue: "默认模型",
+                  })}
+                >
+                  {t("codexConfig.modelListDefaultHelp", {
+                    defaultValue:
+                      "第一行是默认模型，Codex 启动时用它。列表为空时，可以在下方单独填写默认模型。",
+                  })}
+                </HelpTip>
+              </div>
               {renderCatalogActionButtons(
                 handleAddCatalogRow,
                 t("codexConfig.addCatalogModel", {
@@ -1858,92 +1915,76 @@ export function CodexFormFields({
               onAdd={handleAddFetchedCatalogRows}
             />
           )}
+          {defaultModelNotInListNotice}
           {catalogRows.length > 0 && renderCatalogRows()}
         </div>
       )}
 
-      {/* 默认模型 —— config.toml 顶层 model，Codex 启动时默认请求的模型。
-          实时写回 TOML；留空则删行（有模型列表时保存回退为列表第一行）。 */}
-      {category !== "official" && onModelChange && (
-        <div className="space-y-1.5">
-          <FormLabel htmlFor="codexDefaultModel">
-            {t("codexConfig.defaultModelLabel", { defaultValue: "默认模型" })}
-          </FormLabel>
-          <div className="flex gap-1">
-            <Input
-              id="codexDefaultModel"
-              value={codexModel}
-              onChange={(event) => onModelChange(event.target.value)}
-              placeholder={
-                isGrokBuild
-                  ? t("grokBuild.defaultModelPlaceholder", {
-                      defaultValue: "例如: grok-4.5",
-                    })
-                  : t("codexConfig.defaultModelPlaceholder", {
-                      defaultValue: "例如: gpt-5.6",
-                    })
-              }
-              className="flex-1"
-            />
-            {/* 有模型列表时用列表上的「获取模型列表」，这里不再放一个。 */}
-            {!canEditCatalog && (
-              <HoverTip content={t("providerForm.fetchModels")}>
-                <Button
-                  aria-label={t("providerForm.fetchModels")}
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={handleFetchModels}
-                  disabled={isFetchingModels}
-                  className="shrink-0"
-                >
-                  {isFetchingModels ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4" />
-                  )}
-                </Button>
-              </HoverTip>
-            )}
-            {defaultModelSuggestions.length > 0 && (
-              <ModelDropdown
-                models={defaultModelSuggestions}
-                onSelect={(id) => onModelChange(id)}
+      {/* 默认模型 —— config.toml 顶层 model，Codex 启动时默认请求的模型。实时写回 TOML；
+          留空则删行。有模型列表时第一行就是它，不显示这个框（Grok Build 没有列表，一直显示）。 */}
+      {category !== "official" &&
+        onModelChange &&
+        (!firstRowIsDefault || catalogRows.length === 0) && (
+          <div className="space-y-1.5">
+            <FormLabel htmlFor="codexDefaultModel">
+              {t("codexConfig.defaultModelLabel", { defaultValue: "默认模型" })}
+            </FormLabel>
+            <div className="flex gap-1">
+              <Input
+                id="codexDefaultModel"
+                value={codexModel}
+                onChange={(event) => onModelChange(event.target.value)}
+                placeholder={
+                  isGrokBuild
+                    ? t("grokBuild.defaultModelPlaceholder", {
+                        defaultValue: "例如: grok-4.5",
+                      })
+                    : t("codexConfig.defaultModelPlaceholder", {
+                        defaultValue: "例如: gpt-5.6",
+                      })
+                }
+                className="flex-1"
               />
-            )}
-          </div>
-          <p className="text-xs leading-relaxed text-fg-2">
-            {isGrokBuild
-              ? t("grokBuild.defaultModelHint", {
-                  defaultValue:
-                    "Grok Build 默认请求的模型，随时可改，无需等待预设更新。",
-                })
-              : t("codexConfig.defaultModelHint", {
-                  defaultValue:
-                    "Codex 默认请求的模型，随时可改，无需等待预设更新。留空时用模型列表第一行。",
-                })}
-          </p>
-          {isDefaultModelOutsideCatalog && (
-            <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-fg-2">
-              {t("codexConfig.defaultModelNotInCatalog", {
-                defaultValue:
-                  "该模型不在模型列表中，Codex 的 /model 菜单不会列出它（直接请求仍然有效）。",
-              })}
-              <Button
-                type="button"
-                variant="link"
-                size="sm"
-                className="h-auto p-0 text-xs"
-                onClick={handleAddDefaultModelToCatalog}
-              >
-                {t("codexConfig.addToModelList", {
-                  defaultValue: "加入列表",
-                })}
-              </Button>
+              {/* 有模型列表时用列表上的「获取模型列表」，这里不再放一个。 */}
+              {!canEditCatalog && (
+                <HoverTip content={t("providerForm.fetchModels")}>
+                  <Button
+                    aria-label={t("providerForm.fetchModels")}
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={handleFetchModels}
+                    disabled={isFetchingModels}
+                    className="shrink-0"
+                  >
+                    {isFetchingModels ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                  </Button>
+                </HoverTip>
+              )}
+              {defaultModelSuggestions.length > 0 && (
+                <ModelDropdown
+                  models={defaultModelSuggestions}
+                  onSelect={(id) => onModelChange(id)}
+                />
+              )}
+            </div>
+            <p className="text-xs leading-relaxed text-fg-2">
+              {isGrokBuild
+                ? t("grokBuild.defaultModelHint", {
+                    defaultValue:
+                      "Grok Build 默认请求的模型，随时可改，无需等待预设更新。",
+                  })
+                : t("codexConfig.defaultModelHint", {
+                    defaultValue:
+                      "Codex 默认请求的模型，随时可改，无需等待预设更新。添加模型列表后，列表第一行就是默认模型。",
+                  })}
             </p>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
       {/* 子代理 —— config.toml 的 [agents] default_subagent_model / default_subagent_reasoning_effort。
           留空删键，子代理跟随主模型；聚合模式下不写进 live。 */}

@@ -107,30 +107,64 @@ describe("CodexFormFields sub-agent defaults", () => {
   });
 });
 
+const rowModels = () =>
+  screen
+    .getAllByPlaceholderText("例如: deepseek-v4-flash")
+    .map((input) => (input as HTMLInputElement).value);
+
 describe("CodexFormFields direct layout", () => {
-  it("shows the model list outside the advanced section, before the default model", () => {
+  it("lets the list own the default model: no separate field, list outside the advanced section", () => {
     renderCodexForm({
       catalogModels: [{ model: "gpt-a" }],
       onCatalogModelsChange: vi.fn(),
     });
 
-    const listTitle = screen.getByText("模型列表");
-    expect(listTitle).toBeVisible();
+    expect(screen.getByText("模型列表")).toBeVisible();
+    expect(screen.getByRole("button", { name: "默认模型" })).toBeVisible();
     expect(screen.queryByText("上游格式")).toBeNull();
-    const defaultModel = document.getElementById("codexDefaultModel")!;
-    expect(
-      listTitle.compareDocumentPosition(defaultModel) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    // 列表上已有「获取模型列表」，默认模型旁不再放第二个。
+    expect(document.getElementById("codexDefaultModel")).toBeNull();
     expect(
       screen.getAllByRole("button", { name: /providerForm\.fetchModels/ }),
     ).toHaveLength(1);
   });
 
-  it("keeps the fetch button on the default model when there is no list (Grok Build)", () => {
+  it("shows the default model field below an empty list, and seeds the first row with it", () => {
+    const onCatalogModelsChange = vi.fn();
+    renderCodexForm({ catalogModels: [], onCatalogModelsChange });
+
+    const listTitle = screen.getByText("模型列表");
+    const defaultModel = document.getElementById("codexDefaultModel")!;
+    expect(
+      listTitle.compareDocumentPosition(defaultModel) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "手动添加" }));
+    expect(rowModels()).toEqual(["gpt-a", ""]);
+    expect(document.getElementById("codexDefaultModel")).toBeNull();
+    const rows = onCatalogModelsChange.mock.calls.at(-1)?.[0] ?? [];
+    expect(rows.map((row: { model: string }) => row.model)).toEqual([
+      "gpt-a",
+      "",
+    ]);
+  });
+
+  it("shows an older card's default row first without reporting a change", () => {
+    const onCatalogModelsChange = vi.fn();
+    renderCodexForm({
+      codexModel: "gpt-b",
+      catalogModels: [{ model: "gpt-a" }, { model: "gpt-b" }],
+      onCatalogModelsChange,
+    });
+
+    expect(rowModels()).toEqual(["gpt-b", "gpt-a"]);
+    expect(onCatalogModelsChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps the default model field and its fetch button without a list (Grok Build)", () => {
     renderCodexForm();
     expect(screen.queryByText("模型列表")).toBeNull();
+    expect(document.getElementById("codexDefaultModel")).not.toBeNull();
     expect(
       screen.getByRole("button", { name: "providerForm.fetchModels" }),
     ).toBeInTheDocument();
