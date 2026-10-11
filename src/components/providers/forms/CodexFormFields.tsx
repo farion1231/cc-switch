@@ -165,6 +165,13 @@ interface CodexFormFieldsProps {
   codexModel?: string;
   onModelChange?: (model: string) => void;
 
+  // Subagent defaults (config.toml `[agents]`). Codex only: Grok Build has no
+  // such keys, and the Stack layout omits them (subagents follow the main model).
+  subagentModel?: string;
+  onSubagentModelChange?: (model: string) => void;
+  subagentReasoningEffort?: string;
+  onSubagentReasoningEffortChange?: (effort: string) => void;
+
   // API Format
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
   apiFormat: CodexApiFormat;
@@ -274,6 +281,10 @@ const CODEX_REASONING_LEVELS = [
   "max",
   "ultra",
 ] as const;
+
+// Select value standing for "no default_subagent_reasoning_effort" (Radix
+// Select items can't use an empty string).
+const SUBAGENT_EFFORT_INHERIT = "__inherit__";
 
 // Trigger label for the picked levels, kept narrow for the catalog cell. Each
 // run of three or more adjacent canonical levels collapses to "first → last"
@@ -515,6 +526,10 @@ export function CodexFormFields({
   onAutoSelectChange,
   codexModel = "",
   onModelChange,
+  subagentModel = "",
+  onSubagentModelChange,
+  subagentReasoningEffort = "",
+  onSubagentReasoningEffortChange,
   apiFormat,
   onApiFormatChange,
   copilotApiFormat = "auto",
@@ -1027,6 +1042,49 @@ export function CodexFormFields({
     onCatalogModelsChange,
     trimmedDefaultModel,
     variant,
+  ]);
+
+  // 子代理模型不在模型映射里：Codex 拿不到它的窗口和推理档位；经路由转成 Chat / Anthropic
+  // 协议时还会被换成默认模型（转换路径只放行映射里的模型）。没有映射、走原生 Responses 的
+  // 供应商直接请求任意模型名，不提示。
+  const trimmedSubagentModel = subagentModel.trim();
+  const isSubagentModelOutsideCatalog =
+    !!trimmedSubagentModel &&
+    (catalogRows.length > 0 || isChatFormat || isAnthropicFormat) &&
+    !catalogRows.some((row) => row.model.trim() === trimmedSubagentModel);
+
+  const handleAddSubagentModelToCatalog = useCallback(() => {
+    if (!onCatalogModelsChange || !trimmedSubagentModel) return;
+    const rows = catalogRowsRef.current;
+    const added: CodexCatalogRow[] = [];
+    // 映射原本为空时默认模型也一起加进去，不然加完它就成了映射外的模型。
+    if (
+      rows.length === 0 &&
+      trimmedDefaultModel &&
+      trimmedDefaultModel !== trimmedSubagentModel
+    ) {
+      added.push(
+        createCatalogRow({
+          model: trimmedDefaultModel,
+          displayName: trimmedDefaultModel,
+        }),
+      );
+    }
+    added.push(
+      createCatalogRow({
+        model: trimmedSubagentModel,
+        displayName: trimmedSubagentModel,
+      }),
+    );
+    commitCatalogRows([...rows, ...added]);
+    for (const row of added) fillCatalogRowMetadata(row.rowId, row.model);
+  }, [
+    catalogRowsRef,
+    commitCatalogRows,
+    fillCatalogRowMetadata,
+    onCatalogModelsChange,
+    trimmedDefaultModel,
+    trimmedSubagentModel,
   ]);
 
   const renderCatalogActionButtons = (onAdd: () => void, addLabel: string) => (
@@ -1855,6 +1913,101 @@ export function CodexFormFields({
                   defaultValue: "加入映射",
                 })}
               </Button>
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* 子代理 —— config.toml 的 [agents] default_subagent_model / default_subagent_reasoning_effort。
+          留空删键，子代理跟随主模型；聚合模式下不写进 live。 */}
+      {category !== "official" && onSubagentModelChange && (
+        <div className="space-y-1.5">
+          <FormLabel htmlFor="codexSubagentModel">
+            {t("codexConfig.subagentModelLabel", {
+              defaultValue: "子代理模型",
+            })}
+          </FormLabel>
+          <div className="flex gap-1">
+            <Input
+              id="codexSubagentModel"
+              value={subagentModel}
+              onChange={(event) => onSubagentModelChange(event.target.value)}
+              placeholder={t("codexConfig.subagentModelPlaceholder", {
+                defaultValue: "留空则跟随主模型",
+              })}
+              className="flex-1"
+            />
+            {defaultModelSuggestions.length > 0 && (
+              <ModelDropdown
+                models={defaultModelSuggestions}
+                onSelect={(id) => onSubagentModelChange(id)}
+              />
+            )}
+            {onSubagentReasoningEffortChange && (
+              <Select
+                value={subagentReasoningEffort || SUBAGENT_EFFORT_INHERIT}
+                onValueChange={(value) =>
+                  onSubagentReasoningEffortChange(
+                    value === SUBAGENT_EFFORT_INHERIT ? "" : value,
+                  )
+                }
+              >
+                <SelectTrigger
+                  aria-label={t("codexConfig.subagentReasoningEffortLabel", {
+                    defaultValue: "子代理推理强度",
+                  })}
+                  className="w-36 shrink-0"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={SUBAGENT_EFFORT_INHERIT}>
+                    {t("codexConfig.subagentReasoningEffortDefault", {
+                      defaultValue: "默认强度",
+                    })}
+                  </SelectItem>
+                  {subagentReasoningEffort &&
+                    !(CODEX_REASONING_LEVELS as readonly string[]).includes(
+                      subagentReasoningEffort,
+                    ) && (
+                      <SelectItem value={subagentReasoningEffort}>
+                        {subagentReasoningEffort}
+                      </SelectItem>
+                    )}
+                  {CODEX_REASONING_LEVELS.map((level) => (
+                    <SelectItem key={level} value={level}>
+                      {level}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          <p className="text-xs leading-relaxed text-fg-2">
+            {t("codexConfig.subagentModelHint", {
+              defaultValue:
+                "Codex 派出的子代理默认用的模型和推理强度。留空时子代理沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，子代理跟随主模型。",
+            })}
+          </p>
+          {isSubagentModelOutsideCatalog && (
+            <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-fg-2">
+              {t("codexConfig.subagentModelNotInCatalog", {
+                defaultValue:
+                  "该模型不在模型映射中：Codex 拿不到它的上下文窗口；经路由转成 Chat / Anthropic 协议时会被换成默认模型。",
+              })}
+              {onCatalogModelsChange && (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-xs"
+                  onClick={handleAddSubagentModelToCatalog}
+                >
+                  {t("codexConfig.addToModelMapping", {
+                    defaultValue: "加入映射",
+                  })}
+                </Button>
+              )}
             </p>
           )}
         </div>

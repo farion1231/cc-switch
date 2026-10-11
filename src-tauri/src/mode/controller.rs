@@ -6028,6 +6028,48 @@ model_provider = "c"
             .live_has_proxy_placeholder(&AppType::Codex));
     }
 
+    /// 子代理模型：路由模式照写路由那家的；Stack 模式不写（子代理跟随主模型），只删这两个
+    /// 键，`[agents]` 里用户自己的设置不动；Stack 模型都移除后恢复。
+    #[tokio::test]
+    #[serial]
+    async fn codex_stack_mode_leaves_the_subagent_model_to_the_main_model() {
+        let _home = Home::new();
+        seed_codex("[agents]\nmax_threads = 4\n", None);
+        let [_, deepseek, zhipu] = codex_stack_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "[agents]\ndefault_subagent_model = \"gpt-a-mini\"\ndefault_subagent_reasoning_effort = \"low\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        let agents = |doc: &toml::Table| {
+            let agents = &doc["agents"];
+            let text = |key: &str| agents.get(key).and_then(|v| v.as_str()).map(str::to_string);
+            (
+                text("default_subagent_model"),
+                text("default_subagent_reasoning_effort"),
+                agents.get("max_threads").and_then(|v| v.as_integer()),
+            )
+        };
+        let routed = (
+            Some("gpt-a-mini".to_string()),
+            Some("low".to_string()),
+            Some(4),
+        );
+        assert_eq!(agents(&codex_doc()), routed);
+
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(agents(&codex_doc()), (None, None, Some(4)));
+
+        set_codex_member(&state, "deepseek", false).await;
+        assert_eq!(agents(&codex_doc()), routed);
+
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert_eq!(agents(&codex_doc()), routed);
+    }
+
     fn set_classic_subagents(enabled: bool) {
         crate::settings::update_settings(crate::settings::AppSettings {
             codex_stack_classic_subagents: enabled,

@@ -703,6 +703,8 @@ function ProviderFormFull({
     codexApiKey,
     codexBaseUrl,
     codexModel,
+    codexSubagentModel,
+    codexSubagentReasoningEffort,
     codexCatalogModels,
     codexAuthError,
     setCodexAuth,
@@ -711,6 +713,8 @@ function ProviderFormFull({
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
+    handleCodexSubagentModelChange,
+    handleCodexSubagentReasoningEffortChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
@@ -2668,6 +2672,12 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               codexModel={codexModel}
               onModelChange={handleCodexModelChange}
+              subagentModel={codexSubagentModel}
+              onSubagentModelChange={handleCodexSubagentModelChange}
+              subagentReasoningEffort={codexSubagentReasoningEffort}
+              onSubagentReasoningEffortChange={
+                handleCodexSubagentReasoningEffortChange
+              }
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
               copilotApiFormat={effectiveCodexCopilotApiFormat}

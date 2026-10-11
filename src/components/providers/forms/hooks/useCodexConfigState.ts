@@ -1,9 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  extractCodexAgentsString,
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
+  setCodexAgentsString,
   setCodexModelName as setCodexModelNameInConfig,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
@@ -276,6 +278,39 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     [setCodexConfig],
   );
 
+  // 子代理的默认模型和推理强度（`[agents]` 表）：直接从 TOML 读，改动实时写回，清空则删键
+  const codexSubagentModel = useMemo(
+    () => extractCodexAgentsString(codexConfig, "default_subagent_model") || "",
+    [codexConfig],
+  );
+  const codexSubagentReasoningEffort = useMemo(
+    () =>
+      extractCodexAgentsString(
+        codexConfig,
+        "default_subagent_reasoning_effort",
+      ) || "",
+    [codexConfig],
+  );
+
+  const handleCodexSubagentModelChange = useCallback(
+    (model: string) => {
+      const sanitized = model.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+      setCodexConfig((prev) =>
+        setCodexAgentsString(prev, "default_subagent_model", sanitized),
+      );
+    },
+    [setCodexConfig],
+  );
+
+  const handleCodexSubagentReasoningEffortChange = useCallback(
+    (effort: string) => {
+      setCodexConfig((prev) =>
+        setCodexAgentsString(prev, "default_subagent_reasoning_effort", effort),
+      );
+    },
+    [setCodexConfig],
+  );
+
   // 处理 config 变化（同步 Base URL）
   const handleCodexConfigChange = useCallback(
     (value: string) => {
@@ -319,6 +354,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexApiKey,
     codexBaseUrl,
     codexModel,
+    codexSubagentModel,
+    codexSubagentReasoningEffort,
     codexCatalogModels,
     codexAuthError,
     setCodexAuth,
@@ -327,6 +364,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
+    handleCodexSubagentModelChange,
+    handleCodexSubagentReasoningEffortChange,
     handleCodexConfigChange,
     resetCodexConfig,
     getCodexAuthApiKey,
