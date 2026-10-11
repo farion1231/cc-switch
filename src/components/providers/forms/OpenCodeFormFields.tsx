@@ -273,12 +273,9 @@ export function OpenCodeFormFields({
           ...new Map(result.map((model) => [model.id, model])).values(),
         ];
         setFetchedModels(models);
+        // 拉到模型时直接打开选择弹窗，不再提示成功。
         if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
-          );
         }
       })
       .catch((err) => {

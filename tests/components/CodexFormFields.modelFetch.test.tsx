@@ -253,8 +253,9 @@ describe("Codex model-fetch lifecycle", () => {
       await act(async () => pending.resolve([advertisedModel()]));
       await waitFor(() => expect(fetchButton()).toBeEnabled());
       expect(screen.getByTestId("model-options")).toHaveTextContent("model-1");
+      // 列表上的按钮拉取成功后直接打开选择弹窗，不再弹成功提示
       expect(await screen.findByRole("dialog")).toBeInTheDocument();
-      expect(toast.success).toHaveBeenCalledTimes(1);
+      expect(toast.success).not.toHaveBeenCalled();
       expect(showFetchModelsError).not.toHaveBeenCalled();
       if (kind === "copilot") {
         expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
@@ -524,5 +525,19 @@ describe("Codex model-fetch lifecycle", () => {
         expect.objectContaining({ model: "model-2", contextWindow: 128_000 }),
       ]),
     );
+  });
+  it("keeps the success notification for the default model fetch button without a model list", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([advertisedModel()]);
+    render(
+      <Harness {...makeProps("config")} onCatalogModelsChange={undefined} />,
+    );
+    fireEvent.click(fetchButton());
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "providerForm.fetchModelsSuccess",
+      ),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

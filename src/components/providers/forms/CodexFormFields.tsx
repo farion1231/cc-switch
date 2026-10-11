@@ -776,7 +776,8 @@ export function CodexFormFields({
           const count = receiveModels(models);
           if (count === 0) {
             toast.info(t("providerForm.fetchModelsEmpty"));
-          } else {
+          } else if (!canEditCatalog) {
+            // 有模型列表时拉取成功会直接打开选择弹窗，不再提示成功。
             toast.success(t("providerForm.fetchModelsSuccess", { count }));
           }
         })
@@ -787,7 +788,7 @@ export function CodexFormFields({
         })
         .finally(() => setIsFetchingModels(false));
     },
-    [t],
+    [canEditCatalog, t],
   );
 
   const handleFetchModels = useCallback(() => {

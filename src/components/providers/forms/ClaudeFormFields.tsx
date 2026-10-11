@@ -304,15 +304,17 @@ export function ClaudeFormFields({
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
 
+  // 聚合布局的模型列表拉取成功后直接打开选择弹窗，不再提示成功。
+  const opensModelPicker = variant === "stack" && !!onStackModelRowsChange;
   const showModelFetchResult = useCallback(
     (count: number) => {
       if (count === 0) {
         toast.info(t("providerForm.fetchModelsEmpty"));
-      } else {
+      } else if (!opensModelPicker) {
         toast.success(t("providerForm.fetchModelsSuccess", { count }));
       }
     },
-    [t],
+    [opensModelPicker, t],
   );
 
   const handleFetchModels = useCallback(() => {
