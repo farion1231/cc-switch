@@ -136,4 +136,39 @@ pub struct DeepLinkImportRequest {
     /// Auto query interval in minutes (0 to disable)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_auto_interval: Option<u64>,
+
+    // ============ Grok Build inline config fields ============
+    /// Sanitized model catalog extracted from an inline Grok Build config
+    /// (`grokbuild_models`). Deeplink-internal only: populated by config
+    /// merging, never parsed from or serialized to the URL itself.
+    #[serde(skip)]
+    pub grokbuild_models: Option<GrokDeeplinkModels>,
+}
+
+/// 从 deeplink 内联 config.toml 提取的 Grok Build 模型目录（已消毒）。
+///
+/// 只保留可安全透传的展示/容量字段。`api_key` / `env_key` / `base_url` /
+/// `api_backend` 有意不进入这里：导入结果必须统一使用 deeplink 显式端点与
+/// 密钥（或既有的合并回退），不能让不可信链接按档案夹带凭据或私有 backend。
+#[derive(Debug, Clone, PartialEq)]
+pub struct GrokDeeplinkModels {
+    /// 内联 config 原有的 `[models] default`（指向档案键）
+    pub default_profile: String,
+    /// 全部 `[model.*]` 档案
+    pub profiles: Vec<GrokDeeplinkModel>,
+}
+
+/// 单个模型档案的安全字段（`[model.<profile>]` 表）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct GrokDeeplinkModel {
+    /// `[model.<profile>]` 表键，`[models] default` 指向的就是它
+    pub profile: String,
+    /// 模型 id（`model` 字段）；缺省回落到档案键
+    pub model: String,
+    /// 展示名（`name` 字段）；缺省回落到档案键
+    pub name: String,
+    /// 可选模型描述（`description` 字段）
+    pub description: Option<String>,
+    /// 上下文窗口；缺失或非法时回落到 `DEFAULT_CONTEXT_WINDOW`
+    pub context_window: i64,
 }
