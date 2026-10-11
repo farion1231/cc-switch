@@ -81,7 +81,7 @@
     "disableAutoModeServer": "停用 auto mode 伺服器端檢查",
     "disableAutoModeServerHelp": "閘道不支援伺服器端檢查，auto mode 每個工作階段會先停下提示一次「不符合條件」，按 Enter 後改用本機檢查。勾選後直接用本機檢查，不再提示。官方端點不要勾選。",
     "keyFieldsHint": "位址、Key、模型、上下文視窗和相容開關隨供應商切換；其餘欄位是 Claude Code 全域設定，儲存後對所有供應商生效。",
-    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的欄位。點擊可加入上方的全域設定，儲存後寫入設定檔；供應商裡保存的原值不會刪除。",
+    "inactiveFieldsHint": "這些是舊版存進卡裡的設定，現在切換不會寫出去。點一下加入上方，儲存後對所有供應商生效。",
     "addToGlobalSettings": "加入全域設定"
   },
   "header": {
@@ -1217,7 +1217,7 @@
     "reasoningEffortHint": "上游支援 low/high/max 等思考深度時開啟。會同時開啟思考模式，並把請求中的 reasoning effort 轉成上游 Chat 參數。",
     "maxOutputTokensHint": "預設上限 8192，長回答或深度思考容易被截斷。這裡的值會作為 Anthropic 的 max_tokens 發出。",
     "keyFieldsHint": "預設模型（models.default）和它指向的模型表隨供應商切換；其餘是 Grok Build 全域設定，儲存後對所有供應商生效。",
-    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊複製它的 TOML，依需要貼到上方；供應商裡保存的原值不會刪除。",
+    "inactiveFieldsHint": "這些是舊版存進卡裡的設定，現在切換不會寫出去。點一下複製 TOML，需要時貼到上方。",
     "inactiveFieldCopied": "已複製",
     "routeOnlySettingsHint": "以下兩項只在路由模式下生效。"
   },
@@ -1938,7 +1938,7 @@
     "reasoningEffortHint": "上游支援 low/high/max 等思考深度時開啟。會同時開啟思考模式，並把 Codex 的 reasoning.effort 轉成上游 Chat 參數。",
     "reasoningGroupTitle": "思考能力",
     "keyFieldsHint": "位址、Key、模型、推理檔位、上下文視窗和相容開關隨供應商切換；其餘是 Codex 全域設定，儲存後對所有供應商生效。",
-    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊可複製它的 TOML，依需要貼到上方；供應商裡保存的原值不會刪除。",
+    "inactiveFieldsHint": "這些是舊版存進卡裡的設定，現在切換不會寫出去。點一下複製 TOML，需要時貼到上方。",
     "inactiveFieldCopied": "已複製",
     "upstreamFormatCopilotRouteHint": "所有模式都需要開啟路由，由路由注入 Copilot 帳號憑證；手動指定的協定模型不支援時會報錯。",
     "maxOutputTokensWarning": "不要超過模型或閘道的真實輸出上限，否則會回傳 400。",
@@ -1953,7 +1953,7 @@
     "configJson": "設定檔 (settings.json)",
     "configJsonHint": "Gemini CLI 的 settings.json（MCP 伺服器在 MCP 面板中管理）",
     "keyFieldsHint": "位址、Key、模型名稱和認證方式隨供應商切換；其餘環境變數和 settings.json 是 Gemini CLI 全域設定，儲存後對所有供應商生效。",
-    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊可加入上方的全域設定，儲存後寫入設定檔；供應商裡保存的原值不會刪除。",
+    "inactiveFieldsHint": "這些是舊版存進卡裡的設定，現在切換不會寫出去。點一下加入上方，儲存後對所有供應商生效。",
     "addToGlobalSettings": "加入全域設定"
   },
   "opencode": {

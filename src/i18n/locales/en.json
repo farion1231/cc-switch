@@ -81,7 +81,7 @@
     "disableAutoModeServer": "Disable Auto Mode Server Checks",
     "disableAutoModeServerHelp": "Gateways can't run the server-side check, so auto mode pauses once per session with a \"not eligible\" notice, then falls back to the local check after you press Enter. Checked, it uses the local check right away with no notice. Leave it unchecked on official endpoints.",
     "keyFieldsHint": "Endpoint, key, models, context window and compatibility switches follow the provider; everything else is a global Claude Code setting and applies to every provider once saved.",
-    "inactiveFieldsHint": "This provider still stores {{count}} field(s) that do not take effect when switching. Click one to add it to the global settings above; it is written to the config file on save, and the value stored in the provider is kept.",
+    "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to add it above; after saving it applies to every provider.",
     "addToGlobalSettings": "Add to global settings"
   },
   "header": {
@@ -1216,7 +1216,7 @@
     "reasoningEffortHint": "Turn on when the upstream supports thinking depth such as low/high/max. Also turns on thinking mode and maps the request's reasoning effort to the upstream Chat parameter.",
     "maxOutputTokensHint": "The default limit of 8192 can cut off long answers or deep thinking. This value is sent as Anthropic's max_tokens.",
     "keyFieldsHint": "The default model (models.default) and the model table it points to follow the provider; everything else is Grok Build global settings and applies to every provider after saving.",
-    "inactiveFieldsHint": "This provider still stores {{count}} settings that do not follow the provider. Click one to copy its TOML and paste it above if you need it; the value stored in the provider is kept.",
+    "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to copy its TOML and paste it above if you need it.",
     "inactiveFieldCopied": "Copied",
     "routeOnlySettingsHint": "The two settings below only apply in routing mode."
   },
@@ -1937,7 +1937,7 @@
     "reasoningEffortHint": "Turn on when the upstream supports thinking depth such as low/high/max. Also turns on thinking mode and maps Codex's reasoning.effort to the upstream Chat parameter.",
     "reasoningGroupTitle": "Reasoning Capability",
     "keyFieldsHint": "The endpoint, key, model, reasoning effort, context window and compatibility switches follow the provider; everything else is a global Codex setting that applies to every provider once saved.",
-    "inactiveFieldsHint": "This provider still stores {{count}} settings that are not applied when switching. Click one to copy its TOML and paste it above if you need it; the stored values are kept.",
+    "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to copy its TOML and paste it above if you need it.",
     "inactiveFieldCopied": "Copied",
     "upstreamFormatCopilotRouteHint": "Every mode requires routing, which injects the Copilot account credentials. A protocol you pick explicitly fails for models that don't support it.",
     "maxOutputTokensWarning": "Don't exceed the real output limit of the model or gateway, or requests return 400.",
@@ -1952,7 +1952,7 @@
     "configJson": "Settings file (settings.json)",
     "configJsonHint": "Gemini CLI's settings.json (MCP servers are managed in the MCP panel)",
     "keyFieldsHint": "The endpoint, key, model name and auth type follow the provider; the other environment variables and settings.json are Gemini CLI global settings and apply to every provider after saving.",
-    "inactiveFieldsHint": "This provider still stores {{count}} settings that do not follow the provider. Click one to add it to the global settings above; it is written to the config file on save, and the value stored in the provider is kept.",
+    "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to add it above; after saving it applies to every provider.",
     "addToGlobalSettings": "Add to global settings"
   },
   "opencode": {
