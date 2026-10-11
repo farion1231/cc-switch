@@ -1,5 +1,11 @@
 import type { ComponentProps } from "react";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { FormProvider, useForm } from "react-hook-form";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
@@ -140,8 +146,12 @@ const fetchMockFor = (kind: ProviderKind) =>
       ? vi.mocked(fetchXaiOauthModels)
       : vi.mocked(fetchModelsForConfig);
 
+// 拉到列表后按钮改叫「选择模型」并自动打开选择弹窗（弹窗外的元素被设为 aria-hidden）。
 const fetchButton = () =>
-  screen.getAllByRole("button", { name: "providerForm.fetchModels" })[0];
+  screen.getAllByRole("button", {
+    name: /^providerForm\.(fetchModels|modelPicker\.title)$/,
+    hidden: true,
+  })[0];
 const providerKinds: ProviderKind[] = ["copilot", "xai", "config"];
 
 describe("Codex model-fetch lifecycle", () => {
@@ -243,6 +253,7 @@ describe("Codex model-fetch lifecycle", () => {
       await act(async () => pending.resolve([advertisedModel()]));
       await waitFor(() => expect(fetchButton()).toBeEnabled());
       expect(screen.getByTestId("model-options")).toHaveTextContent("model-1");
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
       expect(toast.success).toHaveBeenCalledTimes(1);
       expect(showFetchModelsError).not.toHaveBeenCalled();
       if (kind === "copilot") {
@@ -482,5 +493,36 @@ describe("Codex model-fetch lifecycle", () => {
     } else {
       expect(toast.error).toHaveBeenCalledTimes(1);
     }
+  });
+  it("removes unchecked catalog rows and moves the default to the new first row", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "model-1", ownedBy: null },
+      { id: "model-2", ownedBy: null },
+    ]);
+    const props = {
+      ...makeProps("config"),
+      codexModel: "model-1",
+      catalogModels: [
+        { model: "model-1", contextWindow: 200_000 },
+        { model: "model-2", contextWindow: 128_000 },
+      ],
+    };
+    render(<Harness {...props} />);
+    fireEvent.click(fetchButton());
+
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "model-1" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "providerForm.modelPicker.apply",
+      }),
+    );
+
+    expect(props.onModelChange).toHaveBeenCalledWith("model-2");
+    await waitFor(() =>
+      expect(props.onCatalogModelsChange).toHaveBeenLastCalledWith([
+        expect.objectContaining({ model: "model-2", contextWindow: 128_000 }),
+      ]),
+    );
   });
 });

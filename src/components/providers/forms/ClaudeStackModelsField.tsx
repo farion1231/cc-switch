@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Download, Loader2, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -9,7 +9,10 @@ import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Input } from "@/components/ui/input";
 import type { FetchedModel } from "@/lib/api/model-fetch";
 import type { ClaudeStackModel } from "@/types";
-import { FetchedModelPicker } from "./FetchedModelPicker";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import { ModelDropdown } from "./shared";
 import {
   hasClaudeOneMMarker,
@@ -115,14 +118,18 @@ export function ClaudeStackModelsField({
       rows.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row)),
     );
 
-  const addFetchedModels = (modelIds: string[]) => {
-    const configured = new Set(
-      rows.map((row) => stripClaudeOneMMarker(row.model).trim()),
+  const applyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const removed = new Set(remove);
+    const kept = rows.filter(
+      (row) => !removed.has(stripClaudeOneMMarker(row.model).trim()),
     );
-    const additions = modelIds
+    const configured = new Set(
+      kept.map((row) => stripClaudeOneMMarker(row.model).trim()),
+    );
+    const additions = add
       .filter((id) => !configured.has(id))
       .map((id) => createClaudeStackModelRow({ model: id }));
-    onRowsChange([...rows, ...additions]);
+    onRowsChange([...kept, ...additions]);
   };
 
   return (
@@ -145,21 +152,15 @@ export function ClaudeStackModelsField({
             </HelpTip>
           </div>
           <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onFetchModels}
-              disabled={isFetchingModels}
-              className="h-7 gap-1"
-            >
-              {isFetchingModels ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
+            <FetchedModelPicker
+              models={fetchedModels}
+              configuredModelIds={rows.map((row) =>
+                stripClaudeOneMMarker(row.model).trim(),
               )}
-              {t("providerForm.fetchModels")}
-            </Button>
+              onApply={applyFetchedModels}
+              onFetch={onFetchModels}
+              isFetching={isFetchingModels}
+            />
             <Button
               type="button"
               variant="outline"
@@ -175,16 +176,6 @@ export function ClaudeStackModelsField({
           </div>
         </div>
       </div>
-
-      {fetchedModels.length > 0 && (
-        <FetchedModelPicker
-          models={fetchedModels}
-          configuredModelIds={rows.map((row) =>
-            stripClaudeOneMMarker(row.model).trim(),
-          )}
-          onAdd={addFetchedModels}
-        />
-      )}
 
       {rows.length === 0 ? (
         <p className="text-xs leading-relaxed text-fg-2">

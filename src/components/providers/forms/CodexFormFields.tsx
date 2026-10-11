@@ -73,7 +73,10 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import { CustomUserAgentField } from "./CustomUserAgentField";
-import { FetchedModelPicker } from "./FetchedModelPicker";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
 import { useCommittableRef } from "@/hooks/useLatestRef";
@@ -1056,25 +1059,35 @@ export function CodexFormFields({
     [catalogRows, linkedDefaultIndex, onModelChange],
   );
 
-  // 批量勾选拉取到的模型加入列表。
-  const handleAddFetchedCatalogRows = useCallback(
-    (modelIds: string[]) => {
+  // 按弹窗里的勾选增删列表行：留下的行原样不动，新勾的追加到末尾并补参数。
+  const handleApplyFetchedCatalogRows = useCallback(
+    ({ add, remove }: FetchedModelSelection) => {
       const current = catalogRowsRef.current;
-      const configured = new Set(current.map((row) => row.model.trim()));
-      const picked = modelIds
+      const removed = new Set(remove);
+      const kept = current.filter((row) => !removed.has(row.model.trim()));
+      const configured = new Set(kept.map((row) => row.model.trim()));
+      const picked = add
         .filter((id) => !configured.has(id))
         .map((id) => createCatalogRow({ model: id, displayName: id }));
-      if (picked.length === 0) return;
       const additions =
         current.length === 0 ? seedWithDefaultModel(picked) : picked;
-      commitCatalogRows([...current, ...additions]);
+      const next = [...kept, ...additions];
+      // 默认模型那一行被取消：和删行一样改用新的第一行；删光了就留着 `model`。
+      if (linkedDefaultIndex >= 0 && removed.has(trimmedDefaultModel)) {
+        const first = next.map((row) => row.model.trim()).find(Boolean);
+        if (first) onModelChange?.(first);
+      }
+      commitCatalogRows(next);
       for (const row of additions) fillCatalogRowMetadata(row.rowId, row.model);
     },
     [
       catalogRowsRef,
       commitCatalogRows,
       fillCatalogRowMetadata,
+      linkedDefaultIndex,
+      onModelChange,
       seedWithDefaultModel,
+      trimmedDefaultModel,
     ],
   );
 
@@ -1171,21 +1184,13 @@ export function CodexFormFields({
 
   const renderCatalogActionButtons = (onAdd: () => void, addLabel: string) => (
     <div className="flex gap-1">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={handleFetchModels}
-        disabled={isFetchingModels}
-        className="h-7 gap-1"
-      >
-        {isFetchingModels ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Download className="h-3.5 w-3.5" />
-        )}
-        {t("providerForm.fetchModels")}
-      </Button>
+      <FetchedModelPicker
+        models={fetchedModels}
+        configuredModelIds={catalogRows.map((row) => row.model)}
+        onApply={handleApplyFetchedCatalogRows}
+        onFetch={handleFetchModels}
+        isFetching={isFetchingModels}
+      />
       <Button
         type="button"
         variant="outline"
@@ -1920,13 +1925,6 @@ export function CodexFormFields({
                 })}
               </p>
             </div>
-            {fetchedModels.length > 0 && (
-              <FetchedModelPicker
-                models={fetchedModels}
-                configuredModelIds={catalogRows.map((row) => row.model.trim())}
-                onAdd={handleAddFetchedCatalogRows}
-              />
-            )}
             {defaultModelNotInListNotice}
             {catalogRows.length > 0 ? (
               renderCatalogRows()
@@ -2052,13 +2050,6 @@ export function CodexFormFields({
             </p>
           </div>
 
-          {fetchedModels.length > 0 && (
-            <FetchedModelPicker
-              models={fetchedModels}
-              configuredModelIds={catalogRows.map((row) => row.model.trim())}
-              onAdd={handleAddFetchedCatalogRows}
-            />
-          )}
           {defaultModelNotInListNotice}
           {catalogRows.length > 0 && renderCatalogRows()}
         </div>

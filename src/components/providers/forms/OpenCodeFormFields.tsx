@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
-import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
+import { Plus, Trash2, ChevronRight } from "lucide-react";
 import { ApiKeySection, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
@@ -32,7 +32,10 @@ import {
   findRequestHeaderValue,
   normalizeRequestHeaders,
 } from "./helpers/requestHeaders";
-import { FetchedModelPicker } from "./FetchedModelPicker";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import type { ProviderCategory, OpenCodeModel } from "@/types";
 import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
@@ -330,13 +333,22 @@ export function OpenCodeFormFields({
       return true;
     });
 
-  const handleAddFetchedModels = (modelIds: string[]) => {
+  const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const next = { ...models };
+    for (const id of remove) delete next[id];
     const additions = Object.fromEntries(
-      modelIds
-        .filter((id) => !Object.prototype.hasOwnProperty.call(models, id))
+      add
+        .filter((id) => !Object.prototype.hasOwnProperty.call(next, id))
         .map((id) => [id, { name: id }]),
     );
-    commitModels({ ...models, ...additions });
+    commitModels({ ...next, ...additions });
+    if (remove.length > 0) {
+      setExpandedModels((prev) => {
+        const kept = new Set(prev);
+        for (const id of remove) kept.delete(id);
+        return kept;
+      });
+    }
     Object.keys(additions).forEach(fillModelMetadataFor);
   };
 
@@ -750,21 +762,13 @@ export function OpenCodeFormFields({
             {t("opencode.models", { defaultValue: "Models" })}
           </FormLabel>
           <div className="flex gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleFetchModels}
-              disabled={isFetchingModels}
-              className="h-7 gap-1"
-            >
-              {isFetchingModels ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
-              )}
-              {t("providerForm.fetchModels")}
-            </Button>
+            <FetchedModelPicker
+              models={fetchedModels}
+              configuredModelIds={Object.keys(models)}
+              onApply={handleApplyFetchedModels}
+              onFetch={handleFetchModels}
+              isFetching={isFetchingModels}
+            />
             <Button
               type="button"
               variant="outline"
@@ -777,14 +781,6 @@ export function OpenCodeFormFields({
             </Button>
           </div>
         </div>
-
-        {fetchedModels.length > 0 && (
-          <FetchedModelPicker
-            models={fetchedModels}
-            configuredModelIds={Object.keys(models)}
-            onAdd={handleAddFetchedModels}
-          />
-        )}
 
         {Object.keys(models).length === 0 ? (
           <p className="text-sm text-fg-2 py-2">
