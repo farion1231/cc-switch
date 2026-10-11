@@ -616,7 +616,7 @@ export function CodexFormFields({
   const supportsEffort = codexChatReasoning.supportsEffort === true;
 
   // 高级区在有任何可见配置时自动展开（仅折叠→展开，不会自动折叠）：自定义 UA /
-  // 请求覆盖 / 已填模型映射 / 原生 Responses（需维护 catalog）/ 已配置思考能力。
+  // 请求覆盖 / 非默认的上游格式 / 已配置思考能力。模型列表在高级区外面，不算。
   const hasRequestOverrides = Boolean(
     localProxyHeadersOverride.trim() || localProxyBodyOverride.trim(),
   );
@@ -624,8 +624,6 @@ export function CodexFormFields({
     isCopilotPreset ||
     !!customUserAgent ||
     hasRequestOverrides ||
-    catalogModels.length > 0 ||
-    effectiveApiFormat === "openai_responses" ||
     isAnthropicFormat ||
     supportsThinking ||
     supportsEffort ||
@@ -1027,8 +1025,8 @@ export function CodexFormFields({
       seen.add(id);
       suggestions.push({
         id,
-        ownedBy: t("codexConfig.modelMappingTitle", {
-          defaultValue: "模型映射",
+        ownedBy: t("codexConfig.modelListTitle", {
+          defaultValue: "模型列表",
         }),
       });
     }
@@ -1827,8 +1825,45 @@ export function CodexFormFields({
       {apiKeySection}
       {endpointSection}
 
+      {/* 模型列表 —— 生成 Codex 的模型目录（model_catalog_json）：/model 菜单列哪些模型，
+          各自的窗口和思考等级。留空不生成。默认模型、子代理从这里选，所以排在它们前面。 */}
+      {category !== "official" && canEditCatalog && (
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-3">
+              <FormLabel>
+                {t("codexConfig.modelListTitle", {
+                  defaultValue: "模型列表",
+                })}
+              </FormLabel>
+              {renderCatalogActionButtons(
+                handleAddCatalogRow,
+                t("codexConfig.addCatalogModel", {
+                  defaultValue: "手动添加",
+                }),
+              )}
+            </div>
+            <p className="text-xs leading-relaxed text-fg-2">
+              {t("codexConfig.modelListHint", {
+                defaultValue:
+                  "这些模型会出现在 Codex 的 /model 里，带上各自的上下文窗口和思考等级。修改后需要重启 Codex。",
+              })}
+            </p>
+          </div>
+
+          {fetchedModels.length > 0 && (
+            <FetchedModelPicker
+              models={fetchedModels}
+              configuredModelIds={catalogRows.map((row) => row.model.trim())}
+              onAdd={handleAddFetchedCatalogRows}
+            />
+          )}
+          {catalogRows.length > 0 && renderCatalogRows()}
+        </div>
+      )}
+
       {/* 默认模型 —— config.toml 顶层 model，Codex 启动时默认请求的模型。
-          实时写回 TOML；留空则删行（有映射时保存回退为映射第一行）。 */}
+          实时写回 TOML；留空则删行（有模型列表时保存回退为列表第一行）。 */}
       {category !== "official" && onModelChange && (
         <div className="space-y-1.5">
           <FormLabel htmlFor="codexDefaultModel">
@@ -1850,23 +1885,26 @@ export function CodexFormFields({
               }
               className="flex-1"
             />
-            <HoverTip content={t("providerForm.fetchModels")}>
-              <Button
-                aria-label={t("providerForm.fetchModels")}
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={handleFetchModels}
-                disabled={isFetchingModels}
-                className="shrink-0"
-              >
-                {isFetchingModels ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="h-4 w-4" />
-                )}
-              </Button>
-            </HoverTip>
+            {/* 有模型列表时用列表上的「获取模型列表」，这里不再放一个。 */}
+            {!canEditCatalog && (
+              <HoverTip content={t("providerForm.fetchModels")}>
+                <Button
+                  aria-label={t("providerForm.fetchModels")}
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={handleFetchModels}
+                  disabled={isFetchingModels}
+                  className="shrink-0"
+                >
+                  {isFetchingModels ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                </Button>
+              </HoverTip>
+            )}
             {defaultModelSuggestions.length > 0 && (
               <ModelDropdown
                 models={defaultModelSuggestions}
@@ -1882,14 +1920,14 @@ export function CodexFormFields({
                 })
               : t("codexConfig.defaultModelHint", {
                   defaultValue:
-                    "Codex 默认请求的模型，随时可改，无需等待预设更新。留空且配置了模型映射时，默认使用映射第一行。",
+                    "Codex 默认请求的模型，随时可改，无需等待预设更新。留空时用模型列表第一行。",
                 })}
           </p>
           {isDefaultModelOutsideCatalog && (
             <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-fg-2">
               {t("codexConfig.defaultModelNotInCatalog", {
                 defaultValue:
-                  "该模型不在模型映射中，Codex 的 /model 菜单不会列出它（直接请求仍然有效）。",
+                  "该模型不在模型列表中，Codex 的 /model 菜单不会列出它（直接请求仍然有效）。",
               })}
               <Button
                 type="button"
@@ -1898,8 +1936,8 @@ export function CodexFormFields({
                 className="h-auto p-0 text-xs"
                 onClick={handleAddDefaultModelToCatalog}
               >
-                {t("codexConfig.addToModelMapping", {
-                  defaultValue: "加入映射",
+                {t("codexConfig.addToModelList", {
+                  defaultValue: "加入列表",
                 })}
               </Button>
             </p>
@@ -1982,7 +2020,7 @@ export function CodexFormFields({
             <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-fg-2">
               {t("codexConfig.subagentModelNotInCatalog", {
                 defaultValue:
-                  "该模型不在模型映射中：Codex 拿不到它的上下文窗口；经路由转成 Chat / Anthropic 协议时会被换成默认模型。",
+                  "该模型不在模型列表中：Codex 拿不到它的上下文窗口；经路由转成 Chat / Anthropic 协议时会被换成默认模型。",
               })}
               {onCatalogModelsChange && (
                 <Button
@@ -1992,8 +2030,8 @@ export function CodexFormFields({
                   className="h-auto p-0 text-xs"
                   onClick={handleAddSubagentModelToCatalog}
                 >
-                  {t("codexConfig.addToModelMapping", {
-                    defaultValue: "加入映射",
+                  {t("codexConfig.addToModelList", {
+                    defaultValue: "加入列表",
                   })}
                 </Button>
               )}
@@ -2002,7 +2040,7 @@ export function CodexFormFields({
         </div>
       )}
 
-      {/* 高级选项 —— 上游格式/模型映射/思考能力/自定义 UA；预设供应商通常无需展开 */}
+      {/* 高级选项 —— 上游格式/思考能力/自定义 UA；预设供应商通常无需展开 */}
       {category !== "official" && (
         <Collapsible
           open={advancedExpanded}
@@ -2035,7 +2073,7 @@ export function CodexFormFields({
                   })
                 : t("codexConfig.advancedSectionHint", {
                     defaultValue:
-                      "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
+                      "包含上游格式、思考能力与自定义 User-Agent。使用 Chat Completions / Anthropic Messages 协议的供应商需开启路由才能使用。",
                   })}
             </p>
           )}
@@ -2062,58 +2100,10 @@ export function CodexFormFields({
               </div>
             )}
 
-            {/* 模型映射 / 模型目录 —— 与「路由接管」解耦，常驻显示（可编辑即渲染）。
-                填了才生成 catalog：Chat 模式生成兼容路由、原生 Responses 生成
-                model-catalogs.json；留空则不生成。排在自定义 UA 之前。 */}
-            {canEditCatalog && (
-              <div
-                className={cn(
-                  "space-y-4",
-                  (shouldShowSpeedTest || (isChatFormat && canEditReasoning)) &&
-                    "border-t border-border pt-3",
-                )}
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-3">
-                    <FormLabel>
-                      {t("codexConfig.modelMappingTitle", {
-                        defaultValue: "模型映射",
-                      })}
-                    </FormLabel>
-                    {renderCatalogActionButtons(
-                      handleAddCatalogRow,
-                      t("codexConfig.addCatalogModel", {
-                        defaultValue: "手动添加",
-                      }),
-                    )}
-                  </div>
-                  <p className="text-xs leading-relaxed text-fg-2">
-                    {t("codexConfig.modelMappingHint", {
-                      defaultValue:
-                        "选择模型角色后，CC Switch 会自动生成 Codex 兼容路由；菜单显示名可以填 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
-                    })}
-                  </p>
-                </div>
-
-                {fetchedModels.length > 0 && (
-                  <FetchedModelPicker
-                    models={fetchedModels}
-                    configuredModelIds={catalogRows.map((row) =>
-                      row.model.trim(),
-                    )}
-                    onAdd={handleAddFetchedCatalogRows}
-                  />
-                )}
-                {catalogRows.length > 0 && renderCatalogRows()}
-              </div>
-            )}
-
             <div
               className={cn(
                 "space-y-3",
-                (shouldShowSpeedTest ||
-                  (isChatFormat && canEditReasoning) ||
-                  canEditCatalog) &&
+                (shouldShowSpeedTest || (isChatFormat && canEditReasoning)) &&
                   "border-t border-border pt-3",
               )}
             >

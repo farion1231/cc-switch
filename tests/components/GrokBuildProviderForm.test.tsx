@@ -127,6 +127,9 @@ describe("GrokBuildProviderForm", () => {
     expect(container.querySelector("#grokbuild-context-window")).toHaveValue(
       500000,
     );
+    // 默认的 Responses 格式不再把高级区自动展开。
+    expect(screen.queryByText("上游格式")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /高级选项/ }));
     expect(screen.getByText("上游格式")).toBeInTheDocument();
   });
 

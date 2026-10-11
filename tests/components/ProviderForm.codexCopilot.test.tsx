@@ -224,7 +224,7 @@ describe("Codex Copilot provider form", () => {
     expect(screen.getAllByDisplayValue("272000")).toHaveLength(4);
     expect(screen.getByDisplayValue("200000")).toBeVisible();
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
-    expect(screen.getByText("模型映射")).toBeVisible();
+    expect(screen.getByText("模型列表")).toBeVisible();
   });
 
   it.each<CodexCopilotApiFormat>(["auto", "openai_chat", "openai_responses"])(
@@ -232,7 +232,7 @@ describe("Codex Copilot provider form", () => {
     async (format) => {
       const onSubmit = renderForm();
       await selectFormat(format);
-      expect(screen.getByText("模型映射")).toBeVisible();
+      expect(screen.getByText("模型列表")).toBeVisible();
       fireEvent.click(screen.getByRole("button", { name: "save" }));
       await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
       const saved = onSubmit.mock.calls[0][0];
@@ -490,7 +490,7 @@ describe("Codex Copilot provider form", () => {
   it("keeps legacy cards automatic and shows mapping even with an empty catalog", () => {
     renderForm({ providerType: "github_copilot", apiFormat: "openai_chat" });
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
-    expect(screen.getByText("模型映射")).toBeVisible();
+    expect(screen.getByText("模型列表")).toBeVisible();
   });
 
   it("does not offer preset switching while editing an existing Copilot card", () => {
@@ -543,6 +543,8 @@ requires_openai_auth = true`;
       screen.queryByTestId("selected-copilot-account"),
     ).not.toBeInTheDocument();
 
+    // 普通 Responses 卡的高级区默认折叠，上游格式在里面。
+    fireEvent.click(screen.getByRole("button", { name: /高级选项/ }));
     await selectFormat("openai_chat");
     fireEvent.click(screen.getByRole("button", { name: "save" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -584,7 +586,7 @@ requires_openai_auth = true`;
     );
     fireEvent.click(screen.getByRole("button", { name: /DeepSeek/ }));
     expect(formatControl()).toHaveTextContent("Responses（原生）");
-    expect(screen.getByText("模型映射")).toBeVisible();
+    expect(screen.getByText("模型列表")).toBeVisible();
     fireEvent.keyDown(formatControl(), { key: "ArrowDown" });
     expect(
       await screen.findByRole("option", { name: /Anthropic Messages/ }),
@@ -592,6 +594,6 @@ requires_openai_auth = true`;
     fireEvent.click(screen.getByRole("option", { name: "Responses（原生）" }));
     fireEvent.click(screen.getByRole("button", { name: /GitHub Copilot/ }));
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
-    expect(screen.getByText("模型映射")).toBeVisible();
+    expect(screen.getByText("模型列表")).toBeVisible();
   });
 });

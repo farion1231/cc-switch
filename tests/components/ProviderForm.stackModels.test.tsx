@@ -360,7 +360,8 @@ describe("ProviderForm Stack layout (Codex)", () => {
   it("没开 Stack 设置时仍是完整表单", () => {
     settingsState.enableStackMode = false;
     renderForm("codex", vi.fn());
-    expect(screen.queryByText("模型列表")).toBeNull();
+    // 完整表单也有模型列表，但说明是直连版的。
+    expect(screen.queryByText(/选中后请求直达这家/)).toBeNull();
     expect(document.getElementById("codexDefaultModel")).not.toBeNull();
     expect(screen.getByTestId("codex-config-editor")).toBeInTheDocument();
   });

@@ -16,7 +16,7 @@ const FormShell = ({ children }: PropsWithChildren) => {
   return <Form {...form}>{children}</Form>;
 };
 
-const NOT_IN_CATALOG = /该模型不在模型映射中：Codex 拿不到它的上下文窗口/;
+const NOT_IN_CATALOG = /该模型不在模型列表中：Codex 拿不到它的上下文窗口/;
 
 function renderCodexForm(overrides: Partial<CodexFormFieldsProps> = {}) {
   const props: CodexFormFieldsProps = {
@@ -82,7 +82,7 @@ describe("CodexFormFields sub-agent defaults", () => {
     expect(subagentInput()).toBeNull();
   });
 
-  it("offers to add a model outside the mapping, with the default model when the mapping is empty", () => {
+  it("offers to add a model outside the list, with the default model when the list is empty", () => {
     const onCatalogModelsChange = vi.fn();
     renderCodexForm({
       apiFormat: "openai_chat",
@@ -93,7 +93,7 @@ describe("CodexFormFields sub-agent defaults", () => {
     expect(screen.getByText(NOT_IN_CATALOG)).toBeTruthy();
 
     onCatalogModelsChange.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "加入映射" }));
+    fireEvent.click(screen.getByRole("button", { name: "加入列表" }));
     const rows = onCatalogModelsChange.mock.calls.at(-1)?.[0] ?? [];
     expect(rows.map((row: { model: string }) => row.model)).toEqual([
       "gpt-a",
@@ -101,8 +101,38 @@ describe("CodexFormFields sub-agent defaults", () => {
     ]);
   });
 
-  it("stays quiet for a native Responses provider without a mapping", () => {
+  it("stays quiet for a native Responses provider without a list", () => {
     renderCodexForm({ subagentModel: "k3-mini", catalogModels: [] });
     expect(screen.queryByText(NOT_IN_CATALOG)).toBeNull();
+  });
+});
+
+describe("CodexFormFields direct layout", () => {
+  it("shows the model list outside the advanced section, before the default model", () => {
+    renderCodexForm({
+      catalogModels: [{ model: "gpt-a" }],
+      onCatalogModelsChange: vi.fn(),
+    });
+
+    const listTitle = screen.getByText("模型列表");
+    expect(listTitle).toBeVisible();
+    expect(screen.queryByText("上游格式")).toBeNull();
+    const defaultModel = document.getElementById("codexDefaultModel")!;
+    expect(
+      listTitle.compareDocumentPosition(defaultModel) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 列表上已有「获取模型列表」，默认模型旁不再放第二个。
+    expect(
+      screen.getAllByRole("button", { name: /providerForm\.fetchModels/ }),
+    ).toHaveLength(1);
+  });
+
+  it("keeps the fetch button on the default model when there is no list (Grok Build)", () => {
+    renderCodexForm();
+    expect(screen.queryByText("模型列表")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    ).toBeInTheDocument();
   });
 });
