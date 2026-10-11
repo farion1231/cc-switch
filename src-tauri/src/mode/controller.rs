@@ -179,12 +179,14 @@ fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
 }
 
 /// `stack` 是发布的 Stack 模型，`stack_default` 是四档别名指向的模型（Stack 模式下默认那家
-/// 列表里的第一个，见 [`stack::claude_route_default`]；路由模式为 `None`）。
+/// 列表里的第一个，见 [`stack::claude_route_default`]；路由模式为 `None`）。`others` 是其余
+/// 发布模型的成员，它们的兼容开关按 [`with_member_switches`] 并进契约。
 fn claude_contract(
     route: &Provider,
     proxy_url: &str,
     stack: &[StackModel],
     stack_default: Option<&StackModel>,
+    others: &[&Provider],
 ) -> (ClaudeProjection, Contract) {
     let mut projection = proxy_projection(
         &ClaudeProjection::of(&route.settings_config),
@@ -196,6 +198,13 @@ fn claude_contract(
         }),
     );
     with_stack_models(&mut projection, stack);
+    if !stack.is_empty() {
+        let others: Vec<_> = others
+            .iter()
+            .map(|provider| ClaudeProjection::of(&provider.settings_config).exclusive)
+            .collect();
+        with_member_switches(&mut projection.exclusive, &others);
+    }
     let contract = contract::claude(&projection);
     (projection, contract)
 }
@@ -239,6 +248,81 @@ fn with_stack_models(projection: &mut ClaudeProjection, stack: &[StackModel]) {
             CLAUDE_MAX_CONTEXT_ENV.to_string(),
             Value::String(window.to_string()),
         );
+    }
+}
+
+/// 关掉某个功能的兼容开关：任何一家要关，契约就关（值取第一个要关的那家的）。上游不支持的
+/// 功能开着会让那家每个请求都报错，关掉对别家只是少一个功能。
+const CLAUDE_STACK_ANY_MEMBER_SWITCHES: &[&str] = &[
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
+    "CLAUDE_CODE_DISABLE_ARTIFACT",
+    "CLAUDE_CODE_AUTO_MODE_SERVER",
+];
+
+/// 打开某个功能的兼容开关：每一家都开了才开，有一家没开就去掉。
+const CLAUDE_STACK_ALL_MEMBER_SWITCHES: &[&str] = &[
+    "ENABLE_TOOL_SEARCH",
+    "CLAUDE_CODE_ALWAYS_ENABLE_EFFORT",
+    "CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING",
+];
+
+/// 环境变量当开关读：`1` / `true` / `yes` / `on` 为开，`0` / `false` / `no` / `off` / 空为关。
+fn env_switch_on(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(on) => Some(*on),
+        Value::Number(number) => number.as_f64().map(|n| n != 0.0),
+        Value::String(text) => match text.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" | "" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// 这一家要的是关掉功能的那一边：`CLAUDE_CODE_AUTO_MODE_SERVER` 设成关，其余开关设成开。
+fn asks_to_turn_off(key: &str, value: &Value) -> bool {
+    let on = env_switch_on(value);
+    if key == "CLAUDE_CODE_AUTO_MODE_SERVER" {
+        on == Some(false)
+    } else {
+        on == Some(true)
+    }
+}
+
+/// Stack 模式下其余成员的兼容开关。Claude Code 只有一份 `settings.json`，这些开关在客户端发
+/// 请求时生效、代理补不上，只写默认那家的话，选中别家的模型就带着那家不支持的功能出去。按
+/// 开关的性质合并（[`CLAUDE_STACK_ANY_MEMBER_SWITCHES`]、[`CLAUDE_STACK_ALL_MEMBER_SWITCHES`]）；
+/// `CLAUDE_CODE_EXTRA_BODY`、关思考这类和窗口类的仍只跟默认那家（窗口由 Stack 模型决定）。
+fn with_member_switches(
+    exclusive: &mut serde_json::Map<String, Value>,
+    others: &[serde_json::Map<String, Value>],
+) {
+    if others.is_empty() {
+        return;
+    }
+    for key in CLAUDE_STACK_ANY_MEMBER_SWITCHES {
+        if exclusive
+            .get(*key)
+            .is_some_and(|value| asks_to_turn_off(key, value))
+        {
+            continue;
+        }
+        if let Some(value) = others
+            .iter()
+            .filter_map(|member| member.get(*key))
+            .find(|value| asks_to_turn_off(key, value))
+        {
+            exclusive.insert(key.to_string(), value.clone());
+        }
+    }
+    for key in CLAUDE_STACK_ALL_MEMBER_SWITCHES {
+        let everyone_on = others
+            .iter()
+            .all(|member| member.get(*key).and_then(env_switch_on).unwrap_or(false));
+        if !everyone_on {
+            exclusive.shift_remove(*key);
+        }
     }
 }
 
@@ -314,8 +398,18 @@ async fn write_proxy(
             let members = published_members(state, app, &stack, route)?;
             let published = stack::claude_published(&members);
             let stack_default = stack::claude_route_default(&members);
-            let (projection, contract) =
-                claude_contract(route, &proxy_url, &published, stack_default.as_ref());
+            let others: Vec<&Provider> = members
+                .iter()
+                .filter(|member| !member.route)
+                .map(|member| &member.provider)
+                .collect();
+            let (projection, contract) = claude_contract(
+                route,
+                &proxy_url,
+                &published,
+                stack_default.as_ref(),
+                &others,
+            );
             let unchanged = !force && live_now.has_contract(&contract.key);
             let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
             target.contract = Some(contract);
@@ -1716,9 +1810,122 @@ mod tests {
         assert_eq!(env.get(key).and_then(Value::as_str), expected, "{key}");
     }
 
+    fn stack_member(id: &str, env: Value) -> Provider {
+        Provider::with_id(id.to_string(), id.to_string(), json!({ "env": env }), None)
+    }
+
+    /// Stack 模式下的契约独有字段：`route` 是默认那家，`others` 是其余发布模型的成员。
+    fn stack_exclusive(route: &Provider, others: &[&Provider]) -> Map<String, Value> {
+        let stack: Vec<StackModel> = std::iter::once(route)
+            .chain(others.iter().copied())
+            .flat_map(|provider| stack::claude_models(&provider.id, provider))
+            .collect();
+        let default = stack.first().cloned();
+        let (projection, contract) = claude_contract(
+            route,
+            "http://127.0.0.1:15721",
+            &stack,
+            default.as_ref(),
+            others,
+        );
+        assert_eq!(contract.exclusive, projection.exclusive);
+        projection.exclusive
+    }
+
+    #[test]
+    fn stack_turns_off_a_feature_when_any_member_needs_it_off() {
+        let route = stack_member("kimi", json!({ "ANTHROPIC_MODEL": "kimi-k3" }));
+        let atlas = stack_member(
+            "atlas",
+            json!({
+                "ANTHROPIC_MODEL": "sonnet-5",
+                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+                "CLAUDE_CODE_AUTO_MODE_SERVER": "0",
+                "CLAUDE_CODE_EXTRA_BODY": "{\"x\":1}",
+                "CLAUDE_CODE_DISABLE_THINKING": "1"
+            }),
+        );
+        let exclusive = stack_exclusive(&route, &[&atlas]);
+
+        assert_env_str(
+            &exclusive,
+            "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
+            Some("1"),
+        );
+        assert_env_str(&exclusive, "CLAUDE_CODE_AUTO_MODE_SERVER", Some("0"));
+        // 请求体附加、关思考只跟默认那家，不并进来。
+        assert_env_str(&exclusive, "CLAUDE_CODE_EXTRA_BODY", None);
+        assert_env_str(&exclusive, "CLAUDE_CODE_DISABLE_THINKING", None);
+    }
+
+    #[test]
+    fn stack_does_not_take_a_member_switch_that_keeps_the_feature_on() {
+        let route = stack_member("kimi", json!({ "ANTHROPIC_MODEL": "kimi-k3" }));
+        let other = stack_member(
+            "other",
+            json!({
+                "ANTHROPIC_MODEL": "m",
+                "CLAUDE_CODE_AUTO_MODE_SERVER": "1",
+                "CLAUDE_CODE_DISABLE_ARTIFACT": "0"
+            }),
+        );
+        let exclusive = stack_exclusive(&route, &[&other]);
+
+        assert_env_str(&exclusive, "CLAUDE_CODE_AUTO_MODE_SERVER", None);
+        assert_env_str(&exclusive, "CLAUDE_CODE_DISABLE_ARTIFACT", None);
+    }
+
+    #[test]
+    fn stack_keeps_a_feature_on_only_when_every_member_turns_it_on() {
+        let route = stack_member(
+            "eflow",
+            json!({ "ANTHROPIC_MODEL": "m-1", "ENABLE_TOOL_SEARCH": "true" }),
+        );
+        let with = stack_member(
+            "with",
+            json!({ "ANTHROPIC_MODEL": "m-2", "ENABLE_TOOL_SEARCH": "1" }),
+        );
+        let without = stack_member("without", json!({ "ANTHROPIC_MODEL": "m-3" }));
+
+        assert_env_str(
+            &stack_exclusive(&route, &[&with]),
+            "ENABLE_TOOL_SEARCH",
+            Some("true"),
+        );
+        assert_env_str(
+            &stack_exclusive(&route, &[&with, &without]),
+            "ENABLE_TOOL_SEARCH",
+            None,
+        );
+    }
+
+    #[test]
+    fn route_mode_keeps_only_the_route_switches() {
+        let route = stack_member(
+            "eflow",
+            json!({ "ANTHROPIC_MODEL": "m-1", "ENABLE_TOOL_SEARCH": "true" }),
+        );
+        let other = stack_member(
+            "atlas",
+            json!({
+                "ANTHROPIC_MODEL": "m-2",
+                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
+            }),
+        );
+        // 没有发布 Stack 模型（路由模式）时契约和原来一样，不看别家。
+        let (projection, _) =
+            claude_contract(&route, "http://127.0.0.1:15721", &[], None, &[&other]);
+        assert_env_str(&projection.exclusive, "ENABLE_TOOL_SEARCH", Some("true"));
+        assert_env_str(
+            &projection.exclusive,
+            "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
+            None,
+        );
+    }
+
     /// 以 `live` 为底写入 `provider` 的代理契约，和进入代理时的补丁相同。
     fn takeover(live: &Value, provider: &Provider) -> Value {
-        let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721", &[], None);
+        let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721", &[], None, &[]);
         let mut doc = live.clone();
         direct_patch(None, &projection)
             .apply_to(Path::new("settings.json"), &mut doc)
@@ -2862,6 +3069,56 @@ mod mode_tests {
             "{}",
             gemini_env()
         );
+        state.proxy_service.stop().await.unwrap();
+    }
+
+    /// 客户端地址存在本机 settings.json，不进会同步到别的设备的库；保存时重写接上路由的
+    /// 客户端，第一次重写失败后改好客户端文件、原样再保存一次就是重试。
+    #[tokio::test]
+    #[serial]
+    async fn saving_the_client_host_rewrites_routed_clients_and_retries_on_the_same_value() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("enter claude");
+        let routed = fs::read_to_string(settings_path()).unwrap();
+
+        fs::write(settings_path(), "not json").unwrap();
+        crate::commands::save_proxy_client_host(&state, " 172.25.144.1 ")
+            .await
+            .expect_err("claude settings unreadable");
+        assert_eq!(
+            crate::settings::get_proxy_client_host().as_deref(),
+            Some("172.25.144.1")
+        );
+        let snapshot = state.db.export_sql_string_for_sync().unwrap();
+        assert!(!snapshot.contains("172.25.144.1"));
+
+        fs::write(settings_path(), &routed).unwrap();
+        crate::commands::save_proxy_client_host(&state, "172.25.144.1")
+            .await
+            .expect("retry the same save");
+        let settings = fs::read_to_string(settings_path()).unwrap();
+        assert!(settings.contains("http://172.25.144.1:"), "{settings}");
+        assert!(
+            crate::claude_desktop_config::proxy_gateway_base_url_from_db(&state.db)
+                .unwrap()
+                .starts_with("http://172.25.144.1:")
+        );
+
+        crate::commands::save_proxy_client_host(&state, "")
+            .await
+            .expect("clear the client host");
+        assert_eq!(crate::settings::get_proxy_client_host(), None);
+        let settings = fs::read_to_string(settings_path()).unwrap();
+        assert!(settings.contains("http://127.0.0.1:"), "{settings}");
         state.proxy_service.stop().await.unwrap();
     }
 
@@ -5976,6 +6233,48 @@ model_provider = "c"
         assert!(!state
             .proxy_service
             .live_has_proxy_placeholder(&AppType::Codex));
+    }
+
+    /// 子代理模型：路由模式照写路由那家的；Stack 模式不写（子代理跟随主模型），只删这两个
+    /// 键，`[agents]` 里用户自己的设置不动；Stack 模型都移除后恢复。
+    #[tokio::test]
+    #[serial]
+    async fn codex_stack_mode_leaves_the_subagent_model_to_the_main_model() {
+        let _home = Home::new();
+        seed_codex("[agents]\nmax_threads = 4\n", None);
+        let [_, deepseek, zhipu] = codex_stack_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "[agents]\ndefault_subagent_model = \"gpt-a-mini\"\ndefault_subagent_reasoning_effort = \"low\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        let agents = |doc: &toml::Table| {
+            let agents = &doc["agents"];
+            let text = |key: &str| agents.get(key).and_then(|v| v.as_str()).map(str::to_string);
+            (
+                text("default_subagent_model"),
+                text("default_subagent_reasoning_effort"),
+                agents.get("max_threads").and_then(|v| v.as_integer()),
+            )
+        };
+        let routed = (
+            Some("gpt-a-mini".to_string()),
+            Some("low".to_string()),
+            Some(4),
+        );
+        assert_eq!(agents(&codex_doc()), routed);
+
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(agents(&codex_doc()), (None, None, Some(4)));
+
+        set_codex_member(&state, "deepseek", false).await;
+        assert_eq!(agents(&codex_doc()), routed);
+
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert_eq!(agents(&codex_doc()), routed);
     }
 
     fn set_classic_subagents(enabled: bool) {

@@ -70,7 +70,7 @@ fn managed_account(provider: &Provider) -> Option<String> {
 
 /// 本地代理给 Codex 的地址（带 `/v1`），不需要代理在运行：官方直连时写休眠表用。
 pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
-    let (address, port) = db.get_proxy_listen_sync();
+    let (address, port) = db.get_proxy_client_endpoint_sync();
     let port = if port == 0 {
         crate::proxy::types::ProxyConfig::default().listen_port
     } else {
@@ -84,7 +84,7 @@ pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
 
 /// `config_text` 是不是代理的官方路由（指向本地代理，但不带占位 Key）。
 pub(crate) fn routes_official_to_proxy(db: &Database, config_text: &str) -> bool {
-    let (address, port) = db.get_proxy_listen_sync();
+    let (address, port) = db.get_proxy_client_endpoint_sync();
     crate::codex_config::codex_config_routes_official_to_proxy(config_text, |url| {
         is_proxy_base_url(url, &address, port)
     })
@@ -545,7 +545,7 @@ pub(crate) fn plan(
     let provider = target_provider(target);
     let projection = provider.map(project).transpose()?;
 
-    let (top, nested, mut exclusive) = match (&projection, provider) {
+    let (top, mut nested, mut exclusive) = match (&projection, provider) {
         (Some(projection), Some(provider)) => (
             projection.top.clone(),
             projection.nested.clone(),
@@ -622,6 +622,11 @@ pub(crate) fn plan(
         Target::Proxy { stack, .. } => *stack,
         Target::Direct(_) => &[],
     };
+    // 聚合模式下子代理跟随主模型（用户在模型选择器里选的），和 Claude Code 一样不写：行里
+    // 是路由那家的模型名，主模型换成别家的 Stack 模型后，子代理会被悄悄发回路由那家。
+    if !stack.is_empty() {
+        nested.retain(|(path, _)| !is_subagent_key(path));
+    }
     let stack_catalog = match (provider, &projection) {
         (Some(provider), Some(projection)) => stack_catalog(provider, projection, stack, prepared)?,
         _ => None,
@@ -716,6 +721,11 @@ pub(crate) fn settings_without_row_catalog(route: &Provider) -> Option<Value> {
 
 /// 发布了 Stack 模型时不写进 `config.toml` 的全局键：Codex 拿它们覆盖目录里的每一行。
 const STACK_SUNK_WINDOW_KEYS: &[&str] = &["model_context_window", "model_auto_compact_token_limit"];
+
+/// `[agents]` 里的子代理模型和推理强度（`floor::CODEX_FLOOR_NESTED` 的前两项）。
+fn is_subagent_key(path: &[String]) -> bool {
+    path.first().is_some_and(|table| table == "agents")
+}
 
 /// 发布了 Stack 模型时的合并目录（路由那家的行在前，Stack 里的在后）；没有要发布的 Stack 模型，
 /// 或者这次发布不了时为 `None`，目录照原来的规则算。

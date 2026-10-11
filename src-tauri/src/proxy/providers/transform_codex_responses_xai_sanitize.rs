@@ -12,7 +12,8 @@
 //! (`backend/internal/service/openai_gateway_grok.go`) plus the #6815 schema
 //! collapse for root `oneOf`/`anyOf` function parameters. Field removal and
 //! that schema rewrite stay in that function. Collaboration `agent_message`
-//! items and return-path whole-float tool argument rewrites are separate
+//! items, `function_call_output` receipts without a `call_id`, and
+//! return-path whole-float tool argument rewrites are separate
 //! entry points so they cannot be mistaken for "just delete a field". Gated on
 //! [`super::codex::provider_needs_responses_namespace_flatten`], which covers
 //! xAI OAuth *and* API-key cards whose live upstream is `api.x.ai` Responses.
@@ -660,6 +661,82 @@ pub(crate) fn apply_xai_native_responses_request_compat(
         log::info!(
             "[Codex] Rewrote xAI-unsupported agent_message input items (provider={provider_id})"
         );
+    }
+    if rewrite_xai_call_id_less_tool_outputs(body) {
+        log::info!(
+            "[Codex] Rewrote function_call_output items without call_id for xAI (provider={provider_id})"
+        );
+    }
+}
+
+/// Same marker the Responses→Chat bridge uses, so the model reads one wording
+/// whichever path an orphan tool result takes.
+const ORPHAN_TOOL_OUTPUT_MARKER: &str = "[tool_result without a matching tool_call]";
+
+/// Content part types a Responses `message` accepts as-is from a tool output.
+const MESSAGE_CONTENT_PART_TYPES: &[&str] = &["input_text", "input_image", "input_file"];
+
+/// Rewrite top-level `function_call_output` items that carry no `call_id` into
+/// user `message` items. Codex Desktop injects these receipts on its own
+/// (create_thread delegation, automation_update, heartbeat, cross-thread
+/// messages) with only an `fco_` id; xAI's strict deserializer 422s the whole
+/// request (`input[N]: invalid "function_call_output" item: missing field
+/// call_id`), and since the receipt stays in history the thread never recovers.
+///
+/// Rewrite rather than drop: the receipt carries the delegated task text.
+/// Items with a `call_id` are left alone even if their call is not in `input`,
+/// because a `previous_response_id` continuation legitimately pairs them with
+/// a call from the stored response.
+pub(crate) fn rewrite_xai_call_id_less_tool_outputs(body: &mut Value) -> bool {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for item in input {
+        if json_type(item) != Some("function_call_output") {
+            continue;
+        }
+        let has_call_id = item
+            .get("call_id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.trim().is_empty());
+        if has_call_id {
+            continue;
+        }
+        *item = json!({
+            "type": "message",
+            "role": "user",
+            "content": orphan_tool_output_content(item.get("output")),
+        });
+        changed = true;
+    }
+    changed
+}
+
+fn orphan_tool_output_content(output: Option<&Value>) -> Vec<Value> {
+    match output {
+        Some(Value::String(text)) if !text.is_empty() => {
+            vec![input_text_part(&format!(
+                "{ORPHAN_TOOL_OUTPUT_MARKER}\n{text}"
+            ))]
+        }
+        Some(Value::Array(parts)) => {
+            let mut content = vec![input_text_part(ORPHAN_TOOL_OUTPUT_MARKER)];
+            content.extend(parts.iter().map(|part| {
+                if json_type(part).is_some_and(|ty| MESSAGE_CONTENT_PART_TYPES.contains(&ty)) {
+                    part.clone()
+                } else {
+                    input_text_part(&part.to_string())
+                }
+            }));
+            content
+        }
+        Some(Value::Null | Value::String(_)) | None => {
+            vec![input_text_part(ORPHAN_TOOL_OUTPUT_MARKER)]
+        }
+        Some(other) => vec![input_text_part(&format!(
+            "{ORPHAN_TOOL_OUTPUT_MARKER}\n{other}"
+        ))],
     }
 }
 
@@ -1667,6 +1744,113 @@ mod tests {
         assert!(rewrite_xai_agent_message_input_items(&mut body));
         assert_eq!(body["input"]["items"][0]["type"], "message");
         assert_eq!(body["input"]["items"][0]["role"], "user");
+    }
+
+    #[test]
+    fn rewrites_call_id_less_tool_output_at_input_index_matching_xai_422() {
+        // Shape Codex Desktop injects for a create_thread / worker receipt:
+        // an `fco_` id, `call_id: null`, no preceding function_call.
+        let mut body = json!({
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]},
+                {"type": "function_call", "call_id": "call_1", "name": "shell", "arguments": "{}"},
+                {
+                    "type": "function_call_output",
+                    "id": "fco_01abc",
+                    "call_id": null,
+                    "output": "Created thread t_42: review the PR"
+                },
+                {"type": "function_call_output", "call_id": "call_1", "output": "ok"}
+            ]
+        });
+        assert!(rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert_eq!(
+            body["input"][2],
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "[tool_result without a matching tool_call]\nCreated thread t_42: review the PR"
+                }]
+            })
+        );
+        assert_eq!(body["input"][1]["type"], "function_call");
+        assert_eq!(
+            body["input"][3],
+            json!({"type": "function_call_output", "call_id": "call_1", "output": "ok"})
+        );
+        assert!(!rewrite_xai_call_id_less_tool_outputs(&mut body));
+    }
+
+    #[test]
+    fn rewrites_missing_and_blank_call_id_but_keeps_any_present_call_id() {
+        let mut body = json!({
+            "input": [
+                {"type": "function_call_output", "id": "fco_1", "output": "automation"},
+                {"type": "function_call_output", "call_id": "  ", "output": "heartbeat"},
+                // Paired through previous_response_id, not through `input`.
+                {"type": "function_call_output", "call_id": "call_prev", "output": "kept"}
+            ]
+        });
+        assert!(rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][1]["type"], "message");
+        assert_eq!(body["input"][2]["type"], "function_call_output");
+        assert_eq!(body["input"][2]["call_id"], "call_prev");
+    }
+
+    #[test]
+    fn call_id_less_tool_output_keeps_image_parts() {
+        let mut body = json!({
+            "input": [{
+                "type": "function_call_output",
+                "output": [
+                    {"type": "input_text", "text": "screenshot"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+                    {"type": "unknown_part", "x": 1}
+                ]
+            }]
+        });
+        assert!(rewrite_xai_call_id_less_tool_outputs(&mut body));
+        let content = body["input"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 4);
+        assert_eq!(
+            content[0]["text"],
+            "[tool_result without a matching tool_call]"
+        );
+        assert_eq!(
+            content[1],
+            json!({"type": "input_text", "text": "screenshot"})
+        );
+        assert_eq!(content[2]["type"], "input_image");
+        assert_eq!(content[2]["image_url"], "data:image/png;base64,AAAA");
+        assert_eq!(content[3]["type"], "input_text");
+        assert_eq!(content[3]["text"], r#"{"type":"unknown_part","x":1}"#);
+    }
+
+    #[test]
+    fn clean_tool_history_is_untouched_by_call_id_rewrite() {
+        let mut body = json!({
+            "input": [
+                {"type": "function_call", "call_id": "c1", "name": "shell", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "ok"}
+            ]
+        });
+        let before = body.clone();
+        assert!(!rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert_eq!(body, before);
+    }
+
+    #[test]
+    fn request_compat_rewrites_call_id_less_tool_output() {
+        let mut body = json!({
+            "model": "grok-4.6",
+            "input": [{"type": "function_call_output", "id": "fco_1", "output": "receipt"}]
+        });
+        apply_xai_native_responses_request_compat(&mut body, "grok", None, &json!({}));
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][0]["role"], "user");
     }
 
     #[test]
