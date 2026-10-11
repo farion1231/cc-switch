@@ -274,16 +274,15 @@ describe("ProviderForm Stack layout (Codex)", () => {
     settingsState.enableStackMode = true;
   });
 
-  it("简化面板：模型列表在外面，没有默认模型字段和配置编辑器", () => {
+  it("简化面板：模型列表在外面，没有配置编辑器；列表为空时显示要发布的默认模型", () => {
     renderForm("codex", vi.fn());
 
     expect(screen.getByText("模型列表")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "未配置模型：聚合模式下只发布这家的默认模型（config.toml 的 model）。",
-      ),
+      screen.getByText("未配置模型：聚合模式下只发布下面的默认模型。"),
     ).toBeInTheDocument();
-    expect(document.getElementById("codexDefaultModel")).toBeNull();
+    // 列表为空时聚合发布的就是 config.toml 的 model，框要看得见。
+    expect(document.getElementById("codexDefaultModel")).not.toBeNull();
     expect(screen.queryByTestId("codex-config-editor")).toBeNull();
   });
 
@@ -297,6 +296,8 @@ describe("ProviderForm Stack layout (Codex)", () => {
     });
 
     expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    // 有列表时第一行就是默认模型，不再单独显示默认模型框。
+    expect(document.getElementById("codexDefaultModel")).toBeNull();
     fireEvent.change(screen.getByDisplayValue("m-1"), {
       target: { value: "m-9" },
     });

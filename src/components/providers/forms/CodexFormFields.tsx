@@ -52,7 +52,13 @@ import {
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
-import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import {
+  ApiKeySection,
+  DirectModeFormatWarning,
+  EndpointField,
+  ModelDropdown,
+  type DirectModeFormatNotice,
+} from "./shared";
 import { XaiOAuthSection } from "./XaiOAuthSection";
 import {
   copilotGetModels,
@@ -219,6 +225,8 @@ interface CodexFormFieldsProps {
    * 模型列表 + 高级），没有默认模型字段，列表第一行就是默认模型。
    */
   variant?: "classic" | "stack";
+  /** 应用实际在直连时传：选了要靠路由转换的格式就在格式下面提示后果。 */
+  directModeFormatNotice?: DirectModeFormatNotice;
 }
 
 type CodexCatalogRow = CodexCatalogModel & { rowId: string };
@@ -575,6 +583,7 @@ export function CodexFormFields({
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
   variant = "classic",
+  directModeFormatNotice,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -1203,7 +1212,7 @@ export function CodexFormFields({
           ? t("codexConfig.upstreamFormatCopilotHint")
           : t("codexConfig.upstreamFormatHint", {
               defaultValue:
-                "看供应商原生支持哪种协议：Responses 直连、不转换格式；Chat 或 Anthropic 由路由转成 Responses。",
+                "看供应商原生支持哪种协议：Responses 原样转发、不转换格式；Chat 或 Anthropic 由路由转成 Responses。",
             }),
         "codex-upstream-format",
       )}
@@ -1238,7 +1247,7 @@ export function CodexFormFields({
           )}
           <SelectItem value="openai_chat">
             {t("codexConfig.upstreamFormatChat", {
-              defaultValue: "Chat Completions（需开启路由）",
+              defaultValue: "Chat Completions（需转换）",
             })}
           </SelectItem>
           <SelectItem value="openai_responses">
@@ -1251,13 +1260,18 @@ export function CodexFormFields({
           {!isCopilotPreset && (
             <SelectItem value="anthropic">
               {t("codexConfig.upstreamFormatAnthropic", {
-                defaultValue: "Anthropic Messages（需开启路由）",
+                defaultValue: "Anthropic Messages（需转换）",
               })}
             </SelectItem>
           )}
         </SelectContent>
       </Select>
-      {/* Chat / Anthropic 的「需开启路由」已写在选项里；Copilot 的选项没写，单独提示。 */}
+      {/* 直连下 Chat / Anthropic 发不出请求，按实际模式提示后果；Copilot 恒需路由，单独提示。 */}
+      {directModeFormatNotice &&
+        !isCopilotPreset &&
+        (isChatFormat || isAnthropicFormat) && (
+          <DirectModeFormatWarning notice={directModeFormatNotice} />
+        )}
       {isCopilotPreset && (
         <p className="text-xs leading-relaxed text-fg-2">
           {t("codexConfig.upstreamFormatCopilotRouteHint")}
@@ -1452,12 +1466,17 @@ export function CodexFormFields({
   );
 
   // 两项都只在路由模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
-  const userAgentAndOverrides = (
+  // Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过，不显示。
+  const userAgentAndOverrides = isCopilotPreset ? null : (
     <>
       <p className="text-xs leading-relaxed text-fg-2">
-        {t("codexConfig.routeOnlySettingsHint", {
-          defaultValue: "以下两项只在路由、聚合模式下生效。",
-        })}
+        {isGrokBuild
+          ? t("grokBuild.routeOnlySettingsHint", {
+              defaultValue: "以下两项只在路由模式下生效。",
+            })
+          : t("codexConfig.routeOnlySettingsHint", {
+              defaultValue: "以下两项只在路由、聚合模式下生效。",
+            })}
       </p>
       <CustomUserAgentField
         id="codex-custom-user-agent"
@@ -1741,9 +1760,79 @@ export function CodexFormFields({
     </p>
   );
 
+  // 默认模型 —— config.toml 顶层 model，Codex 启动时默认请求的模型。实时写回 TOML；留空则删行。
+  // 有模型列表时第一行就是它，不显示这个框（Grok Build 没有列表，一直显示）；列表为空时
+  // 两种布局都显示，聚合模式下发布的就是它。
+  const defaultModelField = category !== "official" &&
+    onModelChange &&
+    (!firstRowIsDefault || catalogRows.length === 0) && (
+      <div className="space-y-1.5">
+        {labelWithHelp(
+          t("codexConfig.defaultModelLabel", { defaultValue: "默认模型" }),
+          isGrokBuild
+            ? t("grokBuild.defaultModelHint", {
+                defaultValue: "Grok Build 默认请求的模型，随时可改。",
+              })
+            : t("codexConfig.defaultModelHint", {
+                defaultValue:
+                  "Codex 默认请求的模型。添加模型列表后，列表第一行就是默认模型。",
+              }),
+          "codexDefaultModel",
+        )}
+        <div className="flex gap-1">
+          <Input
+            id="codexDefaultModel"
+            value={codexModel}
+            onChange={(event) => onModelChange(event.target.value)}
+            placeholder={
+              isGrokBuild
+                ? t("grokBuild.defaultModelPlaceholder", {
+                    defaultValue: "例如: grok-4.5",
+                  })
+                : t("codexConfig.defaultModelPlaceholder", {
+                    defaultValue: "例如: gpt-5.6",
+                  })
+            }
+            className="flex-1"
+          />
+          {/* 有模型列表时用列表上的「获取模型列表」，这里不再放一个。 */}
+          {!canEditCatalog && (
+            <HoverTip content={t("providerForm.fetchModels")}>
+              <Button
+                aria-label={t("providerForm.fetchModels")}
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={handleFetchModels}
+                disabled={isFetchingModels}
+                className="shrink-0"
+              >
+                {isFetchingModels ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+              </Button>
+            </HoverTip>
+          )}
+          {defaultModelSuggestions.length > 0 && (
+            <ModelDropdown
+              models={defaultModelSuggestions}
+              onSelect={(id) => onModelChange(id)}
+            />
+          )}
+        </div>
+      </div>
+    );
+
   if (variant === "stack") {
     const showFormatFields = shouldShowSpeedTest && !isXaiOauthPreset;
     const showReasoning = isChatFormat && canEditReasoning;
+    // Copilot 不显示 UA 和请求覆盖，Responses 格式下高级区就空了。
+    const hasStackAdvancedContent =
+      (showFormatFields && isAnthropicFormat) ||
+      showReasoning ||
+      userAgentAndOverrides !== null;
     return (
       <>
         {oauthSections}
@@ -1799,64 +1888,69 @@ export function CodexFormFields({
             ) : (
               <p className="text-xs leading-relaxed text-fg-2">
                 {t("codexConfig.modelListEmpty", {
-                  defaultValue:
-                    "未配置模型：聚合模式下只发布这家的默认模型（config.toml 的 model）。",
+                  defaultValue: "未配置模型：聚合模式下只发布下面的默认模型。",
                 })}
               </p>
             )}
           </div>
         )}
+        {defaultModelField}
 
-        <Collapsible
-          open={stackAdvancedExpanded}
-          onOpenChange={setStackAdvancedExpanded}
-          className="rounded-lg border border-border p-4"
-        >
-          <CollapsibleTrigger asChild>
-            <Button
-              type="button"
-              variant={null}
-              size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
-            >
-              {stackAdvancedExpanded ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
-              )}
-              {t("providerForm.advancedOptionsToggle", {
-                defaultValue: "高级选项",
-              })}
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-3 pt-3">
-            {showFormatFields &&
-              isAnthropicFormat &&
-              impersonateClaudeCodeToggle}
-            {showFormatFields && isAnthropicFormat && maxOutputTokensField}
-            {showReasoning && (
-              <div
-                className={cn(
-                  "space-y-3",
-                  showFormatFields &&
-                    isAnthropicFormat &&
-                    "border-t border-border pt-3",
-                )}
+        {hasStackAdvancedContent && (
+          <Collapsible
+            open={stackAdvancedExpanded}
+            onOpenChange={setStackAdvancedExpanded}
+            className="rounded-lg border border-border p-4"
+          >
+            <CollapsibleTrigger asChild>
+              <Button
+                type="button"
+                variant={null}
+                size="sm"
+                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
               >
-                {reasoningFields}
-              </div>
-            )}
-            <div
-              className={cn(
-                "space-y-3",
-                ((showFormatFields && isAnthropicFormat) || showReasoning) &&
-                  "border-t border-border pt-3",
+                {stackAdvancedExpanded ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+                {t("providerForm.advancedOptionsToggle", {
+                  defaultValue: "高级选项",
+                })}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-3 pt-3">
+              {showFormatFields &&
+                isAnthropicFormat &&
+                impersonateClaudeCodeToggle}
+              {showFormatFields && isAnthropicFormat && maxOutputTokensField}
+              {showReasoning && (
+                <div
+                  className={cn(
+                    "space-y-3",
+                    showFormatFields &&
+                      isAnthropicFormat &&
+                      "border-t border-border pt-3",
+                  )}
+                >
+                  {reasoningFields}
+                </div>
               )}
-            >
-              {userAgentAndOverrides}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+              {userAgentAndOverrides && (
+                <div
+                  className={cn(
+                    "space-y-3",
+                    ((showFormatFields && isAnthropicFormat) ||
+                      showReasoning) &&
+                      "border-t border-border pt-3",
+                  )}
+                >
+                  {userAgentAndOverrides}
+                </div>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
+        )}
 
         {speedTestModal}
       </>
@@ -1888,7 +1982,7 @@ export function CodexFormFields({
                 >
                   {t("codexConfig.modelListDefaultHelp", {
                     defaultValue:
-                      "这些模型会出现在 Codex 的 /model 里，带上各自的上下文窗口和思考等级。第一行是默认模型。",
+                      "这些模型会出现在 Codex 的 /model 里，第一行是默认模型。名字是官方 GPT 模型的行按官方条目生成，行里的显示名、窗口和思考等级不生效。",
                   })}
                 </HelpTip>
               </div>
@@ -1918,69 +2012,8 @@ export function CodexFormFields({
         </div>
       )}
 
-      {/* 默认模型 —— config.toml 顶层 model，Codex 启动时默认请求的模型。实时写回 TOML；
-          留空则删行。有模型列表时第一行就是它，不显示这个框（Grok Build 没有列表，一直显示）。 */}
-      {category !== "official" &&
-        onModelChange &&
-        (!firstRowIsDefault || catalogRows.length === 0) && (
-          <div className="space-y-1.5">
-            {labelWithHelp(
-              t("codexConfig.defaultModelLabel", { defaultValue: "默认模型" }),
-              isGrokBuild
-                ? t("grokBuild.defaultModelHint", {
-                    defaultValue: "Grok Build 默认请求的模型，随时可改。",
-                  })
-                : t("codexConfig.defaultModelHint", {
-                    defaultValue:
-                      "Codex 默认请求的模型。添加模型列表后，列表第一行就是默认模型。",
-                  }),
-              "codexDefaultModel",
-            )}
-            <div className="flex gap-1">
-              <Input
-                id="codexDefaultModel"
-                value={codexModel}
-                onChange={(event) => onModelChange(event.target.value)}
-                placeholder={
-                  isGrokBuild
-                    ? t("grokBuild.defaultModelPlaceholder", {
-                        defaultValue: "例如: grok-4.5",
-                      })
-                    : t("codexConfig.defaultModelPlaceholder", {
-                        defaultValue: "例如: gpt-5.6",
-                      })
-                }
-                className="flex-1"
-              />
-              {/* 有模型列表时用列表上的「获取模型列表」，这里不再放一个。 */}
-              {!canEditCatalog && (
-                <HoverTip content={t("providerForm.fetchModels")}>
-                  <Button
-                    aria-label={t("providerForm.fetchModels")}
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={handleFetchModels}
-                    disabled={isFetchingModels}
-                    className="shrink-0"
-                  >
-                    {isFetchingModels ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Download className="h-4 w-4" />
-                    )}
-                  </Button>
-                </HoverTip>
-              )}
-              {defaultModelSuggestions.length > 0 && (
-                <ModelDropdown
-                  models={defaultModelSuggestions}
-                  onSelect={(id) => onModelChange(id)}
-                />
-              )}
-            </div>
-          </div>
-        )}
+      {/* 默认模型：列表为空（或没有列表）时才显示 */}
+      {defaultModelField}
 
       {/* 子代理 —— config.toml 的 [agents] default_subagent_model / default_subagent_reasoning_effort。
           留空删键，子代理跟随主模型；聚合模式下不写进 live。 */}
@@ -2123,15 +2156,17 @@ export function CodexFormFields({
               </div>
             )}
 
-            <div
-              className={cn(
-                "space-y-3",
-                (shouldShowSpeedTest || (isChatFormat && canEditReasoning)) &&
-                  "border-t border-border pt-3",
-              )}
-            >
-              {userAgentAndOverrides}
-            </div>
+            {userAgentAndOverrides && (
+              <div
+                className={cn(
+                  "space-y-3",
+                  (shouldShowSpeedTest || (isChatFormat && canEditReasoning)) &&
+                    "border-t border-border pt-3",
+                )}
+              >
+                {userAgentAndOverrides}
+              </div>
+            )}
           </CollapsibleContent>
         </Collapsible>
       )}

@@ -140,7 +140,7 @@ export function ClaudeStackModelsField({
             >
               {t("providerForm.stackModelDefaultHelp", {
                 defaultValue:
-                  "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一行是默认模型：这家被设为默认时，启动和后台任务都用它。",
+                  "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一行是默认模型，也会写成这张卡的 ANTHROPIC_MODEL。",
               })}
             </HelpTip>
           </div>

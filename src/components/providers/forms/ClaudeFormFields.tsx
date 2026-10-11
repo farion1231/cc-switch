@@ -28,9 +28,11 @@ import {
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import {
   ApiKeySection,
+  DirectModeFormatWarning,
   EndpointField,
   ModelDropdown,
   ModelInputWithFetch,
+  type DirectModeFormatNotice,
 } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
@@ -171,6 +173,8 @@ interface ClaudeFormFieldsProps {
    * 模型列表 + 高级），不显示模型映射。
    */
   variant?: "classic" | "stack";
+  /** 应用实际在直连时传：选了要靠路由转换的格式就在格式下面提示后果。 */
+  directModeFormatNotice?: DirectModeFormatNotice;
   /** Stack 布局的模型列表（第一行是这家的默认模型）。 */
   stackModelRows?: ClaudeStackModelRow[];
   onStackModelRowsChange?: (rows: ClaudeStackModelRow[]) => void;
@@ -241,6 +245,7 @@ export function ClaudeFormFields({
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
   variant = "classic",
+  directModeFormatNotice,
   stackModelRows = [],
   onStackModelRowsChange,
 }: ClaudeFormFieldsProps) {
@@ -255,7 +260,7 @@ export function ClaudeFormFields({
     defaultOpusModel ||
     defaultFableModel ||
     subagentModel ||
-    (!isXaiOauthPreset && apiFormat !== "anthropic") ||
+    (!isXaiOauthPreset && !isCodexOauthPreset && apiFormat !== "anthropic") ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     customUserAgent ||
     hasRequestOverrides
@@ -798,8 +803,8 @@ export function ClaudeFormFields({
 
   const endpointSection = (
     <>
-      {/* Base URL 输入框 */}
-      {shouldShowSpeedTest && (
+      {/* Base URL 输入框；Codex / xAI 托管账号卡的上游地址由后端固定，不显示 */}
+      {shouldShowSpeedTest && !isCodexOauthPreset && !isXaiOauthPreset && (
         <EndpointField
           id="baseUrl"
           label={t("providerForm.apiEndpoint")}
@@ -852,59 +857,64 @@ export function ClaudeFormFields({
 
   const apiFormatField = (
     <>
-      {/* 上游格式选择（仅非云服务商显示） */}
-      {category !== "cloud_provider" && !isXaiOauthPreset && (
-        <div className="space-y-2">
-          {compactHints ? (
-            <div className="flex items-center gap-0.5">
+      {/* 上游格式选择（仅非云服务商显示；xAI、Codex 托管账号卡的格式由后端固定） */}
+      {category !== "cloud_provider" &&
+        !isXaiOauthPreset &&
+        !isCodexOauthPreset && (
+          <div className="space-y-2">
+            {compactHints ? (
+              <div className="flex items-center gap-0.5">
+                <FormLabel htmlFor="apiFormat">{apiFormatLabel}</FormLabel>
+                <HelpTip title={apiFormatLabel}>
+                  {t("providerForm.apiFormatHelp", {
+                    defaultValue:
+                      "看供应商原生支持哪种协议：Anthropic Messages 原样转发、不转换格式；其余三种由路由转成 Anthropic Messages。",
+                  })}
+                </HelpTip>
+              </div>
+            ) : (
               <FormLabel htmlFor="apiFormat">{apiFormatLabel}</FormLabel>
-              <HelpTip title={apiFormatLabel}>
-                {t("providerForm.apiFormatHelp", {
+            )}
+            <Select value={apiFormat} onValueChange={onApiFormatChange}>
+              <SelectTrigger id="apiFormat" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="anthropic">
+                  {t("providerForm.apiFormatAnthropic", {
+                    defaultValue: "Anthropic Messages (原生)",
+                  })}
+                </SelectItem>
+                <SelectItem value="openai_chat">
+                  {t("providerForm.apiFormatOpenAIChat", {
+                    defaultValue: "OpenAI Chat Completions (需转换)",
+                  })}
+                </SelectItem>
+                <SelectItem value="openai_responses">
+                  {t("providerForm.apiFormatOpenAIResponses", {
+                    defaultValue: "OpenAI Responses API (需转换)",
+                  })}
+                </SelectItem>
+                <SelectItem value="gemini_native">
+                  {t("providerForm.apiFormatGeminiNative", {
+                    defaultValue: "Gemini Native generateContent (需转换)",
+                  })}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            {directModeFormatNotice && apiFormat !== "anthropic" && (
+              <DirectModeFormatWarning notice={directModeFormatNotice} />
+            )}
+            {!compactHints && (
+              <p className="text-xs leading-relaxed text-fg-2">
+                {t("providerForm.apiFormatHint", {
                   defaultValue:
-                    "看供应商原生支持哪种协议：Anthropic Messages 直连、不转换格式；其余三种由路由转成 Anthropic Messages。",
+                    "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（原样转发，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 由路由转成 Anthropic Messages，只能在路由、聚合模式下使用。",
                 })}
-              </HelpTip>
-            </div>
-          ) : (
-            <FormLabel htmlFor="apiFormat">{apiFormatLabel}</FormLabel>
-          )}
-          <Select value={apiFormat} onValueChange={onApiFormatChange}>
-            <SelectTrigger id="apiFormat" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="anthropic">
-                {t("providerForm.apiFormatAnthropic", {
-                  defaultValue: "Anthropic Messages (原生)",
-                })}
-              </SelectItem>
-              <SelectItem value="openai_chat">
-                {t("providerForm.apiFormatOpenAIChat", {
-                  defaultValue: "OpenAI Chat Completions (需转换)",
-                })}
-              </SelectItem>
-              <SelectItem value="openai_responses">
-                {t("providerForm.apiFormatOpenAIResponses", {
-                  defaultValue: "OpenAI Responses API (需转换)",
-                })}
-              </SelectItem>
-              <SelectItem value="gemini_native">
-                {t("providerForm.apiFormatGeminiNative", {
-                  defaultValue: "Gemini Native generateContent (需转换)",
-                })}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          {!compactHints && (
-            <p className="text-xs leading-relaxed text-fg-2">
-              {t("providerForm.apiFormatHint", {
-                defaultValue:
-                  "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
-              })}
-            </p>
-          )}
-        </div>
-      )}
+              </p>
+            )}
+          </div>
+        )}
     </>
   );
 
@@ -919,7 +929,8 @@ export function ClaudeFormFields({
           <FormLabel>{authFieldLabel}</FormLabel>
           <HelpTip title={authFieldLabel}>
             {t("providerForm.authFieldHint", {
-              defaultValue: "选择写入配置的认证环境变量名",
+              defaultValue:
+                "直连时是写进 settings.json 的变量名；经过路由时，AUTH_TOKEN 以 Bearer、API_KEY 以 x-api-key 发给上游。",
             })}
           </HelpTip>
         </div>
@@ -949,7 +960,8 @@ export function ClaudeFormFields({
       {!compactHints && (
         <p className="text-xs text-fg-2">
           {t("providerForm.authFieldHint", {
-            defaultValue: "选择写入配置的认证环境变量名",
+            defaultValue:
+              "直连时是写进 settings.json 的变量名；经过路由时，AUTH_TOKEN 以 Bearer、API_KEY 以 x-api-key 发给上游。",
           })}
         </p>
       )}
@@ -993,53 +1005,56 @@ export function ClaudeFormFields({
           />
         )}
 
-        <Collapsible
-          open={stackAdvancedExpanded}
-          onOpenChange={setStackAdvancedExpanded}
-          className="rounded-lg border border-border p-4"
-        >
-          <CollapsibleTrigger asChild>
-            <Button
-              type="button"
-              variant={null}
-              size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
-            >
-              {stackAdvancedExpanded ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
-              )}
-              {t("providerForm.advancedOptionsToggle")}
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-4 pt-2">
-            <p className="text-xs leading-relaxed text-fg-2">
-              {t("codexConfig.routeOnlySettingsHint", {
-                defaultValue: "以下两项只在路由、聚合模式下生效。",
-              })}
-            </p>
-            <CustomUserAgentField
-              id="claude-custom-user-agent"
-              value={customUserAgent}
-              onChange={onCustomUserAgentChange}
-              help={t("providerForm.customUserAgentHelp", {
-                defaultValue: "替换转发到供应商的请求里的 User-Agent。",
-              })}
-            />
-            <div className="border-t border-border pt-3">
-              <LocalProxyRequestOverridesField
-                headersJson={localProxyHeadersOverride}
-                bodyJson={localProxyBodyOverride}
-                onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
-                onBodyJsonChange={onLocalProxyBodyOverrideChange}
-                help={t("providerForm.localProxyRequestOverridesHelp", {
-                  defaultValue: "作用于格式转换后发给上游的请求。",
+        {/* 高级区只有 UA 和请求覆盖；Copilot 的转发会跳过这两项，整块不显示 */}
+        {!isCopilotPreset && (
+          <Collapsible
+            open={stackAdvancedExpanded}
+            onOpenChange={setStackAdvancedExpanded}
+            className="rounded-lg border border-border p-4"
+          >
+            <CollapsibleTrigger asChild>
+              <Button
+                type="button"
+                variant={null}
+                size="sm"
+                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
+              >
+                {stackAdvancedExpanded ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+                {t("providerForm.advancedOptionsToggle")}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-4 pt-2">
+              <p className="text-xs leading-relaxed text-fg-2">
+                {t("codexConfig.routeOnlySettingsHint", {
+                  defaultValue: "以下两项只在路由、聚合模式下生效。",
+                })}
+              </p>
+              <CustomUserAgentField
+                id="claude-custom-user-agent"
+                value={customUserAgent}
+                onChange={onCustomUserAgentChange}
+                help={t("providerForm.customUserAgentHelp", {
+                  defaultValue: "替换转发到供应商的请求里的 User-Agent。",
                 })}
               />
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+              <div className="border-t border-border pt-3">
+                <LocalProxyRequestOverridesField
+                  headersJson={localProxyHeadersOverride}
+                  bodyJson={localProxyBodyOverride}
+                  onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
+                  onBodyJsonChange={onLocalProxyBodyOverrideChange}
+                  help={t("providerForm.localProxyRequestOverridesHelp", {
+                    defaultValue: "作用于格式转换后发给上游的请求。",
+                  })}
+                />
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
       </>
     );
   }
@@ -1081,7 +1096,7 @@ export function ClaudeFormFields({
           <CollapsibleContent className="space-y-4 pt-2">
             {apiFormatField}
 
-            {authFieldSelect}
+            {!isCodexOauthPreset && !isXaiOauthPreset && authFieldSelect}
 
             {/* 模型映射 */}
             <div className="space-y-1 border-t border-border pt-2">
@@ -1286,28 +1301,39 @@ export function ClaudeFormFields({
                   })}
                 </label>
               </div>
+              {/* 直连时它是 Claude Code 的主模型；经过路由时才是各档留空、没匹配到档位的回落。 */}
               <p className="text-xs text-fg-2">
-                {t("providerForm.fallbackModelHint", {
-                  defaultValue:
-                    "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
-                })}
+                {directModeFormatNotice
+                  ? t("providerForm.fallbackModelHintDirect", {
+                      defaultValue:
+                        "写进 ANTHROPIC_MODEL，是 Claude Code 启动时用的主模型。后台任务看 Haiku 那一档：用第三方端点时请一并填写，否则会用原始 Claude 模型名请求上游。",
+                    })
+                  : t("providerForm.fallbackModelHint", {
+                      defaultValue:
+                        "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
+                    })}
               </p>
             </div>
 
-            <CustomUserAgentField
-              id="claude-custom-user-agent"
-              value={customUserAgent}
-              onChange={onCustomUserAgentChange}
-            />
+            {/* Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过 */}
+            {!isCopilotPreset && (
+              <>
+                <CustomUserAgentField
+                  id="claude-custom-user-agent"
+                  value={customUserAgent}
+                  onChange={onCustomUserAgentChange}
+                />
 
-            <div className="border-t border-border pt-3">
-              <LocalProxyRequestOverridesField
-                headersJson={localProxyHeadersOverride}
-                bodyJson={localProxyBodyOverride}
-                onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
-                onBodyJsonChange={onLocalProxyBodyOverrideChange}
-              />
-            </div>
+                <div className="border-t border-border pt-3">
+                  <LocalProxyRequestOverridesField
+                    headersJson={localProxyHeadersOverride}
+                    bodyJson={localProxyBodyOverride}
+                    onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
+                    onBodyJsonChange={onLocalProxyBodyOverrideChange}
+                  />
+                </div>
+              </>
+            )}
           </CollapsibleContent>
         </Collapsible>
       )}

@@ -169,7 +169,7 @@ function formatControl() {
 
 const formatLabels = {
   auto: "codexConfig.upstreamFormatAuto",
-  openai_chat: "Chat Completions（需开启路由）",
+  openai_chat: "Chat Completions（需转换）",
   openai_responses: "codexConfig.upstreamFormatCopilotResponses",
 };
 
