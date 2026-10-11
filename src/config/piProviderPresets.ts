@@ -2631,6 +2631,27 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "botcf",
   },
+  {
+    name: "YYLX",
+    providerKey: "cc-switch-yylx",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      name: "YYLX",
+      baseUrl: "https://app.yylx.io",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5", { id: "claude-sonnet-5" }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5-20251001",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "yylx",
+  },
 ];
 
 function materializeVerifiedThinkingProfiles(

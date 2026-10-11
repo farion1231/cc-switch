@@ -3774,4 +3774,22 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ),
     icon: "botcf",
   },
+  {
+    name: "YYLX",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "yylx",
+      "https://app.yylx.io/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://app.yylx.io/v1",
+      "https://global.yylx.io/v1",
+      "https://cn.yylx.io/v1",
+    ],
+    icon: "yylx",
+  },
 ];

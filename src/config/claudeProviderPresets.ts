@@ -2199,4 +2199,22 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "botcf",
   },
+  {
+    name: "YYLX",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://app.yylx.io",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: [
+      "https://app.yylx.io",
+      "https://global.yylx.io",
+      "https://cn.yylx.io",
+    ],
+    category: "aggregator",
+    icon: "yylx",
+  },
 ];

@@ -1807,4 +1807,24 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     ),
     icon: "botcf",
   },
+  {
+    name: "YYLX",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    category: "aggregator",
+    baseUrl: "https://app.yylx.io",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5-20251001",
+    ),
+    endpointCandidates: [
+      "https://app.yylx.io",
+      "https://global.yylx.io",
+      "https://cn.yylx.io",
+    ],
+    icon: "yylx",
+  },
 ];

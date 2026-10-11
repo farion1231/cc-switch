@@ -654,6 +654,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://www.runtoken.ai", "https://fast.runtoken.ai"],
     icon: "runtoken",
   },
+  {
+    name: "YYLX",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://app.yylx.io",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://app.yylx.io",
+    model: "gemini-3.1-pro-preview",
+    description: "YYLX",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://app.yylx.io",
+      "https://global.yylx.io",
+      "https://cn.yylx.io",
+    ],
+    icon: "yylx",
+  },
 ];
 
 export function getGeminiPresetByName(

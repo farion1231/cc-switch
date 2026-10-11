@@ -5039,4 +5039,57 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     icon: "botcf",
   },
+  {
+    name: "YYLX",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      baseUrl: "https://app.yylx.io",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 64000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "yylx/claude-opus-5-5",
+        fallbacks: ["yylx/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "yylx/claude-opus-5-5": { alias: "Opus" },
+        "yylx/claude-sonnet-5": { alias: "Sonnet" },
+        "yylx/claude-haiku-4-5-20251001": { alias: "Haiku" },
+      },
+    },
+    icon: "yylx",
+  },
 ];

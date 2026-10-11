@@ -698,4 +698,18 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     category: "aggregator",
     icon: "botcf",
   },
+  {
+    name: "YYLX",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    auth: grokAuth(),
+    config: grokPresetConfig("YYLX", "https://app.yylx.io/v1"),
+    endpointCandidates: [
+      "https://app.yylx.io/v1",
+      "https://global.yylx.io/v1",
+      "https://cn.yylx.io/v1",
+    ],
+    category: "aggregator",
+    icon: "yylx",
+  },
 ];
