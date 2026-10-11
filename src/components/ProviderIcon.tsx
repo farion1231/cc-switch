@@ -18,6 +18,25 @@ interface ProviderIconProps {
   fallbackClassName?: string; // 覆盖首字母 fallback 的底色 / 文字色
 }
 
+/**
+ * 提取供应商名称的首字母（最多 2 个字符）。
+ *
+ * 使用 `Array.from` 按 Unicode 码位安全切分，避免 emoji 或 UTF-16 代理对（surrogate pairs）
+ * 被截半产生无效字符（例如 `🤖 AI` 会被截出孤立的高代理项 `\ud83e`）。
+ */
+export function getProviderInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  return Array.from(
+    words
+      .map((word) => Array.from(word)[0])
+      .filter(Boolean)
+      .join(""),
+  )
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
 export const ProviderIcon: React.FC<ProviderIconProps> = ({
   icon,
   name,
@@ -99,15 +118,9 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       />
     );
   }
-
   // Fallback：显示首字母
   if (showFallback) {
-    const initials = name
-      .split(" ")
-      .map((word) => word[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
+    const initials = getProviderInitials(name);
     const fallbackFontSize =
       typeof size === "number" ? `${Math.max(size * 0.5, 12)}px` : "0.5em";
     return (
