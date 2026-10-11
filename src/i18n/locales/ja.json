@@ -1679,7 +1679,7 @@
     "fallbackModelMissing": "未設定です。どの枠にも当たらないリクエストが元の Claude モデル名で上流へ送られ、エラーになることがあります。",
     "quickSetModels": "一括設定",
     "quickSetSuccess": "モデル名をすべての役割に適用しました",
-    "advancedOptionsToggle": "高級オプション",
+    "advancedOptionsToggle": "詳細オプション",
     "categoryOfficial": "公式",
     "categoryCnOfficial": "オープンソース公式",
     "categoryAggregation": "アグリゲーター",
