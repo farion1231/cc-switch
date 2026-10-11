@@ -1943,7 +1943,10 @@
     "inactiveFieldCopied": "已复制",
     "upstreamFormatCopilotRouteHint": "所有模式都需要开启路由，由路由注入 Copilot 账号凭据；手动指定的协议模型不支持时会报错。",
     "maxOutputTokensWarning": "不要超过模型或网关的真实输出上限，否则会返回 400。",
-    "routeOnlySettingsHint": "以下两项只在路由、聚合模式下生效。"
+    "routeOnlySettingsHint": "以下两项只在路由、聚合模式下生效。",
+    "mainReasoningEffortLabel": "推理强度",
+    "mainReasoningEffortHelp": "Codex 主代理默认用的推理强度，会盖过模型列表里每行的默认等级。选「按模型默认」就删掉这一项，各模型用自己的默认等级。",
+    "mainReasoningEffortDefault": "按模型默认"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",

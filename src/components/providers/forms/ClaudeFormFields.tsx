@@ -1096,7 +1096,12 @@ export function ClaudeFormFields({
           <CollapsibleContent className="space-y-4 pt-2">
             {apiFormatField}
 
-            {!isCodexOauthPreset && !isXaiOauthPreset && authFieldSelect}
+            {/* 认证字段只决定 Anthropic 格式上游的认证头（OpenAI 格式一律 Bearer）；Copilot
+                靠它决定占位符写在哪个变量；Codex / xAI 托管账号卡的认证由后端注入。 */}
+            {!isCodexOauthPreset &&
+              !isXaiOauthPreset &&
+              (apiFormat === "anthropic" || isCopilotPreset) &&
+              authFieldSelect}
 
             {/* 模型映射 */}
             <div className="space-y-1 border-t border-border pt-2">

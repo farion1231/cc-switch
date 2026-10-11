@@ -4,9 +4,11 @@ import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
+  extractCodexTopLevelString,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
   setCodexAgentsString,
   setCodexModelName as setCodexModelNameInConfig,
+  setCodexTopLevelString,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
 import { normalizeTomlText } from "@/utils/textNormalization";
@@ -278,6 +280,22 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     [setCodexConfig],
   );
 
+  // 主代理的推理强度（顶层 `model_reasoning_effort`）：直接从 TOML 读，改动实时写回，清空则删键
+  const codexReasoningEffort = useMemo(
+    () =>
+      extractCodexTopLevelString(codexConfig, "model_reasoning_effort") || "",
+    [codexConfig],
+  );
+
+  const handleCodexReasoningEffortChange = useCallback(
+    (effort: string) => {
+      setCodexConfig((prev) =>
+        setCodexTopLevelString(prev, "model_reasoning_effort", effort),
+      );
+    },
+    [setCodexConfig],
+  );
+
   // 子代理的默认模型和推理强度（`[agents]` 表）：直接从 TOML 读，改动实时写回，清空则删键
   const codexSubagentModel = useMemo(
     () => extractCodexAgentsString(codexConfig, "default_subagent_model") || "",
@@ -354,6 +372,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexApiKey,
     codexBaseUrl,
     codexModel,
+    codexReasoningEffort,
     codexSubagentModel,
     codexSubagentReasoningEffort,
     codexCatalogModels,
@@ -364,6 +383,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
+    handleCodexReasoningEffortChange,
     handleCodexSubagentModelChange,
     handleCodexSubagentReasoningEffortChange,
     handleCodexConfigChange,

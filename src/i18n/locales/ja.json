@@ -1943,7 +1943,10 @@
     "inactiveFieldCopied": "コピーしました",
     "upstreamFormatCopilotRouteHint": "どのモードでもルーティングが必要で、ルーティングが Copilot アカウントの認証情報を注入します。手動指定したプロトコルにモデルが対応していないとエラーになります。",
     "maxOutputTokensWarning": "モデルやゲートウェイの実際の出力上限を超えないでください。超えると 400 が返ります。",
-    "routeOnlySettingsHint": "以下の二つはルーティングモードと集約モードでのみ有効です。"
+    "routeOnlySettingsHint": "以下の二つはルーティングモードと集約モードでのみ有効です。",
+    "mainReasoningEffortLabel": "推論の強さ",
+    "mainReasoningEffortHelp": "Codex のメインエージェントが既定で使う推論の強さです。モデル一覧の各行の既定レベルより優先されます。「モデルの既定」を選ぶとこの項目を削除し、各モデル自身の既定レベルを使います。",
+    "mainReasoningEffortDefault": "モデルの既定"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",

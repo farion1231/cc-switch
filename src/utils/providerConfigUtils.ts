@@ -1500,6 +1500,86 @@ export const setCodexAgentsString = (
   }
 };
 
+// ========== Codex top-level string fields ==========
+
+// 主代理的推理强度（顶层 `model_reasoning_effort`）。后端把它当关键字段，随供应商切换。
+export type CodexTopLevelStringKey = "model_reasoning_effort";
+
+export const extractCodexTopLevelString = (
+  configText: string | undefined | null,
+  key: CodexTopLevelStringKey,
+): string | undefined => {
+  const text = normalizeTomlText(
+    typeof configText === "string" ? configText : "",
+  );
+  if (!text) return undefined;
+  try {
+    const value = (parseToml(text) as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    // 编辑中的 TOML 解析不了时按行在顶层找。
+  }
+  const lines = text.split("\n");
+  const patterns = tomlStringAssignmentPatterns(key);
+  const topLevelEndIndex = getTopLevelEndIndex(lines);
+  for (let i = 0; i < topLevelEndIndex; i += 1) {
+    const doubleQuoted = lines[i].match(patterns.doubleQuoted);
+    if (doubleQuoted) return unescapeTomlBasicString(doubleQuoted[1]);
+    const singleQuoted = lines[i].match(patterns.singleQuoted);
+    if (singleQuoted) return singleQuoted[1];
+  }
+  return undefined;
+};
+
+// 写入或删除顶层的一个字符串键；空值删除。新键放在 `model` 行后面（没有就放在
+// `model_provider` 后面，再没有就放在第一个表之前）。改完解析失败就原样返回。
+export const setCodexTopLevelString = (
+  configText: string,
+  key: CodexTopLevelStringKey,
+  value: string,
+): string => {
+  const trimmed = value.trim();
+  const normalizedText = normalizeTomlText(configText);
+  const lines = normalizedText ? normalizedText.split("\n") : [];
+  const topLevelEndIndex = getTopLevelEndIndex(lines);
+  const lineIndex = findTomlLineInRange(
+    lines,
+    tomlStringAssignmentPatterns(key).anyValue,
+    0,
+    topLevelEndIndex,
+  );
+  const replacementLine = `${key} = ${tomlBasicString(trimmed)}`;
+
+  if (!trimmed) {
+    if (lineIndex === -1) return normalizedText;
+    lines.splice(lineIndex, 1);
+  } else if (lineIndex !== -1) {
+    lines[lineIndex] = replacementLine;
+  } else {
+    const modelIndex = findTopLevelModelLineIndex(lines, topLevelEndIndex);
+    const anchor =
+      modelIndex !== -1 ? modelIndex : getTopLevelModelProviderLineIndex(lines);
+    lines.splice(
+      anchor !== -1 ? anchor + 1 : topLevelEndIndex,
+      0,
+      replacementLine,
+    );
+  }
+
+  const candidate = finalizeTomlText(lines);
+  try {
+    parseToml(normalizedText);
+  } catch {
+    return candidate;
+  }
+  try {
+    parseToml(candidate);
+    return candidate;
+  } catch {
+    return normalizedText;
+  }
+};
+
 // ========== Codex top-level integer field utils ==========
 
 const tomlTopLevelIntPattern = (field: string) =>
