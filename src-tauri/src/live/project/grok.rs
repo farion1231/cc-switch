@@ -44,7 +44,15 @@ impl GrokProjection {
             &crate::app_config::AppType::GrokBuild,
             settings,
         );
-        let settings: &Value = &resolved;
+        Self::of_raw(&resolved, false)
+    }
+
+    /// Project a provider row for editor display or persistence without resolving
+    /// API-key variable templates. Resolution is only for live/proxy writes.
+    pub(crate) fn of_raw(settings: &Value, official: bool) -> Result<Self, AppError> {
+        if official {
+            return Ok(Self { table: None });
+        }
         let text = settings
             .get("config")
             .and_then(Value::as_str)

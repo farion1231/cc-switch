@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+#[cfg(not(windows))]
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -954,9 +955,10 @@ mod tests {
             dir.path().join("index.mjs"),
             r#"
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 const ok = process.env.CC_SWITCH_VAR_NAME === "MY_KEY"
   && process.env.CC_SWITCH_REASON === "test"
-  && path.resolve(process.cwd()) === path.resolve(path.dirname(new URL(import.meta.url).pathname));
+  && path.resolve(process.cwd()) === path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 console.error("log line with secret sk-from-mjs-123");
 process.stdout.write(JSON.stringify({ apiKey: ok ? "sk-from-mjs-123" : "bad-env", expiresAt: Math.floor(Date.now()/1000) + 3600 }));
 "#,

@@ -439,6 +439,30 @@ pub fn propagate(state: &AppState, name: &str) -> (Vec<VarReference>, Vec<String
     (updated, errors)
 }
 
+/// Builds the result for a refresh request that was merged into an already
+/// successful run. Re-project live configuration here as the earlier run may
+/// have persisted the value while its live write failed.
+fn merged_refresh_outcome(state: &AppState, name: &str) -> Result<RefreshOutcome, AppError> {
+    let rec = state
+        .db
+        .get_api_key_var(name)?
+        .ok_or_else(|| var_not_found(name))?;
+    let mut outcome = RefreshOutcome {
+        success: true,
+        name: rec.name.clone(),
+        masked_value: rec.value.as_deref().map(mask_key),
+        expires_at: rec.state.expires_at,
+        resolved_script: rec.state.resolved_script.clone(),
+        ..Default::default()
+    };
+    if rec.config.enabled {
+        let (updated, errors) = propagate(state, &rec.name);
+        outcome.updated_providers = updated;
+        outcome.live_errors = errors;
+    }
+    Ok(outcome)
+}
+
 /// 把脚本结果写回变量（同步；会写库并传播到 live）
 pub fn commit_result(
     state: &AppState,
@@ -449,6 +473,18 @@ pub fn commit_result(
         .db
         .get_api_key_var(name)?
         .ok_or_else(|| var_not_found(name))?;
+    commit_result_for_snapshot(state, rec, result)
+}
+
+/// Commits the result for the exact record that launched the script. The DAO
+/// compares this snapshot atomically so an old script cannot overwrite a newer
+/// edit, rename, deletion, or same-name recreation.
+fn commit_result_for_snapshot(
+    state: &AppState,
+    rec: ApiKeyVarRecord,
+    result: Result<ScriptRun, RunFailure>,
+) -> Result<RefreshOutcome, AppError> {
+    let name = &rec.name;
     let mut st = rec.state.clone();
     let now = now_ms();
     st.last_attempt_at = Some(now);
@@ -496,11 +532,15 @@ pub fn commit_result(
             None
         }
     };
-    let value_changed = new_value.is_some() && new_value != rec.value;
-    state
+    if !state
         .db
-        .update_api_key_var_result(name, new_value.as_deref(), &st)?;
-    if outcome.success && rec.config.enabled && value_changed {
+        .update_api_key_var_result_if_current(&rec, new_value.as_deref(), &st)?
+    {
+        return Err(AppError::Conflict(format!(
+            "API Key 变量 {name} 在刷新期间已被修改，已丢弃旧脚本结果"
+        )));
+    }
+    if outcome.success && rec.config.enabled {
         let (updated, errors) = propagate(state, name);
         outcome.updated_providers = updated;
         outcome.live_errors = errors;
@@ -529,14 +569,16 @@ pub async fn refresh_var(
         .ok_or_else(|| var_not_found(name))?;
     // 合并并发请求：等锁期间已有一次成功刷新
     if rec.state.last_success_at.is_some_and(|t| t >= requested_at) {
-        return Ok(RefreshOutcome {
-            success: true,
-            name: name.to_string(),
-            masked_value: rec.value.as_deref().map(mask_key),
-            expires_at: rec.state.expires_at,
-            resolved_script: rec.state.resolved_script.clone(),
-            ..Default::default()
-        });
+        let handle = app.clone();
+        let name = name.to_string();
+        return tauri::async_runtime::spawn_blocking(move || {
+            let state = handle
+                .try_state::<AppState>()
+                .ok_or_else(|| AppError::Message("应用状态不可用".to_string()))?;
+            merged_refresh_outcome(state.inner(), &name)
+        })
+        .await
+        .map_err(|e| AppError::Message(format!("刷新任务执行失败: {e}")))?;
     }
     if !rec.config.enabled && reason != RefreshReason::Manual {
         return Err(AppError::localized(
@@ -546,14 +588,14 @@ pub async fn refresh_var(
         ));
     }
 
+    let expected = rec.clone();
     let result = execute(&rec, reason).await;
     let handle = app.clone();
-    let name_owned = name.to_string();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         let state = handle
             .try_state::<AppState>()
             .ok_or_else(|| AppError::Message("应用状态不可用".to_string()))?;
-        commit_result(state.inner(), &name_owned, result)
+        commit_result_for_snapshot(state.inner(), expected, result)
     })
     .await
     .map_err(|e| AppError::Message(format!("刷新任务执行失败: {e}")))??;
@@ -680,13 +722,7 @@ pub fn start_worker(app: tauri::AppHandle) {
     }
     tauri::async_runtime::spawn(async move {
         use tauri::Manager;
-        if let Some(state) = app.try_state::<AppState>() {
-            match state.db.load_api_key_var_cache() {
-                Ok(n) if n > 0 => log::info!("[ApiKeyVars] 已加载 {n} 个变量"),
-                Ok(_) => {}
-                Err(e) => log::warn!("[ApiKeyVars] 加载变量失败: {e}"),
-            }
-        }
+        // 缓存已由应用启动流程在注册 AppState 前同步加载，避免异步重载覆盖新值。
         // 等待启动流程完成
         tokio::time::sleep(Duration::from_secs(3)).await;
         let mut first = true;
@@ -715,7 +751,36 @@ pub fn start_worker(app: tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    use crate::app_config::MultiAppConfig;
+    use crate::provider::Provider;
+
     use super::*;
+
+    struct TestHomeGuard {
+        previous_test_home: Option<std::ffi::OsString>,
+    }
+
+    impl TestHomeGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let previous_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", path);
+            Self { previous_test_home }
+        }
+    }
+
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match self.previous_test_home.take() {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     #[test]
     fn name_validation_errors_are_localized() {
@@ -755,5 +820,249 @@ mod tests {
         let due: Vec<String> = due_vars(&db, now).into_iter().map(|(n, _)| n).collect();
         assert_eq!(due, vec!["DUE_T_ON".to_string()]);
         Ok(())
+    }
+
+    #[test]
+    fn stale_script_results_do_not_commit_after_variable_changes() -> Result<(), AppError> {
+        let state = AppState::new(Arc::new(Database::memory()?));
+        let cfg = |enabled, script_dir: &str| ApiKeyRefreshConfig {
+            enabled,
+            script_dir: script_dir.into(),
+            timeout_secs: None,
+            lead_time_secs: None,
+        };
+        let success = |value: &str| -> Result<ScriptRun, RunFailure> {
+            Ok(ScriptRun {
+                output: runner::RefreshOutput {
+                    api_key: value.into(),
+                    expires_at: None,
+                    refresh_after: None,
+                    message: None,
+                },
+                resolved_file: "old-script.mjs".into(),
+            })
+        };
+        let failure = || -> Result<ScriptRun, RunFailure> {
+            Err(RunFailure {
+                permanent: true,
+                error: "old script failed".into(),
+            })
+        };
+        const OLD_NAME: &str = "SERVICE_STALE_RESULT";
+        const RENAMED_NAME: &str = "SERVICE_STALE_RENAMED";
+
+        state
+            .db
+            .upsert_api_key_var(None, OLD_NAME, &cfg(true, "/old"))?;
+        let before_edit = state.db.get_api_key_var(OLD_NAME)?.unwrap();
+        state
+            .db
+            .upsert_api_key_var(Some(OLD_NAME), OLD_NAME, &cfg(false, "/new"))?;
+        assert!(matches!(
+            commit_result_for_snapshot(&state, before_edit, success("old-success")),
+            Err(AppError::Conflict(_))
+        ));
+        let disabled = state.db.get_api_key_var(OLD_NAME)?.unwrap();
+        assert_eq!(disabled.value, None);
+        assert_eq!(disabled.state, ApiKeyRefreshState::default());
+        assert_eq!(resolve::lookup(OLD_NAME).0, RefStatus::Disabled);
+
+        let before_rename = state.db.get_api_key_var(OLD_NAME)?.unwrap();
+        state
+            .db
+            .upsert_api_key_var(Some(OLD_NAME), RENAMED_NAME, &cfg(false, "/new"))?;
+        assert!(matches!(
+            commit_result_for_snapshot(&state, before_rename, failure()),
+            Err(AppError::Conflict(_))
+        ));
+        let renamed = state.db.get_api_key_var(RENAMED_NAME)?.unwrap();
+        assert_eq!(renamed.state, ApiKeyRefreshState::default());
+        assert_eq!(resolve::lookup(RENAMED_NAME).0, RefStatus::Disabled);
+
+        let before_delete = renamed;
+        assert!(state.db.delete_api_key_var(RENAMED_NAME)?);
+        state
+            .db
+            .upsert_api_key_var(None, RENAMED_NAME, &cfg(true, "/replacement"))?;
+        state.db.update_api_key_var_result(
+            RENAMED_NAME,
+            Some("replacement-value"),
+            &ApiKeyRefreshState::default(),
+        )?;
+        assert!(matches!(
+            commit_result_for_snapshot(&state, before_delete, failure()),
+            Err(AppError::Conflict(_))
+        ));
+        let replacement = state.db.get_api_key_var(RENAMED_NAME)?.unwrap();
+        assert_eq!(replacement.value.as_deref(), Some("replacement-value"));
+        assert_eq!(replacement.state, ApiKeyRefreshState::default());
+        assert_eq!(
+            resolve::lookup(RENAMED_NAME),
+            (RefStatus::Ok, Some("replacement-value".into()))
+        );
+        resolve::cache_remove(RENAMED_NAME);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn running_script_result_is_discarded_after_configuration_change() -> Result<(), AppError>
+    {
+        let script_dir = tempdir().map_err(|error| AppError::Message(error.to_string()))?;
+        std::fs::write(
+            script_dir.path().join("index.mjs"),
+            r#"import { existsSync, writeFileSync } from "node:fs";
+writeFileSync("started", "");
+const deadline = Date.now() + 4500;
+while (!existsSync("continue")) {
+  if (Date.now() > deadline) process.exit(2);
+  await new Promise(resolve => setTimeout(resolve, 10));
+}
+process.stdout.write(JSON.stringify({ apiKey: "old-script-key" }));"#,
+        )
+        .map_err(|error| AppError::Io {
+            path: script_dir.path().join("index.mjs").display().to_string(),
+            source: error,
+        })?;
+
+        let state = AppState::new(Arc::new(Database::memory()?));
+        let initial = ApiKeyRefreshConfig {
+            enabled: true,
+            script_dir: script_dir.path().display().to_string(),
+            timeout_secs: Some(5),
+            lead_time_secs: None,
+        };
+        state
+            .db
+            .upsert_api_key_var(None, "RUNNING_SCRIPT_STALE", &initial)?;
+        let expected = state.db.get_api_key_var("RUNNING_SCRIPT_STALE")?.unwrap();
+        let running = expected.clone();
+        let task = tokio::spawn(async move { execute(&running, RefreshReason::Manual).await });
+        let started = script_dir.path().join("started");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !started.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Node script did not create its started marker");
+
+        let changed = ApiKeyRefreshConfig {
+            enabled: false,
+            script_dir: "/new-script".into(),
+            timeout_secs: None,
+            lead_time_secs: None,
+        };
+        state.db.upsert_api_key_var(
+            Some("RUNNING_SCRIPT_STALE"),
+            "RUNNING_SCRIPT_STALE",
+            &changed,
+        )?;
+        std::fs::write(script_dir.path().join("continue"), "go").map_err(|error| AppError::Io {
+            path: script_dir.path().join("continue").display().to_string(),
+            source: error,
+        })?;
+        let result = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("Node script did not finish after its continue marker")
+            .expect("Node task panicked")
+            .expect("Node script must succeed before its stale result is rejected");
+        assert_eq!(result.output.api_key, "old-script-key");
+        assert!(matches!(
+            commit_result_for_snapshot(&state, expected, Ok(result)),
+            Err(AppError::Conflict(_))
+        ));
+        let current = state.db.get_api_key_var("RUNNING_SCRIPT_STALE")?.unwrap();
+        assert_eq!(current.config, changed);
+        assert_eq!(current.value, None);
+        assert_eq!(current.state, ApiKeyRefreshState::default());
+        assert_eq!(
+            resolve::lookup("RUNNING_SCRIPT_STALE").0,
+            RefStatus::Disabled
+        );
+        resolve::cache_remove("RUNNING_SCRIPT_STALE");
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn merged_refresh_retries_live_projection_after_same_value_refresh() -> Result<(), AppError> {
+        let home = tempdir().map_err(|error| AppError::Message(error.to_string()))?;
+        let _home_guard = TestHomeGuard::set(home.path());
+
+        {
+            let mut config = MultiAppConfig::default();
+            config
+                .get_manager_mut(&AppType::Claude)
+                .unwrap()
+                .providers
+                .insert(
+                    "merged-claude".into(),
+                    Provider::with_id(
+                        "merged-claude".into(),
+                        "Merged Claude".into(),
+                        json!({"env": {
+                            "ANTHROPIC_AUTH_TOKEN": "{{MERGED_REFRESH_KEY}}",
+                            "ANTHROPIC_BASE_URL": "https://relay.example"
+                        }}),
+                        None,
+                    ),
+                );
+            let db = Arc::new(Database::memory()?);
+            db.migrate_from_json(&config)?;
+            db.set_current_provider(AppType::Claude.as_str(), "merged-claude")?;
+            let state = AppState::new(db);
+            let cfg = ApiKeyRefreshConfig {
+                enabled: true,
+                script_dir: String::new(),
+                timeout_secs: None,
+                lead_time_secs: None,
+            };
+            state
+                .db
+                .upsert_api_key_var(None, "MERGED_REFRESH_KEY", &cfg)?;
+
+            let live_path = crate::config::get_claude_settings_path();
+            assert!(
+                live_path.starts_with(home.path()),
+                "Claude settings override points outside isolated test home: {}",
+                live_path.display()
+            );
+            std::fs::create_dir_all(&live_path).map_err(|error| AppError::IoContext {
+                context: "prepare broken isolated Claude live path".into(),
+                source: error,
+            })?;
+            let first = commit_result_for_snapshot(
+                &state,
+                state.db.get_api_key_var("MERGED_REFRESH_KEY")?.unwrap(),
+                Ok(ScriptRun {
+                    output: runner::RefreshOutput {
+                        api_key: "same-value".into(),
+                        expires_at: None,
+                        refresh_after: None,
+                        message: None,
+                    },
+                    resolved_file: "first.mjs".into(),
+                }),
+            )?;
+            assert!(first.success);
+            assert!(first.updated_providers.is_empty());
+            assert!(!first.live_errors.is_empty());
+
+            std::fs::remove_dir_all(&live_path).map_err(|error| AppError::IoContext {
+                context: "repair isolated Claude live path".into(),
+                source: error,
+            })?;
+            let merged = merged_refresh_outcome(&state, "MERGED_REFRESH_KEY")?;
+            assert!(merged.success);
+            assert_eq!(merged.updated_providers.len(), 1, "{merged:?}");
+            assert!(merged.live_errors.is_empty(), "{merged:?}");
+            let live = std::fs::read_to_string(&live_path).map_err(|error| AppError::Io {
+                path: live_path.display().to_string(),
+                source: error,
+            })?;
+            assert!(live.contains("same-value"), "{live}");
+            resolve::cache_remove("MERGED_REFRESH_KEY");
+            Ok(())
+        }
     }
 }

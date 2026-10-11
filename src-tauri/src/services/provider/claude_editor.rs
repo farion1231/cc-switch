@@ -119,7 +119,7 @@ pub fn view(state: &AppState, settings_config: &Value) -> Result<EditorView, App
         &file.path,
         &live,
         prev.as_ref(),
-        &ClaudeProjection::of(settings_config),
+        &ClaudeProjection::of_raw(settings_config),
     )?;
     Ok(EditorView {
         inactive: inactive_fields(settings_config, &settings),
@@ -140,7 +140,7 @@ fn live_exclusive_owner(state: &AppState) -> Result<Option<ClaudeProjection>, Ap
     }
     Ok(
         crate::mode::current::direct_provider(&state.db, &AppType::Claude)?
-            .map(|row| ClaudeProjection::of(&row.settings_config)),
+            .map(|row| ClaudeProjection::of_raw(&row.settings_config)),
     )
 }
 
@@ -248,7 +248,7 @@ pub(crate) fn plan_save(
         .cloned()
         .collect();
 
-    let mut projection = ClaudeProjection::of(edited);
+    let mut projection = ClaudeProjection::of_raw(edited);
     projection.exclusive.retain(|key, value| {
         !from_live.contains(key) || env_value(base, key).as_ref() != Some(value)
     });
@@ -475,6 +475,28 @@ mod tests {
 
         let err = plan_save(None, &json!({ "env": "oops" }), &base).expect_err("bad shape");
         assert!(err.to_string().contains("env"), "{err}");
+    }
+
+    #[test]
+    fn saving_a_new_variable_reference_keeps_its_template() {
+        crate::services::api_key_vars::resolve::cache_set(
+            "EDITOR_CLAUDE_REF",
+            true,
+            Some("sk-editor-claude"),
+        );
+        let edited = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "{{EDITOR_CLAUDE_REF}}",
+                "ANTHROPIC_BASE_URL": "https://api.example"
+            }
+        });
+
+        let plan = plan_save(None, &edited, &json!({})).expect("plan");
+        assert_eq!(
+            plan.row_settings["env"]["ANTHROPIC_AUTH_TOKEN"],
+            "{{EDITOR_CLAUDE_REF}}"
+        );
+        assert!(!plan.row_settings.to_string().contains("sk-editor-claude"));
     }
 
     #[test]

@@ -141,7 +141,12 @@ impl CodexProjection {
             official: input.official,
             proxy_injected_oauth: input.proxy_injected_oauth,
         };
-        let input = &resolved_input;
+        Self::of_raw(&resolved_input)
+    }
+
+    /// Project a provider row for editor persistence without resolving API-key
+    /// variable templates. Resolution is only for live/proxy writes.
+    pub(crate) fn of_raw(input: &RowInput<'_>) -> Result<Self, AppError> {
         let settings = input
             .settings
             .as_object()

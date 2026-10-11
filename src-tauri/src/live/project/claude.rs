@@ -38,7 +38,12 @@ impl ClaudeProjection {
             &crate::app_config::AppType::Claude,
             settings,
         );
-        let settings: &Value = &resolved;
+        Self::of_raw(&resolved)
+    }
+
+    /// Project a provider row for editor display or persistence without resolving
+    /// API-key variable templates. Resolution is only for live/proxy writes.
+    pub(crate) fn of_raw(settings: &Value) -> Self {
         let mut projection = Self::default();
         if let Some(root) = settings.as_object() {
             for (key, value) in root {

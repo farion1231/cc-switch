@@ -669,6 +669,12 @@ pub fn run() {
                 }
             }
 
+            // 在恢复客户端文件、创建代理和托盘之前同步加载变量，避免启动任务
+            // 先于 AppState 注册执行时跳过缓存，或启动流程读到尚未加载的引用。
+            let api_key_var_count = db.load_api_key_var_cache()?;
+            if api_key_var_count > 0 {
+                log::info!("[ApiKeyVars] 已加载 {api_key_var_count} 个变量");
+            }
             let app_state = AppState::new(db);
 
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
@@ -1194,9 +1200,9 @@ pub fn run() {
                 app_state.db.clone(),
                 app.handle().clone(),
             );
-            crate::services::api_key_vars::start_worker(app.handle().clone());
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+            crate::services::api_key_vars::start_worker(app.handle().clone());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
