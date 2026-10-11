@@ -472,7 +472,7 @@ pub fn title_from_input(
                 ),
                 None => (
                     str_field(input, &["toolSummary"])
-                        .or_else(|| path)
+                        .or(path)
                         .map(title_path)
                         .unwrap_or_default(),
                     detail_of(&["toolAction"]),
