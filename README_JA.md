@@ -79,6 +79,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.openmodel.ai/campaigns/client-benefits"><img src="assets/partners/logos/openmodel-banner.jpg" alt="OpenModel" width="150"></a></td>
+<td>本プロジェクトのスポンサーである OpenModel に感謝いたします！OpenModel は Codex と Claude Code 向けにクライアント専用の割引を提供しており、対応モデルを Codex 経由で使うと最大 90% オフ、Claude Code 経由で使うと最大 60% オフになります。開発スタイルを変えることなく API コストを削減できます。OpenModel の API Key を設定するだけで、いつも通り Codex や Claude Code を使い続けられます。対応クライアントは自動で判別され、追加パラメータや手動でのルーティング設定なしに割引ルートが適用されます。さらに API Key ごとにフォールバック動作を設定でき、割引ルートが一時的に利用できない場合に標準価格で続行するか停止するかを選べます。CC Switch ユーザーは<a href="https://www.openmodel.ai/campaigns/client-benefits">こちらのリンク</a>から登録し、プロモコード <strong>"cc-switch"</strong> を使うと初回チャージが 10% オフになります！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
 <td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
 </tr>
@@ -492,7 +497,7 @@ Codex では、CC Switch 内の「ChatGPT でログイン」から複数の Chat
 <details>
 <summary><strong>Claude Code で OpenAI 互換 API、Gemini、ローカルモデルを使えますか？</strong></summary>
 
-使えますが、ルーティングを使う必要があります。プロバイダを編集する際に、「高級オプション」の「上流フォーマット」でプロバイダに合った API 形式を選んでください。Chat Completions API のみを提供するサービス（多くのローカルモデルサービスがこれに当たります）は「OpenAI Chat Completions」、Responses API を提供するサービスは「OpenAI Responses API」、Gemini は「Gemini Native generateContent」を選びます。その後、Claude Code のページの「ルーティング」タブで「ルーティングを開始」をクリックしてください。形式の選択を誤ったり、ルーティングを開始していなかったりすると、通常は 404 または 405 エラーになります。
+使えますが、ルーティングを使う必要があります。プロバイダを編集する際に、「詳細オプション」の「上流フォーマット」でプロバイダに合った API 形式を選んでください。Chat Completions API のみを提供するサービス（多くのローカルモデルサービスがこれに当たります）は「OpenAI Chat Completions」、Responses API を提供するサービスは「OpenAI Responses API」、Gemini は「Gemini Native generateContent」を選びます。その後、Claude Code のページの「ルーティング」タブで「ルーティングを開始」をクリックしてください。形式の選択を誤ったり、ルーティングを開始していなかったりすると、通常は 404 または 405 エラーになります。
 
 逆に、Codex や Grok Build の「上流フォーマット」で「Anthropic Messages」を選ぶと、Claude 形式のプロバイダを使えます。この場合もルーティングが必要です。詳しくは [Claude Code で GPT を使う](docs/guides/claude-codex-routing-guide-ja.md) と [Codex で Claude を使う](docs/guides/codex-claude-routing-guide-ja.md) をご覧ください。
 

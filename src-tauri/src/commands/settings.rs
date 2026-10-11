@@ -48,6 +48,9 @@ fn merge_settings_for_save(
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
     incoming.local_migrations = existing.local_migrations.clone();
+    // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
+    // 缓存里的旧值，透传会把刚保存的地址冲掉。
+    incoming.proxy_client_host = existing.proxy_client_host.clone();
     incoming
 }
 
@@ -380,6 +383,18 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn save_settings_should_keep_the_existing_proxy_client_host() {
+        let existing = AppSettings {
+            proxy_client_host: Some("172.25.144.1".to_string()),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(AppSettings::default(), &existing);
+
+        assert_eq!(merged.proxy_client_host.as_deref(), Some("172.25.144.1"));
+    }
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
