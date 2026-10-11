@@ -2544,6 +2544,28 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    providerKey: "cc-switch-ikun-code",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      name: "IKunCode",
+      baseUrl: "https://api.ikuncode.ai",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5-20251001",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "ikuncode",
   },
 ];
 

@@ -2142,5 +2142,20 @@ export const providerPresets: ProviderPreset[] = [
       "https://api-node3.soruxgpt.com",
     ],
     category: "aggregator",
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.ikuncode.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://api.ikuncode.ai", "https://api.ikuncode.cc"],
+    category: "aggregator",
+    icon: "ikuncode",
   },
 ];

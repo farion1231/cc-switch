@@ -109,6 +109,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["soleapi", "sole", "aggregator", "relay", "gateway", "claude"],
     defaultColor: "currentColor",
   },
+  soruxgpt: {
+    name: "soruxgpt",
+    displayName: "SoruxGPT",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["soruxgpt", "sorux", "aggregator", "relay", "gateway", "claude"],
+    defaultColor: "currentColor",
+  },
+  ikuncode: {
+    name: "ikuncode",
+    displayName: "IKunCode",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["ikuncode", "ikun", "aggregator", "relay", "gateway", "claude"],
+    defaultColor: "currentColor",
+  },
   soshow: {
     name: "soshow",
     displayName: "Soshow",

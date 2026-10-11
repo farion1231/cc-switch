@@ -21,6 +21,7 @@ import _fenno from "./fenno-icon.png";
 import _fluxa from "./fluxa.png";
 import _hermes from "./hermes.png";
 import _huoshan from "./huoshan.png";
+import _ikuncode from "./ikuncode.jpg";
 import _nekocode from "./nekocode-icon.png";
 import _pateway from "./pateway.jpg";
 import _pipellm from "./pipellm.png";
@@ -28,6 +29,7 @@ import _qiniu from "./qiniu.png";
 import _relaxcode from "./relaxcode.png";
 import _runapi from "./runapi.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
+import _soruxgpt from "./soruxgpt.jpg";
 import _soshow from "./soshow.png";
 import _sub2api from "./sub2api.svg?url";
 import _subrouter from "./subrouter.svg?url";
@@ -146,6 +148,7 @@ export const iconUrls: Record<string, string> = {
   fluxa: _fluxa,
   hermes: _hermes,
   huoshan: _huoshan,
+  ikuncode: _ikuncode,
   nekocode: _nekocode,
   pateway: _pateway,
   pipellm: _pipellm,
@@ -153,6 +156,7 @@ export const iconUrls: Record<string, string> = {
   relaxcode: _relaxcode,
   runapi: _runapi,
   shengsuanyun: _shengsuanyun,
+  soruxgpt: _soruxgpt,
   soshow: _soshow,
   sub2api: _sub2api,
   subrouter: _subrouter,

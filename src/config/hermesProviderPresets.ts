@@ -2525,5 +2525,39 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     suggestedDefaults: {
       model: { default: "claude-opus-5-5", provider: "soruxgpt" },
     },
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      name: "ikuncode",
+      base_url: "https://api.ikuncode.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "ikuncode" },
+    },
+    icon: "ikuncode",
   },
 ];

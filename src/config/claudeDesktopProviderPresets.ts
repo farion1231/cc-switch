@@ -1742,5 +1742,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "https://api-node6.soruxgpt.com",
       "https://api-node3.soruxgpt.com",
     ],
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    category: "aggregator",
+    baseUrl: "https://api.ikuncode.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5-20251001",
+    ),
+    endpointCandidates: ["https://api.ikuncode.ai", "https://api.ikuncode.cc"],
+    icon: "ikuncode",
   },
 ];

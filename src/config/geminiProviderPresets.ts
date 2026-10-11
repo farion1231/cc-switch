@@ -601,6 +601,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
       "https://api-node6.soruxgpt.com",
       "https://api-node3.soruxgpt.com",
     ],
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.ikuncode.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.ikuncode.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "IKunCode",
+    category: "aggregator",
+    endpointCandidates: ["https://api.ikuncode.ai", "https://api.ikuncode.cc"],
+    icon: "ikuncode",
   },
 ];
 

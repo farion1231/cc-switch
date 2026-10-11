@@ -3711,5 +3711,23 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
       "https://api-node6.soruxgpt.com/v1",
       "https://api-node3.soruxgpt.com/v1",
     ],
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "ikuncode",
+      "https://api.ikuncode.ai/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://api.ikuncode.ai/v1",
+      "https://api.ikuncode.cc/v1",
+    ],
+    icon: "ikuncode",
   },
 ];
