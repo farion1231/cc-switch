@@ -344,38 +344,44 @@ pub fn transform_claude_request_for_api_format(
     shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
 ) -> Result<serde_json::Value, ProxyError> {
     let is_codex_oauth = provider.is_codex_oauth();
-
-    // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
-    // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
-    // 同一会话的请求共享 cache key，提升 Copilot 缓存命中率
     let is_copilot = provider.is_github_copilot()
         || provider
             .settings_config
             .get("baseUrl")
             .and_then(|v| v.as_str())
             .is_some_and(|u| u.contains("githubcopilot.com"));
-    let session_cache_key: Option<String> = if is_copilot {
-        let metadata = body.get("metadata");
-        // Session 提取优先级（与 forwarder 和 session.rs 统一）：
-        //   1. metadata.user_id 中的 _session_ 后缀
-        //   2. metadata.session_id（直接字段）
-        metadata
-            .and_then(|m| m.get("user_id"))
-            .and_then(|v| v.as_str())
-            .and_then(super::super::session::parse_session_from_user_id)
-            .or_else(|| {
-                metadata
-                    .and_then(|m| m.get("session_id"))
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-            })
-    } else {
-        session_id
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string)
-    };
+
+    // 优先使用传入的 session_id；缺失时从 metadata（user_id / session_id）提取，
+    // 确保 Claude Code 会话在 OpenAI Responses / Copilot 等端点能够保持会话缓存亲和性。
+    let session_cache_key: Option<String> = session_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            let metadata = body.get("metadata");
+            metadata
+                .and_then(|m| m.get("user_id"))
+                .and_then(|v| {
+                    if let Some(s) = v.as_str() {
+                        super::super::session::parse_session_from_user_id(s)
+                    } else if let Some(obj) = v.as_object() {
+                        obj.get("session_id")
+                            .or_else(|| obj.get("sessionId"))
+                            .and_then(|s| s.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(ToString::to_string)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    metadata
+                        .and_then(|m| m.get("session_id").or_else(|| m.get("sessionId")))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                })
+        });
 
     let explicit_cache_key = provider
         .meta
@@ -1932,6 +1938,40 @@ mod tests {
         .unwrap();
 
         assert!(transformed.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_for_responses_extracts_cache_key_from_metadata_json() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.example.com"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128,
+            "metadata": {
+                "user_id": "{\"device_id\":\"dev-1\",\"session_id\":\"claudecode-turn-session\"}"
+            }
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "claudecode-turn-session");
     }
 
     #[test]
