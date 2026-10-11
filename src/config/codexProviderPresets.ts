@@ -3805,4 +3805,17 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ),
     icon: "tokenflux",
   },
+  {
+    name: "NekoCode",
+    websiteUrl: "https://nekoapi.ai",
+    apiKeyUrl: "https://nekoapi.ai/token",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "nekocode",
+      "https://nekoapi.ai/v1",
+      "gpt-5.6-sol",
+    ),
+    icon: "nekocode",
+  },
 ];

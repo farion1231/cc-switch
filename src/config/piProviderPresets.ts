@@ -2673,6 +2673,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "tokenflux",
   },
+  {
+    name: "NekoCode",
+    providerKey: "cc-switch-neko-code",
+    websiteUrl: "https://nekoapi.ai",
+    apiKeyUrl: "https://nekoapi.ai/token",
+    settingsConfig: {
+      name: "NekoCode",
+      baseUrl: "https://nekoapi.ai",
+      api: "anthropic-messages",
+      apiKey: "",
+      headers: {
+        "User-Agent": "claude-cli/2.1.161 (external, cli)",
+      },
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5-20251001",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "nekocode",
+  },
 ];
 
 function materializeVerifiedThinkingProfiles(

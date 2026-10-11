@@ -2230,4 +2230,17 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "tokenflux",
   },
+  {
+    name: "NekoCode",
+    websiteUrl: "https://nekoapi.ai",
+    apiKeyUrl: "https://nekoapi.ai/token",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://nekoapi.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    icon: "nekocode",
+  },
 ];

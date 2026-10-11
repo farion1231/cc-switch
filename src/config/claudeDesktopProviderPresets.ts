@@ -1842,4 +1842,19 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     ),
     icon: "tokenflux",
   },
+  {
+    name: "NekoCode",
+    websiteUrl: "https://nekoapi.ai",
+    apiKeyUrl: "https://nekoapi.ai/token",
+    category: "aggregator",
+    baseUrl: "https://nekoapi.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5-20251001",
+    ),
+    icon: "nekocode",
+  },
 ];

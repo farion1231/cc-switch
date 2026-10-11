@@ -5145,4 +5145,60 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     icon: "tokenflux",
   },
+  {
+    name: "NekoCode",
+    websiteUrl: "https://nekoapi.ai",
+    apiKeyUrl: "https://nekoapi.ai/token",
+    settingsConfig: {
+      baseUrl: "https://nekoapi.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      headers: {
+        "User-Agent": "claude-cli/2.1.161 (external, cli)",
+      },
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "nekocode/claude-opus-5-5",
+        fallbacks: ["nekocode/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "nekocode/claude-opus-5-5": { alias: "Opus" },
+        "nekocode/claude-sonnet-5-5": { alias: "Sonnet" },
+        "nekocode/claude-haiku-4-5-20251001": { alias: "Haiku" },
+      },
+    },
+    icon: "nekocode",
+  },
 ];
