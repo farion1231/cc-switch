@@ -1888,6 +1888,9 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "grok-4.5",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "grok-4.5",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "grok-4.5",
+        // Claude Code falls back to 200K for non-Claude model ids; grok-4.5
+        // has a 500K window (same as grok_config::DEFAULT_CONTEXT_WINDOW).
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "500000",
       },
     },
     category: "third_party",
@@ -2120,5 +2123,24 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     endpointCandidates: ["https://moark.com/anthropic"],
     icon: "moark",
+  },
+  {
+    name: "SoruxGPT",
+    websiteUrl: "https://ai.soruxgpt.com",
+    apiKeyUrl: "https://ai.soruxgpt.com/console/token",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://ai.soruxgpt.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: [
+      "https://ai.soruxgpt.com",
+      "https://api-cf.soruxgpt.com",
+      "https://api-host.soruxgpt.com",
+      "https://api-node6.soruxgpt.com",
+      "https://api-node3.soruxgpt.com",
+    ],
+    category: "aggregator",
   },
 ];
