@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
+import { HelpTip } from "@/components/ui/help-tip";
 import {
   parseBodyOverrideJson,
   parseHeaderOverrideJson,
@@ -11,6 +12,8 @@ interface LocalProxyRequestOverridesFieldProps {
   bodyJson: string;
   onHeadersJsonChange: (value: string) => void;
   onBodyJsonChange: (value: string) => void;
+  /** 传了就把说明放进字段名后的「?」，替代下方的「仅在路由下生效」提示。 */
+  help?: string;
 }
 
 export function LocalProxyRequestOverridesField({
@@ -18,25 +21,30 @@ export function LocalProxyRequestOverridesField({
   bodyJson,
   onHeadersJsonChange,
   onBodyJsonChange,
+  help,
 }: LocalProxyRequestOverridesFieldProps) {
   const { t } = useTranslation();
+  const label = t("providerForm.localProxyRequestOverrides", {
+    defaultValue: "本地代理请求覆盖",
+  });
   const headerError = parseHeaderOverrideJson(headersJson).error;
   const bodyError = parseBodyOverrideJson(bodyJson).error;
 
   return (
     <div className="space-y-3">
       <div className="space-y-1">
-        <FormLabel>
-          {t("providerForm.localProxyRequestOverrides", {
-            defaultValue: "本地代理请求覆盖",
-          })}
-        </FormLabel>
-        <p className="text-xs text-fg-2">
-          {t("providerForm.localProxyRequestOverridesHint", {
-            defaultValue:
-              "仅在本地路由/代理接管后生效，应用于协议转换后的上游请求。",
-          })}
-        </p>
+        <div className="flex items-center gap-0.5">
+          <FormLabel>{label}</FormLabel>
+          {help ? <HelpTip title={label}>{help}</HelpTip> : null}
+        </div>
+        {!help && (
+          <p className="text-xs text-fg-2">
+            {t("providerForm.localProxyRequestOverridesHint", {
+              defaultValue:
+                "仅在本地路由/代理接管后生效，应用于协议转换后的上游请求。",
+            })}
+          </p>
+        )}
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">

@@ -3,6 +3,7 @@ import { ChevronDown } from "lucide-react";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,6 +18,8 @@ interface CustomUserAgentFieldProps {
   id: string;
   value: string;
   onChange: (value: string) => void;
+  /** 传了就把说明放进字段名后的「?」，替代下方的「仅在路由下生效」提示。 */
+  help?: string;
 }
 
 /**
@@ -30,17 +33,20 @@ export function CustomUserAgentField({
   id,
   value,
   onChange,
+  help,
 }: CustomUserAgentFieldProps) {
   const { t } = useTranslation();
   const valid = isValidUserAgentHeader(value);
+  const label = t("providerForm.customUserAgent", {
+    defaultValue: "自定义 User-Agent",
+  });
 
   return (
     <div className="space-y-2">
-      <FormLabel htmlFor={id}>
-        {t("providerForm.customUserAgent", {
-          defaultValue: "自定义 User-Agent",
-        })}
-      </FormLabel>
+      <div className="flex items-center gap-0.5">
+        <FormLabel htmlFor={id}>{label}</FormLabel>
+        {help ? <HelpTip title={label}>{help}</HelpTip> : null}
+      </div>
       <div className="flex items-center gap-2">
         <Input
           id={id}
@@ -77,12 +83,14 @@ export function CustomUserAgentField({
         </DropdownMenu>
       </div>
       {valid ? (
-        <p className="text-xs text-fg-2">
-          {t("providerForm.customUserAgentHint", {
-            defaultValue:
-              "仅在开启本地路由/代理接管后生效，会替换转发到供应商 API 请求中的 User-Agent。",
-          })}
-        </p>
+        !help && (
+          <p className="text-xs text-fg-2">
+            {t("providerForm.customUserAgentHint", {
+              defaultValue:
+                "仅在开启本地路由/代理接管后生效，会替换转发到供应商 API 请求中的 User-Agent。",
+            })}
+          </p>
+        )
       ) : (
         <p className="text-xs text-destructive">
           {t("providerForm.customUserAgentInvalid", {

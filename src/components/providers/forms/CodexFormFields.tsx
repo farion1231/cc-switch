@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -1180,13 +1187,26 @@ export function CodexFormFields({
 
   // 上游格式及 Anthropic 格式专有的几项：经典布局都在高级选项里；Stack 布局把上游格式和
   // 认证字段放进连接区，其余留在高级选项里。
+  // 字段名后面的「?」：规则和术语解释收进去；后果（要开路由、会报错）仍写在页面上。
+  const labelWithHelp = (label: string, help: ReactNode, htmlFor?: string) => (
+    <div className="flex items-center gap-0.5">
+      <FormLabel htmlFor={htmlFor}>{label}</FormLabel>
+      <HelpTip title={label}>{help}</HelpTip>
+    </div>
+  );
+
   const upstreamFormatSelect = (
     <div className="space-y-1.5">
-      <FormLabel htmlFor="codex-upstream-format">
-        {t("codexConfig.upstreamFormatLabel", {
-          defaultValue: "上游格式",
-        })}
-      </FormLabel>
+      {labelWithHelp(
+        t("codexConfig.upstreamFormatLabel", { defaultValue: "上游格式" }),
+        isCopilotPreset
+          ? t("codexConfig.upstreamFormatCopilotHint")
+          : t("codexConfig.upstreamFormatHint", {
+              defaultValue:
+                "看供应商原生支持哪种协议：Responses 直连、不转换格式；Chat 或 Anthropic 由路由转成 Responses。",
+            }),
+        "codex-upstream-format",
+      )}
       <Select
         value={isCopilotPreset ? copilotApiFormat : apiFormat}
         onValueChange={(value) => {
@@ -1237,24 +1257,24 @@ export function CodexFormFields({
           )}
         </SelectContent>
       </Select>
-      <p className="text-xs leading-relaxed text-fg-2">
-        {isCopilotPreset
-          ? t("codexConfig.upstreamFormatCopilotHint")
-          : t("codexConfig.upstreamFormatHint", {
-              defaultValue:
-                "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
-            })}
-      </p>
+      {/* Chat / Anthropic 的「需开启路由」已写在选项里；Copilot 的选项没写，单独提示。 */}
+      {isCopilotPreset && (
+        <p className="text-xs leading-relaxed text-fg-2">
+          {t("codexConfig.upstreamFormatCopilotRouteHint")}
+        </p>
+      )}
     </div>
   );
 
   const anthropicAuthFieldSelect = (
     <div className="space-y-1.5">
-      <FormLabel htmlFor="codex-anthropic-auth-field">
-        {t("codexConfig.anthropicAuthFieldLabel", {
-          defaultValue: "认证字段",
-        })}
-      </FormLabel>
+      {labelWithHelp(
+        t("codexConfig.anthropicAuthFieldLabel", { defaultValue: "认证字段" }),
+        t("codexConfig.anthropicAuthFieldHint", {
+          defaultValue: "按网关读取 API Key 的请求头选择，两者只发其一。",
+        }),
+        "codex-anthropic-auth-field",
+      )}
       <Select
         value={anthropicAuthField}
         onValueChange={(value) =>
@@ -1277,30 +1297,20 @@ export function CodexFormFields({
           </SelectItem>
         </SelectContent>
       </Select>
-      <p className="text-xs leading-relaxed text-fg-2">
-        {t("codexConfig.anthropicAuthFieldHint", {
-          defaultValue:
-            "选择网关接收 API Key 的请求头：ANTHROPIC_AUTH_TOKEN 发送 Authorization: Bearer；ANTHROPIC_API_KEY 发送 x-api-key。两者只发其一。",
-        })}
-      </p>
     </div>
   );
 
   const impersonateClaudeCodeToggle = (
     <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
-      <div className="space-y-1">
-        <FormLabel>
-          {t("codexConfig.impersonateClaudeCodeLabel", {
-            defaultValue: "模拟 Claude Code 客户端",
-          })}
-        </FormLabel>
-        <p className="text-xs leading-relaxed text-fg-2">
-          {t("codexConfig.impersonateClaudeCodeHint", {
-            defaultValue:
-              "网关或其上游限制只能通过 Claude Code 使用时开启：伪装 User-Agent、anthropic-beta、x-app 请求头，并在系统提示首行注入 Claude Code 身份。",
-          })}
-        </p>
-      </div>
+      {labelWithHelp(
+        t("codexConfig.impersonateClaudeCodeLabel", {
+          defaultValue: "模拟 Claude Code 客户端",
+        }),
+        t("codexConfig.impersonateClaudeCodeHint", {
+          defaultValue:
+            "网关只允许 Claude Code 使用时打开：伪装 Claude Code 的请求头，并在系统提示首行注入它的身份。",
+        }),
+      )}
       <Switch
         checked={impersonateClaudeCode}
         onCheckedChange={onImpersonateClaudeCodeChange}
@@ -1313,11 +1323,21 @@ export function CodexFormFields({
 
   const maxOutputTokensField = (
     <div className="space-y-1.5 border-t border-border pt-3">
-      <FormLabel htmlFor="codex-anthropic-max-output-tokens">
-        {t("codexConfig.maxOutputTokensLabel", {
+      {labelWithHelp(
+        t("codexConfig.maxOutputTokensLabel", {
           defaultValue: "最大输出 tokens",
-        })}
-      </FormLabel>
+        }),
+        isGrokBuild
+          ? t("grokBuild.maxOutputTokensHint", {
+              defaultValue:
+                "默认上限 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+            })
+          : t("codexConfig.maxOutputTokensHint", {
+              defaultValue:
+                "Codex 不带输出上限，默认 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+            }),
+        "codex-anthropic-max-output-tokens",
+      )}
       <Input
         id="codex-anthropic-max-output-tokens"
         type="number"
@@ -1332,15 +1352,9 @@ export function CodexFormFields({
         })}
       />
       <p className="text-xs leading-relaxed text-fg-2">
-        {isGrokBuild
-          ? t("grokBuild.maxOutputTokensHint", {
-              defaultValue:
-                "默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
-            })
-          : t("codexConfig.maxOutputTokensHint", {
-              defaultValue:
-                "Codex 不会把 model_max_output_tokens 写进请求体，默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
-            })}
+        {t("codexConfig.maxOutputTokensWarning", {
+          defaultValue: "不要超过模型或网关的真实输出上限，否则会返回 400。",
+        })}
       </p>
     </div>
   );
@@ -1348,11 +1362,15 @@ export function CodexFormFields({
   const reasoningFields = (
     <>
       <div className="space-y-2">
-        <FormLabel>
-          {t("codexConfig.promptCacheRoutingLabel", {
+        {labelWithHelp(
+          t("codexConfig.promptCacheRoutingLabel", {
             defaultValue: "提示词缓存路由",
-          })}
-        </FormLabel>
+          }),
+          t("codexConfig.promptCacheRoutingHint", {
+            defaultValue:
+              "自动：只对确认兼容的上游发送 prompt_cache_key。开启：用于其他兼容网关。关闭：避免严格网关因未知字段返回 400。",
+          }),
+        )}
         <Select
           value={promptCacheRouting}
           onValueChange={(value) =>
@@ -1380,42 +1398,24 @@ export function CodexFormFields({
             </SelectItem>
           </SelectContent>
         </Select>
-        <p className="text-xs leading-relaxed text-fg-2">
-          {t("codexConfig.promptCacheRoutingHint", {
-            defaultValue:
-              "自动模式仅对已确认兼容的上游发送 prompt_cache_key；开启可用于其他兼容网关，关闭可避免严格网关因未知字段返回 400。只使用客户端提供的稳定会话 ID。",
-          })}
-        </p>
       </div>
 
-      <div className="space-y-1">
-        <FormLabel>
-          {t("codexConfig.reasoningGroupTitle", {
-            defaultValue: "思考能力",
-          })}
-        </FormLabel>
-        <p className="text-xs leading-relaxed text-fg-2">
-          {t("codexConfig.reasoningSectionHint", {
-            defaultValue:
-              "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
-          })}
-        </p>
-      </div>
+      <FormLabel>
+        {t("codexConfig.reasoningGroupTitle", {
+          defaultValue: "思考能力",
+        })}
+      </FormLabel>
 
       <div className="flex items-center justify-between gap-4">
-        <div className="space-y-1">
-          <FormLabel>
-            {t("codexConfig.reasoningModeToggle", {
-              defaultValue: "支持思考模式",
-            })}
-          </FormLabel>
-          <p className="text-xs leading-relaxed text-fg-2">
-            {t("codexConfig.reasoningModeHint", {
-              defaultValue:
-                "上游 Chat Completions 接口支持开启或关闭 thinking 时启用。Kimi、GLM、Qwen 等通常属于这一类。",
-            })}
-          </p>
-        </div>
+        {labelWithHelp(
+          t("codexConfig.reasoningModeToggle", {
+            defaultValue: "支持思考模式",
+          }),
+          t("codexConfig.reasoningModeHint", {
+            defaultValue:
+              "上游 Chat 接口能开关 thinking 时打开，Kimi、GLM、Qwen 等通常属于这一类。",
+          }),
+        )}
         <Switch
           checked={supportsThinking}
           onCheckedChange={handleReasoningThinkingChange}
@@ -1426,24 +1426,20 @@ export function CodexFormFields({
       </div>
 
       <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
-        <div className="space-y-1">
-          <FormLabel>
-            {t("codexConfig.reasoningEffortToggle", {
-              defaultValue: "支持思考等级",
-            })}
-          </FormLabel>
-          <p className="text-xs leading-relaxed text-fg-2">
-            {isGrokBuild
-              ? t("grokBuild.reasoningEffortHint", {
-                  defaultValue:
-                    "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把请求中的 reasoning effort 转成上游 Chat 参数。",
-                })
-              : t("codexConfig.reasoningEffortHint", {
-                  defaultValue:
-                    "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
-                })}
-          </p>
-        </div>
+        {labelWithHelp(
+          t("codexConfig.reasoningEffortToggle", {
+            defaultValue: "支持思考等级",
+          }),
+          isGrokBuild
+            ? t("grokBuild.reasoningEffortHint", {
+                defaultValue:
+                  "上游支持 low/high/max 等思考深度时打开。会同时打开思考模式，并把请求中的 reasoning effort 转成上游 Chat 参数。",
+              })
+            : t("codexConfig.reasoningEffortHint", {
+                defaultValue:
+                  "上游支持 low/high/max 等思考深度时打开。会同时打开思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
+              }),
+        )}
         <Switch
           checked={supportsEffort}
           onCheckedChange={handleReasoningEffortChange}
@@ -1455,12 +1451,21 @@ export function CodexFormFields({
     </>
   );
 
+  // 两项都只在路由模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   const userAgentAndOverrides = (
     <>
+      <p className="text-xs leading-relaxed text-fg-2">
+        {t("codexConfig.routeOnlySettingsHint", {
+          defaultValue: "以下两项只在路由模式下生效。",
+        })}
+      </p>
       <CustomUserAgentField
         id="codex-custom-user-agent"
         value={customUserAgent}
         onChange={onCustomUserAgentChange}
+        help={t("providerForm.customUserAgentHelp", {
+          defaultValue: "替换转发到供应商的请求里的 User-Agent。",
+        })}
       />
       <div className="border-t border-border pt-3">
         <LocalProxyRequestOverridesField
@@ -1468,6 +1473,9 @@ export function CodexFormFields({
           bodyJson={localProxyBodyOverride}
           onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
           onBodyJsonChange={onLocalProxyBodyOverrideChange}
+          help={t("providerForm.localProxyRequestOverridesHelp", {
+            defaultValue: "作用于格式转换后发给上游的请求。",
+          })}
         />
       </div>
     </>
@@ -1681,7 +1689,7 @@ export function CodexFormFields({
           value={codexBaseUrl}
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.codexApiEndpointPlaceholder")}
-          hint={t("providerForm.codexApiHint")}
+          help={t("providerForm.codexApiHint")}
           showFullUrlToggle
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
@@ -1883,13 +1891,13 @@ export function CodexFormFields({
                   })}
                 </FormLabel>
                 <HelpTip
-                  title={t("providerForm.stackModelDefault", {
-                    defaultValue: "默认模型",
+                  title={t("codexConfig.modelListTitle", {
+                    defaultValue: "模型列表",
                   })}
                 >
                   {t("codexConfig.modelListDefaultHelp", {
                     defaultValue:
-                      "第一行是默认模型，Codex 启动时用它。列表为空时，可以在下方单独填写默认模型。",
+                      "这些模型会出现在 Codex 的 /model 里，带上各自的上下文窗口和思考等级。第一行是默认模型。",
                   })}
                 </HelpTip>
               </div>
@@ -1902,8 +1910,7 @@ export function CodexFormFields({
             </div>
             <p className="text-xs leading-relaxed text-fg-2">
               {t("codexConfig.modelListHint", {
-                defaultValue:
-                  "这些模型会出现在 Codex 的 /model 里，带上各自的上下文窗口和思考等级。修改后需要重启 Codex。",
+                defaultValue: "修改后需要重启 Codex。",
               })}
             </p>
           </div>
@@ -1926,9 +1933,18 @@ export function CodexFormFields({
         onModelChange &&
         (!firstRowIsDefault || catalogRows.length === 0) && (
           <div className="space-y-1.5">
-            <FormLabel htmlFor="codexDefaultModel">
-              {t("codexConfig.defaultModelLabel", { defaultValue: "默认模型" })}
-            </FormLabel>
+            {labelWithHelp(
+              t("codexConfig.defaultModelLabel", { defaultValue: "默认模型" }),
+              isGrokBuild
+                ? t("grokBuild.defaultModelHint", {
+                    defaultValue: "Grok Build 默认请求的模型，随时可改。",
+                  })
+                : t("codexConfig.defaultModelHint", {
+                    defaultValue:
+                      "Codex 默认请求的模型。添加模型列表后，列表第一行就是默认模型。",
+                  }),
+              "codexDefaultModel",
+            )}
             <div className="flex gap-1">
               <Input
                 id="codexDefaultModel"
@@ -1972,17 +1988,6 @@ export function CodexFormFields({
                 />
               )}
             </div>
-            <p className="text-xs leading-relaxed text-fg-2">
-              {isGrokBuild
-                ? t("grokBuild.defaultModelHint", {
-                    defaultValue:
-                      "Grok Build 默认请求的模型，随时可改，无需等待预设更新。",
-                  })
-                : t("codexConfig.defaultModelHint", {
-                    defaultValue:
-                      "Codex 默认请求的模型，随时可改，无需等待预设更新。添加模型列表后，列表第一行就是默认模型。",
-                  })}
-            </p>
           </div>
         )}
 
@@ -1990,11 +1995,16 @@ export function CodexFormFields({
           留空删键，子代理跟随主模型；聚合模式下不写进 live。 */}
       {category !== "official" && onSubagentModelChange && (
         <div className="space-y-1.5">
-          <FormLabel htmlFor="codexSubagentModel">
-            {t("codexConfig.subagentModelLabel", {
+          {labelWithHelp(
+            t("codexConfig.subagentModelLabel", {
               defaultValue: "子代理模型",
-            })}
-          </FormLabel>
+            }),
+            t("codexConfig.subagentModelHint", {
+              defaultValue:
+                "Codex 派出的子代理默认用的模型和推理强度。留空时沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，子代理跟随主模型。",
+            }),
+            "codexSubagentModel",
+          )}
           <div className="flex gap-1">
             <Input
               id="codexSubagentModel"
@@ -2051,12 +2061,6 @@ export function CodexFormFields({
               </Select>
             )}
           </div>
-          <p className="text-xs leading-relaxed text-fg-2">
-            {t("codexConfig.subagentModelHint", {
-              defaultValue:
-                "Codex 派出的子代理默认用的模型和推理强度。留空时子代理沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，子代理跟随主模型。",
-            })}
-          </p>
           {isSubagentModelOutsideCatalog && (
             <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-fg-2">
               {t("codexConfig.subagentModelNotInCatalog", {
@@ -2105,19 +2109,6 @@ export function CodexFormFields({
               })}
             </Button>
           </CollapsibleTrigger>
-          {!advancedExpanded && (
-            <p className="mt-1 ml-1 text-xs text-fg-2">
-              {isGrokBuild
-                ? t("grokBuild.advancedSectionHint", {
-                    defaultValue:
-                      "包含上游格式、思考能力与自定义 User-Agent。使用 Chat Completions / Anthropic Messages 协议的供应商需开启路由接管才能使用。",
-                  })
-                : t("codexConfig.advancedSectionHint", {
-                    defaultValue:
-                      "包含上游格式、思考能力与自定义 User-Agent。使用 Chat Completions / Anthropic Messages 协议的供应商需开启路由才能使用。",
-                  })}
-            </p>
-          )}
           <CollapsibleContent className="space-y-3 pt-3">
             {/* Copilot supports automatic capability routing or an explicit protocol;
                 other providers retain their existing format controls. */}

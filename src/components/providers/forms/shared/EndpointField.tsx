@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { HelpTip } from "@/components/ui/help-tip";
 import { Link2, Zap } from "lucide-react";
 import { REQUIRED_LABEL } from "../BasicFormFields";
 
@@ -12,6 +13,8 @@ interface EndpointFieldProps {
   onChange: (value: string) => void;
   placeholder: string;
   hint?: string;
+  /** 填写说明放进字段名后的「?」，不占页面；和 `hint` 二选一。完整 URL 的提示照常显示。 */
+  help?: string;
   fullUrlHint?: string;
   showManageButton?: boolean;
   onManageClick?: () => void;
@@ -28,6 +31,7 @@ export function EndpointField({
   onChange,
   placeholder,
   hint,
+  help,
   fullUrlHint,
   showManageButton = true,
   onManageClick,
@@ -54,9 +58,14 @@ export function EndpointField({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-3">
-          <FormLabel htmlFor={id} className={REQUIRED_LABEL}>
-            {label}
-          </FormLabel>
+          <div className="flex items-center gap-0.5">
+            <FormLabel htmlFor={id} className={REQUIRED_LABEL}>
+              {label}
+            </FormLabel>
+            {help ? (
+              <HelpTip title={label}>{help.replace(/^💡\s*/u, "")}</HelpTip>
+            ) : null}
+          </div>
           {showFullUrlToggle && onFullUrlChange ? (
             <div className="flex items-center gap-2 rounded-full border border-border px-2.5 py-1">
               <Link2

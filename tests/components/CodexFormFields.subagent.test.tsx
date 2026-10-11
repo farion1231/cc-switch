@@ -120,7 +120,8 @@ describe("CodexFormFields direct layout", () => {
     });
 
     expect(screen.getByText("模型列表")).toBeVisible();
-    expect(screen.getByRole("button", { name: "默认模型" })).toBeVisible();
+    // 「第一行是默认模型」写在「模型列表」后面的「?」里。
+    expect(screen.getByRole("button", { name: "模型列表" })).toBeVisible();
     expect(screen.queryByText("上游格式")).toBeNull();
     expect(document.getElementById("codexDefaultModel")).toBeNull();
     expect(
@@ -168,5 +169,33 @@ describe("CodexFormFields direct layout", () => {
     expect(
       screen.getByRole("button", { name: "providerForm.fetchModels" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("CodexFormFields help tips", () => {
+  it("puts field explanations behind「?」and keeps consequences on the page", () => {
+    renderCodexForm({
+      apiFormat: "anthropic",
+      // 有地址栏的卡才显示上游格式。
+      shouldShowSpeedTest: true,
+      catalogModels: [],
+      onCatalogModelsChange: vi.fn(),
+    });
+
+    for (const name of [
+      "codexConfig.apiUrlLabel",
+      "默认模型",
+      "子代理模型",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    // Anthropic 格式的高级区自动展开：后果提示仍在页面上，说明在字段名后的「?」里。
+    for (const name of ["上游格式", "认证字段", "最大输出 tokens"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(
+      screen.getByText("不要超过模型或网关的真实输出上限，否则会返回 400。"),
+    ).toBeVisible();
+    expect(screen.getByText("以下两项只在路由模式下生效。")).toBeVisible();
   });
 });
