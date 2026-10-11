@@ -22,3 +22,13 @@ export function useApiKeyVars(enabled = true) {
     client ?? detachedClient,
   );
 }
+
+/** 内置模板无需轮询；仅在打开说明时加载，失败由用户重试。 */
+export function useApiKeyVarTemplate() {
+  return useQuery({
+    queryKey: ["apiKeyVarTemplate"],
+    queryFn: () => apiKeyVarsApi.getTemplate(),
+    staleTime: Infinity,
+    retry: false,
+  });
+}

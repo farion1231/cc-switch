@@ -4,6 +4,7 @@ import { FolderOpen, Loader2, Play } from "lucide-react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -30,6 +31,7 @@ interface ApiKeyVarDialogProps {
   existingNames: string[];
   onClose: () => void;
   onSaved: (saved: ApiKeyVar, wasEnabled: boolean) => void;
+  onOpenGuide: () => void;
 }
 
 const parseOptionalInt = (value: string): number | undefined => {
@@ -45,6 +47,7 @@ export function ApiKeyVarDialog({
   existingNames,
   onClose,
   onSaved,
+  onOpenGuide,
 }: ApiKeyVarDialogProps) {
   const { t } = useTranslation();
   const [name, setName] = useState("");
@@ -196,6 +199,11 @@ export function ApiKeyVarDialog({
             <DialogTitle>
               {variable ? t("apiKeyVars.editTitle") : t("apiKeyVars.addTitle")}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              {t("apiKeyVars.nameHint", {
+                ref: `{{${trimmedName || "MY_KEY"}}}`,
+              })}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 px-6 py-2">
             <div className="space-y-1.5">
@@ -250,6 +258,15 @@ export function ApiKeyVarDialog({
                   {t("apiKeyVars.chooseDir")}
                 </Button>
               </div>
+              <Button
+                type="button"
+                variant="link"
+                size="compact"
+                className="h-auto px-0 text-caption"
+                onClick={onOpenGuide}
+              >
+                {t("apiKeyVars.template.openGuide")}
+              </Button>
               {resolveError ? (
                 <p className="text-caption text-danger-text">{resolveError}</p>
               ) : resolved ? (

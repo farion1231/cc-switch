@@ -4784,6 +4784,35 @@
     }
   },
   "apiKeyVars": {
+    "template": {
+      "title": "腳本設定說明與範例",
+      "intro": "完整的多檔案腳本範例，可預覽並下載為 ZIP。",
+      "openGuide": "查看設定說明與範例",
+      "download": "下載範本 ZIP",
+      "downloaded": "範本已儲存至 {{path}}",
+      "downloadFailed": "範本下載失敗：{{error}}",
+      "loading": "正在載入範本程式碼…",
+      "loadFailed": "無法載入範本程式碼：{{error}}",
+      "retry": "重試",
+      "demoNotice": "範本預設使用離線 demo 模式，無需 npm 安裝。產生的示範 Key 僅供測試；用於真實供應商前，請切換到 HTTP 模式並完成介面設定。",
+      "stepExtract": "下載並解壓縮 ZIP，找到包含 index.mjs、config.mjs 和 lib 資料夾的 api-key-refresh-template 目錄。腳本目錄應選擇這一層。",
+      "stepRun": "安裝 Node.js 20 或更新版本，在該目錄執行 node index.mjs。應只輸出一行 JSON。若 CC Switch 找不到 node，可在下方指定 node 執行檔路徑。",
+      "stepTest": "新增名為 MY_KEY 的變數，選擇上述目錄並點擊「測試腳本」，確認顯示遮罩結果。HTTP 模式設定完成後再啟用自動更新。",
+      "stepConnect": "修改 config.mjs 的模式、介面位址、請求內容和逾時；在 lib/provider.mjs 調整介面回應映射。HTTP 範例從 API_KEY_REFRESH_TOKEN 讀取 Bearer 憑證，須在啟動 CC Switch 前設定環境變數，已執行時需完全結束後重新啟動。在供應商 API Key 欄位填入 {{ref}} 引用變數。",
+      "contractTitle": "腳本執行約定",
+      "contractOutput": "入口優先為 index.mjs，其次為 index.js；工作目錄為腳本目錄，支援匯入其他檔案。成功時 stdout 僅輸出一個 JSON 物件（不超過 64 KiB），apiKey 必填且不能包含空白；expiresAt、refreshAfter、message 可選。診斷寫入 stderr，請勿輸出憑證或原始介面回應。",
+      "contractTime": "expiresAt 和 refreshAfter 接受帶時區的 ISO-8601 時間（如 2030-01-01T00:00:00Z）或 Unix 秒數。不要直接輸出 Date.now() 的毫秒值；expiresAt 必須在未來。",
+      "contractSchedule": "優先按 refreshAfter 更新；未提供時按 expiresAt 減去提前更新時間，均未提供時每小時更新。預設腳本逾時 30 秒，提前更新 5 分鐘。HTTP 請求逾時應短於腳本逾時。",
+      "contractExit": "結束碼 0 表示成功；2 表示設定、認證或回應錯誤，需要人工處理；其他非 0 結束碼會自動重試。範例對網路、逾時、HTTP 408/429/5xx 回傳 1。",
+      "environmentTitle": "CC Switch 注入的環境變數",
+      "environment": {
+        "CC_SWITCH_CONTRACT_VERSION": "執行約定版本，目前為 2。",
+        "CC_SWITCH_VAR_NAME": "目前變數名稱，例如 MY_KEY。",
+        "CC_SWITCH_REASON": "執行原因：startup、scheduled、switch、manual、test 或 retry。",
+        "CC_SWITCH_CURRENT_EXPIRES_AT": "可選：目前 Key 的到期時間，UTC ISO-8601 格式。首次取得時不提供。"
+      },
+      "filesTitle": "範本檔案（與 ZIP 內容一致）"
+    },
     "title": "API Key 變數",
     "description": "定義由本機指令碼自動重新整理的 API Key。在 Claude、Codex、Gemini、Grok 供應商的 API Key 輸入框中填寫以兩層大括號包住的變數名即可引用；變數重新整理後，正在使用它的供應商設定會自動更新。指令碼目錄中依 index.mjs、index.js 的順序尋找進入點並以 node 執行，stdout 輸出 JSON：apiKey、expiresAt（選填）、refreshAfter（選填）、message（選填）。結束碼 2 表示需要人工處理，其他非 0 結束碼會自動重試。變數的值只儲存在本機，不會被匯出或同步。",
     "add": "新增變數",

@@ -1447,6 +1447,8 @@ pub fn run() {
             commands::delete_api_key_var,
             commands::resolve_api_key_var_script,
             commands::test_api_key_var,
+            commands::get_api_key_var_template,
+            commands::download_api_key_var_template,
             commands::refresh_api_key_var,
             commands::check_api_key_ref,
             commands::check_api_key_refs,

@@ -48,6 +48,11 @@ export interface ResolvedScript {
   ignoredIndexJs: boolean;
 }
 
+export interface ApiKeyVarTemplateFile {
+  path: string;
+  content: string;
+}
+
 export interface ApiKeyVarTestOutcome {
   apiKeyMasked: string;
   expiresAt?: number;
@@ -127,6 +132,12 @@ export function apiKeyRefStatus(
 }
 
 export const apiKeyVarsApi = {
+  async getTemplate(): Promise<ApiKeyVarTemplateFile[]> {
+    return await invoke("get_api_key_var_template");
+  },
+  async downloadTemplate(): Promise<string | null> {
+    return await invoke("download_api_key_var_template");
+  },
   async list(): Promise<ApiKeyVar[]> {
     return await invoke("list_api_key_vars");
   },

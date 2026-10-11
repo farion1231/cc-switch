@@ -4783,6 +4783,35 @@
     }
   },
   "apiKeyVars": {
+    "template": {
+      "title": "スクリプトの設定とサンプル",
+      "intro": "複数ファイルの完全なサンプルを表示し、ZIP としてダウンロードできます。",
+      "openGuide": "設定手順とサンプルを表示",
+      "download": "テンプレート ZIP をダウンロード",
+      "downloaded": "テンプレートを {{path}} に保存しました",
+      "downloadFailed": "テンプレートのダウンロードに失敗しました：{{error}}",
+      "loading": "テンプレートのコードを読み込み中…",
+      "loadFailed": "テンプレートのコードを読み込めませんでした：{{error}}",
+      "retry": "再試行",
+      "demoNotice": "テンプレートはオフラインの demo モードで動作し、npm install は不要です。デモ用キーはテスト専用です。実際のプロバイダーで使う前に HTTP モードを設定してください。",
+      "stepExtract": "ZIP をダウンロードして展開し、index.mjs、config.mjs、lib フォルダーを含む api-key-refresh-template ディレクトリをスクリプトディレクトリとして選択します。",
+      "stepRun": "Node.js 20 以降をインストールし、そのディレクトリで node index.mjs を実行します。JSON が 1 行だけ出力されます。CC Switch が node を見つけられない場合は、下で実行ファイルのパスを指定します。",
+      "stepTest": "MY_KEY という変数を追加し、そのディレクトリを選択して「スクリプトをテスト」を押し、マスクされた結果を確認します。HTTP モードの設定が完了してから自動更新を有効にします。",
+      "stepConnect": "config.mjs のモード、URL、リクエスト本文、タイムアウトを編集し、lib/provider.mjs のレスポンス変換を調整します。HTTP サンプルは API_KEY_REFRESH_TOKEN から Bearer 認証情報を読みます。CC Switch の起動前に環境変数を設定し、起動中の場合は完全に終了して再起動してください。プロバイダーの API Key 欄に {{ref}} を入力します。",
+      "contractTitle": "スクリプトの実行仕様",
+      "contractOutput": "index.mjs を優先し、なければ index.js を実行します。作業ディレクトリはスクリプトのディレクトリで、別ファイルのインポートも可能です。成功時の stdout は JSON オブジェクト 1 つだけ（最大 64 KiB）です。空白を含まない apiKey は必須、expiresAt、refreshAfter、message は省略可能です。診断情報は stderr に書き、認証情報や生のレスポンスを出力しないでください。",
+      "contractTime": "expiresAt と refreshAfter はタイムゾーン付き ISO-8601（例：2030-01-01T00:00:00Z）または Unix 秒を受け取ります。Date.now() のミリ秒をそのまま出力しないでください。expiresAt は未来である必要があります。",
+      "contractSchedule": "refreshAfter を優先します。省略時は expiresAt から事前更新時間を引いた時刻に更新し、両方なければ毎時更新します。標準のスクリプトタイムアウトは 30 秒、事前更新は 5 分です。HTTP タイムアウトはスクリプトタイムアウトより短くしてください。",
+      "contractExit": "終了コード 0 は成功、2 は手動対応が必要な設定・認証・レスポンスのエラーです。それ以外の非ゼロ終了コードは自動再試行されます。サンプルはネットワークエラー、タイムアウト、HTTP 408/429/5xx で 1 を返します。",
+      "environmentTitle": "CC Switch が設定する環境変数",
+      "environment": {
+        "CC_SWITCH_CONTRACT_VERSION": "実行仕様のバージョン。現在は 2 です。",
+        "CC_SWITCH_VAR_NAME": "現在の変数名（例：MY_KEY）。",
+        "CC_SWITCH_REASON": "実行理由：startup、scheduled、switch、manual、test、retry。",
+        "CC_SWITCH_CURRENT_EXPIRES_AT": "省略可能：現在のキーの有効期限（UTC ISO-8601）。初回取得時は設定されません。"
+      },
+      "filesTitle": "テンプレートファイル（ZIP と同じ内容）"
+    },
     "title": "API キー変数",
     "description": "ローカルスクリプトで自動更新される API キーを定義します。Claude・Codex・Gemini・Grok のプロバイダーの API キー欄に、変数名を二重の波かっこで囲んで入力すると参照できます。更新されると、使用中のプロバイダーの設定も自動で更新されます。スクリプトディレクトリから index.mjs、次に index.js を探して node で実行し、stdout に JSON（apiKey、expiresAt（任意）、refreshAfter（任意）、message（任意））を出力します。終了コード 2 は手動対応が必要、それ以外の 0 以外のコードは自動で再試行します。値はこのデバイスにのみ保存され、エクスポートや同期はされません。",
     "add": "変数を追加",

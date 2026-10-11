@@ -5,6 +5,7 @@
 
 pub mod resolve;
 pub mod runner;
+pub mod template;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};

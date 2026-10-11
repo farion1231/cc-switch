@@ -4783,6 +4783,35 @@
     }
   },
   "apiKeyVars": {
+    "template": {
+      "title": "脚本配置说明与示例",
+      "intro": "完整的多文件脚本示例，可预览并下载为 ZIP。",
+      "openGuide": "查看配置说明与示例",
+      "download": "下载模板 ZIP",
+      "downloaded": "模板已保存到 {{path}}",
+      "downloadFailed": "模板下载失败：{{error}}",
+      "loading": "正在加载模板代码…",
+      "loadFailed": "无法加载模板代码：{{error}}",
+      "retry": "重试",
+      "demoNotice": "模板默认使用离线 demo 模式，无需 npm 安装。生成的演示 Key 只能用于测试；用于真实供应商前，请切换到 HTTP 模式并完成接口配置。",
+      "stepExtract": "下载并解压 ZIP，找到包含 index.mjs、config.mjs 和 lib 文件夹的 api-key-refresh-template 目录。脚本目录应选择这一层。",
+      "stepRun": "安装 Node.js 20 或更新版本，在该目录执行 node index.mjs。应只输出一行 JSON。若 CC Switch 找不到 node，可在下方指定 node 可执行文件路径。",
+      "stepTest": "添加名为 MY_KEY 的变量，选择上述目录并点击“测试脚本”，确认显示掩码结果。HTTP 模式配置完成后再启用自动刷新。",
+      "stepConnect": "修改 config.mjs 的模式、接口地址、请求体和超时；在 lib/provider.mjs 调整接口响应映射。HTTP 示例从 API_KEY_REFRESH_TOKEN 读取 Bearer 凭据，须在启动 CC Switch 前设置环境变量，已运行时需完全退出后重新启动。在供应商 API Key 字段填写 {{ref}} 引用变量。",
+      "contractTitle": "脚本运行约定",
+      "contractOutput": "入口优先为 index.mjs，其次为 index.js；工作目录为脚本目录，支持导入其他文件。成功时 stdout 仅输出一个 JSON 对象（不超过 64 KiB），apiKey 必填且不能包含空白；expiresAt、refreshAfter、message 可选。诊断写入 stderr，请勿输出凭据或原始接口响应。",
+      "contractTime": "expiresAt 和 refreshAfter 接受带时区的 ISO-8601 时间（如 2030-01-01T00:00:00Z）或 Unix 秒数。不要直接输出 Date.now() 的毫秒值；expiresAt 必须在未来。",
+      "contractSchedule": "优先按 refreshAfter 刷新；未提供时按 expiresAt 减去提前刷新时间，均未提供时每小时刷新。默认脚本超时 30 秒，提前刷新 5 分钟。HTTP 请求超时应短于脚本超时。",
+      "contractExit": "退出码 0 表示成功；2 表示配置、认证或响应错误，需要人工处理；其他非 0 退出码会自动重试。示例对网络、超时、HTTP 408/429/5xx 返回 1。",
+      "environmentTitle": "CC Switch 注入的环境变量",
+      "environment": {
+        "CC_SWITCH_CONTRACT_VERSION": "运行约定版本，当前为 2。",
+        "CC_SWITCH_VAR_NAME": "当前变量名，例如 MY_KEY。",
+        "CC_SWITCH_REASON": "执行原因：startup、scheduled、switch、manual、test 或 retry。",
+        "CC_SWITCH_CURRENT_EXPIRES_AT": "可选：当前 Key 的过期时间，UTC ISO-8601 格式。首次获取时不提供。"
+      },
+      "filesTitle": "模板文件（与 ZIP 内容一致）"
+    },
     "title": "API Key 变量",
     "description": "定义由本机脚本自动刷新的 API Key。在 Claude、Codex、Gemini、Grok 供应商的 API Key 输入框中填写以两层花括号包住的变量名即可引用；变量刷新后，正在使用它的供应商配置会自动更新。脚本目录中按 index.mjs、index.js 的顺序查找入口并用 node 运行，stdout 输出 JSON：apiKey、expiresAt（可选）、refreshAfter（可选）、message（可选）。退出码 2 表示需要人工处理，其他非 0 退出码会自动重试。变量的值只保存在本机，不会被导出或同步。",
     "add": "添加变量",

@@ -1,8 +1,16 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { useApiKeyVars } from "@/lib/query/apiKeyVars";
-import { Loader2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  Download,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +21,15 @@ import {
   SettingsRow,
 } from "@/components/settings/SettingsLayout";
 import { ApiKeyVarDialog } from "@/components/settings/ApiKeyVarDialog";
+import {
+  ApiKeyVarTemplateGuide,
+  ApiKeyVarTemplateGuideDialog,
+} from "@/components/settings/ApiKeyVarTemplateGuide";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   API_KEY_VARS_QUERY_KEY,
   apiKeyVarsApi,
@@ -63,12 +80,35 @@ export function ApiKeyVarsSection({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState<ApiKeyVar | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [guideExpanded, setGuideExpanded] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const downloadInFlight = useRef(false);
   const [nodePath, setNodePath] = useState(
     settings.apiKeyRefreshNodePath ?? "",
   );
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: API_KEY_VARS_QUERY_KEY });
+
+  const downloadTemplate = async () => {
+    if (downloadInFlight.current) return;
+    downloadInFlight.current = true;
+    setDownloading(true);
+    try {
+      const path = await apiKeyVarsApi.downloadTemplate();
+      if (path) toast.success(t("apiKeyVars.template.downloaded", { path }));
+    } catch (e) {
+      toast.error(
+        t("apiKeyVars.template.downloadFailed", {
+          error: extractErrorMessage(e),
+        }),
+      );
+    } finally {
+      downloadInFlight.current = false;
+      setDownloading(false);
+    }
+  };
 
   const refresh = async (name: string) => {
     setRefreshing(name);
@@ -122,17 +162,32 @@ export function ApiKeyVarsSection({
           body: t("apiKeyVars.description"),
         }}
         actions={
-          <Button
-            variant="solid"
-            size="compact"
-            onClick={() => {
-              setEditing(undefined);
-              setDialogOpen(true);
-            }}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("apiKeyVars.add")}
-          </Button>
+          <>
+            <Button
+              variant="neutral"
+              size="compact"
+              disabled={downloading}
+              onClick={() => void downloadTemplate()}
+            >
+              {downloading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              {t("apiKeyVars.template.download")}
+            </Button>
+            <Button
+              variant="solid"
+              size="compact"
+              onClick={() => {
+                setEditing(undefined);
+                setDialogOpen(true);
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("apiKeyVars.add")}
+            </Button>
+          </>
         }
       >
         {isLoading ? (
@@ -235,6 +290,29 @@ export function ApiKeyVarsSection({
         )}
       </SettingsBlock>
 
+      <Collapsible
+        open={guideExpanded}
+        onOpenChange={setGuideExpanded}
+        className="rounded-panel border border-border bg-surface"
+      >
+        <CollapsibleTrigger asChild>
+          <Button
+            variant="quiet"
+            size="regular"
+            className="h-auto w-full justify-between whitespace-normal px-4 py-3 text-start"
+          >
+            {t("apiKeyVars.template.title")}
+            <ChevronDown
+              className={`h-4 w-4 shrink-0 transition-transform ${guideExpanded ? "rotate-180" : ""}`}
+              aria-hidden="true"
+            />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="min-w-0 border-t border-border px-4 py-4">
+          {guideExpanded && <ApiKeyVarTemplateGuide />}
+        </CollapsibleContent>
+      </Collapsible>
+
       <SettingsBlock title={t("apiKeyVars.advanced")}>
         <SettingsCard>
           <SettingsRow
@@ -266,6 +344,7 @@ export function ApiKeyVarsSection({
         variable={editing}
         existingNames={(vars ?? []).map((v) => v.name)}
         onClose={() => setDialogOpen(false)}
+        onOpenGuide={() => setGuideOpen(true)}
         onSaved={(saved, wasEnabled) => {
           setDialogOpen(false);
           void invalidate();
@@ -276,6 +355,12 @@ export function ApiKeyVarsSection({
             void refresh(saved.name);
           }
         }}
+      />
+      <ApiKeyVarTemplateGuideDialog
+        open={guideOpen}
+        onOpenChange={setGuideOpen}
+        downloading={downloading}
+        onDownload={() => void downloadTemplate()}
       />
       <ConfirmDialog
         isOpen={Boolean(deleting)}

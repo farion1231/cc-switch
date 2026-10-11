@@ -3,6 +3,7 @@
 use std::str::FromStr;
 
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::app_config::AppType;
 use crate::services::api_key_vars::{
@@ -40,6 +41,39 @@ pub async fn test_api_key_var(input: ApiKeyVarInput) -> Result<TestOutcome, Stri
     api_key_vars::test_script(&input)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 返回内置脚本模板，用于设置页的完整代码预览。
+#[tauri::command]
+pub fn get_api_key_var_template() -> Vec<api_key_vars::template::ApiKeyVarTemplateFile> {
+    api_key_vars::template::files()
+}
+
+/// 由后端弹出保存对话框并下载内置模板。前端不能传入任意写入路径。
+/// 用户取消时返回 `None`，成功时返回选择的绝对路径。
+#[tauri::command]
+pub async fn download_api_key_var_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<String>, String> {
+    let bytes = api_key_vars::template::zip_bytes()?;
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("ZIP archive", &["zip"])
+            .set_file_name("cc-switch-api-key-template.zip")
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|error| format!("打开模板保存对话框失败: {error}"))?;
+
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|error| format!("无效的模板保存路径: {error}"))?;
+    api_key_vars::template::write_zip(&path, &bytes)?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
