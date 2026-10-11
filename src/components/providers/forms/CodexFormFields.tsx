@@ -56,6 +56,7 @@ import {
   ApiKeySection,
   DirectModeFormatWarning,
   EndpointField,
+  FullUrlToggle,
   ModelDropdown,
   type DirectModeFormatNotice,
 } from "./shared";
@@ -654,7 +655,8 @@ export function CodexFormFields({
     supportsThinking ||
     supportsEffort ||
     promptCacheRouting !== "auto" ||
-    !!maxOutputTokens;
+    !!maxOutputTokens ||
+    isFullUrl;
   const [advancedExpanded, setAdvancedExpanded] = useState(
     isXaiOauthPreset ? false : hasAnyAdvancedValue,
   );
@@ -673,7 +675,7 @@ export function CodexFormFields({
   // Stack 布局的高级区（思考能力、Anthropic 专有项、User-Agent、请求覆盖）：填了 UA 或请求
   // 覆盖才展开，其余多是预设自带的。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
-    !!customUserAgent || hasRequestOverrides,
+    isFullUrl || !!customUserAgent || hasRequestOverrides,
   );
 
   // 显示用的顺序。挪动默认那一行不算修改：没动过列表时保存仍是原来的顺序。
@@ -1716,13 +1718,21 @@ export function CodexFormFields({
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.codexApiEndpointPlaceholder")}
           help={t("providerForm.codexApiHint")}
-          showFullUrlToggle
-          isFullUrl={isFullUrl}
-          onFullUrlChange={onFullUrlChange}
           onManageClick={() => onEndpointModalToggle(true)}
         />
       )}
     </>
+  );
+
+  // 完整 URL 跟着地址框（托管 OAuth 端点由 adapter 硬定向，没有这个开关）。
+  const showFullUrlToggle =
+    shouldShowSpeedTest && !isCopilotPreset && !isXaiOauthPreset;
+  const fullUrlToggle = (
+    <FullUrlToggle
+      checked={isFullUrl}
+      onCheckedChange={onFullUrlChange}
+      className="border-t border-border pt-3"
+    />
   );
 
   const speedTestModal = (
@@ -1899,6 +1909,7 @@ export function CodexFormFields({
     const showReasoning = isChatFormat && canEditReasoning;
     // Copilot 不显示 UA 和请求覆盖，Responses 格式下高级区就空了。
     const hasStackAdvancedContent =
+      showFullUrlToggle ||
       (showFormatFields && isAnthropicFormat) ||
       showReasoning ||
       userAgentAndOverrides !== null;
@@ -1989,6 +2000,12 @@ export function CodexFormFields({
               </Button>
             </CollapsibleTrigger>
             <CollapsibleContent className="space-y-3 pt-3">
+              {showFullUrlToggle && (
+                <FullUrlToggle
+                  checked={isFullUrl}
+                  onCheckedChange={onFullUrlChange}
+                />
+              )}
               {showFormatFields &&
                 isAnthropicFormat &&
                 impersonateClaudeCodeToggle}
@@ -2009,7 +2026,8 @@ export function CodexFormFields({
                 <div
                   className={cn(
                     "space-y-3",
-                    ((showFormatFields && isAnthropicFormat) ||
+                    (showFullUrlToggle ||
+                      (showFormatFields && isAnthropicFormat) ||
                       showReasoning) &&
                       "border-t border-border pt-3",
                   )}
@@ -2186,6 +2204,7 @@ export function CodexFormFields({
                 {isAnthropicFormat && anthropicAuthFieldSelect}
                 {isAnthropicFormat && impersonateClaudeCodeToggle}
                 {isAnthropicFormat && maxOutputTokensField}
+                {showFullUrlToggle && fullUrlToggle}
               </div>
             )}
 

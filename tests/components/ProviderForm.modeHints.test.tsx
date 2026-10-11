@@ -326,3 +326,38 @@ describe("Codex 主代理推理强度", () => {
     expect(screen.getByText("模型列表")).toBeInTheDocument();
   });
 });
+
+describe("完整 URL 开关在高级选项里", () => {
+  beforeEach(() => {
+    modeState.mode = "route";
+    modeState.directProviderId = null;
+  });
+
+  const fullUrlSwitch = () =>
+    screen.queryByRole("switch", { name: "完整 URL" });
+
+  it("Claude：高级区折叠时看不到，展开后在里面", () => {
+    renderClaude(undefined, "https://relay.example", { ANTHROPIC_MODEL: "" });
+
+    expect(fullUrlSwitch()).toBeNull();
+    expandClaudeAdvanced();
+    expect(fullUrlSwitch()).not.toBeChecked();
+  });
+
+  it("Claude：已开着的卡自动展开高级区", () => {
+    renderClaude({ isFullUrl: true }, "https://relay.example", {
+      ANTHROPIC_MODEL: "",
+    });
+
+    expect(fullUrlSwitch()).toBeChecked();
+  });
+
+  it("Codex：平时不显示，已开着的卡自动展开高级区", () => {
+    const { unmount } = renderCodex();
+    expect(fullUrlSwitch()).toBeNull();
+    unmount();
+
+    renderCodex({ isFullUrl: true });
+    expect(fullUrlSwitch()).toBeChecked();
+  });
+});

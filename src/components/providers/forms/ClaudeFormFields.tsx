@@ -30,6 +30,7 @@ import {
   ApiKeySection,
   DirectModeFormatWarning,
   EndpointField,
+  FullUrlToggle,
   ModelDropdown,
   ModelInputWithFetch,
   type DirectModeFormatNotice,
@@ -262,6 +263,7 @@ export function ClaudeFormFields({
     subagentModel ||
     (!isXaiOauthPreset && !isCodexOauthPreset && apiFormat !== "anthropic") ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
+    isFullUrl ||
     customUserAgent ||
     hasRequestOverrides
   );
@@ -278,9 +280,9 @@ export function ClaudeFormFields({
     }
   }, [hasAnyAdvancedValue, isXaiOauthPreset]);
 
-  // Stack 布局的高级区只有 User-Agent 和请求覆盖，填了才展开。
+  // Stack 布局的高级区只有完整 URL、User-Agent 和请求覆盖，开了或填了才展开。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
-    !!customUserAgent || hasRequestOverrides,
+    isFullUrl || !!customUserAgent || hasRequestOverrides,
   );
 
   // Copilot 可用模型列表
@@ -810,18 +812,10 @@ export function ClaudeFormFields({
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.apiEndpointPlaceholder")}
           help={endpointHint}
-          fullUrlHint={
-            apiFormat === "gemini_native"
-              ? t("providerForm.fullUrlHintGeminiNative")
-              : undefined
-          }
           showManageButton={showEndpointTools}
           onManageClick={
             showEndpointTools ? () => onEndpointModalToggle(true) : undefined
           }
-          showFullUrlToggle={showEndpointTools && !isXaiOauthPreset}
-          isFullUrl={isFullUrl}
-          onFullUrlChange={onFullUrlChange}
         />
       )}
     </>
@@ -951,6 +945,18 @@ export function ClaudeFormFields({
     usesThirdPartyEndpoint &&
     !(directModeFormatNotice ? defaultHaikuModel : claudeModel).trim();
 
+  // 完整 URL 跟着地址框：托管账号卡的地址由后端固定，没有这个开关。
+  const fullUrlToggle = shouldShowSpeedTest &&
+    showEndpointTools &&
+    !isCodexOauthPreset &&
+    !isXaiOauthPreset && (
+      <FullUrlToggle
+        checked={isFullUrl}
+        onCheckedChange={onFullUrlChange}
+        geminiNative={apiFormat === "gemini_native"}
+      />
+    );
+
   // 两项都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   const userAgentAndOverrides = (
     <>
@@ -1041,6 +1047,11 @@ export function ClaudeFormFields({
               </Button>
             </CollapsibleTrigger>
             <CollapsibleContent className="space-y-4 pt-2">
+              {fullUrlToggle && (
+                <div className="border-b border-border pb-3">
+                  {fullUrlToggle}
+                </div>
+              )}
               {userAgentAndOverrides}
             </CollapsibleContent>
           </Collapsible>
@@ -1080,6 +1091,8 @@ export function ClaudeFormFields({
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-4 pt-2">
             {apiFormatField}
+
+            {fullUrlToggle}
 
             {/* 认证字段只决定 Anthropic 格式上游的认证头（OpenAI 格式一律 Bearer）；Copilot
                 靠它决定占位符写在哪个变量；Codex / xAI 托管账号卡的认证由后端注入。 */}
