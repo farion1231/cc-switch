@@ -529,6 +529,7 @@ mod tests {
             meta: None,
             icon: None,
             icon_color: None,
+            icon_source: None,
             in_failover_queue: false,
         }
     }
@@ -555,6 +556,7 @@ mod tests {
             meta: None,
             icon: None,
             icon_color: None,
+            icon_source: None,
             in_failover_queue: false,
         }
     }
@@ -584,6 +586,7 @@ mod tests {
             meta: None,
             icon: None,
             icon_color: None,
+            icon_source: None,
             in_failover_queue: false,
         }
     }
@@ -625,6 +628,7 @@ mod tests {
             meta: None,
             icon: None,
             icon_color: None,
+            icon_source: None,
             in_failover_queue: false,
         }
     }
@@ -6317,6 +6321,33 @@ impl ProviderService {
     /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+        // 删行前先记下引用的资产键：行删掉后就查不到了。exact-key 清理可以
+        // 覆盖“新增草稿用临时 ID 存资产”导致的前缀不匹配场景。
+        let referenced_asset_key = state
+            .db
+            .get_provider_by_id(id, app_type.as_str())
+            .ok()
+            .flatten()
+            .filter(|p| p.icon_source.as_deref() == Some("local"))
+            .and_then(|p| p.icon);
+        let result = Self::delete_inner(state, app_type, id);
+        if result.is_ok() {
+            if let Some(key) = referenced_asset_key {
+                if let Err(error) =
+                    crate::services::provider_icons::delete_provider_asset_by_key(&key)
+                {
+                    log::warn!("删除供应商 '{id}' 引用的图标资产 {key} 失败: {error}");
+                }
+            }
+            // 前缀清理兜底（编辑态重命名 / 历史堆积）；失败只 warn（孤儿文件无副作用）。
+            if let Err(error) = crate::services::provider_icons::delete_provider_icons(id) {
+                log::warn!("清理供应商 '{id}' 的图标资产失败: {error}");
+            }
+        }
+        result
+    }
+
+    fn delete_inner(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }

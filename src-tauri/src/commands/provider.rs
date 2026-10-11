@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use std::path::Path;
 use tauri::{Emitter, Manager, State};
 
 use crate::app_config::AppType;
@@ -129,6 +130,30 @@ pub fn delete_provider(
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::delete(state.inner(), app_type, &id)
+        .map(|_| true)
+        .map_err(|e| e.to_string())
+}
+
+// ─── 自定义图标资产（issue #8117）────────────────────────────
+
+#[tauri::command]
+pub fn save_provider_icon(
+    #[allow(non_snake_case)] providerId: String,
+    #[allow(non_snake_case)] sourcePath: String,
+) -> Result<crate::services::provider_icons::SavedProviderIcon, String> {
+    crate::services::provider_icons::save_provider_icon(&providerId, Path::new(&sourcePath))
+        .map_err(|e| e.to_string())
+}
+
+/// 返回 `data:` URL（CSP 已放行 img-src data:）；资产缺失返回 None，前端静默回退。
+#[tauri::command]
+pub fn read_provider_icon(#[allow(non_snake_case)] key: String) -> Result<Option<String>, String> {
+    crate::services::provider_icons::read_provider_icon_data_url(&key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_provider_icon(#[allow(non_snake_case)] providerId: String) -> Result<bool, String> {
+    crate::services::provider_icons::delete_provider_icons(&providerId)
         .map(|_| true)
         .map_err(|e| e.to_string())
 }

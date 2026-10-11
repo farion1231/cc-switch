@@ -183,6 +183,7 @@ pub(crate) fn build_provider_from_request(
         meta,
         icon: request.icon.clone(),
         icon_color: None,
+        icon_source: None,
         in_failover_queue: false,
     };
 

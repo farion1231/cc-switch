@@ -109,7 +109,7 @@ impl Database {
     ) -> Result<IndexMap<String, Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, icon_source, meta, in_failover_queue
              FROM providers WHERE app_type = ?1
              ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
@@ -126,8 +126,9 @@ impl Database {
                 let notes: Option<String> = row.get(7)?;
                 let icon: Option<String> = row.get(8)?;
                 let icon_color: Option<String> = row.get(9)?;
-                let meta_str: String = row.get(10)?;
-                let in_failover_queue: bool = row.get(11)?;
+                let icon_source: Option<String> = row.get(10)?;
+                let meta_str: String = row.get(11)?;
+                let in_failover_queue: bool = row.get(12)?;
 
                 let settings_config =
                     serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
@@ -147,6 +148,7 @@ impl Database {
                         meta: Some(meta),
                         icon,
                         icon_color,
+                        icon_source,
                         in_failover_queue,
                     },
                 ))
@@ -220,7 +222,7 @@ impl Database {
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let result = conn.query_row(
-            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, icon_source, meta, in_failover_queue
              FROM providers WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],
             |row| {
@@ -233,8 +235,9 @@ impl Database {
                 let notes: Option<String> = row.get(6)?;
                 let icon: Option<String> = row.get(7)?;
                 let icon_color: Option<String> = row.get(8)?;
-                let meta_str: String = row.get(9)?;
-                let in_failover_queue: bool = row.get(10)?;
+                let icon_source: Option<String> = row.get(9)?;
+                let meta_str: String = row.get(10)?;
+                let in_failover_queue: bool = row.get(11)?;
 
                 let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
                 let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
@@ -251,6 +254,7 @@ impl Database {
                     meta: Some(meta),
                     icon,
                     icon_color,
+                    icon_source,
                     in_failover_queue,
                 })
             },
@@ -296,10 +300,11 @@ impl Database {
                     notes = ?7,
                     icon = ?8,
                     icon_color = ?9,
-                    meta = ?10,
-                    is_current = ?11,
-                    in_failover_queue = ?12
-                WHERE id = ?13 AND app_type = ?14",
+                    icon_source = ?10,
+                    meta = ?11,
+                    is_current = ?12,
+                    in_failover_queue = ?13
+                WHERE id = ?14 AND app_type = ?15",
                 params![
                     provider.name,
                     serde_json::to_string(&provider.settings_config).map_err(|e| {
@@ -312,6 +317,7 @@ impl Database {
                     provider.notes,
                     provider.icon,
                     provider.icon_color,
+                    provider.icon_source,
                     serde_json::to_string(&meta_clone).map_err(|e| AppError::Database(format!(
                         "Failed to serialize meta: {e}"
                     )))?,
@@ -326,8 +332,8 @@ impl Database {
             tx.execute(
                 "INSERT INTO providers (
                     id, app_type, name, settings_config, website_url, category,
-                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    created_at, sort_index, notes, icon, icon_color, icon_source, meta, is_current, in_failover_queue
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     provider.id,
                     app_type,
@@ -341,6 +347,7 @@ impl Database {
                     provider.notes,
                     provider.icon,
                     provider.icon_color,
+                    provider.icon_source,
                     serde_json::to_string(&meta_clone)
                         .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?,
                     is_current,
@@ -416,9 +423,9 @@ impl Database {
         tx.execute(
             "INSERT INTO providers (
                 id, app_type, name, settings_config, website_url, category,
-                created_at, sort_index, notes, icon, icon_color, meta,
+                created_at, sort_index, notes, icon, icon_color, icon_source, meta,
                 is_current, in_failover_queue
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 provider.id,
                 app_type,
@@ -433,6 +440,7 @@ impl Database {
                 provider.notes,
                 provider.icon,
                 provider.icon_color,
+                provider.icon_source,
                 serde_json::to_string(&meta).map_err(|e| {
                     AppError::Database(format!("Failed to serialize meta: {e}"))
                 })?,
@@ -683,6 +691,7 @@ impl Database {
             meta: Some(meta),
             icon: None,
             icon_color: None,
+            icon_source: None,
             in_failover_queue: false,
         }))
     }

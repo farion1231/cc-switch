@@ -37,6 +37,10 @@ pub struct Provider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "iconColor")]
     pub icon_color: Option<String>,
+    /// 图标来源（"builtin" | "local" | "url"）。缺省按内建图标语义解析，旧行零迁移。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "iconSource")]
+    pub icon_source: Option<String>,
     /// 是否加入故障转移队列
     #[serde(default)]
     #[serde(rename = "inFailoverQueue")]
@@ -63,6 +67,7 @@ impl Provider {
             meta: None,
             icon: None,
             icon_color: None,
+            icon_source: None,
             in_failover_queue: false,
         }
     }
@@ -876,6 +881,7 @@ impl UniversalProvider {
             meta: self.meta.clone(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
+            icon_source: None,
             in_failover_queue: false,
         })
     }
@@ -941,6 +947,7 @@ requires_openai_auth = true"#
             meta: self.meta.clone(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
+            icon_source: None,
             in_failover_queue: false,
         })
     }
@@ -976,6 +983,7 @@ requires_openai_auth = true"#
             meta: self.meta.clone(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
+            icon_source: None,
             in_failover_queue: false,
         })
     }

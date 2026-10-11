@@ -36,6 +36,7 @@ impl Database {
                 notes TEXT,
                 icon TEXT,
                 icon_color TEXT,
+                icon_source TEXT,
                 meta TEXT NOT NULL DEFAULT '{}',
                 is_current BOOLEAN NOT NULL DEFAULT 0,
                 in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
@@ -611,6 +612,7 @@ impl Database {
         Self::add_column_if_missing(conn, "providers", "notes", "TEXT")?;
         Self::add_column_if_missing(conn, "providers", "icon", "TEXT")?;
         Self::add_column_if_missing(conn, "providers", "icon_color", "TEXT")?;
+        Self::add_column_if_missing(conn, "providers", "icon_source", "TEXT")?;
         Self::add_column_if_missing(conn, "providers", "meta", "TEXT NOT NULL DEFAULT '{}'")?;
         Self::add_column_if_missing(
             conn,
