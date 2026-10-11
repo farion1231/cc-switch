@@ -478,6 +478,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               })();
             }
           : undefined,
+        failed ? (succeeded.length ? "warning" : "error") : "success",
       );
     } finally {
       endWrite();

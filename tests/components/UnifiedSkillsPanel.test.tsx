@@ -284,6 +284,49 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
+  it.each([true, false])(
+    "shows an error toast when every bulk toggle fails (enabled=%s)",
+    async (enabled) => {
+      m.visibleApps = ["hermes"];
+      m.installed = [
+        makeSkill({ id: "a", name: "A", apps: { hermes: !enabled } }),
+        makeSkill({ id: "b", name: "B", apps: { hermes: !enabled } }),
+      ];
+      m.bulkToggle.mockResolvedValueOnce({
+        succeeded: [],
+        failed: ["a", "b"].map((item) => ({
+          item,
+          error: new Error("Invalid skill directory"),
+        })),
+      });
+      renderPanel();
+      await userEvent.click(columns()[0]);
+      await userEvent.click(
+        screen.getByRole("button", {
+          name: enabled
+            ? "appMatrix.pop.enableRest"
+            : "appMatrix.pop.disableAll",
+        }),
+      );
+      await waitFor(() =>
+        expect(m.toastError).toHaveBeenCalledWith(
+          expect.stringContaining("appMatrix.toast.partialFail"),
+          { closeButton: true },
+        ),
+      );
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["a", "b"],
+        app: "hermes",
+        enabled,
+      });
+      expect(
+        screen.getAllByRole("button", { name: "appMatrix.cell.fail" }),
+      ).toHaveLength(2);
+      expect(m.toastSuccess).not.toHaveBeenCalled();
+      expect(m.toastWarning).not.toHaveBeenCalled();
+    },
+  );
+
   it("marks partial bulk failures in the matrix", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
@@ -304,6 +347,25 @@ describe("UnifiedSkillsPanel", () => {
       ).toBeInTheDocument(),
     );
     expect(screen.getByText(/skillsPage.rowFail/)).toBeInTheDocument();
+    expect(m.toastWarning).toHaveBeenCalledWith(
+      expect.stringContaining("appMatrix.toast.partialFail"),
+      expect.objectContaining({
+        closeButton: true,
+        duration: 8000,
+        action: expect.anything(),
+      }),
+    );
+    expect(m.toastSuccess).not.toHaveBeenCalled();
+    expect(m.toastError).not.toHaveBeenCalled();
+    const [, options] = m.toastWarning.mock.calls[0];
+    act(() => options.action.onClick());
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenLastCalledWith({
+        ids: ["a"],
+        app: "claude",
+        enabled: false,
+      }),
+    );
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.fixSync" }),
     );
