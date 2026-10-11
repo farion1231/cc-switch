@@ -134,13 +134,13 @@ export function ClaudeStackModelsField({
               {t("providerForm.stackModelsLabel", { defaultValue: "模型列表" })}
             </FormLabel>
             <HelpTip
-              title={t("providerForm.stackModelDefault", {
-                defaultValue: "默认模型",
+              title={t("providerForm.stackModelsLabel", {
+                defaultValue: "模型列表",
               })}
             >
               {t("providerForm.stackModelDefaultHelp", {
                 defaultValue:
-                  "第一行是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。",
+                  "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一行是默认模型：这家被设为默认时，启动和后台任务都用它。",
               })}
             </HelpTip>
           </div>
@@ -174,12 +174,6 @@ export function ClaudeStackModelsField({
             </Button>
           </div>
         </div>
-        <p className="text-xs leading-relaxed text-fg-2">
-          {t("providerForm.stackModelsHint", {
-            defaultValue:
-              "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。",
-          })}
-        </p>
       </div>
 
       {fetchedModels.length > 0 && (

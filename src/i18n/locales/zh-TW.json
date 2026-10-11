@@ -1659,13 +1659,11 @@
     "modelMappingHint": "顯示名稱只影響 /model 選單；1M 只是提供給 Claude Code 的上下文能力聲明。",
     "stackModelsLabel": "模型列表",
     "addStackModel": "手動新增",
-    "stackModelsHint": "這些模型會出現在 Claude Code 的 /model 裡，選中後請求直達這家。",
-    "stackModelDefaultHelp": "第一行是這家的預設模型：這家被設為預設時，Claude Code 啟動和背景任務都用它。",
+    "stackModelDefaultHelp": "這些模型會出現在 Claude Code 的 /model 裡，選中後請求直達這家。第一行是預設模型：這家被設為預設時，啟動和背景任務都使用它。",
     "stackModelsEmpty": "未設定模型：把這家加入聚合後，模型選擇器裡不會多出它的模型",
     "stackModelPlaceholder": "例如 deepseek-v4-pro",
     "stackModelDefault": "預設模型",
     "stackLayout": {
-      "advancedHint": "自訂 User-Agent 與請求覆寫，一般無需修改。",
       "noModels": "模型列表為空：把這家加入聚合後，模型選擇器裡不會多出它的模型"
     },
     "modelRoleLabel": "模型角色",
@@ -1714,7 +1712,8 @@
     "fetchModelsTimeout": "請求逾時，請檢查網路連線",
     "requiredFields": "請填寫供應商名稱、API 位址、API Key 和模型",
     "customUserAgentHelp": "替換轉發到供應商的請求裡的 User-Agent。",
-    "localProxyRequestOverridesHelp": "作用於格式轉換後發給上游的請求。"
+    "localProxyRequestOverridesHelp": "作用於格式轉換後發給上游的請求。",
+    "apiFormatHelp": "看供應商原生支援哪種協定：Anthropic Messages 直連、不轉換格式；其餘三種由路由轉成 Anthropic Messages。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 驗證",
@@ -1919,12 +1918,10 @@
     "modelListDefaultHelp": "這些模型會出現在 Codex 的 /model 裡，帶上各自的上下文視窗和思考等級。第一行是預設模型。",
     "addCatalogModel": "手動新增",
     "modelListTitle": "模型列表",
-    "stackModelListHint": "這些模型會出現在 Codex 的 /model 裡，選中後請求直達這家。修改後需要重新啟動 Codex。",
-    "stackModelDefaultHelp": "第一行是這家的預設模型：這家被設為預設時，Codex 預設使用它。",
+    "stackModelDefaultHelp": "這些模型會出現在 Codex 的 /model 裡，選中後請求直達這家。第一行是預設模型：這家被設為預設時，Codex 預設使用它。",
     "defaultModelNotInList": "預設模型 {{model}} 不在清單裡：Codex 預設仍請求它，但 /model 裡沒有這一項。",
     "addToModelList": "加入清單",
     "modelListEmpty": "未設定模型：聚合模式下只發布這家的預設模型（config.toml 的 model）。",
-    "stackAdvancedHint": "思考能力、Anthropic 專有項、自訂 User-Agent 與請求覆寫，一般無需修改。",
     "catalogDisplayName": "顯示名稱",
     "catalogModelId": "模型 ID",
     "catalogColumnDisplay": "選單顯示名",
@@ -1955,7 +1952,7 @@
     "inactiveFieldCopied": "已複製",
     "upstreamFormatCopilotRouteHint": "所有模式都需要開啟路由，由路由注入 Copilot 帳號憑證；手動指定的協定模型不支援時會報錯。",
     "maxOutputTokensWarning": "不要超過模型或閘道的真實輸出上限，否則會回傳 400。",
-    "routeOnlySettingsHint": "以下兩項只在路由模式下生效。"
+    "routeOnlySettingsHint": "以下兩項只在路由、聚合模式下生效。"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",

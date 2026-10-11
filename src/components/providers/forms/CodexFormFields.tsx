@@ -1456,7 +1456,7 @@ export function CodexFormFields({
     <>
       <p className="text-xs leading-relaxed text-fg-2">
         {t("codexConfig.routeOnlySettingsHint", {
-          defaultValue: "以下两项只在路由模式下生效。",
+          defaultValue: "以下两项只在路由、聚合模式下生效。",
         })}
       </p>
       <CustomUserAgentField
@@ -1763,13 +1763,13 @@ export function CodexFormFields({
                     })}
                   </FormLabel>
                   <HelpTip
-                    title={t("providerForm.stackModelDefault", {
-                      defaultValue: "默认模型",
+                    title={t("codexConfig.modelListTitle", {
+                      defaultValue: "模型列表",
                     })}
                   >
                     {t("codexConfig.stackModelDefaultHelp", {
                       defaultValue:
-                        "第一行是这家的默认模型：这家被设为默认时，Codex 默认用它。",
+                        "这些模型会出现在 Codex 的 /model 里，选中后请求直达这家。第一行是默认模型：这家被设为默认时，Codex 默认用它。",
                     })}
                   </HelpTip>
                 </div>
@@ -1781,9 +1781,8 @@ export function CodexFormFields({
                 )}
               </div>
               <p className="text-xs leading-relaxed text-fg-2">
-                {t("codexConfig.stackModelListHint", {
-                  defaultValue:
-                    "这些模型会出现在 Codex 的 /model 里，选中后请求直达这家。修改后需要重启 Codex。",
+                {t("codexConfig.modelListHint", {
+                  defaultValue: "修改后需要重启 Codex。",
                 })}
               </p>
             </div>
@@ -1830,14 +1829,6 @@ export function CodexFormFields({
               })}
             </Button>
           </CollapsibleTrigger>
-          {!stackAdvancedExpanded && (
-            <p className="mt-1 ml-1 text-xs text-fg-2">
-              {t("codexConfig.stackAdvancedHint", {
-                defaultValue:
-                  "思考能力、Anthropic 专有项、自定义 User-Agent 与请求覆盖，一般无需修改。",
-              })}
-            </p>
-          )}
           <CollapsibleContent className="space-y-3 pt-3">
             {showFormatFields &&
               isAnthropicFormat &&

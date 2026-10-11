@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import {
   Collapsible,
   CollapsibleContent,
@@ -783,6 +784,18 @@ export function ClaudeFormFields({
     </>
   );
 
+  // Stack 布局的说明收进字段名后的「?」（和 Codex 表单一致）；经典布局暂时照旧。
+  const compactHints = variant === "stack";
+
+  const endpointHint =
+    apiFormat === "openai_responses"
+      ? t("providerForm.apiHintResponses")
+      : apiFormat === "openai_chat"
+        ? t("providerForm.apiHintOAI")
+        : apiFormat === "gemini_native"
+          ? t("providerForm.apiHintGeminiNative")
+          : t("providerForm.apiHint");
+
   const endpointSection = (
     <>
       {/* Base URL 输入框 */}
@@ -793,15 +806,8 @@ export function ClaudeFormFields({
           value={baseUrl}
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.apiEndpointPlaceholder")}
-          hint={
-            apiFormat === "openai_responses"
-              ? t("providerForm.apiHintResponses")
-              : apiFormat === "openai_chat"
-                ? t("providerForm.apiHintOAI")
-                : apiFormat === "gemini_native"
-                  ? t("providerForm.apiHintGeminiNative")
-                  : t("providerForm.apiHint")
-          }
+          hint={compactHints ? undefined : endpointHint}
+          help={compactHints ? endpointHint : undefined}
           fullUrlHint={
             apiFormat === "gemini_native"
               ? t("providerForm.fullUrlHintGeminiNative")
@@ -840,14 +846,28 @@ export function ClaudeFormFields({
   );
 
   // 上游格式、认证字段：经典布局放在高级选项里，Stack 布局放在连接区。
+  const apiFormatLabel = t("providerForm.apiFormat", {
+    defaultValue: "上游格式",
+  });
+
   const apiFormatField = (
     <>
       {/* 上游格式选择（仅非云服务商显示） */}
       {category !== "cloud_provider" && !isXaiOauthPreset && (
         <div className="space-y-2">
-          <FormLabel htmlFor="apiFormat">
-            {t("providerForm.apiFormat", { defaultValue: "上游格式" })}
-          </FormLabel>
+          {compactHints ? (
+            <div className="flex items-center gap-0.5">
+              <FormLabel htmlFor="apiFormat">{apiFormatLabel}</FormLabel>
+              <HelpTip title={apiFormatLabel}>
+                {t("providerForm.apiFormatHelp", {
+                  defaultValue:
+                    "看供应商原生支持哪种协议：Anthropic Messages 直连、不转换格式；其余三种由路由转成 Anthropic Messages。",
+                })}
+              </HelpTip>
+            </div>
+          ) : (
+            <FormLabel htmlFor="apiFormat">{apiFormatLabel}</FormLabel>
+          )}
           <Select value={apiFormat} onValueChange={onApiFormatChange}>
             <SelectTrigger id="apiFormat" className="w-full">
               <SelectValue />
@@ -875,23 +895,37 @@ export function ClaudeFormFields({
               </SelectItem>
             </SelectContent>
           </Select>
-          <p className="text-xs leading-relaxed text-fg-2">
-            {t("providerForm.apiFormatHint", {
-              defaultValue:
-                "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
-            })}
-          </p>
+          {!compactHints && (
+            <p className="text-xs leading-relaxed text-fg-2">
+              {t("providerForm.apiFormatHint", {
+                defaultValue:
+                  "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
+              })}
+            </p>
+          )}
         </div>
       )}
     </>
   );
 
   // 认证字段选择器
+  const authFieldLabel = t("providerForm.authField", {
+    defaultValue: "认证字段",
+  });
   const authFieldSelect = (
     <div className="space-y-2">
-      <FormLabel>
-        {t("providerForm.authField", { defaultValue: "认证字段" })}
-      </FormLabel>
+      {compactHints ? (
+        <div className="flex items-center gap-0.5">
+          <FormLabel>{authFieldLabel}</FormLabel>
+          <HelpTip title={authFieldLabel}>
+            {t("providerForm.authFieldHint", {
+              defaultValue: "选择写入配置的认证环境变量名",
+            })}
+          </HelpTip>
+        </div>
+      ) : (
+        <FormLabel>{authFieldLabel}</FormLabel>
+      )}
       <Select
         value={apiKeyField}
         onValueChange={(v) => onApiKeyFieldChange(v as ClaudeApiKeyField)}
@@ -912,11 +946,13 @@ export function ClaudeFormFields({
           </SelectItem>
         </SelectContent>
       </Select>
-      <p className="text-xs text-fg-2">
-        {t("providerForm.authFieldHint", {
-          defaultValue: "选择写入配置的认证环境变量名",
-        })}
-      </p>
+      {!compactHints && (
+        <p className="text-xs text-fg-2">
+          {t("providerForm.authFieldHint", {
+            defaultValue: "选择写入配置的认证环境变量名",
+          })}
+        </p>
+      )}
     </div>
   );
 
@@ -977,18 +1013,19 @@ export function ClaudeFormFields({
               {t("providerForm.advancedOptionsToggle")}
             </Button>
           </CollapsibleTrigger>
-          {!stackAdvancedExpanded && (
-            <p className="text-xs text-fg-2 mt-1 ml-1">
-              {t("providerForm.stackLayout.advancedHint", {
-                defaultValue: "自定义 User-Agent 与请求覆盖，一般无需修改。",
+          <CollapsibleContent className="space-y-4 pt-2">
+            <p className="text-xs leading-relaxed text-fg-2">
+              {t("codexConfig.routeOnlySettingsHint", {
+                defaultValue: "以下两项只在路由、聚合模式下生效。",
               })}
             </p>
-          )}
-          <CollapsibleContent className="space-y-4 pt-2">
             <CustomUserAgentField
               id="claude-custom-user-agent"
               value={customUserAgent}
               onChange={onCustomUserAgentChange}
+              help={t("providerForm.customUserAgentHelp", {
+                defaultValue: "替换转发到供应商的请求里的 User-Agent。",
+              })}
             />
             <div className="border-t border-border pt-3">
               <LocalProxyRequestOverridesField
@@ -996,6 +1033,9 @@ export function ClaudeFormFields({
                 bodyJson={localProxyBodyOverride}
                 onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
                 onBodyJsonChange={onLocalProxyBodyOverrideChange}
+                help={t("providerForm.localProxyRequestOverridesHelp", {
+                  defaultValue: "作用于格式转换后发给上游的请求。",
+                })}
               />
             </div>
           </CollapsibleContent>

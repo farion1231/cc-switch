@@ -1658,13 +1658,11 @@
     "modelMappingHint": "表示名は /model メニューだけに影響します。1M は Claude Code へのコンテキスト能力宣言です。",
     "stackModelsLabel": "モデル一覧",
     "addStackModel": "手動で追加",
-    "stackModelsHint": "これらのモデルは Claude Code の /model に表示され、選ぶとリクエストがこのプロバイダーへ直接送られます。",
-    "stackModelDefaultHelp": "先頭の行がこのプロバイダーのデフォルトモデルです。このプロバイダーがデフォルトのとき、Claude Code の起動時とバックグラウンドタスクで使われます。",
+    "stackModelDefaultHelp": "これらのモデルは Claude Code の /model に表示され、選ぶとこのプロバイダーへ直接送られます。先頭の行がデフォルトモデルで、このプロバイダーがデフォルトのとき起動時とバックグラウンドタスクで使われます。",
     "stackModelsEmpty": "モデルが未設定です：集約に追加してもモデル選択には表示されません",
     "stackModelPlaceholder": "例: deepseek-v4-pro",
     "stackModelDefault": "デフォルトモデル",
     "stackLayout": {
-      "advancedHint": "カスタム User-Agent とリクエスト上書き。通常は変更不要です。",
       "noModels": "モデル一覧が空です：集約に追加してもモデル選択には表示されません"
     },
     "modelRoleLabel": "モデル役割",
@@ -1713,7 +1711,8 @@
     "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください",
     "requiredFields": "プロバイダー名、API エンドポイント、API Key、モデルを入力してください",
     "customUserAgentHelp": "プロバイダーへ転送するリクエストの User-Agent を置き換えます。",
-    "localProxyRequestOverridesHelp": "形式変換後に上流へ送るリクエストに適用されます。"
+    "localProxyRequestOverridesHelp": "形式変換後に上流へ送るリクエストに適用されます。",
+    "apiFormatHelp": "プロバイダーがネイティブ対応するプロトコルを選びます。Anthropic Messages は直接接続で変換なし、他の三つはルーティングが Anthropic Messages に変換します。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",
@@ -1924,12 +1923,10 @@
     "modelListDefaultHelp": "これらのモデルは、それぞれのコンテキストウィンドウと思考レベル付きで Codex の /model に表示されます。先頭の行がデフォルトモデルです。",
     "addCatalogModel": "手動で追加",
     "modelListTitle": "モデル一覧",
-    "stackModelListHint": "これらのモデルは Codex の /model に表示され、選ぶとリクエストがこのプロバイダーへ直接送られます。変更後は Codex を再起動してください。",
-    "stackModelDefaultHelp": "先頭の行がこのプロバイダーのデフォルトモデルです。このプロバイダーがデフォルトのとき、Codex はこれを既定で使います。",
+    "stackModelDefaultHelp": "これらのモデルは Codex の /model に表示され、選ぶとこのプロバイダーへ直接送られます。先頭の行がデフォルトモデルで、このプロバイダーがデフォルトのとき使われます。",
     "defaultModelNotInList": "デフォルトモデル {{model}} は一覧にありません。Codex は既定でこれをリクエストしますが、/model には表示されません。",
     "addToModelList": "一覧に追加",
     "modelListEmpty": "モデル未設定：集約モードではこのプロバイダーのデフォルトモデル（config.toml の model）だけが公開されます。",
-    "stackAdvancedHint": "思考能力、Anthropic 固有の項目、カスタム User-Agent とリクエスト上書き。通常は変更不要です。",
     "catalogDisplayName": "表示名",
     "catalogDisplayNamePlaceholder": "例: DeepSeek V4 Flash",
     "catalogModelId": "モデル ID",
@@ -1954,7 +1951,7 @@
     "inactiveFieldCopied": "コピーしました",
     "upstreamFormatCopilotRouteHint": "どのモードでもルーティングが必要で、ルーティングが Copilot アカウントの認証情報を注入します。手動指定したプロトコルにモデルが対応していないとエラーになります。",
     "maxOutputTokensWarning": "モデルやゲートウェイの実際の出力上限を超えないでください。超えると 400 が返ります。",
-    "routeOnlySettingsHint": "以下の二つはルーティングモードでのみ有効です。"
+    "routeOnlySettingsHint": "以下の二つはルーティングモードと集約モードでのみ有効です。"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",

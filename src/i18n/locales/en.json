@@ -1658,13 +1658,11 @@
     "modelMappingHint": "Display names only affect the /model menu; 1M is only a Claude Code context-capability declaration.",
     "stackModelsLabel": "Models",
     "addStackModel": "Add manually",
-    "stackModelsHint": "These models appear in Claude Code's /model menu; picking one sends requests straight to this provider.",
-    "stackModelDefaultHelp": "The first row is this provider's default model: while this provider is the default, Claude Code uses it at startup and for background tasks.",
+    "stackModelDefaultHelp": "These models appear in Claude Code's /model menu and picking one sends requests straight to this provider. The first row is the default model for startup and background tasks while this provider is the default.",
     "stackModelsEmpty": "No models configured: this provider won't appear in the model picker once added to the aggregation",
     "stackModelPlaceholder": "e.g. deepseek-v4-pro",
     "stackModelDefault": "Default model",
     "stackLayout": {
-      "advancedHint": "Custom User-Agent and request overrides; usually no need to change.",
       "noModels": "The model list is empty: this provider won't appear in the model picker once added to the aggregation"
     },
     "modelRoleLabel": "Model role",
@@ -1713,7 +1711,8 @@
     "fetchModelsTimeout": "Request timed out, please check network connection",
     "requiredFields": "Please fill in provider name, API endpoint, API Key and model",
     "customUserAgentHelp": "Replaces the User-Agent of requests forwarded to the provider.",
-    "localProxyRequestOverridesHelp": "Applies to the upstream request after format conversion."
+    "localProxyRequestOverridesHelp": "Applies to the upstream request after format conversion.",
+    "apiFormatHelp": "Pick the protocol the provider supports natively: Anthropic Messages connects directly without conversion; routing converts the other three to Anthropic Messages."
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
@@ -1924,12 +1923,10 @@
     "modelListDefaultHelp": "These models appear in Codex's /model menu with their own context window and reasoning levels. The first row is the default model.",
     "addCatalogModel": "Add manually",
     "modelListTitle": "Models",
-    "stackModelListHint": "These models appear in Codex's /model menu; picking one sends requests straight to this provider. Restart Codex after changes.",
-    "stackModelDefaultHelp": "The first row is this provider's default model: while this provider is the default, Codex uses it by default.",
+    "stackModelDefaultHelp": "These models appear in Codex's /model menu and picking one sends requests straight to this provider. The first row is the default model, used while this provider is the default.",
     "defaultModelNotInList": "The default model {{model}} is not in the list: Codex still requests it by default, but /model won't show it.",
     "addToModelList": "Add to list",
     "modelListEmpty": "No models configured: in Aggregation mode only this provider's default model (the model in config.toml) is published.",
-    "stackAdvancedHint": "Reasoning, Anthropic-specific options, custom User-Agent and request overrides; usually no need to change.",
     "catalogDisplayName": "Display Name",
     "catalogDisplayNamePlaceholder": "e.g., DeepSeek V4 Flash",
     "catalogModelId": "Model ID",
@@ -1954,7 +1951,7 @@
     "inactiveFieldCopied": "Copied",
     "upstreamFormatCopilotRouteHint": "Every mode requires routing, which injects the Copilot account credentials. A protocol you pick explicitly fails for models that don't support it.",
     "maxOutputTokensWarning": "Don't exceed the real output limit of the model or gateway, or requests return 400.",
-    "routeOnlySettingsHint": "The two settings below only apply in routing mode."
+    "routeOnlySettingsHint": "The two settings below only apply in routing and Aggregation modes."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",

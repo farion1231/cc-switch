@@ -1658,13 +1658,11 @@
     "modelMappingHint": "显示名称只影响 /model 菜单；1M 只是给 Claude Code 的上下文能力声明。",
     "stackModelsLabel": "模型列表",
     "addStackModel": "手动添加",
-    "stackModelsHint": "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。",
-    "stackModelDefaultHelp": "第一行是这家的默认模型：这家被设为默认时，Claude Code 启动和后台任务都用它。",
+    "stackModelDefaultHelp": "这些模型会出现在 Claude Code 的 /model 里，选中后请求直达这家。第一行是默认模型：这家被设为默认时，启动和后台任务都用它。",
     "stackModelsEmpty": "未配置模型：把这家加入聚合后，模型选择器里不会多出它的模型",
     "stackModelPlaceholder": "例如 deepseek-v4-pro",
     "stackModelDefault": "默认模型",
     "stackLayout": {
-      "advancedHint": "自定义 User-Agent 与请求覆盖，一般无需修改。",
       "noModels": "模型列表为空：把这家加入聚合后，模型选择器里不会多出它的模型"
     },
     "modelRoleLabel": "模型角色",
@@ -1713,7 +1711,8 @@
     "fetchModelsTimeout": "请求超时，请检查网络连接",
     "requiredFields": "请填写供应商名称、API 地址、API Key 和模型",
     "customUserAgentHelp": "替换转发到供应商的请求里的 User-Agent。",
-    "localProxyRequestOverridesHelp": "作用于格式转换后发给上游的请求。"
+    "localProxyRequestOverridesHelp": "作用于格式转换后发给上游的请求。",
+    "apiFormatHelp": "看供应商原生支持哪种协议：Anthropic Messages 直连、不转换格式；其余三种由路由转成 Anthropic Messages。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",
@@ -1924,12 +1923,10 @@
     "modelListDefaultHelp": "这些模型会出现在 Codex 的 /model 里，带上各自的上下文窗口和思考等级。第一行是默认模型。",
     "addCatalogModel": "手动添加",
     "modelListTitle": "模型列表",
-    "stackModelListHint": "这些模型会出现在 Codex 的 /model 里，选中后请求直达这家。修改后需要重启 Codex。",
-    "stackModelDefaultHelp": "第一行是这家的默认模型：这家被设为默认时，Codex 默认用它。",
+    "stackModelDefaultHelp": "这些模型会出现在 Codex 的 /model 里，选中后请求直达这家。第一行是默认模型：这家被设为默认时，Codex 默认用它。",
     "defaultModelNotInList": "默认模型 {{model}} 不在列表里：Codex 默认仍请求它，但 /model 里没有这一项。",
     "addToModelList": "加入列表",
     "modelListEmpty": "未配置模型：聚合模式下只发布这家的默认模型（config.toml 的 model）。",
-    "stackAdvancedHint": "思考能力、Anthropic 专有项、自定义 User-Agent 与请求覆盖，一般无需修改。",
     "catalogDisplayName": "显示名称",
     "catalogDisplayNamePlaceholder": "例如: DeepSeek V4 Flash",
     "catalogModelId": "模型 ID",
@@ -1954,7 +1951,7 @@
     "inactiveFieldCopied": "已复制",
     "upstreamFormatCopilotRouteHint": "所有模式都需要开启路由，由路由注入 Copilot 账号凭据；手动指定的协议模型不支持时会报错。",
     "maxOutputTokensWarning": "不要超过模型或网关的真实输出上限，否则会返回 400。",
-    "routeOnlySettingsHint": "以下两项只在路由模式下生效。"
+    "routeOnlySettingsHint": "以下两项只在路由、聚合模式下生效。"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",

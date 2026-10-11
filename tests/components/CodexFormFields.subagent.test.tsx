@@ -196,6 +196,6 @@ describe("CodexFormFields help tips", () => {
     expect(
       screen.getByText("不要超过模型或网关的真实输出上限，否则会返回 400。"),
     ).toBeVisible();
-    expect(screen.getByText("以下两项只在路由模式下生效。")).toBeVisible();
+    expect(screen.getByText("以下两项只在路由、聚合模式下生效。")).toBeVisible();
   });
 });
