@@ -70,7 +70,7 @@ fn managed_account(provider: &Provider) -> Option<String> {
 
 /// 本地代理给 Codex 的地址（带 `/v1`），不需要代理在运行：官方直连时写休眠表用。
 pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
-    let (address, port) = db.get_proxy_listen_sync();
+    let (address, port) = db.get_proxy_client_endpoint_sync();
     let port = if port == 0 {
         crate::proxy::types::ProxyConfig::default().listen_port
     } else {
@@ -84,7 +84,7 @@ pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
 
 /// `config_text` 是不是代理的官方路由（指向本地代理，但不带占位 Key）。
 pub(crate) fn routes_official_to_proxy(db: &Database, config_text: &str) -> bool {
-    let (address, port) = db.get_proxy_listen_sync();
+    let (address, port) = db.get_proxy_client_endpoint_sync();
     crate::codex_config::codex_config_routes_official_to_proxy(config_text, |url| {
         is_proxy_base_url(url, &address, port)
     })
