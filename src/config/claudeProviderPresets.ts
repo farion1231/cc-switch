@@ -2217,4 +2217,17 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "yylx",
   },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://tokenflux.dev",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    icon: "tokenflux",
+  },
 ];

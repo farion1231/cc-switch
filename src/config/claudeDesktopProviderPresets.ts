@@ -1827,4 +1827,19 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     ],
     icon: "yylx",
   },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    category: "aggregator",
+    baseUrl: "https://tokenflux.dev",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5",
+    ),
+    icon: "tokenflux",
+  },
 ];

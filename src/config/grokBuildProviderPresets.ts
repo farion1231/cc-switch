@@ -712,4 +712,13 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     category: "aggregator",
     icon: "yylx",
   },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    auth: grokAuth(),
+    config: grokPresetConfig("TokenFlux", "https://tokenflux.dev/v1"),
+    category: "aggregator",
+    icon: "tokenflux",
+  },
 ];

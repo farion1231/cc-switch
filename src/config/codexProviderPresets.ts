@@ -3792,4 +3792,17 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ],
     icon: "yylx",
   },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "tokenflux",
+      "https://tokenflux.dev/v1",
+      "gpt-5.6-sol",
+    ),
+    icon: "tokenflux",
+  },
 ];

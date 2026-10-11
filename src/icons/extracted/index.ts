@@ -30,6 +30,7 @@ import _qiniu from "./qiniu.png";
 import _relaxcode from "./relaxcode.png";
 import _runapi from "./runapi.jpg";
 import _runtoken from "./runtoken.jpg";
+import _tokenflux from "./tokenflux.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
 import _soruxgpt from "./soruxgpt.jpg";
 import _soshow from "./soshow.png";
@@ -161,6 +162,7 @@ export const iconUrls: Record<string, string> = {
   relaxcode: _relaxcode,
   runapi: _runapi,
   runtoken: _runtoken,
+  tokenflux: _tokenflux,
   shengsuanyun: _shengsuanyun,
   soruxgpt: _soruxgpt,
   soshow: _soshow,

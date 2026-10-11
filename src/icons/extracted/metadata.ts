@@ -147,6 +147,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["yylx", "鱼鱼连线", "aggregator", "relay", "claude", "codex"],
     defaultColor: "currentColor",
   },
+  tokenflux: {
+    name: "tokenflux",
+    displayName: "TokenFlux",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["tokenflux", "flux", "aggregator", "relay", "claude", "codex"],
+    defaultColor: "currentColor",
+  },
   soshow: {
     name: "soshow",
     displayName: "Soshow",

@@ -2652,6 +2652,27 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "yylx",
   },
+  {
+    name: "TokenFlux",
+    providerKey: "cc-switch-token-flux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    settingsConfig: {
+      name: "TokenFlux",
+      baseUrl: "https://tokenflux.dev",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "tokenflux",
+  },
 ];
 
 function materializeVerifiedThinkingProfiles(

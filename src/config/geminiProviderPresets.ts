@@ -675,6 +675,22 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     ],
     icon: "yylx",
   },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://tokenflux.dev",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://tokenflux.dev",
+    model: "gemini-3.1-pro",
+    description: "TokenFlux",
+    category: "aggregator",
+    icon: "tokenflux",
+  },
 ];
 
 export function getGeminiPresetByName(
