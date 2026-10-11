@@ -104,14 +104,20 @@ pub fn normalize_tool(
             _ => Other,
         },
         ToolSource::Gemini => match raw_name {
-            "run_shell_command" => Shell,
-            "read_file" | "read_many_files" => Read,
-            "grep_search" | "glob" | "list_directory" | "search_file_content" => Search,
-            "replace" | "edit" => Edit,
-            "write_file" => Write,
-            "web_fetch" | "google_web_search" => Web,
-            "ask_user" => Ask,
-            "write_todos" => Todo,
+            "run_command" | "run_shell_command" => Shell,
+            "view_file" | "read_file" | "read_many_files" => Read,
+            "grep_search"
+            | "find_by_name"
+            | "list_dir"
+            | "glob"
+            | "list_directory"
+            | "search_file_content" => Search,
+            "replace_file_content" | "multi_replace_file_content" | "replace" | "edit" => Edit,
+            "write_to_file" | "write_file" => Write,
+            "read_url_content" | "search_web" | "web_fetch" | "google_web_search" => Web,
+            "ask_question" | "ask_permission" | "ask_user" => Ask,
+            "manage_task" | "schedule" | "write_todos" => Todo,
+            "invoke_subagent" | "define_subagent" | "manage_subagents" => Agent,
             // 待核实：Gemini CLI 的 MCP 工具名形如 `server/tool`
             name if name.contains('/') => {
                 let server = name.split('/').next().unwrap_or_default();
@@ -283,7 +289,9 @@ pub fn title_shell(command: &str) -> String {
 /// read：标题为路径；`detail` 为行范围 `:start-end`（offset 从 1 起算，limit 为行数）。
 pub fn title_read(path: &str, offset: Option<u64>, limit: Option<u64>) -> (String, Option<String>) {
     let detail = match (offset, limit) {
-        (Some(start), Some(limit)) if limit > 0 => Some(format!(":{start}-{}", start + limit - 1)),
+        (Some(start), Some(limit)) if limit > 0 => {
+            Some(format!(":{start}-{}", start.saturating_add(limit - 1)))
+        }
         (Some(start), None) => Some(format!(":{start}")),
         (None, Some(limit)) if limit > 0 => Some(format!(":1-{limit}")),
         _ => None,
@@ -394,6 +402,10 @@ const PATH_KEYS: &[&str] = &[
     "file",
     "filename",
     "dir_path",
+    "AbsolutePath",
+    "DirectoryPath",
+    "TargetFile",
+    "SearchPath",
 ];
 
 /// 按 kind 从参数里提炼 `(title, detail)`（§3.3）。找不到对应字段时 title 为空，
@@ -407,18 +419,25 @@ pub fn title_from_input(
     let detail_of = |keys: &[&str]| str_field(input, keys).map(one_line_title);
     match kind {
         ToolKind::Shell => (
-            str_field(input, &["command", "cmd", "script"])
+            str_field(input, &["toolSummary"])
+                .or_else(|| str_field(input, &["command", "cmd", "script", "CommandLine"]))
                 .map(title_shell)
                 .unwrap_or_default(),
-            detail_of(&["description"]),
+            detail_of(&["toolAction", "description", "CommandLine"]),
         ),
         ToolKind::Read => {
             if let Some(path) = str_field(input, PATH_KEYS) {
-                title_read(
-                    path,
-                    u64_field(input, &["offset", "start_line"]),
-                    u64_field(input, &["limit"]),
-                )
+                let start = u64_field(input, &["offset", "start_line", "StartLine"]);
+                let limit = u64_field(input, &["limit"]).or_else(|| {
+                    let end = u64_field(input, &["end_line", "EndLine"])?;
+                    let s = start.unwrap_or(1);
+                    end.checked_sub(s)?.checked_add(1)
+                });
+                let (title, mut detail) = title_read(path, start, limit);
+                if detail.is_none() {
+                    detail = detail_of(&["toolSummary", "toolAction"]);
+                }
+                (title, detail)
             } else {
                 let paths: Vec<&str> = input
                     .get("paths")
@@ -429,17 +448,42 @@ pub fn title_from_input(
             }
         }
         ToolKind::Search => {
-            let path = str_field(input, &["path", "dir_path", "directory", "cwd"]);
-            match str_field(input, &["pattern", "query", "regex", "glob", "include"]) {
-                Some(pattern) => (title_search(pattern, path), None),
-                None => (path.map(title_path).unwrap_or_default(), None),
+            let path = str_field(
+                input,
+                &[
+                    "path",
+                    "dir_path",
+                    "directory",
+                    "cwd",
+                    "SearchPath",
+                    "DirectoryPath",
+                    "SearchDirectory",
+                ],
+            );
+            match str_field(
+                input,
+                &[
+                    "pattern", "query", "regex", "glob", "include", "Query", "Pattern",
+                ],
+            ) {
+                Some(pattern) => (
+                    title_search(pattern, path),
+                    detail_of(&["toolSummary", "toolAction"]),
+                ),
+                None => (
+                    str_field(input, &["toolSummary"])
+                        .or_else(|| path)
+                        .map(title_path)
+                        .unwrap_or_default(),
+                    detail_of(&["toolAction"]),
+                ),
             }
         }
         ToolKind::Edit | ToolKind::Write => (
             str_field(input, PATH_KEYS)
                 .map(title_path)
                 .unwrap_or_default(),
-            None,
+            detail_of(&["toolSummary", "toolAction"]),
         ),
         ToolKind::Web => {
             let mut items: Vec<&str> = ["urls", "queries"]
@@ -449,7 +493,7 @@ pub fn title_from_input(
                 .filter_map(Value::as_str)
                 .collect();
             if items.is_empty() {
-                items.extend(str_field(input, &["url", "query", "prompt"]));
+                items.extend(str_field(input, &["url", "Url", "query", "prompt"]));
             }
             (title_web(&items), None)
         }
@@ -535,13 +579,34 @@ pub fn single_file_diff(path: &str, op: DiffOp, added: u32, removed: u32) -> Dif
 pub fn diff_from_input(kind: ToolKind, input: &Value) -> Option<DiffSummary> {
     let path = str_field(input, PATH_KEYS)?;
     let pair = |item: &Value| -> Option<(u32, u32)> {
-        let old = str_field_allow_empty(item, &["old_string", "oldString", "old_str", "oldText"])?;
-        let new = str_field_allow_empty(item, &["new_string", "newString", "new_str", "newText"])?;
+        let old = str_field_allow_empty(
+            item,
+            &[
+                "old_string",
+                "oldString",
+                "old_str",
+                "oldText",
+                "TargetContent",
+            ],
+        )?;
+        let new = str_field_allow_empty(
+            item,
+            &[
+                "new_string",
+                "newString",
+                "new_str",
+                "newText",
+                "ReplacementContent",
+            ],
+        )?;
         Some((text_lines(new), text_lines(old)))
     };
     match kind {
         ToolKind::Edit => {
-            let (added, removed) = if let Some(edits) = input.get("edits").and_then(Value::as_array)
+            let (added, removed) = if let Some(edits) = input
+                .get("edits")
+                .or_else(|| input.get("ReplacementChunks"))
+                .and_then(Value::as_array)
             {
                 edits
                     .iter()
@@ -555,10 +620,32 @@ pub fn diff_from_input(kind: ToolKind, input: &Value) -> Option<DiffSummary> {
             Some(single_file_diff(path, DiffOp::Update, added, removed))
         }
         ToolKind::Write => {
-            let content = str_field_allow_empty(input, &["content", "contents", "text"])?;
+            let content =
+                str_field_allow_empty(input, &["content", "contents", "text", "CodeContent"])?;
             Some(single_file_diff(path, DiffOp::Add, text_lines(content), 0))
         }
         _ => None,
+    }
+}
+
+/// Antigravity 的参数如果是带额外引号的 JSON 字符串（如 `"CommandLine": "\"pwd\""`），
+/// 解出一层真实类型；其余值保持原样。
+pub fn parse_antigravity_args(raw: &Value) -> Value {
+    match raw {
+        Value::Object(map) => {
+            let mut cleaned = serde_json::Map::new();
+            for (k, v) in map {
+                if let Value::String(s) = v {
+                    if let Ok(parsed) = serde_json::from_str::<Value>(s) {
+                        cleaned.insert(k.clone(), parsed);
+                        continue;
+                    }
+                }
+                cleaned.insert(k.clone(), v.clone());
+            }
+            Value::Object(cleaned)
+        }
+        _ => raw.clone(),
     }
 }
 
@@ -773,6 +860,30 @@ pub fn line_change_counts(old: &str, new: &str) -> (u32, u32) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn read_range_handles_reversed_and_extreme_line_numbers() {
+        for (start, end, expected) in [
+            (10, 5, ":10".to_string()),
+            (801, 0, ":801".to_string()),
+            (1, u64::MAX, format!(":1-{}", u64::MAX)),
+            (0, u64::MAX, ":0".to_string()),
+        ] {
+            let input = json!({"AbsolutePath":"/tmp/file", "StartLine":start, "EndLine":end});
+            let (title, detail) = title_from_input(ToolKind::Read, "view_file", None, &input);
+            assert_eq!(title, "/tmp/file");
+            assert_eq!(detail.as_deref(), Some(expected.as_str()));
+        }
+        assert_eq!(
+            title_read("file", Some(u64::MAX), Some(2)).1,
+            Some(format!(":{}-{}", u64::MAX, u64::MAX))
+        );
+        let input = json!({"path":"file", "offset":u64::MAX, "limit":u64::MAX});
+        assert_eq!(
+            title_from_input(ToolKind::Read, "read_file", None, &input).1,
+            Some(format!(":{}-{}", u64::MAX, u64::MAX))
+        );
+    }
 
     #[test]
     fn line_change_counts_ignores_shared_context() {
@@ -1054,6 +1165,37 @@ mod tests {
             .0,
             "context7.resolve-library-id"
         );
+    }
+
+    #[test]
+    fn antigravity_multiple_replacements_produce_one_file_summary() {
+        let chunks = json!([
+            {"StartLine":1,"EndLine":2,"TargetContent":"old\nline2","ReplacementContent":"new"},
+            {"StartLine":3,"EndLine":3,"TargetContent":"","ReplacementContent":"added\nnext"}
+        ]);
+        let args = parse_antigravity_args(&json!({
+            "TargetFile":"\"/tmp/file.rs\"", "ReplacementChunks":chunks.to_string()
+        }));
+        let block = tool_call_block(
+            ToolSource::Gemini,
+            "c1",
+            "multi_replace_file_content",
+            &args,
+            || None,
+        );
+        let SessionBlock::ToolCall {
+            kind: ToolKind::Edit,
+            diff: Some(diff),
+            ..
+        } = block
+        else {
+            panic!("multi-replacement call must include its file summary");
+        };
+        assert_eq!((diff.added, diff.removed), (3, 2));
+        assert_eq!(diff.files.len(), 1);
+        assert_eq!(diff.files[0].path, "/tmp/file.rs");
+        assert_eq!(diff.files[0].op, DiffOp::Update);
+        assert_eq!((diff.files[0].added, diff.files[0].removed), (3, 2));
     }
 
     #[test]
