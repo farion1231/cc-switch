@@ -21,7 +21,7 @@ flatpak install -y --user flathub org.gnome.Platform//46 org.gnome.Sdk//46
 1) Build the deb on Linux first:
 
 ```bash
-pnpm tauri build -- --bundles deb
+pnpm tauri build --bundles deb
 ```
 
 2) Copy the generated deb to this directory:
