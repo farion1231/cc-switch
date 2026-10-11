@@ -625,8 +625,10 @@ fn append_responses_input_as_chat_messages(
     // Chat 的 role=tool 消息，严格上游（DeepSeek/OpenCode 等）会判定
     // 「tool message must be a response to a preceding message with tool_calls」
     // 而直接 400。
-    let mut known_tool_call_ids: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut known_tool_call_ids: HashSet<String> = HashSet::new();
+    // 落在并行工具结果中间的孤儿结果先暂存，等回合边界再降级输出，
+    // 避免出现 `tool, user, tool` 这种仍会被严格上游拒绝的序列。
+    let mut pending_orphan_results: Vec<Value> = Vec::new();
 
     match input {
         Value::String(text) => {
@@ -637,6 +639,12 @@ fn append_responses_input_as_chat_messages(
         }
         Value::Array(items) => {
             for item in items {
+                // 非工具结果条目即回合边界：先输出暂存的孤儿结果，让 Chat 序列
+                // 里 role=tool 消息保持连续；夹在并行工具结果中间直接输出会形成
+                // `tool, user, tool`。
+                if !is_tool_result_item(item) {
+                    flush_pending_orphan_results(messages, &mut pending_orphan_results);
+                }
                 append_responses_item_as_chat_message(
                     item,
                     messages,
@@ -645,6 +653,7 @@ fn append_responses_input_as_chat_messages(
                     &mut pending_reasoning,
                     &mut last_assistant_index,
                     &mut known_tool_call_ids,
+                    &mut pending_orphan_results,
                     tool_context,
                 )?;
             }
@@ -658,12 +667,15 @@ fn append_responses_input_as_chat_messages(
                 &mut pending_reasoning,
                 &mut last_assistant_index,
                 &mut known_tool_call_ids,
+                &mut pending_orphan_results,
                 tool_context,
             )?;
         }
         _ => {}
     }
 
+    // 尾部孤儿结果（输入结束时还没等到回合边界）在这里统一降级输出。
+    flush_pending_orphan_results(messages, &mut pending_orphan_results);
     // If a later assistant tool-call batch was accumulated after an earlier
     // media-bearing result, the synthetic user media belongs before that next
     // assistant turn.
@@ -696,7 +708,8 @@ fn append_responses_item_as_chat_message(
     pending_media: &mut Vec<Value>,
     pending_reasoning: &mut Option<String>,
     last_assistant_index: &mut Option<usize>,
-    known_tool_call_ids: &mut std::collections::HashSet<String>,
+    known_tool_call_ids: &mut HashSet<String>,
+    pending_orphan_results: &mut Vec<Value>,
     tool_context: &CodexToolContext,
 ) -> Result<(), ProxyError> {
     let item_type = item.get("type").and_then(|v| v.as_str());
@@ -722,14 +735,13 @@ fn append_responses_item_as_chat_message(
         Some("function_call_output") => {
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
             if call_id.is_empty() || !known_tool_call_ids.contains(call_id) {
-                // 没有配对 tool_calls 的孤儿结果：转成 user 消息保留信息，
-                // 而不是发出一条会让严格上游 400 的 role=tool 消息。
-                append_orphan_tool_output_as_user_message(
-                    messages,
-                    call_id,
-                    item,
-                    last_assistant_index,
-                );
+                // 没有配对 tool_calls 的孤儿结果：先暂存，等回合边界
+                // （下一个非工具结果条目 / 输入结束）再降级成 user 消息。
+                // 立刻输出会夹在并行工具结果中间形成 `tool, user, tool`，
+                // 后一条 tool 前面隔着 user，严格上游会以「tool message
+                // must be a response to a preceding message with tool_calls」
+                // 直接 400。
+                pending_orphan_results.push(item.clone());
                 return Ok(());
             }
             flush_pending_tool_calls(
@@ -764,12 +776,13 @@ fn append_responses_item_as_chat_message(
         Some("custom_tool_call_output") | Some("tool_search_output") => {
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
             if call_id.is_empty() || !known_tool_call_ids.contains(call_id) {
-                append_orphan_tool_output_as_user_message(
-                    messages,
-                    call_id,
-                    item,
-                    last_assistant_index,
-                );
+                // 没有配对 tool_calls 的孤儿结果：先暂存，等回合边界
+                // （下一个非工具结果条目 / 输入结束）再降级成 user 消息。
+                // 立刻输出会夹在并行工具结果中间形成 `tool, user, tool`，
+                // 后一条 tool 前面隔着 user，严格上游会以「tool message
+                // must be a response to a preceding message with tool_calls」
+                // 直接 400。
+                pending_orphan_results.push(item.clone());
                 return Ok(());
             }
             flush_pending_tool_calls(
@@ -831,6 +844,7 @@ fn append_responses_item_as_chat_message(
                 pending_reasoning,
                 last_assistant_index,
                 known_tool_call_ids,
+                pending_orphan_results,
                 tool_context,
             )?;
         }
@@ -844,6 +858,7 @@ fn append_responses_item_as_chat_message(
                     pending_reasoning,
                     last_assistant_index,
                     known_tool_call_ids,
+                    pending_orphan_results,
                     tool_context,
                 )?;
             }
@@ -963,10 +978,7 @@ fn append_responses_item_as_chat_message(
 
 /// 登记一个即将进入 Chat 历史的 tool_call id。统一的取值顺序与
 /// `responses_*_to_chat_tool_call` 保持一致（call_id 优先，回退 id）。
-fn register_known_tool_call_id(
-    known_tool_call_ids: &mut std::collections::HashSet<String>,
-    tool_call: &Value,
-) {
+fn register_known_tool_call_id(known_tool_call_ids: &mut HashSet<String>, tool_call: &Value) {
     if let Some(id) = tool_call.get("id").and_then(Value::as_str) {
         if !id.is_empty() {
             known_tool_call_ids.insert(id.to_string());
@@ -974,32 +986,78 @@ fn register_known_tool_call_id(
     }
 }
 
+/// 判断条目是否为工具结果（function_call_output / custom_tool_call_output /
+/// tool_search_output）。孤儿暂存逻辑用它识别回合边界：只有连续的工具结果
+/// 能保持 role=tool 相邻，其他条目出现即意味着结果段结束。
+fn is_tool_result_item(item: &Value) -> bool {
+    matches!(
+        item.get("type").and_then(Value::as_str),
+        Some("function_call_output" | "custom_tool_call_output" | "tool_search_output")
+    )
+}
+
+/// 输出暂存的孤儿工具结果。孤儿可能夹在并行工具结果中间
+/// （`tool, 孤儿, tool`）；立即降级成 user 消息会打断 tool 序列，后一条
+/// tool 前面隔着 user，仍会被严格上游 400，因此统一等到回合边界
+/// （下一个非工具结果条目 / 输入结束）再在这里输出。
+///
+/// 这里刻意不消费 pending reasoning、也不改写 `last_assistant_index`：
+/// 合成 user 消息只是降级输出，不是真实用户回合，不应改变 reasoning 的
+/// 归属。紧随其后的边界条目会像没有孤儿一样正常附挂 pending reasoning，
+/// 输入结束时也有尾部兜底；若在此处回溯附挂并清空索引，会把本应前向
+/// 附挂给后继 function_call 批次的 reasoning 提前消费掉。
+fn flush_pending_orphan_results(
+    messages: &mut Vec<Value>,
+    pending_orphan_results: &mut Vec<Value>,
+) {
+    for item in std::mem::take(pending_orphan_results) {
+        append_orphan_tool_output_as_user_message(messages, &item);
+    }
+}
+
 /// 孤儿工具结果降级为 user 消息。这类条目没有可配对的 `tool_calls`
 /// （典型来源：call_id 为空的 function_call_output），保留内容以避免丢失
 /// 上下文，但不能以 role=tool 的形式发给严格上游。
-fn append_orphan_tool_output_as_user_message(
-    messages: &mut Vec<Value>,
-    call_id: &str,
-    item: &Value,
-    last_assistant_index: &mut Option<usize>,
-) {
-    let output = match item.get("output") {
-        Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
-        Some(v) => canonical_json_string(v),
-        None => String::new(),
-    };
+///
+/// 输出里的图片/文件媒体块复用配对路径的提取逻辑：文本 body 内联
+/// `TOOL_RESULT_MEDIA_MOVED_MARKER`，媒体本体作为同一条 user 消息的
+/// content parts 跟随，避免图片被 base64 序列化成纯文本——模型既看不到
+/// 图，token 还会被瞬间撑爆。
+fn append_orphan_tool_output_as_user_message(messages: &mut Vec<Value>, item: &Value) {
+    let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+    let (body, media_parts) = plan_orphan_tool_output_body(item.get("output"));
     let marker = if call_id.is_empty() {
         ORPHAN_TOOL_OUTPUT_MARKER.to_string()
     } else {
         format!("{ORPHAN_TOOL_OUTPUT_MARKER} (call_id: {call_id})")
     };
+    let text = format!("{marker}\n{body}");
+    let content = if media_parts.is_empty() {
+        json!(text)
+    } else {
+        let mut parts = vec![json!({ "type": "text", "text": text })];
+        parts.extend(media_parts);
+        Value::Array(parts)
+    };
     messages.push(json!({
         "role": "user",
-        "content": format!("{marker}\n{output}")
+        "content": content
     }));
-    // 该条目不属于任何模型回合的 assistant 消息，追加后最后一条仍是 user，
-    // 因此显式清掉可能指向更早 assistant 的索引，避免 reasoning 被回溯错挂。
-    *last_assistant_index = None;
+}
+
+/// 计算孤儿工具结果的文本 body 与媒体 parts。媒体识别复用配对路径的
+/// `plan_chat_tool_output_media`；没有媒体时保持旧版逐字段的纯文本序列化，
+/// 不给无媒体输出多加一层 JSON 包装。
+fn plan_orphan_tool_output_body(output: Option<&Value>) -> (String, Vec<Value>) {
+    if let Some(plan) = output.cloned().and_then(plan_chat_tool_output_media) {
+        return (plan.tool_content, plan.media_parts);
+    }
+    let body = match output {
+        Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
+        Some(v) => canonical_json_string(v),
+        None => String::new(),
+    };
+    (body, Vec::new())
 }
 
 fn flush_pending_tool_calls(
@@ -2432,6 +2490,131 @@ mod tests {
                 .and_then(Value::as_str)
                 .is_some_and(|content| content.contains("codex_delegation"))
         }));
+    }
+
+    /// P2 回归：孤儿工具结果里的媒体不能退化成 base64 纯文本。
+    /// 图片要复用配对路径的提取逻辑，作为同一条 user 消息的 content parts
+    /// 输出；否则模型看不到图，base64 还会瞬间撑爆上下文与费用。
+    #[test]
+    fn responses_request_to_chat_orphan_tool_output_keeps_media_parts() {
+        let data_url = large_test_image_data_url();
+        let result = convert_test_input(vec![
+            json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+            test_function_output(
+                "",
+                json!([
+                    {"type": "input_text", "text": "screenshot follows"},
+                    {"type": "input_image", "image_url": data_url.clone()}
+                ]),
+            ),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["user", "user"]);
+        let parts = messages[1]["content"]
+            .as_array()
+            .expect("orphan media output must use content parts");
+        let text = parts[0]["text"].as_str().unwrap();
+        assert!(text.starts_with(ORPHAN_TOOL_OUTPUT_MARKER), "{text}");
+        assert!(text.contains("screenshot follows"), "{text}");
+        assert!(
+            !text.contains(&data_url),
+            "base64 image must not stay in the text body: {text}"
+        );
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], data_url);
+    }
+
+    /// P3 回归：孤儿结果夹在并行工具结果中间时必须先暂存、等回合边界再
+    /// 降级输出。立即输出会形成 `tool, user, tool`，后一条 tool 前面隔着
+    /// user，仍会被严格上游以「tool must follow tool_calls」拒掉。
+    #[test]
+    fn responses_request_to_chat_defers_orphan_between_parallel_tool_outputs() {
+        let result = convert_test_input(vec![
+            json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+            test_function_call("call_a"),
+            test_function_call("call_b"),
+            test_function_output("call_a", json!("ok-a")),
+            test_function_output("call_orphan", json!("orphan-in-middle")),
+            test_function_output("call_b", json!("ok-b")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec!["user", "assistant", "tool", "tool", "user"]
+        );
+        assert_eq!(messages[2]["tool_call_id"], "call_a");
+        assert_eq!(messages[3]["tool_call_id"], "call_b");
+        assert!(messages[4]["content"]
+            .as_str()
+            .unwrap()
+            .contains("orphan-in-middle"));
+    }
+
+    /// P3 回归：孤儿结果前尾随的 reasoning 不能丢。`assistant 消息,
+    /// reasoning, 孤儿, user` 序列里 reasoning 要照常回溯附挂到上一条
+    /// assistant——降级输出孤儿时清掉 assistant 索引会让紧随其后的 user
+    /// 边界再也找不到附挂目标。
+    #[test]
+    fn responses_request_to_chat_keeps_reasoning_before_boundary_orphan() {
+        let result = convert_test_input(vec![
+            json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "commentary"}]
+            }),
+            json!({
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "trailing-before-orphan"}]
+            }),
+            json!({"type": "function_call_output", "output": "orphan-payload"}),
+            json!({"role": "user", "content": [{"type": "input_text", "text": "next"}]}),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec!["user", "assistant", "user", "user"]
+        );
+        assert_eq!(messages[1]["reasoning_content"], "trailing-before-orphan");
+        assert!(messages[2]["content"]
+            .as_str()
+            .unwrap()
+            .contains("orphan-payload"));
+        assert_eq!(messages[3]["content"], "next");
+    }
+
+    /// 孤儿降级输出不应改变 reasoning 的归属：`assistant 消息, reasoning,
+    /// 孤儿, function_call` 里 reasoning 仍要前向附挂到新的 tool-call 批次，
+    /// 而不是被提前回溯到旧 assistant 或被吞掉。
+    #[test]
+    fn responses_request_to_chat_orphan_does_not_divert_forward_reasoning() {
+        let result = convert_test_input(vec![
+            json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "commentary"}]
+            }),
+            json!({
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "think-before-call"}]
+            }),
+            json!({"type": "function_call_output", "output": "orphan-payload"}),
+            test_function_call("call_next"),
+            test_function_output("call_next", json!("next-result")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec!["user", "assistant", "user", "assistant", "tool"]
+        );
+        assert_eq!(messages[1].get("reasoning_content"), None);
+        assert_eq!(messages[3]["reasoning_content"], "think-before-call");
+        assert_eq!(messages[3]["tool_calls"][0]["id"], "call_next");
     }
 
     #[test]
