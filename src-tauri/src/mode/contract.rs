@@ -85,7 +85,7 @@ mod tests {
         claude(&proxy_projection(
             &ClaudeProjection::of(&row),
             url,
-            ProxyAuth::FollowRow,
+            ProxyAuth::AuthToken,
             None,
         ))
     }
