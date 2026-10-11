@@ -984,7 +984,7 @@ export function FloatingUsageWindow() {
                     }}
                     className={
                       currentFace === "back"
-                        ? "relative w-full opacity-0 pointer-events-none"
+                        ? "relative w-full pointer-events-none"
                         : "relative w-full"
                     }
                   >
@@ -1057,7 +1057,7 @@ export function FloatingUsageWindow() {
                     }}
                     className={
                       currentFace === "front"
-                        ? "absolute inset-x-0 top-0 pointer-events-none opacity-0"
+                        ? "absolute inset-0 pointer-events-none"
                         : "absolute inset-0"
                     }
                   >
