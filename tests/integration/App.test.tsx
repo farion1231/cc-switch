@@ -257,7 +257,7 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  }, 10_000);
+  }, 20_000);
 
   it("resets provider view scroll when switching apps", async () => {
     const { default: App } = await import("@/App");

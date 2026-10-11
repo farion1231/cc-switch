@@ -5,46 +5,14 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { queryClient, useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
 
-type Language = "zh" | "zh-TW" | "en" | "ja";
+import {
+  type Language,
+  isSupportedLanguage,
+  normalizeLanguage,
+} from "@/i18n/utils";
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
-};
-
-const normalizeLanguage = (lang?: string | null): Language => {
-  if (!lang) return "zh";
-  const normalized = lang.toLowerCase().replace(/_/g, "-");
-
-  if (normalized === "zh") {
-    return "zh";
-  }
-
-  if (
-    normalized === "zh-tw" ||
-    normalized.startsWith("zh-hant") ||
-    normalized.startsWith("zh-hk") ||
-    normalized.startsWith("zh-mo")
-  ) {
-    return "zh-TW";
-  }
-
-  if (normalized === "en" || normalized === "ja") {
-    return normalized;
-  }
-
-  if (normalized.startsWith("zh")) {
-    return "zh";
-  }
-
-  return "zh";
-};
-
-const isSupportedLanguage = (lang?: string | null): boolean => {
-  if (!lang) return false;
-  const normalized = lang.toLowerCase().replace(/_/g, "-");
-  return (
-    normalized === "en" || normalized === "ja" || normalized.startsWith("zh")
-  );
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
