@@ -18,8 +18,8 @@ interface CustomUserAgentFieldProps {
   id: string;
   value: string;
   onChange: (value: string) => void;
-  /** 传了就把说明放进字段名后的「?」，替代下方的「仅在路由下生效」提示。 */
-  help?: string;
+  /** 字段名后「?」里的说明；「只在路由、聚合模式下生效」由调用方在分组开头说一次。 */
+  help: string;
 }
 
 /**
@@ -45,7 +45,7 @@ export function CustomUserAgentField({
     <div className="space-y-2">
       <div className="flex items-center gap-0.5">
         <FormLabel htmlFor={id}>{label}</FormLabel>
-        {help ? <HelpTip title={label}>{help}</HelpTip> : null}
+        <HelpTip title={label}>{help}</HelpTip>
       </div>
       <div className="flex items-center gap-2">
         <Input
@@ -82,16 +82,7 @@ export function CustomUserAgentField({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {valid ? (
-        !help && (
-          <p className="text-xs text-fg-2">
-            {t("providerForm.customUserAgentHint", {
-              defaultValue:
-                "仅在开启本地路由/代理接管后生效，会替换转发到供应商 API 请求中的 User-Agent。",
-            })}
-          </p>
-        )
-      ) : (
+      {!valid && (
         <p className="text-xs text-destructive">
           {t("providerForm.customUserAgentInvalid", {
             defaultValue:

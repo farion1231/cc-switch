@@ -789,9 +789,7 @@ export function ClaudeFormFields({
     </>
   );
 
-  // Stack 布局的说明收进字段名后的「?」（和 Codex 表单一致）；经典布局暂时照旧。
-  const compactHints = variant === "stack";
-
+  // 字段说明一律收进字段名后的「?」（和 Codex 表单一致），页面上只留后果提示。
   const endpointHint =
     apiFormat === "openai_responses"
       ? t("providerForm.apiHintResponses")
@@ -811,8 +809,7 @@ export function ClaudeFormFields({
           value={baseUrl}
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.apiEndpointPlaceholder")}
-          hint={compactHints ? undefined : endpointHint}
-          help={compactHints ? endpointHint : undefined}
+          help={endpointHint}
           fullUrlHint={
             apiFormat === "gemini_native"
               ? t("providerForm.fullUrlHintGeminiNative")
@@ -862,19 +859,15 @@ export function ClaudeFormFields({
         !isXaiOauthPreset &&
         !isCodexOauthPreset && (
           <div className="space-y-2">
-            {compactHints ? (
-              <div className="flex items-center gap-0.5">
-                <FormLabel htmlFor="apiFormat">{apiFormatLabel}</FormLabel>
-                <HelpTip title={apiFormatLabel}>
-                  {t("providerForm.apiFormatHelp", {
-                    defaultValue:
-                      "看供应商原生支持哪种协议：Anthropic Messages 原样转发、不转换格式；其余三种由路由转成 Anthropic Messages。",
-                  })}
-                </HelpTip>
-              </div>
-            ) : (
+            <div className="flex items-center gap-0.5">
               <FormLabel htmlFor="apiFormat">{apiFormatLabel}</FormLabel>
-            )}
+              <HelpTip title={apiFormatLabel}>
+                {t("providerForm.apiFormatHelp", {
+                  defaultValue:
+                    "看供应商原生支持哪种协议：Anthropic Messages 原样转发、不转换格式；其余三种由路由转成 Anthropic Messages。",
+                })}
+              </HelpTip>
+            </div>
             <Select value={apiFormat} onValueChange={onApiFormatChange}>
               <SelectTrigger id="apiFormat" className="w-full">
                 <SelectValue />
@@ -905,14 +898,6 @@ export function ClaudeFormFields({
             {directModeFormatNotice && apiFormat !== "anthropic" && (
               <DirectModeFormatWarning notice={directModeFormatNotice} />
             )}
-            {!compactHints && (
-              <p className="text-xs leading-relaxed text-fg-2">
-                {t("providerForm.apiFormatHint", {
-                  defaultValue:
-                    "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（原样转发，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 由路由转成 Anthropic Messages，只能在路由、聚合模式下使用。",
-                })}
-              </p>
-            )}
           </div>
         )}
     </>
@@ -924,19 +909,15 @@ export function ClaudeFormFields({
   });
   const authFieldSelect = (
     <div className="space-y-2">
-      {compactHints ? (
-        <div className="flex items-center gap-0.5">
-          <FormLabel>{authFieldLabel}</FormLabel>
-          <HelpTip title={authFieldLabel}>
-            {t("providerForm.authFieldHint", {
-              defaultValue:
-                "直连时是写进 settings.json 的变量名；经过路由时，AUTH_TOKEN 以 Bearer、API_KEY 以 x-api-key 发给上游。",
-            })}
-          </HelpTip>
-        </div>
-      ) : (
+      <div className="flex items-center gap-0.5">
         <FormLabel>{authFieldLabel}</FormLabel>
-      )}
+        <HelpTip title={authFieldLabel}>
+          {t("providerForm.authFieldHint", {
+            defaultValue:
+              "直连时是写进 settings.json 的变量名；经过路由时，AUTH_TOKEN 以 Bearer、API_KEY 以 x-api-key 发给上游。",
+          })}
+        </HelpTip>
+      </div>
       <Select
         value={apiKeyField}
         onValueChange={(v) => onApiKeyFieldChange(v as ClaudeApiKeyField)}
@@ -957,15 +938,47 @@ export function ClaudeFormFields({
           </SelectItem>
         </SelectContent>
       </Select>
-      {!compactHints && (
-        <p className="text-xs text-fg-2">
-          {t("providerForm.authFieldHint", {
-            defaultValue:
-              "直连时是写进 settings.json 的变量名；经过路由时，AUTH_TOKEN 以 Bearer、API_KEY 以 x-api-key 发给上游。",
-          })}
-        </p>
-      )}
     </div>
+  );
+
+  const fallbackModelLabel = t("providerForm.fallbackModelLabel", {
+    defaultValue: "默认兜底模型",
+  });
+  // 只有第三方端点才认不出原始 Claude 模型名：直连看后台任务用的 Haiku 档，路由看兜底模型本身。
+  const usesThirdPartyEndpoint =
+    category !== "official" && category !== "cloud_provider";
+  const fallbackModelMissing =
+    usesThirdPartyEndpoint &&
+    !(directModeFormatNotice ? defaultHaikuModel : claudeModel).trim();
+
+  // 两项都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
+  const userAgentAndOverrides = (
+    <>
+      <p className="text-xs leading-relaxed text-fg-2">
+        {t("codexConfig.routeOnlySettingsHint", {
+          defaultValue: "以下两项只在路由、聚合模式下生效。",
+        })}
+      </p>
+      <CustomUserAgentField
+        id="claude-custom-user-agent"
+        value={customUserAgent}
+        onChange={onCustomUserAgentChange}
+        help={t("providerForm.customUserAgentHelp", {
+          defaultValue: "替换转发到供应商的请求里的 User-Agent。",
+        })}
+      />
+      <div className="border-t border-border pt-3">
+        <LocalProxyRequestOverridesField
+          headersJson={localProxyHeadersOverride}
+          bodyJson={localProxyBodyOverride}
+          onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
+          onBodyJsonChange={onLocalProxyBodyOverrideChange}
+          help={t("providerForm.localProxyRequestOverridesHelp", {
+            defaultValue: "作用于格式转换后发给上游的请求。",
+          })}
+        />
+      </div>
+    </>
   );
 
   if (variant === "stack") {
@@ -1028,30 +1041,7 @@ export function ClaudeFormFields({
               </Button>
             </CollapsibleTrigger>
             <CollapsibleContent className="space-y-4 pt-2">
-              <p className="text-xs leading-relaxed text-fg-2">
-                {t("codexConfig.routeOnlySettingsHint", {
-                  defaultValue: "以下两项只在路由、聚合模式下生效。",
-                })}
-              </p>
-              <CustomUserAgentField
-                id="claude-custom-user-agent"
-                value={customUserAgent}
-                onChange={onCustomUserAgentChange}
-                help={t("providerForm.customUserAgentHelp", {
-                  defaultValue: "替换转发到供应商的请求里的 User-Agent。",
-                })}
-              />
-              <div className="border-t border-border pt-3">
-                <LocalProxyRequestOverridesField
-                  headersJson={localProxyHeadersOverride}
-                  bodyJson={localProxyBodyOverride}
-                  onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
-                  onBodyJsonChange={onLocalProxyBodyOverrideChange}
-                  help={t("providerForm.localProxyRequestOverridesHelp", {
-                    defaultValue: "作用于格式转换后发给上游的请求。",
-                  })}
-                />
-              </div>
+              {userAgentAndOverrides}
             </CollapsibleContent>
           </Collapsible>
         )}
@@ -1088,11 +1078,6 @@ export function ClaudeFormFields({
               {t("providerForm.advancedOptionsToggle")}
             </Button>
           </CollapsibleTrigger>
-          {!advancedExpanded && (
-            <p className="text-xs text-fg-2 mt-1 ml-1">
-              {t("providerForm.advancedOptionsHint")}
-            </p>
-          )}
           <CollapsibleContent className="space-y-4 pt-2">
             {apiFormatField}
 
@@ -1106,7 +1091,12 @@ export function ClaudeFormFields({
             {/* 模型映射 */}
             <div className="space-y-1 border-t border-border pt-2">
               <div className="flex items-center justify-between">
-                <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
+                <div className="flex items-center gap-0.5">
+                  <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
+                  <HelpTip title={t("providerForm.modelMappingLabel")}>
+                    {t("providerForm.modelMappingHint")}
+                  </HelpTip>
+                </div>
                 <div className="flex gap-2">
                   {/* 一键设置按钮 */}
                   <Button
@@ -1174,9 +1164,6 @@ export function ClaudeFormFields({
                   </Button>
                 </div>
               </div>
-              <p className="text-xs text-fg-2">
-                {t("providerForm.modelMappingHint")}
-              </p>
             </div>
 
             <div className="space-y-3">
@@ -1272,11 +1259,23 @@ export function ClaudeFormFields({
             </div>
 
             <div className="space-y-2 border-t border-border pt-4">
-              <FormLabel htmlFor="claudeModel">
-                {t("providerForm.fallbackModelLabel", {
-                  defaultValue: "默认兜底模型",
-                })}
-              </FormLabel>
+              <div className="flex items-center gap-0.5">
+                <FormLabel htmlFor="claudeModel">
+                  {fallbackModelLabel}
+                </FormLabel>
+                {/* 直连时它是 Claude Code 的主模型；经过路由时才是各档留空、没匹配到档位的回落。 */}
+                <HelpTip title={fallbackModelLabel}>
+                  {directModeFormatNotice
+                    ? t("providerForm.fallbackModelHelpDirect", {
+                        defaultValue:
+                          "写进 ANTHROPIC_MODEL，是 Claude Code 启动时用的主模型。后台任务另用 Haiku 那一档。",
+                      })
+                    : t("providerForm.fallbackModelHelp", {
+                        defaultValue:
+                          "没落到 Sonnet、Opus、Fable、Haiku 任一档的请求，改用这个模型发给上游。",
+                      })}
+                </HelpTip>
+              </div>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,104px)]">
                 {renderModelInput(
                   "claudeModel",
@@ -1306,38 +1305,26 @@ export function ClaudeFormFields({
                   })}
                 </label>
               </div>
-              {/* 直连时它是 Claude Code 的主模型；经过路由时才是各档留空、没匹配到档位的回落。 */}
-              <p className="text-xs text-fg-2">
-                {directModeFormatNotice
-                  ? t("providerForm.fallbackModelHintDirect", {
-                      defaultValue:
-                        "写进 ANTHROPIC_MODEL，是 Claude Code 启动时用的主模型。后台任务看 Haiku 那一档：用第三方端点时请一并填写，否则会用原始 Claude 模型名请求上游。",
-                    })
-                  : t("providerForm.fallbackModelHint", {
-                      defaultValue:
-                        "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
-                    })}
-              </p>
+              {fallbackModelMissing && (
+                <p className="text-xs leading-relaxed text-warning-text">
+                  {directModeFormatNotice
+                    ? t("providerForm.fallbackModelHaikuMissing", {
+                        defaultValue:
+                          "Haiku 一档没填：后台任务会用原始 Claude 模型名请求上游，第三方端点可能报错。",
+                      })
+                    : t("providerForm.fallbackModelMissing", {
+                        defaultValue:
+                          "没填：没落到任何一档的请求会用原始 Claude 模型名发给上游，可能报错。",
+                      })}
+                </p>
+              )}
             </div>
 
             {/* Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过 */}
             {!isCopilotPreset && (
-              <>
-                <CustomUserAgentField
-                  id="claude-custom-user-agent"
-                  value={customUserAgent}
-                  onChange={onCustomUserAgentChange}
-                />
-
-                <div className="border-t border-border pt-3">
-                  <LocalProxyRequestOverridesField
-                    headersJson={localProxyHeadersOverride}
-                    bodyJson={localProxyBodyOverride}
-                    onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
-                    onBodyJsonChange={onLocalProxyBodyOverrideChange}
-                  />
-                </div>
-              </>
+              <div className="space-y-4 border-t border-border pt-4">
+                {userAgentAndOverrides}
+              </div>
             )}
           </CollapsibleContent>
         </Collapsible>

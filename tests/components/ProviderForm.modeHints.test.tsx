@@ -56,9 +56,15 @@ const IN_USE =
 const SWITCH = "直连模式下用不了这种格式，切到路由或聚合后才能用这张卡。";
 const FALLBACK_DIRECT =
   /^写进 ANTHROPIC_MODEL，是 Claude Code 启动时用的主模型/;
-const FALLBACK_ROUTE = /^用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求/;
+const FALLBACK_ROUTE = /^没落到 Sonnet、Opus、Fable、Haiku 任一档的请求/;
+const HAIKU_MISSING = /^Haiku 一档没填/;
+const FALLBACK_MISSING = /^没填：没落到任何一档的请求/;
 
-function renderClaude(meta?: ProviderMeta, baseUrl = "https://relay.example") {
+function renderClaude(
+  meta?: ProviderMeta,
+  baseUrl = "https://relay.example",
+  extraEnv: Record<string, string> = {},
+) {
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
       <ProviderForm
@@ -75,6 +81,7 @@ function renderClaude(meta?: ProviderMeta, baseUrl = "https://relay.example") {
               ANTHROPIC_BASE_URL: baseUrl,
               ANTHROPIC_AUTH_TOKEN: "sk-test",
               ANTHROPIC_MODEL: "m-a",
+              ...extraEnv,
             },
           },
           meta,
@@ -86,14 +93,13 @@ function renderClaude(meta?: ProviderMeta, baseUrl = "https://relay.example") {
 
 /** 有已配置的高级值时高级区会自动展开，只在折叠时点开，免得点一下反而收起。 */
 function expandClaudeAdvanced() {
-  if (screen.queryByText("providerForm.advancedOptionsHint")) {
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "providerForm.advancedOptionsToggle",
-      }),
-    );
+  const toggle = screen.getByRole("button", {
+    name: "providerForm.advancedOptionsToggle",
+  });
+  if (toggle.getAttribute("aria-expanded") !== "true") {
+    fireEvent.click(toggle);
   }
-  expect(screen.queryByText("providerForm.advancedOptionsHint")).toBeNull();
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
 }
 
 function renderCodex(
@@ -157,6 +163,31 @@ describe("完整表单按实际模式提示（Claude Code）", () => {
     expect(screen.getByText(FALLBACK_ROUTE)).toBeInTheDocument();
   });
 
+  it("直连下第三方端点清空 Haiku 档：提示后台任务会用原始模型名", () => {
+    // Haiku 档缺省时表单从 ANTHROPIC_MODEL 回填，只有显式清空才会空着。
+    renderClaude(undefined, "https://relay.example", {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "",
+    });
+    expandClaudeAdvanced();
+    expect(screen.getByText(HAIKU_MISSING)).toBeInTheDocument();
+  });
+
+  it("直连下填了 Haiku 档就不提示", () => {
+    renderClaude(undefined, "https://relay.example", {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "m-h",
+    });
+    expandClaudeAdvanced();
+    expect(screen.queryByText(HAIKU_MISSING)).toBeNull();
+  });
+
+  it("路由下兜底模型空着才提示，Haiku 档不看", () => {
+    modeState.mode = "route";
+    renderClaude(undefined, "https://relay.example", { ANTHROPIC_MODEL: "" });
+    expandClaudeAdvanced();
+    expect(screen.getByText(FALLBACK_MISSING)).toBeInTheDocument();
+    expect(screen.queryByText(HAIKU_MISSING)).toBeNull();
+  });
+
   it("普通卡照常显示地址、格式、认证字段、UA（下面两个用例的对照）", () => {
     modeState.mode = "route";
     renderClaude();
@@ -166,6 +197,29 @@ describe("完整表单按实际模式提示（Claude Code）", () => {
     expect(document.getElementById("apiFormat")).not.toBeNull();
     expect(screen.getByText("认证字段")).toBeInTheDocument();
     expect(document.getElementById("claude-custom-user-agent")).not.toBeNull();
+  });
+
+  it("字段说明收进「?」，页面上只留后果提示", () => {
+    modeState.mode = "route";
+    renderClaude();
+    expandClaudeAdvanced();
+
+    // HelpTip 给屏幕阅读器常驻一份 sr-only 副本，只看页面上露出来的。
+    const shownOnPage = (text: string | RegExp) =>
+      screen.queryAllByText(text).filter((el) => !el.closest(".sr-only"));
+
+    expect(
+      screen.getByRole("button", { name: "上游格式" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "认证字段" }),
+    ).toBeInTheDocument();
+    expect(shownOnPage(/^直连时是写进 settings\.json/)).toHaveLength(0);
+    expect(shownOnPage("providerForm.modelMappingHint")).toHaveLength(0);
+    expect(shownOnPage(/^看供应商原生支持哪种协议/)).toHaveLength(0);
+    expect(
+      screen.getByText("以下两项只在路由、聚合模式下生效。"),
+    ).toBeInTheDocument();
   });
 
   it("OpenAI 格式不显示认证字段（路由一律发 Bearer）", () => {
