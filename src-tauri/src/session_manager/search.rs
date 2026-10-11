@@ -8,7 +8,7 @@
 //! - 每条消息一行，只收用户与 Agent 的正文（Text 块）；思考、工具参数与输出、
 //!   注入内容（AGENTS.md、system-reminder…）不收
 //! - trigram 分词：中文、代码标识符都能按子串命中；不足 3 个字符的查询 trigram
-//!   用不上，退回 `LIKE` 扫描
+//!   用不上，对规范化正文做精确子串扫描
 //! - 增量：按会话源的 `(mtime, len)` 指纹判断，没变的会话不再解析
 //!
 //! FTS 行的 rowid 由「源 id × 2^24 + 消息序号」组成，重建一个会话时按 rowid 区间删除，
@@ -30,7 +30,7 @@ use super::model::{SessionBlock, SessionMessage};
 
 const INDEX_FILE: &str = "session-index.db";
 /// 索引格式版本；表结构或收录规则变了就加一，旧索引整体重建
-const INDEX_VERSION: i64 = 1;
+const INDEX_VERSION: i64 = 2;
 /// rowid 里留给消息序号的位数（单个会话最多 1600 万条消息，超出部分不收）
 const ROW_SHIFT: u32 = 24;
 const MAX_MESSAGES_PER_SOURCE: usize = 1 << ROW_SHIFT;
@@ -61,6 +61,14 @@ pub struct ContentSnippet {
     pub message_index: usize,
     /// 命中词附近的一段正文（纯文本，空白已压缩）
     pub text: String,
+    /// 摘录内的高亮范围，UTF-16 半开区间；来自完整正文，不能对裁剪后的文本重新匹配。
+    pub highlights: Vec<ContentHighlight>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContentHighlight {
+    pub start: usize,
+    pub end: usize,
 }
 
 /// 一个会话的命中：最相关的几条消息的摘录（第一条最相关）与命中消息数
@@ -148,87 +156,97 @@ fn truncate_chars(text: &str, max: usize) -> String {
     }
 }
 
-/// 不区分大小写地比较字符（只取小写形式的第一个字符，保证下标一一对应）
-fn fold(c: char) -> char {
-    c.to_lowercase().next().unwrap_or(c)
-}
-
-/// 逐字符折叠大小写后的字符串（与 [`fold`] 一致，长度不变）
-fn fold_str(text: &str) -> String {
-    text.chars().map(fold).collect()
-}
-
-/// 查询里有没有 ASCII 以外、区分大小写的字符（É、Ж、Σ…）。
-/// SQLite 的 `LIKE` 只折叠 ASCII 大小写，这类查询不能交给它
-fn has_non_ascii_case(query: &str) -> bool {
-    query
-        .chars()
-        .any(|c| !c.is_ascii() && c.to_lowercase().ne(c.to_uppercase()))
-}
-
-/// 取命中词附近的一段文字；找不到（大小写折叠规则不同）时从开头截
-pub fn make_snippet(text: &str, query: &str) -> String {
+/// 取命中词附近的一段原文，并保留完整正文匹配产生的 UTF-16 高亮范围。
+/// 裁剪上下文或压缩空白后重新查找会改变结果（例如词尾 Σ 的大小写规则）。
+fn make_highlighted_snippet(text: &str, query: &str) -> (String, Vec<ContentHighlight>) {
     let hay: Vec<char> = text.chars().collect();
-    let needle: Vec<char> = query.chars().map(fold).collect();
-    let found = if needle.is_empty() || needle.len() > hay.len() {
-        None
-    } else {
-        (0..=hay.len() - needle.len()).find(|&start| {
-            hay[start..start + needle.len()]
-                .iter()
-                .zip(&needle)
-                .all(|(a, b)| fold(*a) == *b)
-        })
-    };
-    let (start, end) = match found {
-        Some(at) => (
-            at.saturating_sub(SNIPPET_BEFORE),
-            (at + needle.len() + SNIPPET_AFTER).min(hay.len()),
+    let normalized = text.to_lowercase();
+    let needle = query.to_lowercase();
+    // 小写展开（如 İ → i + combining dot）会改变下标。按展开字符数映射回原文；
+    // 默认 Unicode 小写唯一的上下文规则 Final_Sigma 不改变字符数。
+    let original_positions: Vec<usize> = hay
+        .iter()
+        .enumerate()
+        .flat_map(|(index, c)| std::iter::repeat_n(index, c.to_lowercase().count()))
+        .collect();
+    let mut matched = vec![false; hay.len()];
+    let mut first = None;
+    if !needle.is_empty() {
+        let needle_chars = needle.chars().count();
+        let mut previous_byte = 0;
+        let mut normalized_at = 0;
+        for (byte, _) in normalized.match_indices(&needle) {
+            normalized_at += normalized[previous_byte..byte].chars().count();
+            previous_byte = byte;
+            let start = original_positions[normalized_at];
+            let end = original_positions[normalized_at + needle_chars - 1] + 1;
+            first.get_or_insert((start, end));
+            matched[start..end].fill(true);
+        }
+    }
+    let (start, end) = match first {
+        Some((start, end)) => (
+            start.saturating_sub(SNIPPET_BEFORE),
+            (end + SNIPPET_AFTER).min(hay.len()),
         ),
         None => (0, (SNIPPET_BEFORE + SNIPPET_AFTER).min(hay.len())),
     };
 
     let mut snippet = String::new();
+    let mut highlights: Vec<ContentHighlight> = Vec::new();
+    let mut utf16_at = 0;
+    let mut append = |c: char, highlighted: bool| {
+        let end = utf16_at + c.len_utf16();
+        snippet.push(c);
+        if highlighted {
+            if let Some(previous) = highlights.last_mut().filter(|range| range.end == utf16_at) {
+                previous.end = end;
+            } else {
+                highlights.push(ContentHighlight {
+                    start: utf16_at,
+                    end,
+                });
+            }
+        }
+        utf16_at = end;
+    };
     if start > 0 {
-        snippet.push('…');
+        append('…', false);
     }
-    // 连续空白压成一个空格；开头的空白直接丢掉
+    // 连续空白压成一个空格；开头的空白直接丢掉。范围跟随实际输出，
+    // 一个压缩空格只要包含命中的原始空白，就保留高亮。
     let mut pending_space = false;
+    let mut pending_highlight = false;
     let mut started = false;
-    for &c in &hay[start..end] {
+    for index in start..end {
+        let c = hay[index];
         if c.is_whitespace() {
             pending_space = started;
+            pending_highlight |= matched[index];
             continue;
         }
         if pending_space {
-            snippet.push(' ');
-            pending_space = false;
+            append(' ', pending_highlight);
         }
-        snippet.push(c);
+        pending_space = false;
+        pending_highlight = false;
+        append(c, matched[index]);
         started = true;
     }
     if end < hay.len() {
-        snippet.push('…');
+        append('…', false);
     }
-    snippet
+    (snippet, highlights)
+}
+
+#[cfg(test)]
+fn make_snippet(text: &str, query: &str) -> String {
+    make_highlighted_snippet(text, query).0
 }
 
 /// FTS5 短语查询：整段查询按子串匹配
 fn match_expression(query: &str) -> String {
     format!("\"{}\"", query.replace('"', "\"\""))
-}
-
-/// `LIKE` 模式，转义 `%` `_` `\`
-fn like_pattern(query: &str) -> String {
-    let mut pattern = String::from("%");
-    for c in query.chars() {
-        if matches!(c, '%' | '_' | '\\') {
-            pattern.push('\\');
-        }
-        pattern.push(c);
-    }
-    pattern.push('%');
-    pattern
 }
 
 pub struct SessionIndex {
@@ -266,7 +284,7 @@ impl SessionIndex {
                  UNIQUE (provider_id, source_path)
              );
              CREATE VIRTUAL TABLE IF NOT EXISTS message_text
-                 USING fts5(text, tokenize = 'trigram');",
+                 USING fts5(text UNINDEXED, normalized, tokenize = 'trigram case_sensitive 1');",
         )?;
         conn.pragma_update(None, "user_version", INDEX_VERSION)?;
         Ok(Self { conn })
@@ -332,10 +350,15 @@ impl SessionIndex {
             }
         };
         {
-            let mut insert =
-                tx.prepare("INSERT INTO message_text (rowid, text) VALUES (?1, ?2)")?;
+            let mut insert = tx.prepare(
+                "INSERT INTO message_text (rowid, text, normalized) VALUES (?1, ?2, ?3)",
+            )?;
             for (index, text) in rows {
-                insert.execute(params![(id << ROW_SHIFT) + *index as i64, text])?;
+                insert.execute(params![
+                    (id << ROW_SHIFT) + *index as i64,
+                    text,
+                    text.to_lowercase()
+                ])?;
             }
         }
         tx.commit()
@@ -427,52 +450,27 @@ impl SessionIndex {
         let source_filter =
             format!("(?3 IS NULL OR (rowid >> {ROW_SHIFT}) IN (SELECT value FROM json_each(?3)))");
 
-        let rowids: Vec<i64> = if query.chars().count() >= MIN_MATCH_CHARS {
+        let normalized = query.to_lowercase();
+        let rowids: Vec<i64> = if normalized.chars().count() >= MIN_MATCH_CHARS {
             let mut stmt = self.conn.prepare(&format!(
                 "SELECT rowid FROM message_text WHERE message_text MATCH ?1 AND {source_filter}
                  ORDER BY rank LIMIT ?2"
             ))?;
             let rows = stmt.query_map(
-                params![match_expression(query), MAX_HIT_ROWS, allowed_json],
+                params![match_expression(&normalized), MAX_HIT_ROWS, allowed_json],
                 |row| row.get(0),
             )?;
             rows.collect::<rusqlite::Result<_>>()?
-        } else if has_non_ascii_case(query) {
-            // 不足 3 个字符且含 É 之类的字母：LIKE 会漏掉大小写不同的写法，在 Rust 里逐行折叠比较
-            let needle = fold_str(query);
-            let allowed: Option<HashSet<i64>> = allowed.map(|ids| ids.into_iter().collect());
-            let mut stmt = self
-                .conn
-                .prepare("SELECT rowid, text FROM message_text ORDER BY rowid DESC")?;
-            let mut rows = stmt.query([])?;
-            let mut found = Vec::new();
-            while let Some(row) = rows.next()? {
-                let rowid: i64 = row.get(0)?;
-                if allowed
-                    .as_ref()
-                    .is_some_and(|ids| !ids.contains(&(rowid >> ROW_SHIFT)))
-                {
-                    continue;
-                }
-                let text: String = row.get(1)?;
-                if fold_str(&text).contains(&needle) {
-                    found.push(rowid);
-                    if found.len() as i64 >= MAX_HIT_ROWS {
-                        break;
-                    }
-                }
-            }
-            found
         } else {
-            // 不足 3 个字符：trigram 用不上，LIKE 扫描（ASCII 与中日文等无大小写的字符都正确）
+            // 短词在已规范化的正文上精确匹配；不经过 LIKE 的 ASCII 折叠或通配符。
+            // 在 LIMIT 前完成匹配与应用过滤，错误候选不会消耗命中预算。
             let mut stmt = self.conn.prepare(&format!(
-                "SELECT rowid FROM message_text WHERE text LIKE ?1 ESCAPE '\\' AND {source_filter}
+                "SELECT rowid FROM message_text WHERE instr(normalized, ?1) > 0 AND {source_filter}
                  ORDER BY rowid DESC LIMIT ?2"
             ))?;
-            let rows = stmt.query_map(
-                params![like_pattern(query), MAX_HIT_ROWS, allowed_json],
-                |row| row.get(0),
-            )?;
+            let rows = stmt.query_map(params![normalized, MAX_HIT_ROWS, allowed_json], |row| {
+                row.get(0)
+            })?;
             rows.collect::<rusqlite::Result<_>>()?
         };
         if rowids.is_empty() {
@@ -508,9 +506,11 @@ impl SessionIndex {
                 .iter()
                 .map(|&rowid| {
                     let text: String = text_stmt.query_row(params![rowid], |row| row.get(0))?;
+                    let (text, highlights) = make_highlighted_snippet(&text, query);
                     Ok(ContentSnippet {
                         message_index: (rowid & ((1 << ROW_SHIFT) - 1)) as usize,
-                        text: make_snippet(&text, query),
+                        text,
+                        highlights,
                     })
                 })
                 .collect::<rusqlite::Result<_>>()?;
@@ -935,6 +935,130 @@ mod tests {
     }
 
     #[test]
+    fn unicode_search_uses_whole_string_lowercase_for_every_query_length() {
+        for (text, query, expected) in [
+            ("ςabc", "σab", false),
+            ("ſabc", "sab", false),
+            ("ΟΣ", "ος", true),
+            ("ΟΣΑ", "οσα", true),
+            ("ΟΣΑ", "ος", false),
+            ("İabc", "i\u{307}a", true),
+            ("İabc", "ia", false),
+            ("İabc", "i", true),
+            ("😀中文跑马灯", "中文", true),
+            ("😀中文跑马灯", "跑马灯", true),
+            ("a%_b", "%_", true),
+            ("plain", "%_", false),
+        ] {
+            let mut index = SessionIndex::open_in_memory().unwrap();
+            index
+                .replace_source("codex", "/synthetic", fp(1), &rows(&[text]))
+                .unwrap();
+            assert_eq!(
+                !index.search(query, None, 10).unwrap().is_empty(),
+                expected,
+                "text={text:?}, query={query:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unicode_nonmatches_do_not_exhaust_the_hit_budget() {
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        let mut messages: Vec<(usize, String)> = (0..MAX_HIT_ROWS as usize)
+            .map(|i| (i, "ſabc".into()))
+            .collect();
+        messages.push((MAX_HIT_ROWS as usize, "sab target".into()));
+        index
+            .replace_source("codex", "/synthetic", fp(1), &messages)
+            .unwrap();
+        for query in ["sab", "sa"] {
+            let hits = index.search(query, None, 10).unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].match_count, 1);
+            assert_eq!(hits[0].snippets[0].message_index, MAX_HIT_ROWS as usize);
+        }
+    }
+
+    #[test]
+    fn unicode_index_rebuilds_the_previous_tokenizer_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE message_text USING fts5(text, tokenize='trigram');
+            INSERT INTO message_text(text) VALUES ('stale'); PRAGMA user_version=1;",
+        )
+        .unwrap();
+        let mut index = SessionIndex::init(conn).unwrap();
+        assert_eq!(
+            index
+                .conn
+                .query_row("SELECT count(*) FROM message_text", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        index
+            .replace_source("codex", "/synthetic", fp(1), &rows(&["ΟΣ"]))
+            .unwrap();
+        assert_eq!(index.search("ος", None, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn unicode_snippet_highlights_preserve_full_source_case_context() {
+        let text = format!("A{}Σ", "\u{301}".repeat(100));
+        let (snippet, highlights) = make_highlighted_snippet(&text, "ς");
+        assert!(!snippet.to_lowercase().contains('ς'));
+        assert_eq!(highlights, vec![ContentHighlight { start: 31, end: 32 }]);
+        assert_eq!(
+            snippet.encode_utf16().nth(highlights[0].start),
+            Some('Σ' as u16)
+        );
+    }
+
+    #[test]
+    fn unicode_snippet_highlights_survive_whitespace_and_emoji() {
+        let (snippet, highlights) =
+            make_highlighted_snippet("😀 İ\n\t  X and İ\n\t  X", "i\u{307}\n\t  x");
+        assert_eq!(snippet, "😀 İ X and İ X");
+        assert_eq!(
+            highlights,
+            vec![
+                ContentHighlight { start: 3, end: 6 },
+                ContentHighlight { start: 11, end: 14 }
+            ]
+        );
+    }
+
+    #[test]
+    fn unicode_snippet_ranges_keep_supplementary_and_overlapping_expansions_intact() {
+        let (snippet, highlights) = make_highlighted_snippet("😀𐐀 x𐐨", "𐐨");
+        assert_eq!(snippet, "😀𐐀 x𐐨");
+        assert_eq!(
+            highlights,
+            vec![
+                ContentHighlight { start: 2, end: 4 },
+                ContentHighlight { start: 6, end: 8 }
+            ]
+        );
+        let (snippet, highlights) = make_highlighted_snippet("İİİ", "\u{307}i");
+        assert_eq!(snippet, "İİİ");
+        assert_eq!(highlights, vec![ContentHighlight { start: 0, end: 3 }]);
+    }
+
+    #[test]
+    fn unicode_snippets_map_expanded_lowercase_back_to_original_characters() {
+        for (prefix, text, query) in [
+            ("İ".repeat(140), "😀ΟΣ", "ος"),
+            ("中".repeat(140), "İabc", "i\u{307}a"),
+        ] {
+            let original = format!("{prefix}{text}{}", "尾".repeat(140));
+            let snippet = make_snippet(&original, query);
+            assert!(snippet.contains(text), "{snippet:?}");
+            assert!(snippet.starts_with('…'));
+        }
+    }
+
+    #[test]
     fn search_matches_chinese_substrings_including_two_char_queries() {
         let mut index = SessionIndex::open_in_memory().unwrap();
         index
@@ -962,7 +1086,7 @@ mod tests {
         assert_eq!(hits[0].snippets[0].message_index, 1);
         assert!(hits[0].snippets[0].text.contains("跑马灯"));
 
-        // 两个字：trigram 用不上，走 LIKE
+        // 两个字：trigram 用不上，走规范化子串扫描
         let hits = index.search("正交", None, 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].source_path, "/b.jsonl");
@@ -1010,7 +1134,7 @@ mod tests {
         assert_eq!(index.search("éclair", None, 10).unwrap().len(), 1);
         assert_eq!(index.search("ÉCLAIR", None, 10).unwrap().len(), 1);
         assert_eq!(index.search("ПРИВЕТ", None, 10).unwrap().len(), 1);
-        // 不足 3 个字符：LIKE 只折叠 ASCII，这里要走 Rust 逐行比较
+        // 不足 3 个字符：在规范化正文上逐行比较
         let hits = index.search("éc", None, 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippets[0].text.contains("Éclair"));

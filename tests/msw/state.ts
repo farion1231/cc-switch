@@ -8,6 +8,10 @@ import type {
   Settings,
 } from "@/types";
 import { deepClone } from "@/utils/deepClone";
+import {
+  createHighlightedSnippet,
+  findTextMatches,
+} from "@/components/sessions/utils";
 
 type ProvidersByApp = Record<AppId, Record<string, Provider>>;
 type CurrentProviderState = Record<AppId, string>;
@@ -449,10 +453,15 @@ export const searchSessionContent = (
       {
         providerId: session.providerId,
         sourcePath: session.sourcePath ?? "",
-        snippets: matched.slice(0, 3).map(({ index, text }) => ({
-          messageIndex: index,
-          text: text.replace(/\s+/g, " ").trim(),
-        })),
+        snippets: matched.slice(0, 3).map(({ index, text }) => {
+          const source = text.trim();
+          return {
+            messageIndex: index,
+            ...createHighlightedSnippet(source, [
+              ...findTextMatches(source, query),
+            ]),
+          };
+        }),
         matchCount: matched.length,
       },
     ];
