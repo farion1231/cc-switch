@@ -936,22 +936,26 @@ export function CodexFormFields({
 
   // 按模型名补上这一行已知的窗口、档位和模态（只补空着的）。
   const fillCatalogRowMetadata = useCallback(
-    (rowId: string, modelId: string) =>
-      fillModelMetadata(modelId, (metadata) => {
-        const rows = catalogRowsRef.current;
-        const current = rows.find((row) => row.rowId === rowId);
-        if (current?.model.trim() !== modelId) return false;
-        const filled = fillCodexCatalogModel(
-          current,
-          metadata,
-          CODEX_REASONING_LEVELS,
-        );
-        if (!metadataFilledAnything(current, filled)) return false;
-        commitCatalogRows(
-          rows.map((row) => (row.rowId === rowId ? filled : row)),
-        );
-        return true;
-      }),
+    (rowId: string, modelId: string, silent?: boolean) =>
+      fillModelMetadata(
+        modelId,
+        (metadata) => {
+          const rows = catalogRowsRef.current;
+          const current = rows.find((row) => row.rowId === rowId);
+          if (current?.model.trim() !== modelId) return false;
+          const filled = fillCodexCatalogModel(
+            current,
+            metadata,
+            CODEX_REASONING_LEVELS,
+          );
+          if (!metadataFilledAnything(current, filled)) return false;
+          commitCatalogRows(
+            rows.map((row) => (row.rowId === rowId ? filled : row)),
+          );
+          return true;
+        },
+        { silent },
+      ),
     [catalogRowsRef, commitCatalogRows, fillModelMetadata],
   );
 
@@ -1079,7 +1083,10 @@ export function CodexFormFields({
         if (first) onModelChange?.(first);
       }
       commitCatalogRows(next);
-      for (const row of additions) fillCatalogRowMetadata(row.rowId, row.model);
+      // 弹窗里已经显示过这些参数，补完不再提示。
+      for (const row of additions) {
+        fillCatalogRowMetadata(row.rowId, row.model, true);
+      }
     },
     [
       catalogRowsRef,
@@ -1191,6 +1198,10 @@ export function CodexFormFields({
         onApply={handleApplyFetchedCatalogRows}
         onFetch={handleFetchModels}
         isFetching={isFetchingModels}
+        metadataSource={{
+          baseUrl: codexBaseUrl,
+          presets: codexPresetModelSources,
+        }}
       />
       <Button
         type="button"

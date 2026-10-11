@@ -320,15 +320,19 @@ export function OpenCodeFormFields({
     presets: presetModelSources,
     prefetch: fetchedModels.length > 0,
   });
-  const fillModelMetadataFor = (id: string) =>
-    fillModelMetadata(id, (metadata) => {
-      const current = modelsRef.current;
-      if (!Object.prototype.hasOwnProperty.call(current, id)) return false;
-      const filled = fillOpenCodeModel(current[id], metadata);
-      if (!metadataFilledAnything(current[id], filled)) return false;
-      commitModels({ ...current, [id]: filled });
-      return true;
-    });
+  const fillModelMetadataFor = (id: string, silent?: boolean) =>
+    fillModelMetadata(
+      id,
+      (metadata) => {
+        const current = modelsRef.current;
+        if (!Object.prototype.hasOwnProperty.call(current, id)) return false;
+        const filled = fillOpenCodeModel(current[id], metadata);
+        if (!metadataFilledAnything(current[id], filled)) return false;
+        commitModels({ ...current, [id]: filled });
+        return true;
+      },
+      { silent },
+    );
 
   const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
     const next = { ...models };
@@ -346,7 +350,8 @@ export function OpenCodeFormFields({
         return kept;
       });
     }
-    Object.keys(additions).forEach(fillModelMetadataFor);
+    // 弹窗里已经显示过这些参数，补完不再提示。
+    for (const id of Object.keys(additions)) fillModelMetadataFor(id, true);
   };
 
   // Remove a model entry
@@ -765,6 +770,7 @@ export function OpenCodeFormFields({
               onApply={handleApplyFetchedModels}
               onFetch={handleFetchModels}
               isFetching={isFetchingModels}
+              metadataSource={{ baseUrl, presets: presetModelSources }}
             />
             <Button
               type="button"

@@ -1701,6 +1701,8 @@
       "selectAll": "すべて選択",
       "selectNone": "すべて解除",
       "selectedCount": "{{total}} 件中 {{selected}} 件を選択",
+      "reasoning": "推論",
+      "image": "画像",
       "onlySelected": "選択済みのみ",
       "notInProvider": "プロバイダーの一覧にないモデル",
       "fromProvider": "プロバイダーから取得したモデル",

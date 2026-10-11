@@ -1701,6 +1701,8 @@
       "selectAll": "全选",
       "selectNone": "全不选",
       "selectedCount": "已选 {{selected}} / 共 {{total}}",
+      "reasoning": "推理",
+      "image": "图片",
       "onlySelected": "只看已选",
       "notInProvider": "不在供应商列表中",
       "fromProvider": "供应商返回的模型",

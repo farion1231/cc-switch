@@ -98,6 +98,8 @@ interface ClaudeStackModelsFieldProps {
   fetchedModels: FetchedModel[];
   onFetchModels: () => void;
   isFetchingModels: boolean;
+  /** 供应商地址：选择弹窗按它查各模型的窗口等参数。 */
+  baseUrl?: string;
 }
 
 /**
@@ -110,6 +112,7 @@ export function ClaudeStackModelsField({
   fetchedModels,
   onFetchModels,
   isFetchingModels,
+  baseUrl = "",
 }: ClaudeStackModelsFieldProps) {
   const { t } = useTranslation();
 
@@ -160,6 +163,7 @@ export function ClaudeStackModelsField({
               onApply={applyFetchedModels}
               onFetch={onFetchModels}
               isFetching={isFetchingModels}
+              metadataSource={{ baseUrl }}
             />
             <Button
               type="button"

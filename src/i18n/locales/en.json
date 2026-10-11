@@ -1701,6 +1701,8 @@
       "selectAll": "Select all",
       "selectNone": "Select none",
       "selectedCount": "{{selected}} of {{total}} selected",
+      "reasoning": "Reasoning",
+      "image": "Image",
       "onlySelected": "Selected only",
       "notInProvider": "Not in the provider's list",
       "fromProvider": "From the provider",

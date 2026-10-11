@@ -1023,6 +1023,7 @@ export function ClaudeFormFields({
             fetchedModels={stackFetchedModels}
             onFetchModels={handleModelFetchClick}
             isFetchingModels={modelFetchLoading}
+            baseUrl={baseUrl}
           />
         )}
 

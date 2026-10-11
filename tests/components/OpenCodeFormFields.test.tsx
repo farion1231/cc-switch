@@ -13,6 +13,11 @@ import { describe, expect, it, vi } from "vitest";
 import { OpenCodeFormFields } from "@/components/providers/forms/OpenCodeFormFields";
 import { Form } from "@/components/ui/form";
 import { fetchModelsForConfig } from "@/lib/api/model-fetch";
+import type { PresetModelSource } from "@/lib/modelMetadata";
+import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
+import { http, HttpResponse } from "msw";
+import { toast } from "sonner";
+import { server } from "../msw/server";
 
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/model-fetch")>()),
@@ -100,6 +105,50 @@ describe("OpenCodeFormFields", () => {
     fireEvent.click(screen.getByRole("button", { name: PICK }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(fetchModelsForConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows each model's window and capabilities and fills picked models quietly", async () => {
+    server.use(http.get(MODELS_DEV_API_URL, () => HttpResponse.error()));
+    const toastInfo = vi.spyOn(toast, "info");
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "model-a", ownedBy: null },
+      { id: "model-b", ownedBy: null },
+    ]);
+    const presetModelSources = (): PresetModelSource[] => [
+      {
+        baseUrl: "https://api.example.com/v1",
+        models: new Map([
+          [
+            "model-a",
+            {
+              contextWindow: 262144,
+              reasoning: true,
+              inputModalities: ["text", "image"],
+            },
+          ],
+        ]),
+      },
+    ];
+    const { props } = renderOpenCodeForm({ models: {}, presetModelSources });
+    fireEvent.click(screen.getByRole("button", { name: FETCH }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(
+        "256K · providerForm.modelPicker.reasoning · providerForm.modelPicker.image",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "model-a" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: APPLY }));
+
+    expect(props.onModelsChange).toHaveBeenLastCalledWith({
+      "model-a": expect.objectContaining({
+        limit: expect.objectContaining({ context: 262144 }),
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(toastInfo).not.toHaveBeenCalled();
+    toastInfo.mockRestore();
   });
 
   it("checks configured models and removes the ones unchecked on apply", async () => {

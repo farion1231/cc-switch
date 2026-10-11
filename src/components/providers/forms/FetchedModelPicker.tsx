@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Download, ListChecks, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,11 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { SearchField } from "@/components/ui/search-field";
 import { CHECKBOX_CLASS, V7Dialog } from "@/components/mcp/formBits";
 import type { FetchedModel } from "@/lib/api/model-fetch";
+import {
+  resolveModelMetadata,
+  type PresetModelSource,
+} from "@/lib/modelMetadata";
+import { modelsDevQueryOptions } from "@/lib/modelsDev";
 import { cn } from "@/lib/utils";
 
 export interface FetchedModelSelection {
@@ -16,6 +22,11 @@ export interface FetchedModelSelection {
   remove: string[];
 }
 
+interface ModelMetadataSourceProps {
+  baseUrl: string;
+  presets?: () => readonly PresetModelSource[];
+}
+
 interface FetchedModelPickerProps {
   models: FetchedModel[];
   /** 列表里已有的模型 ID（调用方按自己的规则归一，如去掉 [1m]） */
@@ -23,6 +34,21 @@ interface FetchedModelPickerProps {
   onApply: (selection: FetchedModelSelection) => void;
   onFetch: () => void;
   isFetching: boolean;
+  /**
+   * 按这个地址和预设查每个模型的窗口、推理、图片输入，显示在行里（只读）。
+   * 和加入后补参数用的是同一套查法，看到的就是会补进去的值。
+   */
+  metadataSource?: ModelMetadataSourceProps;
+}
+
+/** 窗口按 2 的幂整除时用 1024 进位（262144 → 256K），否则按 1000（200000 → 200K）。 */
+function formatContextWindow(tokens: number): string {
+  const base = tokens % 1024 === 0 ? 1024 : 1000;
+  if (tokens >= base * base) {
+    return `${Number((tokens / (base * base)).toPrecision(3))}M`;
+  }
+  if (tokens >= base) return `${Number((tokens / base).toPrecision(3))}K`;
+  return String(tokens);
 }
 
 /**
@@ -38,6 +64,7 @@ export function FetchedModelPicker({
   onApply,
   onFetch,
   isFetching,
+  metadataSource,
 }: FetchedModelPickerProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -93,6 +120,7 @@ export function FetchedModelPicker({
           onCancel={() => setOpen(false)}
           onFetch={onFetch}
           isFetching={isFetching}
+          metadataSource={metadataSource}
         />
       </V7Dialog>
     </>
@@ -106,6 +134,7 @@ function FetchedModelPickerBody({
   onCancel,
   onFetch,
   isFetching,
+  metadataSource,
 }: Omit<FetchedModelPickerProps, "onApply"> & {
   onApply: (selection: FetchedModelSelection) => void;
   onCancel: () => void;
@@ -134,6 +163,40 @@ function FetchedModelPickerBody({
   const allIds = [...extraIds, ...models.map((model) => model.id)];
   const selectedCount = allIds.filter((id) => draft.has(id)).length;
 
+  // 拉到模型列表时表单已经预取过 models.dev，通常已在缓存里。
+  const { data: modelsDev } = useQuery({
+    ...modelsDevQueryOptions,
+    enabled: !!metadataSource,
+  });
+  const baseUrl = metadataSource?.baseUrl;
+  const presets = metadataSource?.presets;
+  const allIdsKey = allIds.join("\n");
+  const summaries = useMemo(() => {
+    const result = new Map<string, string>();
+    if (baseUrl === undefined) return result;
+    const presetSources = presets?.();
+    for (const id of allIdsKey.split("\n")) {
+      const metadata = resolveModelMetadata(id, {
+        baseUrl,
+        presets: presetSources,
+        modelsDev,
+      });
+      if (!metadata) continue;
+      const parts: string[] = [];
+      if (metadata.contextWindow) {
+        parts.push(formatContextWindow(metadata.contextWindow));
+      }
+      if (metadata.reasoning || metadata.reasoningEfforts?.length) {
+        parts.push(t("providerForm.modelPicker.reasoning"));
+      }
+      if (metadata.inputModalities?.includes("image")) {
+        parts.push(t("providerForm.modelPicker.image"));
+      }
+      if (parts.length > 0) result.set(id, parts.join(" · "));
+    }
+    return result;
+  }, [allIdsKey, baseUrl, modelsDev, presets, t]);
+
   const setChecked = (ids: string[], checked: boolean) =>
     setDraft((prev) => {
       const next = new Set(prev);
@@ -154,6 +217,8 @@ function FetchedModelPickerBody({
     });
   };
 
+  // 厂商列定宽，参数列才能上下对齐；没有一个模型带厂商时不占位。
+  const showOwner = models.some((model) => model.ownedBy);
   const renderRow = (id: string, ownedBy: string | null, first: boolean) => (
     <li key={id} className={cn(!first && "border-t border-border")}>
       <label className="flex cursor-pointer items-center gap-2.5 py-2 pe-3 ps-3.5 hover:bg-subtle">
@@ -167,8 +232,16 @@ function FetchedModelPickerBody({
         <span className="min-w-0 flex-1 truncate text-body" title={id}>
           {id}
         </span>
-        {ownedBy && (
-          <span className="max-w-[40%] shrink-0 truncate text-caption text-fg-3">
+        {summaries.has(id) && (
+          <span className="shrink-0 text-caption tabular-nums text-fg-2">
+            {summaries.get(id)}
+          </span>
+        )}
+        {showOwner && (
+          <span
+            className="w-20 shrink-0 truncate text-end text-caption text-fg-3"
+            title={ownedBy ?? undefined}
+          >
             {ownedBy}
           </span>
         )}
