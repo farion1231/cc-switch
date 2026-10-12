@@ -17,6 +17,8 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 const MAX_PI_FILE_BYTES: u64 = 1024 * 1024;
 const MISSING_MODELS_REVISION: &str = "missing";
 static MODELS_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+#[expect(dead_code)] // T3 命令层消费后移除
+static PI_SETTINGS_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 #[cfg(test)]
 static TEST_AGENT_DIR: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex::new(None));
 
@@ -504,6 +506,242 @@ fn nonempty_string(value: Option<&Value>) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
+// ─── skills 数组编辑（Pi 共享配置管理）────────────────────────────────────
+
+/// 编辑器装填：严格读取（数组含非字符串元素 → parse_error，不静默过滤——
+/// 编辑场景下过滤即销毁）+ 分类/警告（pi_shared 轻量版）+ revision（编辑
+/// 会话乐观锁）+ 复选候选源（各应用技能目录实际路径，不含 Pi 自身与
+/// ~/.agents/skills——后者 pi 无条件自动发现，加入冗余）。
+#[expect(dead_code)] // T3 命令层消费后移除
+pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig, AppError> {
+    use crate::app_config::{PiSkillsConfig, PiSkillsEntryInfo, PiSkillsSourceInfo};
+
+    let path = get_pi_settings_path()?;
+    let mut config = PiSkillsConfig {
+        path: path.display().to_string(),
+        entries: None,
+        parse_error: None,
+        revision: String::new(),
+        sources: Vec::new(),
+    };
+
+    if !path.exists() {
+        return Ok(config); // 文件不存在：空态，保存时创建骨架
+    }
+    let bytes = read_file_limited(&path, "Pi settings")?;
+    config.revision = revision(&bytes);
+    let source = std::str::from_utf8(&bytes)
+        .map_err(|e| AppError::Config(format!("Pi settings 不是 UTF-8: {e}")))?;
+
+    let parsed: serde_json::Value = match json5::from_str(source) {
+        Ok(v) => v,
+        Err(e) => {
+            config.parse_error = Some(format!("settings.json 解析失败：{e}"));
+            return Ok(config);
+        }
+    };
+    let Some(root) = parsed.as_object() else {
+        config.parse_error = Some("settings.json 根节点必须是对象".to_string());
+        return Ok(config);
+    };
+    let Some(skills) = root.get("skills") else {
+        return Ok(config); // 无 skills 键：空态
+    };
+    let Some(array) = skills.as_array() else {
+        config.parse_error = Some("settings.json 的 skills 必须是字符串数组".to_string());
+        return Ok(config);
+    };
+    // 严格读取：非字符串元素 → parse_error（编辑禁用 + 手动修复出口），
+    // 防止 get 时过滤、set 时全量替换把非字符串元素静默销毁
+    let mut entries = Vec::with_capacity(array.len());
+    for item in array {
+        match item.as_str() {
+            Some(raw) => entries.push(PiSkillsEntryInfo {
+                raw: raw.to_string(),
+                kind: crate::services::skill::pi_shared::classify_entry_kind(raw)
+                    .kind_str()
+                    .to_string(),
+                warnings: crate::services::skill::pi_shared::entry_warnings(raw),
+            }),
+            None => {
+                config.parse_error = Some(format!(
+                    "skills 数组含非字符串元素（{item}），请手动修复后再编辑"
+                ));
+                config.entries = None;
+                return Ok(config);
+            }
+        }
+    }
+    config.entries = Some(entries);
+
+    // 复选候选源：各应用技能目录（排除 Pi 自身），仅列存在的
+    for app in crate::app_config::AppType::all() {
+        if matches!(app, crate::app_config::AppType::Pi) {
+            continue;
+        }
+        let Ok(dir) = crate::services::skill::SkillService::get_app_skills_dir(&app) else {
+            continue;
+        };
+        if !dir.is_dir() {
+            continue;
+        }
+        let listed = config
+            .entries
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|e| entry_resolves_to(&e.raw, &dir));
+        config.sources.push(PiSkillsSourceInfo {
+            app: app.as_str().to_string(),
+            path: dir.display().to_string(),
+            already_listed: listed,
+        });
+    }
+    Ok(config)
+}
+
+/// 写入 skills 数组（全量替换；文件中 skills 内容 = 编辑器所见）。
+/// 安全链：双层 revision → 空白条目拒绝 → JsoncDocument（数组外逐字保留）
+/// → round-trip 三重校验 → 无变化零写入 → 首次改写前快照 → 原子写。
+#[expect(dead_code)] // T3 命令层消费后移除
+pub(crate) fn set_pi_skills_entries(
+    entries: &[String],
+    session_revision: &str,
+) -> Result<(), AppError> {
+    let _guard = PI_SETTINGS_FILE_LOCK
+        .lock()
+        .map_err(|_| AppError::Config("Pi settings 锁已毒化".into()))?;
+
+    // 空白条目拒绝："" 会被 pi 解析为 agentDir 本身成扫描根（危险静默行为）
+    if let Some(bad) = entries.iter().find(|e| e.trim().is_empty()) {
+        return Err(AppError::InvalidInput(format!(
+            "skills 条目不能为空或纯空白：{bad:?}"
+        )));
+    }
+
+    let path = get_pi_settings_path()?;
+    let (previous_source, previous_bytes) = if path.exists() {
+        let bytes = read_file_limited(&path, "Pi settings")?;
+        let source = std::str::from_utf8(&bytes)
+            .map_err(|e| AppError::Config(format!("Pi settings 不是 UTF-8: {e}")))?
+            .to_string();
+        (source, Some(bytes))
+    } else {
+        (String::from("{\n  \"skills\": []\n}\n"), None)
+    };
+
+    // 会话层 revision：get 之后文件被外部改过 → 拒绝（防编辑会话内的外部修改被静默吞掉）
+    let current_revision = previous_bytes
+        .as_ref()
+        .map(|b| revision(b))
+        .unwrap_or_default();
+    let file_existed = previous_bytes.is_some();
+    if file_existed && current_revision != session_revision {
+        return Err(AppError::Conflict(
+            "pi settings.json 已在外部修改，请刷新后重试".into(),
+        ));
+    }
+    if !file_existed && !session_revision.is_empty() {
+        return Err(AppError::Conflict(
+            "pi settings.json 已在外部创建，请刷新后重试".into(),
+        ));
+    }
+
+    let mut document = crate::jsonc_document::JsoncDocument::parse(&previous_source)
+        .map_err(|e| AppError::Config(format!("Pi settings 解析失败：{e}")))?;
+    let mut desired = document.value().clone();
+    // skills 键存在但非数组 → 拒绝（不猜用户意图）
+    if let Some(existing) = desired.get("skills") {
+        if !existing.is_array() {
+            return Err(AppError::InvalidInput(
+                "settings.json 的 skills 必须是字符串数组".into(),
+            ));
+        }
+    }
+    desired["skills"] = serde_json::Value::Array(
+        entries
+            .iter()
+            .map(|e| serde_json::Value::String(e.clone()))
+            .collect(),
+    );
+    document
+        .apply(&desired)
+        .map_err(|e| AppError::Config(format!("Pi settings 合并失败：{e}")))?;
+    let new_source = document
+        .validated_source()
+        .map_err(|e| AppError::Config(format!("Pi settings 校验失败：{e}")))?;
+
+    // 无变化零写入
+    if new_source == previous_source {
+        return Ok(());
+    }
+
+    // 操作层乐观锁：load 之后、写之前磁盘被外部改过 → 拒绝
+    if path.exists() {
+        let now = read_file_limited(&path, "Pi settings")?;
+        if Some(&now) != previous_bytes.as_ref() {
+            return Err(AppError::Conflict(
+                "Pi settings.json 已在外部修改，请重试".into(),
+            ));
+        }
+    }
+
+    // 首次改写前快照（保留 20 份，对齐 SKILL_BACKUP_RETAIN_COUNT 惯例）
+    if file_existed {
+        snapshot_pi_settings(&path, &previous_source)?;
+    }
+
+    atomic_write_private(&path, new_source.as_bytes())
+        .map_err(|e| AppError::Config(format!("写入 Pi settings 失败：{e}")))?;
+    Ok(())
+}
+
+/// 条目（raw）解析后是否指向目标目录（canonicalize 去重）
+#[expect(dead_code)] // T3 命令层消费后移除
+fn entry_resolves_to(raw: &str, target: &std::path::Path) -> bool {
+    let resolved = if let Some(rest) = raw.strip_prefix("~/") {
+        get_home_dir().join(rest)
+    } else if raw == "~" {
+        get_home_dir()
+    } else if raw.starts_with('/') {
+        std::path::PathBuf::from(raw)
+    } else {
+        return false; // 相对条目解析依赖 agent 目录，候选源均为绝对/~ 形态
+    };
+    resolved.canonicalize().ok() == target.canonicalize().ok()
+}
+
+/// 首次改写前快照到 ~/.cc-switch/backups/pi-settings/（保留最近 20 份）
+#[expect(dead_code)] // T3 命令层消费后移除
+fn snapshot_pi_settings(path: &std::path::Path, source: &str) -> Result<(), AppError> {
+    const RETAIN: usize = 20;
+    let dir = crate::config::get_app_config_dir()
+        .join("backups")
+        .join("pi-settings");
+    std::fs::create_dir_all(&dir).map_err(|e| AppError::io(&dir, e))?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let backup = dir.join(format!("{ts}.json"));
+    std::fs::write(&backup, source).map_err(|e| AppError::io(&backup, e))?;
+    // 轮换：按文件名（时间戳）降序保留 RETAIN 份
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .map_err(|e| AppError::io(&dir, e))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    entries.sort();
+    if entries.len() > RETAIN {
+        for old in &entries[..entries.len() - RETAIN] {
+            let _ = std::fs::remove_file(old);
+        }
+    }
+    let _ = path; // path 仅用于日志语义，快照内容为 source
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use std::path::{Path, PathBuf};
@@ -618,6 +856,161 @@ mod tests {
             .expect("resolve Pi directory"),
             settings_dir
         );
+    }
+
+    // ===== Pi skills 配置编辑（get/set + revision + 快照）=====
+
+    use super::{get_pi_skills_config, set_pi_skills_entries};
+    use crate::pi_config::test_support::TestAgentDir;
+    use std::fs;
+
+    #[test]
+    #[serial]
+    fn get_returns_entries_classification_and_sources() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _agent = TestAgentDir::new();
+        let settings = crate::pi_config::get_pi_settings_path().unwrap();
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(
+            &settings,
+            "{\n  // 注释\n  \"defaultProvider\": \"anthropic\",\n  \"skills\": [\"~/.claude/skills\", \"!pdf\", \"npm:x\"]\n}\n",
+        )
+        .unwrap();
+        // 候选源目录（Claude 技能目录存在）
+        fs::create_dir_all(temp.path().join(".claude").join("skills")).unwrap();
+
+        let config = get_pi_skills_config().unwrap();
+        assert!(config.parse_error.is_none());
+        let entries = config.entries.expect("entries");
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].kind, "scanPath");
+        assert_eq!(entries[1].kind, "exclude");
+        assert_eq!(entries[2].kind, "packageScheme");
+        // 候选源：Claude 存在且已列入
+        assert!(config
+            .sources
+            .iter()
+            .any(|s| s.app == "claude" && s.already_listed));
+        assert!(!config.revision.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn get_parse_error_states() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _agent = TestAgentDir::new();
+        let settings = crate::pi_config::get_pi_settings_path().unwrap();
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+
+        // 非法 JSON5
+        fs::write(&settings, "{ broken").unwrap();
+        assert!(get_pi_skills_config().unwrap().parse_error.is_some());
+
+        // 数组含非字符串元素（严格保护，不静默过滤）
+        fs::write(&settings, r#"{ "skills": ["a", 42] }"#).unwrap();
+        let config = get_pi_skills_config().unwrap();
+        assert!(config.parse_error.is_some());
+        assert!(config.entries.is_none());
+
+        // skills 非数组
+        fs::write(&settings, r#"{ "skills": "x" }"#).unwrap();
+        assert!(get_pi_skills_config().unwrap().parse_error.is_some());
+
+        // 文件不存在 → 空态
+        fs::remove_file(&settings).unwrap();
+        let config = get_pi_skills_config().unwrap();
+        assert!(config.entries.is_none());
+        assert!(config.parse_error.is_none());
+        assert!(config.revision.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn set_preserves_other_fields_and_rejects_bad_input() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _agent = TestAgentDir::new();
+        let settings = crate::pi_config::get_pi_settings_path().unwrap();
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        let original = "{\n  // 顶层注释\n  \"defaultProvider\": \"anthropic\",  // 行内注释\n  \"skills\": [\"!old\"]\n}\n";
+        fs::write(&settings, original).unwrap();
+        let revision = get_pi_skills_config().unwrap().revision;
+
+        // 空白条目拒绝
+        assert!(set_pi_skills_entries(&["".to_string()], &revision).is_err());
+        assert!(set_pi_skills_entries(&["  ".to_string()], &revision).is_err());
+
+        // 正常写入：数组外逐字保留
+        set_pi_skills_entries(&["~/.claude/skills".into(), "!pdf".into()], &revision).unwrap();
+        let after = fs::read_to_string(&settings).unwrap();
+        assert!(after.contains("// 顶层注释"));
+        assert!(after.contains("\"defaultProvider\": \"anthropic\",  // 行内注释"));
+        assert!(after.contains("\"~/.claude/skills\""));
+        assert!(after.contains("\"!pdf\""));
+        assert!(!after.contains("\"!old\""));
+
+        // 无变化零写入（内容不回退）
+        let rev2 = get_pi_skills_config().unwrap().revision;
+        let before_meta = fs::metadata(&settings).unwrap().modified().unwrap();
+        set_pi_skills_entries(&["~/.claude/skills".into(), "!pdf".into()], &rev2).unwrap();
+        assert_eq!(fs::read_to_string(&settings).unwrap(), after);
+        let _ = before_meta;
+    }
+
+    #[test]
+    #[serial]
+    fn set_revision_conflict_and_snapshot() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _agent = TestAgentDir::new();
+        let settings = crate::pi_config::get_pi_settings_path().unwrap();
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, r#"{ "skills": ["!old"] }"#).unwrap();
+        let revision = get_pi_skills_config().unwrap().revision;
+
+        // 会话层冲突：get 之后外部改盘
+        fs::write(&settings, r#"{ "skills": ["!external"] }"#).unwrap();
+        let err = set_pi_skills_entries(&["!new".into()], &revision).unwrap_err();
+        assert!(err.to_string().contains("外部修改"));
+        // 未写入外部内容
+        assert!(fs::read_to_string(&settings).unwrap().contains("!external"));
+
+        // 修正 revision 后写入成功 + 快照生成
+        let revision2 = get_pi_skills_config().unwrap().revision;
+        set_pi_skills_entries(&["!new".into()], &revision2).unwrap();
+        assert!(fs::read_to_string(&settings).unwrap().contains("!new"));
+        let backup_dir = crate::config::get_app_config_dir()
+            .join("backups")
+            .join("pi-settings");
+        assert!(
+            fs::read_dir(&backup_dir)
+                .expect("快照目录")
+                .filter_map(|e| e.ok())
+                .count()
+                >= 1
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn set_creates_file_when_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _agent = TestAgentDir::new();
+        let settings = crate::pi_config::get_pi_settings_path().unwrap();
+        assert!(!settings.exists());
+
+        set_pi_skills_entries(&["~/.claude/skills".into()], "").unwrap();
+        let after = fs::read_to_string(&settings).unwrap();
+        assert!(after.contains("\"skills\""));
+        assert!(after.contains("~/.claude/skills"));
+        // 无外部创建冲突时空 revision 可写；外部已创建 → 拒绝
+        fs::remove_file(&settings).unwrap();
+        fs::write(&settings, r#"{ "skills": [] }"#).unwrap();
+        let err = set_pi_skills_entries(&["!x".into()], "").unwrap_err();
+        assert!(err.to_string().contains("外部"));
     }
 
     #[test]

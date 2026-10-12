@@ -259,6 +259,56 @@ pub struct InstalledSkill {
     pub pi_visibility: Option<PiVisibilityInfo>,
 }
 
+/// pi settings.json `skills` 数组的编辑器装填载荷（Pi 共享配置编辑）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[expect(dead_code)] // T3 命令层消费后移除
+pub struct PiSkillsConfig {
+    /// settings.json 实际路径（含 override 解析）
+    pub path: String,
+    /// 条目（None = 文件不存在或无 skills 键）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entries: Option<Vec<PiSkillsEntryInfo>>,
+    /// 非法 JSON5 / 数组含非字符串元素 → 编辑禁用
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parse_error: Option<String>,
+    /// 文件字节哈希（编辑会话乐观锁，set 时回传）
+    #[serde(default)]
+    pub revision: String,
+    /// 复选添加的候选来源（各应用技能目录，仅列存在的）
+    #[serde(default)]
+    pub sources: Vec<PiSkillsSourceInfo>,
+}
+
+/// 单个 skills 条目 + 静态分类与警告
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[expect(dead_code)] // T3 命令层消费后移除
+pub struct PiSkillsEntryInfo {
+    /// 条目原文（落盘原样）
+    pub raw: String,
+    /// 分类："scanPath" | "exclude" | "forceInclude" | "forceExclude" |
+    /// "includeWhitelist" | "packageScheme"
+    pub kind: String,
+    /// 编辑器警告（死模式等，不阻断）
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+/// 复选添加候选源
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[expect(dead_code)] // T3 命令层消费后移除
+pub struct PiSkillsSourceInfo {
+    /// 应用 id（前端映射显示名）
+    pub app: String,
+    /// 技能目录实际路径（尊重 override）
+    pub path: String,
+    /// 是否已出现在 skills 数组中（canonicalize 去重）
+    #[serde(default)]
+    pub already_listed: bool,
+}
+
 /// `InstalledSkill.piVisibility` 的载荷（由 skill::pi_shared 判定引擎每次
 /// 读取时现算填充，不入 DB——pi 的 settings.json 是外部文件，入库快照必然过期）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

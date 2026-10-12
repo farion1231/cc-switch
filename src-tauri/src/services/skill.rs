@@ -19,7 +19,7 @@ use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::config::get_app_config_dir;
 use crate::database::Database;
 
-mod pi_shared;
+pub(crate) mod pi_shared;
 use crate::error::format_skill_error;
 
 // ========== Skills state coordination ==========
@@ -4735,7 +4735,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use tempfile::tempdir;
 

@@ -419,6 +419,20 @@ pub(crate) enum PiEntryKind {
     PackageScheme,
 }
 
+impl PiEntryKind {
+    /// 序列化名（PiSkillsEntryInfo.kind）
+    pub(crate) fn kind_str(&self) -> &'static str {
+        match self {
+            PiEntryKind::ScanPath => "scanPath",
+            PiEntryKind::Exclude => "exclude",
+            PiEntryKind::ForceInclude => "forceInclude",
+            PiEntryKind::ForceExclude => "forceExclude",
+            PiEntryKind::IncludeWhitelist => "includeWhitelist",
+            PiEntryKind::PackageScheme => "packageScheme",
+        }
+    }
+}
+
 /// 判定核心：scheme → 前缀 → 通配符 → 纯路径（对齐 pi splitPatterns/isPattern）
 pub(crate) fn classify_entry_kind(raw: &str) -> PiEntryKind {
     const SCHEMES: [&str; 7] = [
