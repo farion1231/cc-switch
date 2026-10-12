@@ -4570,6 +4570,7 @@
       "enable": "활성화",
       "disable": "비활성화",
       "edit": "{{name}} 편집",
+      "visitWebsite": "웹사이트 방문 · {{host}}",
       "more": "{{name}}에 대한 추가 작업",
       "moveUp": "{{name}} 한 칸 위로 이동",
       "moveDown": "{{name}} 한 칸 아래로 이동",
