@@ -7,7 +7,15 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { settingsApi, ToolInstallationReport } from "@/lib/api/settings";
 
@@ -18,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   probeToolInstallations: vi.fn(),
   listToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
+  copyText: vi.fn(),
   info: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
@@ -38,6 +47,7 @@ vi.mock("@/hooks/useSettings", () => ({
   }),
 }));
 vi.mock("sonner", () => ({ toast: mocks }));
+vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copyText }));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -116,12 +126,36 @@ async function renderApps() {
 const updateAllButton = () =>
   screen.getByRole("button", { name: /settings\.updateAllTools/ });
 
+// Radix Select scrolls the focused option; jsdom does not implement scrolling.
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  "scrollIntoView",
+);
+beforeAll(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+afterAll(() => {
+  if (originalScrollIntoView) {
+    Object.defineProperty(
+      HTMLElement.prototype,
+      "scrollIntoView",
+      originalScrollIntoView,
+    );
+  } else {
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  }
+});
+
 describe("AppsPage concurrent CLI upgrades", () => {
   beforeEach(() => {
     vi.resetModules();
     upgraded.clear();
     outdated.clear();
     missing.clear();
+    mocks.copyText.mockReset().mockResolvedValue(undefined);
     outdated.add("claude").add("codex").add("gemini");
     mocks.getToolVersions
       .mockReset()
@@ -156,6 +190,128 @@ describe("AppsPage concurrent CLI upgrades", () => {
         upgraded.add(tool);
         missing.delete(tool);
       });
+  });
+
+  it("copies only the selected application's manual command and switches installation methods", async () => {
+    const user = userEvent.setup();
+    await renderApps();
+    await user.click(
+      screen.getByRole("button", { name: "appsPage.moreActions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: "settings.manualUninstallCommands",
+      }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    const codex = () => within(dialog.getByText("Codex").closest("li")!);
+    expect(
+      codex().getByText("npm uninstall -g @openai/codex"),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText("Hermes")).not.toBeInTheDocument();
+    await user.click(codex().getByRole("button"));
+    expect(mocks.copyText).toHaveBeenLastCalledWith(
+      "npm uninstall -g @openai/codex",
+    );
+
+    await user.click(
+      dialog.getByRole("combobox", { name: "settings.manualUninstallMethod" }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Homebrew (cask)" }),
+    );
+    expect(
+      dialog.queryByText("npm uninstall -g @openai/codex"),
+    ).not.toBeInTheDocument();
+    await user.click(codex().getByRole("button"));
+    expect(mocks.copyText).toHaveBeenLastCalledWith(
+      "brew uninstall --cask codex",
+    );
+    expect(mocks.success).toHaveBeenCalledWith(
+      "settings.uninstallCommandCopied",
+      { closeButton: true },
+    );
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    await user.click(dialog.getByRole("button", { name: "common.close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "appsPage.moreActions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "appsPage.manualCommands" }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).getByRole("heading", {
+        name: "settings.manualInstallCommands",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["Windows NT 10.0", "python"],
+    ["X11; Linux x86_64", "python3"],
+  ])("shows Hermes pip commands for %s", async (userAgent, python) => {
+    const platform = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue(userAgent);
+    try {
+      const user = userEvent.setup();
+      await renderApps();
+      await user.click(
+        screen.getByRole("button", { name: "appsPage.moreActions" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", {
+          name: "settings.manualUninstallCommands",
+        }),
+      );
+      const dialog = within(screen.getByRole("dialog"));
+      await user.click(
+        dialog.getByRole("combobox", {
+          name: "settings.manualUninstallMethod",
+        }),
+      );
+      await user.click(await screen.findByRole("option", { name: "pip" }));
+      expect(dialog.getByText("Hermes")).toBeInTheDocument();
+      expect(dialog.queryByText("Codex")).not.toBeInTheDocument();
+      await user.click(
+        dialog.getByRole("button", {
+          name: "settings.copyToolUninstallCommand",
+        }),
+      );
+      expect(mocks.copyText).toHaveBeenCalledWith(
+        `${python} -m pip uninstall hermes-agent`,
+      );
+      expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
+  it("keeps manual commands visible when copying fails", async () => {
+    mocks.copyText.mockRejectedValueOnce(new Error("clipboard unavailable"));
+    const user = userEvent.setup();
+    await renderApps();
+    await user.click(
+      screen.getByRole("button", { name: "appsPage.moreActions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: "settings.manualUninstallCommands",
+      }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    const codex = within(dialog.getByText("Codex").closest("li")!);
+    await user.click(codex.getByRole("button"));
+    expect(mocks.error).toHaveBeenCalledWith(
+      "settings.uninstallCommandCopyFailed",
+    );
+    expect(
+      codex.getByText("npm uninstall -g @openai/codex"),
+    ).toBeInTheDocument();
+    expect(mocks.success).not.toHaveBeenCalled();
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
   });
 
   it("offers uninstall for installed tools and keeps missing tools installable", async () => {
