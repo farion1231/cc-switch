@@ -412,12 +412,13 @@ describe("UnifiedSkillsPanel", () => {
       path: "/home/u/.pi/agent/settings.json",
       revision: "rev-1",
       sources: [
-        { app: "claude", path: "/home/u/.claude/skills", alreadyListed: false, exists: true },
-        { app: "codex", path: "/home/u/.codex/skills", alreadyListed: true, exists: true },
-        { app: "gemini", path: "/home/u/.gemini/skills", alreadyListed: false, exists: false },
+        { app: "claude", path: "/home/u/.claude/skills", exists: true },
+        { app: "codex", path: "/home/u/.codex/skills", listedEntry: "~/.codex/skills", exists: true },
+        { app: "gemini", path: "/home/u/.gemini/skills", exists: false },
       ],
       entries: [
         { raw: "~/.claude/skills", kind: "scanPath", warnings: [] },
+        { raw: "~/.codex/skills", kind: "scanPath", warnings: [] },
         { raw: "!pdf", kind: "exclude", warnings: [] },
         { raw: "!~/backup", kind: "exclude", warnings: ["dead"] },
       ],
@@ -436,7 +437,7 @@ describe("UnifiedSkillsPanel", () => {
     // 装填：徽章 + 死模式警告 + 复选源（codex 已添加置灰）
     expect(
       await screen.findAllByText("skillsPage.piConfig.kind.scanPath"),
-    ).toHaveLength(1);
+    ).toHaveLength(2); // ~/.claude/skills + ~/.codex/skills
     expect(
       screen.getAllByText("skillsPage.piConfig.kind.exclude"),
     ).toHaveLength(2); // !pdf + !~/backup
@@ -444,15 +445,22 @@ describe("UnifiedSkillsPanel", () => {
     const deadRow = screen.getByText("!~/backup");
     expect(deadRow).toHaveAttribute("title", "skillsPage.piConfig.warnDeadPattern");
 
-    // 复选源弹层：点开 → codex 已添加置灰；claude 可勾选
+    // 顶部提示：~/.agents/skills 无须添加
+    expect(
+      screen.getByText("skillsPage.piConfig.agentsDirHint"),
+    ).toBeInTheDocument();
+
+    // 复选源弹层：点开 → codex 已勾选（listedEntry）→ 取消勾选 = 删除条目
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.piConfig.addFromApps" }),
     );
     const codexBox = screen.getByRole("checkbox", {
       name: "Codex: /home/u/.codex/skills",
     });
-    expect(codexBox).toBeDisabled();
     expect(codexBox).toBeChecked();
+    expect(codexBox).not.toBeDisabled(); // 双向可操作
+    await userEvent.click(codexBox); // 取消勾选 → 移除 ~/.codex/skills
+    await waitFor(() => expect(codexBox).not.toBeChecked());
     // 目录不存在的客户端也列出（可勾选，带"目录未创建"提示）
     expect(
       screen.getByText("skillsPage.piConfig.dirNotExists"),
@@ -462,6 +470,7 @@ describe("UnifiedSkillsPanel", () => {
     const removeButtons = screen.getAllByRole("button", {
       name: /skillsPage.piConfig.removeEntry/,
     });
+    expect(removeButtons).toHaveLength(3); // 取消勾选后剩 3 条
     await userEvent.click(removeButtons[2]); // 删除 !~/backup
     await userEvent.click(screen.getByRole("button", { name: "common.save" }));
 

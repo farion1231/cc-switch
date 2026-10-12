@@ -301,9 +301,10 @@ pub struct PiSkillsSourceInfo {
     pub app: String,
     /// 技能目录实际路径（尊重 override）
     pub path: String,
-    /// 是否已出现在 skills 数组中（canonicalize 去重）
-    #[serde(default)]
-    pub already_listed: bool,
+    /// skills 数组中解析到该目录的原条目（None = 未列入）；供编辑器
+    /// 勾选状态判断与取消勾选时的精确移除
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listed_entry: Option<String>,
     /// 技能目录当前是否存在（不存在也可添加：pi 容忍，装技能后即生效）
     #[serde(default)]
     pub exists: bool,

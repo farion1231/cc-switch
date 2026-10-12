@@ -4620,13 +4620,13 @@
     "piConfig": {
       "addFromApps": "アプリのディレクトリから追加…",
       "addPlaceholder": "エントリを追加（例： ~/.claude/skills や !除外パターン）…",
-      "alreadyListed": "追加済み",
+      "agentsDirHint": "pi はデフォルトで ~/.agents/skills を自動スキャンします。ここに追加する必要はありません。",
       "description": "pi settings.json の skills 配列を編集します：追加スキャンディレクトリと除外/強制ルール。保存するとスキル一覧が更新されます。",
       "dirNotExists": "未作成",
       "dirNotExistsHint": "このアプリのスキルディレクトリはまだ存在しません。追加してもディレクトリが作成されるまで pi はスキップします",
       "editMode": "編集モード",
       "emptyEntryRejected": "エントリは空または空白のみにできません",
-      "emptyHint": "エントリがありません。skills 配列は pi がスキャンするディレクトリと除外ルールを制御します。~/.agents/skills は pi が自動検出するため設定不要です。",
+      "emptyHint": "エントリがありません。skills 配列は pi がスキャンするディレクトリと除外ルールを制御します。",
       "jsonLabel": "skills 配列 JSON",
       "jsonScopeHint": "編集対象は skills 配列です（settings.json 全体ではありません）。文字列配列として解析される必要があります",
       "kind": {

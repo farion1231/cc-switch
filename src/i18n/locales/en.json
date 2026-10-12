@@ -4620,13 +4620,13 @@
     "piConfig": {
       "addFromApps": "Add from app directories…",
       "addPlaceholder": "Add an entry (e.g. ~/.claude/skills or an exclusion pattern)…",
-      "alreadyListed": "Already added",
+      "agentsDirHint": "pi automatically scans ~/.agents/skills by default — no need to add it here.",
       "description": "Edit the skills array of pi's settings.json: extra scan directories and exclusion/force rules. Saving refreshes the skills list.",
       "dirNotExists": "Not created",
       "dirNotExistsHint": "This app's skill directory does not exist yet; pi will skip it until the directory is created",
       "editMode": "Edit mode",
       "emptyEntryRejected": "Entries cannot be empty or whitespace-only",
-      "emptyHint": "No entries yet. The skills array controls the directories pi scans and its exclusion rules; ~/.agents/skills is auto-discovered by pi and needs no entry.",
+      "emptyHint": "No entries yet. The skills array controls the directories pi scans and its exclusion rules.",
       "jsonLabel": "skills array JSON",
       "jsonScopeHint": "You are editing the skills array (not the whole settings.json); it must parse as an array of strings",
       "kind": {

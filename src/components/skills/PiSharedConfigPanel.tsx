@@ -260,7 +260,10 @@ export function PiSharedConfigPanel({
                 </Button>
               </div>
             )}
-            <div className="flex items-center justify-end px-6 pt-3">
+            <p className="px-6 pt-3 text-caption text-fg-3">
+              {t("skillsPage.piConfig.agentsDirHint")}
+            </p>
+            <div className="flex items-center justify-end px-6 pt-2">
               <SegmentedControl
                 aria-label={t("skillsPage.piConfig.editMode")}
                 className="h-8 rounded-[8px]"
@@ -386,49 +389,63 @@ export function PiSharedConfigPanel({
                     {t("skillsPage.piConfig.addFromApps")}
                   </Button>
                   {sourceOpen && (
-                    <div className="absolute z-10 mt-1 w-full rounded-control border border-border bg-surface p-2 shadow-v7-md">
-                      {config.sources.length === 0 ? (
-                        <p className="px-2 py-1 text-caption text-fg-3">
-                          {t("skillsPage.piConfig.noSources")}
-                        </p>
-                      ) : (
-                        <ul className="m-0 list-none p-0">
-                          {config.sources.map((s) => (
-                            <li
-                              key={s.app}
-                              className="flex items-center gap-2 px-2 py-1.5"
-                            >
-                              <input
-                                type="checkbox"
-                                className="ui-checkbox"
-                                checked={
-                                  s.alreadyListed || entries.includes(s.path)
-                                }
-                                disabled={
-                                  s.alreadyListed || entries.includes(s.path)
-                                }
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    addEntry(s.path);
+                    <>
+                      {/* 点击弹层以外任意处关闭 */}
+                      <div
+                        className="fixed inset-0 z-[5]"
+                        onClick={() => setSourceOpen(false)}
+                      />
+                      <div className="absolute z-10 mt-1 w-full rounded-control border border-border bg-surface p-2 shadow-v7-md">
+                        {config.sources.length === 0 ? (
+                          <p className="px-2 py-1 text-caption text-fg-3">
+                            {t("skillsPage.piConfig.noSources")}
+                          </p>
+                        ) : (
+                          <ul className="m-0 list-none p-0">
+                            {config.sources.map((s) => (
+                              <li
+                                key={s.app}
+                                className="flex items-center gap-2 px-2 py-1.5"
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="ui-checkbox"
+                                  checked={
+                                    entries.includes(s.path) ||
+                                    (s.listedEntry != null &&
+                                      entries.includes(s.listedEntry))
                                   }
-                                }}
-                                aria-label={`${APP_DISPLAY_NAME[s.app as AppId] ?? s.app}: ${s.path}`}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span className="text-caption font-medium">
-                                  {APP_DISPLAY_NAME[s.app as AppId] ?? s.app}
+                                  disabled={saving}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      addEntry(s.path);
+                                    } else {
+                                      // 取消勾选 = 移除（精确匹配该目录的原条目）
+                                      setEntries((prev) =>
+                                        prev.filter(
+                                          (entry) =>
+                                            entry !== s.path &&
+                                            entry !== s.listedEntry,
+                                        ),
+                                      );
+                                    }
+                                  }}
+                                  aria-label={`${APP_DISPLAY_NAME[s.app as AppId] ?? s.app}: ${s.path}`}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="text-caption font-medium">
+                                    {APP_DISPLAY_NAME[s.app as AppId] ?? s.app}
+                                  </span>
+                                  <span
+                                    className="ms-1.5 truncate font-mono text-caption text-fg-3"
+                                    title={s.path}
+                                  >
+                                    {s.path}
+                                  </span>
                                 </span>
-                                <span
-                                  className="ms-1.5 truncate font-mono text-caption text-fg-3"
-                                  title={s.path}
-                                >
-                                  {s.path}
-                                </span>
-                              </span>
-                              <span className="flex shrink-0 items-center gap-1.5">
                                 {!s.exists && (
                                   <span
-                                    className="text-caption text-fg-3"
+                                    className="shrink-0 text-caption text-fg-3"
                                     title={t(
                                       "skillsPage.piConfig.dirNotExistsHint",
                                     )}
@@ -436,28 +453,12 @@ export function PiSharedConfigPanel({
                                     {t("skillsPage.piConfig.dirNotExists")}
                                   </span>
                                 )}
-                                {(s.alreadyListed ||
-                                  entries.includes(s.path)) && (
-                                  <span className="text-caption text-fg-3">
-                                    {t("skillsPage.piConfig.alreadyListed")}
-                                  </span>
-                                )}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      <div className="flex justify-end pt-1">
-                        <Button
-                          type="button"
-                          variant="quiet"
-                          size="compact"
-                          onClick={() => setSourceOpen(false)}
-                        >
-                          {t("common.close")}
-                        </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </div>
-                    </div>
+                    </>
                   )}
                 </div>
               </div>

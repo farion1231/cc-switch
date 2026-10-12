@@ -4621,13 +4621,13 @@
     "piConfig": {
       "addFromApps": "從應用目錄新增…",
       "addPlaceholder": "新增條目（如 ~/.claude/skills 或 !排除模式）…",
-      "alreadyListed": "已新增",
+      "agentsDirHint": "pi 預設自動掃描 ~/.agents/skills，無需在此新增。",
       "description": "編輯 pi settings.json 的 skills 陣列：額外掃描目錄與排除/強制規則。儲存後同步重新整理技能列表。",
       "dirNotExists": "目錄未建立",
       "dirNotExistsHint": "該應用的技能目錄尚不存在，新增後 pi 會忽略直到目錄建立",
       "editMode": "編輯模式",
       "emptyEntryRejected": "條目不能為空或純空白",
-      "emptyHint": "暫無條目。skills 陣列控制 pi 額外掃描的目錄與排除規則；~/.agents/skills 由 pi 自動發現，無需設定。",
+      "emptyHint": "暫無條目。skills 陣列控制 pi 額外掃描的目錄與排除規則。",
       "jsonLabel": "skills 陣列 JSON",
       "jsonScopeHint": "編輯對象是 skills 陣列（不是整個 settings.json）；必須解析為字串陣列",
       "kind": {

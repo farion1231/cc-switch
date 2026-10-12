@@ -589,16 +589,18 @@ pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig
         let Ok(dir) = crate::services::skill::SkillService::get_app_skills_dir(&app) else {
             continue;
         };
-        let listed = config
+        let listed_entry = config
             .entries
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .any(|e| entry_resolves_to(&e.raw, &dir));
+            .map(|e| e.raw.as_str())
+            .find(|raw| entry_resolves_to(raw, &dir))
+            .map(str::to_string);
         config.sources.push(PiSkillsSourceInfo {
             app: app.as_str().to_string(),
             path: dir.display().to_string(),
-            already_listed: listed,
+            listed_entry,
             exists: dir.is_dir(),
         });
     }
@@ -711,7 +713,11 @@ fn entry_resolves_to(raw: &str, target: &std::path::Path) -> bool {
     } else {
         return false; // 相对条目解析依赖 agent 目录，候选源均为绝对/~ 形态
     };
-    resolved.canonicalize().ok() == target.canonicalize().ok()
+    match (resolved.canonicalize().ok(), target.canonicalize().ok()) {
+        (Some(a), Some(b)) => a == b,
+        // 两侧任一不存在 → 不匹配（双 None 误判相等会把无关条目当成已列入）
+        _ => false,
+    }
 }
 
 /// 首次改写前快照到 ~/.cc-switch/backups/pi-settings/（保留最近 20 份）
@@ -889,11 +895,13 @@ mod tests {
         assert_eq!(entries[0].kind, "scanPath");
         assert_eq!(entries[1].kind, "exclude");
         assert_eq!(entries[2].kind, "packageScheme");
-        // 候选源：Claude 存在且已列入
-        assert!(config
+        // 候选源：Claude 已列入（返回匹配的原条目）
+        let claude = config
             .sources
             .iter()
-            .any(|s| s.app == "claude" && s.already_listed));
+            .find(|s| s.app == "claude")
+            .expect("claude source");
+        assert_eq!(claude.listed_entry.as_deref(), Some("~/.claude/skills"));
         assert!(!config.revision.is_empty());
     }
 
@@ -926,6 +934,45 @@ mod tests {
         assert!(config.entries.is_none());
         assert!(config.parse_error.is_none());
         assert!(config.revision.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn sources_follow_override_dirs_and_no_false_match() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _agent = TestAgentDir::new();
+
+        // 记录原设置，结束时恢复（进程级 store）
+        struct Restore(crate::settings::AppSettings);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let _ = crate::settings::update_settings(self.0.clone());
+            }
+        }
+        let original = crate::settings::get_settings();
+        let _restore = Restore(original.clone());
+        let mut modified = original;
+        modified.claude_config_dir = Some(temp.path().join("custom-claude").display().to_string());
+        crate::settings::update_settings(modified).expect("set override");
+
+        // 自定义 Claude 目录存在技能子目录
+        let custom_skills = temp.path().join("custom-claude").join("skills");
+        fs::create_dir_all(&custom_skills).unwrap();
+        let settings = crate::pi_config::get_pi_settings_path().unwrap();
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, r#"{ "skills": ["~/.claude/skills"] }"#).unwrap();
+
+        let config = get_pi_skills_config().unwrap();
+        let claude = config
+            .sources
+            .iter()
+            .find(|s| s.app == "claude")
+            .expect("claude source");
+        // 路径跟随全局 override（而非默认 ~/.claude/skills）
+        assert_eq!(claude.path, custom_skills.display().to_string());
+        // 原条目指向默认路径（测试 home 下不存在）→ canonicalize 失败 → 不误判已列入
+        assert!(claude.listed_entry.is_none());
     }
 
     #[test]
