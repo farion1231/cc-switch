@@ -1200,6 +1200,7 @@ export function ClaudeDesktopProviderForm({
                       </Select>
                       {usesAutomaticCopilotFormat && (
                         <p className="text-xs leading-relaxed text-fg-2">
+                          {t("copilot.autoModelHint")}{" "}
                           {t("copilot.automaticFormatHint")}
                         </p>
                       )}

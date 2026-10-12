@@ -117,6 +117,7 @@ import type {
 } from "@/types";
 import type { ManagedAuthProvider } from "@/lib/api";
 import type { AppId } from "@/lib/api";
+import { isCopilotAutoModel } from "@/utils/copilotAuto";
 
 interface EndpointCandidate {
   url: string;
@@ -1389,6 +1390,14 @@ export function CodexFormFields({
     </div>
   );
 
+  const hasCopilotAutoModel =
+    isCopilotPreset &&
+    [codexModel, subagentModel, ...catalogRows.map((row) => row.model)].some(
+      isCopilotAutoModel,
+    );
+  const copilotAutoFormatConflict =
+    hasCopilotAutoModel && copilotApiFormat === "openai_responses";
+
   const upstreamFormatSelect = (
     <div className="space-y-1.5">
       {labelWithHelp(
@@ -1435,7 +1444,7 @@ export function CodexFormFields({
               defaultValue: "Chat Completions（需转换）",
             })}
           </SelectItem>
-          <SelectItem value="openai_responses">
+          <SelectItem value="openai_responses" disabled={hasCopilotAutoModel}>
             {isCopilotPreset
               ? t("codexConfig.upstreamFormatCopilotResponses")
               : t("codexConfig.upstreamFormatResponses", {
@@ -1458,9 +1467,22 @@ export function CodexFormFields({
           <DirectModeFormatWarning notice={directModeFormatNotice} />
         )}
       {isCopilotPreset && (
-        <p className="text-xs leading-relaxed text-fg-2">
-          {t("codexConfig.upstreamFormatCopilotRouteHint")}
-        </p>
+        <>
+          <p className="text-xs leading-relaxed text-fg-2">
+            {t("codexConfig.upstreamFormatCopilotRouteHint")}
+          </p>
+          <p className="text-xs leading-relaxed text-fg-2">
+            {t("copilot.autoModelHint")} {t("copilot.autoModelCodexHint")}
+          </p>
+          {copilotAutoFormatConflict && (
+            <p
+              role="alert"
+              className="text-xs leading-relaxed text-destructive"
+            >
+              {t("copilot.autoModelFormatError")}
+            </p>
+          )}
+        </>
       )}
     </div>
   );

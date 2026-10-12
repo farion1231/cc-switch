@@ -1572,7 +1572,15 @@ impl RequestForwarder {
             }
 
             // 4. Warmup 小模型降级
-            if self.copilot_optimizer_config.warmup_downgrade && classification.is_warmup {
+            // Auto delegates model selection to Copilot; a named warmup model
+            // may be unavailable to the account even when Auto is available.
+            if self.copilot_optimizer_config.warmup_downgrade
+                && classification.is_warmup
+                && !mapped_body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .is_some_and(super::providers::copilot_model_map::is_copilot_auto)
+            {
                 log::info!(
                     "[Copilot] Warmup 请求降级到模型: {}",
                     self.copilot_optimizer_config.warmup_model
@@ -1649,6 +1657,19 @@ impl RequestForwarder {
             copilot_endpoint_override = Some(transport.endpoint);
             codex_responses_to_chat = matches!(transport.protocol, CopilotProtocol::Chat);
             codex_responses_to_anthropic = false;
+        }
+
+        // Decide from this provider's final model, after mappings, context-marker
+        // stripping and warmup rewrites. The original client model must not
+        // override a fallback provider's explicit named-model mapping.
+        let is_copilot_auto = is_copilot
+            && mapped_body
+                .get("model")
+                .and_then(Value::as_str)
+                .is_some_and(super::providers::copilot_model_map::is_copilot_auto);
+        if is_copilot_auto {
+            mapped_body["model"] =
+                serde_json::json!(super::providers::copilot_model_map::COPILOT_AUTO_MODEL_ID);
         }
 
         let codex_upstream_format = if matches!(app_type, AppType::Codex | AppType::GrokBuild)
@@ -1815,6 +1836,11 @@ impl RequestForwarder {
             (status.address.clone(), status.port)
         };
         super::upstream_guard::reject_self_forwarding(&url, &listen_address, listen_port).await?;
+        if is_copilot_auto {
+            // Full-URL mode can bypass the rewritten endpoint. Validate the
+            // actual destination before sending a Chat payload without model.
+            require_copilot_auto_url(&url)?;
+        }
 
         // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
         // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
@@ -2062,6 +2088,12 @@ impl RequestForwarder {
             }
         }
 
+        if is_copilot && require_copilot_chat_endpoint(&effective_endpoint).is_ok() {
+            super::providers::copilot_tool_schema::normalize_copilot_chat_tool_schemas(
+                &mut request_body,
+            );
+        }
+
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
             self.apply_media_prevention(&mut request_body, provider);
         }
@@ -2079,6 +2111,15 @@ impl RequestForwarder {
                     filtered_body = prepare_upstream_request_body(filtered_body);
                 }
             }
+        }
+        if is_copilot_auto {
+            require_copilot_chat_endpoint(&effective_endpoint)?;
+            filtered_body
+                .as_object_mut()
+                .ok_or_else(|| {
+                    ProxyError::InvalidRequest("Request body must be a JSON object".to_string())
+                })?
+                .remove("model");
         }
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
         if let Some(m) = filtered_body
@@ -2154,6 +2195,11 @@ impl RequestForwarder {
                             )));
                         }
                     }
+                } else if cfg!(test) {
+                    auth = AuthInfo::new(
+                        "test-copilot-token".to_string(),
+                        AuthStrategy::GitHubCopilot,
+                    );
                 } else {
                     log::error!("[Copilot] AppHandle 不可用");
                     return Err(ProxyError::AuthError(
@@ -3207,6 +3253,9 @@ impl RequestForwarder {
         let Some(model_id) = body.get("model").and_then(|v| v.as_str()) else {
             return;
         };
+        if super::providers::copilot_model_map::is_copilot_auto(model_id) {
+            return;
+        }
         let model_id = model_id.to_string();
 
         let Some(app_handle) = &self.app_handle else {
@@ -3256,6 +3305,18 @@ impl RequestForwarder {
                     "Codex Copilot requests require a non-empty string model".to_string(),
                 )
             })?;
+        if super::providers::copilot_model_map::is_copilot_auto(model_id) {
+            return Ok(Some(
+                super::providers::copilot_model_map::ResolvedCopilotModel {
+                    id: super::providers::copilot_model_map::COPILOT_AUTO_MODEL_ID.to_string(),
+                    vendor: "copilot".to_string(),
+                    transport: super::providers::copilot_model_map::resolve_copilot_auto_transport(
+                        api_format,
+                    )
+                    .ok(),
+                },
+            ));
+        }
         let app_handle = self.app_handle.as_ref().ok_or_else(|| {
             ProxyError::ConfigError(format!(
                 "GitHub Copilot capabilities for model {model_id} cannot be resolved: AppHandle unavailable"
@@ -3890,6 +3951,13 @@ fn apply_codex_copilot_model(
     resolved: Option<ResolvedCopilotModel>,
     api_format: CodexCopilotApiFormat,
 ) -> Result<CopilotTransport, ProxyError> {
+    let client_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("<missing>");
+    if super::providers::copilot_model_map::is_copilot_auto(client_model) {
+        return super::providers::copilot_model_map::resolve_copilot_auto_transport(api_format);
+    }
     let requested = match api_format {
         CodexCopilotApiFormat::Auto => "a Responses or Chat Completions endpoint",
         CodexCopilotApiFormat::OpenaiResponses => {
@@ -3978,6 +4046,29 @@ fn build_copilot_unversioned_url(base_url: &str, endpoint: &str) -> String {
         base_url.trim_end_matches('/'),
         endpoint.trim_start_matches('/')
     )
+}
+
+fn require_copilot_auto_url(url: &str) -> Result<(), ProxyError> {
+    let parsed = url::Url::parse(url).map_err(|_| {
+        ProxyError::ConfigError("Copilot Auto 需要有效的 Chat Completions URL。".into())
+    })?;
+    require_copilot_chat_endpoint(parsed.path()).map_err(|_| {
+        ProxyError::ConfigError(
+            "Copilot Auto 需要 Chat Completions。请将完整 URL 设为以 /chat/completions 结尾的地址，或关闭完整 URL 模式。".into(),
+        )
+    })
+}
+
+fn require_copilot_chat_endpoint(effective_endpoint: &str) -> Result<(), ProxyError> {
+    let (path, _) = split_endpoint_and_query(effective_endpoint);
+    let normalized = path.trim_end_matches('/');
+    if normalized.ends_with("/chat/completions") {
+        Ok(())
+    } else {
+        Err(ProxyError::ConfigError(
+            "Copilot Auto 需要 Chat Completions。请将 API 格式设为 Auto 或 Chat。".into(),
+        ))
+    }
 }
 
 fn rewrite_claude_transform_endpoint(
@@ -6667,6 +6758,463 @@ mod tests {
                 assert_eq!(body["model"], "GPT-5.6");
             }
         }
+    }
+
+    #[test]
+    fn codex_copilot_auto_selects_chat_and_rejects_responses() {
+        use super::super::providers::copilot_model_map::resolve_model_with_format;
+
+        let models = vec![];
+        for format in [
+            CodexCopilotApiFormat::Auto,
+            CodexCopilotApiFormat::OpenaiChat,
+        ] {
+            let mut body = json!({"model": "copilot-auto", "input": "Hello"});
+            let resolved = resolve_model_with_format("copilot-auto", &models, format);
+            let transport = apply_codex_copilot_model(&mut body, resolved, format).unwrap();
+            assert_eq!(transport.protocol, CopilotProtocol::Chat);
+            assert_eq!(transport.endpoint, "/chat/completions");
+            assert_eq!(body["model"], "copilot-auto");
+        }
+
+        let mut body = json!({"model": "copilot-auto", "input": "Hello"});
+        let resolved = resolve_model_with_format(
+            "copilot-auto",
+            &models,
+            CodexCopilotApiFormat::OpenaiResponses,
+        );
+        let err =
+            apply_codex_copilot_model(&mut body, resolved, CodexCopilotApiFormat::OpenaiResponses)
+                .unwrap_err();
+        assert!(matches!(err, ProxyError::ConfigError(_)));
+    }
+
+    #[test]
+    fn require_copilot_chat_endpoint_validates_paths() {
+        assert!(require_copilot_chat_endpoint("/chat/completions").is_ok());
+        assert!(require_copilot_chat_endpoint("/v1/chat/completions").is_ok());
+        assert!(require_copilot_chat_endpoint("/chat/completions?client_version=1").is_ok());
+        assert!(require_copilot_chat_endpoint("/responses").is_err());
+        assert!(require_copilot_chat_endpoint("/v1/responses").is_err());
+    }
+
+    #[test]
+    fn copilot_auto_validates_actual_url_path() {
+        for url in [
+            "https://example.com/chat/completions",
+            "https://example.com/api/v1/chat/completions/?beta=true#fragment",
+        ] {
+            assert!(require_copilot_auto_url(url).is_ok(), "{url}");
+        }
+        for url in [
+            "https://example.com/v1/responses?target=/chat/completions",
+            "https://example.com/v1/messages#/chat/completions",
+            "https://example.com/chat/completions/responses",
+            "not a URL",
+        ] {
+            assert!(require_copilot_auto_url(url).is_err(), "{url}");
+        }
+    }
+
+    #[tokio::test]
+    async fn copilot_auto_forwards_to_chat_completions_without_model_field() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (request_body_tx, mut request_body_rx) = tokio::sync::mpsc::channel::<Value>(10);
+        let mock_upstream = axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let tx = request_body_tx.clone();
+            async move {
+                if body
+                    .get("tools")
+                    .and_then(Value::as_array)
+                    .is_some_and(|tools| {
+                        tools
+                            .iter()
+                            .filter_map(|tool| tool.get("function"))
+                            .any(|function| {
+                                let parameters = &function["parameters"];
+                                parameters.get("type").and_then(Value::as_str) != Some("object")
+                                    || ["oneOf", "anyOf", "allOf", "enum", "const", "not"]
+                                        .iter()
+                                        .any(|key| parameters.get(key).is_some())
+                            })
+                    })
+                {
+                    return (
+                        http::StatusCode::BAD_REQUEST,
+                        axum::Json(json!({
+                            "error": {"message": "Invalid schema: function parameters require a plain object root"}
+                        })),
+                    );
+                }
+                let _ = tx.send(body).await;
+                (
+                    http::StatusCode::OK,
+                    axum::Json(json!({
+                        "id": "chatcmpl-test",
+                        "object": "chat.completion",
+                        "created": 1234567890,
+                        "model": "gpt-4o",
+                        "choices": [{
+                            "index": 0,
+                            "message": { "role": "assistant", "content": "Hello from Auto" },
+                            "finish_reason": "stop"
+                        }]
+                    })),
+                )
+            }
+        });
+        let app = axum::Router::new()
+            .route("/chat/completions", mock_upstream.clone())
+            .route("/v1/messages", mock_upstream);
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .unwrap();
+        });
+
+        let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+
+        // 1. Test Codex path
+        let mut codex_copilot = test_provider_with_type(Some("github_copilot"));
+        codex_copilot.settings_config = json!({
+            "base_url": format!("http://{addr}"),
+        });
+        let codex_body = json!({
+            "model": "copilot-auto",
+            "input": [{"type": "message", "role": "user", "content": [{"type": "text", "text": "hello"}]}],
+            "stream": false
+        });
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/v1/responses",
+                codex_body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![codex_copilot],
+            )
+            .await
+            .map_err(|e| e.error)
+            .unwrap();
+        assert_eq!(result.outbound_model.as_deref(), Some("copilot-auto"));
+        let received_codex_body = request_body_rx.recv().await.unwrap();
+        assert!(
+            received_codex_body.get("model").is_none(),
+            "model field must be omitted for Copilot Auto requests"
+        );
+
+        // Codex route and Stack must agree on Auto identity and protocol,
+        // including the local context marker. Stack preserves its resolved
+        // model even when the provider has a different default mapping.
+        for stack in [false, true] {
+            for format in [
+                CodexCopilotApiFormat::Auto,
+                CodexCopilotApiFormat::OpenaiChat,
+                CodexCopilotApiFormat::OpenaiResponses,
+            ] {
+                for model in ["copilot-auto", " COPILOT-AUTO[1M] "] {
+                    let mut provider = test_provider_with_type(Some("github_copilot"));
+                    provider.settings_config = json!({"base_url": format!("http://{addr}")});
+                    provider.meta.as_mut().unwrap().codex_copilot_api_format = Some(
+                        match format {
+                            CodexCopilotApiFormat::Auto => "auto",
+                            CodexCopilotApiFormat::OpenaiChat => "openai_chat",
+                            CodexCopilotApiFormat::OpenaiResponses => "openai_responses",
+                        }
+                        .into(),
+                    );
+                    if stack {
+                        provider.settings_config["env"] = json!({"ANTHROPIC_MODEL": "gpt-4o"});
+                    }
+                    let result = test_forwarder(Duration::from_secs(5), Duration::from_secs(5))
+                        .stack_request(stack)
+                        .forward_with_retry(
+                            &AppType::Codex,
+                            http::Method::POST,
+                            if stack { "/responses" } else { "/v1/responses" },
+                            json!({
+                                "model": model, "input": "hello", "stream": stack,
+                                "tools": [{
+                                    "type": "function", "name": "mcp__codex_app__automation_update",
+                                    "strict": true,
+                                    "parameters": {"oneOf": [
+                                        {"type": "object", "properties": {
+                                            "mode": {"const": "view"}, "id": {"type": "string"}
+                                        }, "required": ["mode", "id"]},
+                                        {"type": "object", "properties": {
+                                            "mode": {"enum": ["create", "update"]},
+                                            "prompt": {"type": "string"}
+                                        }, "required": ["mode", "prompt"]},
+                                        {"type": "null"}
+                                    ]}
+                                }]
+                            }),
+                            HeaderMap::new(),
+                            Extensions::new(),
+                            vec![provider],
+                        )
+                        .await;
+                    if matches!(format, CodexCopilotApiFormat::OpenaiResponses) {
+                        assert!(matches!(
+                            result.err().unwrap().error,
+                            ProxyError::ConfigError(_)
+                        ));
+                        assert!(request_body_rx.try_recv().is_err());
+                    } else {
+                        let result = result.map_err(|e| e.error).unwrap();
+                        assert_eq!(result.outbound_model.as_deref(), Some("copilot-auto"));
+                        let sent = request_body_rx.recv().await.unwrap();
+                        assert!(sent.get("model").is_none());
+                        let function = &sent["tools"][0]["function"];
+                        assert_eq!(function["name"], "mcp__codex_app__automation_update");
+                        assert_eq!(function["strict"], false);
+                        assert!(function["parameters"]["properties"].get("id").is_some());
+                        assert!(function["parameters"]["properties"].get("prompt").is_some());
+                    }
+                }
+            }
+        }
+
+        // Desktop maps its visible role before selecting the Copilot protocol.
+        // Its saved manual format is ignored, just as it is for Claude Code.
+        let mut desktop_copilot = test_provider_with_type(Some("github_copilot"));
+        desktop_copilot.settings_config = json!({
+            "env": {"ANTHROPIC_BASE_URL": format!("http://{addr}")}
+        });
+        let meta = desktop_copilot.meta.as_mut().unwrap();
+        meta.api_format = Some("openai_responses".into());
+        meta.claude_desktop_mode = Some(crate::provider::ClaudeDesktopMode::Proxy);
+        meta.claude_desktop_model_routes = serde_json::from_value(json!({
+            "claude-sonnet-5": {"model": "copilot-auto[1M]"}
+        }))
+        .unwrap();
+        let desktop_result = forwarder
+            .forward_with_retry(
+                &AppType::ClaudeDesktop,
+                http::Method::POST,
+                "/v1/messages",
+                json!({
+                    "model": "claude-sonnet-5",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "tools": [{"name": "lookup", "input_schema": {"oneOf": [
+                        {"type": "object", "properties": {"id": {"type": "string"}}},
+                        {"type": "object", "properties": {"name": {"type": "string"}}}
+                    ]}}],
+                    "max_tokens": 100,
+                    "stream": false
+                }),
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![desktop_copilot],
+            )
+            .await
+            .map_err(|e| e.error)
+            .unwrap();
+        assert_eq!(
+            desktop_result.outbound_model.as_deref(),
+            Some("copilot-auto")
+        );
+        let desktop_body = request_body_rx.recv().await.unwrap();
+        assert!(desktop_body.get("model").is_none());
+        assert!(
+            desktop_body["tools"][0]["function"]["parameters"]["properties"]
+                .get("id")
+                .is_some()
+        );
+
+        // Verify each provider's final model, including optimizer rewrites.
+        for (name, client_model, mapped_model, warmup, warmup_model, copilot, expected_model) in [
+            ("auto", "copilot-auto", None, false, None, true, None),
+            (
+                "mapped named model",
+                "copilot-auto",
+                Some("gpt-4o"),
+                false,
+                None,
+                true,
+                Some("gpt-4o"),
+            ),
+            (
+                "mapped auto context marker",
+                "claude-sonnet-4-6",
+                Some("copilot-auto[1M]"),
+                false,
+                None,
+                true,
+                None,
+            ),
+            (
+                "client auto context marker",
+                "copilot-auto[1m]",
+                None,
+                false,
+                None,
+                true,
+                None,
+            ),
+            ("auto warmup", "copilot-auto", None, true, None, true, None),
+            (
+                "mapped auto warmup",
+                "claude-sonnet-4-6",
+                Some("copilot-auto[1M]"),
+                true,
+                None,
+                true,
+                None,
+            ),
+            (
+                "warmup selects auto",
+                "gpt-4o",
+                None,
+                true,
+                Some("copilot-auto"),
+                true,
+                None,
+            ),
+            (
+                "named warmup",
+                "gpt-4o",
+                None,
+                true,
+                None,
+                true,
+                Some("gpt-5-mini"),
+            ),
+            (
+                "named model",
+                "gpt-4o",
+                None,
+                false,
+                None,
+                true,
+                Some("gpt-4o"),
+            ),
+            (
+                "case and whitespace",
+                " COPILOT-AUTO ",
+                None,
+                false,
+                None,
+                true,
+                None,
+            ),
+            (
+                "other provider retains model",
+                "copilot-auto",
+                None,
+                false,
+                None,
+                false,
+                Some("copilot-auto"),
+            ),
+        ] {
+            let mut forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+            if let Some(model) = warmup_model {
+                forwarder.copilot_optimizer_config.warmup_model = model.to_string();
+            }
+            let mut provider = test_provider_with_type(copilot.then_some("github_copilot"));
+            provider.settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": format!("http://{addr}"),
+                    "ANTHROPIC_AUTH_TOKEN": "test-key"
+                }
+            });
+            if let Some(model) = mapped_model {
+                provider.settings_config["env"]["ANTHROPIC_MODEL"] = json!(model);
+            }
+            let mut headers = HeaderMap::new();
+            if warmup {
+                headers.insert(
+                    "anthropic-beta",
+                    http::HeaderValue::from_static("test-beta"),
+                );
+            }
+            let result = forwarder
+                .forward_with_retry(
+                    &AppType::Claude,
+                    http::Method::POST,
+                    "/v1/messages",
+                    json!({
+                        "model": client_model,
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "max_tokens": 100,
+                        "stream": false
+                    }),
+                    headers,
+                    Extensions::new(),
+                    vec![provider],
+                )
+                .await
+                .map_err(|e| e.error)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(
+                result.outbound_model.as_deref(),
+                Some(expected_model.unwrap_or("copilot-auto")),
+                "{name}"
+            );
+            let received = request_body_rx.recv().await.unwrap();
+            assert_eq!(
+                received.get("model").and_then(Value::as_str),
+                expected_model,
+                "{name}"
+            );
+        }
+
+        // Legacy Claude providers can identify Copilot by URL without a managed
+        // provider type. Only this path still honors the full-URL switch.
+        for full_path in ["/chat/completions", "/v1/messages", "/v1/responses"] {
+            let mut provider = test_provider_with_type(None);
+            provider.settings_config = json!({"env": {
+                "ANTHROPIC_BASE_URL": format!("http://{addr}{full_path}?mock=githubcopilot.com"),
+                "ANTHROPIC_AUTH_TOKEN": "test-key"
+            }});
+            provider
+                .meta
+                .get_or_insert_with(Default::default)
+                .is_full_url = Some(true);
+            let result = forwarder
+                .forward_with_retry(
+                    &AppType::Claude,
+                    http::Method::POST,
+                    "/v1/messages",
+                    json!({
+                        "model": "copilot-auto",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "max_tokens": 100, "stream": false
+                    }),
+                    HeaderMap::new(),
+                    Extensions::new(),
+                    vec![provider],
+                )
+                .await;
+            if full_path == "/chat/completions" {
+                if let Err(error) = &result {
+                    panic!("{full_path}: {}", error.error);
+                }
+                assert!(request_body_rx.recv().await.unwrap().get("model").is_none());
+            } else {
+                assert!(matches!(
+                    result.err().unwrap().error,
+                    ProxyError::ConfigError(_)
+                ));
+                assert!(
+                    request_body_rx.try_recv().is_err(),
+                    "must reject before sending"
+                );
+            }
+        }
+
+        shutdown_tx.send(()).unwrap();
+        server.await.unwrap();
     }
 
     #[test]
