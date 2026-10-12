@@ -581,7 +581,7 @@
         },
         "codexHistoryProviderMigration": {
           "name": "Codex セッショングループ移行バックアップ",
-          "hint": "サードパーティのセッショングループを移行する前のコピー。CC Switch が再び読み込むことはありません。"
+          "hint": "セッショングループを移行する前のコピー。CC Switch が再び読み込むことはありません。"
         },
         "liveFirstWrite": {
           "name": "設定ファイル初回書き込みバックアップ",

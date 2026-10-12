@@ -829,6 +829,25 @@ pub fn run() {
                         }
                     }
 
+                    // 旧版官方路由桶（cc-switch-official）迁回 openai，须在统一迁移之前：
+                    // 开关开着时，紧接着的统一迁移会把它们按正常流程带进 custom。
+                    match crate::codex_history_migration::maybe_migrate_codex_legacy_official_history_to_openai_bucket() {
+                        Ok(outcome) => {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log::debug!("○ Codex legacy official history bucket migration skipped: {reason}");
+                            } else {
+                                log::info!(
+                                    "✓ Codex legacy official history bucket migration completed: jsonl_files={}, state_rows={}",
+                                    outcome.migrated_jsonl_files,
+                                    outcome.migrated_state_rows
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Codex legacy official history bucket migration failed: {e}");
+                        }
+                    }
+
                     // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
                     // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
                     match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {

@@ -581,7 +581,7 @@
         },
         "codexHistoryProviderMigration": {
           "name": "Codex 会话分组迁移备份",
-          "hint": "第三方会话分组迁移前留的副本，CC Switch 不会再读取。"
+          "hint": "会话分组迁移前留的副本，CC Switch 不会再读取。"
         },
         "liveFirstWrite": {
           "name": "配置文件首次写入备份",

@@ -581,7 +581,7 @@
         },
         "codexHistoryProviderMigration": {
           "name": "Codex 工作階段分組遷移備份",
-          "hint": "第三方工作階段分組遷移前留下的副本，CC Switch 不會再讀取。"
+          "hint": "工作階段分組遷移前留下的副本，CC Switch 不會再讀取。"
         },
         "liveFirstWrite": {
           "name": "設定檔首次寫入備份",

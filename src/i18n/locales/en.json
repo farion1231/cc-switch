@@ -581,7 +581,7 @@
         },
         "codexHistoryProviderMigration": {
           "name": "Codex session group migration backups",
-          "hint": "Copies kept before third-party session groups were migrated. CC Switch never reads them again."
+          "hint": "Copies kept before session groups were migrated. CC Switch never reads them again."
         },
         "liveFirstWrite": {
           "name": "Config first-write backups",
