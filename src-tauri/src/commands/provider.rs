@@ -174,10 +174,12 @@ pub async fn switch_provider(
         && app_handle.try_state::<AppState>().is_some_and(|state| {
             crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
         });
-    // 目标供应商引用的 API Key 变量已过期 / 即将过期时先刷新；刷新失败但旧值仍可用时
-    // 照常切换并附带警告，无法解析时由切换流程拒绝
+    // 在任何 live 写入前尝试刷新。刷新失败时，仅未过期的已有值能作为降级继续；
+    // 已过期且没有新值会返回错误，后续切换任务不会启动。
     let refresh_warning =
-        crate::services::api_key_vars::refresh_before_switch(&app_handle, &app_type, &id).await;
+        crate::services::api_key_vars::refresh_before_switch(&app_handle, &app_type, &id)
+            .await
+            .map_err(|e| e.to_string())?;
     let handle = app_handle.clone();
     let mut result = tauri::async_runtime::spawn_blocking(move || {
         let state = handle

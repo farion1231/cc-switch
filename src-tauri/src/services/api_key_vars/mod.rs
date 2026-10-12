@@ -7,12 +7,14 @@ pub mod resolve;
 pub mod runner;
 pub mod template;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
+use tokio::task::JoinSet;
 
 use crate::app_config::AppType;
 use crate::database::ApiKeyVarRecord;
@@ -24,13 +26,14 @@ pub use resolve::RefStatus;
 pub use runner::{ApiKeyRefreshConfig, ApiKeyRefreshState, RefreshReason, ResolvedScript};
 
 use runner::{
-    key_expired_now, mask_key, needs_refresh, now_ms, run_script, should_refresh_on_switch,
-    RunFailure, ScriptContext, ScriptRun,
+    mask_key, needs_refresh, now_ms, run_script, should_refresh_on_switch, RunFailure,
+    ScriptContext, ScriptRun,
 };
 
 pub const EVENT_REFRESHED: &str = "api-key-var-refreshed";
 pub const EVENT_REFRESH_FAILED: &str = "api-key-var-refresh-failed";
 const SCHEDULER_TICK: Duration = Duration::from_secs(60);
+const MAX_CONCURRENT_REFRESHES: usize = 4;
 
 // ---------------------------------------------------------------------------
 // 前端视图
@@ -200,7 +203,12 @@ pub fn all_references(db: &Database) -> Result<HashMap<String, Vec<VarReference>
     Ok(out)
 }
 
-fn to_view(rec: ApiKeyVarRecord, refs: &HashMap<String, Vec<VarReference>>) -> ApiKeyVarView {
+fn to_view(mut rec: ApiKeyVarRecord, refs: &HashMap<String, Vec<VarReference>>) -> ApiKeyVarView {
+    // Older versions may already have persisted a key in a script message.
+    let mut secrets = resolve::known_values(&rec.name);
+    secrets.extend(rec.value.iter().cloned());
+    let secrets: Vec<_> = secrets.iter().map(String::as_str).collect();
+    rec.state.last_message = runner::sanitize_message(rec.state.last_message.as_deref(), &secrets);
     ApiKeyVarView {
         references: refs.get(&rec.name).cloned().unwrap_or_default(),
         name: rec.name,
@@ -376,6 +384,30 @@ pub fn ensure_provider_resolvable(
     resolve::ensure_resolvable(app, settings)
 }
 
+/// Validate a provider immediately before activation. A retained key can be
+/// used after a refresh failure while its reported expiration is still ahead.
+pub fn ensure_provider_switchable(
+    db: &Database,
+    app: &AppType,
+    settings: &serde_json::Value,
+) -> Result<(), AppError> {
+    ensure_provider_resolvable(app, settings)?;
+    let now = now_ms();
+    for name in resolve::referenced_vars(app, settings) {
+        if db
+            .get_api_key_var(&name)?
+            .is_some_and(|record| record.state.expires_at.is_some_and(|time| time <= now))
+        {
+            return Err(AppError::localized(
+                    "api_key_vars.expired",
+                    format!("API Key 变量 {name} 已过期，请先成功刷新后再切换供应商"),
+                    format!("API key variable {name} has expired; refresh it successfully before switching providers"),
+                ));
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // 刷新
 // ---------------------------------------------------------------------------
@@ -507,14 +539,19 @@ fn commit_result_for_snapshot(
             st.refresh_after = run.output.refresh_after;
             st.last_success_at = Some(now);
             st.last_error = None;
-            st.last_message = run.output.message.clone();
+            let mut secrets = resolve::known_values(name);
+            secrets.extend(rec.value.iter().cloned());
+            secrets.push(run.output.api_key.clone());
+            let secrets: Vec<_> = secrets.iter().map(String::as_str).collect();
+            let message = runner::sanitize_message(run.output.message.as_deref(), &secrets);
+            st.last_message = message.clone();
             st.resolved_script = Some(run.resolved_file.clone());
             st.consecutive_failures = 0;
             st.needs_attention = false;
             outcome.success = true;
             outcome.masked_value = Some(mask_key(&run.output.api_key));
             outcome.expires_at = run.output.expires_at;
-            outcome.message = run.output.message;
+            outcome.message = message;
             outcome.resolved_script = Some(run.resolved_file);
             log::info!(
                 "[ApiKeyVars] {name} 刷新成功，value={}，expiresAt={:?}",
@@ -531,7 +568,8 @@ fn commit_result_for_snapshot(
             }
             outcome.error = Some(failure.error.clone());
             outcome.needs_attention = st.needs_attention;
-            outcome.value_expired = key_expired_now(&st, now);
+            outcome.value_expired =
+                rec.value.is_none() || st.expires_at.is_some_and(|expires_at| now >= expires_at);
             outcome.expires_at = st.expires_at;
             log::warn!(
                 "[ApiKeyVars] {name} 刷新失败（第 {} 次）: {}",
@@ -625,22 +663,28 @@ pub async fn refresh_var(
     Ok(outcome)
 }
 
-/// 切换前刷新：目标供应商引用的变量已过期 / 即将过期时先刷新。返回警告（刷新失败）。
+/// Refresh before switching. Failures warn while the previous key is valid;
+/// expired, missing, or disabled references block activation.
 pub async fn refresh_before_switch(
     app: &tauri::AppHandle,
     app_type: &AppType,
     id: &str,
-) -> Option<String> {
+) -> Result<Option<String>, AppError> {
     use tauri::Manager;
     if !resolve::supports_app(app_type) {
-        return None;
+        return Ok(None);
     }
-    let state = app.try_state::<AppState>()?;
-    let provider = state.db.get_provider_by_id(id, app_type.as_str()).ok()??;
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| AppError::Message("应用状态不可用".to_string()))?;
+    let provider = state
+        .db
+        .get_provider_by_id(id, app_type.as_str())?
+        .ok_or_else(|| AppError::InvalidInput(format!("供应商 {id} 不存在")))?;
     let names = resolve::referenced_vars(app_type, &provider.settings_config);
     let mut warnings = Vec::new();
     for name in names {
-        let Ok(Some(rec)) = state.db.get_api_key_var(&name) else {
+        let Some(rec) = state.db.get_api_key_var(&name)? else {
             continue;
         };
         if !should_refresh_on_switch(&rec.config, &rec.state, now_ms()) {
@@ -655,7 +699,12 @@ pub async fn refresh_before_switch(
             Err(e) => warnings.push(format!("API Key 变量 {name} 刷新失败: {e}")),
         }
     }
-    (!warnings.is_empty()).then(|| warnings.join("; "))
+    let provider = state
+        .db
+        .get_provider_by_id(id, app_type.as_str())?
+        .ok_or_else(|| AppError::InvalidInput(format!("供应商 {id} 不存在")))?;
+    ensure_provider_switchable(&state.db, app_type, &provider.settings_config)?;
+    Ok((!warnings.is_empty()).then(|| warnings.join("; ")))
 }
 
 /// 测试脚本（不保存）
@@ -673,7 +722,10 @@ pub async fn test_script(input: &ApiKeyVarInput) -> Result<TestOutcome, AppError
             api_key_masked: mask_key(&run.output.api_key),
             expires_at: run.output.expires_at,
             refresh_after: run.output.refresh_after,
-            message: run.output.message,
+            message: runner::sanitize_message(
+                run.output.message.as_deref(),
+                &[&run.output.api_key],
+            ),
             file: run.resolved_file,
         }),
         Err(failure) => Err(AppError::Message(failure.error)),
@@ -723,7 +775,38 @@ pub fn due_vars(db: &Database, now: i64) -> Vec<(String, RefreshReason)> {
         .collect()
 }
 
-/// 启动后台调度器（启动时全量检查一次，之后每 60 秒或被唤醒时检查）
+/// Fill free slots without dispatching a variable that is already running.
+/// Completed task IDs are removed by the worker before it scans again.
+fn spawn_due_refreshes<F, Fut>(
+    tasks: &mut JoinSet<()>,
+    in_flight: &mut HashMap<tokio::task::Id, String>,
+    startup_pending: &mut HashSet<String>,
+    due: Vec<(String, RefreshReason)>,
+    refresh: F,
+) where
+    F: Fn(String, RefreshReason) -> Fut,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    for (name, reason) in due {
+        if in_flight.values().any(|running| running == &name) {
+            continue;
+        }
+        if tasks.len() >= MAX_CONCURRENT_REFRESHES {
+            break;
+        }
+        let startup = startup_pending.remove(&name);
+        let reason = if startup && reason == RefreshReason::Scheduled {
+            RefreshReason::Startup
+        } else {
+            reason
+        };
+        let task = tasks.spawn(refresh(name.clone(), reason));
+        in_flight.insert(task.id(), name);
+    }
+}
+
+/// Check due work on startup, every minute, on configuration changes, and as
+/// slots become available. Slow scripts do not delay independent refreshes.
 pub fn start_worker(app: tauri::AppHandle) {
     static STARTED: OnceLock<()> = OnceLock::new();
     if STARTED.set(()).is_err() {
@@ -735,22 +818,43 @@ pub fn start_worker(app: tauri::AppHandle) {
         // 等待启动流程完成
         tokio::time::sleep(Duration::from_secs(3)).await;
         let mut first = true;
+        let mut tasks = JoinSet::new();
+        let mut in_flight = HashMap::new();
+        let mut startup_pending = HashSet::new();
         loop {
             if let Some(state) = app.try_state::<AppState>() {
                 let db = state.db.clone();
-                for (name, reason) in due_vars(&db, now_ms()) {
-                    let reason = if first && reason == RefreshReason::Scheduled {
-                        RefreshReason::Startup
-                    } else {
-                        reason
-                    };
-                    if let Err(e) = refresh_var(&app, &name, reason).await {
-                        log::warn!("[ApiKeyVars] {name} 刷新出错: {e}");
-                    }
+                let due = due_vars(&db, now_ms());
+                if first {
+                    startup_pending.extend(due.iter().map(|(name, _)| name.clone()));
                 }
+                spawn_due_refreshes(
+                    &mut tasks,
+                    &mut in_flight,
+                    &mut startup_pending,
+                    due,
+                    |name, reason| {
+                        let handle = app.clone();
+                        async move {
+                            if let Err(e) = refresh_var(&handle, &name, reason).await {
+                                log::warn!("[ApiKeyVars] {name} 刷新出错: {e}");
+                            }
+                        }
+                    },
+                );
             }
             first = false;
             tokio::select! {
+                finished = tasks.join_next_with_id(), if !tasks.is_empty() => {
+                    match finished {
+                        Some(Ok((id, ()))) => { in_flight.remove(&id); }
+                        Some(Err(error)) => {
+                            let name = in_flight.remove(&error.id()).unwrap_or_default();
+                            log::warn!("[ApiKeyVars] {name} 刷新任务异常: {error}");
+                        }
+                        None => {}
+                    }
+                }
                 _ = tokio::time::sleep(SCHEDULER_TICK) => {}
                 _ = scheduler_notify().notified() => {}
             }
@@ -789,6 +893,273 @@ mod tests {
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
+    }
+
+    #[tokio::test]
+    async fn scheduled_refreshes_run_independently_and_deduplicate_in_flight_names() {
+        let mut tasks = JoinSet::new();
+        let mut in_flight = HashMap::new();
+        let mut startup_pending = HashSet::from(["slow".to_string(), "fast".to_string()]);
+        let gate = Arc::new(Notify::new());
+        let (started, mut observed) = tokio::sync::mpsc::unbounded_channel();
+        let refresh = |name: String, reason| {
+            let started = started.clone();
+            let gate = gate.clone();
+            async move {
+                started.send((name.clone(), reason)).unwrap();
+                if name == "slow" {
+                    gate.notified().await;
+                }
+            }
+        };
+        let due = vec![
+            ("slow".to_string(), RefreshReason::Scheduled),
+            ("fast".to_string(), RefreshReason::Scheduled),
+        ];
+        spawn_due_refreshes(
+            &mut tasks,
+            &mut in_flight,
+            &mut startup_pending,
+            due.clone(),
+            &refresh,
+        );
+        spawn_due_refreshes(
+            &mut tasks,
+            &mut in_flight,
+            &mut startup_pending,
+            due,
+            &refresh,
+        );
+        let mut names = HashSet::new();
+        for _ in 0..2 {
+            let (name, reason) = tokio::time::timeout(Duration::from_secs(5), observed.recv())
+                .await
+                .expect("a slow refresh must not block the independent one")
+                .unwrap();
+            names.insert(name);
+            assert_eq!(reason, RefreshReason::Startup);
+        }
+        assert_eq!(
+            names,
+            HashSet::from(["slow".to_string(), "fast".to_string()])
+        );
+        assert_eq!(tasks.len(), 2);
+        assert!(
+            observed.try_recv().is_err(),
+            "same-name work was dispatched twice"
+        );
+        gate.notify_one();
+        while tasks.join_next().await.is_some() {}
+    }
+
+    #[tokio::test]
+    async fn scheduled_refreshes_limit_processes_and_refill_without_waiting_for_slow_work() {
+        let mut tasks = JoinSet::new();
+        let mut in_flight = HashMap::new();
+        let due: Vec<_> = (0..MAX_CONCURRENT_REFRESHES + 1)
+            .map(|index| (format!("job-{index}"), RefreshReason::Scheduled))
+            .collect();
+        let mut startup_pending = due.iter().map(|(name, _)| name.clone()).collect();
+        let gate = Arc::new(Notify::new());
+        let (started, mut observed) = tokio::sync::mpsc::unbounded_channel();
+        let refresh = |name: String, reason| {
+            let started = started.clone();
+            let gate = gate.clone();
+            async move {
+                started.send((name.clone(), reason)).unwrap();
+                if name == "job-0" {
+                    gate.notified().await;
+                }
+            }
+        };
+        spawn_due_refreshes(
+            &mut tasks,
+            &mut in_flight,
+            &mut startup_pending,
+            due.clone(),
+            &refresh,
+        );
+        assert_eq!(tasks.len(), MAX_CONCURRENT_REFRESHES);
+        for _ in 0..MAX_CONCURRENT_REFRESHES {
+            tokio::time::timeout(Duration::from_secs(5), observed.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert!(observed.try_recv().is_err(), "capacity limit was exceeded");
+        let (completed, ()) =
+            tokio::time::timeout(Duration::from_secs(5), tasks.join_next_with_id())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        in_flight.remove(&completed);
+        spawn_due_refreshes(
+            &mut tasks,
+            &mut in_flight,
+            &mut startup_pending,
+            vec![due[MAX_CONCURRENT_REFRESHES].clone()],
+            &refresh,
+        );
+        let (name, reason) = tokio::time::timeout(Duration::from_secs(5), observed.recv())
+            .await
+            .expect("free capacity must be reused before the slow task completes")
+            .unwrap();
+        assert_eq!(name, format!("job-{MAX_CONCURRENT_REFRESHES}"));
+        assert_eq!(reason, RefreshReason::Startup);
+        gate.notify_one();
+        while tasks.join_next().await.is_some() {}
+    }
+
+    #[test]
+    fn script_messages_are_redacted_before_storage_and_view_serialization() {
+        let home = tempdir().unwrap();
+        let _home_guard = TestHomeGuard::set(home.path());
+        let db = Arc::new(Database::memory().unwrap());
+        let state = AppState::new(db.clone());
+        let name = "MESSAGE_REDACTION_REGRESSION";
+        let secret = "regression-message-secret";
+        db.upsert_api_key_var(
+            None,
+            name,
+            &ApiKeyRefreshConfig {
+                enabled: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let outcome = commit_result(
+            &state,
+            name,
+            Ok(ScriptRun {
+                output: runner::RefreshOutput {
+                    api_key: secret.to_string(),
+                    message: Some(format!("fetched {secret}")),
+                    expires_at: None,
+                    refresh_after: None,
+                },
+                resolved_file: "index.mjs".to_string(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(outcome.message.as_deref(), Some("fetched [REDACTED]"));
+        assert_eq!(
+            db.get_api_key_var(name)
+                .unwrap()
+                .unwrap()
+                .state
+                .last_message
+                .as_deref(),
+            Some("fetched [REDACTED]")
+        );
+        let legacy = ApiKeyRefreshState {
+            last_message: Some(format!("legacy {secret}")),
+            ..Default::default()
+        };
+        db.update_api_key_var_result(name, None, &legacy).unwrap();
+        let json = serde_json::to_string(&list_views(&db).unwrap()).unwrap();
+        assert!(!json.contains(secret), "{json}");
+        assert!(json.contains("legacy [REDACTED]"), "{json}");
+    }
+
+    #[test]
+    fn changing_scripts_keeps_unexpired_cached_value_available_after_failure() {
+        let home = tempdir().unwrap();
+        let _home_guard = TestHomeGuard::set(home.path());
+        let db = Arc::new(Database::memory().unwrap());
+        let state = AppState::new(db.clone());
+        let name = "SCRIPT_CHANGE_FALLBACK_REGRESSION";
+        let mut cfg = ApiKeyRefreshConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        db.upsert_api_key_var(None, name, &cfg).unwrap();
+        db.update_api_key_var_result(
+            name,
+            Some("cached-fallback-value"),
+            &ApiKeyRefreshState {
+                last_success_at: Some(now_ms()),
+                expires_at: Some(now_ms() + 3_600_000),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        cfg.script_dir = "replacement-script".to_string();
+        db.upsert_api_key_var(Some(name), name, &cfg).unwrap();
+        let outcome = commit_result(
+            &state,
+            name,
+            Err(RunFailure {
+                permanent: false,
+                error: "temporary failure".to_string(),
+            }),
+        )
+        .unwrap();
+        assert!(!outcome.success);
+        assert!(
+            !outcome.value_expired,
+            "schedule invalidation must not expire a valid key"
+        );
+        ensure_provider_switchable(
+            &db,
+            &AppType::Claude,
+            &json!({"env": {"ANTHROPIC_AUTH_TOKEN": format!("{{{{{name}}}}}")}}),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn success_and_legacy_messages_redact_older_retained_values() {
+        let home = tempdir().unwrap();
+        let _home_guard = TestHomeGuard::set(home.path());
+        let db = Arc::new(Database::memory().unwrap());
+        let state = AppState::new(db.clone());
+        let name = "HISTORICAL_MESSAGE_REDACTION";
+        let oldest = "older-retained-credential";
+        db.upsert_api_key_var(
+            None,
+            name,
+            &ApiKeyRefreshConfig {
+                enabled: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let success = |value: &str, message| {
+            Ok(ScriptRun {
+                output: runner::RefreshOutput {
+                    api_key: value.to_string(),
+                    message,
+                    expires_at: None,
+                    refresh_after: None,
+                },
+                resolved_file: "index.mjs".to_string(),
+            })
+        };
+        commit_result(&state, name, success(oldest, None)).unwrap();
+        commit_result(&state, name, success("second-retained-credential", None)).unwrap();
+        let outcome = commit_result(
+            &state,
+            name,
+            success(
+                "third-current-credential",
+                Some(format!("previous {oldest}")),
+            ),
+        )
+        .unwrap();
+        assert_eq!(outcome.message.as_deref(), Some("previous [REDACTED]"));
+        db.update_api_key_var_result(
+            name,
+            None,
+            &ApiKeyRefreshState {
+                last_message: Some(format!("legacy {oldest}")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let view = serde_json::to_string(&list_views(&db).unwrap()).unwrap();
+        assert!(!view.contains(oldest), "{view}");
+        assert!(view.contains("legacy [REDACTED]"), "{view}");
     }
 
     #[test]

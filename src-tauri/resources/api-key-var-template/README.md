@@ -69,3 +69,7 @@ CC Switch supplies these environment variables:
 Exit with `2` for configuration, authentication, or invalid-response problems that require attention. Exit with `1` for network, timeout, HTTP 408/429, or 5xx failures so CC Switch retries with backoff. The supplied files implement these rules.
 
 CC Switch uses a 30-second default script timeout (configurable from 5 to 300 seconds) and a five-minute default refresh lead time. It runs enabled scripts at startup and on its schedule, and may also run them before a switch when the current key is near expiry. Scheduling uses `refreshAfter` first; otherwise it uses `expiresAt` minus the lead time, then falls back to one hour after a successful run. If testing fails, first verify the selected directory contains `index.mjs`, run the same command manually, check the Node path under **Script runtime**, then review stderr without adding secrets to logs.
+
+Automatic refreshes for independent variables can run concurrently, with up to four scheduled scripts running at once. Changing a variable's script directory schedules the replacement script immediately while preserving the last key and its actual expiration time.
+
+Both the main window and tray refresh before switching when needed. If refresh fails, a key that has not expired can still be used with a warning; a key whose reported expiration has passed blocks the switch until refresh succeeds. Replacing a `{{NAME}}` reference with a literal key in a provider editor explicitly detaches that field from the variable.

@@ -71,7 +71,10 @@ pub(super) fn add(
         false
     };
 
-    if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
+    if let Err(error) = state
+        .db
+        .save_provider_from_user(app_type.as_str(), &provider)
+    {
         if native_inserted {
             if let Err(rollback) = crate::pi_config::remove_pi_provider_if_matches(
                 &provider.id,
@@ -146,7 +149,10 @@ pub(super) fn update(
     } else {
         None
     };
-    if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
+    if let Err(error) = state
+        .db
+        .save_provider_from_user(app_type.as_str(), &provider)
+    {
         if let Some((previous_native, native_settings)) = previous_native.as_ref() {
             if let Err(rollback) = crate::pi_config::replace_pi_provider(
                 &original_id,
@@ -223,7 +229,8 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
 
     // Whether the node is already active or about to be inserted, enabling it
     // is a live write boundary and must never persist an unresolved template.
-    crate::services::api_key_vars::ensure_provider_resolvable(
+    crate::services::api_key_vars::ensure_provider_switchable(
+        &state.db,
         &app_type,
         &provider.settings_config,
     )?;

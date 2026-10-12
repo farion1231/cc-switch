@@ -279,7 +279,30 @@ impl Database {
         }
     }
 
+    /// Save a provider reconstructed from a client config or another derived
+    /// source. If the stored row contains an API-key variable template, retain
+    /// that template instead of persisting the resolved live value.
     pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
+        self.save_provider_inner(app_type, provider, true)
+    }
+
+    /// Save an explicit edit made by the user. A literal key is intentional
+    /// here, including when it happens to equal a current or historical value
+    /// of an API-key variable, so it must be allowed to detach the reference.
+    pub fn save_provider_from_user(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        self.save_provider_inner(app_type, provider, false)
+    }
+
+    fn save_provider_inner(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+        preserve_key_refs: bool,
+    ) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()
@@ -298,9 +321,13 @@ impl Database {
 
         let is_update = existing.is_some();
         // 写回保护：库里是 `{{NAME}}`、新值是该变量的值（从 live 读回）时保留模板
-        let guarded = existing
-            .as_ref()
-            .and_then(|(_, _, old)| guard_key_refs(app_type, old, &provider.settings_config));
+        let guarded = preserve_key_refs
+            .then(|| {
+                existing.as_ref().and_then(|(_, _, old)| {
+                    guard_key_refs(app_type, old, &provider.settings_config)
+                })
+            })
+            .flatten();
         let settings_config = guarded.as_ref().unwrap_or(&provider.settings_config);
         let (is_current, in_failover_queue) = existing
             .map(|(c, f, _)| (c, f))

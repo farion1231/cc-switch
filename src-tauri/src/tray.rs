@@ -2544,9 +2544,48 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
             && app_handle.try_state::<AppState>().is_some_and(|state| {
                 crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
             });
+        // Do not run a refresh script for a checked, failover-locked, or
+        // route-only item. Once the click is eligible, refresh before the
+        // service writes a live config; an expired value cannot be activated.
+        let refresh_warning =
+            match provider_click_requires_switch(&app_handle, &app_type, &provider_id) {
+                Ok(false) => None,
+                Ok(true) => match tauri::async_runtime::block_on(
+                    crate::services::api_key_vars::refresh_before_switch(
+                        &app_handle,
+                        &app_type,
+                        &provider_id,
+                    ),
+                ) {
+                    Ok(warning) => warning,
+                    Err(e) => {
+                        log::error!(
+                            "托盘刷新 API Key 后无法切换{}: {e}",
+                            app_display_name(&app_type)
+                        );
+                        record_switch_failure(&app_type, e.to_string());
+                        refresh_tray_menu(&app_handle);
+                        return;
+                    }
+                },
+                Err(e) => {
+                    log::error!("托盘检查{}失败: {e}", app_display_name(&app_type));
+                    record_switch_failure(&app_type, e.to_string());
+                    refresh_tray_menu(&app_handle);
+                    return;
+                }
+            };
         match handle_provider_click(&app_handle, &app_type, &provider_id) {
             Ok(ClickOutcome::Switched { mode, name }) => {
                 clear_app_problems(&app_type);
+                // refresh_before_switch has already emitted the API-key
+                // refresh result event and refreshed the tray's problem
+                // snapshot. Keep the warning in the switch log as a useful
+                // diagnostic without turning a successful switch into a
+                // misleading switch failure.
+                if let Some(warning) = refresh_warning {
+                    log::warn!("[ApiKeyVars] 托盘切换使用尚未过期的缓存 Key: {warning}");
+                }
                 if let Some(feedback) = switch_feedback(&app_type, mode, name) {
                     record_feedback(&app_handle, feedback);
                 }
@@ -2589,28 +2628,6 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
         refresh_tray_menu(&app_handle);
     });
     true
-}
-
-/// 托盘切换是同步路径，不能先等待刷新：切换后若引用的 API Key 变量已过期/即将过期，
-/// 后台刷新一次（成功后会重写 live 配置，因为此时它已是当前供应商）。无法解析的变量
-/// 在切换流程里已被拒绝。
-fn spawn_api_key_refresh_after_switch(
-    app: &tauri::AppHandle,
-    app_type: &AppType,
-    provider_id: &str,
-) {
-    use crate::services::api_key_vars as refresh;
-    if !refresh::resolve::supports_app(app_type) {
-        return;
-    }
-    let app = app.clone();
-    let app_type = app_type.clone();
-    let id = provider_id.to_string();
-    tauri::async_runtime::spawn(async move {
-        if let Some(warning) = refresh::refresh_before_switch(&app, &app_type, &id).await {
-            log::warn!("[ApiKeyVars] 托盘切换后刷新失败: {warning}");
-        }
-    });
 }
 
 enum ClickOutcome {
@@ -2657,11 +2674,39 @@ fn handle_provider_click(
         return Ok(ClickOutcome::NeedsRoute);
     }
     crate::services::ProviderService::switch(state, app_type.clone(), provider_id)?;
-    spawn_api_key_refresh_after_switch(app, app_type, provider_id);
     Ok(ClickOutcome::Switched {
         mode,
         name: provider.name,
     })
+}
+
+/// Mirrors the no-op and route-only decisions made by `handle_provider_click`
+/// so the caller can avoid starting a refresh script for a click that will not
+/// activate a provider. The service still re-validates this after its switch
+/// lock, which closes the race with a concurrent menu action.
+fn provider_click_requires_switch(
+    app: &tauri::AppHandle,
+    app_type: &AppType,
+    provider_id: &str,
+) -> Result<bool, AppError> {
+    let Some(app_state) = app.try_state::<AppState>() else {
+        return Ok(false);
+    };
+    let state = app_state.inner();
+    let current = crate::mode::current::provider_for(
+        &state.db,
+        app_type,
+        crate::mode::current::Purpose::InUse,
+    )?;
+    if current.as_deref() == Some(provider_id) || tray_mode(state, app_type) == TrayMode::Failover {
+        return Ok(false);
+    }
+    let provider = state
+        .db
+        .get_provider_by_id(provider_id, app_type.as_str())?
+        .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+    Ok(!(tray_mode(state, app_type) == TrayMode::Direct
+        && provider_needs_routing(app_type, &provider)))
 }
 
 fn emit_switched(app: &tauri::AppHandle, app_type: &AppType, provider_id: &str) {

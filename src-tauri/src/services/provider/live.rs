@@ -392,7 +392,11 @@ pub(crate) fn write_live_for_state(
     // writers do not themselves project. Those writers keep the template row
     // so their pending operations and write-back protection never retain a
     // decoded key.
-    crate::services::api_key_vars::ensure_provider_resolvable(app_type, &provider.settings_config)?;
+    crate::services::api_key_vars::ensure_provider_switchable(
+        &state.db,
+        app_type,
+        &provider.settings_config,
+    )?;
     let db = state.db.as_ref();
     if matches!(app_type, AppType::Claude) {
         // Claude 不再整份写，也不合并片段：只替换关键字段和独有字段。live 当前对应的
@@ -787,7 +791,11 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
     provider: &Provider,
     prev: Option<&Provider>,
 ) -> Result<LiveSyncOutcome, AppError> {
-    crate::services::api_key_vars::ensure_provider_resolvable(app_type, &provider.settings_config)?;
+    crate::services::api_key_vars::ensure_provider_switchable(
+        &state.db,
+        app_type,
+        &provider.settings_config,
+    )?;
     if crate::mode::current::is_proxy(app_type) {
         futures::executor::block_on(crate::mode::controller::resync_saved_row_locked(
             state, app_type, provider,

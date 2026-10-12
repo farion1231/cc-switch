@@ -232,10 +232,20 @@ impl Database {
             let now = next_timestamp(existing.as_ref().map_or(0, |record| record.updated_at));
             let record = match existing {
                 Some(mut rec) => {
+                    // A different script is a new source of truth. Keep the
+                    // last key (and its real expiry for switch-time safety),
+                    // but discard the old script's success/schedule markers
+                    // so the scheduler runs the replacement immediately.
+                    let script_changed = rec.config.script_dir != config.script_dir;
                     if rec.config != *config {
                         rec.state.consecutive_failures = 0;
                         rec.state.needs_attention = false;
                         rec.state.last_error = None;
+                    }
+                    if script_changed {
+                        rec.state.last_success_at = None;
+                        rec.state.refresh_after = None;
+                        rec.state.resolved_script = None;
                     }
                     rec.config = config.clone();
                     rec.updated_at = now;
@@ -498,6 +508,7 @@ mod tests {
     use super::*;
     use crate::app_config::AppType;
     use crate::provider::UniversalProvider;
+    use crate::services::api_key_vars::runner::next_due_ms;
 
     fn cfg(dir: &str, enabled: bool) -> ApiKeyRefreshConfig {
         ApiKeyRefreshConfig {
@@ -796,6 +807,62 @@ mod tests {
             resolve::lookup("DAO_T_RENAMED").0,
             resolve::RefStatus::Unknown
         );
+        Ok(())
+    }
+
+    #[test]
+    fn changing_script_discards_old_schedule_but_keeps_the_last_key_and_expiry(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.upsert_api_key_var(None, "DAO_T_SCRIPT_CHANGE", &cfg("/old-script", true))?;
+        let state = ApiKeyRefreshState {
+            expires_at: Some(9_000_000),
+            refresh_after: Some(8_000_000),
+            last_success_at: Some(7_000_000),
+            resolved_script: Some("index.mjs".to_string()),
+            ..Default::default()
+        };
+        db.update_api_key_var_result("DAO_T_SCRIPT_CHANGE", Some("last-good-key"), &state)?;
+
+        let updated = db.upsert_api_key_var(
+            Some("DAO_T_SCRIPT_CHANGE"),
+            "DAO_T_SCRIPT_CHANGE",
+            &cfg("/replacement-script", true),
+        )?;
+
+        assert_eq!(updated.value.as_deref(), Some("last-good-key"));
+        assert_eq!(updated.state.expires_at, Some(9_000_000));
+        assert_eq!(updated.state.last_success_at, None);
+        assert_eq!(updated.state.refresh_after, None);
+        assert_eq!(updated.state.resolved_script, None);
+        // A replacement script must be scheduled now, even when the old key
+        // had a distant expiry. `next_due_ms` treats no successful run as due.
+        assert_eq!(next_due_ms(&updated.config, &updated.state), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn renaming_without_changing_script_keeps_a_successful_schedule() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.upsert_api_key_var(None, "DAO_T_RENAME_SCHEDULE", &cfg("/same-script", true))?;
+        let state = ApiKeyRefreshState {
+            expires_at: Some(9_000_000),
+            refresh_after: Some(8_000_000),
+            last_success_at: Some(7_000_000),
+            resolved_script: Some("index.mjs".to_string()),
+            ..Default::default()
+        };
+        db.update_api_key_var_result("DAO_T_RENAME_SCHEDULE", Some("last-good-key"), &state)?;
+
+        let renamed = db.upsert_api_key_var(
+            Some("DAO_T_RENAME_SCHEDULE"),
+            "DAO_T_RENAME_SCHEDULED",
+            &cfg("/same-script", true),
+        )?;
+
+        assert_eq!(renamed.value.as_deref(), Some("last-good-key"));
+        assert_eq!(renamed.state, state);
+        assert_eq!(next_due_ms(&renamed.config, &renamed.state), 8_000_000);
         Ok(())
     }
 

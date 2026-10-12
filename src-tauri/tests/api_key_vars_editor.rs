@@ -453,3 +453,71 @@ fn editor_adds_variable_template_providers_without_persisting_the_resolved_value
     let export = state.db.export_sql_string().expect("export");
     assert!(!export.contains(VALUE_A), "{export}");
 }
+
+#[test]
+fn explicit_user_key_edits_detach_current_and_historical_variable_values() {
+    let _guard = test_mutex()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    ensure_test_home();
+    reset_test_fs();
+    let state = create_test_state().expect("state");
+    state
+        .db
+        .upsert_api_key_var(None, VAR_A, &refresh_config())
+        .expect("create variable");
+    api_key_vars::commit_result(&state, VAR_A, success(VALUE_A)).expect("seed old value");
+
+    let template = json!({
+        "npm": "@ai-sdk/openai-compatible",
+        "name": "Detach test",
+        "options": {
+            "baseURL": "https://api.example.test/v1",
+            "apiKey": format!("{{{{{VAR_A}}}}}")
+        },
+        "models": {"model-a": {"name": "Model A"}}
+    });
+    for id in ["historical", "current"] {
+        ProviderService::add(
+            &state,
+            AppType::OpenCode,
+            provider(id, template.clone()),
+            false,
+        )
+        .expect("add DB-only provider");
+    }
+
+    // A native/import read that contains the resolved value must retain the
+    // template. This uses the legacy DAO entry point on purpose.
+    let mut imported = row(&state, AppType::OpenCode, "historical");
+    imported.settings_config["options"]["apiKey"] = json!(VALUE_A);
+    state
+        .db
+        .save_provider(AppType::OpenCode.as_str(), &imported)
+        .expect("import readback preserves template");
+    assert_eq!(
+        row(&state, AppType::OpenCode, "historical").settings_config["options"]["apiKey"],
+        json!(format!("{{{{{VAR_A}}}}}"))
+    );
+
+    api_key_vars::commit_result(&state, VAR_A, success(VALUE_B)).expect("refresh current value");
+
+    let mut historical = row(&state, AppType::OpenCode, "historical");
+    historical.settings_config["options"]["apiKey"] = json!(VALUE_A);
+    ProviderService::update(&state, AppType::OpenCode, None, historical)
+        .expect("user can detach historical value");
+
+    let mut current = row(&state, AppType::OpenCode, "current");
+    current.settings_config["options"]["apiKey"] = json!(VALUE_B);
+    ProviderService::update(&state, AppType::OpenCode, None, current)
+        .expect("user can detach current value");
+
+    for (id, expected) in [("historical", VALUE_A), ("current", VALUE_B)] {
+        assert_eq!(
+            row(&state, AppType::OpenCode, id).settings_config["options"]["apiKey"],
+            json!(expected),
+            "explicit edit for {id} must not be restored as a template"
+        );
+    }
+    api_key_vars::delete(&state, VAR_A).expect("detached references no longer block deletion");
+}

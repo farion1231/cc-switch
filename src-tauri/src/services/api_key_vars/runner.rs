@@ -6,6 +6,7 @@
 //! 退出码：0 成功；2 永久失败（停止自动重试，需要用户处理）；其它为临时失败（指数退避）。
 //! stderr 仅作日志，写入前对新旧值脱敏。
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 #[cfg(not(windows))]
@@ -14,7 +15,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::error::AppError;
 
@@ -68,6 +69,9 @@ pub const DEFAULT_LEAD_TIME_SECS: u64 = 300;
 pub const FALLBACK_INTERVAL_MS: i64 = 60 * 60 * 1000;
 pub const MAX_STDOUT_BYTES: usize = 64 * 1024;
 pub const MAX_STDERR_KEEP_BYTES: usize = 4 * 1024;
+// Keep enough context to redact a maximum-length returned key before taking
+// the final log tail. Truncating first could expose a large key's suffix.
+const MAX_STDERR_CAPTURE_BYTES: usize = MAX_STDERR_KEEP_BYTES + MAX_STDOUT_BYTES;
 const MAX_MESSAGE_CHARS: usize = 500;
 const MAX_ERROR_SUMMARY_CHARS: usize = 200;
 const SCRIPT_CANDIDATES: [&str; 2] = ["index.mjs", "index.js"];
@@ -181,16 +185,22 @@ pub fn next_due_ms(cfg: &ApiKeyRefreshConfig, state: &ApiKeyRefreshState) -> i64
         let base = state.last_attempt_at.unwrap_or(0);
         return base.saturating_add(backoff(state.consecutive_failures).as_millis() as i64);
     }
+    // A script change clears `last_success_at` while retaining the old key's
+    // expiry for display. That old expiry must not delay the first run of the
+    // newly selected script generation.
+    if state.last_success_at.is_none() {
+        return 0;
+    }
     if let Some(refresh_after) = state.refresh_after {
         return refresh_after;
     }
     if let Some(expires_at) = state.expires_at {
         return expires_at.saturating_sub(effective_lead_time_ms(cfg));
     }
-    match state.last_success_at {
-        Some(last) => last.saturating_add(FALLBACK_INTERVAL_MS),
-        None => 0,
-    }
+    state
+        .last_success_at
+        .map(|last| last.saturating_add(FALLBACK_INTERVAL_MS))
+        .unwrap_or(0)
 }
 
 pub fn needs_refresh(cfg: &ApiKeyRefreshConfig, state: &ApiKeyRefreshState, now_ms: i64) -> bool {
@@ -413,6 +423,14 @@ fn parse_time(field: &str, value: &Value) -> Result<Option<i64>, AppError> {
 
 /// 严格按契约 v1 解析 stdout
 pub fn parse_output(stdout: &[u8], now_ms: i64) -> Result<RefreshOutput, AppError> {
+    parse_output_with_secrets(stdout, now_ms, &[])
+}
+
+fn parse_output_with_secrets(
+    stdout: &[u8],
+    now_ms: i64,
+    known_secrets: &[&str],
+) -> Result<RefreshOutput, AppError> {
     if stdout.len() > MAX_STDOUT_BYTES {
         return Err(AppError::localized(
             "api_key_vars.stdout_too_large",
@@ -426,10 +444,7 @@ pub fn parse_output(stdout: &[u8], now_ms: i64) -> Result<RefreshOutput, AppErro
     let Value::Object(obj) = value else {
         return Err(stdout_not_json("top-level value must be an object"));
     };
-    let api_key = obj
-        .get("apiKey")
-        .and_then(Value::as_str)
-        .filter(|k| !k.is_empty() && !k.chars().any(char::is_whitespace))
+    let api_key = valid_api_key(obj.get("apiKey"))
         .ok_or_else(|| {
             AppError::localized(
                 "api_key_vars.invalid_api_key",
@@ -452,16 +467,57 @@ pub fn parse_output(stdout: &[u8], now_ms: i64) -> Result<RefreshOutput, AppErro
             ));
         }
     }
-    let message = obj
-        .get("message")
-        .and_then(Value::as_str)
-        .map(|m| m.chars().take(MAX_MESSAGE_CHARS).collect::<String>());
+    // Redact before truncating. Otherwise a key split by the truncation boundary
+    // could be persisted verbatim in the refresh result.
+    let mut secrets = known_secrets.to_vec();
+    secrets.push(&api_key);
+    let message = sanitize_message(obj.get("message").and_then(Value::as_str), &secrets);
     Ok(RefreshOutput {
         api_key,
         expires_at,
         refresh_after,
         message,
     })
+}
+
+fn valid_api_key(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(Value::as_str)
+        .filter(|key| !key.is_empty() && !key.chars().any(char::is_whitespace))
+}
+
+/// Recover credential fields for redaction even when diagnostic text or a
+/// malformed surrounding object makes stdout fail the strict output contract.
+fn output_api_key_candidates(stdout: &[u8]) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut seen = HashSet::new();
+    for (offset, byte) in stdout.iter().enumerate() {
+        if *byte != b'"' {
+            continue;
+        }
+        // Decode field names as JSON strings, including escaped spellings.
+        let mut field =
+            serde_json::Deserializer::from_slice(&stdout[offset..]).into_iter::<String>();
+        if !matches!(field.next(), Some(Ok(name)) if name == "apiKey") {
+            continue;
+        }
+        let tail = &stdout[offset + field.byte_offset()..];
+        let Some(colon) = tail.iter().position(|byte| !byte.is_ascii_whitespace()) else {
+            continue;
+        };
+        if tail[colon] != b':' {
+            continue;
+        }
+        if let Some(Ok(key)) = serde_json::Deserializer::from_slice(&tail[colon + 1..])
+            .into_iter::<String>()
+            .next()
+        {
+            if !key.is_empty() && seen.insert(key.clone()) {
+                keys.push(key);
+            }
+        }
+    }
+    keys
 }
 
 fn stdout_not_json(detail: impl std::fmt::Display) -> AppError {
@@ -496,10 +552,26 @@ pub fn mask_key(key: &str) -> String {
 
 pub fn redact(text: &str, secrets: &[&str]) -> String {
     let mut out = text.to_string();
-    for secret in secrets.iter().filter(|s| s.len() >= 4) {
+    // Short keys occur in test and development providers. They are still secrets,
+    // and only an empty string is unsafe to pass to `replace`.
+    let mut secrets: Vec<_> = secrets.iter().filter(|s| !s.is_empty()).collect();
+    secrets.sort_unstable_by_key(|secret| std::cmp::Reverse(secret.len()));
+    for secret in secrets {
         out = out.replace(secret, "[REDACTED]");
     }
     out
+}
+
+/// Redact script-supplied status text before applying the UI/storage length limit.
+/// Kept public so callers that construct `ScriptRun` outside this module get the
+/// same protection as parsed script output.
+pub fn sanitize_message(message: Option<&str>, secrets: &[&str]) -> Option<String> {
+    message.map(|text| {
+        redact(text, secrets)
+            .chars()
+            .take(MAX_MESSAGE_CHARS)
+            .collect()
+    })
 }
 
 fn tail_bytes(bytes: &[u8], max: usize) -> String {
@@ -512,6 +584,43 @@ fn last_line_summary(text: &str) -> Option<String> {
         .map(str::trim)
         .rfind(|l| !l.is_empty())
         .map(|l| l.chars().take(MAX_ERROR_SUMMARY_CHARS).collect())
+}
+
+#[derive(Default)]
+struct StdoutCapture {
+    bytes: Vec<u8>,
+}
+
+async fn read_stdout_limited<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> std::io::Result<StdoutCapture> {
+    let mut capture = StdoutCapture::default();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(capture);
+        }
+        let remaining = (MAX_STDOUT_BYTES + 1).saturating_sub(capture.bytes.len());
+        let kept = read.min(remaining);
+        capture.bytes.extend_from_slice(&chunk[..kept]);
+    }
+}
+
+async fn read_stderr_tail<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<Vec<u8>> {
+    let mut tail = Vec::with_capacity(MAX_STDERR_CAPTURE_BYTES);
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(tail);
+        }
+        tail.extend_from_slice(&chunk[..read]);
+        if tail.len() > MAX_STDERR_CAPTURE_BYTES {
+            let excess = tail.len() - MAX_STDERR_CAPTURE_BYTES;
+            tail.drain(..excess);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -596,22 +705,18 @@ pub async fn run_script(
 
     let collect = async {
         let read_stdout = async {
-            let mut buf = Vec::new();
             if let Some(pipe) = stdout_pipe.as_mut() {
-                // 多读 1 字节用于判断超限
-                let _ = pipe
-                    .take((MAX_STDOUT_BYTES + 1) as u64)
-                    .read_to_end(&mut buf)
-                    .await;
+                read_stdout_limited(pipe).await
+            } else {
+                Ok(StdoutCapture::default())
             }
-            buf
         };
         let read_stderr = async {
-            let mut buf = Vec::new();
             if let Some(pipe) = stderr_pipe.as_mut() {
-                let _ = pipe.take(1024 * 1024).read_to_end(&mut buf).await;
+                read_stderr_tail(pipe).await
+            } else {
+                Ok(Vec::new())
             }
-            buf
         };
         let (out, err) = tokio::join!(read_stdout, read_stderr);
         let status = child.wait().await;
@@ -630,12 +735,31 @@ pub async fn run_script(
         }
     };
 
-    let parsed_key = parse_output(&stdout, now_ms()).ok().map(|o| o.api_key);
+    let stdout = stdout.map_err(|error| {
+        retryable(AppError::localized(
+            "api_key_vars.stdout_read_failed",
+            format!("读取脚本 stdout 失败: {error}"),
+            format!("Failed to read script stdout: {error}"),
+        ))
+    })?;
+    let stderr = stderr.map_err(|error| {
+        retryable(AppError::localized(
+            "api_key_vars.stderr_read_failed",
+            format!("读取脚本 stderr 失败: {error}"),
+            format!("Failed to read script stderr: {error}"),
+        ))
+    })?;
+    let parsed_keys = output_api_key_candidates(&stdout.bytes);
     let mut secrets: Vec<&str> = known_secrets.to_vec();
-    if let Some(k) = parsed_key.as_deref() {
-        secrets.push(k);
-    }
-    let stderr_text = redact(&tail_bytes(&stderr, MAX_STDERR_KEEP_BYTES), &secrets);
+    secrets.extend(parsed_keys.iter().map(String::as_str));
+    // Truncated stdout may contain an incomplete JSON credential we cannot
+    // recover safely. Do not expose its stderr through logs or error summaries.
+    let stderr_text = if stdout.bytes.len() > MAX_STDOUT_BYTES {
+        String::new()
+    } else {
+        let sanitized = redact(&String::from_utf8_lossy(&stderr), &secrets);
+        tail_bytes(sanitized.as_bytes(), MAX_STDERR_KEEP_BYTES)
+    };
     if !stderr_text.trim().is_empty() {
         log::info!("[ApiKeyVars] {} stderr:\n{}", ctx.var_name, stderr_text);
     }
@@ -649,7 +773,8 @@ pub async fn run_script(
     })?;
     match classify_exit(status.code()) {
         ExitClass::Success => {
-            let output = parse_output(&stdout, now_ms()).map_err(retryable)?;
+            let output =
+                parse_output_with_secrets(&stdout.bytes, now_ms(), &secrets).map_err(retryable)?;
             Ok(ScriptRun {
                 output,
                 resolved_file: script.file,
@@ -699,6 +824,59 @@ mod tests {
     }
 
     const NOW: i64 = 1_760_000_000_000;
+
+    #[test]
+    fn log_redaction_extracts_credentials_before_contract_validation() {
+        let bytes = br#"{"apiKey":"credential with spaces","expiresAt":"bad date"}"#;
+        assert_eq!(
+            output_api_key_candidates(bytes),
+            vec!["credential with spaces"]
+        );
+        assert!(parse_output(bytes, NOW).is_err());
+        assert_eq!(redact("abcdef", &["abc", "abcdef"]), "[REDACTED]");
+        assert_eq!(
+            output_api_key_candidates(br#"{"apiKey":"first"} {"apiKey":"second"} trailing"#),
+            vec!["first", "second"]
+        );
+        assert_eq!(
+            output_api_key_candidates(
+                br#"debug before JSON
+{"api\u004bey" : "escaped\u002dsecret", "expiresAt": broken}
+{"apiKey":"escaped-secret"} trailing"#
+            ),
+            vec!["escaped-secret"]
+        );
+    }
+
+    #[test]
+    fn historical_keys_are_redacted_before_message_truncation() {
+        let old = format!("old-{}", "x".repeat(600));
+        let stdout = serde_json::to_vec(&serde_json::json!({
+            "apiKey": "replacement-key",
+            "message": format!("{}{old}", "p".repeat(480))
+        }))
+        .unwrap();
+        let output = parse_output_with_secrets(&stdout, NOW, &[&old]).unwrap();
+        let message = output.message.unwrap();
+        assert!(message.ends_with("[REDACTED]"));
+        assert!(!message.contains("old-"));
+    }
+
+    #[tokio::test]
+    async fn log_capture_keeps_context_to_redact_long_keys_before_tail_truncation() {
+        let key = "secret-part-".repeat(600);
+        let input = format!("{}\nkey={key}\nfinished", "padding".repeat(20_000));
+        let mut reader = std::io::Cursor::new(input.into_bytes());
+        let captured = read_stderr_tail(&mut reader).await.unwrap();
+        assert_eq!(captured.len(), MAX_STDERR_CAPTURE_BYTES);
+        let sanitized = redact(&String::from_utf8_lossy(&captured), &[&key]);
+        let summary = tail_bytes(sanitized.as_bytes(), MAX_STDERR_KEEP_BYTES);
+        assert!(
+            !summary.contains("secret-part-"),
+            "a credential suffix leaked"
+        );
+        assert!(summary.ends_with("key=[REDACTED]\nfinished"));
+    }
 
     #[test]
     fn resolve_script_prefers_mjs_then_js() {
@@ -761,6 +939,16 @@ mod tests {
         assert_eq!(o.expires_at, Some(1_760_076_000_000));
         assert_eq!(o.refresh_after, Some(1_760_001_000_000));
         assert_eq!(o.message.as_deref(), Some("ok"));
+
+        let o = parse_output(
+            br#"{"apiKey":"message-secret","message":"refreshed message-secret successfully"}"#,
+            NOW,
+        )
+        .unwrap();
+        assert_eq!(
+            o.message.as_deref(),
+            Some("refreshed [REDACTED] successfully")
+        );
     }
 
     #[test]
@@ -853,6 +1041,15 @@ mod tests {
             next_due_ms(&disabled, &ApiKeyRefreshState::default()),
             i64::MAX
         );
+
+        // Updating a script deliberately preserves the old expiry for display,
+        // while clearing last_success_at. The new script must be due immediately.
+        let changed_script = ApiKeyRefreshState {
+            expires_at: Some(NOW + 24 * 60 * 60 * 1000),
+            refresh_after: Some(NOW + 60 * 60 * 1000),
+            ..Default::default()
+        };
+        assert_eq!(next_due_ms(&c, &changed_script), 0);
     }
 
     #[test]
@@ -914,6 +1111,16 @@ mod tests {
         assert_eq!(
             redact("got sk-secret ok", &["sk-secret"]),
             "got [REDACTED] ok"
+        );
+        assert_eq!(redact("got abc", &["abc"]), "got [REDACTED]");
+        let key = "new-secret-key";
+        let long_message = format!("{}{}", "x".repeat(MAX_MESSAGE_CHARS - 1), key);
+        let sanitized = sanitize_message(Some(&long_message), &[key]).unwrap();
+        assert!(!sanitized.contains(key));
+        assert_eq!(sanitized.chars().count(), MAX_MESSAGE_CHARS);
+        assert_eq!(
+            sanitize_message(Some("normal status"), &[key]).as_deref(),
+            Some("normal status")
         );
         assert_eq!(last_line_summary("a\nlast \n\n").as_deref(), Some("last"));
     }
@@ -1033,6 +1240,106 @@ process.stdout.write(JSON.stringify({ apiKey: ok ? "sk-from-mjs-123" : "bad-env"
             f.error
         );
         assert!(started.elapsed() < Duration::from_secs(15));
+    }
+
+    #[tokio::test]
+    async fn run_script_redacts_candidate_key_when_contract_validation_fails() {
+        if !node_available() {
+            eprintln!("node not available; skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let key = "candidate-secret-key";
+        std::fs::write(
+            dir.path().join("index.mjs"),
+            format!(
+                r#"const key = "{key}";
+process.stdout.write(JSON.stringify({{ apiKey: key, expiresAt: 1 }}));
+console.error(`backend rejected ${{key}}`);
+process.exit(1);"#
+            ),
+        )
+        .unwrap();
+
+        let failure = run_script(&script_cfg(dir.path()), &test_ctx(), None, &[])
+            .await
+            .unwrap_err();
+        assert!(failure.error.contains("[REDACTED]"), "{}", failure.error);
+        assert!(!failure.error.contains(key), "{}", failure.error);
+    }
+
+    #[tokio::test]
+    async fn run_script_redacts_keys_when_stdout_has_diagnostics() {
+        assert!(node_available(), "Node is required for this regression");
+        let dir = tempfile::tempdir().unwrap();
+        let key = "diagnostic-output-secret";
+        for (before, after) in [("", "debug"), ("debug", ""), ("debug", "debug")] {
+            std::fs::write(
+                dir.path().join("index.mjs"),
+                format!(
+                    r#"console.log("{before}");
+console.log(JSON.stringify({{ apiKey: "{key}" }}));
+console.log("{after}");
+console.error("failed {key}");
+process.exitCode = 1;"#
+                ),
+            )
+            .unwrap();
+            let failure = run_script(&script_cfg(dir.path()), &test_ctx(), None, &[])
+                .await
+                .unwrap_err();
+            assert!(failure.error.contains("[REDACTED]"), "{}", failure.error);
+            assert!(!failure.error.contains(key), "{}", failure.error);
+        }
+    }
+
+    #[tokio::test]
+    async fn run_script_drains_noisy_stdout_and_stderr() {
+        if !node_available() {
+            eprintln!("node not available; skipping");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("index.mjs"),
+            format!(
+                r#"const write = (stream, data) => new Promise((resolve, reject) =>
+  stream.write(data, error => error ? reject(error) : resolve()));
+await write(process.stdout, "o".repeat({stdout}));
+await write(process.stderr, "e".repeat({stderr}));
+process.exitCode = 0;"#,
+                stdout = MAX_STDOUT_BYTES * 4,
+                stderr = MAX_STDERR_KEEP_BYTES * 512,
+            ),
+        )
+        .unwrap();
+
+        let started = std::time::Instant::now();
+        let failure = run_script(&script_cfg(dir.path()), &test_ctx(), None, &[])
+            .await
+            .unwrap_err();
+        assert!(failure.error.contains("64 KiB"), "{}", failure.error);
+        assert!(started.elapsed() < Duration::from_secs(4), "{failure:?}");
+
+        std::fs::write(
+            dir.path().join("index.mjs"),
+            format!(
+                r#"const write = (stream, data) => new Promise((resolve, reject) =>
+  stream.write(data, error => error ? reject(error) : resolve()));
+await write(process.stdout, JSON.stringify({{ apiKey: "noisy-test-key" }}));
+await write(process.stderr, "e".repeat({stderr}));
+await write(process.stderr, "\ntail sentinel\n");
+process.exitCode = 1;"#,
+                stderr = MAX_STDERR_KEEP_BYTES * 512,
+            ),
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        let failure = run_script(&script_cfg(dir.path()), &test_ctx(), None, &[])
+            .await
+            .unwrap_err();
+        assert!(failure.error.contains("tail sentinel"), "{}", failure.error);
+        assert!(started.elapsed() < Duration::from_secs(4), "{failure:?}");
     }
 
     #[tokio::test]
