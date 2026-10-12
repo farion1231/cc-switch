@@ -3753,6 +3753,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
     websiteUrl: "https://yylx.io",
     apiKeyUrl: "https://app.yylx.io/keys",
     settingsConfig: {

@@ -2633,6 +2633,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
     providerKey: "cc-switch-yylx",
     websiteUrl: "https://yylx.io",
     apiKeyUrl: "https://app.yylx.io/keys",

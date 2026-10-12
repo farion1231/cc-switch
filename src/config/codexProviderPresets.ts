@@ -3776,6 +3776,7 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
   },
   {
     name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
     websiteUrl: "https://yylx.io",
     apiKeyUrl: "https://app.yylx.io/keys",
     category: "aggregator",

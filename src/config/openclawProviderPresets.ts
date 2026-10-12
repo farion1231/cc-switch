@@ -5041,6 +5041,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
     websiteUrl: "https://yylx.io",
     apiKeyUrl: "https://app.yylx.io/keys",
     settingsConfig: {

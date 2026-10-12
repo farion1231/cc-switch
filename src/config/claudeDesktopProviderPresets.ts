@@ -1809,6 +1809,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
     websiteUrl: "https://yylx.io",
     apiKeyUrl: "https://app.yylx.io/keys",
     category: "aggregator",

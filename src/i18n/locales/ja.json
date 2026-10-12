@@ -1586,7 +1586,8 @@
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI",
-      "tuzi": "Tu-zi"
+      "tuzi": "Tu-zi",
+      "yylx": "YYLX"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
