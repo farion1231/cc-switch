@@ -51,6 +51,7 @@ import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfi
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   ENV_BADGE_CONFIG,
   ONE_CLICK_INSTALL_COMMANDS,
@@ -108,6 +109,7 @@ export function AppsPage() {
   const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const [showCommands, setShowCommands] = useState(false);
+  const [showUninstallCommands, setShowUninstallCommands] = useState(false);
   const [pendingUninstall, setPendingUninstall] = useState<ToolName | null>(
     null,
   );
@@ -247,6 +249,12 @@ export function AppsPage() {
                 <DropdownMenuItem onSelect={() => setShowCommands(true)}>
                   {t("appsPage.manualCommands")}
                 </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-red-500 focus:text-red-500 dark:text-red-400 dark:focus:text-red-400"
+                  onSelect={() => setShowUninstallCommands(true)}
+                >
+                  {t("settings.manualUninstallCommands")}
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </>
@@ -350,6 +358,11 @@ export function AppsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ManualUninstallDialog
+        open={showUninstallCommands}
+        onOpenChange={setShowUninstallCommands}
+      />
 
       <ConfirmDialog
         isOpen={pendingUninstall !== null}
