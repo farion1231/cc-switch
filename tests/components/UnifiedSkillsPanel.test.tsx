@@ -485,6 +485,52 @@ describe("UnifiedSkillsPanel", () => {
     setEntries.mockRestore();
   });
 
+  it("prompts before leaving the Pi config panel with unsaved changes", async () => {
+    m.installed = [makeSkill({ apps: { pi: true } })];
+    const getConfig = vi.spyOn(skillsApi, "getPiSkillsConfig").mockResolvedValue({
+      path: "/home/u/.pi/agent/settings.json",
+      revision: "rev-1",
+      sources: [],
+      entries: [{ raw: "!pdf", kind: "exclude", warnings: [] }],
+    });
+    const setEntries = vi
+      .spyOn(skillsApi, "setPiSkillsEntries")
+      .mockResolvedValue(undefined);
+
+    renderPanel();
+    await userEvent.click(columns()[2]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.piConfig.manageEntry" }),
+    );
+    // 添加一条（产生未保存修改）
+    const input = await screen.findByLabelText(
+      "skillsPage.piConfig.addPlaceholder",
+    );
+    await userEvent.type(input, "~/.claude/skills{Enter}");
+
+    // 点左上角返回 → 弹出未保存确认
+    await userEvent.click(screen.getByRole("button", { name: "common.back" }));
+    expect(
+      await screen.findByText("common.unsavedLeaveTitle"),
+    ).toBeInTheDocument();
+    // 继续编辑（取消）→ 面板仍在
+    await userEvent.click(
+      screen.getByRole("button", { name: "common.unsavedLeaveCancel" }),
+    );
+    expect(screen.getByText("~/.claude/skills")).toBeInTheDocument();
+    // 再次返回 → 确认放弃 → 面板关闭（未调用保存）
+    await userEvent.click(screen.getByRole("button", { name: "common.back" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "common.unsavedLeaveConfirm" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("~/.claude/skills")).not.toBeInTheDocument(),
+    );
+    expect(setEntries).not.toHaveBeenCalled();
+    getConfig.mockRestore();
+    setEntries.mockRestore();
+  });
+
   it("bulk-enables only the disabled Skills in a column and offers undo", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A", apps: { codex: true } }),

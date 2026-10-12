@@ -9,6 +9,7 @@ import {
   SheetPageContent,
 } from "@/components/ui/sheet";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { skillsApi, type PiSkillsConfig } from "@/lib/api/skills";
 import { cn } from "@/lib/utils";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
@@ -42,7 +43,10 @@ export function PiSharedConfigPanel({
   const [addInput, setAddInput] = useState("");
   const [sourceOpen, setSourceOpen] = useState(false);
   const [revisionStale, setRevisionStale] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const savingRef = useRef(false);
+  /** 装填基线（entries 序列化），关闭前比对判断未保存修改 */
+  const baselineRef = useRef<string>("[]");
 
   const load = () => {
     setLoading(true);
@@ -52,6 +56,9 @@ export function PiSharedConfigPanel({
       .then((c) => {
         setConfig(c);
         setEntries(c.entries?.map((e) => e.raw) ?? []);
+        baselineRef.current = JSON.stringify(
+          c.entries?.map((e) => e.raw) ?? [],
+        );
         setJsonText(
           JSON.stringify(c.entries?.map((e) => e.raw) ?? [], null, 2),
         );
@@ -72,6 +79,24 @@ export function PiSharedConfigPanel({
   if (!config) return null;
 
   const parseError = config.parseError ?? null;
+
+  /** 是否有未保存修改（表单比 entries，JSON 比解析后的语义值；解析失败视为有修改） */
+  const isDirty = () => {
+    if (tab === "json") {
+      const parsed = parseJsonArray(jsonText);
+      return !parsed.ok || JSON.stringify(parsed.value) !== baselineRef.current;
+    }
+    return JSON.stringify(entries) !== baselineRef.current;
+  };
+  /** 关闭请求：保存中不许关；有未保存修改先确认 */
+  const requestClose = () => {
+    if (savingRef.current) return;
+    if (isDirty()) {
+      setConfirmDiscard(true);
+      return;
+    }
+    onClose();
+  };
 
   // ─── 分类徽章（轻量复判：与后端 classify_entry_kind 同规则）───
   const kindOf = (raw: string) => {
@@ -199,7 +224,7 @@ export function PiSharedConfigPanel({
       open
       modal={false}
       onOpenChange={(open) => {
-        if (!open && !savingRef.current) onClose();
+        if (!open) requestClose();
       }}
     >
       <SheetPageContent
@@ -216,7 +241,9 @@ export function PiSharedConfigPanel({
         }
         closeLabel={t("common.back")}
         onEscapeKeyDown={(event) => {
-          if (savingRef.current) event.preventDefault();
+          // 保存中或有未保存修改时拦截 Esc，走确认流程
+          if (savingRef.current || isDirty()) event.preventDefault();
+          if (!savingRef.current && isDirty()) setConfirmDiscard(true);
         }}
       >
         <SheetDescription className="sr-only">
@@ -260,29 +287,32 @@ export function PiSharedConfigPanel({
                 </Button>
               </div>
             )}
-            <p className="px-6 pt-3 text-caption text-fg-3">
-              {t("skillsPage.piConfig.agentsDirHint")}
-            </p>
-            <div className="flex items-center justify-end px-6 pt-2">
-              <SegmentedControl
-                aria-label={t("skillsPage.piConfig.editMode")}
-                className="h-8 rounded-[8px]"
-                value={tab}
-                onValueChange={switchTab}
-                items={[
-                  {
-                    value: "form",
-                    label: t("skillsPage.piConfig.tabForm"),
-                    disabled: tab === "json" && jsonError !== null,
-                    className: "min-w-[60px] rounded-[5px]",
-                  },
-                  {
-                    value: "json",
-                    label: "JSON",
-                    className: "min-w-[60px] rounded-[5px]",
-                  },
-                ]}
-              />
+
+            <div className="grid shrink-0 grid-cols-[1fr_auto]">
+              <p className="px-6 pt-3 text-caption text-fg-3">
+                {t("skillsPage.piConfig.agentsDirHint")}
+              </p>
+              <div className="flex items-center justify-end px-6 pt-2">
+                <SegmentedControl
+                  aria-label={t("skillsPage.piConfig.editMode")}
+                  className="h-8 rounded-[8px]"
+                  value={tab}
+                  onValueChange={switchTab}
+                  items={[
+                    {
+                      value: "form",
+                      label: t("skillsPage.piConfig.tabForm"),
+                      disabled: tab === "json" && jsonError !== null,
+                      className: "min-w-[60px] rounded-[5px]",
+                    },
+                    {
+                      value: "json",
+                      label: "JSON",
+                      className: "min-w-[60px] rounded-[5px]",
+                    },
+                  ]}
+                />
+              </div>
             </div>
 
             {tab === "form" ? (
@@ -491,9 +521,7 @@ export function PiSharedConfigPanel({
                 type="button"
                 variant="neutral"
                 size="regular"
-                onClick={() => {
-                  if (!savingRef.current) onClose();
-                }}
+                onClick={requestClose}
                 disabled={saving}
               >
                 {t("common.cancel")}
@@ -511,6 +539,20 @@ export function PiSharedConfigPanel({
           </>
         )}
       </SheetPageContent>
+
+      <ConfirmDialog
+        isOpen={confirmDiscard}
+        title={t("common.unsavedLeaveTitle")}
+        message={t("common.unsavedLeaveMessage")}
+        confirmText={t("common.unsavedLeaveConfirm")}
+        cancelText={t("common.unsavedLeaveCancel")}
+        zIndex="top"
+        onConfirm={() => {
+          setConfirmDiscard(false);
+          onClose();
+        }}
+        onCancel={() => setConfirmDiscard(false)}
+      />
     </Sheet>
   );
 }
