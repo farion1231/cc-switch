@@ -143,6 +143,7 @@ describe("RequestLogTable", () => {
       model: "deepseek-v4-pro",
       costMultiplier: "1",
       inputTokens: 1_000,
+      freshInputTokens: 1_000,
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
       inputCostUsd: "0",
@@ -279,6 +280,7 @@ describe("RequestLogTable", () => {
             model: "kimi-k2.6",
             costMultiplier: "1",
             inputTokens: 10,
+            freshInputTokens: 10,
             outputTokens: 10,
             cacheReadTokens: 0,
             cacheCreationTokens: 0,
@@ -312,6 +314,52 @@ describe("RequestLogTable", () => {
     expect(appCell).toHaveTextContent("Claude");
     expect(appShortName("claude-desktop")).toBe("Desktop");
     expect(appShortName("unknown-app")).toBe("unknown-app");
+  });
+
+  it("shows fresh input net of both cache reads and cache writes", () => {
+    useRequestLogsMock.mockReturnValue({
+      data: {
+        data: [
+          {
+            requestId: "codex-cache-write",
+            providerId: "p1",
+            providerName: "OpenAI",
+            appType: "codex",
+            model: "gpt-6-sol",
+            costMultiplier: "1",
+            inputTokens: 1_000,
+            freshInputTokens: 100,
+            outputTokens: 50,
+            cacheReadTokens: 300,
+            cacheCreationTokens: 600,
+            inputCostUsd: "0",
+            outputCostUsd: "0",
+            cacheReadCostUsd: "0",
+            cacheCreationCostUsd: "0",
+            totalCostUsd: "0.01",
+            isStreaming: true,
+            statusCode: 200,
+            latencyMs: 0,
+            createdAt: Math.floor(Date.now() / 1000),
+          },
+        ],
+        total: 1,
+        page: 0,
+        pageSize: 20,
+      },
+      isLoading: false,
+    });
+
+    render(
+      <RequestLogTable range={{ preset: "today" }} refreshIntervalMs={0} />,
+    );
+
+    const freshInputCell = screen.getAllByRole("row")[1].children[4];
+    expect(freshInputCell).toHaveTextContent("100");
+    expect(freshInputCell).toHaveAttribute(
+      "title",
+      "100 (usage.rawInputLabel: 1,000)",
+    );
   });
 });
 
