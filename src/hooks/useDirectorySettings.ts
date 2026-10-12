@@ -295,7 +295,10 @@ export function useDirectorySettings({
       delete localDirectoryUpdatesRef.current[key];
       const revision = (directoryRevisionsRef.current[key] ?? 0) + 1;
       directoryRevisionsRef.current[key] = revision;
-      setResolvedDirs((prev) => ({ ...prev, [key]: value ?? "" }));
+      setResolvedDirs((prev) => ({
+        ...prev,
+        [key]: value ?? defaultsRef.current[key],
+      }));
       if (value !== undefined) continue;
 
       void settingsApi.getConfigDir(key).then(

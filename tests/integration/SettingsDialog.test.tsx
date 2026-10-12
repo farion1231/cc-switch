@@ -269,6 +269,90 @@ describe("SettingsPage integration", () => {
     },
   );
 
+  it("keeps a pending directory fallback out of autosaves and explicit saves after picker cancellation", async () => {
+    setSettings({ claudeConfigDir: undefined });
+    const saves: Settings[] = [];
+    const pickerPaths: string[] = [];
+    let claudeReads = 0;
+    let finishResolution!: (directory: string) => void;
+    const resolution = new Promise<string>((resolve) => {
+      finishResolution = resolve;
+    });
+    server.use(
+      http.post("http://tauri.local/get_config_dir", async ({ request }) => {
+        const { app } = (await request.json()) as { app: string };
+        if (app !== "claude") return HttpResponse.json(`/default/${app}`);
+        claudeReads += 1;
+        return HttpResponse.json(
+          claudeReads === 1 ? "/environment/claude" : await resolution,
+        );
+      }),
+      http.post("http://tauri.local/save_settings", async ({ request }) => {
+        const { settings } = (await request.json()) as { settings: Settings };
+        saves.push(settings);
+        setSettings({ ...settings, claudeConfigDir: settings.claudeConfigDir });
+        return HttpResponse.json(true);
+      }),
+      http.post("http://tauri.local/pick_directory", async ({ request }) => {
+        const { defaultPath } = (await request.json()) as {
+          defaultPath: string;
+        };
+        pickerPaths.push(defaultPath);
+        return HttpResponse.json(null);
+      }),
+    );
+    renderDialog({ section: "appConfig" });
+    const directory = await screen.findByPlaceholderText(
+      "settings.browsePlaceholderClaude",
+    );
+    await waitFor(() => expect(directory).toHaveValue("/environment/claude"));
+    fireEvent.change(directory, { target: { value: "/unsaved/claude" } });
+    fireEvent.click(
+      screen.getByRole("switch", { name: "settings.skipClaudeOnboarding" }),
+    );
+    await waitFor(() => expect(claudeReads).toBe(2));
+    await waitFor(() => expect(directory).toHaveValue("/home/mock/.claude"));
+    expect(saves).toHaveLength(1);
+    expect(saves[0].claudeConfigDir).toBeUndefined();
+    expect(screen.queryByRole("button", { name: "common.save" })).toBeNull();
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "settings.browseDirectory" })[0],
+    );
+    await waitFor(() => expect(pickerPaths).toEqual(["/home/mock/.claude"]));
+    expect(directory).toHaveValue("/home/mock/.claude");
+    expect(screen.queryByRole("button", { name: "common.save" })).toBeNull();
+    expect(saves).toHaveLength(1);
+
+    fireEvent.change(
+      screen.getByPlaceholderText("settings.browsePlaceholderCodex"),
+      { target: { value: "/edited/codex" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect(saves[1].claudeConfigDir).toBeUndefined();
+    expect(saves[1].codexConfigDir).toBe("/edited/codex");
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "common.save" })).toBeNull(),
+    );
+    expect(getSettings().claudeConfigDir).toBeUndefined();
+
+    finishResolution("/environment/claude");
+    await waitFor(() => expect(directory).toHaveValue("/environment/claude"));
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "settings.browseDirectory" })[0],
+    );
+    await waitFor(() =>
+      expect(pickerPaths).toEqual([
+        "/home/mock/.claude",
+        "/environment/claude",
+      ]),
+    );
+    expect(saves).toHaveLength(2);
+    expect(getSettings().claudeConfigDir).toBeUndefined();
+    expect(screen.queryByRole("button", { name: "common.save" })).toBeNull();
+  });
+
   it.each([undefined, "/saved/claude"])(
     "saves directory edits and resets after picker cancellation from %s",
     async (savedDirectory) => {
