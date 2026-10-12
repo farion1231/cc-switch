@@ -4,6 +4,7 @@ import {
   ZCODE_DEFAULT_KIND,
   ZCODE_DEFAULT_CONFIG,
   ZCODE_EXTRA_OPTION_DRAFT_PREFIX,
+  extractZcodeConfigExtras,
   parseZcodeConfig,
   toZcodeExtraOptions,
 } from "../helpers/zcodeFormUtils";
@@ -71,6 +72,14 @@ export function useZcodeFormState({
   const initialZcodeConfig =
     appId === "zcode" ? parseZcodeConfig(initialData?.settingsConfig) : null;
   const initialZcodeOptions = initialZcodeConfig?.options || {};
+
+  // Top-level keys outside the structured whitelist (priority, tags, …) must
+  // survive every structured edit, so capture them once and merge on emit.
+  const initialExtras =
+    appId === "zcode"
+      ? extractZcodeConfigExtras(initialData?.settingsConfig)
+      : {};
+  const extrasRef = useRef(initialExtras);
 
   const initialFields: ZcodeFieldState = {
     kind: initialZcodeConfig?.kind || ZCODE_DEFAULT_KIND,
@@ -143,7 +152,10 @@ export function useZcodeFormState({
         }
       }
 
+      // Extras (priority, tags, …) go first so the structured fields the form
+      // owns always win; anything the user cannot edit here passes through.
       const config: ZCodeProviderConfig = {
+        ...extrasRef.current,
         kind: next.kind,
         options: options as ZCodeProviderConfig["options"],
         models: next.models,
@@ -208,6 +220,9 @@ export function useZcodeFormState({
       enabled: config?.enabled === undefined ? null : config.enabled,
       source: config?.source,
     };
+    // A reset installs a whole new config (e.g. a preset), so its extras —
+    // if any — replace whatever the previous provider carried.
+    extrasRef.current = extractZcodeConfigExtras(config);
     fieldsRef.current = next;
     setZcodeProviderKey("");
     setFields(next);

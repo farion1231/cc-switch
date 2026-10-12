@@ -124,6 +124,7 @@ import {
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
+import { invalidateZcodeProviderCaches } from "@/hooks/useZcode";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -831,6 +832,8 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: ["providers", "mcode"],
         });
+      } else if (activeApp === "zcode") {
+        await invalidateZcodeProviderCaches(queryClient);
       }
       toast.success(
         activeApp === "pi"

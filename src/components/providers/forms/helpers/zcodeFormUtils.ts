@@ -78,3 +78,31 @@ export function toZcodeExtraOptions(
   }
   return extra;
 }
+
+/** Structured keys the form owns; everything else is round-tripped verbatim. */
+const ZCODE_KNOWN_TOP_LEVEL_KEYS = [
+  "name",
+  "kind",
+  "enabled",
+  "source",
+  "options",
+  "models",
+] as const;
+
+/**
+ * Top-level keys outside the structured whitelist (e.g. `priority`, `tags`
+ * written by the backend). The form must carry these through edits untouched —
+ * rebuilding only the whitelist would silently delete them from live config.
+ */
+export function extractZcodeConfigExtras(
+  settingsConfig?: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!settingsConfig || typeof settingsConfig !== "object") return {};
+  const extras: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(settingsConfig)) {
+    if (!(ZCODE_KNOWN_TOP_LEVEL_KEYS as readonly string[]).includes(k)) {
+      extras[k] = v;
+    }
+  }
+  return extras;
+}
