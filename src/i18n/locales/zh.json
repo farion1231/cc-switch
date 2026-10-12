@@ -1613,7 +1613,7 @@
       "hint": "仍要保存吗？保存后切换此供应商时可能失败，可以之后再补全。",
       "saveAnyway": "仍要保存"
     },
-    "configJsonError": "配置JSON格式错误，请检查语法",
+    "configJsonError": "配置 JSON 格式错误，请检查语法",
     "authJsonRequired": "auth.json 必须是 JSON 对象",
     "authJsonError": "auth.json 格式错误，请检查JSON语法",
     "fillAuthJson": "请填写 auth.json 配置",
@@ -4735,7 +4735,7 @@
       "thinking": "思考配置",
       "imageInputDecoder": "图像输入解码器",
       "cost": "价格",
-      "configYaml": "配置YAML",
+      "configYaml": "配置 YAML",
       "fixYamlFirst": "请先修复下方配置 YAML，再编辑结构化字段。",
       "providerKeyDuplicate": "此标识已被使用，请更换",
       "absoluteHttpUrlRequired": "{{label}} 必须是绝对 HTTP 或 HTTPS 地址",

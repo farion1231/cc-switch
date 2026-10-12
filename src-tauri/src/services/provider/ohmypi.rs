@@ -21,24 +21,21 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
         }
     }
     let mut providers = state.db.get_all_providers(OHMYPI_APP)?;
-    // Show the raw models.yml entry (comments included) in the YAML editor;
-    // fall back to the stored passthrough text when the native file is unreadable.
+    // Show the raw models.yml entry (comments included) in the YAML editor.
+    // models.yml is the source of truth: re-read on every list so external
+    // edits to an entry (comments, formatting, unmanaged fields) reach the
+    // editor; the stored snapshot is only a fallback when the file or the
+    // entry cannot be read.
     for (id, provider) in providers.iter_mut() {
-        if provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.ohmypi_passthrough_yaml.as_deref())
-            .is_some()
-        {
-            continue;
-        }
-        let raw = crate::ohmypi_config::read_ohmypi_provider_entry_raw(id);
-        match raw {
+        match crate::ohmypi_config::read_ohmypi_provider_entry_raw(id) {
             Ok(Some(text)) => {
                 let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
                 meta.ohmypi_passthrough_yaml = Some(text);
             }
-            Ok(None) => {}
+            Ok(None) => {
+                // Entry absent from models.yml (not yet written to live):
+                // keep the stored snapshot so pending editor text survives.
+            }
             Err(error) => {
                 log::warn!("Failed to read Oh My Pi raw entry for '{id}': {error}");
             }
@@ -253,6 +250,14 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
     if let Some(native) = crate::ohmypi_config::read_ohmypi_native_provider(id)? {
         let mut synced = provider;
         merge_native_config(&mut synced, native);
+        // models.yml 是真相源：切换后刷新 passthrough 快照，编辑器读到的是
+        // 当前文件内容，不会用旧 meta 文本把外部修改盖回去。
+        if let Ok(Some(text)) = crate::ohmypi_config::read_ohmypi_provider_entry_raw(id) {
+            synced
+                .meta
+                .get_or_insert_with(ProviderMeta::default)
+                .ohmypi_passthrough_yaml = Some(text);
+        }
         state.db.save_provider(app_type.as_str(), &synced)?;
         return Ok(SwitchResult::default());
     }

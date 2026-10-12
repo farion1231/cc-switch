@@ -156,6 +156,25 @@ function parseYamlObject(value: string): Record<string, unknown> | null {
   }
 }
 
+/**
+ * 编辑器文本首行可能是 `<key>:` 行（含注释，由后端原样带出，仅作展示）。
+ * 解析其 YAML 语义时先剥离这一行，否则会得到 `<key>: null` 污染配置。
+ */
+function parseYamlObjectWithoutKeyLine(
+  value: string,
+  providerKey: string,
+): Record<string, unknown> | null {
+  const trimmed = value.trim();
+  if (
+    providerKey &&
+    trimmed.split("\n")[0]?.trimStart().startsWith(`${providerKey}:`)
+  ) {
+    const rest = value.split("\n").slice(1).join("\n");
+    return parseYamlObject(rest);
+  }
+  return parseYamlObject(value);
+}
+
 function parseOptionValue(value: string): unknown {
   try {
     return JSON.parse(value);
@@ -361,6 +380,75 @@ function buildOhMyPiSettingsConfig({
   };
 }
 
+/**
+ * 受管键（ROOT_CONTROLLED_KEYS）部分的 YAML 文本，由表单控件值生成。
+ * 这是"配置 YAML"编辑器显示文本的受管块，与控件双向实时同步。
+ */
+function controlledBlockYaml(
+  name: string,
+  baseUrl: string,
+  api: string,
+  apiKey: string,
+  headers: Record<string, string>,
+  compat: Record<string, unknown>,
+  includeCompat: boolean,
+  models: OhMyPiModelDraft[],
+  includeModels: boolean,
+): string {
+  const controlled: Record<string, unknown> = {
+    ...(name.trim() ? { name: name.trim() } : {}),
+    ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+    ...(api.trim() ? { api: api.trim() } : {}),
+    ...(apiKey ? { apiKey } : {}),
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    ...(includeCompat && Object.keys(compat).length > 0 ? { compat } : {}),
+    ...(includeModels
+      ? {
+          models: models
+            .filter((model) => model.id.trim())
+            .map((model) => modelPreview({ ...model, id: model.id.trim() })),
+        }
+      : {}),
+  };
+  if (Object.keys(controlled).length === 0) return "";
+  return stringifyYaml(controlled, { indent: 2 }).trimEnd();
+}
+
+/**
+ * 从编辑器文本中剥离受管键行（含其嵌套块），返回剩余的非受管文本。
+ * 与后端 drop_controlled_keys 的剥离规则一致。
+ */
+function stripControlledKeys(text: string): string {
+  const kept: string[] = [];
+  let skippingIndent: number | null = null;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) {
+      kept.push(line);
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    if (skippingIndent !== null) {
+      if (
+        indent > skippingIndent ||
+        (indent === skippingIndent && trimmed.startsWith("-"))
+      ) {
+        continue;
+      }
+      skippingIndent = null;
+    }
+    if (indent === 0) {
+      const key = trimmed.split(":")[0]?.trim() ?? "";
+      if (key in ROOT_CONTROLLED_KEYS) {
+        skippingIndent = 0;
+        continue;
+      }
+    }
+    kept.push(line);
+  }
+  return kept.join("\n");
+}
+
 export function OhMyPiProviderForm({
   providerId,
   submitLabel,
@@ -409,14 +497,18 @@ export function OhMyPiProviderForm({
   const [providerPassthrough, setProviderPassthrough] = useState<
     Record<string, unknown>
   >(() => objectWithout(initialConfig, ROOT_CONTROLLED_KEYS));
-  const [passthroughText, setPassthroughText] = useState(() => {
+  // 编辑器里非受管部分的文本（注释、自定义字段）。受管部分由控件派生，
+  // 两者在 displayYaml 里组合，实现控件 ⇄ YAML 双向实时同步。
+  const [unmanagedText, setUnmanagedText] = useState(() => {
     // Prefer the raw text (comments, order preserved) captured from models.yml.
     const raw = initialData?.meta?.ohmypiPassthroughYaml;
-    if (raw !== undefined && raw.trim() !== "") return raw;
-    const passthrough = objectWithout(initialConfig, ROOT_CONTROLLED_KEYS);
-    return Object.keys(passthrough).length > 0
-      ? stringifyYaml(passthrough, { indent: 2 })
-      : "";
+    const source =
+      raw !== undefined && raw.trim() !== ""
+        ? raw
+        : Object.keys(providerPassthrough).length > 0
+          ? stringifyYaml(providerPassthrough, { indent: 2 })
+          : "";
+    return stripControlledKeys(source).trim();
   });
   const [includeModels, setIncludeModels] = useState(
     () => !isEdit || hasOwn(initialConfig, "models"),
@@ -451,8 +543,37 @@ export function OhMyPiProviderForm({
   });
 
   const hasConfigurationSelection = isEdit || selectedPresetId !== null;
+
+  // 编辑器显示文本 = 受管块（控件派生）+ 非受管文本。控件变化实时反映到 YAML。
+  const displayYaml = useMemo(() => {
+    const controlled = controlledBlockYaml(
+      form.watch("name"),
+      baseUrl,
+      api,
+      apiKey,
+      providerHeaders,
+      providerCompat,
+      includeCompatRef.current,
+      models,
+      includeModels,
+    );
+    const unmanaged = unmanagedText.trim();
+    if (controlled && unmanaged) return `${controlled}\n${unmanaged}`;
+    return controlled || unmanaged;
+  }, [
+    baseUrl,
+    api,
+    apiKey,
+    providerHeaders,
+    providerCompat,
+    models,
+    includeModels,
+    unmanagedText,
+    form,
+  ]);
+
   const isSettingsConfigValid =
-    passthroughText.trim() === "" || parseYamlObject(passthroughText) !== null;
+    unmanagedText.trim() === "" || parseYamlObject(unmanagedText) !== null;
   const isSubmitReady =
     form.watch("name").trim().length > 0 && isSettingsConfigValid;
 
@@ -462,9 +583,9 @@ export function OhMyPiProviderForm({
 
   const buildSettingsConfig = useCallback(
     (displayName: string): Record<string, unknown> => {
-      const parsedPassthrough = parseYamlObject(passthroughText);
+      const parsedPassthrough = parseYamlObject(unmanagedText);
       const passthrough =
-        passthroughText.trim() === ""
+        unmanagedText.trim() === ""
           ? {}
           : (parsedPassthrough ?? providerPassthrough);
       return buildOhMyPiSettingsConfig({
@@ -488,7 +609,7 @@ export function OhMyPiProviderForm({
       baseUrl,
       includeModels,
       models,
-      passthroughText,
+      unmanagedText,
       providerCompat,
       providerHeaders,
       providerPassthrough,
@@ -515,7 +636,7 @@ export function OhMyPiProviderForm({
     apiKey,
     providerHeaders,
     providerCompat,
-    passthroughText,
+    unmanagedText,
     includeModels,
     models,
     syncSettingsConfig,
@@ -555,7 +676,7 @@ export function OhMyPiProviderForm({
     setProviderCompat({});
     includeCompatRef.current = false;
     setProviderPassthrough({});
-    setPassthroughText("");
+    setUnmanagedText("");
     setIncludeModels(true);
     setModels([]);
     setExpandedModelKeys(new Set());
@@ -602,8 +723,10 @@ export function OhMyPiProviderForm({
     includeCompatRef.current = hasOwn(presetConfig, "compat");
     const passthrough = objectWithout(presetConfig, ROOT_CONTROLLED_KEYS);
     setProviderPassthrough(passthrough);
-    setPassthroughText(
-      Object.keys(passthrough).length > 0 ? stringifyYaml(passthrough) : "",
+    setUnmanagedText(
+      Object.keys(passthrough).length > 0
+        ? stringifyYaml(passthrough).trim()
+        : "",
     );
     setModels(preset.settingsConfig.models.map((model) => modelDraft(model)));
     setExpandedModelKeys(new Set());
@@ -661,10 +784,37 @@ export function OhMyPiProviderForm({
     setProviderKey(normalizeProviderKey(value));
   }, []);
 
-  const handlePassthroughChange = (value: string) => {
-    setPassthroughText(value);
-    const parsed = parseYamlObject(value);
-    if (parsed) setProviderPassthrough(parsed);
+  const handleDisplayYamlChange = (value: string) => {
+    // YAML → 控件：受管键行同步回表单控件（displayYaml 的受管块由控件
+    // 派生，改动会立即反映回来）；非受管部分原样保留。
+    const parsed = parseYamlObjectWithoutKeyLine(value, providerKey);
+    if (parsed) {
+      setProviderPassthrough(parsed);
+      if (typeof parsed.name === "string") {
+        form.setValue("name", parsed.name, { shouldDirty: true });
+      }
+      setBaseUrl(optionalText(parsed.baseUrl));
+      if (typeof parsed.api === "string" && parsed.api.trim() !== "") {
+        setApi(parsed.api);
+      }
+      setApiKey(optionalText(parsed.apiKey));
+      const parsedHeaders: Record<string, string> = {};
+      for (const [key, val] of Object.entries(asObject(parsed.headers))) {
+        if (typeof val === "string") parsedHeaders[key] = val;
+      }
+      setProviderHeaders(parsedHeaders);
+      setProviderCompat(asObject(parsed.compat));
+      includeCompatRef.current = hasOwn(parsed, "compat");
+      setIncludeModels(hasOwn(parsed, "models"));
+      if (Array.isArray(parsed.models)) {
+        setModels(parsed.models.map((model) => modelDraft(model)));
+        setExpandedModelKeys(new Set());
+      } else {
+        setModels([]);
+      }
+      invalidateFetchedModels();
+    }
+    setUnmanagedText(stripControlledKeys(value));
   };
 
   const changeModelId = (key: string, id: string) => {
@@ -871,7 +1021,7 @@ export function OhMyPiProviderForm({
           ...initialData?.meta,
           // The edited raw text (comments included) is persisted and reused
           // verbatim when writing this entry into models.yml.
-          ohmypiPassthroughYaml: passthroughText.trim() ? passthroughText : undefined,
+          ohmypiPassthroughYaml: displayYaml.trim() ? displayYaml : undefined,
         },
       };
       await onSubmit(values);
@@ -1394,19 +1544,17 @@ export function OhMyPiProviderForm({
               <FormItem className="space-y-2">
                 <Label htmlFor="ohmypi-settings-config">
                   {t("ohmypi.form.configYaml", {
-                    defaultValue: "配置YAML",
+                    defaultValue: "配置 YAML",
                   })}
                 </Label>
                 <JsonEditor
                   id="ohmypi-settings-config"
                   ariaLabel={t("ohmypi.form.configYaml", {
-                    defaultValue: "配置YAML",
+                    defaultValue: "配置 YAML",
                   })}
-                  value={passthroughText}
-                  onChange={handlePassthroughChange}
-                  height={
-                    Math.max(1, passthroughText.split("\n").length) * 20 + 20
-                  }
+                  value={displayYaml}
+                  onChange={handleDisplayYamlChange}
+                  height={Math.max(1, displayYaml.split("\n").length) * 20 + 20}
                   showValidation={false}
                   language="yaml"
                   darkMode={isDarkMode}

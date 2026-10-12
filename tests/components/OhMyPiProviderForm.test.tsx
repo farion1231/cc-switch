@@ -108,4 +108,48 @@ describe("OhMyPi native edits", () => {
     const config = JSON.parse(payload.settingsConfig);
     expect(config.auth).toBe("none");
   });
+
+  it("editing form controls updates the YAML editor in real time", async () => {
+    const { container } = mount({
+      name: "llama.cpp",
+      baseUrl: "http://127.0.0.1:8080",
+      api: "openai-responses",
+      auth: "none",
+    });
+    const editor = container.querySelector(
+      "#ohmypi-settings-config",
+    )! as HTMLTextAreaElement;
+    expect(editor.value).toContain("baseUrl: http://127.0.0.1:8080");
+    fireEvent.change(
+      container.querySelector("#ohmypi-provider-base-url")!,
+      { target: { value: "http://127.0.0.1:8081" } },
+    );
+    await waitFor(() =>
+      expect(editor.value).toContain("baseUrl: http://127.0.0.1:8081"),
+    );
+    // Non-managed lines survive the control-driven rewrite.
+    expect(editor.value).toContain("auth: none");
+  });
+
+  it("editing controlled keys in the YAML editor overrides the form values", async () => {
+    const { onSubmit, container } = mount({
+      name: "llama.cpp",
+      baseUrl: "http://127.0.0.1:8080",
+      api: "openai-responses",
+      auth: "none",
+      discovery: { type: "llama.cpp" },
+    });
+    const editor = container.querySelector(
+      "#ohmypi-settings-config",
+    )! as HTMLTextAreaElement;
+    fireEvent.change(editor, {
+      target: {
+        value: "baseUrl: http://127.0.0.1:8081\nauth: none\ndiscovery:\n  type: llama.cpp",
+      },
+    });
+    const config = await save(onSubmit);
+    expect(config.baseUrl).toBe("http://127.0.0.1:8081");
+    expect(config.auth).toBe("none");
+    expect(config.discovery).toEqual({ type: "llama.cpp" });
+  });
 });
