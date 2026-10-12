@@ -73,6 +73,8 @@ url = "2.5"
 auto-launch = "0.5"
 once_cell = "1.21.3"
 base64 = "0.22"
+# 校验自定义供应商图标；tauri 经 image 已依赖同一版本，不增加编译量
+png = "0.18"
 rusqlite = { version = "0.31", features = ["bundled", "backup", "hooks"] }
 indexmap = { version = "2", features = ["serde"] }
 rust_decimal = "1.33"

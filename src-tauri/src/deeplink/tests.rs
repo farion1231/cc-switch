@@ -79,6 +79,25 @@ fn test_parse_valid_claude_deeplink() {
 }
 
 #[test]
+fn test_parse_deeplink_drops_icon_that_is_not_a_builtin_name() {
+    let base = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test";
+
+    // 大小写和空白照旧归一
+    let request = parse_deeplink_url(&format!("{base}&icon=%20DeepSeek%20")).unwrap();
+    assert_eq!(request.icon, Some("deepseek".to_string()));
+
+    // data URI、外链地址都不是图标名：丢掉，链接本身照常解析
+    for icon in [
+        "data%3Aimage%2Fpng%3Bbase64%2CiVBORw0KGgo%3D",
+        "https%3A%2F%2Fexample.com%2Flogo.png",
+        "%3Csvg%3E",
+    ] {
+        let request = parse_deeplink_url(&format!("{base}&icon={icon}")).unwrap();
+        assert_eq!(request.icon, None, "{icon}");
+    }
+}
+
+#[test]
 fn test_parse_deeplink_with_notes() {
     let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&homepage=https%3A%2F%2Fcodex.com&endpoint=https%3A%2F%2Fapi.codex.com&apiKey=key123&notes=Test%20notes";
 

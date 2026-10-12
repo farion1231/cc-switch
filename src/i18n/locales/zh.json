@@ -3446,6 +3446,16 @@
     "search": "搜索图标",
     "searchPlaceholder": "输入图标名称...",
     "noResults": "未找到匹配的图标",
+    "upload": "上传图片",
+    "uploadHint": "支持 PNG、JPG、WebP、SVG，不超过 2 MB。图片会缩成小尺寸 PNG 保存在本地配置里，随云同步一起带走。",
+    "customIcon": "自定义图标",
+    "removeCustom": "移除",
+    "uploadError": {
+      "unsupported": "不支持这种图片格式，请选择 PNG、JPG、WebP 或 SVG",
+      "tooLarge": "图片超过 2 MB",
+      "decodeFailed": "无法读取这张图片，请换一张试试",
+      "dimensions": "图片尺寸太大（宽高不能超过 4096 像素）"
+    },
     "category": {
       "aiProvider": "AI 服务商",
       "cloud": "云平台",

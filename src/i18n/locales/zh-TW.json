@@ -3447,6 +3447,16 @@
     "search": "搜尋圖示",
     "searchPlaceholder": "輸入圖示名稱...",
     "noResults": "未找到相符的圖示",
+    "upload": "上傳圖片",
+    "uploadHint": "支援 PNG、JPG、WebP、SVG，不超過 2 MB。圖片會縮成小尺寸 PNG 儲存在本機設定中，隨雲端同步一起帶走。",
+    "customIcon": "自訂圖示",
+    "removeCustom": "移除",
+    "uploadError": {
+      "unsupported": "不支援這種圖片格式，請選擇 PNG、JPG、WebP 或 SVG",
+      "tooLarge": "圖片超過 2 MB",
+      "decodeFailed": "無法讀取這張圖片，請換一張試試",
+      "dimensions": "圖片尺寸太大（寬高不能超過 4096 像素）"
+    },
     "category": {
       "aiProvider": "AI 服務商",
       "cloud": "雲端平台",

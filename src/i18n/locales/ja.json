@@ -3446,6 +3446,16 @@
     "search": "アイコンを検索",
     "searchPlaceholder": "アイコン名を入力...",
     "noResults": "一致するアイコンが見つかりません",
+    "upload": "画像をアップロード",
+    "uploadHint": "PNG・JPG・WebP・SVG に対応、2 MB まで。画像は小さな PNG に縮小してローカル設定に保存され、クラウド同期でも一緒に同期されます。",
+    "customIcon": "カスタムアイコン",
+    "removeCustom": "削除",
+    "uploadError": {
+      "unsupported": "この画像形式には対応していません。PNG・JPG・WebP・SVG を選んでください",
+      "tooLarge": "画像が 2 MB を超えています",
+      "decodeFailed": "この画像を読み込めませんでした。別の画像をお試しください",
+      "dimensions": "画像が大きすぎます（幅・高さは 4096 ピクセル以下）"
+    },
     "category": {
       "aiProvider": "AI プロバイダー",
       "cloud": "クラウドプラットフォーム",

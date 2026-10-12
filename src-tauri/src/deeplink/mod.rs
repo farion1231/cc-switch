@@ -115,7 +115,7 @@ pub struct DeepLinkImportRequest {
     /// API key
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    /// Optional provider icon name (maps to built-in SVG)
+    /// Optional built-in provider icon name; anything else is dropped by the parser
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
     /// Optional model name

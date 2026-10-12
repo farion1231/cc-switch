@@ -3446,6 +3446,16 @@
     "search": "Search Icons",
     "searchPlaceholder": "Enter icon name...",
     "noResults": "No matching icons found",
+    "upload": "Upload Image",
+    "uploadHint": "PNG, JPG, WebP or SVG, up to 2 MB. The image is shrunk to a small PNG, saved in your local config and carried along by cloud sync.",
+    "customIcon": "Custom icon",
+    "removeCustom": "Remove",
+    "uploadError": {
+      "unsupported": "Unsupported image format. Choose a PNG, JPG, WebP or SVG file",
+      "tooLarge": "The image is larger than 2 MB",
+      "decodeFailed": "Couldn't read this image, please try another one",
+      "dimensions": "The image is too large (width and height must not exceed 4096 px)"
+    },
     "category": {
       "aiProvider": "AI Providers",
       "cloud": "Cloud Platforms",

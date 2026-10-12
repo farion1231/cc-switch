@@ -68,6 +68,16 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
 }
 
 /// Parse provider deep link parameters
+/// 内置图标名的形状：小写字母、数字、`-`、`_`、`.`，不超过 64 个字符。
+/// 只看形状，不核对图标是否存在（前端找不到时显示首字母）。
+fn is_builtin_icon_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'))
+}
+
 fn parse_provider_deeplink(
     params: &HashMap<String, String>,
     version: String,
@@ -131,10 +141,12 @@ fn parse_provider_deeplink(
     if let Some(ref format) = api_format {
         super::provider::check_api_format(&app, format)?;
     }
+    // icon 只收内置图标名。图片要走下载后重新编码的流程，不能借这个参数直接把
+    // data URI 之类的内容塞进库；不合格的值丢掉，退回首字母图标，不让整条链接失败
     let icon = params
         .get("icon")
         .map(|v| v.trim().to_lowercase())
-        .filter(|v| !v.is_empty());
+        .filter(|v| is_builtin_icon_name(v));
     let config = params.get("config").cloned();
     let config_format = params.get("configFormat").cloned();
     // 远程配置还没实现。在解析阶段就拒绝，用户当场看到原因，而不是确认导入之后才失败
