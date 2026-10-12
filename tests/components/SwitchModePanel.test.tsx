@@ -1,9 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
-import { toast } from "sonner";
+import { toast, Toaster } from "sonner";
 import type { Provider } from "@/types";
 import type { ProxyAppId } from "@/config/appConfig";
 import type { AppMode } from "@/types/proxy";
@@ -11,14 +11,22 @@ import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
-vi.mock("sonner", () => ({
-  toast: {
-    success: vi.fn(),
-    info: vi.fn(),
-    warning: vi.fn(),
-    error: vi.fn(),
-  },
-}));
+vi.mock("sonner", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("sonner")>();
+  return {
+    ...actual,
+    toast: Object.assign(
+      (...args: Parameters<typeof actual.toast>) => actual.toast(...args),
+      actual.toast,
+      {
+        success: vi.fn(actual.toast.success),
+        info: vi.fn(actual.toast.info),
+        warning: vi.fn(actual.toast.warning),
+        error: vi.fn(actual.toast.error),
+      },
+    ),
+  };
+});
 
 // 只关心模式层：卡片画成按钮，按 presentation 的 key 找；「更多」菜单里的项加 menu- 前缀
 vi.mock("@/components/providers/ProviderCard", () => ({
@@ -88,6 +96,7 @@ function renderPanel(
   const queryClient = createTestQueryClient();
   const view = render(
     <QueryClientProvider client={queryClient}>
+      <Toaster theme="light" />
       <SwitchModePanel
         app={app}
         providers={providers}
@@ -111,6 +120,8 @@ beforeEach(() => {
   // jsdom 没有 scrollIntoView，确认框里的下拉打开时会调
   Element.prototype.scrollIntoView = vi.fn();
 });
+
+afterEach(() => toast.dismiss());
 
 describe("SwitchModePanel — Stack mode", () => {
   it("adds and removes Stack members through the backend", async () => {
@@ -216,10 +227,12 @@ describe("SwitchModePanel — Stack mode", () => {
     );
     const { queryClient } = renderPanel("codex", { route: provider("route") });
     await screen.findByText("proxy.stackMode.codexStale.title");
-    fireEvent.click(screen.getByRole("button", { name: "common.close" }));
-    expect(
-      screen.queryByText("proxy.stackMode.codexStale.title"),
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close toast" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText("proxy.stackMode.codexStale.title"),
+      ).not.toBeInTheDocument(),
+    );
 
     // 同一份：再拉一次还是关着。
     await queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });

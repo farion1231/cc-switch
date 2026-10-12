@@ -461,20 +461,6 @@ export function SwitchModePanel({
       </Notice>,
     );
   }
-  if (
-    app === "codex" &&
-    stack?.staleClients &&
-    (stack.staleClients.daemon || stack.staleClients.others) &&
-    staleDismissed !== staleRevision
-  ) {
-    notices.push(
-      <CodexStaleClientsNotice
-        key="stale"
-        staleClients={stack.staleClients}
-        onDismiss={() => setStaleDismissed(staleRevision)}
-      />,
-    );
-  }
   if (view !== active) {
     const cta =
       view === "route"
@@ -515,6 +501,16 @@ export function SwitchModePanel({
 
   return (
     <>
+      {app === "codex" &&
+        stack?.staleClients &&
+        (stack.staleClients.daemon || stack.staleClients.others) &&
+        staleDismissed !== staleRevision && (
+          <CodexStaleClientsNotice
+            key={staleRevision}
+            staleClients={stack.staleClients}
+            onDismiss={() => setStaleDismissed(staleRevision)}
+          />
+        )}
       <ModeTabs
         modes={modes}
         active={active}

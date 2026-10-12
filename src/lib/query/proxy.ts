@@ -13,6 +13,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { getAppLabel } from "@/config/appConfig";
 
 export const proxyKeys = {
+  codexRestart: ["restartCodexAppServerDaemon"] as const,
   status: ["proxyStatus"] as const,
   takeoverStatus: ["proxyTakeoverStatus"] as const,
   globalConfig: ["globalProxyConfig"] as const,
@@ -194,6 +195,8 @@ export function useRestartCodexAppServerDaemon() {
   const { t } = useTranslation();
 
   return useMutation({
+    mutationKey: proxyKeys.codexRestart,
+    retry: false,
     mutationFn: () => proxyApi.restartCodexAppServerDaemon(),
     onSuccess: (outcome) => {
       if (outcome === "notRunning") {
