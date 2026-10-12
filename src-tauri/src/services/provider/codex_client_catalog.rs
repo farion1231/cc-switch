@@ -12,8 +12,10 @@
 //! 一个进程读到的，是它启动之前开始的最后一代。
 //!
 //! 进程只看不动：用户在界面上确认之后，才调 Codex 自己的 `codex app-server daemon restart`。
-//! 桌面版和编辑器插件不替用户重启，只提示彻底退出再开。进程表只在 macOS、Linux 上读（`ps`），
-//! Windows 上看不到进程，不出提示。
+//! 桌面版和编辑器插件不替用户重启，只提示彻底退出再开。进程表只在 macOS、Linux 上读（`ps`）。
+//! Windows 上没有进程表：守护进程按它自己的 `daemon.pid` 打开进程、比对创建时间来判断；其余
+//! app-server 看不到，改成「变了就提醒」——目录或文件登录和用户上次确认时（[`ACK_FILENAME`]）
+//! 不同就提示可能还在用旧的，用户关掉提示时记下现在这份。`ps` 读不出来时也这样退回。
 
 use std::process::Output;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -33,6 +35,8 @@ use super::codex_direct::read_config_text;
 
 pub(crate) const HISTORY_FILENAME: &str = "codex-catalog-history.json";
 const LOGIN_HISTORY_FILENAME: &str = "codex-login-history.json";
+/// 看不到进程时，用户上次确认（关掉提示）时的目录和文件登录。
+const ACK_FILENAME: &str = "codex-client-ack.json";
 /// 最多记这么多代。更早启动的进程判断不了，按旧的算。
 const HISTORY_LIMIT: usize = 32;
 /// 进程的启动时刻只精确到秒（`ps` 的 etime），每一代又是写完之后才记下的：启动时刻离一代的
@@ -66,6 +70,10 @@ pub struct StaleClients {
     /// 文件登录的身份变了，进程可能还缓存着旧账号。不是查询进程内存得到的确认。
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub auth: bool,
+    /// 看不到桌面版、编辑器插件的进程（Windows，或 `ps` 读不出来）：`others` 只表示用户上次确认
+    /// 之后目录或登录变了，不知道有没有开着。用户关掉提示时调 [`acknowledge`]。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unverified: bool,
 }
 
 /// 重启守护进程的结果（给前端）。
@@ -82,12 +90,26 @@ pub enum RestartOutcome {
 struct AppServers {
     daemon: Option<u64>,
     others: Vec<u64>,
+    /// 没有进程表：`others` 是空的不代表没开着。
+    others_unknown: bool,
+}
+
+/// 用户上次确认时的目录和文件登录（[`ACK_FILENAME`]）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Acknowledged {
+    catalog: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    login: Option<String>,
 }
 
 /// 外部依赖：进程表、时钟、重启命令。测试里换成假的。
 pub(crate) struct Env {
     /// `ps -Ao pid=,etime=,command=` 的输出；读不到（或在 Windows 上）是 `None`。
     pub process_table: Box<dyn Fn() -> Option<String> + Send + Sync>,
+    /// 没有进程表时，`daemon.pid` 记的守护进程还活着的话它的启动时刻（Unix 毫秒）。只有
+    /// Windows 能这样查，别的平台是 `None`。
+    pub daemon_started: Box<dyn Fn() -> Option<u64> + Send + Sync>,
     /// Unix 毫秒。
     pub now_ms: Box<dyn Fn() -> u64 + Send + Sync>,
     /// 执行 `codex app-server daemon restart`，参数是超时。
@@ -98,6 +120,7 @@ impl Env {
     fn real() -> Self {
         Self {
             process_table: Box::new(read_process_table),
+            daemon_started: Box::new(read_daemon_started),
             now_ms: Box::new(|| {
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -154,6 +177,69 @@ fn read_process_table() -> Option<String> {
 #[cfg(not(unix))]
 fn read_process_table() -> Option<String> {
     None
+}
+
+/// Windows：`daemon.pid` 里记着守护进程的 pid 和创建时间（codex-rs `backend/pid.rs` 的
+/// `processStartTime`，Windows 上是 FILETIME 的十进制）。按 pid 打开进程，还在运行、创建时间
+/// 也对得上（pid 没被别的进程复用）才算它在跑，返回它的启动时刻。
+#[cfg(windows)]
+fn read_daemon_started() -> Option<u64> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    let (pid, recorded) = daemon_record()?;
+    // SAFETY: 只查询；句柄在下面关掉。
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return None;
+    }
+    let zero = || FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero(), zero(), zero(), zero());
+    let mut exit_code = 0u32;
+    // SAFETY: 句柄有效，输出参数都指向本地变量。
+    let queried = unsafe {
+        GetExitCodeProcess(handle, &mut exit_code) != 0
+            && GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) != 0
+    };
+    // SAFETY: OpenProcess 返回的句柄只关这一次。
+    unsafe { CloseHandle(handle) };
+    let created = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+    if !queried || exit_code != STILL_ACTIVE as u32 || created != recorded {
+        return None;
+    }
+    filetime_to_unix_ms(created)
+}
+
+#[cfg(not(windows))]
+fn read_daemon_started() -> Option<u64> {
+    None
+}
+
+/// `daemon.pid` 的 pid 和 `processStartTime`（Windows 上的 FILETIME）。
+#[cfg(any(windows, test))]
+fn daemon_record() -> Option<(u32, u64)> {
+    let bytes = std::fs::read(
+        get_codex_config_dir()
+            .join("app-server-daemon")
+            .join("daemon.pid"),
+    )
+    .ok()?;
+    let record: Value = serde_json::from_slice(&bytes).ok()?;
+    let pid = u32::try_from(record.get("pid")?.as_u64()?).ok()?;
+    let started = record.get("processStartTime")?.as_str()?.parse().ok()?;
+    Some((pid, started))
+}
+
+/// FILETIME（从 1601 年起的 100 纳秒数）换成 Unix 毫秒。
+#[cfg(any(windows, test))]
+fn filetime_to_unix_ms(filetime: u64) -> Option<u64> {
+    const UNIX_EPOCH_AS_FILETIME_MS: u64 = 11_644_473_600_000;
+    (filetime / 10_000).checked_sub(UNIX_EPOCH_AS_FILETIME_MS)
 }
 
 fn run_restart(timeout: Duration) -> Result<Output, String> {
@@ -273,15 +359,17 @@ pub(crate) fn stale_clients(store: &DeviceStore, check_catalog: bool) -> Option<
     } else {
         None
     };
-    if let Some(login) = current_login_fingerprint() {
-        let history = record_history(store, LOGIN_HISTORY_FILENAME, &login, (env.now_ms)());
+    let login = current_login_fingerprint();
+    if let Some(login) = &login {
+        let history = record_history(store, LOGIN_HISTORY_FILENAME, login, (env.now_ms)());
         // 首次观察不是切号；不能因进程早于安装 CC Switch 就声称它缓存了别的账号。
         if history.len() > 1 {
-            if let Some(auth_stale) = judge(&history, &login, &servers) {
+            if let Some(auth_stale) = judge(&history, login, &servers) {
                 let clients = stale.get_or_insert(StaleClients {
                     daemon: false,
                     others: false,
                     auth: false,
+                    unverified: false,
                 });
                 clients.daemon |= auth_stale.daemon;
                 clients.others |= auth_stale.others;
@@ -289,7 +377,82 @@ pub(crate) fn stale_clients(store: &DeviceStore, check_catalog: bool) -> Option<
             }
         }
     }
+    if servers.others_unknown {
+        let ack = acknowledged(store, &current, login.as_deref());
+        let catalog_changed = check_catalog && ack.catalog != current;
+        // 确认时不是文件登录（没记下身份）不算切号，和首次观察一样。
+        let login_changed =
+            matches!((&ack.login, &login), (Some(before), Some(now)) if before != now);
+        if catalog_changed || login_changed {
+            let clients = stale.get_or_insert(StaleClients {
+                daemon: false,
+                others: false,
+                auth: false,
+                unverified: false,
+            });
+            clients.others = true;
+            clients.unverified = true;
+            clients.auth |= login_changed;
+        }
+    }
     stale
+}
+
+/// 看不到进程时，用户上次确认的目录和登录。从没确认过就把现在这份当作确认过的：装好或升级
+/// 之后第一次不提示，不能因为以前切过就声称开着的客户端还在用旧的。
+fn acknowledged(store: &DeviceStore, catalog: &str, login: Option<&str>) -> Acknowledged {
+    let _guard = history_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let path = store.file(ACK_FILENAME);
+    if let Some(mut ack) = std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Acknowledged>(&bytes).ok())
+    {
+        // 确认时还没有文件登录：第一次看到的登录记作基准（登录不是切号），之后再换才提示。
+        if ack.login.is_none() && login.is_some() {
+            ack.login = login.map(str::to_string);
+            write_ack(store, &ack);
+        }
+        return ack;
+    }
+    let ack = Acknowledged {
+        catalog: catalog.to_string(),
+        login: login.map(str::to_string),
+    };
+    write_ack(store, &ack);
+    ack
+}
+
+/// 提示对应的是哪一份目录和登录（给前端）：用户关掉提示之后，这个值变了（目录或登录又改了）
+/// 才是新的提示，要重新显示。
+pub(crate) fn revision() -> String {
+    sha256_hex(
+        format!(
+            "{}\n{:?}",
+            current_fingerprint(),
+            current_login_fingerprint()
+        )
+        .as_bytes(),
+    )
+}
+
+/// 用户关掉「可能还在用旧的」提示：记下现在的目录和登录，同一份不再提示，再变才提示。
+pub(crate) fn acknowledge(store: &DeviceStore) {
+    let ack = Acknowledged {
+        catalog: current_fingerprint(),
+        login: current_login_fingerprint(),
+    };
+    let _guard = history_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    write_ack(store, &ack);
+}
+
+fn write_ack(store: &DeviceStore, ack: &Acknowledged) {
+    if let Err(error) = crate::config::write_json_file(&store.file(ACK_FILENAME), ack) {
+        log::warn!("记录 Codex 客户端提示的确认失败: {error}");
+    }
 }
 
 fn judge(history: &[Generation], current: &str, servers: &AppServers) -> Option<StaleClients> {
@@ -304,6 +467,7 @@ fn judge(history: &[Generation], current: &str, servers: &AppServers) -> Option<
         daemon,
         others,
         auth: false,
+        unverified: false,
     })
 }
 
@@ -322,7 +486,11 @@ fn is_stale(history: &[Generation], current: &str, started_ms: u64) -> bool {
 
 fn probe(env: &Env) -> AppServers {
     let Some(table) = (env.process_table)() else {
-        return AppServers::default();
+        return AppServers {
+            daemon: (env.daemon_started)(),
+            others: Vec::new(),
+            others_unknown: true,
+        };
     };
     let plugins = format!("{}/", get_codex_config_dir().join("plugins").display());
     classify(&table, daemon_pid(), &plugins, (env.now_ms)())
@@ -545,12 +713,49 @@ mod tests {
         let now = clock.clone();
         set_test_env(Env {
             process_table: Box::new(move || Some(table.lock().unwrap().clone())),
+            daemon_started: Box::new(|| None),
             now_ms: Box::new(move || now.load(Ordering::SeqCst)),
             restart: Box::new(move |_| {
                 restarted.store(true, Ordering::SeqCst);
                 Ok(success(r#"{"status":"restarted","pid":1}"#))
             }),
         });
+    }
+
+    /// 看不到进程表的环境（Windows）：`daemon` 是按 `daemon.pid` 查到的守护进程启动时刻。
+    fn fake_env_without_table(
+        clock: Arc<AtomicU64>,
+        daemon: Arc<Mutex<Option<u64>>>,
+        restarted: Arc<AtomicBool>,
+    ) {
+        let now = clock.clone();
+        set_test_env(Env {
+            process_table: Box::new(|| None),
+            daemon_started: Box::new(move || *daemon.lock().unwrap()),
+            now_ms: Box::new(move || now.load(Ordering::SeqCst)),
+            restart: Box::new(move |_| {
+                restarted.store(true, Ordering::SeqCst);
+                Ok(success(r#"{"status":"restarted","pid":1}"#))
+            }),
+        });
+    }
+
+    fn write_file_login(account: &str) {
+        std::fs::write(
+            get_codex_config_dir().join("auth.json"),
+            serde_json::json!({"tokens": {"account_id": account, "access_token": "token"}})
+                .to_string(),
+        )
+        .unwrap();
+    }
+
+    fn unverified(daemon: bool, auth: bool) -> Option<StaleClients> {
+        Some(StaleClients {
+            daemon,
+            others: true,
+            auth,
+            unverified: true,
+        })
     }
 
     #[cfg(unix)]
@@ -744,7 +949,8 @@ mod tests {
             Some(StaleClients {
                 daemon: true,
                 others: false,
-                auth: false
+                auth: false,
+                unverified: false
             })
         );
 
@@ -762,7 +968,8 @@ mod tests {
             Some(StaleClients {
                 daemon: true,
                 others: false,
-                auth: false
+                auth: false,
+                unverified: false
             })
         );
     }
@@ -793,7 +1000,8 @@ mod tests {
             Some(StaleClients {
                 daemon: false,
                 others: true,
-                auth: false
+                auth: false,
+                unverified: false
             })
         );
         // 撤掉指针之后仍提示：桌面版还拿着 CC Switch 的旧目录，新启动的 Codex 读的是内置列表。
@@ -803,7 +1011,8 @@ mod tests {
             Some(StaleClients {
                 daemon: false,
                 others: true,
-                auth: false
+                auth: false,
+                unverified: false
             })
         );
     }
@@ -936,6 +1145,174 @@ mod tests {
             format!("59013 07:19 {DAEMON} app-server --listen unix:// --managed-daemon");
         assert_eq!(restart_daemon(), Ok(RestartOutcome::Restarted));
         assert!(restarted.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    #[serial]
+    fn without_a_process_table_changes_since_the_last_acknowledgement_are_reported() {
+        let scope = Scope::new();
+        let store = scope.store();
+        let clock = Arc::new(AtomicU64::new(1_000_000));
+        let daemon = Arc::new(Mutex::new(None));
+        fake_env_without_table(clock.clone(), daemon, Arc::new(AtomicBool::new(false)));
+        point_at_catalog(Some("a"));
+        observe(&store);
+        // 第一次查：没确认过，把现在这份当作确认过的，不提示。
+        assert_eq!(stale_clients(&store, true), None);
+
+        clock.store(1_100_000, Ordering::SeqCst);
+        point_at_catalog(Some("b"));
+        observe(&store);
+        assert_eq!(stale_clients(&store, true), unverified(false, false));
+        // 路由那家自己管理目录时不查目录。
+        assert_eq!(stale_clients(&store, false), None);
+
+        // 用户关掉提示：同一份不再提示。
+        acknowledge(&store);
+        assert_eq!(stale_clients(&store, true), None);
+
+        // 撤掉指针也是变了：开着的客户端还拿着 CC Switch 的目录。
+        point_at_catalog(None);
+        observe(&store);
+        assert_eq!(stale_clients(&store, true), unverified(false, false));
+        acknowledge(&store);
+
+        // 退出 CC Switch 撤掉、再启动写回同一份：最后和确认时一样，不提示。
+        point_at_catalog(Some("b"));
+        observe(&store);
+        point_at_catalog(None);
+        observe(&store);
+        assert_eq!(stale_clients(&store, true), None);
+    }
+
+    #[test]
+    #[serial]
+    fn without_a_process_table_the_daemon_is_judged_by_its_start_time() {
+        let scope = Scope::new();
+        let store = scope.store();
+        let clock = Arc::new(AtomicU64::new(1_000_000));
+        let daemon = Arc::new(Mutex::new(None));
+        fake_env_without_table(
+            clock.clone(),
+            daemon.clone(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        point_at_catalog(Some("a"));
+        observe(&store);
+        clock.store(1_100_000, Ordering::SeqCst);
+        // 守护进程在 a 时启动。
+        *daemon.lock().unwrap() = Some(1_050_000);
+        assert_eq!(stale_clients(&store, true), None);
+
+        clock.store(1_200_000, Ordering::SeqCst);
+        point_at_catalog(Some("b"));
+        observe(&store);
+        assert_eq!(stale_clients(&store, true), unverified(true, false));
+
+        // 用户关掉提示：桌面版那部分不再提示，守护进程照样是旧的。
+        acknowledge(&store);
+        assert_eq!(
+            stale_clients(&store, true),
+            Some(StaleClients {
+                daemon: true,
+                others: false,
+                auth: false,
+                unverified: false
+            })
+        );
+        // 守护进程重启之后：读到的是现在这份。
+        *daemon.lock().unwrap() = Some(1_300_000);
+        clock.store(1_400_000, Ordering::SeqCst);
+        assert_eq!(stale_clients(&store, true), None);
+    }
+
+    #[test]
+    #[serial]
+    fn without_a_process_table_an_account_switch_is_reported_but_a_first_login_is_not() {
+        let scope = Scope::new();
+        let store = scope.store();
+        let clock = Arc::new(AtomicU64::new(1_000_000));
+        fake_env_without_table(
+            clock.clone(),
+            Arc::new(Mutex::new(None)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        point_at_catalog(None);
+        // 第一次检查时还没有文件登录：之后登录不算切号，但要记下它，再换账号才能提示。
+        assert_eq!(stale_clients(&store, true), None);
+        write_file_login("a");
+        observe(&store);
+        assert_eq!(stale_clients(&store, true), None);
+
+        write_file_login("b");
+        observe(&store);
+        assert_eq!(stale_clients(&store, true), unverified(false, true));
+        acknowledge(&store);
+        assert_eq!(stale_clients(&store, true), None);
+    }
+
+    #[test]
+    #[serial]
+    fn without_a_process_table_restart_needs_a_live_daemon() {
+        let _scope = Scope::new();
+        let restarted = Arc::new(AtomicBool::new(false));
+        let daemon = Arc::new(Mutex::new(None));
+        fake_env_without_table(
+            Arc::new(AtomicU64::new(1_000_000)),
+            daemon.clone(),
+            restarted.clone(),
+        );
+        // `codex app-server daemon restart` 在守护进程没跑时会起一个新的：不调。
+        assert_eq!(restart_daemon(), Ok(RestartOutcome::NotRunning));
+        assert!(!restarted.load(Ordering::SeqCst));
+
+        *daemon.lock().unwrap() = Some(900_000);
+        assert_eq!(restart_daemon(), Ok(RestartOutcome::Restarted));
+        assert!(restarted.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    #[serial]
+    fn the_revision_changes_with_the_catalog_and_the_login() {
+        let _scope = Scope::new();
+        point_at_catalog(Some("{\"models\":[1]}"));
+        let first = revision();
+        assert_eq!(revision(), first, "same catalog, same notice");
+
+        point_at_catalog(Some("{\"models\":[2]}"));
+        let second = revision();
+        assert_ne!(second, first, "the catalog changed again");
+
+        write_file_login("a");
+        assert_ne!(revision(), second, "the login changed");
+    }
+
+    #[test]
+    #[serial]
+    fn reads_the_daemon_record_and_converts_filetime() {
+        let _scope = Scope::new();
+        assert_eq!(daemon_record(), None);
+        let dir = get_codex_config_dir().join("app-server-daemon");
+        std::fs::create_dir_all(&dir).unwrap();
+        // 2026-10-10T00:00:00Z
+        std::fs::write(
+            dir.join("daemon.pid"),
+            r#"{"pid":4242,"processStartTime":"134360640000000000"}"#,
+        )
+        .unwrap();
+        assert_eq!(daemon_record(), Some((4242, 134_360_640_000_000_000)));
+        assert_eq!(
+            filetime_to_unix_ms(134_360_640_000_000_000),
+            Some(1_791_590_400_000)
+        );
+        assert_eq!(filetime_to_unix_ms(0), None);
+        // Unix 上 processStartTime 是 `ps` 的 lstart 文本，不是数字：认不出来。
+        std::fs::write(
+            dir.join("daemon.pid"),
+            r#"{"pid":4242,"processStartTime":"Sat Oct 10 08:00:00 2026"}"#,
+        )
+        .unwrap();
+        assert_eq!(daemon_record(), None);
     }
 
     #[test]

@@ -181,8 +181,10 @@ fn validate_codex_official_authorization(
         None | Some("") => Err(ProxyError::AuthError(
             "Codex 官方登录不可用，请先在 Codex 中完成 ChatGPT 登录".to_string(),
         )),
+        // 带占位 Key 的请求有两种来源：没重载配置的 Codex 进程；或切换前用第三方供应商建的
+        // 旧会话（Codex 按会话记下的 provider 走休眠的 custom 表，重启也还是它）。
         Some(value) if value.contains(PROXY_AUTH_PLACEHOLDER) => Err(ProxyError::AuthError(
-            "已切换到 OpenAI 官方供应商，请重启 Codex 或新建会话以加载官方登录配置".to_string(),
+            "已切换到 OpenAI 官方供应商，但这个请求仍按第三方供应商的配置发出。如果这是切换前用第三方供应商创建的旧会话，它会一直沿用原供应商，重启也无效，请新建会话继续；否则请重启 Codex 以加载官方登录配置".to_string(),
         )),
         Some(_) => {
             let managed_account_id = provider
@@ -5602,7 +5604,11 @@ mod tests {
         provider.category = Some("official".to_string());
         let error = validate_codex_official_authorization(&headers, &provider, None, None)
             .expect_err("stale placeholder must be rejected");
-        assert!(matches!(error, ProxyError::AuthError(message) if message.contains("重启 Codex")));
+        assert!(matches!(
+            error,
+            ProxyError::AuthError(message)
+                if message.contains("重启 Codex") && message.contains("新建会话")
+        ));
     }
 
     #[test]

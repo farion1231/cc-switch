@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import {
   Collapsible,
   CollapsibleContent,
@@ -27,9 +28,12 @@ import {
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import {
   ApiKeySection,
+  DirectModeFormatWarning,
   EndpointField,
+  FullUrlToggle,
   ModelDropdown,
   ModelInputWithFetch,
+  type DirectModeFormatNotice,
 } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
@@ -43,6 +47,7 @@ import {
   fetchCodexOauthModels,
   fetchXaiOauthModels,
   fetchModelsForConfig,
+  modelFetchRequestHeaders,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
@@ -169,6 +174,8 @@ interface ClaudeFormFieldsProps {
    * 模型列表 + 高级），不显示模型映射。
    */
   variant?: "classic" | "stack";
+  /** 应用实际在直连时传：选了要靠路由转换的格式就在格式下面提示后果。 */
+  directModeFormatNotice?: DirectModeFormatNotice;
   /** Stack 布局的模型列表（第一行是这家的默认模型）。 */
   stackModelRows?: ClaudeStackModelRow[];
   onStackModelRowsChange?: (rows: ClaudeStackModelRow[]) => void;
@@ -239,6 +246,7 @@ export function ClaudeFormFields({
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
   variant = "classic",
+  directModeFormatNotice,
   stackModelRows = [],
   onStackModelRowsChange,
 }: ClaudeFormFieldsProps) {
@@ -253,8 +261,9 @@ export function ClaudeFormFields({
     defaultOpusModel ||
     defaultFableModel ||
     subagentModel ||
-    (!isXaiOauthPreset && apiFormat !== "anthropic") ||
+    (!isXaiOauthPreset && !isCodexOauthPreset && apiFormat !== "anthropic") ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
+    isFullUrl ||
     customUserAgent ||
     hasRequestOverrides
   );
@@ -271,9 +280,9 @@ export function ClaudeFormFields({
     }
   }, [hasAnyAdvancedValue, isXaiOauthPreset]);
 
-  // Stack 布局的高级区只有 User-Agent 和请求覆盖，填了才展开。
+  // Stack 布局的高级区只有完整 URL、User-Agent 和请求覆盖，开了或填了才展开。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
-    !!customUserAgent || hasRequestOverrides,
+    isFullUrl || !!customUserAgent || hasRequestOverrides,
   );
 
   // Copilot 可用模型列表
@@ -295,15 +304,17 @@ export function ClaudeFormFields({
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
 
+  // 聚合布局的模型列表拉取成功后直接打开选择弹窗，不再提示成功。
+  const opensModelPicker = variant === "stack" && !!onStackModelRowsChange;
   const showModelFetchResult = useCallback(
     (count: number) => {
       if (count === 0) {
         toast.info(t("providerForm.fetchModelsEmpty"));
-      } else {
+      } else if (!opensModelPicker) {
         toast.success(t("providerForm.fetchModelsSuccess", { count }));
       }
     },
-    [t],
+    [opensModelPicker, t],
   );
 
   const handleFetchModels = useCallback(() => {
@@ -323,7 +334,16 @@ export function ClaudeFormFields({
     const modelsUrl = matchedPreset?.modelsUrl;
 
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl, customUserAgent)
+    fetchModelsForConfig(
+      baseUrl,
+      apiKey,
+      isFullUrl,
+      modelsUrl,
+      customUserAgent,
+      {
+        requestHeaders: modelFetchRequestHeaders(localProxyHeadersOverride),
+      },
+    )
       .then((models) => {
         setFetchedModels(models);
         showModelFetchResult(models.length);
@@ -333,7 +353,15 @@ export function ClaudeFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, isFullUrl, customUserAgent, showModelFetchResult, t]);
+  }, [
+    baseUrl,
+    apiKey,
+    isFullUrl,
+    customUserAgent,
+    localProxyHeadersOverride,
+    showModelFetchResult,
+    t,
+  ]);
 
   const handleFetchCopilotModels = useCallback(() => {
     if (!isCopilotAuthenticated) {
@@ -765,37 +793,31 @@ export function ClaudeFormFields({
     </>
   );
 
+  // 字段说明一律收进字段名后的「?」（和 Codex 表单一致），页面上只留后果提示。
+  const endpointHint =
+    apiFormat === "openai_responses"
+      ? t("providerForm.apiHintResponses")
+      : apiFormat === "openai_chat"
+        ? t("providerForm.apiHintOAI")
+        : apiFormat === "gemini_native"
+          ? t("providerForm.apiHintGeminiNative")
+          : t("providerForm.apiHint");
+
   const endpointSection = (
     <>
-      {/* Base URL 输入框 */}
-      {shouldShowSpeedTest && (
+      {/* Base URL 输入框；Codex / xAI 托管账号卡的上游地址由后端固定，不显示 */}
+      {shouldShowSpeedTest && !isCodexOauthPreset && !isXaiOauthPreset && (
         <EndpointField
           id="baseUrl"
           label={t("providerForm.apiEndpoint")}
           value={baseUrl}
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.apiEndpointPlaceholder")}
-          hint={
-            apiFormat === "openai_responses"
-              ? t("providerForm.apiHintResponses")
-              : apiFormat === "openai_chat"
-                ? t("providerForm.apiHintOAI")
-                : apiFormat === "gemini_native"
-                  ? t("providerForm.apiHintGeminiNative")
-                  : t("providerForm.apiHint")
-          }
-          fullUrlHint={
-            apiFormat === "gemini_native"
-              ? t("providerForm.fullUrlHintGeminiNative")
-              : undefined
-          }
+          help={endpointHint}
           showManageButton={showEndpointTools}
           onManageClick={
             showEndpointTools ? () => onEndpointModalToggle(true) : undefined
           }
-          showFullUrlToggle={showEndpointTools && !isXaiOauthPreset}
-          isFullUrl={isFullUrl}
-          onFullUrlChange={onFullUrlChange}
         />
       )}
     </>
@@ -822,58 +844,76 @@ export function ClaudeFormFields({
   );
 
   // 上游格式、认证字段：经典布局放在高级选项里，Stack 布局放在连接区。
+  const apiFormatLabel = t("providerForm.apiFormat", {
+    defaultValue: "上游格式",
+  });
+
   const apiFormatField = (
     <>
-      {/* 上游格式选择（仅非云服务商显示） */}
-      {category !== "cloud_provider" && !isXaiOauthPreset && (
-        <div className="space-y-2">
-          <FormLabel htmlFor="apiFormat">
-            {t("providerForm.apiFormat", { defaultValue: "上游格式" })}
-          </FormLabel>
-          <Select value={apiFormat} onValueChange={onApiFormatChange}>
-            <SelectTrigger id="apiFormat" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="anthropic">
-                {t("providerForm.apiFormatAnthropic", {
-                  defaultValue: "Anthropic Messages (原生)",
+      {/* 上游格式选择（仅非云服务商显示；xAI、Codex 托管账号卡的格式由后端固定） */}
+      {category !== "cloud_provider" &&
+        !isXaiOauthPreset &&
+        !isCodexOauthPreset && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-0.5">
+              <FormLabel htmlFor="apiFormat">{apiFormatLabel}</FormLabel>
+              <HelpTip title={apiFormatLabel}>
+                {t("providerForm.apiFormatHelp", {
+                  defaultValue:
+                    "看供应商原生支持哪种协议：Anthropic Messages 原样转发、不转换格式；其余三种由路由转成 Anthropic Messages。",
                 })}
-              </SelectItem>
-              <SelectItem value="openai_chat">
-                {t("providerForm.apiFormatOpenAIChat", {
-                  defaultValue: "OpenAI Chat Completions (需转换)",
-                })}
-              </SelectItem>
-              <SelectItem value="openai_responses">
-                {t("providerForm.apiFormatOpenAIResponses", {
-                  defaultValue: "OpenAI Responses API (需转换)",
-                })}
-              </SelectItem>
-              <SelectItem value="gemini_native">
-                {t("providerForm.apiFormatGeminiNative", {
-                  defaultValue: "Gemini Native generateContent (需转换)",
-                })}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-xs leading-relaxed text-fg-2">
-            {t("providerForm.apiFormatHint", {
-              defaultValue:
-                "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
-            })}
-          </p>
-        </div>
-      )}
+              </HelpTip>
+            </div>
+            <Select value={apiFormat} onValueChange={onApiFormatChange}>
+              <SelectTrigger id="apiFormat" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="anthropic">
+                  {t("providerForm.apiFormatAnthropic", {
+                    defaultValue: "Anthropic Messages (原生)",
+                  })}
+                </SelectItem>
+                <SelectItem value="openai_chat">
+                  {t("providerForm.apiFormatOpenAIChat", {
+                    defaultValue: "OpenAI Chat Completions (需转换)",
+                  })}
+                </SelectItem>
+                <SelectItem value="openai_responses">
+                  {t("providerForm.apiFormatOpenAIResponses", {
+                    defaultValue: "OpenAI Responses API (需转换)",
+                  })}
+                </SelectItem>
+                <SelectItem value="gemini_native">
+                  {t("providerForm.apiFormatGeminiNative", {
+                    defaultValue: "Gemini Native generateContent (需转换)",
+                  })}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            {directModeFormatNotice && apiFormat !== "anthropic" && (
+              <DirectModeFormatWarning notice={directModeFormatNotice} />
+            )}
+          </div>
+        )}
     </>
   );
 
   // 认证字段选择器
+  const authFieldLabel = t("providerForm.authField", {
+    defaultValue: "认证字段",
+  });
   const authFieldSelect = (
     <div className="space-y-2">
-      <FormLabel>
-        {t("providerForm.authField", { defaultValue: "认证字段" })}
-      </FormLabel>
+      <div className="flex items-center gap-0.5">
+        <FormLabel>{authFieldLabel}</FormLabel>
+        <HelpTip title={authFieldLabel}>
+          {t("providerForm.authFieldHint", {
+            defaultValue:
+              "直连时是写进 settings.json 的变量名；经过路由时，AUTH_TOKEN 以 Bearer、API_KEY 以 x-api-key 发给上游。",
+          })}
+        </HelpTip>
+      </div>
       <Select
         value={apiKeyField}
         onValueChange={(v) => onApiKeyFieldChange(v as ClaudeApiKeyField)}
@@ -894,12 +934,59 @@ export function ClaudeFormFields({
           </SelectItem>
         </SelectContent>
       </Select>
-      <p className="text-xs text-fg-2">
-        {t("providerForm.authFieldHint", {
-          defaultValue: "选择写入配置的认证环境变量名",
+    </div>
+  );
+
+  const fallbackModelLabel = t("providerForm.fallbackModelLabel", {
+    defaultValue: "默认兜底模型",
+  });
+  // 只有第三方端点才认不出原始 Claude 模型名：直连看后台任务用的 Haiku 档，路由看兜底模型本身。
+  const usesThirdPartyEndpoint =
+    category !== "official" && category !== "cloud_provider";
+  const fallbackModelMissing =
+    usesThirdPartyEndpoint &&
+    !(directModeFormatNotice ? defaultHaikuModel : claudeModel).trim();
+
+  // 完整 URL 跟着地址框：托管账号卡的地址由后端固定，没有这个开关。
+  const fullUrlToggle = shouldShowSpeedTest &&
+    showEndpointTools &&
+    !isCodexOauthPreset &&
+    !isXaiOauthPreset && (
+      <FullUrlToggle
+        checked={isFullUrl}
+        onCheckedChange={onFullUrlChange}
+        geminiNative={apiFormat === "gemini_native"}
+      />
+    );
+
+  // 两项都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
+  const userAgentAndOverrides = (
+    <>
+      <p className="text-xs leading-relaxed text-fg-2">
+        {t("codexConfig.routeOnlySettingsHint", {
+          defaultValue: "以下两项只在路由、聚合模式下生效。",
         })}
       </p>
-    </div>
+      <CustomUserAgentField
+        id="claude-custom-user-agent"
+        value={customUserAgent}
+        onChange={onCustomUserAgentChange}
+        help={t("providerForm.customUserAgentHelp", {
+          defaultValue: "替换转发到供应商的请求里的 User-Agent。",
+        })}
+      />
+      <div className="border-t border-border pt-3">
+        <LocalProxyRequestOverridesField
+          headersJson={localProxyHeadersOverride}
+          bodyJson={localProxyBodyOverride}
+          onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
+          onBodyJsonChange={onLocalProxyBodyOverrideChange}
+          help={t("providerForm.localProxyRequestOverridesHelp", {
+            defaultValue: "作用于格式转换后发给上游的请求。",
+          })}
+        />
+      </div>
+    </>
   );
 
   if (variant === "stack") {
@@ -936,52 +1023,42 @@ export function ClaudeFormFields({
             fetchedModels={stackFetchedModels}
             onFetchModels={handleModelFetchClick}
             isFetchingModels={modelFetchLoading}
+            baseUrl={baseUrl}
           />
         )}
 
-        <Collapsible
-          open={stackAdvancedExpanded}
-          onOpenChange={setStackAdvancedExpanded}
-          className="rounded-lg border border-border p-4"
-        >
-          <CollapsibleTrigger asChild>
-            <Button
-              type="button"
-              variant={null}
-              size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
-            >
-              {stackAdvancedExpanded ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
+        {/* 高级区只有 UA 和请求覆盖；Copilot 的转发会跳过这两项，整块不显示 */}
+        {!isCopilotPreset && (
+          <Collapsible
+            open={stackAdvancedExpanded}
+            onOpenChange={setStackAdvancedExpanded}
+            className="rounded-lg border border-border p-4"
+          >
+            <CollapsibleTrigger asChild>
+              <Button
+                type="button"
+                variant={null}
+                size="sm"
+                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
+              >
+                {stackAdvancedExpanded ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+                {t("providerForm.advancedOptionsToggle")}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-4 pt-2">
+              {fullUrlToggle && (
+                <div className="border-b border-border pb-3">
+                  {fullUrlToggle}
+                </div>
               )}
-              {t("providerForm.advancedOptionsToggle")}
-            </Button>
-          </CollapsibleTrigger>
-          {!stackAdvancedExpanded && (
-            <p className="text-xs text-fg-2 mt-1 ml-1">
-              {t("providerForm.stackLayout.advancedHint", {
-                defaultValue: "自定义 User-Agent 与请求覆盖，一般无需修改。",
-              })}
-            </p>
-          )}
-          <CollapsibleContent className="space-y-4 pt-2">
-            <CustomUserAgentField
-              id="claude-custom-user-agent"
-              value={customUserAgent}
-              onChange={onCustomUserAgentChange}
-            />
-            <div className="border-t border-border pt-3">
-              <LocalProxyRequestOverridesField
-                headersJson={localProxyHeadersOverride}
-                bodyJson={localProxyBodyOverride}
-                onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
-                onBodyJsonChange={onLocalProxyBodyOverrideChange}
-              />
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+              {userAgentAndOverrides}
+            </CollapsibleContent>
+          </Collapsible>
+        )}
       </>
     );
   }
@@ -1015,20 +1092,27 @@ export function ClaudeFormFields({
               {t("providerForm.advancedOptionsToggle")}
             </Button>
           </CollapsibleTrigger>
-          {!advancedExpanded && (
-            <p className="text-xs text-fg-2 mt-1 ml-1">
-              {t("providerForm.advancedOptionsHint")}
-            </p>
-          )}
           <CollapsibleContent className="space-y-4 pt-2">
             {apiFormatField}
 
-            {authFieldSelect}
+            {fullUrlToggle}
+
+            {/* 认证字段只决定 Anthropic 格式上游的认证头（OpenAI 格式一律 Bearer）；Copilot
+                靠它决定占位符写在哪个变量；Codex / xAI 托管账号卡的认证由后端注入。 */}
+            {!isCodexOauthPreset &&
+              !isXaiOauthPreset &&
+              (apiFormat === "anthropic" || isCopilotPreset) &&
+              authFieldSelect}
 
             {/* 模型映射 */}
             <div className="space-y-1 border-t border-border pt-2">
               <div className="flex items-center justify-between">
-                <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
+                <div className="flex items-center gap-0.5">
+                  <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
+                  <HelpTip title={t("providerForm.modelMappingLabel")}>
+                    {t("providerForm.modelMappingHint")}
+                  </HelpTip>
+                </div>
                 <div className="flex gap-2">
                   {/* 一键设置按钮 */}
                   <Button
@@ -1096,9 +1180,6 @@ export function ClaudeFormFields({
                   </Button>
                 </div>
               </div>
-              <p className="text-xs text-fg-2">
-                {t("providerForm.modelMappingHint")}
-              </p>
             </div>
 
             <div className="space-y-3">
@@ -1194,11 +1275,23 @@ export function ClaudeFormFields({
             </div>
 
             <div className="space-y-2 border-t border-border pt-4">
-              <FormLabel htmlFor="claudeModel">
-                {t("providerForm.fallbackModelLabel", {
-                  defaultValue: "默认兜底模型",
-                })}
-              </FormLabel>
+              <div className="flex items-center gap-0.5">
+                <FormLabel htmlFor="claudeModel">
+                  {fallbackModelLabel}
+                </FormLabel>
+                {/* 直连时它是 Claude Code 的主模型；经过路由时才是各档留空、没匹配到档位的回落。 */}
+                <HelpTip title={fallbackModelLabel}>
+                  {directModeFormatNotice
+                    ? t("providerForm.fallbackModelHelpDirect", {
+                        defaultValue:
+                          "写进 ANTHROPIC_MODEL，是 Claude Code 启动时用的主模型。后台任务另用 Haiku 那一档。",
+                      })
+                    : t("providerForm.fallbackModelHelp", {
+                        defaultValue:
+                          "没落到 Sonnet、Opus、Fable、Haiku 任一档的请求，改用这个模型发给上游。",
+                      })}
+                </HelpTip>
+              </div>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,104px)]">
                 {renderModelInput(
                   "claudeModel",
@@ -1228,28 +1321,27 @@ export function ClaudeFormFields({
                   })}
                 </label>
               </div>
-              <p className="text-xs text-fg-2">
-                {t("providerForm.fallbackModelHint", {
-                  defaultValue:
-                    "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
-                })}
-              </p>
+              {fallbackModelMissing && (
+                <p className="text-xs leading-relaxed text-warning-text">
+                  {directModeFormatNotice
+                    ? t("providerForm.fallbackModelHaikuMissing", {
+                        defaultValue:
+                          "Haiku 一档没填：后台任务会用原始 Claude 模型名请求上游，第三方端点可能报错。",
+                      })
+                    : t("providerForm.fallbackModelMissing", {
+                        defaultValue:
+                          "没填：没落到任何一档的请求会用原始 Claude 模型名发给上游，可能报错。",
+                      })}
+                </p>
+              )}
             </div>
 
-            <CustomUserAgentField
-              id="claude-custom-user-agent"
-              value={customUserAgent}
-              onChange={onCustomUserAgentChange}
-            />
-
-            <div className="border-t border-border pt-3">
-              <LocalProxyRequestOverridesField
-                headersJson={localProxyHeadersOverride}
-                bodyJson={localProxyBodyOverride}
-                onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
-                onBodyJsonChange={onLocalProxyBodyOverrideChange}
-              />
-            </div>
+            {/* Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过 */}
+            {!isCopilotPreset && (
+              <div className="space-y-4 border-t border-border pt-4">
+                {userAgentAndOverrides}
+              </div>
+            )}
           </CollapsibleContent>
         </Collapsible>
       )}

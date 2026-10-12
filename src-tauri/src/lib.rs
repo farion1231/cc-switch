@@ -1423,6 +1423,7 @@ pub fn run() {
             commands::get_skills_migration_result,
             commands::get_app_config_path,
             commands::open_app_config_folder,
+            commands::reveal_app_log_file,
             commands::get_claude_common_config_snippet,
             commands::set_claude_common_config_snippet,
             commands::get_common_config_snippet,
@@ -1612,6 +1613,8 @@ pub fn run() {
             // Global & Per-App Config
             commands::get_global_proxy_config,
             commands::update_global_proxy_config,
+            commands::get_proxy_client_host,
+            commands::set_proxy_client_host,
             commands::get_proxy_config_for_app,
             commands::update_proxy_config_for_app,
             commands::get_pricing_model_source,
@@ -1623,6 +1626,7 @@ pub fn run() {
             commands::set_proxy_stack_member,
             commands::adopt_codex_stack_catalog,
             commands::restart_codex_app_server_daemon,
+            commands::acknowledge_codex_stale_clients,
             // Proxy failover commands
             commands::get_provider_health,
             commands::reset_circuit_breaker,

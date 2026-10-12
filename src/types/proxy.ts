@@ -94,6 +94,21 @@ export type ProxyStackNotice =
   | "officialModelsOutdated";
 
 /**
+ * 官方模型列表没取到的原因（`officialModelsBundled` / `officialModelsUnavailable` 时）：先是官方
+ * 列表的，不可用时再跟 Codex 自带列表的。
+ */
+export type ProxyStackNoticeReason =
+  | "noLogin"
+  | "loginStale"
+  | "loginIncomplete"
+  | "noVersion"
+  | "fetchFailed"
+  | "invalidList"
+  | "noCli"
+  | "cliFailed"
+  | "nothingUsable";
+
+/**
  * 还在用旧模型列表的 Codex 客户端（它们只在启动时读模型目录）：`daemon` 是 `codex` 命令行连的
  * 托管守护进程，可以一键重启；`others` 是桌面版、编辑器插件，要用户自己彻底退出再开。
  */
@@ -102,6 +117,11 @@ export interface CodexStaleClients {
   others: boolean;
   /** File-store account changed after startup; the process may cache the old login. */
   auth?: boolean;
+  /**
+   * 看不到桌面版、编辑器插件的进程（Windows）：`others` 只表示上次确认之后目录或登录变了，
+   * 不知道有没有开着。关掉提示时要告诉后端（`acknowledgeCodexStaleClients`）。
+   */
+  unverified?: boolean;
 }
 
 /** Stack 模式的状态、名单和提示。 */
@@ -110,7 +130,10 @@ export interface ProxyStack {
   active: boolean;
   members: ProxyStackMember[];
   notice?: ProxyStackNotice;
+  noticeReasons?: ProxyStackNoticeReason[];
   staleClients?: CodexStaleClients;
+  /** `staleClients` 对应的目录和登录：关掉提示后这个值变了（同一个供应商上又改了目录），重新显示。 */
+  staleRevision?: string;
 }
 
 /** 重启 Codex 守护进程的结果：`notRunning` 表示它没在运行，什么都没做。 */

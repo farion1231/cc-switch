@@ -159,7 +159,7 @@ describe("ProviderForm native OpenAI compatibility opt-in", () => {
     await user.click(screen.getByRole("combobox", { name: "上游格式" }));
     await user.click(
       await screen.findByRole("option", {
-        name: "Chat Completions（需开启路由）",
+        name: /^Chat Completions/,
       }),
     );
     expect(screen.queryByRole("checkbox", { name: LABEL })).toBeNull();
