@@ -165,9 +165,31 @@ function applyFontPreferences(preferences: AppearancePreferences) {
 }
 
 async function applyPageZoom(pageZoom: number) {
-  // Native WebView zoom also scales CSS dimensions; keep this value available for
-  // macOS Overlay title-bar layout to compensate native traffic-light spacing.
-  document.documentElement.style.setProperty("--page-zoom", String(pageZoom));
+  // Compute pixel values here for compatibility with older WKWebView CSS parsers.
+  const rootStyle = document.documentElement.style;
+  rootStyle.setProperty("--mac-titlebar-spacer-height", `${44 / pageZoom}px`);
+  rootStyle.setProperty(
+    "--mac-titlebar-expanded-row-margin-top",
+    `${-18 / pageZoom}px`,
+  );
+  rootStyle.setProperty(
+    "--mac-titlebar-expanded-row-margin-bottom",
+    `${8 / pageZoom}px`,
+  );
+  rootStyle.setProperty(
+    "--mac-titlebar-expanded-row-height",
+    `${36 / pageZoom}px`,
+  );
+  rootStyle.setProperty(
+    "--mac-titlebar-collapsed-row-margin-top",
+    `${-16 / pageZoom}px`,
+  );
+  rootStyle.setProperty(
+    "--mac-titlebar-collapsed-row-height",
+    `${32 / pageZoom}px`,
+  );
+  rootStyle.setProperty("--mac-titlebar-button-size", `${28 / pageZoom}px`);
+  rootStyle.setProperty("--mac-titlebar-icon-size", `${16 / pageZoom}px`);
 
   try {
     await getCurrentWebview().setZoom(pageZoom);
