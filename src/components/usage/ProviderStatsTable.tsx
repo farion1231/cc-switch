@@ -20,7 +20,15 @@ interface ProviderStatsTableProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
+}
+
+function countLabelKey(appType?: string): string {
+  if (appType === "hermes") return "usage.countLabel.hermesApiCalls";
+  if (!appType || appType === "all") return "usage.countLabel.mixedActivity";
+  return "usage.countLabel.requests";
 }
 
 export function ProviderStatsTable({
@@ -28,13 +36,15 @@ export function ProviderStatsTable({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t, i18n } = useTranslation();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useProviderStats(
     range,
-    { appType, providerName, model },
+    { appType, providerName, model, profileName, task },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -47,7 +57,7 @@ export function ProviderStatsTable({
   );
   const pagination = useClientPagination(
     rows,
-    JSON.stringify([range, appType, providerName, model]),
+    JSON.stringify([range, appType, providerName, model, profileName, task]),
   );
 
   if (isLoading) {
@@ -64,7 +74,7 @@ export function ProviderStatsTable({
           <thead>
             <tr className={usageTable.headRow}>
               <th className={usageTable.th}>{t("usage.provider")}</th>
-              <th className={usageTable.thEnd}>{t("usage.requests")}</th>
+              <th className={usageTable.thEnd}>{t(countLabelKey(appType))}</th>
               <th className={usageTable.thEnd}>{t("usage.tokens")}</th>
               <th className={usageTable.thEnd}>{t("usage.cost")}</th>
               <SuccessSpeedHeaders />

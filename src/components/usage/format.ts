@@ -28,6 +28,7 @@ export function fmtUsd(
 ): string {
   const num = parseFiniteNumber(value);
   if (num == null) return fallback;
+  if (num < 0) return `-$${Math.abs(num).toFixed(digits)}`;
   return `$${num.toFixed(digits)}`;
 }
 

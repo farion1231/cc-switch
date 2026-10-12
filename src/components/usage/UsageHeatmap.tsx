@@ -26,6 +26,8 @@ interface UsageHeatmapProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
 }
 
@@ -114,7 +116,9 @@ function metricValue(stat: UsageTrendStatLike, metric: HeatMetric): number {
     stat.totalInputTokens +
     stat.totalOutputTokens +
     stat.totalCacheCreationTokens +
-    stat.totalCacheReadTokens
+    stat.totalCacheReadTokens +
+    (stat.totalCacheWriteTokens ?? 0) +
+    (stat.totalReasoningTokens ?? 0)
   );
 }
 
@@ -148,7 +152,13 @@ function cellStyle(level: number) {
  * 起点按周取整，同一周内查询键不变。
  */
 function useAllSpansDailyTrends(
-  filters: { appType?: string; providerName?: string; model?: string },
+  filters: {
+    appType?: string;
+    providerName?: string;
+    model?: string;
+    profileName?: string;
+    task?: string;
+  },
   refreshIntervalMs: number,
 ) {
   const refetchInterval = refreshIntervalMs > 0 ? refreshIntervalMs : false;
@@ -228,9 +238,18 @@ export function UsageHeatmap({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
 }: UsageHeatmapProps) {
   const { t, i18n } = useTranslation();
+  const requestLabel = t(
+    appType === "hermes"
+      ? "usage.countLabel.hermesApiCalls"
+      : !appType || appType === "all"
+        ? "usage.countLabel.mixedActivity"
+        : "usage.countLabel.requests",
+  );
   const [metric, setMetric] = useState<HeatMetric>("tokens");
   const sectionRef = useRef<HTMLElement>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -252,7 +271,7 @@ export function UsageHeatmap({
   const locale = getLocaleFromLanguage(language);
 
   const { spanCount, trends, isLoading } = useAllSpansDailyTrends(
-    { appType, providerName, model },
+    { appType, providerName, model, profileName, task },
     refreshIntervalMs,
   );
 
@@ -319,7 +338,7 @@ export function UsageHeatmap({
           onValueChange={setMetric}
           items={[
             { value: "tokens", label: t("usage.trend.tokens") },
-            { value: "requests", label: t("usage.trend.requests") },
+            { value: "requests", label: requestLabel },
             { value: "cost", label: t("usage.trend.cost") },
           ]}
         />
@@ -426,6 +445,7 @@ export function UsageHeatmap({
             })}
             tokens={hover.cell.tokens}
             requests={hover.cell.requests}
+            requestLabel={requestLabel}
             cost={hover.cell.cost}
           />
         </div>

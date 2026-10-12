@@ -280,8 +280,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         let old_home = std::env::var_os("HOME");
+        let old_hermes_home = std::env::var_os("HERMES_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
         std::env::set_var("HOME", temp.path());
+        // Hermes uses HERMES_HOME/LOCALAPPDATA rather than HOME on Windows.
+        std::env::set_var("HERMES_HOME", temp.path().join(".hermes"));
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
@@ -294,6 +297,10 @@ mod tests {
         match old_home {
             Some(value) => std::env::set_var("HOME", value),
             None => std::env::remove_var("HOME"),
+        }
+        match old_hermes_home {
+            Some(value) => std::env::set_var("HERMES_HOME", value),
+            None => std::env::remove_var("HERMES_HOME"),
         }
 
         result

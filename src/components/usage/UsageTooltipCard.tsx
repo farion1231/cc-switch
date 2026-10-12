@@ -5,6 +5,7 @@ interface UsageTooltipCardProps {
   heading: string;
   tokens: number;
   requests: number;
+  requestLabel?: string;
   /** 美元；null 表示没有可计价的数据 */
   cost: number | null;
 }
@@ -14,6 +15,7 @@ export function UsageTooltipCard({
   heading,
   tokens,
   requests,
+  requestLabel,
   cost,
 }: UsageTooltipCardProps) {
   const { t, i18n } = useTranslation();
@@ -24,7 +26,7 @@ export function UsageTooltipCard({
       value: formatTokensShort(tokens, language),
     },
     {
-      label: t("usage.trend.requests"),
+      label: requestLabel ?? t("usage.trend.requests"),
       value: formatTokensShort(requests, language),
     },
     {

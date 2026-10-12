@@ -9,6 +9,7 @@ import { UsageDashboard } from "@/components/usage/UsageDashboard";
  */
 
 const usageApiMock = vi.hoisted(() => ({
+  getHermesUsageMetadata: vi.fn().mockResolvedValue({ profiles: [], tasks: [] }),
   getUsageSummary: vi.fn(),
   getUsageSummaryByApp: vi.fn(),
   getUsageTrends: vi.fn(),

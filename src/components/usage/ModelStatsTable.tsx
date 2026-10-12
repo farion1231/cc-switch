@@ -19,7 +19,22 @@ interface ModelStatsTableProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
+}
+
+function countLabelKey(appType?: string): string {
+  if (appType === "hermes") return "usage.countLabel.hermesApiCalls";
+  if (!appType || appType === "all") return "usage.countLabel.mixedActivity";
+  return "usage.countLabel.requests";
+}
+
+function averageCostLabelKey(appType?: string): string {
+  if (appType === "hermes") return "usage.averageCostLabel.perApiCall";
+  if (!appType || appType === "all")
+    return "usage.averageCostLabel.perActivity";
+  return "usage.averageCostLabel.perRequest";
 }
 
 export function ModelStatsTable({
@@ -27,13 +42,15 @@ export function ModelStatsTable({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
 }: ModelStatsTableProps) {
   const { t, i18n } = useTranslation();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useModelStats(
     range,
-    { appType, providerName, model },
+    { appType, providerName, model, profileName, task },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -45,7 +62,7 @@ export function ModelStatsTable({
   );
   const pagination = useClientPagination(
     rows,
-    JSON.stringify([range, appType, providerName, model]),
+    JSON.stringify([range, appType, providerName, model, profileName, task]),
   );
 
   if (isLoading) {
@@ -62,7 +79,7 @@ export function ModelStatsTable({
           <thead>
             <tr className={usageTable.headRow}>
               <th className={usageTable.th}>{t("usage.model")}</th>
-              <th className={usageTable.thEnd}>{t("usage.requests")}</th>
+              <th className={usageTable.thEnd}>{t(countLabelKey(appType))}</th>
               <th className={usageTable.thEnd}>{t("usage.tokens")}</th>
               <th className={usageTable.thEnd}>{t("usage.cost")}</th>
               <SuccessSpeedHeaders />
@@ -97,7 +114,7 @@ export function ModelStatsTable({
                   </td>
                   <td
                     className={cn(usageTable.tdEnd, "font-medium")}
-                    title={`${fmtUsd(stat.totalCost, 6)} · ${t("usage.avgCost")} ${fmtUsd(stat.avgCostPerRequest, 4)}`}
+                    title={`${fmtUsd(stat.totalCost, 6)} · ${t(averageCostLabelKey(appType))} ${fmtUsd(stat.avgCostPerRequest, 4)}`}
                   >
                     {fmtUsd(stat.totalCost, 2)}
                   </td>

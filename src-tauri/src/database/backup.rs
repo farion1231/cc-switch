@@ -91,6 +91,8 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "hermes_usage_snapshots",
+    "hermes_usage_deltas",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -102,6 +104,8 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "hermes_usage_snapshots",
+    "hermes_usage_deltas",
 ];
 
 /// A database backup entry for the UI
@@ -2158,6 +2162,111 @@ mod tests {
                 "本地保留表 {table} 也必须从远端 payload 中排除"
             );
         }
+    }
+
+    #[test]
+    #[serial]
+    fn hermes_sync_export_excludes_local_usage() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        seed_hermes_sync_usage(&db, "local")?;
+        let exported = Connection::open_in_memory()?;
+        exported.execute_batch(&db.export_sql_string_for_sync()?)?;
+        for table in ["hermes_usage_snapshots", "hermes_usage_deltas"] {
+            let count: i64 =
+                exported.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(count, 0, "local usage must not be exported: {table}");
+        }
+        Ok(())
+    }
+
+    fn seed_hermes_sync_usage(db: &Database, source: &str) -> Result<(), AppError> {
+        let conn = crate::database::lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO hermes_usage_snapshots (
+                source_id, source_incarnation, profile_name, row_key, session_id,
+                model, billing_provider, billing_base_url_digest, billing_mode, task,
+                api_call_count, selected_cost_usd, cost_baseline_usd,
+                emitted_cost_balance_usd, observed_at
+             ) VALUES (?1, 'incarnation', 'default', 'row', 'session', 'model',
+                       'provider', 'digest', 'chat', '', 11, '4.2', '3.1', '1.1', 100)",
+            [source],
+        )?;
+        conn.execute(
+            "INSERT INTO hermes_usage_deltas (
+                delta_id, source_id, source_incarnation, profile_name, row_key,
+                session_id, provider, model, billing_base_url_digest, billing_mode,
+                task, sync_window_start, sync_window_end, api_call_count, cost_usd
+             ) VALUES (123, ?1, 'incarnation', 'default', 'row', 'session', 'provider',
+                       'model', 'digest', 'chat', '', 50, 100, 2, '1.1')",
+            [source],
+        )?;
+        Ok(())
+    }
+
+    fn hermes_sync_rows(db: &Database) -> Result<Vec<Vec<Vec<rusqlite::types::Value>>>, AppError> {
+        let conn = crate::database::lock_conn!(db.conn);
+        [
+            "SELECT * FROM hermes_usage_snapshots ORDER BY source_id, row_key",
+            "SELECT * FROM hermes_usage_deltas ORDER BY delta_id",
+            "SELECT name, seq FROM sqlite_sequence WHERE name = 'hermes_usage_deltas'",
+        ]
+        .into_iter()
+        .map(|sql| {
+            let mut stmt = conn.prepare(sql)?;
+            let rows = stmt
+                .query_map([], |row| {
+                    (0..row.as_ref().column_count())
+                        .map(|index| row.get(index))
+                        .collect()
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .collect()
+    }
+
+    #[test]
+    #[serial]
+    fn hermes_sync_import_preserves_local_usage_from_empty_or_populated_remote(
+    ) -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        for remote_has_usage in [false, true] {
+            let remote = Database::memory()?;
+            if remote_has_usage {
+                seed_hermes_sync_usage(&remote, "remote")?;
+            }
+            // A full dump models an older sender that exported local-only data.
+            let remote_sql = remote.export_sql_string()?;
+            let local = Database::memory()?;
+            seed_hermes_sync_usage(&local, "local")?;
+            // Model a deleted local high-water row, distinct from the remote sequence.
+            crate::database::lock_conn!(local.conn).execute(
+                "UPDATE sqlite_sequence SET seq = 999 WHERE name = 'hermes_usage_deltas'",
+                [],
+            )?;
+            let before = hermes_sync_rows(&local)?;
+            local.import_sql_string_for_sync(&remote_sql)?;
+            assert_eq!(
+                hermes_sync_rows(&local)?,
+                before,
+                "remote_has_usage={remote_has_usage}: local baseline and deltas must survive"
+            );
+            let conn = crate::database::lock_conn!(local.conn);
+            conn.execute(
+                "INSERT INTO hermes_usage_deltas (
+                    source_id, source_incarnation, profile_name, row_key, session_id,
+                    provider, model, billing_base_url_digest, billing_mode, task,
+                    sync_window_start, sync_window_end
+                 ) SELECT source_id, source_incarnation, profile_name, row_key, session_id,
+                          provider, model, billing_base_url_digest, billing_mode, task,
+                          100, 200 FROM hermes_usage_deltas WHERE delta_id = 123",
+                [],
+            )?;
+            assert_eq!(conn.last_insert_rowid(), 1000);
+        }
+        Ok(())
     }
 
     #[test]

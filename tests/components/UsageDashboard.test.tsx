@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
+import type { UsageSummary } from "@/types/usage";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   UsageDashboard,
@@ -11,6 +12,8 @@ import {
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
 const useSummaryByAppMock = vi.hoisted(() => vi.fn());
+const useHermesMetadataMock = vi.hoisted(() => vi.fn());
+const heatmapMock = vi.hoisted(() => vi.fn());
 const usageHeroMock = vi.hoisted(() => vi.fn());
 const requestLogTableMock = vi.hoisted(() => vi.fn());
 const detailPanelMock = vi.hoisted(() => vi.fn());
@@ -60,6 +63,8 @@ vi.mock("@/lib/query/usage", async () => {
     useProviderStats: (...args: unknown[]) => useProviderStatsMock(...args),
     useModelStats: (...args: unknown[]) => useModelStatsMock(...args),
     useUsageSummaryByApp: (...args: unknown[]) => useSummaryByAppMock(...args),
+    useHermesUsageMetadata: (...args: unknown[]) =>
+      useHermesMetadataMock(...args),
   };
 });
 
@@ -75,7 +80,10 @@ vi.mock("@/components/usage/UsageTrendChart", () => ({
 }));
 
 vi.mock("@/components/usage/UsageHeatmap", () => ({
-  UsageHeatmap: () => <div data-testid="usage-heatmap" />,
+  UsageHeatmap: (props: unknown) => {
+    heatmapMock(props);
+    return <div data-testid="usage-heatmap" />;
+  },
 }));
 
 vi.mock("@/components/usage/RequestLogTable", () => ({
@@ -172,6 +180,10 @@ describe("UsageDashboard", () => {
     });
     useModelStatsMock.mockReturnValue({ data: [] });
     useSummaryByAppMock.mockReturnValue({ data: [] });
+    heatmapMock.mockClear();
+    useHermesMetadataMock.mockReturnValue({
+      data: { profiles: ["profile-a"], tasks: ["task-a"] },
+    });
     usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 5 });
     usageApiMock.getSessionUsageLastSync.mockReset().mockResolvedValue(null);
     usageApiMock.syncSessionUsage.mockResolvedValue({
@@ -494,6 +506,56 @@ describe("UsageDashboard", () => {
     expect(screen.queryByTestId("usage-hero")).not.toBeInTheDocument();
   });
 
+  const zeroCallUsageCases: (readonly [string, Partial<UsageSummary>])[] = [
+    ["positive cost", { totalCost: "0.500000" }] as const,
+    ["negative cost correction", { totalCost: "-0.500000" }] as const,
+    ...[
+      "totalInputTokens",
+      "totalOutputTokens",
+      "totalCacheCreationTokens",
+      "totalCacheReadTokens",
+      "totalCacheWriteTokens",
+      "totalReasoningTokens",
+      "realTotalTokens",
+    ].map((field) => [field, { [field]: 1 }] as const),
+  ];
+  it.each(zeroCallUsageCases)(
+    "keeps All visible for zero-call %s usage",
+    async (_name, dimension) => {
+      usageApiMock.getUsageSummary.mockResolvedValue({
+        totalRequests: 0,
+        totalCost: "0",
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalCacheCreationTokens: 0,
+        totalCacheReadTokens: 0,
+        totalCacheWriteTokens: 0,
+        totalReasoningTokens: 0,
+        realTotalTokens: 0,
+        cacheHitRate: 0,
+        successRate: 0,
+        ...dimension,
+      });
+      useSummaryByAppMock.mockReturnValue({
+        data: [{ appType: "hermes", summary: {} }],
+      });
+      renderDashboard();
+      await waitFor(() =>
+        expect(usageApiMock.getUsageSummary).toHaveBeenCalled(),
+      );
+      // Wait for the summary's asynchronous query to settle before testing its branch.
+      await waitFor(() =>
+        expect(screen.queryByText("usage.empty.title")).not.toBeInTheDocument(),
+      );
+      expect(
+        await screen.findByTestId("hermes-precision-notice"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("tab", { name: "usage.requestLogs" }),
+      ).toBeInTheDocument();
+    },
+  );
+
   it("still lets the pricing tab be opened from the empty state", async () => {
     usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 0 });
     const user = userEvent.setup();
@@ -514,5 +576,100 @@ describe("UsageDashboard", () => {
     ).toHaveAttribute("aria-selected", "true");
     // 空库里没有可看的概览，不画全是 0 的卡
     expect(screen.queryByTestId("usage-hero")).not.toBeInTheDocument();
+  });
+  it("shows aggregate limitations without offering request capture when usage is empty", async () => {
+    usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 0 });
+    renderDashboard({ initialAppType: "hermes" });
+    expect(
+      await screen.findByTestId("hermes-precision-notice"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("open-row")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "usage.hermes.profile" }),
+    ).toBeInTheDocument();
+  });
+
+  it("propagates profile/task to aggregates and all-time heatmap and clears them on app change", async () => {
+    const user = userEvent.setup();
+    renderDashboard({ initialAppType: "hermes" });
+    await user.click(
+      screen.getByRole("button", { name: "usage.hermes.profile" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "profile-a" }),
+    );
+    await user.click(screen.getByRole("button", { name: "usage.hermes.task" }));
+    await user.click(await screen.findByRole("menuitem", { name: "task-a" }));
+    const filters = {
+      appType: "hermes",
+      profileName: "profile-a",
+      task: "task-a",
+    };
+    expect(useProviderStatsMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining(filters),
+      expect.anything(),
+    );
+    expect(useModelStatsMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining(filters),
+      expect.anything(),
+    );
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining(filters),
+    );
+    await user.click(screen.getByRole("button", { name: "pick-all" }));
+    expect(heatmapMock).toHaveBeenLastCalledWith(
+      expect.objectContaining(filters),
+    );
+    await user.click(screen.getByRole("button", { name: "Claude Code" }));
+    expect(useProviderStatsMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        appType: "claude",
+        profileName: undefined,
+        task: undefined,
+      }),
+      expect.anything(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "usage.hermes.profile" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("open-row")).toBeInTheDocument();
+  });
+
+  it("shows an aggregate precision notice in All only when Hermes contributes", async () => {
+    useSummaryByAppMock.mockReturnValue({
+      data: [{ appType: "hermes", summary: {} }],
+    });
+    const user = userEvent.setup();
+    renderDashboard();
+    expect(
+      await screen.findByTestId("hermes-precision-notice"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Claude Code" }));
+    expect(
+      screen.queryByTestId("hermes-precision-notice"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("labels the empty main task and passes its raw value to filters", async () => {
+    useHermesMetadataMock.mockReturnValue({
+      data: { profiles: ["default"], tasks: ["", "compression"] },
+    });
+    const user = userEvent.setup();
+    renderDashboard({ initialAppType: "hermes" });
+    await user.click(screen.getByRole("button", { name: "usage.hermes.task" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "usage.hermes.mainTask" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "usage.hermes.task" }),
+    ).toHaveTextContent("usage.hermes.mainTask");
+    expect(useProviderStatsMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ appType: "hermes", task: "" }),
+      expect.anything(),
+    );
   });
 });

@@ -88,8 +88,14 @@ export interface UsageSummary {
   totalOutputTokens: number;
   totalCacheCreationTokens: number;
   totalCacheReadTokens: number;
+  /** Hermes session aggregates expose cache writes separately from cache creation. */
+  totalCacheWriteTokens?: number;
+  /** Hermes session aggregates expose reasoning tokens separately. */
+  totalReasoningTokens?: number;
   successRate: number;
-  /** input + output + cache_creation + cache_read, all cache-normalized */
+  /** False when the selected aggregate source does not expose request status. */
+  statusAvailable?: boolean;
+  /** All processed token dimensions, including Hermes cache-write/reasoning fields. */
   realTotalTokens: number;
   /** cache_read / (input + cache_creation + cache_read), range 0–1 */
   cacheHitRate: number;
@@ -109,6 +115,8 @@ export interface DailyStats {
   totalOutputTokens: number;
   totalCacheCreationTokens: number;
   totalCacheReadTokens: number;
+  totalCacheWriteTokens?: number;
+  totalReasoningTokens?: number;
 }
 
 export interface ProviderStats {
@@ -121,6 +129,16 @@ export interface ProviderStats {
   totalCost: string;
   successRate: number;
   avgLatencyMs: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  totalCacheCreationTokens?: number;
+  totalCacheReadTokens?: number;
+  totalCacheWriteTokens?: number;
+  totalReasoningTokens?: number;
+  /** False when the selected aggregate source does not expose request status. */
+  statusAvailable?: boolean;
+  /** False when the selected aggregate source does not expose latency. */
+  latencyAvailable?: boolean;
   /** 速度分子：有首字、输出 ≥ 100 token 的明细请求的输出之和（日汇总不计） */
   speedOutputTokens?: number;
   /** 速度分母：同一批请求的（耗时 − 首字）之和，毫秒 */
@@ -144,6 +162,22 @@ export interface ModelStats {
   speedGenerationMs?: number;
   estSpeedOutputTokens?: number;
   estSpeedDurationMs?: number;
+  statusAvailable?: boolean;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  totalCacheCreationTokens?: number;
+  totalCacheReadTokens?: number;
+  totalCacheWriteTokens?: number;
+  totalReasoningTokens?: number;
+}
+
+/** Metadata returned by the Hermes aggregate usage source. */
+export interface HermesUsageMetadata {
+  dataSource: string;
+  precision: string;
+  explanation: string;
+  profiles: string[];
+  tasks: string[];
 }
 
 export interface LogFilters {
@@ -167,6 +201,8 @@ export interface UsageScopeFilters {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
 }
 
 export interface ProviderLimitStatus {
@@ -210,8 +246,9 @@ export interface UsageRangeSelection {
  * Desktop's full usage. The backend collapses `claude-desktop → claude` in
  * every dashboard query (see `folded_app_type_sql`).
  * `opencode` and `pi` have no proxy handler; their usage reaches this
- * dashboard through session importers. `openclaw` / `hermes` appear only as
- * managed apps elsewhere.
+ * dashboard through session importers. `openclaw` appears only as a managed
+ * app elsewhere. Hermes has a dedicated aggregate
+ * session-usage source; its deltas are not represented as `RequestLog` rows.
  */
 export type AppType =
   | "claude"
@@ -219,6 +256,7 @@ export type AppType =
   | "gemini"
   | "grokbuild"
   | "opencode"
+  | "hermes"
   | "pi"
   | "mcode";
 
@@ -230,6 +268,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "gemini",
   "grokbuild",
   "opencode",
+  "hermes",
   "pi",
   "mcode",
 ];
