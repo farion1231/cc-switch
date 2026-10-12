@@ -32,24 +32,6 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-vi.mock("@/components/common/FullScreenPanel", () => ({
-  FullScreenPanel: ({
-    isOpen,
-    children,
-    footer,
-  }: {
-    isOpen: boolean;
-    children: React.ReactNode;
-    footer?: React.ReactNode;
-  }) =>
-    isOpen ? (
-      <div>
-        <div>{children}</div>
-        <div>{footer}</div>
-      </div>
-    ) : null,
-}));
-
 vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
     initialData,
@@ -154,7 +136,7 @@ describe("EditProviderDialog", () => {
     apiMocks.getOpenClawLiveProvider.mockReset();
   });
 
-  it("keeps the list visible until the initial editor projection is ready", async () => {
+  it("keeps the list visible until the initial editor projection is ready, then opens without a fade", async () => {
     let resolveView!: (view: {
       settings: Record<string, unknown>;
       inactive: string[];
@@ -186,8 +168,16 @@ describe("EditProviderDialog", () => {
       resolveView({ settings: provider.settingsConfig, inactive: [] });
     });
     expect(screen.getByTestId("settings-config")).toBeInTheDocument();
+    expect(
+      screen
+        .getByRole("heading", { name: "provider.editProviderNamed" })
+        .closest(".bg-app"),
+    ).toHaveStyle({ opacity: "1" });
 
     rerender(<EditProviderDialog open={false} {...props} />);
+    await waitFor(() => {
+      expect(screen.queryByTestId("settings-config")).not.toBeInTheDocument();
+    });
     rerender(<EditProviderDialog open {...props} />);
     expect(screen.queryByTestId("settings-config")).not.toBeInTheDocument();
     rerender(<EditProviderDialog open={false} {...props} />);
