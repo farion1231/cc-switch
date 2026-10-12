@@ -71,7 +71,9 @@ const missing = new Set<string>();
 
 function card(name: string) {
   return within(
-    screen.getByText(name).closest("[data-tool-row]") as HTMLElement,
+    screen
+      .getByText(name, { selector: "span" })
+      .closest("[data-tool-row]") as HTMLElement,
   );
 }
 
@@ -154,6 +156,192 @@ describe("AppsPage concurrent CLI upgrades", () => {
         upgraded.add(tool);
         missing.delete(tool);
       });
+  });
+
+  it("offers uninstall for installed tools and keeps missing tools installable", async () => {
+    missing.add("codex");
+    await renderApps();
+    expect(
+      card("Claude Code").getByRole("button", {
+        name: "settings.toolUninstall",
+      }),
+    ).toBeEnabled();
+    expect(
+      card("OpenCode").getByRole("button", { name: "settings.toolUninstall" }),
+    ).toBeEnabled();
+    expect(
+      card("Codex").queryByRole("button", { name: "settings.toolUninstall" }),
+    ).toBeNull();
+    expect(
+      card("Codex").getByRole("button", { name: "settings.toolInstall" }),
+    ).toBeEnabled();
+  });
+
+  it("confirms uninstall, preserves the running task across navigation and refreshes to install", async () => {
+    const running = deferred<void>();
+    mocks.runToolLifecycleAction.mockImplementation(
+      async ([tool]: string[]) => {
+        await running.promise;
+        missing.add(tool);
+      },
+    );
+    const view = await renderApps();
+    const uninstall = () =>
+      card("Claude Code").getByRole("button", {
+        name: "settings.toolUninstall",
+      });
+    fireEvent.click(uninstall());
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "common.cancel",
+      }),
+    );
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    fireEvent.click(uninstall());
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "settings.toolUninstall",
+      }),
+    );
+    expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1);
+    expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+      ["claude"],
+      "uninstall",
+      {},
+    );
+    expect(uninstall()).toBeDisabled();
+    expect(uninstall()).toHaveAttribute("aria-busy", "true");
+    expect(updateButton("Claude Code")).toBeDisabled();
+    expect(updateButton("Codex")).toBeEnabled();
+    view.unmount();
+    await renderApps();
+    expect(uninstall()).toBeDisabled();
+    expect(uninstall()).toHaveAttribute("aria-busy", "true");
+    await act(async () => running.resolve());
+    expect(
+      card("Claude Code").queryByRole("button", {
+        name: "settings.toolUninstall",
+      }),
+    ).toBeNull();
+    expect(
+      card("Claude Code").getByRole("button", { name: "settings.toolInstall" }),
+    ).toBeEnabled();
+    expect(
+      card("Claude Code").getByText("common.notInstalled"),
+    ).toBeInTheDocument();
+    expect(mocks.probeToolInstallations).toHaveBeenCalledWith(["claude"]);
+    expect(mocks.success).toHaveBeenCalledOnce();
+    expect(mocks.warning).not.toHaveBeenCalled();
+  });
+
+  it("keeps uninstall available for a broken installation", async () => {
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      tools.map((name) => ({
+        name,
+        version: null,
+        latest_version: "2.0.0",
+        error: "cannot run",
+        installed_but_broken: true,
+        env_type: "windows",
+        wsl_distro: null,
+      })),
+    );
+    await renderApps();
+    expect(
+      card("Claude Code").getByRole("button", {
+        name: "settings.toolUninstall",
+      }),
+    ).toBeEnabled();
+    expect(
+      card("Claude Code").queryByRole("button", {
+        name: "settings.toolInstall",
+      }),
+    ).toBeNull();
+  });
+
+  it("reports uninstall failure and unlocks the tool for retry", async () => {
+    mocks.runToolLifecycleAction.mockRejectedValueOnce(
+      new Error("permission denied"),
+    );
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await renderApps();
+      fireEvent.click(
+        card("Claude Code").getByRole("button", {
+          name: "settings.toolUninstall",
+        }),
+      );
+      fireEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "settings.toolUninstall",
+        }),
+      );
+      await waitFor(() =>
+        expect(mocks.error).toHaveBeenCalledWith(
+          "settings.toolUninstallFailed",
+          {
+            description: "permission denied",
+            closeButton: true,
+          },
+        ),
+      );
+      expect(
+        card("Claude Code").getByRole("button", {
+          name: "settings.toolUninstall",
+        }),
+      ).toBeEnabled();
+      expect(updateButton("Claude Code")).toBeEnabled();
+      expect(mocks.success).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it("refreshes the remaining installation after uninstall instead of reporting a broken install", async () => {
+    await renderApps();
+    mocks.probeToolInstallations.mockResolvedValueOnce([
+      report("claude", {
+        installs: [
+          {
+            path: "C:/remaining/claude.exe",
+            version: "2.0.0",
+            runnable: true,
+            error: null,
+            source: "system",
+            is_path_default: true,
+          },
+        ],
+      }),
+    ]);
+    fireEvent.click(
+      card("Claude Code").getByRole("button", {
+        name: "settings.toolUninstall",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "settings.toolUninstall",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.info).toHaveBeenCalledWith(
+        "settings.toolUninstallRemaining",
+        {
+          description: "Claude Code",
+          closeButton: true,
+        },
+      ),
+    );
+    expect(
+      card("Claude Code").getByText("C:/remaining/claude.exe"),
+    ).toBeInTheDocument();
+    expect(
+      card("Claude Code").getByRole("button", {
+        name: "settings.toolUninstall",
+      }),
+    ).toBeEnabled();
+    expect(mocks.warning).not.toHaveBeenCalled();
   });
 
   it("lets different tools preflight and submit together while blocking duplicate clicks", async () => {
