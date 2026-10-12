@@ -4,7 +4,11 @@ import DailyMemoryPanel from "@/components/workspace/DailyMemoryPanel";
 import { workspaceApi } from "@/lib/api/workspace";
 
 vi.mock("@/lib/api/workspace", () => ({
-  workspaceApi: { listDailyMemoryFiles: vi.fn(), readDailyMemoryFile: vi.fn() },
+  workspaceApi: {
+    listDailyMemoryFiles: vi.fn(),
+    readDailyMemoryFile: vi.fn(),
+    deleteDailyMemoryFile: vi.fn(),
+  },
 }));
 vi.mock("@/components/MarkdownEditor", () => ({
   default: ({ value }: { value: string }) => (
@@ -42,6 +46,42 @@ beforeEach(() => {
 });
 
 describe("DailyMemoryPanel opening", () => {
+  it.each(["before", "after"])(
+    "ignores a pending read that resolves %s deletion completes",
+    async (readTiming) => {
+      const read = deferred();
+      const deletion = deferred();
+      vi.mocked(workspaceApi.readDailyMemoryFile).mockReturnValueOnce(
+        read.promise,
+      );
+      vi.mocked(workspaceApi.deleteDailyMemoryFile).mockReturnValueOnce(
+        deletion.promise.then(() => undefined),
+      );
+      render(<DailyMemoryPanel isOpen onClose={vi.fn()} />);
+      const row = await screen.findByRole("button", { name: /First note/ });
+      fireEvent.click(row);
+      // The row's trailing delete control stops propagation to openFile.
+      fireEvent.click(row.lastElementChild!);
+      fireEvent.click(screen.getByRole("button", { name: "common.confirm" }));
+      expect(workspaceApi.deleteDailyMemoryFile).toHaveBeenCalledWith(
+        "2026-10-10.md",
+      );
+
+      if (readTiming === "before") {
+        await act(async () => read.resolve("Deleted content"));
+        expect(screen.queryByRole("textbox")).toBeNull();
+      }
+      vi.mocked(workspaceApi.listDailyMemoryFiles).mockResolvedValue([]);
+      await act(async () => deletion.resolve(""));
+      if (readTiming === "after") {
+        await act(async () => read.resolve("Deleted content"));
+      }
+      expect(screen.queryByRole("textbox")).toBeNull();
+      expect(screen.queryByRole("button", { name: "common.save" })).toBeNull();
+      expect(screen.queryByText("First note")).toBeNull();
+    },
+  );
+
   it("keeps the list visible until the latest selected note is ready", async () => {
     const first = deferred();
     const second = deferred();

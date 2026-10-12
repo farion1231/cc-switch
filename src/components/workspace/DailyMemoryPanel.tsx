@@ -257,6 +257,8 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
   // Delete file
   const handleDelete = useCallback(async () => {
     if (!deletingFile) return;
+    // A pending read must not open the file during or after deletion.
+    contentRequestRef.current += 1;
     try {
       await workspaceApi.deleteDailyMemoryFile(deletingFile);
       toast.success(t("workspace.dailyMemory.deleteSuccess"));
