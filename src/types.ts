@@ -239,6 +239,8 @@ export interface ProviderMeta {
   githubAccountId?: string;
   // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
   stackModels?: ClaudeStackModel[];
+  // Oh My Pi：编辑器“其他字段（YAML，原样保留）”的原文（含注释），写 models.yml 时原样保留
+  ohmypiPassthroughYaml?: string;
 }
 
 // Stack 模式下 Claude Code 供应商发布的一个模型

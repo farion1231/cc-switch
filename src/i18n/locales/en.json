@@ -4733,7 +4733,7 @@
       "thinking": "Thinking",
       "imageInputDecoder": "Image input decoder",
       "cost": "Cost",
-      "passthroughLabel": "Other fields (YAML, preserved verbatim)",
+      "configYaml": "Configuration YAML",
       "fixYamlFirst": "Fix the configuration YAML below before editing the structured fields.",
       "providerKeyDuplicate": "This key is already in use",
       "absoluteHttpUrlRequired": "{{label}} must be an absolute HTTP or HTTPS URL",

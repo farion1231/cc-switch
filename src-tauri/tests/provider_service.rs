@@ -3604,3 +3604,81 @@ fn claude_editor_never_leaves_the_row_and_live_apart() {
         json!("sk-old")
     );
 }
+
+#[test]
+fn ohmypi_edit_save_preserves_comments_without_false_conflict() {
+    use cc_switch_lib::update_settings;
+    use std::fs;
+
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let agent_dir = home.join(".omp/agent");
+    fs::create_dir_all(&agent_dir).unwrap();
+    let models_path = agent_dir.join("models.yml");
+    fs::write(
+        &models_path,
+        "# managed by me\nproviders:\n  duolalab:\n    # proxy endpoint\n    baseUrl: https://api.duolalab.test/v1\n    api: openai-completions\n    apiKey: sk-live\n    # extra unmanaged field\n    auth: none\n    models:\n    - id: glm-4.7\n      name: GLM 4.7\n",
+    )
+    .unwrap();
+    update_settings(cc_switch_lib::AppSettings {
+        ohmypi_config_dir: Some(agent_dir.to_string_lossy().into_owned()),
+        ..Default::default()
+    })
+    .unwrap();
+    let state = create_test_state().expect("create test state");
+
+    // list() syncs the DB row from models.yml and captures the raw entry.
+    let providers = ProviderService::list(&state, AppType::OhMyPi).expect("list");
+    let original = providers.get("duolalab").expect("provider").clone();
+    assert!(
+        original
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.ohmypi_passthrough_yaml.as_deref())
+            .expect("raw entry captured")
+            .contains("# proxy endpoint")
+    );
+
+    // Edit: the form rebuilds settingsConfig (same semantics) and keeps the
+    // edited passthrough text; user only tweaked a comment.
+    let raw = original
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.ohmypi_passthrough_yaml.clone())
+        .unwrap();
+    let edited_raw = raw.replace("# proxy endpoint", "# edited comment");
+    let mut edited = original.clone();
+    edited.settings_config["name"] = json!("Duolalab");
+    edited.meta.get_or_insert_with(ProviderMeta::default).ohmypi_passthrough_yaml =
+        Some(edited_raw);
+
+    ProviderService::update(&state, AppType::OhMyPi, Some("duolalab"), edited)
+        .expect("update without false conflict");
+
+    let after = fs::read_to_string(&models_path).unwrap();
+    assert!(after.contains("# edited comment"), "{after}");
+    assert!(after.contains("# extra unmanaged field"), "{after}");
+    assert!(after.contains("# managed by me"), "{after}");
+    assert!(after.contains("name: Duolalab"), "{after}");
+
+    // External edit after the DB sync still conflicts.
+    let synced = ProviderService::list(&state, AppType::OhMyPi)
+        .expect("list again")
+        .get("duolalab")
+        .cloned()
+        .expect("provider");
+    fs::write(
+        &models_path,
+        after.replace("sk-live", "sk-external"),
+    )
+    .unwrap();
+    let mut stale = synced.clone();
+    stale.settings_config["name"] = json!("Stale");
+    let err = ProviderService::update(&state, AppType::OhMyPi, Some("duolalab"), stale)
+        .expect_err("external edit must conflict");
+    assert!(
+        err.to_string().contains("changed outside CC Switch"),
+        "{err}"
+    );
+}

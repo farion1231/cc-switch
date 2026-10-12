@@ -410,6 +410,9 @@ export function OhMyPiProviderForm({
     Record<string, unknown>
   >(() => objectWithout(initialConfig, ROOT_CONTROLLED_KEYS));
   const [passthroughText, setPassthroughText] = useState(() => {
+    // Prefer the raw text (comments, order preserved) captured from models.yml.
+    const raw = initialData?.meta?.ohmypiPassthroughYaml;
+    if (raw !== undefined && raw.trim() !== "") return raw;
     const passthrough = objectWithout(initialConfig, ROOT_CONTROLLED_KEYS);
     return Object.keys(passthrough).length > 0
       ? stringifyYaml(passthrough, { indent: 2 })
@@ -864,7 +867,12 @@ export function OhMyPiProviderForm({
         providerKey: isEdit ? providerId : trimmedKey,
         presetId: selectedPresetId ?? undefined,
         presetCategory: category,
-        meta: initialData?.meta,
+        meta: {
+          ...initialData?.meta,
+          // The edited raw text (comments included) is persisted and reused
+          // verbatim when writing this entry into models.yml.
+          ohmypiPassthroughYaml: passthroughText.trim() ? passthroughText : undefined,
+        },
       };
       await onSubmit(values);
     } catch (error) {
@@ -1385,14 +1393,14 @@ export function OhMyPiProviderForm({
             render={() => (
               <FormItem className="space-y-2">
                 <Label htmlFor="ohmypi-settings-config">
-                  {t("ohmypi.form.passthroughLabel", {
-                    defaultValue: "其他字段（YAML，原样保留）",
+                  {t("ohmypi.form.configYaml", {
+                    defaultValue: "配置YAML",
                   })}
                 </Label>
                 <JsonEditor
                   id="ohmypi-settings-config"
-                  ariaLabel={t("ohmypi.form.passthroughLabel", {
-                    defaultValue: "其他字段（YAML，原样保留）",
+                  ariaLabel={t("ohmypi.form.configYaml", {
+                    defaultValue: "配置YAML",
                   })}
                   value={passthroughText}
                   onChange={handlePassthroughChange}

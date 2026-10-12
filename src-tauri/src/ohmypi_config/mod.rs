@@ -391,7 +391,370 @@ fn nonempty_string(value: Option<&Value>) -> Option<&str> {
 
 // ============================================================================
 // Provider CRUD (models.yml)
-// ============================================================================
+
+/// Root keys owned by the curated Oh My Pi form controls. They are serialized
+/// from the settings object; everything else may come from the raw passthrough
+/// text (with comments) the user typed in the YAML editor.
+const CONTROLLED_PROVIDER_KEYS: [&str; 7] =
+    ["name", "baseUrl", "api", "apiKey", "headers", "compat", "models"];
+
+/// Byte range of a top-level (`column 0`) YAML section, hermes-style: the
+/// section spans from its key line to the next top-level key line or EOF.
+fn top_level_section_range(raw: &str, section_key: &str) -> Option<(usize, usize)> {
+    let target = format!("{section_key}:");
+    let mut start = None;
+    let mut offset = 0;
+    for line in raw.split('\n') {
+        let trimmed = line.trim_end_matches('\r');
+        let is_key_line = !line.is_empty()
+            && !line.starts_with([' ', '\t', '#', '-'])
+            && line
+                .find(':')
+                .is_some_and(|colon| {
+                    line[colon + 1..].is_empty()
+                        || line[colon + 1..].starts_with([' ', '\t', '\r'])
+                });
+        if start.is_none() {
+            if is_key_line && trimmed.starts_with(&target) {
+                let after = &trimmed[target.len()..];
+                if after.is_empty() || after.starts_with([' ', '\t']) {
+                    start = Some(offset);
+                }
+            }
+        } else if is_key_line {
+            return Some((start.unwrap(), offset));
+        }
+        offset += line.len() + 1;
+    }
+    start.map(|start| (start, raw.len()))
+}
+
+fn line_indent(line: &str) -> usize {
+    line.len() - line.trim_start_matches([' ', '\t']).len()
+}
+
+/// Byte range of one `providers.<key>` entry inside the `providers:` section.
+///
+/// Entries are the first indented mapping level below `providers:`; an entry
+/// ends at the next line indented no deeper (a sibling entry or the end of the
+/// section). Blank lines and comments belong to whatever follows them.
+fn provider_entry_range(raw: &str, provider_key: &str) -> Option<(usize, usize)> {
+    let (section_start, section_end) = top_level_section_range(raw, "providers")?;
+    let target = format!("{provider_key}:");
+    let mut entry_indent: Option<usize> = None;
+    let mut entry_start: Option<usize> = None;
+    let mut offset = section_start;
+    for line in raw[section_start..section_end].split('\n') {
+        let trimmed_end = line.trim_end_matches('\r');
+        let trimmed = trimmed_end.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            offset += line.len() + 1;
+            continue;
+        }
+        let indent = line_indent(trimmed_end);
+        // The `providers:` key line itself (indent 0) must not set the entry
+        // indent; entries are the first indented level below it.
+        if entry_indent.is_none() && indent == 0 {
+            offset += line.len() + 1;
+            continue;
+        }
+        match entry_indent {
+            None => entry_indent = Some(indent),
+            Some(entry_indent) => {
+                if entry_start.is_some() && indent <= entry_indent {
+                    return Some((entry_start.unwrap(), offset));
+                }
+            }
+        }
+        if entry_start.is_none()
+            && indent == entry_indent.expect("set above")
+            && trimmed.starts_with(&target)
+        {
+            let after = &trimmed[target.len()..];
+            if after.is_empty() || after.starts_with([' ', '\t']) {
+                entry_start = Some(offset);
+            }
+        }
+        offset += line.len() + 1;
+    }
+    entry_start.map(|start| (start, section_end.min(offset)))
+}
+
+/// The raw text of one provider entry (as written in models.yml), or `None`
+/// when the entry is absent. Indentation is stripped so the result can be
+/// shown in the "other fields" YAML editor.
+pub(crate) fn read_ohmypi_provider_entry_raw(
+    provider_key: &str,
+) -> Result<Option<String>, AppError> {
+    let _guard = lock_files()?;
+    let path = get_ohmypi_models_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = String::from_utf8(read_file_limited(&path, "Oh My Pi models")?).map_err(|error| {
+        AppError::Config(format!(
+            "Oh My Pi models file must be UTF-8 ({}): {error}",
+            path.display()
+        ))
+    })?;
+    let Some((start, end)) = provider_entry_range(&raw, provider_key) else {
+        return Ok(None);
+    };
+    let entry = &raw[start..end];
+    // Skip the `<key>:` line and dedent its indent level plus one more: the
+    // editor text is the entry's fields at column 0 ("other fields" YAML),
+    // not the keyed entry.
+    let key_indent = entry.lines().next().map(line_indent).unwrap_or(0);
+    let strip = key_indent + 2;
+    let dedented = entry
+        .lines()
+        .skip(1)
+        .map(|line| {
+            if line.len() >= strip && line[..strip].trim().is_empty() {
+                &line[strip..]
+            } else {
+                line.trim_start_matches('\r')
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Some(dedented.trim_end_matches(['\n', '\r', ' ']).to_string()))
+}
+
+/// Top-level (column 0) lines of a controlled key, plus the nested block that
+/// follows them, are dropped from the passthrough text: those keys belong to
+/// the curated form fields and are serialized from the settings object.
+fn drop_controlled_keys(passthrough: &str) -> String {
+    let mut kept: Vec<&str> = Vec::new();
+    let mut skipping_indent: Option<usize> = None;
+    for line in passthrough.lines() {
+        let trimmed_end = line.trim_end_matches('\r');
+        let trimmed = trimmed_end.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            // Comments and blank lines always survive, even inside a skipped
+            // controlled-key block — they may document the field after them.
+            kept.push(line);
+            continue;
+        }
+        let indent = line_indent(trimmed_end);
+        if let Some(limit) = skipping_indent {
+            // Nested content (including sequence items at the same indent, as
+            // YAML allows for block sequences under a mapping key) belongs to
+            // the skipped controlled key.
+            if indent > limit || (indent == limit && trimmed.starts_with('-')) {
+                continue;
+            }
+            skipping_indent = None;
+        }
+        if indent == 0 {
+            let key = trimmed.split(':').next().unwrap_or_default().trim();
+            if CONTROLLED_PROVIDER_KEYS.contains(&key) {
+                skipping_indent = Some(0);
+                continue;
+            }
+        }
+        kept.push(line);
+    }
+    kept.join("\n")
+}
+
+/// Compose the `models.yml` fragment for one provider entry: curated fields
+/// serialized from `config`, then the raw passthrough text (comments kept)
+/// indented under the entry. Keys parsed from `passthrough_raw` are excluded
+/// from the serialized part so they are written exactly as typed.
+fn compose_provider_entry(
+    provider_key: &str,
+    config: &Value,
+    passthrough_raw: Option<&str>,
+) -> Result<String, AppError> {
+    let Some(object) = config.as_object() else {
+        return Err(AppError::Config(
+            "Oh My Pi provider configuration must be an object".to_string(),
+        ));
+    };
+
+    let mut passthrough_text = passthrough_raw
+        .map(|raw| drop_controlled_keys(raw))
+        .unwrap_or_default();
+    if passthrough_text.trim().is_empty() {
+        passthrough_text.clear();
+    }
+
+    // Which root keys does the passthrough text own? Parsed (not extracted from
+    // lines) so quoted/exotic keys are handled correctly.
+    let passthrough_keys: std::collections::HashSet<String> = if passthrough_text.is_empty() {
+        Default::default()
+    } else {
+        serde_yaml::from_str::<serde_yaml::Value>(&passthrough_text)
+            .ok()
+            .and_then(|doc| match doc {
+                serde_yaml::Value::Mapping(map) => Some(
+                    map.into_iter()
+                        .filter_map(|(key, _)| key.as_str().map(str::to_string))
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
+
+    let mut curated = serde_yaml::Mapping::new();
+    for (key, value) in object {
+        if passthrough_keys.contains(key) {
+            continue;
+        }
+        let yaml_value =
+            serde_json::from_value::<serde_yaml::Value>(value.clone()).map_err(|error| {
+                AppError::Config(format!(
+                    "Oh My Pi provider '{provider_key}' could not be converted to YAML: {error}"
+                ))
+            })?;
+        curated.insert(serde_yaml::Value::String(key.clone()), yaml_value);
+    }
+
+    let body = if curated.is_empty() {
+        format!("{provider_key}:\n")
+    } else {
+        let mut entry = serde_yaml::Mapping::new();
+        entry.insert(
+            serde_yaml::Value::String(provider_key.to_string()),
+            serde_yaml::Value::Mapping(curated),
+        );
+        serde_yaml::to_string(&serde_yaml::Value::Mapping(entry))
+            .map_err(|error| AppError::Config(format!("Failed to serialize Oh My Pi provider '{provider_key}': {error}")))?
+    };
+    let mut body = body.trim_end_matches('\n').to_string();
+    if !passthrough_text.is_empty() {
+        for line in passthrough_text.trim_end().lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            body.push('\n');
+            body.push_str("  ");
+            body.push_str(line.trim_end_matches('\r'));
+        }
+    }
+    // The fragment lives inside `providers:` — indent every line by one level.
+    let fragment = body
+        .lines()
+        .map(|line| format!("  {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!("{fragment}\n"))
+}
+
+/// Replace (or append) one provider entry in the raw models.yml text, leaving
+/// every other byte — comments included — untouched.
+fn replace_provider_entry_in_raw(
+    raw: &str,
+    provider_key: &str,
+    entry_fragment: &str,
+) -> String {
+    if let Some((start, end)) = provider_entry_range(raw, provider_key) {
+        let mut result = String::with_capacity(raw.len());
+        result.push_str(&raw[..start]);
+        result.push_str(entry_fragment);
+        let mut remainder = &raw[end..];
+        while remainder.starts_with('\n') || remainder.starts_with('\r') {
+            remainder = &remainder[1..];
+        }
+        result.push_str(remainder);
+        return result;
+    }
+
+    let mut result = raw.to_string();
+    if let Some((_, section_end)) = top_level_section_range(raw, "providers") {
+        // Insert before the next top-level section (or EOF).
+        let insert_at = result.len().min(section_end);
+        let mut prefix = result[..insert_at].to_string();
+        while prefix.ends_with('\n') || prefix.ends_with('\r') || prefix.ends_with(' ') {
+            prefix.pop();
+        }
+        prefix.push('\n');
+        let suffix = result[insert_at..].to_string();
+        result = prefix;
+        result.push_str(entry_fragment);
+        // The fragment already ends with a newline; only add separation when
+        // another top-level section follows.
+        if !suffix.is_empty() && !suffix.starts_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(&suffix);
+    } else {
+        if !result.is_empty() && !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str("providers:\n");
+        result.push_str(entry_fragment);
+    }
+    result
+}
+
+/// Parse the edited raw text back and verify the composed entry still means
+/// exactly `config`; guards against indentation or duplicate-key mistakes.
+fn verify_entry(raw: &str, provider_key: &str, config: &Value) -> Result<(), AppError> {
+    let document: serde_yaml::Value = serde_yaml::from_str(raw).map_err(|error| {
+        AppError::Config(format!(
+            "Oh My Pi models text is not valid YAML after editing '{provider_key}': {error}"
+        ))
+    })?;
+    let parsed = document
+        .as_mapping()
+        .and_then(|root| root.get(serde_yaml::Value::String("providers".to_string())))
+        .and_then(|providers| providers.as_mapping())
+        .and_then(|providers| providers.get(serde_yaml::Value::String(provider_key.to_string())));
+    let parsed_json = parsed
+        .map(|value| serde_json::to_value(value))
+        .transpose()
+        .map_err(|error| {
+            AppError::Config(format!(
+                "Oh My Pi provider '{provider_key}' could not be converted from YAML: {error}"
+            ))
+        })?
+        .unwrap_or(Value::Null);
+    if parsed_json != *config {
+        return Err(AppError::Config(format!(
+            "Oh My Pi provider '{provider_key}' round-trip mismatch after text edit: parsed {parsed_json} != config {config} in\n{raw}"
+        )));
+    }
+    Ok(())
+}
+
+/// Write one provider entry to models.yml at the text level: only the
+/// `providers.<key>` block is rewritten (curated fields serialized from
+/// `config`, other fields from `passthrough_raw` verbatim with comments);
+/// the rest of the file — comments included — is left untouched.
+///
+/// Returns `Ok(false)` when nothing changed on disk.
+pub(crate) fn write_ohmypi_provider_entry(
+    provider_key: &str,
+    config: &Value,
+    passthrough_raw: Option<&str>,
+) -> Result<bool, AppError> {
+    validate_provider_node(provider_key, config)?;
+    let _guard = lock_files()?;
+    let path = get_ohmypi_models_path()?;
+    let raw = if path.exists() {
+        String::from_utf8(read_file_limited(&path, "Oh My Pi models")?).map_err(|error| {
+            AppError::Config(format!(
+                "Oh My Pi models file must be UTF-8 ({}): {error}",
+                path.display()
+            ))
+        })?
+    } else {
+        String::new()
+    };
+    let entry_fragment = compose_provider_entry(provider_key, config, passthrough_raw)?;
+    let new_raw = replace_provider_entry_in_raw(&raw, provider_key, &entry_fragment);
+    if new_raw == raw {
+        return Ok(false);
+    }
+    verify_entry(&new_raw, provider_key, config)?;
+    ensure_parent(&path)?;
+    atomic_write_private(&path, new_raw.as_bytes())?;
+    Ok(true)
+}
+
 
 pub(crate) fn read_ohmypi_native_providers() -> Result<IndexMap<String, Value>, AppError> {
     let _guard = lock_files()?;
@@ -451,38 +814,23 @@ pub(crate) fn replace_ohmypi_provider(
     expected: &Value,
     replacement: &Value,
 ) -> Result<(), AppError> {
-    validate_provider_node(provider_key, replacement)?;
-    let _guard = lock_files()?;
-    let path = get_ohmypi_models_path()?;
-    let (mut document, expected_revision) =
-        read_document_with_revision(&path, "Oh My Pi models", true)?;
-    let providers = providers_mut(&mut document, &path)?;
-    let current = providers.get(provider_key).ok_or_else(|| {
-        AppError::Conflict(format!(
-            "Oh My Pi provider '{provider_key}' is no longer present in models.yml"
-        ))
-    })?;
-    if current != expected {
-        return Err(AppError::Conflict(format!(
-            "Oh My Pi provider '{provider_key}' changed outside CC Switch"
-        )));
-    }
-    if current == replacement {
-        return Ok(());
-    }
-    providers.insert(provider_key.to_string(), replacement.clone());
-    write_document(
-        &path,
-        &document,
-        &expected_revision,
-        "Oh My Pi models",
-        true,
-    )
+    replace_ohmypi_provider_if_present(provider_key, expected, replacement, None)?
+        .ok_or_else(|| {
+            AppError::Conflict(format!(
+                "Oh My Pi provider '{provider_key}' is no longer present in models.yml"
+            ))
+        })?;
+    Ok(())
 }
 
+/// Replace a provider entry. Uses the text-level writer when passthrough text
+/// is available so comments survive; falls back to whole-document rewrite
+/// otherwise (legacy callers). Returns the previous entry value.
 pub(crate) fn replace_ohmypi_provider_if_present(
     provider_key: &str,
+    expected: &Value,
     replacement: &Value,
+    passthrough_raw: Option<&str>,
 ) -> Result<Option<Value>, AppError> {
     validate_provider_node(provider_key, replacement)?;
     let _guard = lock_files()?;
@@ -493,7 +841,18 @@ pub(crate) fn replace_ohmypi_provider_if_present(
     let Some(current) = providers.get(provider_key).cloned() else {
         return Ok(None);
     };
+    if current != *expected {
+        return Err(AppError::Conflict(format!(
+            "Oh My Pi provider '{provider_key}' changed outside CC Switch"
+        )));
+    }
     if current == *replacement {
+        return Ok(Some(current));
+    }
+    if passthrough_raw.is_some() {
+        // Text-level writer takes its own file lock; release ours first.
+        drop(_guard);
+        write_ohmypi_provider_entry(provider_key, replacement, passthrough_raw)?;
         return Ok(Some(current));
     }
     providers.insert(provider_key.to_string(), replacement.clone());
@@ -506,6 +865,7 @@ pub(crate) fn replace_ohmypi_provider_if_present(
     )?;
     Ok(Some(current))
 }
+
 
 pub(crate) fn remove_ohmypi_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
     remove_ohmypi_provider_inner(provider_key, None)
@@ -818,6 +1178,19 @@ mod tests {
     use serial_test::serial;
 
     #[test]
+    fn drop_controlled_keys_keeps_comments_and_unmanaged_fields() {
+        let passthrough = "# edited comment\nbaseUrl: https://api.duolalab.test/v1\napi: openai-completions\napiKey: sk-live\n# extra unmanaged field\nauth: none\nmodels:\n- id: glm-4.7\n  name: GLM 4.7\n";
+        let dropped = drop_controlled_keys(passthrough);
+        assert!(dropped.contains("# edited comment"), "{dropped}");
+        assert!(dropped.contains("# extra unmanaged field"), "{dropped}");
+        assert!(dropped.contains("auth: none"), "{dropped}");
+        assert!(!dropped.contains("baseUrl:"), "{dropped}");
+        assert!(!dropped.contains("apiKey:"), "{dropped}");
+        assert!(!dropped.contains("models:"), "{dropped}");
+        assert!(!dropped.contains("glm-4.7"), "{dropped}");
+    }
+
+    #[test]
     fn native_profile_and_config_root_resolution() {
         let home = tempfile::tempdir().expect("home");
         assert_eq!(normalize_profile(Some("").or(Some("work"))).unwrap(), None);
@@ -957,6 +1330,44 @@ mod tests {
         assert!(insert_ohmypi_provider("proxy", &config).expect("insert override-only"));
         let providers = read_ohmypi_native_providers().expect("read providers");
         assert_eq!(providers.get("proxy"), Some(&config));
+    }
+
+    #[test]
+    #[serial]
+    fn text_level_edit_preserves_comments_and_sibling_entries() {
+        let _agent = TestAgentDir::new();
+        write_agent_file(
+            "models.yml",
+            "# top comment\nproviders:\n  # sibling comment\n  existing:\n    baseUrl: https://a.example\n    compat:\n      supportsStore: true\n",
+        );
+
+        let mut config = provider();
+        config["auth"] = json!("none");
+        let passthrough = "# unmanaged key\nauth: none\n";
+        assert!(write_ohmypi_provider_entry("example", &config, Some(passthrough))
+            .expect("text-level write"));
+
+        let source = read_agent_file("models.yml");
+        assert!(source.contains("# top comment"), "{source}");
+        assert!(source.contains("# sibling comment"), "{source}");
+        assert!(source.contains("# unmanaged key"), "{source}");
+        assert!(source.contains("supportsStore: true"), "{source}");
+        assert!(source.contains("auth: none"), "{source}");
+
+        // Parsed content must round-trip the full config object.
+        let providers = read_ohmypi_native_providers().expect("read providers");
+        assert_eq!(providers.get("example"), Some(&config));
+        assert!(providers.contains_key("existing"));
+
+        // Raw entry (for the editor) keeps the comment.
+        let raw = read_ohmypi_provider_entry_raw("example")
+            .expect("read raw entry")
+            .expect("entry present");
+        assert!(raw.contains("# unmanaged key"), "{raw}");
+
+        // Re-writing with the same passthrough is a no-op.
+        assert!(!write_ohmypi_provider_entry("example", &config, Some(passthrough))
+            .expect("idempotent write"));
     }
 
     #[test]

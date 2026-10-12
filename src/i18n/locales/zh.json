@@ -4733,7 +4733,7 @@
       "thinking": "思考配置",
       "imageInputDecoder": "图像输入解码器",
       "cost": "价格",
-      "passthroughLabel": "其他字段（YAML，原样保留）",
+      "configYaml": "配置YAML",
       "fixYamlFirst": "请先修复下方配置 YAML，再编辑结构化字段。",
       "providerKeyDuplicate": "此标识已被使用，请更换",
       "absoluteHttpUrlRequired": "{{label}} 必须是绝对 HTTP 或 HTTPS 地址",

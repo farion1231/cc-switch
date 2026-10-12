@@ -20,7 +20,31 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
             log::warn!("Failed to read Oh My Pi providers; showing saved catalog: {error}");
         }
     }
-    state.db.get_all_providers(OHMYPI_APP)
+    let mut providers = state.db.get_all_providers(OHMYPI_APP)?;
+    // Show the raw models.yml entry (comments included) in the YAML editor;
+    // fall back to the stored passthrough text when the native file is unreadable.
+    for (id, provider) in providers.iter_mut() {
+        if provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.ohmypi_passthrough_yaml.as_deref())
+            .is_some()
+        {
+            continue;
+        }
+        let raw = crate::ohmypi_config::read_ohmypi_provider_entry_raw(id);
+        match raw {
+            Ok(Some(text)) => {
+                let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
+                meta.ohmypi_passthrough_yaml = Some(text);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                log::warn!("Failed to read Oh My Pi raw entry for '{id}': {error}");
+            }
+        }
+    }
+    Ok(providers)
 }
 
 pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
@@ -59,8 +83,16 @@ pub(super) fn add(
         )));
     }
 
+    let passthrough_yaml = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.ohmypi_passthrough_yaml.clone());
     let native_inserted = if add_to_live {
-        crate::ohmypi_config::insert_ohmypi_provider(&provider.id, &provider.settings_config)?
+        crate::ohmypi_config::write_ohmypi_provider_entry(
+            &provider.id,
+            &provider.settings_config,
+            passthrough_yaml.as_deref(),
+        )?
     } else {
         false
     };
@@ -120,7 +152,7 @@ pub(super) fn update(
         ));
     }
 
-    state
+    let existing = state
         .db
         .get_provider_by_id(&original_id, app_type.as_str())?
         .ok_or_else(|| {
@@ -130,9 +162,17 @@ pub(super) fn update(
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
+    let passthrough_yaml = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.ohmypi_passthrough_yaml.clone());
+    // 冲突检查的底是数据库那一行（list() 时与 models.yml 同步过），不是编辑器重组的
+    // 新配置：表单控件对字段顺序/表示的归一化不应被当成外部修改。
     let previous_native = crate::ohmypi_config::replace_ohmypi_provider_if_present(
         &original_id,
+        &existing.settings_config,
         &provider.settings_config,
+        passthrough_yaml.as_deref(),
     )?;
     if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
         if let Some(previous_native) = previous_native.as_ref() {
@@ -278,6 +318,7 @@ fn strip_unsupported_ohmypi_metadata(provider: &mut Provider) {
         usage_script: meta.usage_script,
         is_partner: meta.is_partner,
         partner_promotion_key: meta.partner_promotion_key,
+        ohmypi_passthrough_yaml: meta.ohmypi_passthrough_yaml,
         ..ProviderMeta::default()
     });
 }

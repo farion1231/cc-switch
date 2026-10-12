@@ -4733,7 +4733,7 @@
       "thinking": "思考設定",
       "imageInputDecoder": "画像入力デコーダー",
       "cost": "コスト",
-      "passthroughLabel": "その他のフィールド（YAML、そのまま保持）",
+      "configYaml": "設定YAML",
       "fixYamlFirst": "下の設定 YAML を修正してから、構造化フィールドを編集してください。",
       "providerKeyDuplicate": "このキーは既に使用されています",
       "absoluteHttpUrlRequired": "{{label}} は絶対 HTTP または HTTPS URL で指定してください",

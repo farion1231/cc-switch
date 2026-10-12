@@ -74,4 +74,38 @@ describe("OhMyPi native edits", () => {
     const config = await save(onSubmit);
     expect(config).not.toHaveProperty("models");
   });
+  it("shows raw passthrough text with comments and saves it back into meta", async () => {
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <OhMyPiProviderForm
+        appId="ohmypi"
+        providerId="custom"
+        initialData={{
+          name: "Review",
+          settingsConfig: { baseUrl: "https://local.example.test" },
+          meta: {
+            ohmypiPassthroughYaml:
+              "# keep me\nauth: none\n",
+          },
+        }}
+        submitLabel="Save probe"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+    const editor = container.querySelector(
+      "#ohmypi-settings-config",
+    )! as HTMLTextAreaElement;
+    expect(editor.value).toContain("# keep me");
+
+    fireEvent.change(editor, {
+      target: { value: "# edited comment\nauth: none\n" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save probe" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    const payload = onSubmit.mock.calls[0][0];
+    expect(payload.meta?.ohmypiPassthroughYaml).toContain("# edited comment");
+    const config = JSON.parse(payload.settingsConfig);
+    expect(config.auth).toBe("none");
+  });
 });
