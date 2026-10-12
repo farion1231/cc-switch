@@ -1966,7 +1966,14 @@ impl RequestForwarder {
             }
         }
 
-        // Native Responses passthrough to a strict third-party gateway (xAI).
+        if matches!(app_type, AppType::Codex)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            super::providers::apply_native_responses_api_version(provider, &mut request_body);
+        }
+
+        // Native Responses namespace compatibility for strict gateways (xAI / explicitly configured gateways).
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
         // xAI request rewrites (schema, agent_message, unknown models).
@@ -1983,18 +1990,20 @@ impl RequestForwarder {
                     provider.id
                 );
             }
-            // Stack 请求只做字段兼容。
-            let upstream_model = if self.keeps_resolved_model() {
-                None
-            } else {
-                super::providers::codex_provider_upstream_model(provider)
-            };
-            super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
-                &mut request_body,
-                &provider.id,
-                upstream_model.as_deref(),
-                &provider.settings_config,
-            );
+            if super::providers::provider_needs_xai_responses_compat(provider) {
+                // Stack 请求只做字段兼容。
+                let upstream_model = if self.keeps_resolved_model() {
+                    None
+                } else {
+                    super::providers::codex_provider_upstream_model(provider)
+                };
+                super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+                    &mut request_body,
+                    &provider.id,
+                    upstream_model.as_deref(),
+                    &provider.settings_config,
+                );
+            }
         }
 
         // Stack 请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
