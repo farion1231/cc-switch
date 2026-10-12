@@ -226,6 +226,13 @@ export function ProviderList({
   const isSearchOpen = searchOpen ?? innerSearchOpen;
   const setIsSearchOpen = onSearchOpenChange ?? setInnerSearchOpen;
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const focusSearch = useCallback(() => {
+    const input = searchInputRef.current;
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    input.select();
+    input.scrollIntoView?.({ block: "nearest" });
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -237,7 +244,12 @@ export function ProviderList({
         // ProviderPresetSelector 的搜索框），避免与其同名快捷键冲突。
         if (isTextEditableTarget(document.activeElement)) return;
         event.preventDefault();
-        setIsSearchOpen(true);
+        if (isSearchOpen) {
+          // The in-flow panel may have scrolled out of view since it was opened.
+          focusSearch();
+        } else {
+          setIsSearchOpen(true);
+        }
         return;
       }
 
@@ -248,17 +260,14 @@ export function ProviderList({
 
     globalThis.addEventListener("keydown", handleKeyDown);
     return () => globalThis.removeEventListener("keydown", handleKeyDown);
-  }, [setIsSearchOpen]);
+  }, [setIsSearchOpen, isSearchOpen, focusSearch]);
 
   useEffect(() => {
     if (isSearchOpen) {
-      const frame = requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
+      const frame = requestAnimationFrame(focusSearch);
       return () => cancelAnimationFrame(frame);
     }
-  }, [isSearchOpen]);
+  }, [isSearchOpen, focusSearch]);
 
   // 每家可被搜到的文字：名称、备注、官网、请求地址（请求地址要解析配置，只随列表变化重算）
   const searchIndex = useMemo(
