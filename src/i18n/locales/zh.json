@@ -4044,6 +4044,12 @@
       "hermes": "安装时运行官方安装脚本",
       "pi": "通过 npm 安装",
       "mcode": "安装时运行官方安装脚本，失败时改用 npm"
+    },
+    "bobot": {
+      "installHint": "先运行安装命令，再点击启动",
+      "launch": "启动",
+      "launchSuccess": "已在终端启动 BoBot",
+      "launchFailed": "启动 BoBot 失败"
     }
   },
   "appPage": {

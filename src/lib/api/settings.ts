@@ -113,6 +113,10 @@ export const settingsApi = {
     await invoke("open_app_config_folder");
   },
 
+  async openBobotTerminal(): Promise<boolean> {
+    return await invoke("open_bobot_terminal");
+  },
+
   async revealAppLogFile(): Promise<void> {
     await invoke("reveal_app_log_file");
   },

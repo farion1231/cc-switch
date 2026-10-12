@@ -4405,6 +4405,15 @@ pub async fn open_provider_terminal(
     Ok(true)
 }
 
+/// 打开终端并启动 BoBot CLI。
+///
+/// BoBot 目前没有公开稳定的配置文件格式，先提供一个不改写用户配置的启动入口。
+#[tauri::command]
+pub async fn open_bobot_terminal() -> Result<bool, String> {
+    launch_terminal_running("bobot", "bobot").map_err(|e| format!("启动 BoBot 失败: {e}"))?;
+    Ok(true)
+}
+
 /// 从提供商配置中提取环境变量
 fn extract_env_vars_from_config(
     config: &serde_json::Value,

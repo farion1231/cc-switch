@@ -49,8 +49,8 @@ pub use codex_config::{
     extract_codex_experimental_bearer_token, get_codex_auth_path, get_codex_config_path,
     read_codex_live_settings, write_codex_live_atomic,
 };
-pub use commands::open_provider_terminal;
 pub use commands::*;
+pub use commands::{open_bobot_terminal, open_provider_terminal};
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
 pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
@@ -1682,6 +1682,7 @@ pub fn run() {
             commands::list_tool_installations,
             // Provider terminal
             commands::open_provider_terminal,
+            commands::open_bobot_terminal,
             // Universal Provider management
             commands::get_universal_providers,
             commands::get_universal_provider,
