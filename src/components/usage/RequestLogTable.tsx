@@ -5,6 +5,7 @@ import { TablePagination } from "./TablePagination";
 import { HelpTip } from "@/components/ui/help-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api";
+import type { ColumnVisibility } from "@/types/table";
 import {
   getFreshInputTokens,
   isUnpricedUsage,
@@ -24,6 +25,11 @@ import {
 } from "./format";
 import { usageTable } from "./usageTable";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
+import {
+  getColumnLayout,
+  REQUEST_LOG_COLUMNS,
+  type RequestLogColumnId,
+} from "./tableColumns";
 
 interface RequestLogTableProps {
   range: UsageRangeSelection;
@@ -37,6 +43,7 @@ interface RequestLogTableProps {
   refreshIntervalMs: number;
   /** 点一行打开请求详情 */
   onOpenDetail?: (requestId: string) => void;
+  columnVisibility?: ColumnVisibility<RequestLogColumnId>;
 }
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -108,10 +115,13 @@ export function RequestLogTable({
   statusCode,
   refreshIntervalMs,
   onOpenDetail,
+  columnVisibility,
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
   const [page, setPage] = useState(0);
   const pageSize = 20;
+  const layout = getColumnLayout(REQUEST_LOG_COLUMNS, columnVisibility);
+  const { isVisible } = layout;
 
   const effectiveFilters: LogFilters = {
     appType:
@@ -173,6 +183,7 @@ export function RequestLogTable({
     const tps = exactTps ?? estimatedTps;
     const latency = parseFiniteNumber(log.latencyMs);
     const firstToken = parseFiniteNumber(log.firstTokenMs);
+    const hasFirstToken = firstToken != null && firstToken >= 0;
     const timingTip =
       latency != null && latency > 0 && firstToken != null
         ? t("usage.timingTip", {
@@ -197,156 +208,218 @@ export function RequestLogTable({
         className={onOpenDetail ? usageTable.rowInteractive : usageTable.row}
         onClick={() => onOpenDetail?.(log.requestId)}
       >
-        {/* 时间、应用两列收紧到内容宽度（w-px），多出来的宽度留给后面的数值列 */}
-        <td className={cn(usageTable.td, "w-px")}>
-          <button
-            type="button"
-            className="rounded-[4px] text-start tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            title={fullTime}
-            aria-label={t("usage.openRequestDetail", {
-              time: fullTime,
-              provider,
-            })}
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenDetail?.(log.requestId);
-            }}
-          >
-            {time}
-          </button>
-          {!isSuccessStatus(log.statusCode) && (
-            <span
-              className="ms-1.5 rounded-[4px] bg-danger-soft px-1 text-badge text-danger-text"
-              title={log.errorMessage || undefined}
+        {isVisible("time") && (
+          <td className={cn(usageTable.td, "w-px")}>
+            <button
+              type="button"
+              className="rounded-[4px] text-start tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title={fullTime}
+              aria-label={t("usage.openRequestDetail", {
+                time: fullTime,
+                provider,
+              })}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenDetail?.(log.requestId);
+              }}
             >
-              {log.statusCode}
-            </span>
-          )}
-        </td>
-        <td className={cn(usageTable.td, "w-px")}>
-          <span
-            className="flex max-w-[88px] items-center gap-1.5"
-            title={appDisplayName(log.appType)}
-          >
-            {isKnownAppId(log.appType) && (
-              <AppGlyph
-                app={log.appType}
-                size={14}
-                badgeClassName="bg-surface"
-              />
-            )}
-            <span className="truncate" aria-hidden="true">
-              {appShortName(log.appType)}
-            </span>
-            <span className="sr-only">{appDisplayName(log.appType)}</span>
-          </span>
-        </td>
-        {/* 供应商、模型两列按比例取宽（max-w-0 让百分比宽度生效、内容截断）；
-            比例合计 40%，再大就会把数值列挤到只剩内容宽度。模型名通常比供应商名长 */}
-        <td className={cn(usageTable.td, "w-[18%] max-w-0")}>
-          <span
-            className="block truncate"
-            title={usageProviderTitle(providerLabel)}
-          >
-            {provider}
-          </span>
-        </td>
-        <td className={cn(usageTable.td, usageTable.mono, "w-[22%] max-w-0")}>
-          <span className="block truncate" title={modelTitle}>
-            {log.model}
-          </span>
-        </td>
-        <td
-          className={usageTable.tdEnd}
-          title={
-            isCacheInclusive
-              ? `${fmtInt(freshInput, locale)} (${t("usage.rawInputLabel")}: ${fmtInt(log.inputTokens, locale)})`
-              : fmtInt(freshInput, locale)
-          }
-        >
-          {formatTokensCompact(freshInput, locale)}
-        </td>
-        <td
-          className={usageTable.tdEnd}
-          title={fmtInt(log.outputTokens, locale)}
-        >
-          {formatTokensCompact(log.outputTokens, locale)}
-        </td>
-        <td
-          className={cn(usageTable.tdEnd, !hasCache && usageTable.muted)}
-          title={t("usage.cacheTip", {
-            read: fmtInt(log.cacheReadTokens, locale),
-            write: fmtInt(log.cacheCreationTokens, locale),
-          })}
-        >
-          {hasCache ? formatTokensCompact(log.cacheReadTokens, locale) : "—"}
-        </td>
-        <td
-          className={cn(
-            usageTable.tdEnd,
-            "font-medium",
-            unpriced && "font-normal text-fg-3",
-          )}
-          title={
-            multiplier != null && multiplier !== 1
-              ? `${t("usage.costMultiplier")} ×${multiplier.toFixed(2)}`
-              : undefined
-          }
-        >
-          {unpriced ? t("usage.unpriced") : fmtUsd(log.totalCostUsd, 4)}
-        </td>
-        <td
-          className={cn(usageTable.tdEnd, tps == null && usageTable.muted)}
-          title={timingTip}
-        >
-          {tps == null ? (
-            "—"
-          ) : (
-            <>
-              {estimatedTps != null && "≈"}
-              {tps}
-              <span className="ms-0.5 text-badge font-normal text-fg-3">
-                tok/s
+              {time}
+            </button>
+            {!isSuccessStatus(log.statusCode) && (
+              <span
+                className="ms-1.5 rounded-[4px] bg-danger-soft px-1 text-badge text-danger-text"
+                title={log.errorMessage || undefined}
+              >
+                {log.statusCode}
               </span>
-            </>
-          )}
-        </td>
+            )}
+          </td>
+        )}
+        {isVisible("app") && (
+          <td className={cn(usageTable.td, "w-px")}>
+            <span
+              className="flex max-w-[88px] items-center gap-1.5"
+              title={appDisplayName(log.appType)}
+            >
+              {isKnownAppId(log.appType) && (
+                <AppGlyph
+                  app={log.appType}
+                  size={14}
+                  badgeClassName="bg-surface"
+                />
+              )}
+              <span className="truncate" aria-hidden="true">
+                {appShortName(log.appType)}
+              </span>
+              <span className="sr-only">{appDisplayName(log.appType)}</span>
+            </span>
+          </td>
+        )}
+        {isVisible("provider") && (
+          <td className={cn(usageTable.td, "max-w-0")}>
+            <span
+              className="block truncate"
+              title={usageProviderTitle(providerLabel)}
+            >
+              {provider}
+            </span>
+          </td>
+        )}
+        {isVisible("model") && (
+          <td className={cn(usageTable.td, usageTable.mono, "max-w-0")}>
+            <span className="block truncate" title={modelTitle}>
+              {log.model}
+            </span>
+          </td>
+        )}
+        {isVisible("freshInput") && (
+          <td
+            className={usageTable.tdEnd}
+            title={
+              isCacheInclusive
+                ? `${fmtInt(freshInput, locale)} (${t("usage.rawInputLabel")}: ${fmtInt(log.inputTokens, locale)})`
+                : fmtInt(freshInput, locale)
+            }
+          >
+            {formatTokensCompact(freshInput, locale)}
+          </td>
+        )}
+        {isVisible("outputTokens") && (
+          <td
+            className={usageTable.tdEnd}
+            title={fmtInt(log.outputTokens, locale)}
+          >
+            {formatTokensCompact(log.outputTokens, locale)}
+          </td>
+        )}
+        {isVisible("cacheReadTokens") && (
+          <td
+            className={cn(usageTable.tdEnd, !hasCache && usageTable.muted)}
+            title={t("usage.cacheTip", {
+              read: fmtInt(log.cacheReadTokens, locale),
+              write: fmtInt(log.cacheCreationTokens, locale),
+            })}
+          >
+            {hasCache ? formatTokensCompact(log.cacheReadTokens, locale) : "—"}
+          </td>
+        )}
+        {isVisible("cost") && (
+          <td
+            className={cn(
+              usageTable.tdEnd,
+              "font-medium",
+              unpriced && "font-normal text-fg-3",
+            )}
+            title={
+              multiplier != null && multiplier !== 1
+                ? `${t("usage.costMultiplier")} ×${multiplier.toFixed(2)}`
+                : undefined
+            }
+          >
+            {unpriced ? t("usage.unpriced") : fmtUsd(log.totalCostUsd, 4)}
+          </td>
+        )}
+        {isVisible("speed") && (
+          <td
+            className={cn(usageTable.tdEnd, tps == null && usageTable.muted)}
+            title={timingTip}
+          >
+            {tps == null ? (
+              "—"
+            ) : (
+              <>
+                {estimatedTps != null && "≈"}
+                {tps}
+                <span className="ms-0.5 text-badge font-normal text-fg-3">
+                  tok/s
+                </span>
+              </>
+            )}
+          </td>
+        )}
+        {isVisible("firstToken") && (
+          <td
+            className={cn(usageTable.tdEnd, !hasFirstToken && usageTable.muted)}
+            title={
+              hasFirstToken
+                ? t("usage.firstTokenMilliseconds", {
+                    value: firstToken.toLocaleString(locale, {
+                      maximumFractionDigits: 20,
+                    }),
+                  })
+                : undefined
+            }
+          >
+            {hasFirstToken ? `${(firstToken / 1000).toFixed(1)}s` : "—"}
+          </td>
+        )}
       </tr>
     );
   };
 
   return (
     <div className="flex flex-col">
-      <div className={usageTable.scroller}>
-        {/* 最小窗口（900）展开侧栏时表格区只有 644px：最小宽度超过它，最右的速度列就被挤到横向滚动里看不见 */}
+      <div className={cn(usageTable.scroller, "relative")}>
         <table
-          className={cn(usageTable.table, "min-w-[620px]")}
+          className={usageTable.table}
+          style={{ minWidth: layout.minWidth }}
           aria-label={t("usage.requestLogs")}
         >
+          {/* 列宽作为起点，自动布局为多语言表头和日期留足空间。 */}
+          <colgroup>
+            {REQUEST_LOG_COLUMNS.filter(({ id }) => isVisible(id)).map(
+              (column) => (
+                <col key={column.id} style={{ width: column.minWidth }} />
+              ),
+            )}
+          </colgroup>
           <thead>
             <tr className={usageTable.headRow}>
-              <th className={usageTable.th}>{t("usage.time")}</th>
-              <th className={usageTable.th}>{t("usage.app")}</th>
-              <th className={usageTable.th}>{t("usage.provider")}</th>
-              <th className={usageTable.th}>{t("usage.model")}</th>
-              <th className={usageTable.thEnd}>{t("usage.freshInput")}</th>
-              <th className={usageTable.thEnd}>{t("usage.outputTokens")}</th>
-              <th className={usageTable.thEnd}>{t("usage.cacheReadTokens")}</th>
-              <th className={usageTable.thEnd}>{t("usage.cost")}</th>
-              <th className={usageTable.thEnd}>
-                <span className="inline-flex items-center gap-0.5">
-                  {t("usage.speed")}
-                  <HelpTip title={t("usage.speedHelpTitle")} align="end">
-                    {t("usage.speedHelp")}
-                  </HelpTip>
-                </span>
-              </th>
+              {isVisible("time") && (
+                <th className={usageTable.th}>{t("usage.time")}</th>
+              )}
+              {isVisible("app") && (
+                <th className={usageTable.th}>{t("usage.app")}</th>
+              )}
+              {isVisible("provider") && (
+                <th className={usageTable.th}>{t("usage.provider")}</th>
+              )}
+              {isVisible("model") && (
+                <th className={usageTable.th}>{t("usage.model")}</th>
+              )}
+              {isVisible("freshInput") && (
+                <th className={usageTable.thEnd}>{t("usage.freshInput")}</th>
+              )}
+              {isVisible("outputTokens") && (
+                <th className={usageTable.thEnd}>{t("usage.outputTokens")}</th>
+              )}
+              {isVisible("cacheReadTokens") && (
+                <th className={usageTable.thEnd}>
+                  {t("usage.cacheReadTokens")}
+                </th>
+              )}
+              {isVisible("cost") && (
+                <th className={usageTable.thEnd}>{t("usage.cost")}</th>
+              )}
+              {isVisible("speed") && (
+                <th className={usageTable.thEnd}>
+                  <span className="inline-flex items-center gap-0.5">
+                    {t("usage.speed")}
+                    <HelpTip title={t("usage.speedHelpTitle")} align="end">
+                      {t("usage.speedHelp")}
+                    </HelpTip>
+                  </span>
+                </th>
+              )}
+              {isVisible("firstToken") && (
+                <th className={usageTable.thEnd}>{t("usage.firstToken")}</th>
+              )}
             </tr>
           </thead>
           <tbody>
             {logs.length === 0 ? (
               <tr>
-                <td colSpan={9} className={usageTable.empty}>
+                <td colSpan={layout.visibleCount} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>

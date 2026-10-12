@@ -15,6 +15,8 @@ import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { HelpTip } from "@/components/ui/help-tip";
 import { PageTabs } from "@/components/ui/page-tabs";
 import { Button } from "@/components/ui/button";
+import { ColumnVisibilityMenu } from "@/components/ui/ColumnVisibilityMenu";
+import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
   SegmentThumb,
@@ -54,6 +56,11 @@ import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
+import {
+  REQUEST_LOG_COLUMNS,
+  PROVIDER_STATS_COLUMNS,
+  MODEL_STATS_COLUMNS,
+} from "./tableColumns";
 
 const DEFAULT_REFRESH_INTERVAL_MS = 30000;
 const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
@@ -167,6 +174,18 @@ export function UsageDashboard({
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
   const [tab, setTab] = useState<UsageTab>("logs");
+  const logColumns = useColumnVisibility(
+    "cc-switch.usage.requestLogs.hiddenColumns",
+    REQUEST_LOG_COLUMNS,
+  );
+  const providerColumns = useColumnVisibility(
+    "cc-switch.usage.providerStats.hiddenColumns",
+    PROVIDER_STATS_COLUMNS,
+  );
+  const modelColumns = useColumnVisibility(
+    "cc-switch.usage.modelStats.hiddenColumns",
+    MODEL_STATS_COLUMNS,
+  );
   // 没有用量时也能进定价页：新装的人往往先配好 models.dev 同步再开始用
   const [pricingWhileEmpty, setPricingWhileEmpty] = useState(false);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
@@ -631,7 +650,7 @@ export function UsageDashboard({
       ? t("usage.statusFilter.all")
       : `${t("usage.statusCode")} ${statusCode}`;
 
-  const tabTrailing =
+  const tabInfo =
     tab === "logs" ? (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -675,6 +694,51 @@ export function UsageDashboard({
       </span>
     ) : null;
 
+  const columnMenu =
+    tab === "logs" ? (
+      <ColumnVisibilityMenu
+        columns={REQUEST_LOG_COLUMNS.map((column) => ({
+          ...column,
+          label: t(column.labelKey),
+        }))}
+        visibility={logColumns.visibility}
+        onVisibleChange={logColumns.setVisible}
+        onReset={logColumns.reset}
+        compact={compact}
+      />
+    ) : tab === "providers" ? (
+      <ColumnVisibilityMenu
+        columns={PROVIDER_STATS_COLUMNS.map((column) => ({
+          ...column,
+          label: t(column.labelKey),
+        }))}
+        visibility={providerColumns.visibility}
+        onVisibleChange={providerColumns.setVisible}
+        onReset={providerColumns.reset}
+        compact={compact}
+      />
+    ) : tab === "models" ? (
+      <ColumnVisibilityMenu
+        columns={MODEL_STATS_COLUMNS.map((column) => ({
+          ...column,
+          label: t(column.labelKey),
+        }))}
+        visibility={modelColumns.visibility}
+        onVisibleChange={modelColumns.setVisible}
+        onReset={modelColumns.reset}
+        compact={compact}
+      />
+    ) : null;
+
+  const tabTrailing = columnMenu ? (
+    <div className="flex items-center gap-1">
+      {tabInfo}
+      {columnMenu}
+    </div>
+  ) : (
+    tabInfo
+  );
+
   const scopedAppType = appType === "all" ? undefined : appType;
 
   const tabsSection = (
@@ -696,6 +760,7 @@ export function UsageDashboard({
       >
         {tab === "logs" && (
           <RequestLogTable
+            columnVisibility={logColumns.visibility}
             range={range}
             appType={appType}
             providerName={providerName}
@@ -707,6 +772,7 @@ export function UsageDashboard({
         )}
         {tab === "providers" && (
           <ProviderStatsTable
+            columnVisibility={providerColumns.visibility}
             range={range}
             appType={appType}
             providerName={providerName}
@@ -716,6 +782,7 @@ export function UsageDashboard({
         )}
         {tab === "models" && (
           <ModelStatsTable
+            columnVisibility={modelColumns.visibility}
             range={range}
             appType={appType}
             providerName={providerName}

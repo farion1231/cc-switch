@@ -32,20 +32,32 @@ export function getStatsEstimatedSpeed(stat: SpeedTotals): string | null {
   );
 }
 
+interface SuccessSpeedVisibility {
+  showSuccessRate?: boolean;
+  showSpeed?: boolean;
+}
+
 /** 「成功率」「速度」两列的表头，供应商和模型统计共用。 */
-export function SuccessSpeedHeaders() {
+export function SuccessSpeedHeaders({
+  showSuccessRate = true,
+  showSpeed = true,
+}: SuccessSpeedVisibility = {}) {
   const { t } = useTranslation();
   return (
     <>
-      <th className={usageTable.thEnd}>{t("usage.successRate")}</th>
-      <th className={usageTable.thEnd}>
-        <span className="inline-flex items-center gap-0.5">
-          {t("usage.speed")}
-          <HelpTip title={t("usage.speedSumHelpTitle")} align="end">
-            {t("usage.speedSumHelp")}
-          </HelpTip>
-        </span>
-      </th>
+      {showSuccessRate && (
+        <th className={usageTable.thEnd}>{t("usage.successRate")}</th>
+      )}
+      {showSpeed && (
+        <th className={usageTable.thEnd}>
+          <span className="inline-flex items-center gap-0.5">
+            {t("usage.speed")}
+            <HelpTip title={t("usage.speedSumHelpTitle")} align="end">
+              {t("usage.speedSumHelp")}
+            </HelpTip>
+          </span>
+        </th>
+      )}
     </>
   );
 }
@@ -53,7 +65,9 @@ export function SuccessSpeedHeaders() {
 /** 「成功率」「速度」两列的单元格；精确速度缺失时用会话日志的估算值，带 ≈。 */
 export function SuccessSpeedCells({
   stat,
-}: {
+  showSuccessRate = true,
+  showSpeed = true,
+}: SuccessSpeedVisibility & {
   stat: SpeedTotals & { successRate: number };
 }) {
   const exactSpeed = getStatsSpeed(stat);
@@ -62,22 +76,26 @@ export function SuccessSpeedCells({
   const speed = exactSpeed ?? estimatedSpeed;
   return (
     <>
-      <td className={usageTable.tdEnd}>
-        {stat.successRate.toFixed(stat.successRate >= 99.95 ? 0 : 1)}%
-      </td>
-      <td className={cn(usageTable.tdEnd, speed == null && usageTable.muted)}>
-        {speed == null ? (
-          "—"
-        ) : (
-          <>
-            {estimatedSpeed != null && "≈"}
-            {speed}
-            <span className="ms-0.5 text-badge font-normal text-fg-3">
-              tok/s
-            </span>
-          </>
-        )}
-      </td>
+      {showSuccessRate && (
+        <td className={usageTable.tdEnd}>
+          {stat.successRate.toFixed(stat.successRate >= 99.95 ? 0 : 1)}%
+        </td>
+      )}
+      {showSpeed && (
+        <td className={cn(usageTable.tdEnd, speed == null && usageTable.muted)}>
+          {speed == null ? (
+            "—"
+          ) : (
+            <>
+              {estimatedSpeed != null && "≈"}
+              {speed}
+              <span className="ms-0.5 text-badge font-normal text-fg-3">
+                tok/s
+              </span>
+            </>
+          )}
+        </td>
+      )}
     </>
   );
 }

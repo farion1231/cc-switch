@@ -12,6 +12,12 @@ import {
 } from "./format";
 import { usageTable } from "./usageTable";
 import { SuccessSpeedCells, SuccessSpeedHeaders } from "./statsColumns";
+import {
+  getColumnLayout,
+  MODEL_STATS_COLUMNS,
+  type ModelStatsColumnId,
+} from "./tableColumns";
+import type { ColumnVisibility } from "@/types/table";
 import type { UsageRangeSelection } from "@/types/usage";
 
 interface ModelStatsTableProps {
@@ -20,6 +26,7 @@ interface ModelStatsTableProps {
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
+  columnVisibility?: ColumnVisibility<ModelStatsColumnId>;
 }
 
 export function ModelStatsTable({
@@ -28,9 +35,11 @@ export function ModelStatsTable({
   providerName,
   model,
   refreshIntervalMs,
+  columnVisibility,
 }: ModelStatsTableProps) {
   const { t, i18n } = useTranslation();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
+  const columns = getColumnLayout(MODEL_STATS_COLUMNS, columnVisibility);
   const { data: stats, isLoading } = useModelStats(
     range,
     { appType, providerName, model },
@@ -56,22 +65,32 @@ export function ModelStatsTable({
     <div className="flex flex-col">
       <div className={usageTable.scroller}>
         <table
-          className={cn(usageTable.table, "min-w-[620px]")}
+          className={usageTable.table}
+          style={{ minWidth: columns.minWidth }}
           aria-label={t("usage.modelStats")}
         >
           <thead>
             <tr className={usageTable.headRow}>
               <th className={usageTable.th}>{t("usage.model")}</th>
-              <th className={usageTable.thEnd}>{t("usage.requests")}</th>
-              <th className={usageTable.thEnd}>{t("usage.tokens")}</th>
-              <th className={usageTable.thEnd}>{t("usage.cost")}</th>
-              <SuccessSpeedHeaders />
+              {columns.isVisible("requests") && (
+                <th className={usageTable.thEnd}>{t("usage.requests")}</th>
+              )}
+              {columns.isVisible("tokens") && (
+                <th className={usageTable.thEnd}>{t("usage.tokens")}</th>
+              )}
+              {columns.isVisible("cost") && (
+                <th className={usageTable.thEnd}>{t("usage.cost")}</th>
+              )}
+              <SuccessSpeedHeaders
+                showSuccessRate={columns.isVisible("successRate")}
+                showSpeed={columns.isVisible("speed")}
+              />
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className={usageTable.empty}>
+                <td colSpan={columns.visibleCount} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>
@@ -86,22 +105,32 @@ export function ModelStatsTable({
                       {stat.model}
                     </span>
                   </td>
-                  <td className={usageTable.tdEnd}>
-                    {fmtInt(stat.requestCount, locale)}
-                  </td>
-                  <td
-                    className={usageTable.tdEnd}
-                    title={fmtInt(stat.totalTokens, locale)}
-                  >
-                    {formatTokensCompact(stat.totalTokens, locale)}
-                  </td>
-                  <td
-                    className={cn(usageTable.tdEnd, "font-medium")}
-                    title={`${fmtUsd(stat.totalCost, 6)} · ${t("usage.avgCost")} ${fmtUsd(stat.avgCostPerRequest, 4)}`}
-                  >
-                    {fmtUsd(stat.totalCost, 2)}
-                  </td>
-                  <SuccessSpeedCells stat={stat} />
+                  {columns.isVisible("requests") && (
+                    <td className={usageTable.tdEnd}>
+                      {fmtInt(stat.requestCount, locale)}
+                    </td>
+                  )}
+                  {columns.isVisible("tokens") && (
+                    <td
+                      className={usageTable.tdEnd}
+                      title={fmtInt(stat.totalTokens, locale)}
+                    >
+                      {formatTokensCompact(stat.totalTokens, locale)}
+                    </td>
+                  )}
+                  {columns.isVisible("cost") && (
+                    <td
+                      className={cn(usageTable.tdEnd, "font-medium")}
+                      title={`${fmtUsd(stat.totalCost, 6)} · ${t("usage.avgCost")} ${fmtUsd(stat.avgCostPerRequest, 4)}`}
+                    >
+                      {fmtUsd(stat.totalCost, 2)}
+                    </td>
+                  )}
+                  <SuccessSpeedCells
+                    stat={stat}
+                    showSuccessRate={columns.isVisible("successRate")}
+                    showSpeed={columns.isVisible("speed")}
+                  />
                 </tr>
               ))
             )}
