@@ -394,8 +394,56 @@ fn extract_claude_config_env(
     value.get("env").and_then(|v| v.as_object()).cloned()
 }
 
+/// Extract the inline-supplied Codex settings (auth + config TOML) from the
+/// deeplink payload, when present and usable. Mirrors the Claude env helper:
+/// re-decodes the base64 param here instead of threading the decoded value
+/// through every build function (the call graph makes signature changes
+/// invasive, and decode cost is negligible on this one-shot import path).
+/// Returns None unless the payload declares `configFormat: "json"` and its
+/// `config` string parses as TOML — an unusable payload falls back to the
+/// template instead of failing the whole import.
+fn supplied_codex_settings(request: &DeepLinkImportRequest) -> Option<serde_json::Value> {
+    let config_b64 = request.config.as_ref()?;
+
+    let format = request.config_format.as_deref().unwrap_or("json");
+    if format != "json" {
+        return None;
+    }
+
+    let decoded = decode_base64_param("config", config_b64).ok()?;
+    let json_str = std::str::from_utf8(&decoded).ok()?;
+    let value: serde_json::Value = serde_json::from_str(json_str).ok()?;
+
+    let config_toml = value.get("config").and_then(|v| v.as_str())?;
+    toml::from_str::<toml::Value>(config_toml).ok()?;
+
+    // Keep any extra auth fields the distributor supplied; the merged
+    // request key (URL param wins over payload auth) stays authoritative
+    // for OPENAI_API_KEY.
+    let mut auth = value
+        .get("auth")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    auth.insert("OPENAI_API_KEY".to_string(), json!(request.api_key));
+
+    Some(json!({
+        "auth": auth,
+        "config": config_toml,
+    }))
+}
+
 /// Build Codex settings configuration
 fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    // An explicitly supplied inline config wins: distributors hand-craft the
+    // provider table (auth mode, required headers, bearer tokens) and the
+    // fixed template below would silently rewrite it into a different
+    // authentication configuration (#7438). Fall back to the template when
+    // nothing usable was supplied.
+    if let Some(settings) = supplied_codex_settings(request) {
+        return settings;
+    }
+
     let provider_display_name = request
         .name
         .as_deref()
@@ -1169,6 +1217,131 @@ mod tests {
                 .get("base_url")
                 .and_then(|value| value.as_str()),
             Some("https://api.example.com/v1")
+        );
+    }
+
+    #[test]
+    fn build_codex_settings_preserves_supplied_inline_config() {
+        // Regression for #7438: a distributor-supplied inline config declares
+        // its own auth mode and required provider fields; importing must keep
+        // them instead of rewriting to the fixed template.
+        let config = r#"model_provider = "custom"
+model = "gpt-5-codex"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "Codex auth import repro"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = false
+http_headers = { "x-openai-actor-authorization" = "1" }
+supports_websockets = true
+experimental_bearer_token = "fixture-not-a-real-key"
+"#;
+        let payload = serde_json::json!({
+            "auth": {"OPENAI_API_KEY": "fixture-not-a-real-key"},
+            "config": config,
+        });
+        use base64::prelude::*;
+        let config_b64 = BASE64_STANDARD.encode(payload.to_string());
+
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("Codex auth import repro".to_string()),
+            endpoint: Some("https://api.example.com/v1".to_string()),
+            api_key: Some("fixture-not-a-real-key".to_string()),
+            model: Some("gpt-5-codex".to_string()),
+            config: Some(config_b64),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+
+        let settings = build_codex_settings(&request);
+        let config_text = settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("valid Codex config");
+
+        let provider = parsed
+            .get("model_providers")
+            .and_then(|value| value.get("custom"))
+            .expect("custom model provider");
+        assert_eq!(
+            provider
+                .get("requires_openai_auth")
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            provider
+                .get("experimental_bearer_token")
+                .and_then(|value| value.as_str()),
+            Some("fixture-not-a-real-key")
+        );
+        assert_eq!(
+            provider
+                .get("supports_websockets")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        let headers = provider
+            .get("http_headers")
+            .and_then(|value| value.as_table())
+            .expect("http_headers preserved");
+        assert_eq!(
+            headers
+                .get("x-openai-actor-authorization")
+                .and_then(|value| value.as_str()),
+            Some("1")
+        );
+
+        assert_eq!(
+            settings
+                .get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .and_then(|value| value.as_str()),
+            Some("fixture-not-a-real-key")
+        );
+    }
+
+    #[test]
+    fn build_codex_settings_falls_back_to_template_on_unusable_supplied_config() {
+        // A payload whose `config` is not valid TOML must not fail the import:
+        // fall back to the fixed template.
+        let payload = serde_json::json!({"config": "not = [valid toml"});
+        use base64::prelude::*;
+        let config_b64 = BASE64_STANDARD.encode(payload.to_string());
+
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("Fallback".to_string()),
+            endpoint: Some("https://api.example.com/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            config: Some(config_b64),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+
+        let settings = build_codex_settings(&request);
+        let config_text = settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("valid Codex config");
+
+        let provider = parsed
+            .get("model_providers")
+            .and_then(|value| value.get("custom"))
+            .expect("custom model provider");
+        assert_eq!(
+            provider
+                .get("requires_openai_auth")
+                .and_then(|value| value.as_bool()),
+            Some(true)
         );
     }
 
