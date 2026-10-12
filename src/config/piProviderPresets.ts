@@ -379,7 +379,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     name: "OpenModel",
     providerKey: "cc-switch-open-model",
     websiteUrl: "https://www.openmodel.ai",
-    apiKeyUrl: "https://www.openmodel.ai/campaigns/client-benefits",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
     settingsConfig: {
       name: "OpenModel",
       baseUrl: "https://api.openmodel.ai",

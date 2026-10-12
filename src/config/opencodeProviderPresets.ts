@@ -666,7 +666,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "OpenModel",
     websiteUrl: "https://www.openmodel.ai",
-    apiKeyUrl: "https://www.openmodel.ai/campaigns/client-benefits",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "OpenModel",

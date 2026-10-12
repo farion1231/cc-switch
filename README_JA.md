@@ -79,8 +79,8 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.openmodel.ai/campaigns/client-benefits"><img src="assets/partners/logos/openmodel-banner.jpg" alt="OpenModel" width="150"></a></td>
-<td>本プロジェクトのスポンサーである OpenModel に感謝いたします！OpenModel は Codex と Claude Code 向けにクライアント専用の割引を提供しており、対応モデルを Codex 経由で使うと最大 90% オフ、Claude Code 経由で使うと最大 60% オフになります。開発スタイルを変えることなく API コストを削減できます。OpenModel の API Key を設定するだけで、いつも通り Codex や Claude Code を使い続けられます。対応クライアントは自動で判別され、追加パラメータや手動でのルーティング設定なしに割引ルートが適用されます。さらに API Key ごとにフォールバック動作を設定でき、割引ルートが一時的に利用できない場合に標準価格で続行するか停止するかを選べます。CC Switch ユーザーは<a href="https://www.openmodel.ai/campaigns/client-benefits">こちらのリンク</a>から登録し、プロモコード <strong>"cc-switch"</strong> を使うと初回チャージが 10% オフになります！</td>
+<td width="180"><a href="https://www.openmodel.ai?ref=cc-switch"><img src="assets/partners/logos/openmodel-banner.jpg" alt="OpenModel" width="150"></a></td>
+<td>本プロジェクトのスポンサーである OpenModel に感謝いたします！OpenModel は Codex と Claude Code 向けにクライアント専用の割引を提供しており、対応モデルを Codex 経由で使うと最大 90% オフ、Claude Code 経由で使うと最大 60% オフになります。開発スタイルを変えることなく API コストを削減できます。OpenModel の API Key を設定するだけで、いつも通り Codex や Claude Code を使い続けられます。対応クライアントは自動で判別され、追加パラメータや手動でのルーティング設定なしに割引ルートが適用されます。さらに API Key ごとにフォールバック動作を設定でき、割引ルートが一時的に利用できない場合に標準価格で続行するか停止するかを選べます。CC Switch ユーザーは<a href="https://www.openmodel.ai?ref=cc-switch">こちらのリンク</a>から登録し、プロモコード <strong>"cc-switch"</strong> を使うと初回チャージが 10% オフになります！</td>
 </tr>
 
 <tr>

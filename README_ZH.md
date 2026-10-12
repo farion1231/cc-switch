@@ -79,8 +79,8 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.openmodel.ai/campaigns/client-benefits"><img src="assets/partners/logos/openmodel-banner.jpg" alt="OpenModel" width="150"></a></td>
-<td>感谢 OpenModel 赞助本项目！OpenModel 为 Codex 和 Claude Code 提供客户端专属折扣，所支持的模型通过 Codex 调用最高优惠 90%、通过 Claude Code 调用最高优惠 60%，帮助开发者在不改变工作方式的前提下降低 API 成本。只需填入 OpenModel API Key，像往常一样继续使用 Codex 或 Claude Code，系统会自动识别所支持的客户端并应用折扣路由，无需额外参数或手动路由。你还可以为每个 API Key 单独设置回退策略：折扣路由暂时不可用时，选择按标准价格继续调用或直接停止。CC Switch 用户通过<a href="https://www.openmodel.ai/campaigns/client-benefits">此链接</a>注册，并使用优惠码 <strong>"cc-switch"</strong>，即可享受首次充值九折优惠！</td>
+<td width="180"><a href="https://www.openmodel.ai?ref=cc-switch"><img src="assets/partners/logos/openmodel-banner.jpg" alt="OpenModel" width="150"></a></td>
+<td>感谢 OpenModel 赞助本项目！OpenModel 为 Codex 和 Claude Code 提供客户端专属折扣，所支持的模型通过 Codex 调用最高优惠 90%、通过 Claude Code 调用最高优惠 60%，帮助开发者在不改变工作方式的前提下降低 API 成本。只需填入 OpenModel API Key，像往常一样继续使用 Codex 或 Claude Code，系统会自动识别所支持的客户端并应用折扣路由，无需额外参数或手动路由。你还可以为每个 API Key 单独设置回退策略：折扣路由暂时不可用时，选择按标准价格继续调用或直接停止。CC Switch 用户通过<a href="https://www.openmodel.ai?ref=cc-switch">此链接</a>注册，并使用优惠码 <strong>"cc-switch"</strong>，即可享受首次充值九折优惠！</td>
 </tr>
 
 <tr>

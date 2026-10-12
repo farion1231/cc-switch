@@ -180,7 +180,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   {
     name: "OpenModel",
     websiteUrl: "https://www.openmodel.ai",
-    apiKeyUrl: "https://www.openmodel.ai/campaigns/client-benefits",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
     auth: grokAuth(),
     config: grokPresetConfig("OpenModel", "https://api.openmodel.ai/v1"),
     category: "aggregator",
