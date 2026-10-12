@@ -1,7 +1,9 @@
 //! Thin adapter for Pi's native files.
 //!
 //! Pi owns account login and the active provider/model in `settings.json`.
-//! CC Switch only manages explicit provider entries in `models.json`.
+//! CC Switch only manages explicit provider entries in `models.json`, plus
+//! read/write access to the `skills` array in `settings.json` (shared skill
+//! roots & exclusion rules) — every other settings field stays untouched.
 
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;

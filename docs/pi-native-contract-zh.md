@@ -20,7 +20,7 @@
 | `prompts/*.md`                  | 管理顶层斜杠命令模板；空模板是有效原生文件                    | 文件存在         |
 | `skills/<目录>`                 | 按目录名判定，含 SKILL.md 校验                                | 原生 Skills 目录 |
 | `~/.agents/skills`              | pi 无条件自动发现的共享目录，参与技能启用判定                  | 共享 Skills 目录 |
-| settings `skills` 数组          | 额外扫描根与 `!`/`+`/`-` 模式（条目解析逐字节对齐 pi）        | Pi 原生设置      |
+| settings `skills` 数组          | 额外扫描根与 `!`/`+`/`-` 模式（条目解析逐字节对齐 pi）；**可编辑**（Pi 列弹窗 → 管理共享配置：格式保留写、双层 revision、快照、原子写） | Pi 原生设置 |
 | Sessions JSONL                  | 读取 Pi 的会话头、树分支、消息和会话名称                      | 原生会话文件     |
 
 ### 供应商
@@ -72,6 +72,6 @@ Pi 在全局设置中保存的当前供应商和模型不进入供应商列表�
 - Pi 运行时内置供应商与内置模型目录的复制
 - 完整 `compat`、`modelOverrides` 和费用编辑器；思考档位只提供 Pi 原生 `thinkingLevelMap` 的轻量入口
 - 相对会话目录的全局猜测
-- 写入 Pi `settings.json` 的 `skills` 数组（只读消费；共享目录配置由用户在 Pi 侧管理）
+- 写入 Pi `settings.json` 中 `skills` 数组以外的任何字段
 
 Pi 发布新版本时，通过正常开发和验收重新运行供应商、提示词、Skills 和 Sessions 契约测试。没有进入产品界面的上游字段不应仅为了“覆盖完整”而扩展后端。

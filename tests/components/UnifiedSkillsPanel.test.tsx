@@ -406,6 +406,71 @@ describe("UnifiedSkillsPanel", () => {
     expect(text).toContain("appMatrix.toast.skippedExcluded");
   });
 
+  it("opens the Pi shared config panel from the column popup and saves entries", async () => {
+    m.installed = [makeSkill({ apps: { pi: true } })];
+    const getConfig = vi.spyOn(skillsApi, "getPiSkillsConfig").mockResolvedValue({
+      path: "/home/u/.pi/agent/settings.json",
+      revision: "rev-1",
+      sources: [
+        { app: "claude", path: "/home/u/.claude/skills", alreadyListed: false },
+        { app: "codex", path: "/home/u/.codex/skills", alreadyListed: true },
+      ],
+      entries: [
+        { raw: "~/.claude/skills", kind: "scanPath", warnings: [] },
+        { raw: "!pdf", kind: "exclude", warnings: [] },
+        { raw: "!~/backup", kind: "exclude", warnings: ["dead"] },
+      ],
+    });
+    const setEntries = vi
+      .spyOn(skillsApi, "setPiSkillsEntries")
+      .mockResolvedValue(undefined);
+
+    renderPanel();
+    // Pi 列头（第 3 列）→ 管理共享配置
+    await userEvent.click(columns()[2]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.piConfig.manageEntry" }),
+    );
+
+    // 装填：徽章 + 死模式警告 + 复选源（codex 已添加置灰）
+    expect(
+      await screen.findAllByText("skillsPage.piConfig.kind.scanPath"),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByText("skillsPage.piConfig.kind.exclude"),
+    ).toHaveLength(2); // !pdf + !~/backup
+    // 死模式警告：条目行 title 含警告（测试环境为 key）
+    const deadRow = screen.getByText("!~/backup");
+    expect(deadRow).toHaveAttribute("title", "skillsPage.piConfig.warnDeadPattern");
+
+    // 复选源弹层：点开 → codex 已添加置灰；claude 可勾选
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.piConfig.addFromApps" }),
+    );
+    const codexBox = screen.getByRole("checkbox", {
+      name: "Codex: /home/u/.codex/skills",
+    });
+    expect(codexBox).toBeDisabled();
+    expect(codexBox).toBeChecked();
+
+    // 删除死模式条目后保存
+    const removeButtons = screen.getAllByRole("button", {
+      name: /skillsPage.piConfig.removeEntry/,
+    });
+    await userEvent.click(removeButtons[2]); // 删除 !~/backup
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(setEntries).toHaveBeenCalled());
+    const [entries, revision] = setEntries.mock.calls[0];
+    expect(revision).toBe("rev-1");
+    expect(entries).toEqual(["~/.claude/skills", "!pdf"]);
+    await waitFor(() =>
+      expect(m.toastSuccess).toHaveBeenCalledWith("skillsPage.piConfig.saved"),
+    );
+    getConfig.mockRestore();
+    setEntries.mockRestore();
+  });
+
   it("bulk-enables only the disabled Skills in a column and offers undo", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A", apps: { codex: true } }),
