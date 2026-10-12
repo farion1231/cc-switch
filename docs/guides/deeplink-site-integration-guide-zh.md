@@ -12,9 +12,19 @@
 
 用户手册里的 [深度链接协议](../user-manual/zh/5-faq/5.3-deeplink.md) 是参数速查表；这篇讲站长真正要做的决定：链接怎么生成、哪些东西能带、哪些会被拒绝、怎么让用户导入后直接看到余额。
 
+## 最快路径
+
+大多数站长只要做三件事，按顺序读下面几节就够了：
+
+1. 读「先看结论」，再读「供应商链接」里的「最小的一条」「支持哪些应用」「常用参数」，定下给哪些应用生成链接、地址和格式怎么写。可以先在 [在线生成器](https://farion1231.github.io/cc-switch/deplink.html) 里填表单生成一条，在自己电脑上点一下，看看确认框长什么样。
+2. 想让用户导入后看到余额，读「用量查询脚本」。NewAPI / OneAPI、Sub2API 系的站有现成脚本，照抄即可。
+3. 读「生成链接的代码」和「把链接放到按钮上」：后端按用户生成链接，前端放按钮。
+
+折叠起来的几节（附带配置原文、会被拒绝的链接汇总、MCP / 提示词 / Skill）用到时再展开。
+
 ## 先看结论
 
-1. **链接要按用户生成**。导入供应商时 API Key 是必填的，没有 Key 的链接会导入失败。所以「一键导入」按钮应该放在用户登录后的控制台里，由你的后端用这个用户自己的 Key 拼出链接，不要放在公开页面上。
+1. **链接要按用户生成**。导入供应商时 API Key 是必填的，没有 Key 的链接会导入失败。所以「一键导入」按钮应该放在用户登录后的控制台里，由你的后端用这个用户自己的 Key 拼出链接，不要放在公开页面上。按钮怎么做见「把链接放到按钮上」。
 2. **用 `apiFormat` 声明你的接口格式**。取值 `anthropic`、`openai_chat`、`openai_responses`、`gemini_native`，各应用支持哪几种见下文。不写时按应用的默认格式：Claude Code 是 Anthropic Messages，Codex 和 Grok Build 是 OpenAI Responses，OpenCode / OpenClaw / Hermes / Pi 是 OpenAI Chat Completions。
 3. **模型名按需写**。中转站提供的是原版 Claude 模型时，Claude Code 的模型全部留空，Claude Code 会用自带的模型列表；只有 DeepSeek、Kimi 这类非原生模型才需要把 `model`、`haikuModel`、`sonnetModel`、`opusModel` 写上。OpenCode、OpenClaw、Hermes 的模型列表来自 `model`，不写就没有可选的模型；Pi 必须写。
 4. **想让用户看到余额，就带上用量查询脚本**。v4.0.10 起，带了 `usageScript` 就默认启用；想兼容旧版本，同时写上 `usageEnabled=true`。脚本只能请求与供应商地址同源的 HTTPS 接口，详见下文。
@@ -59,7 +69,7 @@ ccswitch://v1/import?resource=<类型>&<参数>...
 - 链接只能由用户点击触发。页面加载时自动跳转 `ccswitch://` 会被大多数浏览器拦下。
 - CC Switch 一次只处理一条链接；用户还没处理完上一条时又点了新的，只保留最新那条。不要设计成「一个按钮连续触发多条链接」，供应商、MCP、提示词各给一个按钮，让用户依次点。
 - 同一条供应商链接点两次会导入两份。供应商 ID 由名称加时间戳生成，不做去重。
-- 网页无法可靠地判断用户是否装了 CC Switch。按钮旁边最好放一个「复制链接」和 CC Switch 的下载地址。
+- 网页无法可靠地判断用户是否装了 CC Switch。按钮旁边写一句提示并附上下载地址，写法见「把链接放到按钮上」。
 
 ## 供应商链接
 
@@ -136,6 +146,9 @@ CC Switch 内置图标里没有你的品牌时，用 `iconUrl` 给一个图片�
 
 ### Claude Code：附带环境变量
 
+<details>
+<summary>需要额外环境变量（自定义请求头、超时等）时展开</summary>
+
 需要额外环境变量的站（自定义请求头、超时、关闭实验特性等），把它们放进 `config`：
 
 ```json
@@ -152,7 +165,12 @@ CC Switch 内置图标里没有你的品牌时，用 `iconUrl` 给一个图片�
 
 `env` 里的变量原样保留；地址、Key、模型名这几个，URL 参数里也写了的话以 URL 参数为准。确认框会把每个变量列出来，敏感值打码。
 
+</details>
+
 ### Codex：附带 config.toml
+
+<details>
+<summary>只有要带 <code>wire_api</code>、请求头、推理强度等额外设置时才需要，展开看收哪些键、拒绝哪些写法</summary>
 
 两种写法：
 
@@ -185,7 +203,12 @@ http_headers = { "X-Client" = "cc-switch" }
 stream_idle_timeout_ms = 300000
 ```
 
+</details>
+
 ### Grok Build：附带一张模型表
+
+<details>
+<summary>只有要带上下文窗口、采样参数等额外设置时才需要</summary>
 
 写法同 Codex（`{"config": "<config.toml 原文>"}` 或 `configFormat=toml`）。
 
@@ -195,7 +218,12 @@ stream_idle_timeout_ms = 300000
 
 表里带 `auth_provider`、`env_http_headers`、`mtls_cert_dir` 的链接会被拒绝；`env_key` 处理同 Codex。
 
+</details>
+
 ### 会被拒绝的链接，汇总
+
+<details>
+<summary>确认框报错时展开，按报错原文查原因</summary>
 
 | 情况 | 确认框里的报错（英文原文，节选） |
 |------|-------------------------------|
@@ -215,6 +243,8 @@ stream_idle_timeout_ms = 300000
 | Grok 有多张表但没写 `default` | `several [model.*] tables` |
 
 OpenCode、OpenClaw、Hermes、Pi 读配置时会展开某些写法：Pi 的 Key 以 `!` 开头会被当成命令执行，`$NAME` / `${NAME}` 换成环境变量；OpenCode 的 `{env:…}` 读环境变量、`{file:…}` 读本机文件；OpenClaw、Hermes 的 `${…}` 读环境变量。从链接导入时，这些写法一律拒绝。你的 Key 和地址本来就是字面值，不受影响。
+
+</details>
 
 ## 让用户导入后直接看到余额：用量查询脚本
 
@@ -274,6 +304,7 @@ CC Switch 的供应商卡片可以显示余额或套餐用量，数据来自一�
 - **每次查询只发一个请求**，不能先登录再查询。
 - **请求必须是 HTTPS，且与 `{{baseUrl}}` 同源**（同域名、同端口）。不同源的请求会被拒绝。余额接口在另一个域名时（比如控制台在 `console.example.com`，API 在 `api.example.com`），用 `usageBaseUrl` 指向控制台域名。
 - 响应必须是 JSON。
+- 请求由 CC Switch 从用户电脑上直接发出，不经过浏览器，你的余额接口不需要配置 CORS。接口要能用 API Key 认证；只能用登录态或系统访问令牌查询时，用 `usageAccessToken` 把令牌带进链接（见下面 NewAPI 一节）。
 - 脚本执行时间上限 5 秒，内存上限 16 MiB；HTTP 请求超时 10 秒。
 
 ### 启用与否
@@ -365,6 +396,9 @@ Sub2API 自带给 CC Switch 用的 `GET /v1/usage` 接口，用 API Key 认证�
 
 ## MCP、提示词、Skill 链接
 
+<details>
+<summary>和 API 服务关系不大，顺带分发配套工具时展开</summary>
+
 这三类和你的 API 服务关系不大，但有的站会顺带分发配套工具，简单列一下要点。
 
 **MCP**（`resource=mcp`）
@@ -384,6 +418,8 @@ Sub2API 自带给 CC Switch 用的 `GET /v1/usage` 接口，用 API Key 认证�
 
 - `repo` 必填，格式 `owner/name`，必须是 GitHub 上的公开仓库；`branch` 默认 `main`。
 - 添加的是仓库，用户还要自己选择安装哪些 Skill。`directory` 参数目前会被忽略。
+
+</details>
 
 ## 生成链接的代码
 
@@ -486,9 +522,74 @@ function b64(text) {
 
 能在后端生成就在后端生成，Key 不经过前端 JavaScript 更好。
 
+## 把链接放到按钮上
+
+推荐的流程：
+
+1. 按钮本身不带链接。用户点击时，前端向你的后端请求这个用户的链接。
+2. 后端确认用户已登录，用这个用户自己的 Key 生成链接返回（用上一节的生成函数）。
+3. 前端拿到链接后执行 `window.location.href = link`。浏览器询问是否打开 CC Switch，用户同意后弹出导入确认框。
+
+这样链接不会写进页面源码，只在用户真的点了按钮时生成一次。
+
+### 后端：按用户返回链接
+
+以 Node.js（Express）为例。`claudeImportLink` 是上一节的生成函数，`codexImportLink` 照同样的写法另写一个：
+
+```javascript
+const builders = {
+  claude: claudeImportLink,
+  codex: codexImportLink,
+};
+
+app.post("/api/ccswitch-link", requireLogin, (req, res) => {
+  const build = builders[req.body.app];
+  if (!build) return res.status(400).json({ error: "unsupported app" });
+  // 响应里有用户的 Key：不缓存，也别打进日志
+  res.set("Cache-Control", "no-store");
+  res.json({ link: build(req.user) });
+});
+```
+
+用 POST，不用 GET：GET 请求可能被浏览器预取、被缓存，或者带着参数出现在访问日志里。
+
+### 前端：按钮和提示
+
+```html
+<button type="button" onclick="importToCcSwitch('claude')">导入到 Claude Code</button>
+<button type="button" onclick="importToCcSwitch('codex')">导入到 Codex</button>
+<p class="hint">
+  浏览器会先询问是否打开 CC Switch，请选「打开」。点了没有任何反应？可能还没安装，
+  先<a href="https://ccswitch.io" target="_blank" rel="noopener">下载 CC Switch</a>，装好后再点一次。
+</p>
+
+<script>
+  async function importToCcSwitch(app) {
+    const res = await fetch("/api/ccswitch-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ app }),
+    });
+    if (!res.ok) {
+      alert("生成导入链接失败，请稍后再试");
+      return;
+    }
+    const { link } = await res.json();
+    window.location.href = link;
+  }
+</script>
+```
+
+几点说明：
+
+- **跳转要紧跟着点击**。浏览器只放行用户点击触发的外部应用唤起，有的浏览器在点击后隔得太久就不再算作点击触发。接口应在一两秒内返回；不要在拿到链接后再弹一个确认框，让用户再点一次。
+- **一条链接只导入到一个应用**。同时支持几个应用时，每个应用放一个按钮，或者先让用户选择客户端，再点同一个「导入」按钮。每个应用的地址和格式可能不同，见「支持哪些应用」。
+- **没装 CC Switch 时浏览器通常什么都不提示**，网页也无法可靠地判断。所以按钮旁边的那句提示要一直显示，不要等检测结果。
+- 同一个按钮被点两次会导入两份。用户点完一次后，可以把按钮改成「已发送到 CC Switch」，或者暂时禁用几秒。
+
 ## 安全与隐私
 
-- **带 Key 的链接等同于 Key 本身**。它会出现在浏览器历史、页面源码里，可能被浏览器插件读到。只在用户登录后的页面生成，不要写进公开页面、邮件群发或社群公告；不要让它进入你的访问日志和第三方统计。
+- **带 Key 的链接等同于 Key 本身**。直接写进按钮 `href` 的链接会出现在页面源码里，可能被浏览器插件读到；按「把链接放到按钮上」的做法，在用户点击时才向后端要链接，可以避免这一点。只在用户登录后的页面生成，不要写进公开页面、邮件群发或社群公告；不要让它进入你的访问日志和第三方统计。
 - 链接越短越好。整份 `config` 很长时，Windows 下传给 CC Switch 的命令行有约 3.2 万字符的上限，超长的链接打不开。
 - CC Switch 对链接内容做的是白名单过滤和醒目提示，不是替用户背书。确认框显示的每一项用户都能看到，别在里面放和你的服务无关的东西，用户会因此不信任这个按钮。
 

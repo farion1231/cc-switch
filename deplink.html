@@ -146,7 +146,15 @@
 
         section { padding: 36px 0; border-bottom: 1px solid var(--border); scroll-margin-top: 8px; }
         section:last-child { border-bottom: 0; }
-        section > h2 { font-size: 20px; line-height: 28px; font-weight: 600; }
+        section > h2, details.fold > summary h2 { font-size: 20px; line-height: 28px; font-weight: 600; }
+        /* 阅读优先级低的节默认折叠，标题一行可点开 */
+        details.fold > summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; cursor: pointer; list-style: none; }
+        details.fold > summary::-webkit-details-marker { display: none; }
+        details.fold > summary::after { content: "展开"; margin-left: auto; font-size: 12px; color: var(--action-text); }
+        details.fold[open] > summary::after { content: "收起"; }
+        details.fold > summary:hover h2 { color: var(--action-text); }
+        .fold-hint { font-size: 13px; color: var(--text-2); }
+        details.fold > summary + * { margin-top: 12px; }
         .lede { max-width: 70ch; margin-top: 6px; font-size: 13px; line-height: 21px; color: var(--text-2); }
         .lede + * { margin-top: 20px; }
         h3.sub { font-size: 15px; line-height: 22px; font-weight: 600; margin: 32px 0 12px; }
@@ -767,33 +775,35 @@
 
             <!-- Base64 -->
             <section id="base64">
-                <h2>Base64 编解码</h2>
-                <p class="lede">按 UTF-8 编码，中文没问题。编码结果可以直接放进链接的 <code>config</code> 或 <code>content</code> 参数（生成器会自动做这一步）；解码用来检查链接里的配置对不对。</p>
-                <div class="grid2">
-                    <div class="card">
-                        <h3>编码</h3>
-                        <textarea class="input mono" id="encodeInput" rows="6" placeholder="输入要编码的文本，JSON、TOML、Markdown 都可以"></textarea>
-                        <div class="actions"><button type="button" class="btn neutral" onclick="encodeToBase64()">编码为 Base64</button></div>
-                        <div id="encodeResult" style="display: none;">
-                            <div class="linkbox" id="encodeOutput"></div>
-                            <div class="actions">
-                                <button type="button" class="btn neutral compact" onclick="copyText(document.getElementById('encodeOutput').textContent, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制结果</span></button>
+                <details class="fold">
+                    <summary><h2>Base64 编解码</h2><span class="fold-hint">生成器会自动编码；手动检查链接里的配置时再用</span></summary>
+                    <p class="lede">按 UTF-8 编码，中文没问题。编码结果可以直接放进链接的 <code>config</code> 或 <code>content</code> 参数（生成器会自动做这一步）；解码用来检查链接里的配置对不对。</p>
+                    <div class="grid2">
+                        <div class="card">
+                            <h3>编码</h3>
+                            <textarea class="input mono" id="encodeInput" rows="6" placeholder="输入要编码的文本，JSON、TOML、Markdown 都可以"></textarea>
+                            <div class="actions"><button type="button" class="btn neutral" onclick="encodeToBase64()">编码为 Base64</button></div>
+                            <div id="encodeResult" style="display: none;">
+                                <div class="linkbox" id="encodeOutput"></div>
+                                <div class="actions">
+                                    <button type="button" class="btn neutral compact" onclick="copyText(document.getElementById('encodeOutput').textContent, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制结果</span></button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <h3>解码</h3>
+                            <textarea class="input mono" id="decodeInput" rows="6" placeholder="粘贴 Base64，例如 eyJlbnYiOnsiaGVsbG8iOiJ3b3JsZCJ9fQ=="></textarea>
+                            <div class="actions"><button type="button" class="btn neutral" onclick="decodeFromBase64()">解码为文本</button></div>
+                            <div id="decodeResult" style="display: none;">
+                                <div class="linkbox" id="decodeOutput"></div>
+                                <div class="actions">
+                                    <button type="button" class="btn neutral compact" onclick="copyText(document.getElementById('decodeOutput').textContent, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制结果</span></button>
+                                    <span id="jsonFormat" style="display: none;"><button type="button" class="btn neutral compact" onclick="formatJson()">格式化 JSON</button></span>
+                                </div>
                             </div>
                         </div>
                     </div>
-                    <div class="card">
-                        <h3>解码</h3>
-                        <textarea class="input mono" id="decodeInput" rows="6" placeholder="粘贴 Base64，例如 eyJlbnYiOnsiaGVsbG8iOiJ3b3JsZCJ9fQ=="></textarea>
-                        <div class="actions"><button type="button" class="btn neutral" onclick="decodeFromBase64()">解码为文本</button></div>
-                        <div id="decodeResult" style="display: none;">
-                            <div class="linkbox" id="decodeOutput"></div>
-                            <div class="actions">
-                                <button type="button" class="btn neutral compact" onclick="copyText(document.getElementById('decodeOutput').textContent, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制结果</span></button>
-                                <span id="jsonFormat" style="display: none;"><button type="button" class="btn neutral compact" onclick="formatJson()">格式化 JSON</button></span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                </details>
             </section>
 
             <!-- 供应商示例 -->
@@ -1094,94 +1104,102 @@ model=example-chat</pre>
 
             <!-- MCP 示例 -->
             <section id="ex-mcp">
-                <h2>MCP 示例</h2>
-                <div class="ex-list" style="margin-top: 16px;">
-                    <article class="ex">
-                        <div class="ex-head"><span class="chip app"><i class="d"></i>MCP</span><h3>一次导入多个 MCP 服务器</h3></div>
-                        <p class="ex-desc">导入 Context7 和 Sequential-thinking 两个服务器，并在 Claude Code 和 Codex 里启用。</p>
-                        <dl class="params">
-                            <dt>必需</dt><dd><code>resource=mcp</code> <code>apps</code> <code>config</code>（Base64）</dd>
-                            <dt>apps</dt><dd>claude、codex、gemini、grokbuild、opencode、hermes、pi、mcode（openclaw 会被忽略）</dd>
-                        </dl>
-                        <figure class="code">
-                            <figcaption>解码后的 config</figcaption>
-                            <pre>{
-  "mcpServers": {
-    "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
-      "env": {}
-    },
-    "sequential-thinking": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
-      "env": {}
-    }
-  }
-}</pre>
-                            <div class="foot">已存在同 ID 的服务器：只给它勾上新的应用，不覆盖配置内容。导入即写入客户端配置文件，<code>enabled</code> 参数目前不起作用。</div>
-                        </figure>
-                        <div class="actions">
-                            <a class="btn solid compact" href="ccswitch://v1/import?resource=mcp&amp;apps=claude%2Ccodex&amp;config=eyJtY3BTZXJ2ZXJzIjp7ImNvbnRleHQ3Ijp7ImNvbW1hbmQiOiJucHgiLCJhcmdzIjpbIi15IiwiQHVwc3Rhc2gvY29udGV4dDctbWNwIl0sImVudiI6e319LCJzZXF1ZW50aWFsLXRoaW5raW5nIjp7ImNvbW1hbmQiOiJucHgiLCJhcmdzIjpbIi15IiwiQG1vZGVsY29udGV4dHByb3RvY29sL3NlcnZlci1zZXF1ZW50aWFsLXRoaW5raW5nIl0sImVudiI6e319fX0%3D"><svg class="i sm"><use href="#i-import" /></svg>在 CC Switch 中打开</a>
-                            <button type="button" class="btn neutral compact" data-link="ccswitch://v1/import?resource=mcp&amp;apps=claude%2Ccodex&amp;config=eyJtY3BTZXJ2ZXJzIjp7ImNvbnRleHQ3Ijp7ImNvbW1hbmQiOiJucHgiLCJhcmdzIjpbIi15IiwiQHVwc3Rhc2gvY29udGV4dDctbWNwIl0sImVudiI6e319LCJzZXF1ZW50aWFsLXRoaW5raW5nIjp7ImNvbW1hbmQiOiJucHgiLCJhcmdzIjpbIi15IiwiQG1vZGVsY29udGV4dHByb3RvY29sL3NlcnZlci1zZXF1ZW50aWFsLXRoaW5raW5nIl0sImVudiI6e319fX0%3D" onclick="copyDeepLink(this.dataset.link, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制链接</span></button>
-                        </div>
-                    </article>
-                </div>
+                <details class="fold">
+                    <summary><h2>MCP 示例</h2><span class="fold-hint">和 API 服务关系不大，顺带分发配套工具时再看</span></summary>
+                    <div class="ex-list" style="margin-top: 16px;">
+                        <article class="ex">
+                            <div class="ex-head"><span class="chip app"><i class="d"></i>MCP</span><h3>一次导入多个 MCP 服务器</h3></div>
+                            <p class="ex-desc">导入 Context7 和 Sequential-thinking 两个服务器，并在 Claude Code 和 Codex 里启用。</p>
+                            <dl class="params">
+                                <dt>必需</dt><dd><code>resource=mcp</code> <code>apps</code> <code>config</code>（Base64）</dd>
+                                <dt>apps</dt><dd>claude、codex、gemini、grokbuild、opencode、hermes、pi、mcode（openclaw 会被忽略）</dd>
+                            </dl>
+                            <figure class="code">
+                                <figcaption>解码后的 config</figcaption>
+                                <pre>{
+      "mcpServers": {
+        "context7": {
+          "command": "npx",
+          "args": ["-y", "@upstash/context7-mcp"],
+          "env": {}
+        },
+        "sequential-thinking": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+          "env": {}
+        }
+      }
+    }</pre>
+                                <div class="foot">已存在同 ID 的服务器：只给它勾上新的应用，不覆盖配置内容。导入即写入客户端配置文件，<code>enabled</code> 参数目前不起作用。</div>
+                            </figure>
+                            <div class="actions">
+                                <a class="btn solid compact" href="ccswitch://v1/import?resource=mcp&amp;apps=claude%2Ccodex&amp;config=eyJtY3BTZXJ2ZXJzIjp7ImNvbnRleHQ3Ijp7ImNvbW1hbmQiOiJucHgiLCJhcmdzIjpbIi15IiwiQHVwc3Rhc2gvY29udGV4dDctbWNwIl0sImVudiI6e319LCJzZXF1ZW50aWFsLXRoaW5raW5nIjp7ImNvbW1hbmQiOiJucHgiLCJhcmdzIjpbIi15IiwiQG1vZGVsY29udGV4dHByb3RvY29sL3NlcnZlci1zZXF1ZW50aWFsLXRoaW5raW5nIl0sImVudiI6e319fX0%3D"><svg class="i sm"><use href="#i-import" /></svg>在 CC Switch 中打开</a>
+                                <button type="button" class="btn neutral compact" data-link="ccswitch://v1/import?resource=mcp&amp;apps=claude%2Ccodex&amp;config=eyJtY3BTZXJ2ZXJzIjp7ImNvbnRleHQ3Ijp7ImNvbW1hbmQiOiJucHgiLCJhcmdzIjpbIi15IiwiQHVwc3Rhc2gvY29udGV4dDctbWNwIl0sImVudiI6e319LCJzZXF1ZW50aWFsLXRoaW5raW5nIjp7ImNvbW1hbmQiOiJucHgiLCJhcmdzIjpbIi15IiwiQG1vZGVsY29udGV4dHByb3RvY29sL3NlcnZlci1zZXF1ZW50aWFsLXRoaW5raW5nIl0sImVudiI6e319fX0%3D" onclick="copyDeepLink(this.dataset.link, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制链接</span></button>
+                            </div>
+                        </article>
+                    </div>
+                </details>
             </section>
 
             <!-- 提示词示例 -->
             <section id="ex-prompt">
-                <h2>提示词示例</h2>
-                <div class="ex-list" style="margin-top: 16px;">
-                    <article class="ex">
-                        <div class="ex-head"><span class="chip app" style="--dot: var(--agent-claude)"><i class="d"></i>Claude Code</span><h3>代码审查专家</h3></div>
-                        <p class="ex-desc">为 Claude Code 导入一条提示词。确认框里有「导入后立即启用」开关，默认关闭；用户打开后会替换当前的提示词文件（如 CLAUDE.md）。</p>
-                        <dl class="params">
-                            <dt>必需</dt><dd><code>resource=prompt</code> <code>app</code> <code>name</code> <code>content</code>（Base64 Markdown）</dd>
-                            <dt>可选</dt><dd><code>description</code> <code>enabled</code>（开关的初始值，一般不要写）</dd>
-                        </dl>
-                        <figure class="code">
-                            <figcaption>解码后的 content</figcaption>
-                            <pre># 代码审查专家
+                <details class="fold">
+                    <summary><h2>提示词示例</h2><span class="fold-hint">和 API 服务关系不大，顺带分发配套工具时再看</span></summary>
+                    <div class="ex-list" style="margin-top: 16px;">
+                        <article class="ex">
+                            <div class="ex-head"><span class="chip app" style="--dot: var(--agent-claude)"><i class="d"></i>Claude Code</span><h3>代码审查专家</h3></div>
+                            <p class="ex-desc">为 Claude Code 导入一条提示词。确认框里有「导入后立即启用」开关，默认关闭；用户打开后会替换当前的提示词文件（如 CLAUDE.md）。</p>
+                            <dl class="params">
+                                <dt>必需</dt><dd><code>resource=prompt</code> <code>app</code> <code>name</code> <code>content</code>（Base64 Markdown）</dd>
+                                <dt>可选</dt><dd><code>description</code> <code>enabled</code>（开关的初始值，一般不要写）</dd>
+                            </dl>
+                            <figure class="code">
+                                <figcaption>解码后的 content</figcaption>
+                                <pre># 代码审查专家
 
-你是一位有经验的代码审查员。审查代码时，先指出会导致错误的问题，再给出修改建议。</pre>
-                        </figure>
-                        <div class="actions">
-                            <a class="btn solid compact" href="ccswitch://v1/import?resource=prompt&amp;app=claude&amp;name=%E4%BB%A3%E7%A0%81%E5%AE%A1%E6%9F%A5%E4%B8%93%E5%AE%B6&amp;content=IyDku6PnoIHlrqHmn6XkuJPlrrYKCuS9oOaYr%2BS4gOS9jeaciee7j%2BmqjOeahOS7o%2BeggeWuoeafpeWRmOOAguWuoeafpeS7o%2BeggeaXtu%2B8jOWFiOaMh%2BWHuuS8muWvvOiHtOmUmeivr%2BeahOmXrumimO%2B8jOWGjee7meWHuuS%2FruaUueW7uuiuruOAgg%3D%3D&amp;description=%E4%B8%93%E6%B3%A8%E4%BB%A3%E7%A0%81%E8%B4%A8%E9%87%8F"><svg class="i sm"><use href="#i-import" /></svg>在 CC Switch 中打开</a>
-                            <button type="button" class="btn neutral compact" data-link="ccswitch://v1/import?resource=prompt&amp;app=claude&amp;name=%E4%BB%A3%E7%A0%81%E5%AE%A1%E6%9F%A5%E4%B8%93%E5%AE%B6&amp;content=IyDku6PnoIHlrqHmn6XkuJPlrrYKCuS9oOaYr%2BS4gOS9jeaciee7j%2BmqjOeahOS7o%2BeggeWuoeafpeWRmOOAguWuoeafpeS7o%2BeggeaXtu%2B8jOWFiOaMh%2BWHuuS8muWvvOiHtOmUmeivr%2BeahOmXrumimO%2B8jOWGjee7meWHuuS%2FruaUueW7uuiuruOAgg%3D%3D&amp;description=%E4%B8%93%E6%B3%A8%E4%BB%A3%E7%A0%81%E8%B4%A8%E9%87%8F" onclick="copyDeepLink(this.dataset.link, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制链接</span></button>
-                        </div>
-                    </article>
-                </div>
+    你是一位有经验的代码审查员。审查代码时，先指出会导致错误的问题，再给出修改建议。</pre>
+                            </figure>
+                            <div class="actions">
+                                <a class="btn solid compact" href="ccswitch://v1/import?resource=prompt&amp;app=claude&amp;name=%E4%BB%A3%E7%A0%81%E5%AE%A1%E6%9F%A5%E4%B8%93%E5%AE%B6&amp;content=IyDku6PnoIHlrqHmn6XkuJPlrrYKCuS9oOaYr%2BS4gOS9jeaciee7j%2BmqjOeahOS7o%2BeggeWuoeafpeWRmOOAguWuoeafpeS7o%2BeggeaXtu%2B8jOWFiOaMh%2BWHuuS8muWvvOiHtOmUmeivr%2BeahOmXrumimO%2B8jOWGjee7meWHuuS%2FruaUueW7uuiuruOAgg%3D%3D&amp;description=%E4%B8%93%E6%B3%A8%E4%BB%A3%E7%A0%81%E8%B4%A8%E9%87%8F"><svg class="i sm"><use href="#i-import" /></svg>在 CC Switch 中打开</a>
+                                <button type="button" class="btn neutral compact" data-link="ccswitch://v1/import?resource=prompt&amp;app=claude&amp;name=%E4%BB%A3%E7%A0%81%E5%AE%A1%E6%9F%A5%E4%B8%93%E5%AE%B6&amp;content=IyDku6PnoIHlrqHmn6XkuJPlrrYKCuS9oOaYr%2BS4gOS9jeaciee7j%2BmqjOeahOS7o%2BeggeWuoeafpeWRmOOAguWuoeafpeS7o%2BeggeaXtu%2B8jOWFiOaMh%2BWHuuS8muWvvOiHtOmUmeivr%2BeahOmXrumimO%2B8jOWGjee7meWHuuS%2FruaUueW7uuiuruOAgg%3D%3D&amp;description=%E4%B8%93%E6%B3%A8%E4%BB%A3%E7%A0%81%E8%B4%A8%E9%87%8F" onclick="copyDeepLink(this.dataset.link, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制链接</span></button>
+                            </div>
+                        </article>
+                    </div>
+                </details>
             </section>
 
             <!-- Skill 示例 -->
             <section id="ex-skill">
-                <h2>Skill 仓库示例</h2>
-                <div class="ex-list" style="margin-top: 16px;">
-                    <article class="ex">
-                        <div class="ex-head"><span class="chip app"><i class="d"></i>Skills</span><h3>添加 Skill 仓库</h3></div>
-                        <p class="ex-desc">把一个 GitHub 公开仓库加进 Skill 仓库列表。添加的是仓库，用户还要在 Skills 管理界面自己选择安装哪些 Skill。</p>
-                        <dl class="params">
-                            <dt>必需</dt><dd><code>resource=skill</code> <code>repo</code>（owner/name）</dd>
-                            <dt>可选</dt><dd><code>branch</code>（默认 main）</dd>
-                        </dl>
-                        <figure class="code">
-                            <figcaption>链接参数</figcaption>
-                            <pre>repo=example/claude-skills
-branch=main</pre>
-                        </figure>
-                        <div class="actions">
-                            <a class="btn solid compact" href="ccswitch://v1/import?resource=skill&amp;repo=example%2Fclaude-skills&amp;branch=main"><svg class="i sm"><use href="#i-import" /></svg>在 CC Switch 中打开</a>
-                            <button type="button" class="btn neutral compact" data-link="ccswitch://v1/import?resource=skill&amp;repo=example%2Fclaude-skills&amp;branch=main" onclick="copyDeepLink(this.dataset.link, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制链接</span></button>
-                        </div>
-                    </article>
-                </div>
+                <details class="fold">
+                    <summary><h2>Skill 仓库示例</h2><span class="fold-hint">和 API 服务关系不大，顺带分发配套工具时再看</span></summary>
+                    <div class="ex-list" style="margin-top: 16px;">
+                        <article class="ex">
+                            <div class="ex-head"><span class="chip app"><i class="d"></i>Skills</span><h3>添加 Skill 仓库</h3></div>
+                            <p class="ex-desc">把一个 GitHub 公开仓库加进 Skill 仓库列表。添加的是仓库，用户还要在 Skills 管理界面自己选择安装哪些 Skill。</p>
+                            <dl class="params">
+                                <dt>必需</dt><dd><code>resource=skill</code> <code>repo</code>（owner/name）</dd>
+                                <dt>可选</dt><dd><code>branch</code>（默认 main）</dd>
+                            </dl>
+                            <figure class="code">
+                                <figcaption>链接参数</figcaption>
+                                <pre>repo=example/claude-skills
+    branch=main</pre>
+                            </figure>
+                            <div class="actions">
+                                <a class="btn solid compact" href="ccswitch://v1/import?resource=skill&amp;repo=example%2Fclaude-skills&amp;branch=main"><svg class="i sm"><use href="#i-import" /></svg>在 CC Switch 中打开</a>
+                                <button type="button" class="btn neutral compact" data-link="ccswitch://v1/import?resource=skill&amp;repo=example%2Fclaude-skills&amp;branch=main" onclick="copyDeepLink(this.dataset.link, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制链接</span></button>
+                            </div>
+                        </article>
+                    </div>
+                </details>
             </section>
 
             <!-- 常见问题 -->
             <section id="faq">
                 <h2>常见问题</h2>
                 <dl class="faq">
+                    <dt>怎么做成我网站上的按钮</dt>
+                    <dd>链接里有用户的 Key，不要直接写进按钮的 <code>href</code>。用户点击时，前端向你的后端要这个用户的链接，拿到后用 <code>location.href = link</code> 跳转；按钮旁写一句「点了没反应？先安装 CC Switch」并附上下载地址。一条链接只导入到一个应用，同时支持 Claude Code、Codex 等几个应用时，每个应用放一个按钮。后端接口和前端按钮的完整代码见 <a href="https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-zh.md#把链接放到按钮上" target="_blank" rel="noopener">站长接入指南</a>。</dd>
                     <dt>点了没反应</dt>
                     <dd>第一次点击时浏览器会询问是否打开 CC Switch，选「允许」或「打开」。macOS 上如果仍然打不开，到「系统设置 → 隐私与安全性」里允许 CC Switch。</dd>
                     <dt>导入时会发生什么</dt>
@@ -2228,6 +2246,14 @@ api_backend = "responses"`;
                     rail.scrollTo({ left: Math.max(0, left) });
                 }
             };
+            // 折叠的节：从侧栏或带锚点的地址跳过来时自动展开
+            const openFold = (hash) => {
+                const fold = hash && hash.length > 1 && document.querySelector(hash + ' > details.fold');
+                if (fold) fold.open = true;
+            };
+            links.forEach(a => a.addEventListener('click', () => openFold(a.getAttribute('href'))));
+            window.addEventListener('hashchange', () => openFold(location.hash));
+            openFold(location.hash);
             window.addEventListener('scroll', markActive, { passive: true });
             markActive();
 
