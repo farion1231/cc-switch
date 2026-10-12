@@ -4,7 +4,7 @@
 //! - 支持三应用开关（Claude/Codex/Gemini）
 //! - SSOT 存储在 ~/.cc-switch/skills/
 
-use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
+use crate::app_config::{AppType, InstalledSkill, PiSkillsConfig, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillAppSyncOutcome,
@@ -83,6 +83,18 @@ pub fn restore_skill_backup(
     let app_type = parse_app_type(&current_app)?;
     SkillService::restore_from_backup(&app_state.db, &backup_id, &app_type)
         .map_err(|e| e.to_string())
+}
+
+/// Pi 共享配置装填（skills 数组 + 分类/警告 + revision + 候选源）
+#[tauri::command]
+pub fn get_pi_skills_config() -> Result<PiSkillsConfig, String> {
+    crate::pi_config::get_pi_skills_config().map_err(|e| e.to_string())
+}
+
+/// 写入 pi settings.json 的 skills 数组（revision 防外部修改冲突）
+#[tauri::command]
+pub fn set_pi_skills_entries(entries: Vec<String>, revision: String) -> Result<(), String> {
+    crate::pi_config::set_pi_skills_entries(&entries, &revision).map_err(|e| e.to_string())
 }
 
 /// 切换 Skill 的应用启用状态

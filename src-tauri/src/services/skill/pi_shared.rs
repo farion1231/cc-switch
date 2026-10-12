@@ -458,7 +458,6 @@ pub(crate) fn classify_entry_kind(raw: &str) -> PiEntryKind {
 ///   （上游 issue #10765；`foo~bar` 这类含 ~ 的合法备份文件模式不误报）；
 /// - 字面路径陷阱：纯路径条目含通配符会被 pi 当 include 模式，
 ///   无法按字面路径引用（如目录名恰含 ? 或 *）。
-#[expect(dead_code)] // T2/T3 编辑器消费后移除
 pub(crate) fn entry_warnings(raw: &str) -> Vec<String> {
     let mut warnings = Vec::new();
     let kind = classify_entry_kind(raw);

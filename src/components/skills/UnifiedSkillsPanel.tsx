@@ -72,6 +72,7 @@ import { RepoManagerPanel } from "./RepoManagerPanel";
 import { SkillImportDialog } from "./SkillImportDialog";
 import { SkillRestoreDialog } from "./SkillRestoreDialog";
 import { SkillsStorageSheet } from "./SkillsStorageSheet";
+import { PiSharedConfigPanel } from "./PiSharedConfigPanel";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
 import { describeRepoFailures } from "./repoFailures";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
@@ -145,6 +146,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [importOpen, setImportOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [storageOpen, setStorageOpen] = useState(false);
+  const [piConfigOpen, setPiConfigOpen] = useState(false);
   const [repoManagerOpen, setRepoManagerOpen] = useState(false);
   const [dismissedUnmanaged, setDismissedUnmanaged] = useState<number | null>(
     null,
@@ -1376,6 +1378,14 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                             statusFilter === appFilter ? "all" : appFilter,
                           ),
                       }}
+                      secondaryAction={
+                        isPi
+                          ? {
+                              label: t("skillsPage.piConfig.manageEntry"),
+                              onClick: () => setPiConfigOpen(true),
+                            }
+                          : undefined
+                      }
                       onEnableRest={() => handleColumnBulk(app, true)}
                       onDisableAll={() => handleColumnBulk(app, false)}
                     />
@@ -1744,6 +1754,15 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       />
 
       <SkillsStorageSheet open={storageOpen} onOpenChange={setStorageOpen} />
+
+      {piConfigOpen && (
+        <PiSharedConfigPanel
+          onClose={() => setPiConfigOpen(false)}
+          onSaved={() => {
+            void refetch();
+          }}
+        />
+      )}
 
       {repoManagerOpen && (
         <RepoManagerContainer onClose={() => setRepoManagerOpen(false)} />

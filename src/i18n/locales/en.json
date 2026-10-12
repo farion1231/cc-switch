@@ -4616,6 +4616,39 @@
       "dualInconsistent": " Contents differ — consider removing one of the copies.",
       "excludedTooltip": "{{name}}'s Pi projection path is hit by an exclusion rule and cannot be enabled here; adjust the skills config in pi's settings.json — once the rule is removed it can be enabled normally.",
       "approximateSuffix": " (Contains config Pi-side that cannot be parsed precisely; actual Pi loading takes precedence.)"
+    },
+    "piConfig": {
+      "addFromApps": "Add from app directories…",
+      "addPlaceholder": "Add an entry (e.g. ~/.claude/skills or an exclusion pattern)…",
+      "alreadyListed": "Already added",
+      "description": "Edit the skills array of pi's settings.json: extra scan directories and exclusion/force rules. Saving refreshes the skills list.",
+      "editMode": "Edit mode",
+      "emptyEntryRejected": "Entries cannot be empty or whitespace-only",
+      "emptyHint": "No entries yet. The skills array controls the directories pi scans and its exclusion rules; ~/.agents/skills is auto-discovered by pi and needs no entry.",
+      "jsonLabel": "skills array JSON",
+      "jsonScopeHint": "You are editing the skills array (not the whole settings.json); it must parse as an array of strings",
+      "kind": {
+        "scanPath": "Scan root",
+        "exclude": "Exclude",
+        "forceInclude": "Force include",
+        "forceExclude": "Force exclude",
+        "includeWhitelist": "Whitelist",
+        "packageScheme": "Package"
+      },
+      "manageEntry": "Manage shared config…",
+      "noSources": "No skill directories of other apps found",
+      "parseErrorHint": "settings.json cannot be parsed (or the skills array contains non-string elements); fix it manually, then refresh",
+      "refresh": "Refresh",
+      "refreshConfirm": "Refreshing discards unsaved changes. Continue?",
+      "reloadHint": "pi needs a restart or /reload to pick up the change",
+      "revisionConflict": "pi settings.json was modified externally; please refresh and retry",
+      "revisionConflictBanner": "The config was modified externally and your edit is based on stale content. Refreshing discards unsaved changes.",
+      "saved": "Saved; skills list refreshed",
+      "tabForm": "Form",
+      "title": "Pi shared config",
+      "warnDeadPattern": "~ in patterns is never expanded by pi; this rule will never match",
+      "warnLiteralWildcard": "The path contains wildcards; pi treats it as an include whitelist pattern, not a literal path",
+      "willBe": "will be"
     }
   },
   "newLayoutNotice": {

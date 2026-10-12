@@ -4617,6 +4617,39 @@
       "dualInconsistent": " 內容不一致，建議移除其中一份。",
       "excludedTooltip": "{{name}} 的 Pi 投影路徑被排除規則命中，無法在此啟用；請調整 pi settings.json 的 skills 設定，移除相關規則後即可正常啟用。",
       "approximateSuffix": "（含 Pi 無法精確解析的設定，實際以 Pi 載入結果為準）"
+    },
+    "piConfig": {
+      "addFromApps": "從應用目錄新增…",
+      "addPlaceholder": "新增條目（如 ~/.claude/skills 或 !排除模式）…",
+      "alreadyListed": "已新增",
+      "description": "編輯 pi settings.json 的 skills 陣列：額外掃描目錄與排除/強制規則。儲存後同步重新整理技能列表。",
+      "editMode": "編輯模式",
+      "emptyEntryRejected": "條目不能為空或純空白",
+      "emptyHint": "暫無條目。skills 陣列控制 pi 額外掃描的目錄與排除規則；~/.agents/skills 由 pi 自動發現，無需設定。",
+      "jsonLabel": "skills 陣列 JSON",
+      "jsonScopeHint": "編輯對象是 skills 陣列（不是整個 settings.json）；必須解析為字串陣列",
+      "kind": {
+        "scanPath": "掃描根",
+        "exclude": "排除",
+        "forceInclude": "強制啟用",
+        "forceExclude": "強制排除",
+        "includeWhitelist": "白名單",
+        "packageScheme": "包引用"
+      },
+      "manageEntry": "管理共享設定…",
+      "noSources": "沒有發現其他應用的技能目錄",
+      "parseErrorHint": "settings.json 無法解析（或 skills 陣列含非字串元素），請手動修復後重新整理",
+      "refresh": "重新整理",
+      "refreshConfirm": "重新整理將捨棄目前未儲存的修改，確定繼續？",
+      "reloadHint": "儲存後 pi 需重啟或執行 /reload 生效",
+      "revisionConflict": "pi settings.json 已在外部修改，請重新整理後重試",
+      "revisionConflictBanner": "設定已在外部被修改，目前編輯基於過期內容。重新整理將捨棄未儲存的修改。",
+      "saved": "已儲存，技能列表已重新整理",
+      "tabForm": "表單",
+      "title": "Pi 共享設定",
+      "warnDeadPattern": "模式中的 ~ 不會被 pi 展開，該規則永遠不會生效",
+      "warnLiteralWildcard": "路徑含萬用字元，pi 會將其當作 include 白名單模式而非字面路徑",
+      "willBe": "將作為"
     }
   },
   "newLayoutNotice": {

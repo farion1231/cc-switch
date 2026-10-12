@@ -4616,6 +4616,39 @@
       "dualInconsistent": " 内容が異なるため、どちらかの削除を検討してください。",
       "excludedTooltip": "{{name}} の Pi 投影パスは除外ルールに該当するため、ここでは有効化できません。pi settings.json の skills 設定を調整し、該当ルールを削除すると通常どおり有効化できます。",
       "approximateSuffix": "（正確に解析できない pi 側の設定を含みます。実際の Pi の読み込み結果が優先されます）"
+    },
+    "piConfig": {
+      "addFromApps": "アプリのディレクトリから追加…",
+      "addPlaceholder": "エントリを追加（例： ~/.claude/skills や !除外パターン）…",
+      "alreadyListed": "追加済み",
+      "description": "pi settings.json の skills 配列を編集します：追加スキャンディレクトリと除外/強制ルール。保存するとスキル一覧が更新されます。",
+      "editMode": "編集モード",
+      "emptyEntryRejected": "エントリは空または空白のみにできません",
+      "emptyHint": "エントリがありません。skills 配列は pi がスキャンするディレクトリと除外ルールを制御します。~/.agents/skills は pi が自動検出するため設定不要です。",
+      "jsonLabel": "skills 配列 JSON",
+      "jsonScopeHint": "編集対象は skills 配列です（settings.json 全体ではありません）。文字列配列として解析される必要があります",
+      "kind": {
+        "scanPath": "スキャンルート",
+        "exclude": "除外",
+        "forceInclude": "強制有効",
+        "forceExclude": "強制除外",
+        "includeWhitelist": "ホワイトリスト",
+        "packageScheme": "パッケージ"
+      },
+      "manageEntry": "共有設定を管理…",
+      "noSources": "他のアプリのスキルディレクトリが見つかりません",
+      "parseErrorHint": "settings.json を解析できません（または skills 配列に文字列以外の要素があります）。手動で修復してから更新してください",
+      "refresh": "更新",
+      "refreshConfirm": "更新すると未保存の変更が破棄されます。続行しますか？",
+      "reloadHint": "保存後、pi の再起動または /reload で反映されます",
+      "revisionConflict": "pi settings.json が外部で変更されました。更新して再試行してください",
+      "revisionConflictBanner": "設定が外部で変更されたため、現在の編集は古い内容に基づいています。更新すると未保存の変更は破棄されます。",
+      "saved": "保存しました。スキル一覧を更新しました",
+      "tabForm": "フォーム",
+      "title": "Pi 共有設定",
+      "warnDeadPattern": "パターン内の ~ は pi によって展開されないため、このルールは決して一致しません",
+      "warnLiteralWildcard": "パスにワイルドカードが含まれるため、pi はリテラルパスではなく include ホワイトリストパターンとして扱います",
+      "willBe": "分類："
     }
   },
   "newLayoutNotice": {

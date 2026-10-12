@@ -262,7 +262,6 @@ pub struct InstalledSkill {
 /// pi settings.json `skills` 数组的编辑器装填载荷（Pi 共享配置编辑）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[expect(dead_code)] // T3 命令层消费后移除
 pub struct PiSkillsConfig {
     /// settings.json 实际路径（含 override 解析）
     pub path: String,
@@ -283,7 +282,6 @@ pub struct PiSkillsConfig {
 /// 单个 skills 条目 + 静态分类与警告
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[expect(dead_code)] // T3 命令层消费后移除
 pub struct PiSkillsEntryInfo {
     /// 条目原文（落盘原样）
     pub raw: String,
@@ -298,7 +296,6 @@ pub struct PiSkillsEntryInfo {
 /// 复选添加候选源
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[expect(dead_code)] // T3 命令层消费后移除
 pub struct PiSkillsSourceInfo {
     /// 应用 id（前端映射显示名）
     pub app: String,

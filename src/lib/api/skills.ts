@@ -46,6 +46,35 @@ export interface InstalledSkill {
   piVisibility?: PiVisibility;
 }
 
+/** pi settings.json skills 数组的编辑器装填载荷 */
+export interface PiSkillsConfig {
+  path: string;
+  entries?: PiSkillsEntryInfo[];
+  parseError?: string;
+  revision: string;
+  sources: PiSkillsSourceInfo[];
+}
+
+/** 单个 skills 条目 + 静态分类与警告 */
+export interface PiSkillsEntryInfo {
+  raw: string;
+  kind:
+    | "scanPath"
+    | "exclude"
+    | "forceInclude"
+    | "forceExclude"
+    | "includeWhitelist"
+    | "packageScheme";
+  warnings: string[];
+}
+
+/** 复选添加候选源 */
+export interface PiSkillsSourceInfo {
+  app: string;
+  path: string;
+  alreadyListed: boolean;
+}
+
 /** 对 pi 的可见性五态：inactive / inactive-excluded / native / shared / native-shared
  *  （由后端 skill::pi_shared 判定引擎现算；开/关 = pi 是否实际加载该技能） */
 export interface PiVisibility {
@@ -250,6 +279,16 @@ export const skillsApi = {
   },
 
   /** 切换 Skill 的应用启用状态 */
+  /** Pi 共享配置装填（skills 数组 + 分类/警告 + revision + 候选源） */
+  async getPiSkillsConfig(): Promise<PiSkillsConfig> {
+    return await invoke("get_pi_skills_config");
+  },
+
+  /** 写入 pi settings.json 的 skills 数组（revision 防外部修改冲突） */
+  async setPiSkillsEntries(entries: string[], revision: string): Promise<void> {
+    return await invoke("set_pi_skills_entries", { entries, revision });
+  },
+
   async toggleApp(id: string, app: AppId, enabled: boolean): Promise<boolean> {
     return await invoke("toggle_skill_app", { id, app, enabled });
   },

@@ -189,6 +189,8 @@ interface MatrixColumnHeaderProps {
   onDisableAll: () => void;
   /** 弹层里额外的文字按钮（Skills：「只看在 Codex 启用的」） */
   extraAction?: { label: string; onClick: () => void };
+  /** 第二个文字动作（Skills 面板的 Pi 列：「管理共享配置」） */
+  secondaryAction?: { label: string; onClick: () => void };
   /** 标题旁的「?」（Pi：怎么算启用） */
   help?: { title: string; body: React.ReactNode };
   /** 列头的 title（Pi 说明按目录判断） */
@@ -208,6 +210,7 @@ export function MatrixColumnHeader({
   onEnableRest,
   onDisableAll,
   extraAction,
+  secondaryAction,
   help,
   title,
   disabled,
@@ -340,14 +343,27 @@ export function MatrixColumnHeader({
               {t("appMatrix.pop.disableAll")}
             </Button>
           </div>
-          {extraAction && (
-            <button
-              type="button"
-              onClick={() => run(extraAction.onClick)}
-              className="self-start text-body font-medium text-fg-1 underline underline-offset-[3px] hover:text-fg-2"
-            >
-              {extraAction.label}
-            </button>
+          {(extraAction || secondaryAction) && (
+            <div className="flex flex-col items-start gap-1">
+              {extraAction && (
+                <button
+                  type="button"
+                  onClick={() => run(extraAction.onClick)}
+                  className="text-body font-medium text-fg-1 underline underline-offset-[3px] hover:text-fg-2"
+                >
+                  {extraAction.label}
+                </button>
+              )}
+              {secondaryAction && (
+                <button
+                  type="button"
+                  onClick={() => run(secondaryAction.onClick)}
+                  className="text-body font-medium text-fg-1 underline underline-offset-[3px] hover:text-fg-2"
+                >
+                  {secondaryAction.label}
+                </button>
+              )}
+            </div>
           )}
           <span className="text-caption text-fg-3">
             {scopeKind === "search"

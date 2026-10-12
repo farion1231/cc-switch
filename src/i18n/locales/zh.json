@@ -4616,6 +4616,39 @@
       "dualInconsistent": " 内容不一致，建议移除其中一份。",
       "excludedTooltip": "{{name}} 的 Pi 投影路径被排除规则命中，无法在此启用；请调整 pi settings.json 的 skills 配置，移除相关规则后即可正常启用。",
       "approximateSuffix": "（含 Pi 无法精确解析的配置，实际以 Pi 加载结果为准）"
+    },
+    "piConfig": {
+      "addFromApps": "从应用目录添加…",
+      "addPlaceholder": "添加条目（如 ~/.claude/skills 或 !排除模式）…",
+      "alreadyListed": "已添加",
+      "description": "编辑 pi settings.json 的 skills 数组：额外扫描目录与排除/强制规则。保存后同步刷新技能列表。",
+      "editMode": "编辑模式",
+      "emptyEntryRejected": "条目不能为空或纯空白",
+      "emptyHint": "暂无条目。skills 数组控制 pi 额外扫描的目录与排除规则；~/.agents/skills 由 pi 自动发现，无需配置。",
+      "jsonLabel": "skills 数组 JSON",
+      "jsonScopeHint": "编辑对象是 skills 数组（不是整个 settings.json）；必须解析为字符串数组",
+      "kind": {
+        "scanPath": "扫描根",
+        "exclude": "排除",
+        "forceInclude": "强制启用",
+        "forceExclude": "强制排除",
+        "includeWhitelist": "白名单",
+        "packageScheme": "包引用"
+      },
+      "manageEntry": "管理共享配置…",
+      "noSources": "没有发现其他应用的技能目录",
+      "parseErrorHint": "settings.json 无法解析（或 skills 数组含非字符串元素），请手动修复后刷新",
+      "refresh": "刷新",
+      "refreshConfirm": "刷新将丢弃当前未保存的修改，确定继续？",
+      "reloadHint": "保存后 pi 需重启或执行 /reload 生效",
+      "revisionConflict": "pi settings.json 已在外部修改，请刷新后重试",
+      "revisionConflictBanner": "配置已在外部被修改，当前编辑基于过期内容。刷新将丢弃未保存的修改。",
+      "saved": "已保存，技能列表已刷新",
+      "tabForm": "表单",
+      "title": "Pi 共享配置",
+      "warnDeadPattern": "模式中的 ~ 不会被 pi 展开，该规则永远不会生效",
+      "warnLiteralWildcard": "路径含通配符，pi 会将其当作 include 白名单模式而非字面路径",
+      "willBe": "将作为"
     }
   },
   "newLayoutNotice": {

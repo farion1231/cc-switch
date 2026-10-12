@@ -17,7 +17,6 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 const MAX_PI_FILE_BYTES: u64 = 1024 * 1024;
 const MISSING_MODELS_REVISION: &str = "missing";
 static MODELS_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-#[expect(dead_code)] // T3 命令层消费后移除
 static PI_SETTINGS_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 #[cfg(test)]
 static TEST_AGENT_DIR: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex::new(None));
@@ -512,7 +511,6 @@ fn nonempty_string(value: Option<&Value>) -> Option<&str> {
 /// 编辑场景下过滤即销毁）+ 分类/警告（pi_shared 轻量版）+ revision（编辑
 /// 会话乐观锁）+ 复选候选源（各应用技能目录实际路径，不含 Pi 自身与
 /// ~/.agents/skills——后者 pi 无条件自动发现，加入冗余）。
-#[expect(dead_code)] // T3 命令层消费后移除
 pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig, AppError> {
     use crate::app_config::{PiSkillsConfig, PiSkillsEntryInfo, PiSkillsSourceInfo};
 
@@ -603,7 +601,6 @@ pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig
 /// 写入 skills 数组（全量替换；文件中 skills 内容 = 编辑器所见）。
 /// 安全链：双层 revision → 空白条目拒绝 → JsoncDocument（数组外逐字保留）
 /// → round-trip 三重校验 → 无变化零写入 → 首次改写前快照 → 原子写。
-#[expect(dead_code)] // T3 命令层消费后移除
 pub(crate) fn set_pi_skills_entries(
     entries: &[String],
     session_revision: &str,
@@ -697,7 +694,6 @@ pub(crate) fn set_pi_skills_entries(
 }
 
 /// 条目（raw）解析后是否指向目标目录（canonicalize 去重）
-#[expect(dead_code)] // T3 命令层消费后移除
 fn entry_resolves_to(raw: &str, target: &std::path::Path) -> bool {
     let resolved = if let Some(rest) = raw.strip_prefix("~/") {
         get_home_dir().join(rest)
@@ -712,7 +708,6 @@ fn entry_resolves_to(raw: &str, target: &std::path::Path) -> bool {
 }
 
 /// 首次改写前快照到 ~/.cc-switch/backups/pi-settings/（保留最近 20 份）
-#[expect(dead_code)] // T3 命令层消费后移除
 fn snapshot_pi_settings(path: &std::path::Path, source: &str) -> Result<(), AppError> {
     const RETAIN: usize = 20;
     let dir = crate::config::get_app_config_dir()
