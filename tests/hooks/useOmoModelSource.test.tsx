@@ -5,8 +5,9 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
-import type { PropsWithChildren } from "react";
+import { useState, type PropsWithChildren } from "react";
 import {
   afterAll,
   beforeAll,
@@ -235,4 +236,92 @@ describe.each([false, true])("OMO form variants (slim=%s)", (isSlim) => {
       await screen.findByTitle("medium (current value, unavailable)"),
     ).toBeInTheDocument();
   });
+});
+
+describe.each([
+  { isSlim: false, scope: "agents" },
+  { isSlim: true, scope: "agents" },
+  { isSlim: false, scope: "categories" },
+])("custom $scope variants (slim=$isSlim)", ({ isSlim, scope }) => {
+  it.each(["rename another", "delete another", "rename current"])(
+    "preserves a disabled saved variant after %s entry",
+    async (operation) => {
+      mocks.getLiveIds.mockResolvedValue(["provider"]);
+      mocks.getModels.mockResolvedValue([]);
+      setModel({
+        variants: { low: {}, medium: { disabled: true }, high: {} },
+      });
+      const saved = {
+        model: "provider/model",
+        variant: "medium",
+        temperature: 0.2,
+      };
+      const initialStore = {
+        first: saved,
+        second: { model: "provider/model" },
+      };
+      const onChange = vi.fn();
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      const emptyStore = {};
+      const noop = () => {};
+      function Form() {
+        const source = useOmoModelSource({ isOmoCategory: true });
+        const [store, setStore] =
+          useState<Record<string, Record<string, unknown>>>(initialStore);
+        const update = (next: Record<string, Record<string, unknown>>) => {
+          onChange(next);
+          setStore(next);
+        };
+        return (
+          <OmoFormFields
+            modelOptions={source.omoModelOptions}
+            modelVariantsMap={source.omoModelVariantsMap}
+            agents={scope === "agents" ? store : emptyStore}
+            categories={scope === "categories" ? store : emptyStore}
+            onAgentsChange={scope === "agents" ? update : noop}
+            onCategoriesChange={scope === "categories" ? update : noop}
+            otherFieldsStr="{}"
+            onOtherFieldsStrChange={noop}
+            isSlim={isSlim}
+          />
+        );
+      }
+      render(
+        <QueryClientProvider client={client}>
+          <Form />
+        </QueryClientProvider>,
+      );
+      // Wait for enabled choices from the real model source, not its initial empty map.
+      const secondRow = screen.getByDisplayValue("second").parentElement!;
+      await waitFor(() =>
+        expect(within(secondRow).getByTitle("(Default)")).toBeInTheDocument(),
+      );
+      expect(
+        screen.getByTitle("medium (current value, unavailable)"),
+      ).toBeInTheDocument();
+
+      if (operation === "delete another") {
+        fireEvent.click(
+          within(secondRow).getByRole("button", { name: "common.delete" }),
+        );
+      } else {
+        const key = screen.getByDisplayValue(
+          operation === "rename current" ? "first" : "second",
+        );
+        fireEvent.change(key, { target: { value: "renamed" } });
+        fireEvent.blur(key);
+      }
+      const targetKey = operation === "rename current" ? "renamed" : "first";
+      await waitFor(() => expect(onChange).toHaveBeenCalled());
+      expect(onChange.mock.lastCall?.[0][targetKey]).toEqual(saved);
+      expect(
+        screen.getByTitle("medium (current value, unavailable)"),
+      ).toBeInTheDocument();
+      if (operation === "delete another") {
+        expect(onChange.mock.lastCall?.[0].second).toBeUndefined();
+      }
+    },
+  );
 });
