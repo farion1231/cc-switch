@@ -38,6 +38,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   "xAI (Grok)": "grok",
   "Xiaomi MiMo": "小米",
   "Xiaomi MiMo Token Plan (China)": "小米",
+  YYLX: "鱼鱼连线 yylx.io",
   "Zhipu GLM": "智谱 glm bigmodel z.ai chatglm",
   "Zhipu GLM en": "智谱 glm bigmodel z.ai chatglm",
   优云智算: "ucloud",

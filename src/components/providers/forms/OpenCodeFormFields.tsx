@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
-import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
+import { Plus, Trash2, ChevronRight } from "lucide-react";
 import { ApiKeySection, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
@@ -32,7 +32,10 @@ import {
   findRequestHeaderValue,
   normalizeRequestHeaders,
 } from "./helpers/requestHeaders";
-import { FetchedModelPicker } from "./FetchedModelPicker";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import type { ProviderCategory, OpenCodeModel } from "@/types";
 import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
@@ -270,12 +273,9 @@ export function OpenCodeFormFields({
           ...new Map(result.map((model) => [model.id, model])).values(),
         ];
         setFetchedModels(models);
+        // 拉到模型时直接打开选择弹窗，不再提示成功。
         if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
-          );
         }
       })
       .catch((err) => {
@@ -320,24 +320,38 @@ export function OpenCodeFormFields({
     presets: presetModelSources,
     prefetch: fetchedModels.length > 0,
   });
-  const fillModelMetadataFor = (id: string) =>
-    fillModelMetadata(id, (metadata) => {
-      const current = modelsRef.current;
-      if (!Object.prototype.hasOwnProperty.call(current, id)) return false;
-      const filled = fillOpenCodeModel(current[id], metadata);
-      if (!metadataFilledAnything(current[id], filled)) return false;
-      commitModels({ ...current, [id]: filled });
-      return true;
-    });
+  const fillModelMetadataFor = (id: string, silent?: boolean) =>
+    fillModelMetadata(
+      id,
+      (metadata) => {
+        const current = modelsRef.current;
+        if (!Object.prototype.hasOwnProperty.call(current, id)) return false;
+        const filled = fillOpenCodeModel(current[id], metadata);
+        if (!metadataFilledAnything(current[id], filled)) return false;
+        commitModels({ ...current, [id]: filled });
+        return true;
+      },
+      { silent },
+    );
 
-  const handleAddFetchedModels = (modelIds: string[]) => {
+  const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const next = { ...models };
+    for (const id of remove) delete next[id];
     const additions = Object.fromEntries(
-      modelIds
-        .filter((id) => !Object.prototype.hasOwnProperty.call(models, id))
+      add
+        .filter((id) => !Object.prototype.hasOwnProperty.call(next, id))
         .map((id) => [id, { name: id }]),
     );
-    commitModels({ ...models, ...additions });
-    Object.keys(additions).forEach(fillModelMetadataFor);
+    commitModels({ ...next, ...additions });
+    if (remove.length > 0) {
+      setExpandedModels((prev) => {
+        const kept = new Set(prev);
+        for (const id of remove) kept.delete(id);
+        return kept;
+      });
+    }
+    // 弹窗里已经显示过这些参数，补完不再提示。
+    for (const id of Object.keys(additions)) fillModelMetadataFor(id, true);
   };
 
   // Remove a model entry
@@ -750,21 +764,14 @@ export function OpenCodeFormFields({
             {t("opencode.models", { defaultValue: "Models" })}
           </FormLabel>
           <div className="flex gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleFetchModels}
-              disabled={isFetchingModels}
-              className="h-7 gap-1"
-            >
-              {isFetchingModels ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
-              )}
-              {t("providerForm.fetchModels")}
-            </Button>
+            <FetchedModelPicker
+              models={fetchedModels}
+              configuredModelIds={Object.keys(models)}
+              onApply={handleApplyFetchedModels}
+              onFetch={handleFetchModels}
+              isFetching={isFetchingModels}
+              metadataSource={{ baseUrl, presets: presetModelSources }}
+            />
             <Button
               type="button"
               variant="outline"
@@ -777,14 +784,6 @@ export function OpenCodeFormFields({
             </Button>
           </div>
         </div>
-
-        {fetchedModels.length > 0 && (
-          <FetchedModelPicker
-            models={fetchedModels}
-            configuredModelIds={Object.keys(models)}
-            onAdd={handleAddFetchedModels}
-          />
-        )}
 
         {Object.keys(models).length === 0 ? (
           <p className="text-sm text-fg-2 py-2">
