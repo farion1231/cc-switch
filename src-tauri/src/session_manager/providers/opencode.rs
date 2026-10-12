@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::blocks::assign_turn_ids;
 use super::opencode_blocks::{message_from_parts, PartLocator};
-use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary, ScanStatus};
 
 const PROVIDER_ID: &str = "opencode";
 
@@ -55,34 +55,54 @@ fn detect_schema(conn: &Connection) -> OpenCodeSchema {
 }
 
 fn sqlite_table_exists(conn: &Connection, table: &str) -> bool {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-        [table],
-        |row| row.get(0),
-    )
-    .unwrap_or(false)
+    sqlite_table_exists_with_status(conn, table, &mut ScanStatus::default())
+}
+
+fn sqlite_table_exists_with_status(
+    conn: &Connection,
+    table: &str,
+    status: &mut ScanStatus,
+) -> bool {
+    status
+        .record(conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [table],
+            |row| row.get(0),
+        ))
+        .unwrap_or(false)
 }
 
 /// Read the V1→V2 migration marker timestamp (`migration.v1-v2`) from the `kv` table.
-fn get_v2_migration_marker_ts(conn: &Connection) -> Option<i64> {
-    if !sqlite_table_exists(conn, "kv") {
+fn get_v2_migration_marker_ts_with_status(
+    conn: &Connection,
+    status: &mut ScanStatus,
+) -> Option<i64> {
+    if !sqlite_table_exists_with_status(conn, "kv", status) {
         return None;
     }
-    conn.query_row(
-        "SELECT max(coalesce(time_created, 0), coalesce(time_updated, 0)) \
+    status
+        .record(
+            conn.query_row(
+                "SELECT max(coalesce(time_created, 0), coalesce(time_updated, 0)) \
          FROM kv WHERE key = 'migration.v1-v2'",
-        [],
-        |row| row.get(0),
-    )
-    .ok()
-    .filter(|&ts| ts > 0)
+                [],
+                |row| row.get(0),
+            )
+            .optional(),
+        )
+        .flatten()
+        .filter(|&ts| ts > 0)
 }
 
 /// Scan sessions from both the legacy JSON files and the newer SQLite database,
 /// merging results with SQLite taking precedence on ID conflicts.
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let json_sessions = scan_sessions_json();
-    let sqlite_sessions = scan_sessions_sqlite();
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let json_sessions = scan_sessions_json(status);
+    let sqlite_sessions = scan_sessions_sqlite_with_status(status);
 
     if sqlite_sessions.is_empty() {
         return json_sessions;
@@ -106,19 +126,16 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     merged
 }
 
-fn scan_sessions_json() -> Vec<SessionMeta> {
+fn scan_sessions_json(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let storage = get_opencode_data_dir();
     let session_dir = storage.join("session");
-    if !session_dir.exists() {
-        return Vec::new();
-    }
 
     let mut json_files = Vec::new();
-    collect_json_files(&session_dir, &mut json_files);
+    collect_json_files_with_status(&session_dir, &mut json_files, status);
 
     let mut sessions = Vec::new();
     for path in json_files {
-        if let Some(meta) = parse_session(&storage, &path) {
+        if let Some(meta) = parse_session_with_status(&storage, &path, status) {
             sessions.push(meta);
         }
     }
@@ -138,9 +155,14 @@ pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     Some((db_path, session_id))
 }
 
+#[cfg(test)]
 fn scan_sessions_sqlite() -> Vec<SessionMeta> {
+    scan_sessions_sqlite_with_status(&mut ScanStatus::default())
+}
+
+fn scan_sessions_sqlite_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let db_path = get_opencode_db_path();
-    if !db_path.exists() {
+    if status.metadata(&db_path).is_none() {
         return Vec::new();
     }
 
@@ -149,15 +171,24 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     ) {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
-    let schema = detect_schema(&conn);
+    let schema = if sqlite_table_exists_with_status(&conn, "session_v2", status)
+        && sqlite_table_exists_with_status(&conn, "session_message", status)
+    {
+        OpenCodeSchema::V2
+    } else {
+        OpenCodeSchema::V1
+    };
     let db_display = db_path.display().to_string();
 
     match schema {
-        OpenCodeSchema::V1 => scan_sessions_sqlite_v1(&conn, &db_display),
-        OpenCodeSchema::V2 => scan_sessions_sqlite_v2(&conn, &db_display),
+        OpenCodeSchema::V1 => scan_sessions_sqlite_v1(&conn, &db_display, status),
+        OpenCodeSchema::V2 => scan_sessions_sqlite_v2(&conn, &db_display, status),
     }
 }
 
@@ -193,24 +224,38 @@ fn parse_sqlite_session_row(
     })
 }
 
-fn scan_sessions_sqlite_v1(conn: &Connection, db_display: &str) -> Vec<SessionMeta> {
+fn scan_sessions_sqlite_v1(
+    conn: &Connection,
+    db_display: &str,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     let sql = "SELECT id, COALESCE(title, ''), directory, time_created, time_updated \
                FROM session ORDER BY time_updated DESC";
 
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
     let iter = match stmt.query_map([], |row| parse_sqlite_session_row(row, db_display)) {
         Ok(rows) => rows,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
-    iter.flatten().collect()
+    iter.filter_map(|row| status.record(row)).collect()
 }
 
-fn scan_sessions_sqlite_v2(conn: &Connection, db_display: &str) -> Vec<SessionMeta> {
+fn scan_sessions_sqlite_v2(
+    conn: &Connection,
+    db_display: &str,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     let sql = "SELECT s.id, \
                       COALESCE(s.title, ''), \
                       s.directory, \
@@ -223,29 +268,35 @@ fn scan_sessions_sqlite_v2(conn: &Connection, db_display: &str) -> Vec<SessionMe
 
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
     let iter = match stmt.query_map([], |row| parse_sqlite_session_row(row, db_display)) {
         Ok(rows) => rows,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
-    let mut sessions: Vec<SessionMeta> = iter.flatten().collect();
+    let mut sessions: Vec<SessionMeta> = iter.filter_map(|row| status.record(row)).collect();
 
     // Include V1 sessions for mixed V1/V2 databases (e.g. user tested 2.x beta then continued on 1.x)
-    if sqlite_table_exists(conn, "session") {
-        if let Some(marker_ts) = get_v2_migration_marker_ts(conn) {
+    if sqlite_table_exists_with_status(conn, "session", status) {
+        if let Some(marker_ts) = get_v2_migration_marker_ts_with_status(conn, status) {
             let v1_sql = "SELECT id, COALESCE(title, ''), directory, time_created, time_updated \
                           FROM session \
                           WHERE NOT EXISTS (SELECT 1 FROM session_v2 WHERE session_v2.id = session.id) \
                             AND time_updated > ?1 \
                           ORDER BY time_updated DESC";
-            if let Ok(mut v1_stmt) = conn.prepare(v1_sql) {
-                if let Ok(rows) =
-                    v1_stmt.query_map([marker_ts], |row| parse_sqlite_session_row(row, db_display))
-                {
-                    sessions.extend(rows.flatten());
+            if let Some(mut v1_stmt) = status.record(conn.prepare(v1_sql)) {
+                if let Some(rows) = status.record(
+                    v1_stmt.query_map([marker_ts], |row| parse_sqlite_session_row(row, db_display)),
+                ) {
+                    sessions.extend(rows.filter_map(|row| status.record(row)));
                     sessions.sort_by_key(|s| std::cmp::Reverse(s.last_active_at));
                 }
             }
@@ -687,8 +738,12 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
     Ok(deleted > 0)
 }
 
-fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
-    let data = std::fs::read_to_string(path).ok()?;
+fn parse_session_with_status(
+    storage: &Path,
+    path: &Path,
+    status: &mut ScanStatus,
+) -> Option<SessionMeta> {
+    let data = status.record(std::fs::read_to_string(path))?;
     let value: Value = serde_json::from_str(&data).ok()?;
 
     let session_id = value.get("id").and_then(Value::as_str)?.to_string();
@@ -844,19 +899,14 @@ fn collect_parts_text(part_dir: &Path) -> String {
 }
 
 fn collect_json_files(root: &Path, files: &mut Vec<PathBuf>) {
-    if !root.exists() {
-        return;
-    }
+    collect_json_files_with_status(root, files, &mut ScanStatus::default());
+}
 
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
+fn collect_json_files_with_status(root: &Path, files: &mut Vec<PathBuf>, status: &mut ScanStatus) {
+    for entry in status.entries(root) {
         let path = entry.path();
-        if path.is_dir() {
-            collect_json_files(&path, files);
+        if status.is_dir(&path) {
+            collect_json_files_with_status(&path, files, status);
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
             files.push(path);
         }

@@ -396,15 +396,19 @@ impl SessionIndex {
         tx.commit()
     }
 
-    /// 删掉已经不在会话列表里的源（会话在外部被删、移走）
-    pub fn retain_sources(&mut self, keep: &HashSet<(String, String)>) -> rusqlite::Result<()> {
+    /// 删掉已经不在会话列表里的源（会话在外部被删、移走）；扫描不完整的提供商保留旧正文和指纹。
+    pub fn retain_sources(
+        &mut self,
+        keep: &HashSet<(String, String)>,
+        complete_providers: &HashSet<String>,
+    ) -> rusqlite::Result<()> {
         let stale: Vec<(String, String)> = {
             let mut stmt = self
                 .conn
                 .prepare("SELECT provider_id, source_path FROM indexed_sources")?;
             let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
             rows.filter_map(Result::ok)
-                .filter(|key| !keep.contains(key))
+                .filter(|key| complete_providers.contains(&key.0) && !keep.contains(key))
                 .collect()
         };
         for (provider_id, source_path) in stale {
@@ -698,7 +702,9 @@ fn set_status(status: IndexStatus, on_status: &dyn Fn(IndexStatus)) {
 
 fn run_sync(on_status: &dyn Fn(IndexStatus)) {
     let mut seen = HashSet::new();
-    let sources: Vec<(String, String)> = super::scan_sessions()
+    let scan = super::scan_sessions_with_status();
+    let sources: Vec<(String, String)> = scan
+        .sessions
         .into_iter()
         .filter_map(|session| Some((session.provider_id, session.source_path?)))
         .filter(|key| seen.insert(key.clone()))
@@ -711,7 +717,7 @@ fn run_sync(on_status: &dyn Fn(IndexStatus)) {
     };
     set_status(status, on_status);
 
-    if let Err(e) = with_index(|index| index.retain_sources(&seen)) {
+    if let Err(e) = with_index(|index| index.retain_sources(&seen, &scan.complete_providers)) {
         log::warn!("清理会话正文索引失败: {e}");
     }
 
@@ -822,6 +828,154 @@ mod tests {
                 .replace_source("codex", "/a.jsonl", fingerprint, rows)
                 .map_err(|e| e.to_string())
         })
+    }
+
+    fn retain_scanned_claude(index: &mut SessionIndex, root: &Path) -> (usize, bool) {
+        let mut status = super::super::providers::utils::ScanStatus::default();
+        let sessions = super::super::providers::claude::scan_sessions_in_root(root, &mut status);
+        let count = sessions.len();
+        let seen = sessions
+            .into_iter()
+            .filter_map(|session| Some((session.provider_id, session.source_path?)))
+            .collect();
+        let complete = if status.incomplete {
+            HashSet::new()
+        } else {
+            HashSet::from(["claude".into()])
+        };
+        index.retain_sources(&seen, &complete).unwrap();
+        (count, !status.incomplete)
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn unreadable_session_directory_preserves_index_until_successful_scan() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("projects");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("session.jsonl");
+        std::fs::write(&path, r#"{"sessionId":"session","type":"user","message":{"role":"user","content":"recovered body"}}"#).unwrap();
+        let source = path.to_string_lossy().into_owned();
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        index
+            .replace_source("claude", &source, fp(1), &rows(&["cached body"]))
+            .unwrap();
+
+        let permissions = std::fs::metadata(&root).unwrap().permissions();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0)).unwrap();
+        let read_error = std::fs::read_dir(&root).err();
+        // Both the list refresh and the background sync encounter the outage.
+        let list = super::super::providers::claude::scan_sessions_in_root(
+            &root,
+            &mut super::super::providers::utils::ScanStatus::default(),
+        );
+        let failed_scan = retain_scanned_claude(&mut index, &root);
+        std::fs::set_permissions(&root, permissions).unwrap();
+        assert!(
+            read_error.is_some(),
+            "regression requires an unprivileged test process"
+        );
+        assert!(list.is_empty());
+        assert_eq!(failed_scan, (0, false));
+        assert_eq!(index.search("cached body", None, 10).unwrap().len(), 1);
+        assert_eq!(
+            index.stored_fingerprint("claude", &source).unwrap(),
+            Some(fp(1))
+        );
+        assert!(path.exists(), "raw session files must never be removed");
+
+        // A fresh scan recovers normally, without losing the old fingerprint first.
+        assert_eq!(retain_scanned_claude(&mut index, &root), (1, true));
+        let stored = index.stored_fingerprint("claude", &source).unwrap();
+        assert!(!index_changed_source(
+            stored,
+            fp(1),
+            || panic!("unchanged source must not be reparsed"),
+            |_| panic!("unchanged source must not be rewritten")
+        ));
+        assert!(index_changed_source(
+            stored,
+            fp(2),
+            || super::super::providers::claude::load_messages(&path),
+            |rows| index
+                .replace_source("claude", &source, fp(2), rows)
+                .map_err(|error| error.to_string())
+        ));
+        assert_eq!(index.search("recovered body", None, 10).unwrap().len(), 1);
+
+        // A real external deletion, including deletion of the final session, still prunes.
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(retain_scanned_claude(&mut index, &root), (0, true));
+        assert!(index.search("body", None, 10).unwrap().is_empty());
+        assert_eq!(index.stored_fingerprint("claude", &source).unwrap(), None);
+    }
+
+    #[test]
+    fn incomplete_provider_does_not_block_successful_empty_provider_cleanup() {
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        index
+            .replace_source(
+                "claude",
+                "/unreadable.jsonl",
+                fp(1),
+                &rows(&["keep this body"]),
+            )
+            .unwrap();
+        index
+            .replace_source("claude", "/visible.jsonl", fp(2), &rows(&["visible body"]))
+            .unwrap();
+        index
+            .replace_source("codex", "/deleted.jsonl", fp(3), &rows(&["deleted body"]))
+            .unwrap();
+        let seen = HashSet::from([("claude".into(), "/visible.jsonl".into())]);
+        index
+            .retain_sources(&seen, &HashSet::from(["codex".into()]))
+            .unwrap();
+        assert_eq!(index.search("body", None, 10).unwrap().len(), 2);
+        assert_eq!(
+            index
+                .stored_fingerprint("claude", "/unreadable.jsonl")
+                .unwrap(),
+            Some(fp(1))
+        );
+        assert_eq!(
+            index.stored_fingerprint("codex", "/deleted.jsonl").unwrap(),
+            None
+        );
+        index
+            .retain_sources(&seen, &HashSet::from(["claude".into(), "codex".into()]))
+            .unwrap();
+        assert_eq!(index.search("body", None, 10).unwrap().len(), 1);
+        assert_eq!(
+            index
+                .stored_fingerprint("claude", "/unreadable.jsonl")
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_directory_is_not_a_successful_empty_scan() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("projects");
+        std::fs::write(&root, "not a directory").unwrap();
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        index
+            .replace_source("claude", "/old.jsonl", fp(1), &rows(&["cached body"]))
+            .unwrap();
+        assert_eq!(retain_scanned_claude(&mut index, &root), (0, false));
+        assert_eq!(
+            index.stored_fingerprint("claude", "/old.jsonl").unwrap(),
+            Some(fp(1))
+        );
+        std::fs::remove_file(&root).unwrap();
+        assert_eq!(retain_scanned_claude(&mut index, &root), (0, true));
+        assert_eq!(
+            index.stored_fingerprint("claude", "/old.jsonl").unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -1356,7 +1510,9 @@ mod tests {
         assert_eq!(index.stored_fingerprint("codex", "/b.jsonl").unwrap(), None);
 
         let keep: HashSet<(String, String)> = HashSet::new();
-        index.retain_sources(&keep).unwrap();
+        index
+            .retain_sources(&keep, &HashSet::from(["claude".into(), "codex".into()]))
+            .unwrap();
         assert!(index.search("new words", None, 10).unwrap().is_empty());
     }
 
