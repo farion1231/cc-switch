@@ -23,7 +23,7 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     load_sync_cursors, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
-use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
+use crate::services::usage_stats::{find_model_pricing, proxy_request_id_exists};
 use crate::zcode_config::get_zcode_usage_db_path;
 use rust_decimal::Decimal;
 use std::fs;
@@ -236,16 +236,11 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
     // request_id 加前缀防跨源冲突
     let request_id = format!("zcode_session:{}", row.id);
 
-    let dedup_key = DedupKey {
-        app_type: "zcode",
-        model: &model_id,
-        input_tokens: row.input_tokens as u32,
-        output_tokens: output_with_reasoning as u32,
-        cache_read_tokens: row.cache_read_tokens as u32,
-        cache_creation_tokens: row.cache_creation_tokens as u32,
-        created_at,
-    };
-    if should_skip_session_insert(&conn, &request_id, &dedup_key)? {
+    // 只按 request_id 精确去重：model_usage.id 唯一，足以保证幂等。
+    // 不走指纹去重（DedupKey）——created_at 是秒级精度，同一秒内完成、
+    // token 完全相同的两次调用（典型：并行 subagent）会被误判为重复，
+    // 导致真实记录被永久跳过。
+    if proxy_request_id_exists(&conn, &request_id)? {
         return Ok(false);
     }
 
