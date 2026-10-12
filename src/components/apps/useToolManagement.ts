@@ -18,7 +18,7 @@ import { isWindows } from "@/lib/platform";
 import { isUpdateAvailable } from "@/lib/version";
 
 /**
- * 「应用」页的安装 / 升级逻辑（原来在设置 → 关于）。任务、确认队列和版本结果放在模块级的
+ * 「应用」页的安装 / 升级 / 卸载逻辑。任务、确认队列和版本结果放在模块级的
  * store 里：离开页面也不中断，回来立刻恢复进度。
  */
 
@@ -46,7 +46,7 @@ export const TOOL_NAMES = [
   "mcode",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
-export type ToolLifecycleAction = "install" | "update";
+export type ToolLifecycleAction = "install" | "update" | "uninstall";
 
 interface PendingUpgrade {
   toolNames: ToolName[];
@@ -630,12 +630,36 @@ export function useToolManagement() {
               action,
               wslOverrides,
             );
+            if (action === "uninstall") {
+              const nextReports = { ...toolManagementState.installReports };
+              delete nextReports[toolName];
+              updateToolManagementState({ installReports: nextReports });
+              setToolDiagnostics((prev) => {
+                const next = { ...prev };
+                delete next[toolName];
+                return next;
+              });
+            }
             // 静默执行真正结束后刷新该工具版本，卡片立即反映结果。
             const refreshed = await refreshToolVersions(
               [toolName],
               wslOverrides,
             );
             const tool = refreshed.find((t) => t.name === toolName);
+            if (action === "uninstall") {
+              await diagnoseToolSilently(toolName);
+              if (!tool) {
+                throw new Error(t("settings.toolUninstallCheckFailed"));
+              }
+              if (tool.version || tool.installed_but_broken) {
+                toast.info(t("settings.toolUninstallRemaining"), {
+                  description: TOOL_DISPLAY_NAMES[toolName],
+                  closeButton: true,
+                });
+              }
+              succeeded += 1;
+              return;
+            }
             if (tool?.version) {
               const latestVersion =
                 tool.latest_version ?? previousLatestVersion;
@@ -706,7 +730,9 @@ export function useToolManagement() {
       const actionLabel =
         action === "install"
           ? t("settings.toolInstall")
-          : t("settings.toolUpdate");
+          : action === "uninstall"
+            ? t("settings.toolUninstall")
+            : t("settings.toolUpdate");
 
       if (failures.length === 0) {
         if (succeeded > 0) {
@@ -752,10 +778,17 @@ export function useToolManagement() {
           },
         );
       } else if (succeeded === 0) {
-        toast.error(t("settings.toolActionFailed"), {
-          description: failureDescription || undefined,
-          closeButton: true,
-        });
+        toast.error(
+          t(
+            action === "uninstall"
+              ? "settings.toolUninstallFailed"
+              : "settings.toolActionFailed",
+          ),
+          {
+            description: failureDescription || undefined,
+            closeButton: true,
+          },
+        );
       } else {
         // 部分成功：用 warning 汇总成败数量，详情列出失败的工具。
         toast.warning(
@@ -809,7 +842,7 @@ export function useToolManagement() {
         updateToolManagementState({ batchAction: action });
       }
       try {
-        if (action === "install") {
+        if (action === "install" || action === "uninstall") {
           toolsToRelease = [];
           await executeRun(toolNames, action, wslOverrides);
           return;
