@@ -1,8 +1,18 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
+import { http, HttpResponse } from "msw";
+import i18n from "i18next";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import { server } from "../msw/server";
+import { peekPendingDeepLink, setPendingDeepLink } from "../msw/state";
+
+// 模拟后端：先暂存链接，再发 deeplink-pending 通知前端来取
+const deliverDeepLink = (request: Record<string, unknown>) => {
+  setPendingDeepLink({ kind: "import", request });
+  emitTauriEvent("deeplink-pending", null);
+};
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => (
@@ -36,7 +46,7 @@ describe("DeepLinkImportDialog", () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
 
     act(() => {
-      emitTauriEvent("deeplink-import", {
+      deliverDeepLink({
         version: "v1",
         resource: "provider",
         app: "claude",
@@ -71,7 +81,7 @@ describe("DeepLinkImportDialog", () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
 
     act(() => {
-      emitTauriEvent("deeplink-import", {
+      deliverDeepLink({
         version: "v1",
         resource: "provider",
         app: "claude",
@@ -98,5 +108,236 @@ describe("DeepLinkImportDialog", () => {
       ),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("脚本代码")).not.toBeInTheDocument();
+  });
+
+  it("shows a link that arrived before the dialog mounted (cold start)", async () => {
+    // 冷启动时链接早于前端监听到达，后端已暂存；组件挂载后必须主动取一次
+    setPendingDeepLink({
+      kind: "import",
+      request: {
+        version: "v1",
+        resource: "provider",
+        app: "claude",
+        name: "Cold Start Provider",
+        homepage: "https://example.com",
+        endpoint: "https://api.example.com",
+        apiKey: "sk-provider-key",
+      },
+    });
+
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("Cold Start Provider")).toBeInTheDocument();
+    });
+  });
+
+  it("warns that enabled=true switches to the provider right after import", async () => {
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+    act(() => {
+      deliverDeepLink({
+        version: "v1",
+        resource: "provider",
+        app: "claude",
+        name: "Switching Provider",
+        homepage: "https://example.com",
+        endpoint: "https://api.example.com",
+        apiKey: "sk-provider-key",
+        enabled: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("deeplink.providerEnabledWarning"),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("does not show the switch warning when enabled is absent", async () => {
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+    act(() => {
+      deliverDeepLink({
+        version: "v1",
+        resource: "provider",
+        app: "claude",
+        name: "Add Only Provider",
+        homepage: "https://example.com",
+        endpoint: "https://api.example.com",
+        apiKey: "sk-provider-key",
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Add Only Provider")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText("deeplink.providerEnabledWarning"),
+    ).not.toBeInTheDocument();
+  });
+
+  describe("when processing is interrupted after the link was read", () => {
+    const coldStartLink = {
+      kind: "import",
+      request: {
+        version: "v1",
+        resource: "provider",
+        app: "claude",
+        name: "Interrupted Provider",
+        homepage: "https://example.com",
+        endpoint: "https://api.example.com",
+        apiKey: "sk-provider-key",
+      },
+    };
+
+    // 让 peek 的响应停在半路：返回 hit（请求已到达）与 release（放行响应）
+    const holdPeek = () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let markHit!: () => void;
+      const hit = new Promise<void>((resolve) => (markHit = resolve));
+      server.use(
+        http.post("http://tauri.local/peek_pending_deeplink", async () => {
+          const entry = peekPendingDeepLink();
+          markHit();
+          await gate;
+          return HttpResponse.json(entry);
+        }),
+      );
+      return { hit, release };
+    };
+
+    afterEach(async () => {
+      await act(async () => {
+        await i18n.changeLanguage("zh");
+      });
+    });
+
+    it("still shows the link when the language changes mid-read", async () => {
+      // 启动时按后端设置校正语言会换掉 t；effect 若随 t 重建，读到一半的链接就被丢下
+      setPendingDeepLink(coldStartLink);
+      const { hit, release } = holdPeek();
+
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      await hit;
+      await act(async () => {
+        await i18n.changeLanguage("en");
+      });
+      release();
+
+      await waitFor(() => {
+        expect(screen.getByText("Interrupted Provider")).toBeInTheDocument();
+      });
+      await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
+    });
+
+    it("keeps the link for the next mount when unmounted mid-read", async () => {
+      // 窗口销毁重建：旧实例读到了但没显示，链接必须留在后端给新实例
+      setPendingDeepLink(coldStartLink);
+      const { hit, release } = holdPeek();
+
+      const first = render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      await hit;
+      first.unmount();
+      release();
+      server.resetHandlers();
+
+      expect(peekPendingDeepLink()).not.toBeNull();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+      await waitFor(() => {
+        expect(screen.getByText("Interrupted Provider")).toBeInTheDocument();
+      });
+    });
+
+    it("does not let a late read of an older link replace a newer one", async () => {
+      // A 的读取响应迟到；期间 B 到达。若读取可以并发，B 先显示并被清除，
+      // A 随后返回把 B 盖掉，B 从界面消失、后端也取不回来了
+      const providerLink = (name: string) => ({
+        ...coldStartLink,
+        request: { ...coldStartLink.request, name },
+      });
+      setPendingDeepLink(providerLink("Older Provider"));
+
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let markHit!: () => void;
+      const hit = new Promise<void>((resolve) => (markHit = resolve));
+      let calls = 0;
+      server.use(
+        http.post("http://tauri.local/peek_pending_deeplink", async () => {
+          const entry = peekPendingDeepLink();
+          if (++calls === 1) {
+            markHit();
+            await gate;
+          }
+          return HttpResponse.json(entry);
+        }),
+      );
+
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      await hit;
+      act(() => {
+        deliverDeepLink(providerLink("Newer Provider").request);
+      });
+      // 给并发读取（如果有）留出完成的时间
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      release();
+
+      await waitFor(() => {
+        expect(screen.getByText("Newer Provider")).toBeInTheDocument();
+      });
+      await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
+      expect(screen.queryByText("Older Provider")).not.toBeInTheDocument();
+    });
+
+    it("shows the newer link when it arrives while the older one is merging its config", async () => {
+      // 读取已返回 A，A 带 config 正在合并（异步），此时 B 到达：最终必须停在 B
+      setPendingDeepLink({
+        ...coldStartLink,
+        request: {
+          ...coldStartLink.request,
+          name: "Merging Provider",
+          config: btoa('{"env":{}}'),
+        },
+      });
+
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let markHit!: () => void;
+      const hit = new Promise<void>((resolve) => (markHit = resolve));
+      server.use(
+        http.post(
+          "http://tauri.local/merge_deeplink_config",
+          async ({ request }) => {
+            const body = (await request.json()) as {
+              request: Record<string, unknown>;
+            };
+            markHit();
+            await gate;
+            return HttpResponse.json(body.request);
+          },
+        ),
+      );
+
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      await hit;
+      act(() => {
+        deliverDeepLink({
+          ...coldStartLink.request,
+          name: "Arrived During Merge",
+        });
+      });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      release();
+
+      await waitFor(() => {
+        expect(screen.getByText("Arrived During Merge")).toBeInTheDocument();
+      });
+      await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
+      expect(screen.queryByText("Merging Provider")).not.toBeInTheDocument();
+    });
   });
 });

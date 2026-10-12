@@ -3378,6 +3378,7 @@
     "import": "インポート",
     "importing": "インポート中...",
     "warning": "インポート前に内容を確認してください。後から一覧で編集・削除できます。",
+    "providerEnabledWarning": "インポート後すぐにこのプロバイダーへ切り替わり、クライアントのリクエストは上記のエンドポイントに送られます",
     "parseError": "ディープリンクの解析に失敗しました",
     "importSuccess": "インポート成功",
     "importSuccessDescription": "プロバイダー「{{name}}」をインポートしました",

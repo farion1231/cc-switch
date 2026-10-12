@@ -160,6 +160,72 @@ fn test_parse_missing_required_field() {
         .contains("Missing 'name' parameter"));
 }
 
+/// configUrl 没实现，必须在解析阶段就报错：放行的话，用户点了确认导入才失败
+#[test]
+fn test_parse_rejects_config_url_up_front() {
+    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&configUrl=https%3A%2F%2Fexample.com%2Fc.json";
+
+    let err = parse_deeplink_url(url).unwrap_err();
+    assert!(err.to_string().contains("configUrl"), "{err}");
+}
+
+/// 下游 parse_mcp_apps 与 McpService 都支持 Pi / MiniMax Code，解析层不能先把它们拦掉
+#[test]
+fn test_parse_mcp_deeplink_accepts_pi_and_mcode() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    let url = format!("ccswitch://v1/import?resource=mcp&apps=claude,pi,mcode&config={config}");
+
+    let request = parse_deeplink_url(&url).expect("pi and mcode are valid MCP targets");
+    let apps = parse_mcp_apps(request.apps.as_deref().unwrap()).unwrap();
+    assert!(apps.claude && apps.pi && apps.mcode);
+}
+
+#[test]
+fn test_parse_prompt_deeplink_accepts_mcode() {
+    let url = "ccswitch://v1/import?resource=prompt&app=mcode&name=Rules&content=IyBoaQ%3D%3D";
+
+    let request = parse_deeplink_url(url).expect("MiniMax Code has a prompt panel");
+    assert_eq!(request.app.as_deref(), Some("mcode"));
+}
+
+/// 读取不清除，按编号确认才清除：前端读到后、显示前被打断（effect 重建、窗口销毁），
+/// 下次读取仍能拿到；期间来了新链接，迟到的旧确认不能把新链接清掉
+#[test]
+#[serial_test::serial]
+fn test_pending_deeplink_survives_peek_and_clears_only_on_matching_ack() {
+    use super::{
+        ack_pending_deeplink, peek_pending_deeplink, set_pending_deeplink, PendingDeepLink,
+    };
+
+    let link = |name: &str| PendingDeepLink::Import {
+        request: Box::new(
+            parse_deeplink_url(&format!(
+                "ccswitch://v1/import?resource=provider&app=claude&name={name}"
+            ))
+            .expect("valid link"),
+        ),
+    };
+
+    set_pending_deeplink(link("A"));
+    let first = peek_pending_deeplink().expect("pending link");
+    let json = serde_json::to_value(&first).unwrap();
+    assert_eq!(json["link"]["kind"], "import");
+    assert_eq!(json["link"]["request"]["name"], "A");
+    assert_eq!(
+        peek_pending_deeplink().map(|entry| entry.id),
+        Some(first.id),
+        "peek must not clear the link"
+    );
+
+    set_pending_deeplink(link("B"));
+    ack_pending_deeplink(first.id);
+    let second = peek_pending_deeplink().expect("a stale ack must not clear the newer link");
+    assert_ne!(second.id, first.id);
+
+    ack_pending_deeplink(second.id);
+    assert!(peek_pending_deeplink().is_none());
+}
+
 // =============================================================================
 // Utils Tests
 // =============================================================================

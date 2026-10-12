@@ -77,7 +77,31 @@ export type ImportResult =
     }
   | { type: "skill"; key: string };
 
+/** 后端暂存、等前端处理的深链接（解析结果或解析错误） */
+export type PendingDeepLink =
+  | { kind: "import"; request: DeepLinkImportRequest }
+  | { kind: "error"; url: string; error: string };
+
+/** 带编号的待处理深链接：编号用于确认清除和去重 */
+export interface PendingDeepLinkEntry {
+  id: number;
+  link: PendingDeepLink;
+}
+
 export const deeplinkApi = {
+  /**
+   * Read the deep link waiting for the frontend; the backend keeps it until acked.
+   * Called on mount (cold start / rebuilt window) and on every `deeplink-pending` event.
+   */
+  peekPendingDeeplink: async (): Promise<PendingDeepLinkEntry | null> => {
+    return invoke("peek_pending_deeplink");
+  },
+
+  /** Clear the pending deep link after it has been shown; a stale id is ignored */
+  ackPendingDeeplink: async (id: number): Promise<void> => {
+    return invoke("ack_pending_deeplink", { id });
+  },
+
   /**
    * Parse a deep link URL
    * @param url The ccswitch:// URL to parse

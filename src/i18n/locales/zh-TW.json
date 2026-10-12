@@ -3379,6 +3379,7 @@
     "import": "匯入",
     "importing": "匯入中...",
     "warning": "請確認以上資訊準確無誤後再匯入。匯入後可在供應商清單中編輯或刪除。",
+    "providerEnabledWarning": "匯入後將立即切換到此供應商，用戶端請求會改送到上面的位址",
     "parseError": "深層連結解析失敗",
     "importSuccess": "匯入成功",
     "importSuccessDescription": "供應商 \"{{name}}\" 已成功匯入",

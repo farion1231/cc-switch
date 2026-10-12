@@ -3378,6 +3378,7 @@
     "import": "Import",
     "importing": "Importing...",
     "warning": "Please confirm the information above is correct before importing. You can edit or delete it later in the provider list.",
+    "providerEnabledWarning": "After import, CC Switch will switch to this provider immediately, and client requests will go to the endpoint above",
     "parseError": "Failed to parse deep link",
     "importSuccess": "Import successful",
     "importSuccessDescription": "Provider \"{{name}}\" has been successfully imported",

@@ -1,6 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { DeepLinkImportRequest, deeplinkApi } from "@/lib/api/deeplink";
+import {
+  DeepLinkImportRequest,
+  PendingDeepLink,
+  deeplinkApi,
+} from "@/lib/api/deeplink";
+import { providersApi } from "@/lib/api";
 import { parseDeepLinkConfigPreview } from "@/utils/deepLinkConfigPreview";
 import {
   Dialog,
@@ -27,11 +32,6 @@ import {
 } from "@/utils/deeplinkRisk";
 import { decodeBase64Utf8 } from "@/lib/utils/base64";
 
-interface DeeplinkError {
-  url: string;
-  error: string;
-}
-
 export function DeepLinkImportDialog() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -57,48 +57,111 @@ export function DeepLinkImportDialog() {
     );
   };
 
+  // effect 只随挂载/卸载运行，不能依赖 t：启动时校正语言会换掉 t，effect 一重建，
+  // 正在处理的链接就被丢下。翻译函数从 ref 读最新值。
+  const tRef = useRef(t);
   useEffect(() => {
-    // Listen for deep link import events
-    const unlistenImport = listen<DeepLinkImportRequest>(
-      "deeplink-import",
-      async (event) => {
-        // If config is present, merge it to get the complete configuration
-        if (event.payload.config || event.payload.configUrl) {
-          try {
-            const mergedRequest = await deeplinkApi.mergeDeeplinkConfig(
-              event.payload,
-            );
-            setRequest(mergedRequest);
-          } catch (error) {
-            console.error("Failed to merge config:", error);
-            toast.error(t("deeplink.configMergeError"), {
-              description:
-                error instanceof Error ? error.message : String(error),
-            });
-            // Fall back to original request
-            setRequest(event.payload);
-          }
-        } else {
-          setRequest(event.payload);
+    tRef.current = t;
+  }, [t]);
+  // 已显示过的链接编号：同一条链接的重复通知只弹一次框
+  const shownIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    // 串行处理：同一时间只有一次读取在进行，期间来的通知只记一笔，处理完再读一次。
+    // 并发读取的话，迟到的旧结果会盖掉已经显示并清除的新链接，新链接就再也取不回来了
+    let running = false;
+    let rerun = false;
+
+    // 返回是否真的显示了；被卸载打断时返回 false，链接留在后端等下次读取
+    const showPending = async (pending: PendingDeepLink): Promise<boolean> => {
+      if (pending.kind === "error") {
+        if (disposed) return false;
+        console.error("Deep link error:", pending);
+        toast.error(tRef.current("deeplink.parseError"), {
+          description: pending.error,
+        });
+        return true;
+      }
+
+      const incoming = pending.request;
+      let next = incoming;
+      // If config is present, merge it to get the complete configuration
+      if (incoming.config) {
+        try {
+          next = await deeplinkApi.mergeDeeplinkConfig(incoming);
+        } catch (error) {
+          console.error("Failed to merge config:", error);
+          toast.error(tRef.current("deeplink.configMergeError"), {
+            description: error instanceof Error ? error.message : String(error),
+          });
         }
+      }
+      if (disposed) return false;
+      setRequest(next);
+      setIsOpen(true);
+      return true;
+    };
 
-        setIsOpen(true);
-      },
-    );
+    // 读取不清除，显示之后才按编号确认清除：读到后、显示前被打断，链接也不会丢
+    const processOnce = async () => {
+      try {
+        const entry = await deeplinkApi.peekPendingDeeplink();
+        if (!entry || disposed) return;
+        if (entry.id === shownIdRef.current) {
+          // 显示过但上次确认没送达
+          await deeplinkApi.ackPendingDeeplink(entry.id);
+          return;
+        }
+        if (!(await showPending(entry.link))) return;
+        shownIdRef.current = entry.id;
+        // 处理期间若来了新链接，后端编号已变，这次确认不会清掉它，下一轮读取会显示它
+        await deeplinkApi.ackPendingDeeplink(entry.id);
+      } catch (error) {
+        console.error("Failed to process pending deep link:", error);
+      }
+    };
 
-    // Listen for deep link error events
-    const unlistenError = listen<DeeplinkError>("deeplink-error", (event) => {
-      console.error("Deep link error:", event.payload);
-      toast.error(t("deeplink.parseError"), {
-        description: event.payload.error,
-      });
+    const processPending = async () => {
+      if (disposed) return;
+      if (running) {
+        rerun = true;
+        return;
+      }
+      running = true;
+      try {
+        do {
+          rerun = false;
+          await processOnce();
+        } while (rerun && !disposed);
+      } finally {
+        running = false;
+      }
+    };
+
+    const unlisten = listen("deeplink-pending", () => {
+      void processPending();
     });
+    // 冷启动或窗口重建时，链接早于本组件挂载到达，挂载后主动读一次
+    void unlisten.then(() => processPending());
 
     return () => {
-      unlistenImport.then((fn) => fn());
-      unlistenError.then((fn) => fn());
+      disposed = true;
+      unlisten.then((fn) => fn());
     };
-  }, [t]);
+  }, []);
+
+  // 托盘列出供应商和当前项，导入（以及 enabled=true 时的切换）后要重建
+  const refreshTrayMenu = async () => {
+    try {
+      await providersApi.updateTrayMenu();
+    } catch (trayError) {
+      console.error(
+        "Failed to update tray menu after deep link import",
+        trayError,
+      );
+    }
+  };
 
   const handleImport = async () => {
     if (!request) return;
@@ -145,6 +208,7 @@ export function DeepLinkImportDialog() {
           await queryClient.invalidateQueries({
             queryKey: ["providers", request.app],
           });
+          await refreshTrayMenu();
           toast.success(t("deeplink.importSuccess"), {
             description: t("deeplink.importSuccessDescription", {
               name: request.name,
@@ -191,6 +255,7 @@ export function DeepLinkImportDialog() {
         await queryClient.invalidateQueries({
           queryKey: ["providers", request.app],
         });
+        await refreshTrayMenu();
         toast.success(t("deeplink.importSuccess"), {
           description: t("deeplink.importSuccessDescription", {
             name: request.name,
@@ -746,6 +811,17 @@ export function DeepLinkImportDialog() {
                             </div>
                           </div>
                         )}
+                    </div>
+                  )}
+
+                  {/*
+                    enabled=true 会在导入后立即切到这家，客户端流量随之改走链接里的地址。
+                    提示词和 MCP 都有同类提示，供应商不能例外。
+                  */}
+                  {request.enabled === true && (
+                    <div className="text-warning-text text-sm flex items-start gap-2">
+                      <span aria-hidden="true">⚠️</span>
+                      <span>{t("deeplink.providerEnabledWarning")}</span>
                     </div>
                   )}
 

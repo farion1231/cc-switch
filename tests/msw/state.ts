@@ -208,7 +208,22 @@ let mcpConfigs: McpConfigState = {
 const cloneProviders = (value: ProvidersByApp) =>
   deepClone(value) as ProvidersByApp;
 
+// 后端暂存、等前端处理的深链接：peek 不清除，ack 按编号清除
+let pendingDeepLink: { id: number; link: unknown } | null = null;
+let nextPendingDeepLinkId = 1;
+
+export const setPendingDeepLink = (link: unknown) => {
+  pendingDeepLink = { id: nextPendingDeepLinkId++, link };
+};
+
+export const peekPendingDeepLink = () => pendingDeepLink;
+
+export const ackPendingDeepLink = (id: number) => {
+  if (pendingDeepLink?.id === id) pendingDeepLink = null;
+};
+
 export const resetProviderState = () => {
+  pendingDeepLink = null;
   providers = createDefaultProviders();
   current = createDefaultCurrent();
   liveProviderIds = {

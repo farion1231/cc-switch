@@ -1,9 +1,21 @@
 use crate::deeplink::{
     import_mcp_from_deeplink, import_prompt_from_deeplink, import_provider_from_deeplink,
-    import_skill_from_deeplink, parse_deeplink_url, DeepLinkImportRequest,
+    import_skill_from_deeplink, parse_deeplink_url, DeepLinkImportRequest, PendingDeepLinkEntry,
 };
 use crate::store::AppState;
 use tauri::State;
+
+/// Read the deep link waiting for the frontend without clearing it (see `PendingDeepLink`)
+#[tauri::command]
+pub fn peek_pending_deeplink() -> Option<PendingDeepLinkEntry> {
+    crate::deeplink::peek_pending_deeplink()
+}
+
+/// Clear the pending deep link once the frontend has shown it; ignored if `id` is stale
+#[tauri::command]
+pub fn ack_pending_deeplink(id: u64) {
+    crate::deeplink::ack_pending_deeplink(id);
+}
 
 /// Parse a deep link URL and return the parsed request for frontend confirmation
 #[tauri::command]

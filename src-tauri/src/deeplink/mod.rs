@@ -19,6 +19,8 @@ mod utils;
 mod tests;
 
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 // Re-export public API
 pub use mcp::import_mcp_from_deeplink;
@@ -26,6 +28,56 @@ pub use parser::parse_deeplink_url;
 pub use prompt::import_prompt_from_deeplink;
 pub use provider::{import_provider_from_deeplink, parse_and_merge_config};
 pub use skill::import_skill_from_deeplink;
+
+/// 等前端处理的深链接（解析结果或解析错误）
+///
+/// 链接经常在前端还没注册监听时到达：冷启动、轻量模式重建窗口。事件一发出去就没了，
+/// 所以先存在这里，再发 `deeplink-pending` 通知；前端在挂载时和收到通知时都调
+/// `peek_pending_deeplink` 读一次，真正显示之后再按 `id` 调 `ack_pending_deeplink` 清除。
+///
+/// 读取不清除：前端读到之后、显示之前可能被打断（启动时校正语言会重建 effect、窗口被销毁），
+/// 读即清的话链接就丢了。同一条链接收到多次通知，前端按 `id` 去重，只弹一次框。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PendingDeepLink {
+    Import { request: Box<DeepLinkImportRequest> },
+    Error { url: String, error: String },
+}
+
+/// 带编号的待处理深链接，编号用于确认清除和前端去重
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingDeepLinkEntry {
+    pub id: u64,
+    pub link: PendingDeepLink,
+}
+
+static PENDING_DEEPLINK: Mutex<Option<PendingDeepLinkEntry>> = Mutex::new(None);
+static NEXT_PENDING_ID: AtomicU64 = AtomicU64::new(1);
+
+fn pending_slot() -> std::sync::MutexGuard<'static, Option<PendingDeepLinkEntry>> {
+    PENDING_DEEPLINK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 暂存一条待处理的深链接，覆盖还没处理的旧链接（只保留最新一条）
+pub fn set_pending_deeplink(link: PendingDeepLink) {
+    let id = NEXT_PENDING_ID.fetch_add(1, Ordering::Relaxed);
+    *pending_slot() = Some(PendingDeepLinkEntry { id, link });
+}
+
+/// 读取待处理的深链接，不清除
+pub fn peek_pending_deeplink() -> Option<PendingDeepLinkEntry> {
+    pending_slot().clone()
+}
+
+/// 前端显示之后确认清除；编号对不上（期间来了新链接）就不动
+pub fn ack_pending_deeplink(id: u64) {
+    let mut slot = pending_slot();
+    if slot.as_ref().is_some_and(|entry| entry.id == id) {
+        *slot = None;
+    }
+}
 
 /// Deep link import request model
 ///
