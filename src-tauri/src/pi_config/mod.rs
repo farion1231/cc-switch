@@ -519,6 +519,7 @@ pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig
     let path = get_pi_settings_path()?;
     let mut config = PiSkillsConfig {
         path: path.display().to_string(),
+        home_dir: get_home_dir().display().to_string(),
         entries: None,
         parse_error: None,
         revision: String::new(),

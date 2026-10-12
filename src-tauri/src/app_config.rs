@@ -265,6 +265,9 @@ pub struct InstalledSkill {
 pub struct PiSkillsConfig {
     /// settings.json 实际路径（含 override 解析）
     pub path: String,
+    /// 用户主目录（编辑器会话内展开 `~/` 形态条目用，与后端 entry_resolves_to 对应）
+    #[serde(default)]
+    pub home_dir: String,
     /// 条目（None = 文件不存在或无 skills 键）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entries: Option<Vec<PiSkillsEntryInfo>>,

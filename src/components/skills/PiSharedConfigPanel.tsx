@@ -10,7 +10,11 @@ import {
 } from "@/components/ui/sheet";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { skillsApi, type PiSkillsConfig } from "@/lib/api/skills";
+import {
+  skillsApi,
+  type PiSkillsConfig,
+  type PiSkillsSourceInfo,
+} from "@/lib/api/skills";
 import { cn } from "@/lib/utils";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api/types";
@@ -129,6 +133,19 @@ export function PiSharedConfigPanel({
   };
   const kindLabel = (kind: ReturnType<typeof kindOf>) =>
     t(`skillsPage.piConfig.kind.${kind}`);
+
+  /** 展开 `~/` 形态条目（会话侧归一，与后端 entry_resolves_to 的
+   *  `~` 展开对应——新输入的 ~/xxx 无需保存重进即可匹配来源） */
+  const expandTilde = (entry: string) => {
+    if (entry === "~") return config.homeDir;
+    if (entry.startsWith("~/")) return `${config.homeDir}${entry.slice(1)}`;
+    return entry;
+  };
+  /** 条目是否解析到该来源目录（绝对路径 / listedEntry / ~/ 展开） */
+  const matchesSource = (entry: string, s: PiSkillsSourceInfo) =>
+    entry === s.path ||
+    entry === s.listedEntry ||
+    expandTilde(entry) === s.path;
 
   // ─── 表单操作 ───
   const addEntry = (raw: string) => {
@@ -440,22 +457,18 @@ export function PiSharedConfigPanel({
                                 <input
                                   type="checkbox"
                                   className="ui-checkbox"
-                                  checked={
-                                    entries.includes(s.path) ||
-                                    (s.listedEntry != null &&
-                                      entries.includes(s.listedEntry))
-                                  }
+                                  checked={entries.some((entry) =>
+                                    matchesSource(entry, s),
+                                  )}
                                   disabled={saving}
                                   onChange={(e) => {
                                     if (e.target.checked) {
                                       addEntry(s.path);
                                     } else {
-                                      // 取消勾选 = 移除（精确匹配该目录的原条目）
+                                      // 取消勾选 = 移除所有解析到该目录的条目
                                       setEntries((prev) =>
                                         prev.filter(
-                                          (entry) =>
-                                            entry !== s.path &&
-                                            entry !== s.listedEntry,
+                                          (entry) => !matchesSource(entry, s),
                                         ),
                                       );
                                     }

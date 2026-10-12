@@ -49,6 +49,8 @@ export interface InstalledSkill {
 /** pi settings.json skills 数组的编辑器装填载荷 */
 export interface PiSkillsConfig {
   path: string;
+  /** 用户主目录（会话内展开 ~/ 形态条目） */
+  homeDir: string;
   entries?: PiSkillsEntryInfo[];
   parseError?: string;
   revision: string;

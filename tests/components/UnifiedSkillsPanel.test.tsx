@@ -410,6 +410,7 @@ describe("UnifiedSkillsPanel", () => {
     m.installed = [makeSkill({ apps: { pi: true } })];
     const getConfig = vi.spyOn(skillsApi, "getPiSkillsConfig").mockResolvedValue({
       path: "/home/u/.pi/agent/settings.json",
+      homeDir: "/home/u",
       revision: "rev-1",
       sources: [
         { app: "claude", path: "/home/u/.claude/skills", exists: true },
@@ -454,6 +455,21 @@ describe("UnifiedSkillsPanel", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.piConfig.addFromApps" }),
     );
+    // claude 以 ~/ 形态存在于 entries（无 listedEntry）→ 会话内 ~ 展开即匹配勾选
+    const claudeBox = screen.getByRole("checkbox", {
+      name: "Claude Code: /home/u/.claude/skills",
+    });
+    expect(claudeBox).toBeChecked();
+    // 手动新增 ~/ 形态条目 → 无需保存重进即匹配勾选
+    const addInput = screen.getByLabelText("skillsPage.piConfig.addPlaceholder");
+    await userEvent.type(addInput, "~/.gemini/skills{Enter}");
+    const geminiBox = screen.getByRole("checkbox", {
+      name: "Gemini CLI: /home/u/.gemini/skills",
+    });
+    expect(geminiBox).toBeChecked();
+    await userEvent.click(geminiBox); // 取消勾选 → 移除刚输入的 ~/ 条目
+    await waitFor(() => expect(geminiBox).not.toBeChecked());
+
     const codexBox = screen.getByRole("checkbox", {
       name: "Codex: /home/u/.codex/skills",
     });
@@ -489,6 +505,7 @@ describe("UnifiedSkillsPanel", () => {
     m.installed = [makeSkill({ apps: { pi: true } })];
     const getConfig = vi.spyOn(skillsApi, "getPiSkillsConfig").mockResolvedValue({
       path: "/home/u/.pi/agent/settings.json",
+      homeDir: "/home/u",
       revision: "rev-1",
       sources: [],
       entries: [{ raw: "!pdf", kind: "exclude", warnings: [] }],
