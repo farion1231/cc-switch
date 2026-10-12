@@ -262,6 +262,10 @@ const TOML_WIRE_API_PATTERN =
   /^\s*wire_api\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_MODEL_PROVIDER_LINE_PATTERN =
   /^\s*model_provider\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+// 任意值（含空串、非字符串）的顶层 model_provider 行：改选路时整行替换，免得写出重复键
+const TOML_ANY_MODEL_PROVIDER_LINE_PATTERN = /^\s*model_provider\s*=/;
+// 后端写 live 时用的路由表 id（ROUTE_ID）
+const CODEX_CUSTOM_ROUTE_ID = "custom";
 const TOML_PROVIDER_NAME_PATTERN =
   /^\s*name\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_PROVIDER_NAME_REPLACE_PATTERN =
@@ -1057,6 +1061,135 @@ export const getCodexBaseUrl = (
   }
 };
 
+// 从任一应用的 settingsConfig 中取出请求地址：各应用存法不同（env 变量 / baseUrl /
+// base_url / options.baseURL / models[].baseUrl / Codex 风格 TOML），按已知形态依次找
+export const extractProviderBaseUrl = (
+  settingsConfig: unknown,
+): string | undefined => {
+  if (!settingsConfig || typeof settingsConfig !== "object") return undefined;
+  const object = settingsConfig as Record<string, any>;
+
+  const envBase =
+    object.env?.ANTHROPIC_BASE_URL || object.env?.GOOGLE_GEMINI_BASE_URL;
+  if (typeof envBase === "string" && envBase.trim()) {
+    return envBase;
+  }
+
+  const directBaseUrl =
+    object.baseUrl ||
+    object.base_url ||
+    object.options?.baseURL ||
+    (Array.isArray(object.models)
+      ? object.models.find(
+          (model: unknown) =>
+            model &&
+            typeof model === "object" &&
+            typeof (model as Record<string, unknown>).baseUrl === "string",
+        )?.baseUrl
+      : undefined);
+  if (typeof directBaseUrl === "string" && directBaseUrl.trim()) {
+    return directBaseUrl;
+  }
+
+  if (typeof object.config === "string" && object.config.includes("base_url")) {
+    return extractCodexBaseUrl(object.config) || undefined;
+  }
+
+  return undefined;
+};
+
+// 解析后的 TOML 值转成可比较的普通值：键排序，日期按文本比
+const comparableTomlValue = (value: unknown): unknown => {
+  if (value instanceof Date) return { $date: String(value) };
+  if (Array.isArray(value)) return value.map(comparableTomlValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [
+          key,
+          comparableTomlValue((value as Record<string, unknown>)[key]),
+        ]),
+    );
+  }
+  return value;
+};
+
+// 没有选路时把地址写进选中的 custom 表：Codex 不认顶层 base_url（#8039）。逐行改写认不全
+// TOML 的写法（内联表、带注释的表头、多行字符串里像赋值的行），所以改完按解析结果核对：
+// 除了选路、地址和收进表里的顶层 wire_api，其余值都没变才采用；否则返回 undefined，由
+// 调用方照旧写顶层 base_url（后端会把这种旧形态归一成 custom 表）。
+const moveCodexBaseUrlIntoCustomTable = (
+  text: string,
+  url: string,
+): string | undefined => {
+  let before: Record<string, unknown>;
+  try {
+    before = parseToml(text) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+
+  const lines = text ? text.split("\n") : [];
+  const topLevelEndIndex = getTopLevelEndIndex(lines);
+  const topLevelWireApi = findTomlAssignmentInRange(
+    lines,
+    TOML_WIRE_API_PATTERN,
+    0,
+    topLevelEndIndex,
+  )?.value;
+  for (let index = topLevelEndIndex - 1; index >= 0; index -= 1) {
+    if (
+      TOML_BASE_URL_PATTERN.test(lines[index]) ||
+      TOML_WIRE_API_PATTERN.test(lines[index]) ||
+      TOML_ANY_MODEL_PROVIDER_LINE_PATTERN.test(lines[index])
+    ) {
+      lines.splice(index, 1);
+    }
+  }
+  lines.unshift(`model_provider = "${CODEX_CUSTOM_ROUTE_ID}"`);
+
+  const sectionName = `model_providers.${CODEX_CUSTOM_ROUTE_ID}`;
+  const hadSection = Boolean(getTomlSectionRange(lines, sectionName));
+  if (!hadSection) {
+    if (lines[lines.length - 1].trim() !== "") {
+      lines.push("");
+    }
+    lines.push(
+      `[${sectionName}]`,
+      `name = "${CODEX_CUSTOM_ROUTE_ID}"`,
+      `wire_api = ${tomlBasicString(topLevelWireApi ?? "responses")}`,
+    );
+  }
+  const candidate = setCodexBaseUrl(finalizeTomlText(lines), url);
+
+  let after: unknown;
+  try {
+    after = parseToml(candidate);
+  } catch {
+    return undefined;
+  }
+  const expected = comparableTomlValue(before) as Record<string, any>;
+  delete expected.base_url;
+  delete expected.wire_api;
+  expected.model_provider = CODEX_CUSTOM_ROUTE_ID;
+  expected.model_providers ??= {};
+  if (!hadSection) {
+    expected.model_providers[CODEX_CUSTOM_ROUTE_ID] = {
+      name: CODEX_CUSTOM_ROUTE_ID,
+      wire_api: topLevelWireApi ?? "responses",
+    };
+  }
+  if (typeof expected.model_providers[CODEX_CUSTOM_ROUTE_ID] !== "object") {
+    return undefined;
+  }
+  expected.model_providers[CODEX_CUSTOM_ROUTE_ID].base_url = url;
+  return JSON.stringify(comparableTomlValue(expected)) ===
+    JSON.stringify(comparableTomlValue(after))
+    ? candidate
+    : undefined;
+};
+
 // 在 Codex 的 TOML 配置文本中写入或更新 base_url 字段
 export const setCodexBaseUrl = (
   configText: string,
@@ -1144,6 +1277,9 @@ export const setCodexBaseUrl = (
     lines.push(`[${targetSectionName}]`, replacementLine);
     return finalizeTomlText(lines);
   }
+
+  const moved = moveCodexBaseUrlIntoCustomTable(normalizedText, normalizedUrl);
+  if (moved !== undefined) return moved;
 
   const topLevelEndIndex = getTopLevelEndIndex(lines);
   const topLevelMatches = findTomlAssignmentsInRange(
@@ -1256,6 +1392,112 @@ export const setCodexModelName = (
 
   lines.splice(topLevelEndIndex, 0, replacementLine);
   return finalizeTomlText(lines);
+};
+
+// ========== Codex [agents] subagent defaults ==========
+
+// 子代理的默认模型和推理强度（Codex 的 `[agents]` 表）。后端把这两个键当关键字段，随供应商
+// 切换；聚合模式下不写（子代理跟随主模型）。
+export type CodexAgentsStringKey =
+  | "default_subagent_model"
+  | "default_subagent_reasoning_effort";
+
+const CODEX_AGENTS_SECTION = "agents";
+
+const tomlStringAssignmentPatterns = (key: string) => ({
+  doubleQuoted: new RegExp(
+    `^\\s*${key}\\s*=\\s*"((?:[^"\\\\\\r\\n]|\\\\.)*)"\\s*(?:#.*)?$`,
+  ),
+  singleQuoted: new RegExp(`^\\s*${key}\\s*=\\s*'([^'\\r\\n]*)'\\s*(?:#.*)?$`),
+  anyValue: new RegExp(`^\\s*${key}\\s*=`),
+});
+
+export const extractCodexAgentsString = (
+  configText: string | undefined | null,
+  key: CodexAgentsStringKey,
+): string | undefined => {
+  const text = normalizeTomlText(
+    typeof configText === "string" ? configText : "",
+  );
+  if (!text) return undefined;
+  try {
+    const value = (parseToml(text) as Record<string, any>)[
+      CODEX_AGENTS_SECTION
+    ]?.[key];
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    // 编辑中的 TOML 解析不了时按行在 [agents] 里找。
+  }
+  const lines = text.split("\n");
+  const range = getTomlSectionRange(lines, CODEX_AGENTS_SECTION);
+  if (!range) return undefined;
+  const patterns = tomlStringAssignmentPatterns(key);
+  for (let i = range.bodyStartIndex; i < range.bodyEndIndex; i += 1) {
+    const doubleQuoted = lines[i].match(patterns.doubleQuoted);
+    if (doubleQuoted) return unescapeTomlBasicString(doubleQuoted[1]);
+    const singleQuoted = lines[i].match(patterns.singleQuoted);
+    if (singleQuoted) return singleQuoted[1];
+  }
+  return undefined;
+};
+
+// 写入或删除 `[agents]` 里的一个字符串键；空值删除，删完表里没别的就连表头一起删。
+// 用户把 agents 写成行内表或点号键时按行改不了：改完解析失败就原样返回。
+export const setCodexAgentsString = (
+  configText: string,
+  key: CodexAgentsStringKey,
+  value: string,
+): string => {
+  const trimmed = value.trim();
+  const normalizedText = normalizeTomlText(configText);
+  const lines = normalizedText ? normalizedText.split("\n") : [];
+  const range = getTomlSectionRange(lines, CODEX_AGENTS_SECTION);
+  const replacementLine = `${key} = ${tomlBasicString(trimmed)}`;
+
+  if (range) {
+    const lineIndex = findTomlLineInRange(
+      lines,
+      tomlStringAssignmentPatterns(key).anyValue,
+      range.bodyStartIndex,
+      range.bodyEndIndex,
+    );
+    if (!trimmed) {
+      if (lineIndex === -1) return normalizedText;
+      lines.splice(lineIndex, 1);
+      const bodyEmpty = lines
+        .slice(range.bodyStartIndex, range.bodyEndIndex - 1)
+        .every((line) => line.trim() === "");
+      if (bodyEmpty) {
+        lines.splice(
+          range.headerLineIndex,
+          range.bodyEndIndex - 1 - range.headerLineIndex,
+        );
+      }
+    } else if (lineIndex !== -1) {
+      lines[lineIndex] = replacementLine;
+    } else {
+      lines.splice(getTomlSectionInsertIndex(lines, range), 0, replacementLine);
+    }
+  } else {
+    if (!trimmed) return normalizedText;
+    if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
+      lines.push("");
+    }
+    lines.push(`[${CODEX_AGENTS_SECTION}]`, replacementLine, "");
+  }
+
+  const candidate = finalizeTomlText(lines);
+  try {
+    parseToml(normalizedText);
+  } catch {
+    return candidate;
+  }
+  try {
+    parseToml(candidate);
+    return candidate;
+  } catch {
+    return normalizedText;
+  }
 };
 
 // ========== Codex top-level integer field utils ==========

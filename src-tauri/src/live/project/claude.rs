@@ -199,7 +199,11 @@ fn legacy_bedrock_shape(row: &Value, projection: &ClaudeProjection) -> Option<Cl
 pub const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 
 /// 代理契约里的稳定模型别名：客户端只看到这几个名字，真实模型由代理映射。
-const PROXY_HAIKU_ALIAS: &str = "claude-haiku-4-5";
+///
+/// Claude Code 按别名查自己的模型表决定思考参数：`claude-haiku-4-5` 被当成可关思考的旧
+/// 模型，haiku 档会发 `thinking: disabled`，强制思考的上游直接拒（#8118）。别名要跟上
+/// 当代模型。
+const PROXY_HAIKU_ALIAS: &str = "claude-haiku-5-5";
 const PROXY_SONNET_ALIAS: &str = "claude-sonnet-5";
 const PROXY_OPUS_ALIAS: &str = "claude-opus-5";
 const PROXY_FABLE_ALIAS: &str = "claude-fable-5";
@@ -565,6 +569,36 @@ mod tests {
         assert_eq!(
             project(&edited, Some(&kimi()), &official),
             json!({ "env": { "CLAUDE_CODE_DISABLE_ARTIFACT": "0" } })
+        );
+    }
+
+    #[test]
+    fn gateway_compat_switches_reach_settings_json() {
+        // 回归：auto mode 的服务端分类器只有官方端点支持，网关场景的供应商行要带
+        // `CLAUDE_CODE_AUTO_MODE_SERVER=0`（官方文档给代理、网关的兼容选项）。
+        // 它此前不在独有字段清单里，行里写了也到不了 settings.json。
+        let gateway = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://gw.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-gw",
+            "CLAUDE_CODE_AUTO_MODE_SERVER": "0"
+        }});
+        let live = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-kimi"
+        }});
+        let out = project(&live, Some(&kimi()), &gateway);
+        assert_eq!(out["env"]["CLAUDE_CODE_AUTO_MODE_SERVER"], json!("0"));
+
+        // 切回不带它的官方端点：值没被改过，跟着上一家走。
+        let live = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://gw.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-gw",
+            "CLAUDE_CODE_AUTO_MODE_SERVER": "0"
+        }});
+        let official = json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "sk-official" } });
+        assert_eq!(
+            project(&live, Some(&gateway), &official)["env"].get("CLAUDE_CODE_AUTO_MODE_SERVER"),
+            None
         );
     }
 

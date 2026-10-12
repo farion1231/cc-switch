@@ -2,12 +2,10 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DisabledReason } from "@/components/ui/help-tip";
 import {
   Sheet,
-  SheetContent,
   SheetDescription,
-  SheetTitle,
+  SheetPageContent,
 } from "@/components/ui/sheet";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { Prompt, AppId } from "@/lib/api";
@@ -27,8 +25,6 @@ interface PromptFormPanelProps {
   initialData?: Prompt;
   onSave: (id: string, prompt: Prompt) => Promise<void | boolean>;
   onClose: () => void;
-  /** 编辑时左下角的「删除」；不传就不显示 */
-  onDelete?: (id: string) => void;
 }
 
 /** 和 Input / Textarea 同一套外观（ui/input.tsx 的 fieldClass） */
@@ -60,7 +56,6 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   initialData,
   onSave,
   onClose,
-  onDelete,
 }) => {
   const { t } = useTranslation();
   const baseId = useId();
@@ -137,7 +132,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   };
 
   const title = editingId
-    ? t("prompts.editTitle", { name: initialData?.name ?? "" })
+    ? t("prompts.editTitle")
     : t("prompts.addTitle", { appName });
 
   const submitLabel = !editingId
@@ -162,28 +157,21 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   return (
     <Sheet
       open
+      modal={false}
       onOpenChange={(open) => {
         if (!open) handleClose();
       }}
     >
-      <SheetContent
-        width={560}
-        closeLabel={t("common.close")}
+      <SheetPageContent
+        title={title}
+        closeLabel={t("common.back")}
         onEscapeKeyDown={(event) => {
           if (savingRef.current) event.preventDefault();
         }}
       >
-        <div className="flex h-[52px] shrink-0 items-center border-b border-border pe-12 ps-6">
-          <SheetTitle
-            title={title}
-            className="min-w-0 truncate text-title text-fg-1"
-          >
-            {title}
-          </SheetTitle>
-          <SheetDescription className="sr-only">
-            {t("prompts.formDescription", { file: fileName })}
-          </SheetDescription>
-        </div>
+        <SheetDescription className="sr-only">
+          {t("prompts.formDescription", { file: fileName })}
+        </SheetDescription>
 
         <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5">
           <div className="flex shrink-0 flex-col gap-1.5">
@@ -288,26 +276,6 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
         </div>
 
         <div className="flex h-14 shrink-0 items-center gap-2 border-t border-border px-6">
-          {editingId && onDelete ? (
-            <DisabledReason
-              reason={isActive ? t("prompts.deleteBlockedReason") : undefined}
-              side="top"
-            >
-              <Button
-                type="button"
-                variant="quiet"
-                size="regular"
-                disabled={saving}
-                onClick={() => onDelete(editingId)}
-                className={cn(
-                  "-ms-2.5",
-                  isActive ? "text-fg-3" : "text-danger-text",
-                )}
-              >
-                {t("common.delete")}
-              </Button>
-            </DisabledReason>
-          ) : null}
           <div className="flex-1" />
           <Button
             type="button"
@@ -328,7 +296,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
             {saving ? t("common.saving") : submitLabel}
           </Button>
         </div>
-      </SheetContent>
+      </SheetPageContent>
     </Sheet>
   );
 };

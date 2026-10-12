@@ -1,3 +1,8 @@
+import {
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+} from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +27,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/hooks/useMcp", () => ({
+  MCP_UPSERT_MUTATION_KEY: ["mcp", "upsert"],
   useAllMcpServers: () => ({
     data: mocks.serversMap,
     isLoading: mocks.isLoading,
@@ -93,8 +99,29 @@ function makeServer(id: string, overrides: ServerOverrides = {}): McpServer {
   } as McpServer;
 }
 
-const renderPanel = (onBlocked?: (blocked: boolean) => void) =>
-  render(<UnifiedMcpPanel onInteractionBlockedChange={onBlocked} />);
+const renderPanel = (
+  onBlocked?: (blocked: boolean) => void,
+  extra?: React.ReactNode,
+) =>
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <UnifiedMcpPanel onInteractionBlockedChange={onBlocked} />
+      {extra}
+    </QueryClientProvider>,
+  );
+
+/** 模拟编辑页发起、一直没完成的保存 */
+function PendingEditorSave() {
+  const save = useMutation({
+    mutationKey: ["mcp", "upsert"],
+    mutationFn: () => new Promise<void>(() => {}),
+  });
+  return (
+    <button type="button" onClick={() => save.mutate()}>
+      start-editor-save
+    </button>
+  );
+}
 
 const rowNames = () =>
   within(screen.getByRole("list", { name: "mcpPage.listLabel" }))
@@ -411,12 +438,22 @@ describe("UnifiedMcpPanel", () => {
     expect(screen.getByText("mcpPage.import.added")).toBeInTheDocument();
   });
 
-  it("reports the blocked state while the drawer is open", async () => {
+  it("locks navigation while the editor page is saving", async () => {
+    const onBlocked = vi.fn();
+    renderPanel(onBlocked, <PendingEditorSave />);
+    expect(onBlocked).toHaveBeenLastCalledWith(false);
+    await userEvent.click(
+      screen.getByRole("button", { name: "start-editor-save" }),
+    );
+    await waitFor(() => expect(onBlocked).toHaveBeenLastCalledWith(true));
+  });
+
+  it("does not lock navigation just because the editor page is open", async () => {
     const onBlocked = vi.fn();
     mocks.serversMap = { alpha: makeServer("alpha") };
     renderPanel(onBlocked);
     expect(onBlocked).toHaveBeenLastCalledWith(false);
     await userEvent.click(screen.getByRole("button", { name: "mcpPage.add" }));
-    expect(onBlocked).toHaveBeenLastCalledWith(true);
+    expect(onBlocked).toHaveBeenLastCalledWith(false);
   });
 });

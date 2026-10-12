@@ -141,6 +141,8 @@ export function AppConfigSection({
       {DIRECTORY_APPS.map((app) => (
         <SettingsBlock
           key={app}
+          id={`app-config-${app}`}
+          className="rounded-panel"
           title={blockTitle(app)}
           actions={saveButton(app)}
         >
@@ -162,6 +164,10 @@ export function AppConfigSection({
                 />
                 <SettingsSwitchRow
                   label={t("settings.skipClaudeOnboarding")}
+                  help={{
+                    title: t("settings.skipClaudeOnboarding"),
+                    body: t("settings.skipClaudeOnboardingDescription"),
+                  }}
                   checked={!!settings.skipClaudeOnboarding}
                   onCheckedChange={(value) =>
                     void onAutoSave({ skipClaudeOnboarding: value })
@@ -170,7 +176,11 @@ export function AppConfigSection({
               </>
             )}
             {app === "codex" && (
-              <CodexAuthSettings settings={settings} onChange={onAutoSave} />
+              <CodexAuthSettings
+                settings={settings}
+                onChange={onAutoSave}
+                codexConfigDir={savedSettings?.codexConfigDir}
+              />
             )}
             {directoryRow(app)}
           </SettingsCard>

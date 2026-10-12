@@ -83,6 +83,7 @@ describe("UsageDashboard (smoke)", () => {
     usageApiMock.getProviderStats.mockResolvedValue([
       {
         providerId: "p1",
+        appType: "claude",
         providerName: "DeepSeek",
         requestCount: 720,
         totalTokens: 4_300_000,
@@ -100,6 +101,7 @@ describe("UsageDashboard (smoke)", () => {
         totalTokens: 5_700_000,
         totalCost: "11.2",
         avgCostPerRequest: "0.0114",
+        successRate: 100,
       },
     ]);
     usageApiMock.getRequestLogs.mockResolvedValue({

@@ -11,6 +11,7 @@ const apiMocks = vi.hoisted(() => ({
   authPollForAccount: vi.fn(),
   authCancelLogin: vi.fn(),
   authRemoveAccount: vi.fn(),
+  authLogout: vi.fn(),
 }));
 const toastMocks = vi.hoisted(() => ({
   success: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("@/lib/api", () => ({
     authPollForAccount: (...args: unknown[]) =>
       apiMocks.authPollForAccount(...args),
     authCancelLogin: (...args: unknown[]) => apiMocks.authCancelLogin(...args),
+    authLogout: (...args: unknown[]) => apiMocks.authLogout(...args),
     authRemoveAccount: (...args: unknown[]) =>
       apiMocks.authRemoveAccount(...args),
   },
@@ -41,14 +43,14 @@ vi.mock("sonner", () => ({
   },
 }));
 
-function createWrapper() {
-  const queryClient = new QueryClient({
+function createWrapper(
+  queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
-  });
-
+  }),
+) {
   return function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
@@ -82,6 +84,7 @@ describe("useManagedAuth", () => {
     apiMocks.authPollForAccount.mockReset().mockResolvedValue(null);
     apiMocks.authCancelLogin.mockReset().mockResolvedValue(true);
     apiMocks.authRemoveAccount.mockReset().mockResolvedValue(undefined);
+    apiMocks.authLogout.mockReset().mockResolvedValue(undefined);
   });
 
   it("starts reauthentication for the selected account", async () => {
@@ -258,6 +261,62 @@ describe("useManagedAuth", () => {
       expect(apiMocks.authStartLogin).toHaveBeenCalledTimes(2),
     );
   });
+
+  it.each([
+    ["remove", false],
+    ["remove", true],
+    ["logout", false],
+    ["logout", true],
+  ] as const)(
+    "refreshes providers and accounts after %s (partial failure=%s)",
+    async (operation, fails) => {
+      const queryClient = new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      });
+      queryClient.setQueryData(["providers", "codex"], {
+        current: "old-binding",
+      });
+      queryClient.setQueryData(["providers", "claude"], {
+        current: "unrelated",
+      });
+      const { result } = renderHook(() => useManagedAuth("codex_oauth"), {
+        wrapper: createWrapper(queryClient),
+      });
+      await waitFor(() => expect(result.current.accounts).toHaveLength(1));
+      apiMocks.authGetStatus.mockResolvedValue({
+        provider: "codex_oauth",
+        authenticated: false,
+        accounts: [],
+      });
+      if (fails) {
+        const mutation =
+          operation === "remove"
+            ? apiMocks.authRemoveAccount
+            : apiMocks.authLogout;
+        mutation.mockRejectedValue(
+          new Error("账号已删除，但 Codex 供应商解绑失败"),
+        );
+      }
+      act(() =>
+        operation === "remove"
+          ? result.current.removeAccount("acct-1")
+          : result.current.logout(),
+      );
+      await waitFor(() =>
+        expect(
+          queryClient.getQueryState(["providers", "codex"])?.isInvalidated,
+        ).toBe(true),
+      );
+      await waitFor(() => expect(result.current.accounts).toHaveLength(0));
+      expect(
+        queryClient.getQueryState(["providers", "claude"])?.isInvalidated,
+      ).toBe(false);
+      if (fails) expect(result.current.error).toContain("解绑失败");
+    },
+  );
 
   it("shows a success toast after removing an account", async () => {
     const { result } = renderHook(() => useManagedAuth("codex_oauth"), {

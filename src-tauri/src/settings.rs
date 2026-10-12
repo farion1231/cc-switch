@@ -302,6 +302,9 @@ pub struct LocalMigrations {
     /// 这样重新开启能把"关闭期间"落入 openai 桶的官方会话补迁进来。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_official_history_unify_v1: Option<CodexOfficialHistoryUnifyMigration>,
+    /// 旧版官方路由桶（`cc-switch-official`）迁回 openai 桶的标记，按 Codex 目录生效。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_legacy_official_history_bucket_v1: Option<CodexLegacyOfficialHistoryBucketMigration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,6 +341,20 @@ pub struct CodexOfficialHistoryUnifyMigration {
     pub migrated_state_rows: usize,
     /// 迁移时的规范化 Codex 目录。标记只对同一目录生效：
     /// 切换 codex_config_dir 后旧标记不会挡住新目录的迁移。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_config_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLegacyOfficialHistoryBucketMigration {
+    pub completed_at: String,
+    pub target_provider_id: String,
+    #[serde(default)]
+    pub migrated_jsonl_files: usize,
+    #[serde(default)]
+    pub migrated_state_rows: usize,
+    /// 迁移时的规范化 Codex 目录，切换 codex_config_dir 后新目录照常迁移。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
 }
@@ -392,8 +409,12 @@ pub struct AppSettings {
     #[serde(default)]
     pub enable_failover_toggle: bool,
     /// Whether to show the project profile switcher on the main page header
-    #[serde(default = "default_show_profile_switcher")]
+    #[serde(default)]
     pub show_profile_switcher: bool,
+    /// Show the provider search button in the provider page header (on by default;
+    /// Cmd/Ctrl+F still opens the search when it is hidden)
+    #[serde(default = "default_true")]
+    pub show_provider_search: bool,
     /// Check installed CLI tools for new versions at startup (off by default:
     /// many users do not want to chase every release).
     #[serde(default)]
@@ -412,6 +433,11 @@ pub struct AppSettings {
     /// a failed migration retries at startup; cleared when the toggle turns off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unify_codex_migrate_existing: Option<bool>,
+    /// Codex 聚合模式下，合并目录里的每个模型都改用经典子 agent 工具（`multi_agent_version`
+    /// 写 `"v1"`）。新版工具（v2）把派给子 agent 的任务加密，只有主 agent 那家后端解得开，
+    /// 主、子 agent 不在同一家时子 agent 读不到任务。默认关：保持官方目录的值。
+    #[serde(default)]
+    pub codex_stack_classic_subagents: bool,
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
@@ -421,11 +447,18 @@ pub struct AppSettings {
     /// User has confirmed the one-time "new layout" dialog shown to upgrading users
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_layout_notice_confirmed: Option<bool>,
+    /// Highest app version whose "what's new" summary the user has seen on this device
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whats_new_seen_version: Option<String>,
     /// User has confirmed the common config first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub common_config_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// 按档的额度百分比写「剩余」还是「已用」（`"left"` / `"used"`，缺省为剩余）。卡片、
+    /// 授权中心和托盘一起变；余额、Credits、重置次数不受影响（#8024）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_display: Option<String>,
 
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -474,6 +507,13 @@ pub struct AppSettings {
     /// 当前 Hermes 供应商 ID（本地存储，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
+
+    // ===== 本地路由（设备级）=====
+    /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
+    /// 客户端和代理不在同一个网络栈时用，比如 WSL2 NAT 模式里的会话连不到 Windows 的回环。
+    /// 只对这台机器有意义，所以不放在会随云同步覆盖的 proxy_config 表里。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_client_host: Option<String>,
 
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
@@ -524,10 +564,6 @@ fn default_minimize_to_tray_on_close() -> bool {
     true
 }
 
-fn default_show_profile_switcher() -> bool {
-    true
-}
-
 fn default_session_auto_sync_enabled() -> bool {
     true
 }
@@ -549,16 +585,20 @@ impl Default for AppSettings {
             usage_dashboard_refresh_interval_ms: None,
             session_auto_sync_enabled: true,
             enable_failover_toggle: false,
-            show_profile_switcher: true,
+            show_profile_switcher: false,
+            show_provider_search: true,
             check_tool_updates_on_startup: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
+            codex_stack_classic_subagents: false,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             new_layout_notice_confirmed: None,
+            whats_new_seen_version: None,
             common_config_confirmed: None,
             language: None,
+            quota_display: None,
             visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,
@@ -576,6 +616,7 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
+            proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
@@ -590,6 +631,11 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// 额度百分比按「已用」写（默认按剩余）
+    pub fn quota_shows_used(&self) -> bool {
+        self.quota_display.as_deref() == Some("used")
+    }
+
     fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
         Some(
@@ -661,6 +707,13 @@ impl AppSettings {
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
+            .map(|s| s.to_string());
+
+        self.quota_display = self
+            .quota_display
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| matches!(*s, "left" | "used"))
             .map(|s| s.to_string());
 
         if let Some(sync) = &mut self.webdav_sync {
@@ -904,6 +957,25 @@ pub fn clear_codex_official_history_unify_migration() -> Result<(), AppError> {
     })
 }
 
+pub fn is_codex_legacy_official_history_bucket_migrated_for_dir(codex_dir: &str) -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|migrations| migrations.codex_legacy_official_history_bucket_v1.as_ref())
+        .is_some_and(|migration| migration.codex_config_dir.as_deref() == Some(codex_dir))
+}
+
+pub fn mark_codex_legacy_official_history_bucket_migrated(
+    migration: CodexLegacyOfficialHistoryBucketMigration,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        settings
+            .local_migrations
+            .get_or_insert_with(Default::default)
+            .codex_legacy_official_history_bucket_v1 = Some(migration);
+    })
+}
+
 pub fn unify_codex_migrate_existing_requested() -> bool {
     get_settings().unify_codex_migrate_existing.unwrap_or(false)
 }
@@ -911,6 +983,21 @@ pub fn unify_codex_migrate_existing_requested() -> bool {
 pub fn clear_codex_unify_migrate_existing() -> Result<(), AppError> {
     mutate_settings(|settings| {
         settings.unify_codex_migrate_existing = None;
+    })
+}
+
+/// 客户端地址（见 [`AppSettings::proxy_client_host`]），去掉首尾空白；没设或为空时是 `None`。
+pub fn get_proxy_client_host() -> Option<String> {
+    get_settings()
+        .proxy_client_host
+        .map(|host| host.trim().to_string())
+        .filter(|host| !host.is_empty())
+}
+
+pub fn set_proxy_client_host(host: &str) -> Result<(), AppError> {
+    let host = host.trim();
+    mutate_settings(|settings| {
+        settings.proxy_client_host = (!host.is_empty()).then(|| host.to_string());
     })
 }
 
@@ -1008,6 +1095,16 @@ pub fn unify_codex_session_history() -> bool {
             e.into_inner()
         })
         .unify_codex_session_history
+}
+
+pub fn codex_stack_classic_subagents() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .codex_stack_classic_subagents
 }
 
 // ===== 当前供应商管理函数 =====

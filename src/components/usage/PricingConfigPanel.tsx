@@ -24,6 +24,7 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
+import { TablePagination, useClientPagination } from "./TablePagination";
 import { proxyApi } from "@/lib/api/proxy";
 import type { ModelPricing } from "@/types/usage";
 import { cn } from "@/lib/utils";
@@ -329,6 +330,7 @@ export function PricingConfigPanel() {
   };
 
   const rows = pricing ?? [];
+  const pagination = useClientPagination(rows);
 
   return (
     <div className="flex flex-col gap-3 pt-3">
@@ -384,12 +386,10 @@ export function PricingConfigPanel() {
             <thead>
               <tr className={usageTable.headRow}>
                 <th className={usageTable.th}>{t("usage.model")}</th>
-                <th className={usageTable.thEnd}>{t("usage.inputTokens")}</th>
-                <th className={usageTable.thEnd}>{t("usage.outputTokens")}</th>
-                <th className={usageTable.thEnd}>
-                  {t("usage.cacheReadTokens")}
-                </th>
-                <th className={usageTable.thEnd}>
+                <th className={usageTable.th}>{t("usage.inputTokens")}</th>
+                <th className={usageTable.th}>{t("usage.outputTokens")}</th>
+                <th className={usageTable.th}>{t("usage.cacheReadTokens")}</th>
+                <th className={usageTable.th}>
                   {t("usage.pricing.cacheWrite")}
                 </th>
                 <th className="w-[72px]" aria-label={t("common.actions")} />
@@ -403,7 +403,7 @@ export function PricingConfigPanel() {
                   </td>
                 </tr>
               ) : (
-                rows.map((model) => {
+                pagination.pageRows.map((model) => {
                   const name = model.displayName || model.modelId;
                   return (
                     <tr
@@ -425,16 +425,16 @@ export function PricingConfigPanel() {
                           </span>
                         </span>
                       </td>
-                      <td className={usageTable.tdEnd}>
+                      <td className={usageTable.td}>
                         {formatUnitPrice(model.inputCostPerMillion)}
                       </td>
-                      <td className={usageTable.tdEnd}>
+                      <td className={usageTable.td}>
                         {formatUnitPrice(model.outputCostPerMillion)}
                       </td>
-                      <td className={usageTable.tdEnd}>
+                      <td className={usageTable.td}>
                         {formatUnitPrice(model.cacheReadCostPerMillion)}
                       </td>
-                      <td className={cn(usageTable.tdEnd, "text-fg-2")}>
+                      <td className={cn(usageTable.td, "text-fg-2")}>
                         {formatUnitPrice(model.cacheCreationCostPerMillion)}
                       </td>
                       <td className="whitespace-nowrap pe-1 text-end">
@@ -478,6 +478,14 @@ export function PricingConfigPanel() {
             </tbody>
           </table>
         </div>
+      )}
+      {!isLoading && !error && (
+        <TablePagination
+          page={pagination.page}
+          totalPages={pagination.totalPages}
+          total={pagination.total}
+          onPageChange={pagination.setPage}
+        />
       )}
 
       {editingModel && (

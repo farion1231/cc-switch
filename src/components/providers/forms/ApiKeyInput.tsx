@@ -15,6 +15,8 @@ interface ApiKeyInputProps {
   id?: string;
   /** 标签行右侧（「获取 API Key ↗」） */
   labelAside?: React.ReactNode;
+  /** 输入框下方的说明文字 */
+  hint?: React.ReactNode;
 }
 
 const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
@@ -26,6 +28,7 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
   label = "API Key",
   id = "apiKey",
   labelAside,
+  hint,
 }) => {
   const { t } = useTranslation();
   const [showKey, setShowKey] = useState(false);
@@ -52,7 +55,8 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder ?? t("apiKeyInput.placeholder")}
           disabled={disabled}
-          required={required}
+          // 只标给读屏，不用原生 required：空 Key 由表单校验弹「仍要保存」确认，
+          // 原生校验会抢先拦下提交
           aria-required={required || undefined}
           autoComplete="off"
           className={cn(
@@ -72,6 +76,7 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
           </button>
         )}
       </div>
+      {hint && <p className="text-caption text-fg-2">{hint}</p>}
     </div>
   );
 };

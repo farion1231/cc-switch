@@ -309,10 +309,12 @@ const DiffSection = ({ call }: { call: ToolCallBlock }) => {
                 └
               </span>
               <span className="min-w-0 truncate">{formatPath(file.path)}</span>
-              <span className="shrink-0 tabular-nums">
-                (<span className="text-success-text">+{file.added}</span>{" "}
-                <span className="text-danger-text">−{file.removed}</span>)
-              </span>
+              {file.added + file.removed > 0 && (
+                <span className="shrink-0 tabular-nums">
+                  (<span className="text-success-text">+{file.added}</span>{" "}
+                  <span className="text-danger-text">−{file.removed}</span>)
+                </span>
+              )}
             </li>
           ))}
         </ul>

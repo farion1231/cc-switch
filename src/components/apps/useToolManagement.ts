@@ -113,13 +113,18 @@ const MCODE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy By
   "irm https://filecdn.minimax.chat/public/install.ps1 | iex",
 )}`;
 
+// 与后端 npm_install_command_for("claude") 保持一致：原生依赖和 postinstall 缺一不可，
+// 否则 bin/claude.exe 会保留文本占位文件，在 Windows 上报兼容性错误。
+const CLAUDE_NPM_INSTALL_COMMAND =
+  "npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code";
+
 // 与后端 npm_install_command_for("mcode") 保持一致：npm 12 默认拦截依赖的 install
 // 脚本，不放行 better-sqlite3 时 SQLite 不可用。
 const MCODE_NPM_INSTALL_COMMAND =
   'npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional "--allow-scripts=@minimax-ai/code,better-sqlite3"';
 
 const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
-${posixScriptInstallCommand("https://claude.ai/install.sh")} || npm i -g @anthropic-ai/claude-code@latest
+${posixScriptInstallCommand("https://claude.ai/install.sh")} || ${CLAUDE_NPM_INSTALL_COMMAND}
 # Codex
 npm i -g @openai/codex@latest
 # Gemini CLI
@@ -138,7 +143,7 @@ npm i -g @earendil-works/pi-coding-agent@latest
 ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
-npm i -g @anthropic-ai/claude-code@latest
+${CLAUDE_NPM_INSTALL_COMMAND}
 # Codex
 npm i -g @openai/codex@latest
 # Gemini CLI

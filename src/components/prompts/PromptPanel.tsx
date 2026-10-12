@@ -76,7 +76,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   const dialogOpen = copyingId !== null;
   const interactionBlocked =
     loading || reloadPending || writePending || isFormOpen || dialogOpen;
-  const navigationBlocked = writePending || isFormOpen || dialogOpen;
+  // 编辑页只盖住内容区，不锁导航：离开页面就关掉它（同供应商编辑页）
+  const navigationBlocked = writePending || dialogOpen;
   // 外观上的禁用晚 300ms 才出现：切回窗口时的重读、点一下启用这类很快的操作，
   // 不让整列按钮闪一下变灰。拦截仍看 interactionBlocked 和写锁；表单、对话框打开时照常立即禁用。
   const controlsDisabled =
@@ -236,12 +237,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
     if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
       return;
     }
-    void performDelete(id);
-  };
-
-  const handleDeleteFromDrawer = (id: string) => {
-    if (writeLockRef.current) return;
-    closeOverlay();
     void performDelete(id);
   };
 
@@ -565,7 +560,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
           initialData={editingId ? prompts[editingId] : undefined}
           onSave={handleSave}
           onClose={handleCloseForm}
-          onDelete={handleDeleteFromDrawer}
         />
       )}
 

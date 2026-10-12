@@ -270,6 +270,24 @@ pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
+/// 在文件管理器中定位应用诊断日志 cc-switch.log；文件还没生成时打开日志目录
+#[tauri::command]
+pub async fn reveal_app_log_file() -> Result<bool, String> {
+    let log_dir = crate::panic_hook::get_log_dir();
+    let log_file = log_dir.join("cc-switch.log");
+
+    let target = if log_file.exists() {
+        log_file
+    } else {
+        std::fs::create_dir_all(&log_dir).map_err(|e| format!("创建目录失败: {e}"))?;
+        log_dir
+    };
+
+    tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|e| format!("打开文件夹失败: {e}"))?;
+
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn get_claude_common_config_snippet(
     state: tauri::State<'_, crate::store::AppState>,

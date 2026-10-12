@@ -18,7 +18,7 @@ import {
   DialogTrigger,
   DialogClose,
 } from "@/components/ui/dialog";
-import { ProviderIcon } from "@/components/ProviderIcon";
+import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { IconPicker } from "@/components/IconPicker";
 import { getIconMetadata } from "@/icons/extracted/metadata";
 import type { UseFormReturn } from "react-hook-form";
@@ -54,6 +54,8 @@ export function BasicFormFields({
     const meta = getIconMetadata(icon);
     form.setValue("icon", icon);
     form.setValue("iconColor", meta?.defaultColor ?? "");
+    // 单选：点了就是选好了，不用再找「完成」
+    setIconDialogOpen(false);
   };
 
   const iconButton = (
@@ -73,13 +75,13 @@ export function BasicFormFields({
           <button
             type="button"
             aria-label={t("providerIcon.change", { defaultValue: "更换图标" })}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-border bg-surface transition-colors hover:bg-subtle"
+            className="group shrink-0 rounded-[8px]"
           >
-            <ProviderIcon
+            <ProviderIconBox
               icon={currentIcon}
               name={providerName}
               color={effectiveIconColor}
-              size={18}
+              className="bg-surface transition-colors group-hover:bg-subtle"
             />
           </button>
         </DialogTrigger>
@@ -116,14 +118,8 @@ export function BasicFormFields({
                 value={currentIcon}
                 onValueChange={handleIconSelect}
                 color={effectiveIconColor}
+                defaultName={form.watch("name") ?? ""}
               />
-              <div className="flex justify-end gap-2">
-                <DialogClose asChild>
-                  <Button type="button" variant="outline">
-                    {t("common.done", { defaultValue: "完成" })}
-                  </Button>
-                </DialogClose>
-              </div>
             </div>
           </div>
         </div>

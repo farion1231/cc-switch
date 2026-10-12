@@ -346,6 +346,7 @@ requires_openai_auth = true`;
   return (
     <FullScreenPanel
       isOpen={isOpen}
+      trackUnsavedChanges
       title={
         isEditMode
           ? t("universalProvider.edit", { defaultValue: "编辑统一供应商" })

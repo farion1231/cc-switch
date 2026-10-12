@@ -1,12 +1,6 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClientProvider, focusManager } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { toast } from "sonner";
@@ -92,7 +86,7 @@ function renderPanel(
   onSwitch = vi.fn(),
 ) {
   const queryClient = createTestQueryClient();
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <SwitchModePanel
         app={app}
@@ -108,6 +102,7 @@ function renderPanel(
       />
     </QueryClientProvider>,
   );
+  return { ...view, queryClient };
 }
 
 beforeEach(() => {
@@ -155,55 +150,32 @@ describe("SwitchModePanel — Stack mode", () => {
     ]);
   });
 
-  it("reminds to restart Claude Code when Stack models change outside add / remove", async () => {
+  it("says why the Codex model list could not be read", async () => {
     mockMode("stack", "route");
-    let members = [
-      { providerId: "route", modelIds: ["m-route-1"], route: true },
-      { providerId: "kimi", modelIds: ["m-kimi"], route: false },
-    ];
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
-        HttpResponse.json({ active: true, members }),
-      ),
-      http.post(`${TAURI_ENDPOINT}/set_proxy_stack_member`, () =>
-        HttpResponse.json(null),
+        HttpResponse.json({
+          active: true,
+          members: [{ providerId: "route", modelIds: [], route: true }],
+          notice: "officialModelsUnavailable",
+          noticeReasons: ["loginStale", "noCli"],
+        }),
       ),
     );
+    renderPanel("codex", { route: provider("route") });
 
-    renderPanel("claude", { route: provider("route"), kimi: provider("kimi") });
-
-    // 移出名单：保存成功的提示已经说了要重启，不再提示
-    const remove = await screen.findByTestId("remove-kimi");
-    members = [members[0]];
-    fireEvent.click(remove);
-    await screen.findByTestId("add-kimi");
-    expect(toast.info).not.toHaveBeenCalled();
-
-    // 别处改了默认那家的模型：回到窗口时重查，提示重启
-    members = [
-      {
-        providerId: "route",
-        modelIds: ["m-route-1", "m-route-2"],
-        route: true,
-      },
-    ];
-    try {
-      act(() => {
-        focusManager.setFocused(false);
-        focusManager.setFocused(true);
-      });
-      await waitFor(() =>
-        expect(toast.info).toHaveBeenCalledWith(
-          "provider.stackModelsChanged",
-          expect.anything(),
-        ),
-      );
-    } finally {
-      focusManager.setFocused(undefined);
-    }
+    expect(
+      await screen.findByText("provider.officialModelsUnavailable"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("provider.officialModelsReason.loginStale"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("provider.officialModelsReason.noCli"),
+    ).toBeInTheDocument();
   });
 
-  it("warns about Codex clients on an old model list only in Stack mode", async () => {
+  it("warns about Codex clients on an old model list in every mode", async () => {
     const stack = (active: boolean) =>
       http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({
@@ -224,11 +196,67 @@ describe("SwitchModePanel — Stack mode", () => {
     mockMode("route", "route");
     server.use(stack(false));
     renderPanel("codex", { route: provider("route") });
-    await screen.findByTestId("card-route");
+    expect(
+      await screen.findByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a dismissed Codex stale notice again once the model list changes again", async () => {
+    let revision = "r1";
+    mockMode("direct", "route");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: false,
+          members: [],
+          staleClients: { daemon: false, others: true },
+          staleRevision: revision,
+        }),
+      ),
+    );
+    const { queryClient } = renderPanel("codex", { route: provider("route") });
+    await screen.findByText("proxy.stackMode.codexStale.title");
+    fireEvent.click(screen.getByRole("button", { name: "common.close" }));
     expect(
       screen.queryByText("proxy.stackMode.codexStale.title"),
     ).not.toBeInTheDocument();
+
+    // 同一份：再拉一次还是关着。
+    await queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
+    expect(
+      screen.queryByText("proxy.stackMode.codexStale.title"),
+    ).not.toBeInTheDocument();
+
+    // 同一个供应商又改了一次目录：同样的客户端，但已经是新的一份。
+    revision = "r2";
+    await queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
+    expect(
+      await screen.findByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
   });
+
+  it.each(["direct", "route", "stack"] as const)(
+    "shows a cached account notice in %s mode",
+    async (mode) => {
+      mockMode(mode, "route");
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+          HttpResponse.json({
+            active: mode === "stack",
+            members: [],
+            staleClients: { daemon: true, others: false, auth: true },
+          }),
+        ),
+      );
+      renderPanel("codex", { route: provider("route") });
+      expect(
+        await screen.findByText("proxy.stackMode.codexStale.authTitle"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("proxy.stackMode.codexStale.title"),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("does not read the Stack list for apps without Stack mode", async () => {
     mockMode("route", "a");

@@ -129,3 +129,35 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
     }
   });
 });
+
+describe("OpenCode preset reasoning flags", () => {
+  // OpenCode 只给 reasoning 为真的模型生成思考档位；CC Switch 写的供应商 key
+  // 对不上 models.dev，不写就一个档位都没有。
+  const models = opencodeProviderPresets.flatMap((preset) =>
+    Object.entries(preset.settingsConfig.models ?? {}).map(([id, model]) => ({
+      preset: preset.name,
+      id,
+      model,
+    })),
+  );
+
+  it("marks Claude, GPT and DeepSeek V4 models as reasoning", () => {
+    const expected = models.filter(({ id }) =>
+      /claude-|gpt-[56]|deepseek-v4/.test(id),
+    );
+    expect(expected.length).toBeGreaterThan(0);
+    for (const { preset, id, model } of expected) {
+      expect(model.reasoning, `${preset} / ${id}`).toBe(true);
+    }
+  });
+
+  it("never claims reasoning on a model whose thinking is turned off", () => {
+    for (const { preset, id, model } of models) {
+      const thinking = (model.options as { thinking?: { type?: string } })
+        ?.thinking;
+      if (thinking?.type === "disabled") {
+        expect(model.reasoning, `${preset} / ${id}`).not.toBe(true);
+      }
+    }
+  });
+});
