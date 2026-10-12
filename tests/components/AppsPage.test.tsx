@@ -17,7 +17,11 @@ import {
   vi,
 } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { settingsApi, ToolInstallationReport } from "@/lib/api/settings";
+import type {
+  settingsApi,
+  ToolInstallationReport,
+  ToolUninstallPlan,
+} from "@/lib/api/settings";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
@@ -26,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   probeToolInstallations: vi.fn(),
   listToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
+  prepareToolUninstall: vi.fn(),
   copyText: vi.fn(),
   info: vi.fn(),
   success: vi.fn(),
@@ -72,6 +77,17 @@ function report(
     anchored: true,
     unmanaged: false,
     ...overrides,
+  };
+}
+
+function uninstallPlan(tool: string): ToolUninstallPlan {
+  return {
+    tool,
+    path: `C:/tools/${tool}.cmd`,
+    real_path: `C:/tools/${tool}.cmd`,
+    command: `npm uninstall -g --prefix C:/tools ${tool}`,
+    native: false,
+    wsl_distro: null,
   };
 }
 
@@ -184,6 +200,9 @@ describe("AppsPage concurrent CLI upgrades", () => {
       .mockImplementation(async (tools: string[]) =>
         tools.map((tool) => report(tool)),
       );
+    mocks.prepareToolUninstall
+      .mockReset()
+      .mockImplementation(async (tool: string) => uninstallPlan(tool));
     mocks.runToolLifecycleAction
       .mockReset()
       .mockImplementation(async ([tool]: string[]) => {
@@ -193,6 +212,13 @@ describe("AppsPage concurrent CLI upgrades", () => {
   });
 
   it("copies only the selected application's manual command and switches installation methods", async () => {
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      ((await getVersions(tools)) as ToolVersions).map((tool) => ({
+        ...tool,
+        env_type: "macos",
+      })),
+    );
     const user = userEvent.setup();
     await renderApps();
     await user.click(
@@ -214,6 +240,8 @@ describe("AppsPage concurrent CLI upgrades", () => {
       "npm uninstall -g @openai/codex",
     );
 
+    expect(dialog.getByText("macOS")).toBeInTheDocument();
+    expect(dialog.getAllByRole("combobox")).toHaveLength(2);
     await user.click(
       dialog.getByRole("combobox", { name: "settings.manualUninstallMethod" }),
     );
@@ -223,6 +251,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(
       dialog.queryByText("npm uninstall -g @openai/codex"),
     ).not.toBeInTheDocument();
+    expect(
+      dialog.getByText("brew uninstall --cask claude-code"),
+    ).toBeInTheDocument();
+    expect(
+      dialog.getByText("brew uninstall --cask claude-code@latest"),
+    ).toBeInTheDocument();
     await user.click(codex().getByRole("button"));
     expect(mocks.copyText).toHaveBeenLastCalledWith(
       "brew uninstall --cask codex",
@@ -248,46 +282,46 @@ describe("AppsPage concurrent CLI upgrades", () => {
     ).toBeInTheDocument();
   });
 
-  it.each([
-    ["Windows NT 10.0", "python"],
-    ["X11; Linux x86_64", "python3"],
-  ])("shows Hermes pip commands for %s", async (userAgent, python) => {
-    const platform = vi
-      .spyOn(navigator, "userAgent", "get")
-      .mockReturnValue(userAgent);
-    try {
-      const user = userEvent.setup();
-      await renderApps();
-      await user.click(
-        screen.getByRole("button", { name: "appsPage.moreActions" }),
-      );
-      await user.click(
-        await screen.findByRole("menuitem", {
-          name: "settings.manualUninstallCommands",
-        }),
-      );
-      const dialog = within(screen.getByRole("dialog"));
-      await user.click(
-        dialog.getByRole("combobox", {
-          name: "settings.manualUninstallMethod",
-        }),
-      );
-      await user.click(await screen.findByRole("option", { name: "pip" }));
-      expect(dialog.getByText("Hermes")).toBeInTheDocument();
-      expect(dialog.queryByText("Codex")).not.toBeInTheDocument();
-      await user.click(
-        dialog.getByRole("button", {
-          name: "settings.copyToolUninstallCommand",
-        }),
-      );
-      expect(mocks.copyText).toHaveBeenCalledWith(
-        `${python} -m pip uninstall hermes-agent`,
-      );
-      expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
-    } finally {
-      platform.mockRestore();
-    }
-  });
+  it.each([["Windows NT 10.0"], ["X11; Linux x86_64"]])(
+    "shows the official Hermes uninstall command for %s",
+    async (userAgent) => {
+      const platform = vi
+        .spyOn(navigator, "userAgent", "get")
+        .mockReturnValue(userAgent);
+      try {
+        const user = userEvent.setup();
+        await renderApps();
+        await user.click(
+          screen.getByRole("button", { name: "appsPage.moreActions" }),
+        );
+        await user.click(
+          await screen.findByRole("menuitem", {
+            name: "settings.manualUninstallCommands",
+          }),
+        );
+        const dialog = within(screen.getByRole("dialog"));
+        await user.click(
+          dialog.getByRole("combobox", {
+            name: "settings.manualUninstallMethod",
+          }),
+        );
+        await user.click(await screen.findByRole("option", { name: "Hermes" }));
+        expect(
+          within(dialog.getByRole("list")).getByText("Hermes"),
+        ).toBeInTheDocument();
+        expect(dialog.queryByText("Codex")).not.toBeInTheDocument();
+        await user.click(
+          dialog.getByRole("button", {
+            name: "settings.copyToolUninstallCommand",
+          }),
+        );
+        expect(mocks.copyText).toHaveBeenCalledWith("hermes uninstall --yes");
+        expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+      } finally {
+        platform.mockRestore();
+      }
+    },
+  );
 
   it("keeps manual commands visible when copying fails", async () => {
     mocks.copyText.mockRejectedValueOnce(new Error("clipboard unavailable"));
@@ -314,6 +348,210 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
   });
 
+  it("automatically detects Windows and only shows documented pnpm and Bun clients", async () => {
+    const platform = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Windows NT 10.0");
+    try {
+      const user = userEvent.setup();
+      await renderApps();
+      await user.click(
+        screen.getByRole("button", { name: "appsPage.moreActions" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", {
+          name: "settings.manualUninstallCommands",
+        }),
+      );
+      const dialog = within(screen.getByRole("dialog"));
+      expect(dialog.getByText("Windows")).toBeInTheDocument();
+      expect(dialog.getAllByRole("combobox")).toHaveLength(2);
+      const chooseMethod = async (name: string) => {
+        await user.click(
+          dialog.getByRole("combobox", {
+            name: "settings.manualUninstallMethod",
+          }),
+        );
+        expect(
+          screen.queryByRole("option", { name: "Volta" }),
+        ).not.toBeInTheDocument();
+        await user.click(await screen.findByRole("option", { name }));
+      };
+      await user.click(
+        dialog.getByRole("combobox", {
+          name: "settings.manualUninstallMethod",
+        }),
+      );
+      expect(
+        screen.queryByRole("option", { name: "Homebrew (cask)" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("option", { name: "Homebrew (formula)" }),
+      ).not.toBeInTheDocument();
+      await user.click(await screen.findByRole("option", { name: "pnpm" }));
+      expect(dialog.getAllByRole("listitem")).toHaveLength(2);
+      expect(
+        dialog.getByText("pnpm remove -g opencode-ai"),
+      ).toBeInTheDocument();
+      expect(dialog.getByText("pnpm remove -g openclaw")).toBeInTheDocument();
+      expect(dialog.queryByText("Codex")).not.toBeInTheDocument();
+      await chooseMethod("bun");
+      expect(dialog.getAllByRole("listitem")).toHaveLength(1);
+      expect(dialog.getByText("bun remove -g openclaw")).toBeInTheDocument();
+      expect(
+        dialog.queryByText("bun remove -g opencode-ai"),
+      ).not.toBeInTheDocument();
+      expect(
+        dialog.getByText("settings.manualUninstallOpenClawHint"),
+      ).toBeInTheDocument();
+      expect(
+        dialog.getByText("settings.manualUninstallBunLauncherHint"),
+      ).toBeInTheDocument();
+
+      expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
+  it.each([
+    ["updates the detected environments and per-client WSL commands", false],
+    ["preserves a manual environment selection during detection", true],
+  ] as const)("%s", async (_name, manualOverride) => {
+    const platform = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Windows NT 10.0");
+    try {
+      const pending = deferred<ToolVersions>();
+      const getVersions = mocks.getToolVersions.getMockImplementation()!;
+      const opencode = (await getVersions(["opencode"])) as ToolVersions;
+      mocks.getToolVersions.mockImplementation((tools: string[]) =>
+        tools.includes("opencode") ? pending.promise : getVersions(tools),
+      );
+      const user = userEvent.setup();
+      const { AppsPage } = await import("@/components/apps/AppsPage");
+      mountApps(AppsPage);
+      await user.click(
+        screen.getByRole("button", { name: "appsPage.moreActions" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", {
+          name: "settings.manualUninstallCommands",
+        }),
+      );
+      const dialog = within(screen.getByRole("dialog"));
+      const environmentSelect = dialog.getByRole("combobox", {
+        name: "settings.manualUninstallEnvironment",
+      });
+      expect(environmentSelect).toHaveTextContent("Windows");
+      await user.click(
+        dialog.getByRole("combobox", {
+          name: "settings.manualUninstallMethod",
+        }),
+      );
+      await user.click(await screen.findByRole("option", { name: "bun" }));
+      expect(
+        dialog.queryByText("bun remove -g opencode-ai"),
+      ).not.toBeInTheDocument();
+
+      const chooseEnvironment = async (name: string) => {
+        await user.click(environmentSelect);
+        expect(
+          (await screen.findAllByRole("option")).map(
+            (option) => option.textContent,
+          ),
+        ).toEqual(["Windows", "macOS", "Linux / WSL"]);
+        await user.click(await screen.findByRole("option", { name }));
+      };
+      // Selecting the currently detected Windows environment explicitly makes
+      // it an override; the pending WSL detection must not replace that choice.
+      if (manualOverride) await chooseEnvironment("Windows");
+      await act(async () =>
+        pending.resolve(
+          opencode.map((tool) => ({
+            ...tool,
+            env_type: "wsl",
+            wsl_distro: "Ubuntu",
+          })),
+        ),
+      );
+      if (manualOverride) {
+        expect(environmentSelect).toHaveTextContent(/^Windows$/);
+        expect(
+          dialog.queryByText("bun remove -g opencode-ai"),
+        ).not.toBeInTheDocument();
+      } else {
+        expect(environmentSelect).toHaveTextContent("Windows / WSL · Ubuntu");
+        const opencodeRow = within(
+          dialog.getByText("bun remove -g opencode-ai").closest("li")!,
+        );
+        expect(opencodeRow.getByText("WSL · Ubuntu")).toBeInTheDocument();
+        const openclawRow = within(
+          dialog.getByText("bun remove -g openclaw").closest("li")!,
+        );
+        expect(openclawRow.getByText("Windows")).toBeInTheDocument();
+        expect(dialog.getAllByRole("combobox")).toHaveLength(2);
+
+        await user.click(
+          dialog.getByRole("combobox", {
+            name: "settings.manualUninstallMethod",
+          }),
+        );
+        expect(
+          screen.queryByRole("option", { name: "Homebrew (cask)" }),
+        ).not.toBeInTheDocument();
+        await user.click(
+          await screen.findByRole("option", { name: "Homebrew (formula)" }),
+        );
+        expect(
+          dialog.getByText("brew uninstall --formula opencode"),
+        ).toBeInTheDocument();
+        expect(
+          dialog.getByText("brew uninstall --formula anomalyco/tap/opencode"),
+        ).toBeInTheDocument();
+        expect(
+          dialog.queryByText("brew uninstall --formula gemini-cli"),
+        ).not.toBeInTheDocument();
+      }
+
+      await chooseEnvironment("macOS");
+      await user.click(
+        dialog.getByRole("combobox", {
+          name: "settings.manualUninstallMethod",
+        }),
+      );
+      await user.click(
+        await screen.findByRole("option", { name: "Homebrew (cask)" }),
+      );
+      expect(
+        dialog.getByText("brew uninstall --cask codex"),
+      ).toBeInTheDocument();
+      expect(dialog.queryByText("WSL · Ubuntu")).not.toBeInTheDocument();
+
+      // A manual switch also drops methods unsupported in the new environment.
+      await chooseEnvironment("Windows");
+      expect(
+        dialog.getByRole("combobox", {
+          name: "settings.manualUninstallMethod",
+        }),
+      ).toHaveTextContent("npm");
+      expect(
+        dialog.queryByText("brew uninstall --cask codex"),
+      ).not.toBeInTheDocument();
+      await chooseEnvironment("Linux / WSL");
+      await user.click(
+        dialog.getByRole("combobox", {
+          name: "settings.manualUninstallMethod",
+        }),
+      );
+      await user.click(await screen.findByRole("option", { name: "bun" }));
+      expect(dialog.getByText("bun remove -g opencode-ai")).toBeInTheDocument();
+      expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it("offers uninstall for installed tools and keeps missing tools installable", async () => {
     missing.add("codex");
     await renderApps();
@@ -331,6 +569,142 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(
       card("Codex").getByRole("button", { name: "settings.toolInstall" }),
     ).toBeEnabled();
+  });
+
+  it("shows the selected path and command while retaining the resolved target for uninstall validation", async () => {
+    const pending = deferred<ToolUninstallPlan>();
+    mocks.prepareToolUninstall.mockReturnValueOnce(pending.promise);
+    await renderApps();
+    fireEvent.click(
+      card("Claude Code").getByRole("button", {
+        name: "settings.toolUninstall",
+      }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByRole("status")).toHaveTextContent(
+      "settings.toolUninstallPreparing",
+    );
+    expect(
+      dialog.queryByRole("button", { name: "settings.toolUninstall" }),
+    ).toBeNull();
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    const plan = {
+      ...uninstallPlan("claude"),
+      real_path: "C:/Users/me/.local/share/claude/versions/2.0.0",
+      native: true,
+    };
+    await act(async () => pending.resolve(plan));
+    expect(dialog.getByText(plan.path)).toBeInTheDocument();
+    expect(dialog.queryByText(plan.real_path)).not.toBeInTheDocument();
+    expect(dialog.getByText(plan.command)).toBeInTheDocument();
+    expect(
+      dialog.getByText("settings.toolUninstallNativeHint"),
+    ).toBeInTheDocument();
+    expect(mocks.prepareToolUninstall).toHaveBeenCalledWith("claude", {});
+    fireEvent.click(
+      dialog.getByRole("button", { name: "settings.toolUninstall" }),
+    );
+    await waitFor(() =>
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+        ["claude"],
+        "uninstall",
+        {},
+        plan,
+      ),
+    );
+  });
+
+  it("offers only manual uninstall when a plan cannot be prepared", async () => {
+    mocks.prepareToolUninstall.mockRejectedValueOnce(
+      new Error("Unverified Homebrew owner: mise"),
+    );
+    await renderApps();
+    fireEvent.click(
+      card("Codex").getByRole("button", { name: "settings.toolUninstall" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      "settings.toolUninstallManualRequired",
+    );
+    expect(
+      dialog.getByText("Unverified Homebrew owner: mise"),
+    ).toBeInTheDocument();
+    expect(
+      dialog.queryByRole("button", { name: "settings.toolUninstall" }),
+    ).toBeNull();
+    fireEvent.click(
+      dialog.getByRole("button", { name: "settings.manualUninstallCommands" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "settings.manualUninstallCommands" }),
+    ).toBeInTheDocument();
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+  });
+
+  it("discards a cancelled preview instead of showing it for another tool", async () => {
+    const first = deferred<ToolUninstallPlan>();
+    mocks.prepareToolUninstall.mockReturnValueOnce(first.promise);
+    await renderApps();
+    fireEvent.click(
+      card("Claude Code").getByRole("button", {
+        name: "settings.toolUninstall",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "common.cancel",
+      }),
+    );
+    fireEvent.click(
+      card("Codex").getByRole("button", { name: "settings.toolUninstall" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    expect(
+      await dialog.findByText(uninstallPlan("codex").path),
+    ).toBeInTheDocument();
+    await act(async () => first.resolve(uninstallPlan("claude")));
+    expect(dialog.queryByText(uninstallPlan("claude").path)).toBeNull();
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+  });
+
+  it("only offers valid Homebrew formula uninstall commands", async () => {
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      ((await getVersions(tools)) as ToolVersions).map((tool) => ({
+        ...tool,
+        env_type: "linux",
+      })),
+    );
+    const user = userEvent.setup();
+    await renderApps();
+    await user.click(
+      screen.getByRole("button", { name: "appsPage.moreActions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: "settings.manualUninstallCommands",
+      }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("Linux")).toBeInTheDocument();
+    await user.click(
+      dialog.getByRole("combobox", { name: "settings.manualUninstallMethod" }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Homebrew (formula)" }),
+    );
+    expect(
+      dialog.getByText("brew uninstall --formula gemini-cli"),
+    ).toBeInTheDocument();
+    expect(
+      dialog.getByText("brew uninstall --formula opencode"),
+    ).toBeInTheDocument();
+    expect(
+      dialog.getByText("brew uninstall --formula anomalyco/tap/opencode"),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText("Codex")).toBeNull();
+    expect(dialog.queryByText("Claude Code")).toBeNull();
+    expect(dialog.queryByText("Grok Build")).toBeNull();
   });
 
   it("confirms uninstall, preserves the running task across navigation and refreshes to install", async () => {
@@ -356,7 +730,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
     fireEvent.click(uninstall());
     fireEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
+      await within(screen.getByRole("dialog")).findByRole("button", {
         name: "settings.toolUninstall",
       }),
     );
@@ -365,6 +739,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       ["claude"],
       "uninstall",
       {},
+      uninstallPlan("claude"),
     );
     expect(uninstall()).toBeDisabled();
     expect(uninstall()).toHaveAttribute("aria-busy", "true");
@@ -429,7 +804,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
         }),
       );
       fireEvent.click(
-        within(screen.getByRole("dialog")).getByRole("button", {
+        await within(screen.getByRole("dialog")).findByRole("button", {
           name: "settings.toolUninstall",
         }),
       );
@@ -476,7 +851,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       }),
     );
     fireEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
+      await within(screen.getByRole("dialog")).findByRole("button", {
         name: "settings.toolUninstall",
       }),
     );
