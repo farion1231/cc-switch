@@ -4649,8 +4649,7 @@
       "tabForm": "Form",
       "title": "Pi shared config",
       "warnDeadPattern": "~ in patterns is never expanded by pi; this rule will never match",
-      "warnLiteralWildcard": "The path contains wildcards; pi treats it as an include whitelist pattern, not a literal path",
-      "willBe": "will be"
+      "warnLiteralWildcard": "The path contains wildcards; pi treats it as an include whitelist pattern, not a literal path"
     }
   },
   "newLayoutNotice": {

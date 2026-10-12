@@ -404,7 +404,6 @@ export function PiSharedConfigPanel({
                   />
                   {addInput.trim() && (
                     <span className={kindBadgeClass(kindOf(addInput.trim()))}>
-                      {t("skillsPage.piConfig.willBe")}{" "}
                       {kindLabel(kindOf(addInput.trim()))}
                     </span>
                   )}

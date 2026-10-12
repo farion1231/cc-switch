@@ -4649,8 +4649,7 @@
       "tabForm": "フォーム",
       "title": "Pi 共有設定",
       "warnDeadPattern": "パターン内の ~ は pi によって展開されないため、このルールは決して一致しません",
-      "warnLiteralWildcard": "パスにワイルドカードが含まれるため、pi はリテラルパスではなく include ホワイトリストパターンとして扱います",
-      "willBe": "分類："
+      "warnLiteralWildcard": "パスにワイルドカードが含まれるため、pi はリテラルパスではなく include ホワイトリストパターンとして扱います"
     }
   },
   "newLayoutNotice": {

@@ -4650,8 +4650,7 @@
       "tabForm": "表單",
       "title": "Pi 共享設定",
       "warnDeadPattern": "模式中的 ~ 不會被 pi 展開，該規則永遠不會生效",
-      "warnLiteralWildcard": "路徑含萬用字元，pi 會將其當作 include 白名單模式而非字面路徑",
-      "willBe": "將作為"
+      "warnLiteralWildcard": "路徑含萬用字元，pi 會將其當作 include 白名單模式而非字面路徑"
     }
   },
   "newLayoutNotice": {
