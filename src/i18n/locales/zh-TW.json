@@ -581,7 +581,7 @@
         },
         "codexHistoryProviderMigration": {
           "name": "Codex 工作階段分組遷移備份",
-          "hint": "第三方工作階段分組遷移前留下的副本，CC Switch 不會再讀取。"
+          "hint": "工作階段分組遷移前留下的副本，CC Switch 不會再讀取。"
         },
         "liveFirstWrite": {
           "name": "設定檔首次寫入備份",
@@ -1588,7 +1588,8 @@
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI",
-      "tuzi": "兔子API"
+      "tuzi": "兔子API",
+      "yylx": "魚魚連線"
     },
     "parameterConfig": "參數設定 - {{name}} *",
     "mainModel": "主模型 (選填)",
@@ -2376,11 +2377,17 @@
     "speedValue": "{{value}} tok/s",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "速度怎麼算",
-    "speedHelp": "每秒輸出多少 token，從首字算到結束。只算經路由服務、輸出不少於 100 token 的請求；思考過程不外露的模型是近似值。帶 ≈ 的是沒開路由時按工作階段日誌的時間戳記估算的：沒有首字計時，等首字的時間也算在內，所以偏低；只估輸出不少於 200 token 的請求。",
+    "speedHelp": "每秒輸出多少 token，從首字算到結束。只算經路由服務、輸出不少於 100 token 的請求；思考過程不外露的模型是近似值。帶 ≈ 的是沒開路由時按工作階段日誌的時間戳記估算的：等首字的時間也算在內，所以偏低；只估輸出不少於 200 token 的請求。",
     "speedSumHelpTitle": "彙總速度怎麼算",
     "speedSumHelp": "輸出 token 總數除以生成時間總和，不是逐筆平均，免得短請求把數字帶歪。只算經路由服務、輸出不少於 100 token 的請求。帶 ≈ 的是按工作階段日誌估算的（含首字等待，只估輸出不少於 200 token 的請求），這一列沒有路由資料時才顯示。",
+    "firstToken": "首字",
+    "firstTokenHelpTitle": "首字時間",
+    "firstTokenHelp": "從路由服務收到請求，到上游開始輸出的時間。帶 ≈ 的是沒開路由時按工作階段日誌的時間戳記推出來的：起點是上一筆日誌寫入的時刻，含用戶端組裝請求的時間，所以偏高；Claude Code 只有回覆以思考開頭時推得出，Codex 只有新版日誌、而且回覆不是一開頭就呼叫工具時推得出。",
+    "firstTokenSumHelpTitle": "首字時間怎麼算",
+    "firstTokenSumHelp": "從路由服務收到請求，到上游開始輸出的時間。取這一列所有請求的中位數，不會被個別排隊、冷啟動的慢請求拉高。只算經路由服務、成功的串流請求；超過 30 天、已併入每日彙總的請求不計。帶 ≈ 的是按工作階段日誌推出來的（偏高，只有部分請求推得出），這一列沒有路由資料時才顯示。",
     "timingTip": "耗時 {{duration}}s · 首字 {{ttft}}s",
     "estimatedTimingTip": "耗時約 {{duration}}s（按工作階段日誌的時間戳記估算，含首字等待）",
+    "estimatedTimingTipWithFirstToken": "耗時約 {{duration}}s · 首字約 {{ttft}}s（按工作階段日誌的時間戳記估算）",
     "cacheTip": "快取命中 {{read}} · 快取寫入 {{write}}",
     "openRequestDetail": "查看請求詳情：{{time}} {{provider}}",
     "prevPage": "上一頁",
@@ -2397,6 +2404,7 @@
       "sourceSession": "工作階段日誌",
       "total": "合計",
       "firstToken": "首字",
+      "firstTokenEstimated": "首字（估算）",
       "duration": "耗時",
       "durationEstimated": "耗時（估算）",
       "speedTooFew": "輸出不到 100 token，不算速度",
@@ -2459,6 +2467,7 @@
     "templateCustom": "自訂",
     "templateGeneral": "通用範本",
     "templateNewAPI": "NewAPI",
+    "templateSub2API": "Sub2API",
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
     "templateBalance": "官方",
@@ -3380,11 +3389,18 @@
     "import": "匯入",
     "importing": "匯入中...",
     "warning": "請確認以上資訊準確無誤後再匯入。匯入後可在供應商清單中編輯或刪除。",
+    "providerEnabledWarning": "匯入後將立即切換到此供應商，用戶端請求會改送到上面的位址",
+    "apiFormat": "介面格式",
+    "switchAfterImport": "匯入後立即切換到這個供應商",
+    "addToAppAfterImport": "匯入後立即新增到 {{app}} 設定",
+    "enableInPiAfterImport": "匯入後立即在 Pi 中啟用",
     "parseError": "深層連結解析失敗",
     "importSuccess": "匯入成功",
     "importSuccessDescription": "供應商 \"{{name}}\" 已成功匯入",
     "importError": "匯入失敗",
     "configSource": "設定來源",
+    "codexConfigScopeHint": "只匯入其中屬於這個供應商的設定（位址、驗證、模型、推理強度等）；[features]、MCP、權限這類全域設定不會匯入。",
+    "grokConfigScopeHint": "只匯入 [models] default 指向的那張模型表（顯示名稱、說明、介面類型、視窗等）；位址和 Key 使用連結參數，其他模型表不會匯入。",
     "configEmbedded": "內嵌設定",
     "configRemote": "遠端設定",
     "configDetails": "設定詳情",
@@ -3407,7 +3423,8 @@
       "name": "名稱",
       "description": "描述",
       "contentPreview": "內容預覽",
-      "enabledWarning": "匯入後將立即啟用此提示詞，其他提示詞將被停用"
+      "enabledWarning": "匯入後將立即啟用此提示詞，其他提示詞將被停用",
+      "enableAfterImport": "匯入後立即啟用"
     },
     "skill": {
       "title": "新增 Claude Skill 儲存庫",
@@ -3439,6 +3456,32 @@
     "search": "搜尋圖示",
     "searchPlaceholder": "輸入圖示名稱...",
     "noResults": "未找到相符的圖示",
+    "clear": "清除圖示",
+    "myIcons": "我的圖示",
+    "builtinIcons": "內建圖示",
+    "myIconsEmpty": "上傳的圖片取好名稱後存在這裡，其他供應商也能直接選用。",
+    "currentIcon": "目前圖示",
+    "saveToLibrary": "存入我的圖示",
+    "saveCurrentTitle": "把目前圖示存入「我的圖示」",
+    "uploadTitle": "為圖示取個名稱",
+    "uploadDescription": "存進「我的圖示」後，其他供應商也能直接選用。",
+    "saveAndUse": "儲存並使用",
+    "renameTitle": "重新命名圖示",
+    "rename": "重新命名",
+    "delete": "刪除",
+    "deleteTitle": "刪除圖示",
+    "deleteMessage": "從「我的圖示」中刪除「{{name}}」？已經在使用它的供應商不受影響。",
+    "alreadySaved": "這張圖片已經在「我的圖示」裡了，名為「{{name}}」",
+    "nameLabel": "名稱",
+    "namePlaceholder": "例如：我的中轉站",
+    "upload": "上傳",
+    "uploadHint": "支援 PNG、JPG、WebP、SVG，不超過 2 MB。圖片會縮成小尺寸 PNG 存進「我的圖示」，隨雲端同步一起帶走。",
+    "uploadError": {
+      "unsupported": "不支援這種圖片格式，請選擇 PNG、JPG、WebP 或 SVG",
+      "tooLarge": "圖片超過 2 MB",
+      "decodeFailed": "無法讀取這張圖片，請換一張試試",
+      "dimensions": "圖片尺寸太大（寬高不能超過 4096 像素）"
+    },
     "category": {
       "aiProvider": "AI 服務商",
       "cloud": "雲端平台",
@@ -4132,9 +4175,9 @@
     },
     "help": {
       "title": "連線模式的差別",
-      "direct": "直連：用戶端直接連所選那家，切換即改寫設定。",
-      "route": "路由：請求先經過本機的 CC Switch，可開啟故障轉移。",
-      "stack": "聚合：多家模型同列在 /model，不做故障轉移。"
+      "direct": "直連：CC Switch 不經手任何請求，用戶端直接連所選供應商，體驗最原生。",
+      "route": "路由：請求經本機 CC Switch 轉發，可熱切換供應商，並支援故障轉移、格式轉換等進階功能。",
+      "stack": "聚合：多家供應商的模型同列在 /model，在用戶端內即可無感切換。"
     }
   },
   "providerCard": {

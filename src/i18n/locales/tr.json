@@ -581,7 +581,7 @@
         },
         "codexHistoryProviderMigration": {
           "name": "Codex oturum grubu geçiş yedeklemeleri",
-          "hint": "Üçüncü taraf oturum grupları taşınmadan önce tutulan kopyalar. CC Switch bunları bir daha asla okumaz."
+          "hint": "Oturum grupları taşınmadan önce saklanan kopyalar. CC Switch bunları bir daha okumaz."
         },
         "liveFirstWrite": {
           "name": "İlk yazma yedeklemelerini yapılandırma",
@@ -1587,7 +1587,8 @@
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Birlikte Yapay Zeka",
-      "tuzi": "Tu-zi"
+      "tuzi": "Tu-zi",
+      "yylx": "YYLX"
     },
     "parameterConfig": "Parametre Yapılandırması - {{name}} *",
     "mainModel": "Ana Model (isteğe bağlı)",
@@ -2375,7 +2376,7 @@
     "speedValue": "{{value}} tok/sn",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "Hız nasıl hesaplanır?",
-    "speedHelp": "İlk tokendan sonuna kadar saniye başına token çıkışı. Yalnızca en az 100 çıkış tokenu içeren yönlendirme hizmeti aracılığıyla yapılan istekler sayılır; Mantıklarını gizleyen modeller için bu bir yaklaşımdır. Yönlendirme kapalıyken oturum günlüğü zaman damgalarından ≈ içeren bir değer tahmin edilir: ilk token zamanlaması yoktur, bu nedenle ilk token için bekleme dahil edilir ve sayı düşük okunur. Yalnızca en az 200 çıkış tokenu içeren istekler tahmin edilir.",
+    "speedHelp": "İlk token’dan yanıtın sonuna kadar saniyede üretilen çıktı token’ı sayısı. Yalnızca yönlendirme hizmetinden geçen ve en az 100 çıktı token’ı içeren istekler hesaba katılır; akıl yürütme verilerini gizleyen modellerde bu bir yaklaşımdır. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından tahmin edilir: ilk token’ı bekleme süresi de dahil olduğundan daha düşük görünür. Yalnızca en az 200 çıktı token’ı içeren istekler için tahmin yapılır.",
     "speedSumHelpTitle": "Genel hız nasıl hesaplanır?",
     "speedSumHelp": "Toplam çıktı tokenlarının istek başına ortalama hızlara değil, toplam üretim süresine bölünmesiyle kısa istekler çarpıklık yaratmaz. Yalnızca yönlendirme hizmeti aracılığıyla yapılan ve en az 100 çıkış tokenu içeren istekler sayılır. ≈ içeren bir değer, oturum günlüklerinden tahmin edilir (ilk token için beklemeyi içerir ve yalnızca en az 200 çıkış tokenu sayımına sahip istekler içerir) ve yalnızca satırda yönlendirilmiş veri bulunmadığında gösterilir.",
     "timingTip": "Süre {{duration}} · ilk token {{ttft}}",
@@ -2402,7 +2403,8 @@
       "speedEstimateTooFew": "Çıkış tokenu 200'ün altında olduğundan tahmin yok",
       "noTimingSession": "Oturum günlüklerinde zamanlama verisi yok",
       "noFirstToken": "İlk token zamanlaması yok, dolayısıyla hız yok",
-      "providerId": "Sağlayıcı kimliği"
+      "providerId": "Sağlayıcı kimliği",
+      "firstTokenEstimated": "İlk token (tahmini)"
     },
     "sources": {
       "scanTitle": "Oturum günlüklerini otomatik olarak tara",
@@ -2446,7 +2448,13 @@
       "cacheWrite": "Önbelleğe yazma"
     },
     "prevMonth": "Önceki ay",
-    "nextMonth": "Gelecek ay"
+    "nextMonth": "Gelecek ay",
+    "firstToken": "İlk token",
+    "firstTokenHelpTitle": "İlk token süresi",
+    "firstTokenHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından hesaplanır: önceki günlük satırının yazıldığı andan başladığı için istemcinin isteği hazırlama süresini de içerir ve daha yüksek görünür. Claude Code’da yalnızca yanıt düşünme ile başladığında; Codex’te yalnızca yeni günlüklerde ve yanıt bir araç çağrısıyla başlamadığında hesaplanabilir.",
+    "firstTokenSumHelpTitle": "İlk token süresi nasıl hesaplanır?",
+    "firstTokenSumHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. Satır, isteklerin medyanını gösterir; böylece ara sıra yavaşlayan bir istek (kuyruk, soğuk başlangıç) değeri yükseltmez. Yalnızca yönlendirme hizmetinden geçen başarılı akış istekleri hesaba katılır; 30 günden eski ve günlük toplamlara dahil edilmiş istekler sayılmaz. ≈ işaretli değer oturum günlüklerinden türetilir (daha yüksek görünür ve yalnızca bazı isteklerde hesaplanabilir); yalnızca satırda yönlendirilmiş istek verisi yoksa gösterilir.",
+    "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)"
   },
   "usageScript": {
     "title": "Kullanım Sorgusunu Yapılandır",
@@ -2534,7 +2542,8 @@
     "fieldExtra": "• ekstra: Dize, özel ekran metni",
     "tip1": "• {{apiKey}} ve {{baseUrl}} değişkenleri otomatik olarak değiştirilir",
     "tip2": "• Çıkarıcı işlevi korumalı alan ortamında çalışır, ES2020+ sözdizimini destekler",
-    "tip3": "• Nesne değişmez ifadesini oluşturmak için tüm yapılandırmanın () içine sarılması gerekir"
+    "tip3": "• Nesne değişmez ifadesini oluşturmak için tüm yapılandırmanın () içine sarılması gerekir",
+    "templateSub2API": "Sub2API"
   },
   "dbUpgrade": {
     "title": "Veritabanı sürümü çok yeni",
@@ -3406,7 +3415,8 @@
       "name": "İsim",
       "description": "Açıklama",
       "contentPreview": "İçerik Önizlemesi",
-      "enabledWarning": "İçe aktarmanın ardından bu istem hemen etkinleştirilecek ve diğer istemler devre dışı bırakılacak"
+      "enabledWarning": "İçe aktarmanın ardından bu istem hemen etkinleştirilecek ve diğer istemler devre dışı bırakılacak",
+      "enableAfterImport": "İçe aktardıktan sonra etkinleştir"
     },
     "skill": {
       "title": "Claude Beceri Deposu Ekle",
@@ -3432,7 +3442,14 @@
       "envHijack": "Bu yapılandırma, yükleme kodunun işlenme biçimini değiştiren ortam değişkenlerini ayarlar (örneğin, kitaplıkları enjekte etme veya CA sertifikalarını değiştirme). Yalnızca güvendiğiniz bir kaynaktan içe aktarın.",
       "privateEndpoint": "Bu adres localhost'a veya özel bir ağa işaret eder. Kendi yerel hizmetiniz olmadığı sürece ithalat yapmayın.",
       "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin."
-    }
+    },
+    "providerEnabledWarning": "İçe aktarıldıktan sonra CC Switch hemen bu sağlayıcıya geçer; istemci istekleri yukarıdaki uç noktaya gönderilir",
+    "apiFormat": "API biçimi",
+    "switchAfterImport": "İçe aktardıktan sonra bu sağlayıcıya geç",
+    "addToAppAfterImport": "İçe aktardıktan sonra {{app}} yapılandırmasına ekle",
+    "enableInPiAfterImport": "İçe aktardıktan sonra Pi içinde etkinleştir",
+    "codexConfigScopeHint": "Yalnızca bu sağlayıcıya ait ayarlar (uç nokta, kimlik doğrulama, model, akıl yürütme düzeyi vb.) içe aktarılır; [features], MCP ve izinler gibi genel ayarlar atlanır.",
+    "grokConfigScopeHint": "Yalnızca [models] default tarafından belirtilen model tablosu (görünen ad, açıklama, API arka ucu, bağlam penceresi vb.) içe aktarılır; uç nokta ve anahtar bağlantı parametrelerinden alınır, diğer model tabloları atlanır."
   },
   "iconPicker": {
     "search": "Arama Simgeleri",
@@ -3443,6 +3460,32 @@
       "cloud": "Bulut Platformları",
       "tool": "Geliştirici Araçları",
       "other": "Diğer"
+    },
+    "clear": "Simgeyi temizle",
+    "myIcons": "Simgelerim",
+    "builtinIcons": "Yerleşik simgeler",
+    "myIconsEmpty": "Yükleyip adlandırdığınız görseller burada saklanır; diğer sağlayıcılar da bunları kullanabilir.",
+    "currentIcon": "Mevcut simge",
+    "saveToLibrary": "Simgelerim’e kaydet",
+    "saveCurrentTitle": "Mevcut simgeyi Simgelerim’e kaydet",
+    "uploadTitle": "Bu simgeyi adlandırın",
+    "uploadDescription": "Simgelerim’e eklendikten sonra diğer sağlayıcılar da kullanabilir.",
+    "saveAndUse": "Kaydet ve kullan",
+    "renameTitle": "Simgeyi yeniden adlandır",
+    "rename": "Yeniden adlandır",
+    "delete": "Sil",
+    "deleteTitle": "Simgeyi sil",
+    "deleteMessage": "“{{name}}” Simgelerim’den silinsin mi? Bu simgeyi kullanan sağlayıcılar etkilenmez.",
+    "alreadySaved": "Bu görsel Simgelerim’de zaten “{{name}}” adıyla kayıtlı",
+    "nameLabel": "Ad",
+    "namePlaceholder": "ör. Kendi ağ geçidim",
+    "upload": "Yükle",
+    "uploadHint": "PNG, JPG, WebP veya SVG; en fazla 2 MB. Görsel küçük bir PNG’ye dönüştürülür, Simgelerim’e kaydedilir ve bulut eşitlemesiyle taşınır.",
+    "uploadError": {
+      "unsupported": "Görsel biçimi desteklenmiyor. PNG, JPG, WebP veya SVG dosyası seçin",
+      "tooLarge": "Görsel 2 MB’den büyük",
+      "decodeFailed": "Bu görsel okunamadı; lütfen başka bir görsel deneyin",
+      "dimensions": "Görsel çok büyük (genişlik ve yükseklik 4096 pikseli aşmamalıdır)"
     }
   },
   "providerIcon": {
@@ -4131,9 +4174,9 @@
     },
     "help": {
       "title": "Bağlantı modları nasıl farklılık gösterir?",
-      "direct": "Doğrudan: istemci doğrudan seçilen sağlayıcıya bağlanır; geçiş, yapılandırmasını yeniden yazar.",
-      "route": "Yönlendirme: istekler önce bu makinede CC Switch üzerinden gider; yedek sağlayıcıya geçiş mevcuttur.",
-      "stack": "Birleştirme: çeşitli sağlayıcıların modelleri /model'de birlikte listelenir; yedek sağlayıcıya geçiş yok."
+      "direct": "Doğrudan: CC Switch isteklerinize müdahale etmez; istemci, seçtiğiniz sağlayıcıyla kendi yerel özelliklerini kullanarak doğrudan iletişim kurar.",
+      "route": "Yönlendirme: İstekler bu bilgisayardaki CC Switch üzerinden geçer; anında sağlayıcı değiştirme, yedek sağlayıcıya geçiş, biçim dönüştürme ve diğer gelişmiş özellikleri kullanabilirsiniz.",
+      "stack": "Birleştirme: Farklı sağlayıcıların modelleri /model içinde birlikte listelenir; istemci içinde modeller arasında kesintisiz geçiş yapabilirsiniz."
     }
   },
   "providerCard": {
