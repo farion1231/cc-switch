@@ -395,8 +395,9 @@ fn nonempty_string(value: Option<&Value>) -> Option<&str> {
 /// Root keys owned by the curated Oh My Pi form controls. They are serialized
 /// from the settings object; everything else may come from the raw passthrough
 /// text (with comments) the user typed in the YAML editor.
-const CONTROLLED_PROVIDER_KEYS: [&str; 7] =
-    ["name", "baseUrl", "api", "apiKey", "headers", "compat", "models"];
+const CONTROLLED_PROVIDER_KEYS: [&str; 7] = [
+    "name", "baseUrl", "api", "apiKey", "headers", "compat", "models",
+];
 
 /// Byte range of a top-level (`column 0`) YAML section, hermes-style: the
 /// section spans from its key line to the next top-level key line or EOF.
@@ -408,12 +409,9 @@ fn top_level_section_range(raw: &str, section_key: &str) -> Option<(usize, usize
         let trimmed = line.trim_end_matches('\r');
         let is_key_line = !line.is_empty()
             && !line.starts_with([' ', '\t', '#', '-'])
-            && line
-                .find(':')
-                .is_some_and(|colon| {
-                    line[colon + 1..].is_empty()
-                        || line[colon + 1..].starts_with([' ', '\t', '\r'])
-                });
+            && line.find(':').is_some_and(|colon| {
+                line[colon + 1..].is_empty() || line[colon + 1..].starts_with([' ', '\t', '\r'])
+            });
         if start.is_none() {
             if is_key_line && trimmed.starts_with(&target) {
                 let after = &trimmed[target.len()..];
@@ -523,7 +521,9 @@ pub(crate) fn read_ohmypi_provider_entry_raw(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    Ok(Some(dedented.trim_end_matches(['\n', '\r', ' ']).to_string()))
+    Ok(Some(
+        dedented.trim_end_matches(['\n', '\r', ' ']).to_string(),
+    ))
 }
 
 /// Top-level (column 0) lines of a controlled key, plus the nested block that
@@ -595,7 +595,11 @@ fn compose_provider_entry(
 
     // A stale editor snapshot may repeat the `<key>:` line (comment included);
     // peel it off so it doesn't leak into the passthrough YAML.
-    let first_line = passthrough_text.lines().next().unwrap_or_default().to_string();
+    let first_line = passthrough_text
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string();
     if first_line
         .trim_start()
         .starts_with(&format!("{provider_key}:"))
@@ -650,8 +654,11 @@ fn compose_provider_entry(
             serde_yaml::Value::String(provider_key.to_string()),
             serde_yaml::Value::Mapping(curated),
         );
-        serde_yaml::to_string(&serde_yaml::Value::Mapping(entry))
-            .map_err(|error| AppError::Config(format!("Failed to serialize Oh My Pi provider '{provider_key}': {error}")))?
+        serde_yaml::to_string(&serde_yaml::Value::Mapping(entry)).map_err(|error| {
+            AppError::Config(format!(
+                "Failed to serialize Oh My Pi provider '{provider_key}': {error}"
+            ))
+        })?
     };
     let mut body = body.trim_end_matches('\n').to_string();
     // Re-attach the trailing comments users typed on controlled-key lines
@@ -697,11 +704,7 @@ fn compose_provider_entry(
 
 /// Replace (or append) one provider entry in the raw models.yml text, leaving
 /// every other byte — comments included — untouched.
-fn replace_provider_entry_in_raw(
-    raw: &str,
-    provider_key: &str,
-    entry_fragment: &str,
-) -> String {
+fn replace_provider_entry_in_raw(raw: &str, provider_key: &str, entry_fragment: &str) -> String {
     if let Some((start, end)) = provider_entry_range(raw, provider_key) {
         // Preserve the key line's comment (e.g. `example: #local`): it lives
         // outside the editor text, so only the file can carry it. Re-attach
@@ -717,7 +720,11 @@ fn replace_provider_entry_in_raw(
             fragment.push_str(comment.trim_end_matches('\r'));
             fragment.push('\n');
             fragment.push_str(
-                &entry_fragment.lines().skip(1).collect::<Vec<_>>().join("\n"),
+                &entry_fragment
+                    .lines()
+                    .skip(1)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
             );
             if entry_fragment.ends_with('\n') {
                 fragment.push('\n');
@@ -831,7 +838,6 @@ pub(crate) fn write_ohmypi_provider_entry(
     Ok(true)
 }
 
-
 pub(crate) fn read_ohmypi_native_providers() -> Result<IndexMap<String, Value>, AppError> {
     let _guard = lock_files()?;
     let path = get_ohmypi_models_path()?;
@@ -890,12 +896,13 @@ pub(crate) fn replace_ohmypi_provider(
     expected: &Value,
     replacement: &Value,
 ) -> Result<(), AppError> {
-    replace_ohmypi_provider_if_present(provider_key, expected, replacement, None)?
-        .ok_or_else(|| {
+    replace_ohmypi_provider_if_present(provider_key, expected, replacement, None)?.ok_or_else(
+        || {
             AppError::Conflict(format!(
                 "Oh My Pi provider '{provider_key}' is no longer present in models.yml"
             ))
-        })?;
+        },
+    )?;
     Ok(())
 }
 
@@ -1268,10 +1275,7 @@ mod tests {
         assert!(!dropped.contains("glm-4.7"), "{dropped}");
         // Trailing comments on controlled-key lines are captured for the
         // composer to re-attach.
-        assert_eq!(
-            comments,
-            vec![("baseUrl".to_string(), "local".to_string())]
-        );
+        assert_eq!(comments, vec![("baseUrl".to_string(), "local".to_string())]);
     }
 
     #[test]
@@ -1434,8 +1438,7 @@ mod tests {
         // Editor text mirrors the file plus a new trailing comment on `api`.
         let passthrough = "api: openai-responses #asd\nname: llama.cpp\nbaseUrl: http://127.0.0.1:8080\nauth: none #ab\ndiscovery: #ab\n  type: llama.cpp";
         assert!(
-            write_ohmypi_provider_entry("llama.cpp", &config, Some(passthrough))
-                .expect("write"),
+            write_ohmypi_provider_entry("llama.cpp", &config, Some(passthrough)).expect("write"),
             "must not be a no-op"
         );
         let source = read_agent_file("models.yml");
@@ -1466,8 +1469,10 @@ mod tests {
         // Saving edited fields keeps the key line comment from the file.
         let config = json!({"baseUrl": "https://b.example"});
         let edited = format!("{raw}\n");
-        assert!(write_ohmypi_provider_entry("example", &config, Some(&edited))
-            .expect("text-level write"));
+        assert!(
+            write_ohmypi_provider_entry("example", &config, Some(&edited))
+                .expect("text-level write")
+        );
 
         let source = read_agent_file("models.yml");
         assert!(source.contains("example: #local"), "{source}");
@@ -1483,12 +1488,10 @@ mod tests {
             "providers:\n  example:\n    baseUrl: https://b.example\n",
         );
         let changed_config = json!({"baseUrl": "https://c.example"});
-        assert!(write_ohmypi_provider_entry(
-            "example",
-            &changed_config,
-            Some(&edited)
-        )
-        .expect("write again"));
+        assert!(
+            write_ohmypi_provider_entry("example", &changed_config, Some(&edited))
+                .expect("write again")
+        );
         assert!(
             !read_agent_file("models.yml").contains("example: #"),
             "{}",
@@ -1506,14 +1509,10 @@ mod tests {
         // User only adds a comment in the editor: parsed config is unchanged,
         // but the new comment must reach the file.
         let passthrough = "# my note\nauth: none\n";
-        let previous = replace_ohmypi_provider_if_present(
-            "example",
-            &config,
-            &config,
-            Some(passthrough),
-        )
-        .expect("replace")
-        .expect("present");
+        let previous =
+            replace_ohmypi_provider_if_present("example", &config, &config, Some(passthrough))
+                .expect("replace")
+                .expect("present");
         assert_eq!(previous, config);
 
         let source = read_agent_file("models.yml");
@@ -1536,8 +1535,10 @@ mod tests {
         let mut config = provider();
         config["auth"] = json!("none");
         let passthrough = "# unmanaged key\nauth: none\n";
-        assert!(write_ohmypi_provider_entry("example", &config, Some(passthrough))
-            .expect("text-level write"));
+        assert!(
+            write_ohmypi_provider_entry("example", &config, Some(passthrough))
+                .expect("text-level write")
+        );
 
         let source = read_agent_file("models.yml");
         assert!(source.contains("# top comment"), "{source}");
@@ -1558,8 +1559,10 @@ mod tests {
         assert!(raw.contains("# unmanaged key"), "{raw}");
 
         // Re-writing with the same passthrough is a no-op.
-        assert!(!write_ohmypi_provider_entry("example", &config, Some(passthrough))
-            .expect("idempotent write"));
+        assert!(
+            !write_ohmypi_provider_entry("example", &config, Some(passthrough))
+                .expect("idempotent write")
+        );
     }
 
     #[test]

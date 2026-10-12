@@ -3631,14 +3631,12 @@ fn ohmypi_edit_save_preserves_comments_without_false_conflict() {
     // list() syncs the DB row from models.yml and captures the raw entry.
     let providers = ProviderService::list(&state, AppType::OhMyPi).expect("list");
     let original = providers.get("duolalab").expect("provider").clone();
-    assert!(
-        original
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.ohmypi_passthrough_yaml.as_deref())
-            .expect("raw entry captured")
-            .contains("# proxy endpoint")
-    );
+    assert!(original
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.ohmypi_passthrough_yaml.as_deref())
+        .expect("raw entry captured")
+        .contains("# proxy endpoint"));
 
     // Edit: the form rebuilds settingsConfig (same semantics) and keeps the
     // edited passthrough text; user only tweaked a comment.
@@ -3650,8 +3648,10 @@ fn ohmypi_edit_save_preserves_comments_without_false_conflict() {
     let edited_raw = raw.replace("# proxy endpoint", "# edited comment");
     let mut edited = original.clone();
     edited.settings_config["name"] = json!("Duolalab");
-    edited.meta.get_or_insert_with(ProviderMeta::default).ohmypi_passthrough_yaml =
-        Some(edited_raw);
+    edited
+        .meta
+        .get_or_insert_with(ProviderMeta::default)
+        .ohmypi_passthrough_yaml = Some(edited_raw);
 
     ProviderService::update(&state, AppType::OhMyPi, Some("duolalab"), edited)
         .expect("update without false conflict");
@@ -3668,11 +3668,7 @@ fn ohmypi_edit_save_preserves_comments_without_false_conflict() {
         .get("duolalab")
         .cloned()
         .expect("provider");
-    fs::write(
-        &models_path,
-        after.replace("sk-live", "sk-external"),
-    )
-    .unwrap();
+    fs::write(&models_path, after.replace("sk-live", "sk-external")).unwrap();
     let mut stale = synced.clone();
     stale.settings_config["name"] = json!("Stale");
     let err = ProviderService::update(&state, AppType::OhMyPi, Some("duolalab"), stale)
