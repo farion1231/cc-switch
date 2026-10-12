@@ -404,7 +404,7 @@ paru -S cc-switch-bin
 
 - **クラウド同期** — WebDAV（坚果云、Nextcloud、Synology NAS など）または S3 互換ストレージ（AWS S3、Cloudflare R2、Alibaba Cloud OSS、Tencent Cloud COS など）で複数のデバイス間を同期。CC Switch の設定ディレクトリを Dropbox、OneDrive、iCloud などのクラウドストレージのフォルダに置くことも可能
 - **CLI ツール管理** — サイドバーの「アプリ」ページで Claude Code、Codex などのコマンドラインツールの現在のバージョンと最新バージョンを確認し、ワンクリックでインストール、アップグレード、一括アップグレード。重複インストールの診断にも対応。Windows では WSL 内のツールも管理可能（よくある質問を参照）
-- **Deep Link**（`ccswitch://`）— リンクからプロバイダ、MCP サーバー、プロンプトをワンクリックでインポート、またはスキルリポジトリを追加
+- **Deep Link**（`ccswitch://`）— リンクからプロバイダ、MCP サーバー、プロンプトをワンクリックでインポート、またはスキルリポジトリを追加。リンクは [オンライン生成ツール](https://ccswitch.io/deplink.html) で作成可能
 - **便利ツール** — Claude Code の初回確認のスキップ、AI 署名の非表示、VS Code の Claude Code 拡張を CC Switch のプロバイダ切り替えに追従させる機能など
 - ダーク / ライト / システムテーマ、自動起動、自動アップデーター、アトミック書き込み、自動バックアップ（「設定 → データ」ですべてのバックアップの場所と使用容量を確認可能）、多言語対応（簡体中文/繁體中文/英/日）
 
