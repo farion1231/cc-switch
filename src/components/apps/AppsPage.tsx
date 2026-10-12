@@ -50,7 +50,7 @@ import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   ENV_BADGE_CONFIG,
@@ -362,22 +362,26 @@ export function AppsPage() {
       <ManualUninstallDialog
         open={showUninstallCommands}
         onOpenChange={setShowUninstallCommands}
+        toolVersionByName={tools.toolVersionByName}
       />
 
-      <ConfirmDialog
-        isOpen={pendingUninstall !== null}
-        title={t("settings.toolUninstallConfirmTitle", {
-          tool: pendingUninstall ? toolDisplayName(pendingUninstall) : "",
-        })}
-        message={t("settings.toolUninstallConfirmHint")}
-        confirmText={t("settings.toolUninstall")}
-        onConfirm={() => {
-          if (!pendingUninstall) return;
-          void tools.handleRunToolAction([pendingUninstall], "uninstall");
-          setPendingUninstall(null);
-        }}
-        onCancel={() => setPendingUninstall(null)}
-      />
+      {pendingUninstall && (
+        <ToolUninstallConfirmDialog
+          tool={pendingUninstall}
+          wslShellByTool={tools.wslShellByTool}
+          onConfirm={(uninstallPlan) => {
+            void tools.handleRunToolAction([pendingUninstall], "uninstall", {
+              uninstallPlan,
+            });
+            setPendingUninstall(null);
+          }}
+          onCancel={() => setPendingUninstall(null)}
+          onManualUninstall={() => {
+            setPendingUninstall(null);
+            setShowUninstallCommands(true);
+          }}
+        />
+      )}
 
       <ToolUpgradeConfirmDialog
         isOpen={tools.pendingUpgrade !== null}

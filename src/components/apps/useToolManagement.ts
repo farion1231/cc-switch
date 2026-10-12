@@ -11,6 +11,7 @@ import { settingsApi } from "@/lib/api";
 import type {
   ToolInstallation,
   ToolInstallationReport,
+  ToolUninstallPlan,
 } from "@/lib/api/settings";
 import type { AppId } from "@/lib/api/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -604,6 +605,7 @@ export function useToolManagement() {
       toolNames: ToolName[],
       action: ToolLifecycleAction,
       wslOverrides: Record<string, WslShellPreference>,
+      uninstallPlan?: ToolUninstallPlan,
     ) => {
       const isBatch = toolNames.length > 1;
 
@@ -625,11 +627,20 @@ export function useToolManagement() {
             const previousVersion = previousTool?.version ?? null;
             const previousLatestVersion = previousTool?.latest_version ?? null;
 
-            await settingsApi.runToolLifecycleAction(
-              [toolName],
-              action,
-              wslOverrides,
-            );
+            if (action === "uninstall") {
+              await settingsApi.runToolLifecycleAction(
+                [toolName],
+                action,
+                wslOverrides,
+                uninstallPlan,
+              );
+            } else {
+              await settingsApi.runToolLifecycleAction(
+                [toolName],
+                action,
+                wslOverrides,
+              );
+            }
             if (action === "uninstall") {
               const nextReports = { ...toolManagementState.installReports };
               delete nextReports[toolName];
@@ -815,7 +826,7 @@ export function useToolManagement() {
     async (
       requestedTools: ToolName[],
       action: ToolLifecycleAction,
-      options?: { fromBatchEntry?: boolean },
+      options?: { fromBatchEntry?: boolean; uninstallPlan?: ToolUninstallPlan },
     ) => {
       const toolNames = requestedTools.filter(
         (name) => !toolManagementState.busyTools.has(name),
@@ -844,7 +855,12 @@ export function useToolManagement() {
       try {
         if (action === "install" || action === "uninstall") {
           toolsToRelease = [];
-          await executeRun(toolNames, action, wslOverrides);
+          await executeRun(
+            toolNames,
+            action,
+            wslOverrides,
+            options?.uninstallPlan,
+          );
           return;
         }
         let reports: ToolInstallationReport[];
