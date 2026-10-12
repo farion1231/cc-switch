@@ -19,8 +19,7 @@ impl AppState {
     pub fn new(db: Arc<Database>) -> Self {
         let codex_oauth_manager =
             Arc::new(CodexOAuthManager::new(crate::config::get_app_config_dir()));
-        let proxy_service =
-            ProxyService::new_with_codex_oauth_manager(db.clone(), codex_oauth_manager.clone());
+        let proxy_service = ProxyService::new(db.clone());
 
         Self {
             db,

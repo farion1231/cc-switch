@@ -59,8 +59,7 @@ function renderCard({
         provider={provider}
         appId="claude"
         isCurrent={true}
-        isProxyRunning={false}
-        onSwitch={vi.fn()}
+        presentation={{ chips: [], buttons: [] }}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
         onConfigureUsage={vi.fn()}
@@ -77,8 +76,12 @@ describe("ProviderCard cached usage expansion", () => {
 
     expect(screen.getByText("official-subscription-quota")).toBeInTheDocument();
     expect(screen.queryByText("expanded-plan-details")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("收起")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("展开")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "收起" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "展开" }),
+    ).not.toBeInTheDocument();
   });
 
   it.each<Parameters<typeof renderCard>[0]>([
@@ -90,8 +93,12 @@ describe("ProviderCard cached usage expansion", () => {
     renderCard(options);
 
     expect(screen.queryByText("expanded-plan-details")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("收起")).not.toBeInTheDocument();
-    expect(screen.queryByTitle("展开")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "收起" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "展开" }),
+    ).not.toBeInTheDocument();
   });
 
   it("still expands ordinary multi-plan usage and allows collapsing it", async () => {
@@ -99,8 +106,8 @@ describe("ProviderCard cached usage expansion", () => {
     renderCard();
 
     expect(screen.getByText("expanded-plan-details")).toBeInTheDocument();
-    await user.click(screen.getByTitle("收起"));
+    await user.click(screen.getByRole("button", { name: "收起" }));
     expect(screen.queryByText("expanded-plan-details")).not.toBeInTheDocument();
-    expect(screen.getByTitle("展开")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "展开" })).toBeInTheDocument();
   });
 });

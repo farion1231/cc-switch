@@ -371,6 +371,10 @@ pub struct AppSettings {
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
+    /// 是否在主页面显示 Stack 模式开关（默认关闭）。和 `enable_local_proxy` 二选一，只影响
+    /// Claude Code、Codex：它们的开关换成 Stack 模式开关，其余应用仍显示路由开关。
+    #[serde(default)]
+    pub enable_stack_mode: bool,
     /// User has confirmed the local proxy first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_confirmed: Option<bool>,
@@ -388,8 +392,16 @@ pub struct AppSettings {
     #[serde(default)]
     pub enable_failover_toggle: bool,
     /// Whether to show the project profile switcher on the main page header
-    #[serde(default = "default_show_profile_switcher")]
+    #[serde(default)]
     pub show_profile_switcher: bool,
+    /// Show the provider search button in the provider page header (on by default;
+    /// Cmd/Ctrl+F still opens the search when it is hidden)
+    #[serde(default = "default_true")]
+    pub show_provider_search: bool,
+    /// Check installed CLI tools for new versions at startup (off by default:
+    /// many users do not want to chase every release).
+    #[serde(default)]
+    pub check_tool_updates_on_startup: bool,
     /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
@@ -404,17 +416,32 @@ pub struct AppSettings {
     /// a failed migration retries at startup; cleared when the toggle turns off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unify_codex_migrate_existing: Option<bool>,
+    /// Codex 聚合模式下，合并目录里的每个模型都改用经典子 agent 工具（`multi_agent_version`
+    /// 写 `"v1"`）。新版工具（v2）把派给子 agent 的任务加密，只有主 agent 那家后端解得开，
+    /// 主、子 agent 不在同一家时子 agent 读不到任务。默认关：保持官方目录的值。
+    #[serde(default)]
+    pub codex_stack_classic_subagents: bool,
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
     /// User has confirmed the first-run welcome notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_run_notice_confirmed: Option<bool>,
+    /// User has confirmed the one-time "new layout" dialog shown to upgrading users
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_layout_notice_confirmed: Option<bool>,
+    /// Highest app version whose "what's new" summary the user has seen on this device
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whats_new_seen_version: Option<String>,
     /// User has confirmed the common config first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub common_config_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// 按档的额度百分比写「剩余」还是「已用」（`"left"` / `"used"`，缺省为剩余）。卡片、
+    /// 授权中心和托盘一起变；余额、Credits、重置次数不受影响（#8024）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_display: Option<String>,
 
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -463,6 +490,13 @@ pub struct AppSettings {
     /// 当前 Hermes 供应商 ID（本地存储，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
+
+    // ===== 本地路由（设备级）=====
+    /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
+    /// 客户端和代理不在同一个网络栈时用，比如 WSL2 NAT 模式里的会话连不到 Windows 的回环。
+    /// 只对这台机器有意义，所以不放在会随云同步覆盖的 proxy_config 表里。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_client_host: Option<String>,
 
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
@@ -513,10 +547,6 @@ fn default_minimize_to_tray_on_close() -> bool {
     true
 }
 
-fn default_show_profile_switcher() -> bool {
-    true
-}
-
 fn default_session_auto_sync_enabled() -> bool {
     true
 }
@@ -532,19 +562,26 @@ impl Default for AppSettings {
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,
+            enable_stack_mode: false,
             proxy_confirmed: None,
             usage_confirmed: None,
             usage_dashboard_refresh_interval_ms: None,
             session_auto_sync_enabled: true,
             enable_failover_toggle: false,
-            show_profile_switcher: true,
+            show_profile_switcher: false,
+            show_provider_search: true,
+            check_tool_updates_on_startup: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
+            codex_stack_classic_subagents: false,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
+            new_layout_notice_confirmed: None,
+            whats_new_seen_version: None,
             common_config_confirmed: None,
             language: None,
+            quota_display: None,
             visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,
@@ -562,6 +599,7 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
+            proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
@@ -576,6 +614,11 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// 额度百分比按「已用」写（默认按剩余）
+    pub fn quota_shows_used(&self) -> bool {
+        self.quota_display.as_deref() == Some("used")
+    }
+
     fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
         Some(
@@ -647,6 +690,13 @@ impl AppSettings {
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
+            .map(|s| s.to_string());
+
+        self.quota_display = self
+            .quota_display
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| matches!(*s, "left" | "used"))
             .map(|s| s.to_string());
 
         if let Some(sync) = &mut self.webdav_sync {
@@ -900,6 +950,21 @@ pub fn clear_codex_unify_migrate_existing() -> Result<(), AppError> {
     })
 }
 
+/// 客户端地址（见 [`AppSettings::proxy_client_host`]），去掉首尾空白；没设或为空时是 `None`。
+pub fn get_proxy_client_host() -> Option<String> {
+    get_settings()
+        .proxy_client_host
+        .map(|host| host.trim().to_string())
+        .filter(|host| !host.is_empty())
+}
+
+pub fn set_proxy_client_host(host: &str) -> Result<(), AppError> {
+    let host = host.trim();
+    mutate_settings(|settings| {
+        settings.proxy_client_host = (!host.is_empty()).then(|| host.to_string());
+    })
+}
+
 /// 从文件重新加载设置到内存缓存
 /// 用于导入配置等场景，确保内存缓存与文件同步
 pub fn reload_settings() -> Result<(), AppError> {
@@ -996,6 +1061,16 @@ pub fn unify_codex_session_history() -> bool {
         .unify_codex_session_history
 }
 
+pub fn codex_stack_classic_subagents() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .codex_stack_classic_subagents
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）
@@ -1052,8 +1127,10 @@ pub fn get_effective_current_provider(
     // 1. 从本地 settings 读取
     if let Some(local_id) = get_current_provider(app_type) {
         // 2. 验证该 ID 在数据库中存在
-        let providers = db.get_all_providers(app_type.as_str())?;
-        if providers.contains_key(&local_id) {
+        if db
+            .get_provider_by_id(&local_id, app_type.as_str())?
+            .is_some()
+        {
             // 存在，直接返回
             return Ok(Some(local_id));
         }

@@ -1,4 +1,6 @@
 //! MCode TUI and desktop share the local runtime database.
+use super::blocks::assign_turn_ids;
+use crate::session_manager::model::SessionBlock;
 use crate::session_manager::{SessionMessage, SessionMeta};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
@@ -95,26 +97,37 @@ fn read_messages(conn: &Connection, id: &str) -> rusqlite::Result<Vec<SessionMes
     let rows = query.query_map([id], |row| {
         let data: String = row.get(1)?;
         let value: Value = serde_json::from_str(&data).unwrap_or_default();
-        Ok(SessionMessage {
-            role: row.get(0)?,
-            content: super::utils::extract_text(&value["msg_content"]),
-            ts: row.get::<_, Option<i64>>(2)?.or_else(|| {
-                let time = value
-                    .get("timestamp")
-                    .filter(|v| !v.is_null())
-                    .or_else(|| value.get("created_at"))?;
-                time.as_f64()
-                    .or_else(|| time.as_str()?.parse::<f64>().ok())
-                    .filter(|time| time.is_finite())
-                    .map(|time| time.floor() as i64)
-            }),
-        })
+        let ts = row.get::<_, Option<i64>>(2)?.or_else(|| {
+            let time = value
+                .get("timestamp")
+                .filter(|v| !v.is_null())
+                .or_else(|| value.get("created_at"))?;
+            time.as_f64()
+                .or_else(|| time.as_str()?.parse::<f64>().ok())
+                .filter(|time| time.is_finite())
+                .map(|time| time.floor() as i64)
+        });
+        // 只暴露展示行，没有执行过程：只有 Text
+        let text = super::utils::extract_text(&value["msg_content"]);
+        let blocks = if text.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![SessionBlock::text(text)]
+        };
+        Ok(SessionMessage::from_blocks(
+            row.get::<_, String>(0)?,
+            ts,
+            blocks,
+        ))
     })?;
-    rows.filter_map(|r| match r {
-        Ok(m) if m.content.trim().is_empty() => None,
-        other => Some(other),
-    })
-    .collect()
+    let mut messages = rows
+        .filter_map(|r| match r {
+            Ok(m) if m.is_empty() => None,
+            other => Some(other),
+        })
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assign_turn_ids(&mut messages);
+    Ok(messages)
 }
 
 #[cfg(test)]
@@ -171,6 +184,8 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[1].content, "Tests passed");
         assert_eq!(messages[1].ts, Some(200));
+        assert_eq!(messages[1].blocks, vec![SessionBlock::text("Tests passed")]);
+        assert_eq!(messages[1].turn_id.as_deref(), Some("t1"));
 
         let legacy = serde_json::json!([
             {"role":"user", "msg_content":"Legacy question", "timestamp":"100"},

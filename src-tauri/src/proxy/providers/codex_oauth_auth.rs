@@ -67,10 +67,10 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 
 // Shared by model discovery and generation: ChatGPT gates models by this
-// client identity. Sol and Luna are exposed to ChatGPT accounts at 0.155.0.
-// Bump together when a new model raises its minimal_client_version.
+// client identity. GPT-6.1 Sol enters the ChatGPT-account catalog at 0.159.0.
+// Bump together when a new model raises its minimal_client_version or catalog gate.
 pub(crate) const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
-pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.155.0";
+pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.159.0";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
@@ -228,22 +228,6 @@ impl CodexLiveAuthSwitchGuard {
             )?;
         }
         Ok(())
-    }
-
-    pub(crate) fn clear_outgoing(&self, account_id: &str) -> Result<(), crate::error::AppError> {
-        match self {
-            Self::ExistingAccount(token) => {
-                crate::codex_config::clear_codex_live_auth_for_managed_account_if_unchanged(
-                    account_id,
-                    token.as_deref(),
-                )
-            }
-            Self::MissingAccount => {
-                crate::codex_config::clear_codex_managed_oauth_live_auth_marker_for_account(
-                    account_id,
-                )
-            }
-        }
     }
 }
 

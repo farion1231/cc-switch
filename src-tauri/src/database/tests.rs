@@ -1143,6 +1143,44 @@ fn model_pricing_seed_includes_claude_opus_5_5() {
 }
 
 #[test]
+fn model_pricing_seed_includes_claude_sonnet_5_5_and_haiku_5_5() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price_of = |model_id: &str| -> (String, String, String, String) {
+        conn.query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = ?1",
+            [model_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap_or_else(|e| panic!("query {model_id} price: {e}"))
+    };
+
+    // 缓存读 0.05x = $0.10：不是 Sonnet 5 的 $0.20
+    assert_eq!(
+        price_of("claude-sonnet-5-5"),
+        (
+            "2".to_string(),
+            "10".to_string(),
+            "0.10".to_string(),
+            "2.50".to_string(),
+        )
+    );
+    // 10 万 token 以内的标准档
+    assert_eq!(
+        price_of("claude-haiku-5-5"),
+        (
+            "0.10".to_string(),
+            "0.50".to_string(),
+            "0.01".to_string(),
+            "0.125".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_refresh_finishes_old_repair_chains_and_preserves_custom_prices() {
     let db = Database::memory().expect("create memory db");
     {
@@ -1365,4 +1403,31 @@ fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
         2,
         "file db should persist INCREMENTAL auto_vacuum after VACUUM rebuild"
     );
+}
+
+#[test]
+fn incremental_vacuum_reclaims_entire_freelist() {
+    let temp = NamedTempFile::new().expect("create temp db file");
+    let conn = Connection::open(temp.path()).expect("open temp db");
+    conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
+        .expect("set incremental auto_vacuum");
+    conn.execute_batch(
+        "CREATE TABLE bulk (payload BLOB);
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
+         INSERT INTO bulk SELECT zeroblob(4096) FROM n;
+         DELETE FROM bulk;",
+    )
+    .expect("fill and clear table");
+
+    let freelist = |conn: &Connection| -> i64 {
+        conn.query_row("PRAGMA freelist_count;", [], |row| row.get(0))
+            .expect("read freelist_count")
+    };
+    assert!(
+        freelist(&conn) > 100,
+        "deleting rows should leave free pages"
+    );
+
+    Database::incremental_vacuum_on_conn(&conn).expect("incremental vacuum");
+    assert_eq!(freelist(&conn), 0, "all free pages should be reclaimed");
 }

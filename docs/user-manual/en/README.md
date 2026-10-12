@@ -34,7 +34,8 @@
 │   ├── 4.2 App Routing
 │   ├── 4.3 Failover
 │   ├── 4.4 Usage Statistics
-│   └── 4.5 Connectivity Check
+│   ├── 4.5 Connectivity Check
+│   └── 4.6 Aggregation Mode
 │
 └── 5. FAQ
     ├── 5.1 Configuration Files
@@ -51,17 +52,17 @@
 |------|-------------|
 | [1.1-introduction.md](./1-getting-started/1.1-introduction.md) | Introduction, core features, supported platforms |
 | [1.2-installation.md](./1-getting-started/1.2-installation.md) | Windows/macOS/Linux installation guide |
-| [1.3-interface.md](./1-getting-started/1.3-interface.md) | Interface layout, navigation bar, provider cards |
+| [1.3-interface.md](./1-getting-started/1.3-interface.md) | Sidebar layout, connection mode tabs, provider cards |
 | [1.4-quickstart.md](./1-getting-started/1.4-quickstart.md) | 5-minute quick start tutorial |
-| [1.5-settings.md](./1-getting-started/1.5-settings.md) | Language, theme, directories, cloud sync settings |
+| [1.5-settings.md](./1-getting-started/1.5-settings.md) | The six Settings groups: General, App config, Local routing, Network, Data, About |
 
 ### 2. Provider Management
 
 | File | Description |
 |------|-------------|
 | [2.1-add.md](./2-providers/2.1-add.md) | Using presets, custom configuration, universal providers |
-| [2.2-switch.md](./2-providers/2.2-switch.md) | Main UI switching, tray switching, activation methods |
-| [2.3-edit.md](./2-providers/2.3-edit.md) | Edit configuration, modify API Key, backfill mechanism |
+| [2.2-switch.md](./2-providers/2.2-switch.md) | Direct / Routing / Aggregation, tray switching, activation methods |
+| [2.3-edit.md](./2-providers/2.3-edit.md) | Edit configuration, modify API Key, global settings and edit conflicts |
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | Drag-to-reorder, duplicate provider, delete |
 | [2.5-usage-query.md](./2-providers/2.5-usage-query.md) | Usage query, remaining balance, multi-plan display |
 | [2.6-claude-desktop.md](./2-providers/2.6-claude-desktop.md) | Claude Desktop third-party providers, direct mode, and model mapping |
@@ -71,7 +72,7 @@
 | File | Description |
 |------|-------------|
 | [3.1-mcp.md](./3-extensions/3.1-mcp.md) | MCP protocol, add servers, app binding |
-| [3.2-prompts.md](./3-extensions/3.2-prompts.md) | Create presets, activate/switch, smart backfill |
+| [3.2-prompts.md](./3-extensions/3.2-prompts.md) | Create prompts, enable/switch, target files |
 | [3.3-skills.md](./3-extensions/3.3-skills.md) | Discover skills, install/uninstall, repository management |
 | [3.4-sessions.md](./3-extensions/3.4-sessions.md) | Session Manager: browse, search, resume, delete sessions |
 | [3.5-workspace.md](./3-extensions/3.5-workspace.md) | Workspace files and daily memory (OpenClaw) |
@@ -85,6 +86,7 @@
 | [4.3-failover.md](./4-proxy/4.3-failover.md) | Failover queue, circuit breaker, health status |
 | [4.4-usage.md](./4-proxy/4.4-usage.md) | Usage statistics, trend charts, pricing configuration |
 | [4.5-model-test.md](./4-proxy/4.5-model-test.md) | Connectivity check, check parameters |
+| [4.6-aggregation.md](./4-proxy/4.6-aggregation.md) | Aggregation mode, default provider, `ccs-` prefix, Codex restart |
 
 ### 5. FAQ
 
@@ -106,19 +108,19 @@
 
 ## Version Information
 
-- Documentation version: v3.20.4
-- Last updated: 2026-09-26
-- Applicable to CC Switch v3.20.4+
+- Documentation version: v4.0.4
+- Last updated: 2026-10-07
+- Applicable to CC Switch v4.0.4+
 
-### Recent Major Changes
+### Recent Major Changes (v4.0)
 
-- **New managed apps**: Grok Build (v3.18.0), Pi (v3.20.0), and MiniMax Code (v3.20.4), bringing the total to 10 managed apps — see [1.1 Introduction](./1-getting-started/1.1-introduction.md)
-- **Official Codex presets now connect directly via native Responses**: DeepSeek, Zhipu GLM (v3.20.2), Kimi (v3.20.3), and others no longer need local routing for protocol conversion — see [2.1 Add Provider](./2-providers/2.1-add.md)
-- **Codex switching writes only config.toml**: third-party API keys are no longer written to `auth.json` (v3.20.1) — see [1.5 Personalization → Codex App Enhancements](./1-getting-started/1.5-settings.md#codex-app-enhancements)
-- **"Upstream Format" replaces the "Needs Local Routing" toggle** (v3.16.5) — see [2.1 Add Provider](./2-providers/2.1-add.md#upstream-format-and-model-mapping-for-codex--grok-build)
-- **Connectivity check replaces model test**: it only checks whether the address is reachable and no longer sends real model requests (v3.16.3) — see [4.5 Connectivity Check](./4-proxy/4.5-model-test.md)
-- **Usage statistics without local routing**: usage is imported from each tool's local session logs — see [4.4 Usage Statistics](./4-proxy/4.4-usage.md)
-- **Cloud sync supports S3-compatible storage** — see [1.5 Personalization](./1-getting-started/1.5-settings.md)
+- **Redesigned interface**: the top navigation is replaced by a left sidebar, with separate pages for Usage, Accounts, MCP, Skills, Prompts, Sessions, and Apps; Settings is split into six groups: General, App config, Local routing, Network, Data, About — see [1.3 Interface Overview](./1-getting-started/1.3-interface.md) and [1.5 Personalization](./1-getting-started/1.5-settings.md)
+- **Three connection modes: Direct / Routing / Aggregation**: chosen at the top of each app page; going back to direct is one step — see [2.2 Switch Provider](./2-providers/2.2-switch.md)
+- **New Aggregation mode**: Claude Code and Codex can mix models from several providers in one session — see [4.6 Aggregation Mode](./4-proxy/4.6-aggregation.md)
+- **Switching only changes key fields**: everything other than the address, key, model, and other key fields is left as is; common config snippets are no longer used — see [2.3 Edit Provider](./2-providers/2.3-edit.md)
+- **Accounts**: ChatGPT, GitHub Copilot, xAI, and other sign-ins are managed in one place under **Accounts** in the sidebar — see [1.5 Personalization](./1-getting-started/1.5-settings.md)
+- **Apps page**: install and upgrade each CLI tool, and choose which apps show in the sidebar — see [1.2 Installation Guide](./1-getting-started/1.2-installation.md)
+- For the full list of changes, see the [v4.0 release notes](../../release-notes/v4.0.4-en.md)
 
 ## Contributing
 

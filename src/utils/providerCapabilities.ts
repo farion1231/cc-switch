@@ -84,6 +84,31 @@ export function resolveCodexOfficialIdentity(
     : null;
 }
 
+/**
+ * 官方账号卡（对应后端 `codex_direct::is_official`）：Codex 早期绑定托管账号的官方卡
+ * 没有 category，按身份认。
+ */
+export function isOfficialAccount(
+  appId: AppId,
+  provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
+): boolean {
+  return (
+    provider.category === "official" ||
+    resolveCodexOfficialIdentity(appId, provider) !== null
+  );
+}
+
+/**
+ * 能进故障转移队列（对应后端 `provider_router::provider_supports_failover`）：
+ * Codex 官方账号卡靠客户端自己的登录走路由，不能和别家轮换。
+ */
+export function supportsFailover(
+  appId: AppId,
+  provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
+): boolean {
+  return !supportsOfficialProxyTakeover(appId, provider);
+}
+
 /** Keep the UI capability rule aligned with the Rust takeover policy. */
 export function supportsOfficialProxyTakeover(
   appId: AppId,
@@ -117,11 +142,7 @@ export function providerNeedsRouting(
   appId: AppId,
   provider: Provider,
 ): boolean {
-  if (
-    provider.category === "official" ||
-    resolveCodexOfficialIdentity(appId, provider)
-  )
-    return false;
+  if (isOfficialAccount(appId, provider)) return false;
 
   const isManagedOAuth = isOAuthProviderType(provider.meta?.providerType);
 
