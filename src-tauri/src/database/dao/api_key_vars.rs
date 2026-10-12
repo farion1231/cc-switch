@@ -1,12 +1,19 @@
 //! API Key 变量 DAO。每次写入后同步更新进程内的值缓存
 //! （`services::api_key_vars::resolve`）。
 
+use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use rusqlite::{params, OptionalExtension, Row};
 
+use crate::app_config::AppType;
+use crate::database::dao::universal_providers::{
+    rewrite_api_key_var_refs_in_tx, UNIVERSAL_PROVIDERS_KEY,
+};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+use crate::provider::UniversalProvider;
 use crate::services::api_key_vars::resolve;
 use crate::services::api_key_vars::runner::{ApiKeyRefreshConfig, ApiKeyRefreshState};
 
@@ -20,6 +27,23 @@ pub struct ApiKeyVarRecord {
     pub sort_index: i64,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// A persisted API-key field that prevents a variable from being deleted.
+/// This is intentionally storage-only: callers must not treat it as a live
+/// provider activation signal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiKeyVarReference {
+    pub app: String,
+    pub provider_id: String,
+    pub provider_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeleteApiKeyVarOutcome {
+    Deleted,
+    NotFound,
+    InUse(Vec<ApiKeyVarReference>),
 }
 
 const COLUMNS: &str = "name, script_dir, enabled, timeout_secs, lead_time_secs, value, state_json, sort_index, created_at, updated_at";
@@ -92,6 +116,74 @@ fn next_timestamp(after: i64) -> i64 {
             Err(current) => previous = current,
         }
     }
+}
+
+fn references_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    name: &str,
+) -> Result<Vec<ApiKeyVarReference>, AppError> {
+    let provider_rows = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT id, app_type, name, settings_config FROM providers ORDER BY app_type, id",
+            )
+            .map_err(db_err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(db_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(db_err)?
+    };
+    let mut refs = Vec::new();
+    for (id, app_type, provider_name, raw_settings) in provider_rows {
+        let Ok(app) = AppType::from_str(&app_type) else {
+            continue;
+        };
+        let settings = serde_json::from_str(&raw_settings).map_err(|e| {
+            AppError::Database(format!(
+                "Failed to parse settings_config for {app_type}/{id}: {e}"
+            ))
+        })?;
+        if resolve::referenced_vars(&app, &settings)
+            .iter()
+            .any(|reference| reference == name)
+        {
+            refs.push(ApiKeyVarReference {
+                app: app_type,
+                provider_id: id,
+                provider_name,
+            });
+        }
+    }
+
+    let raw_universal: Option<String> = tx
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [UNIVERSAL_PROVIDERS_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_err)?;
+    if let Some(raw_universal) = raw_universal {
+        let providers: HashMap<String, UniversalProvider> = serde_json::from_str(&raw_universal)
+            .map_err(|e| AppError::Database(format!("解析统一供应商数据失败: {e}")))?;
+        for provider in providers.values() {
+            if resolve::parse_ref(&provider.api_key) == Some(name) {
+                refs.push(ApiKeyVarReference {
+                    app: "universal".to_string(),
+                    provider_id: provider.id.clone(),
+                    provider_name: provider.name.clone(),
+                });
+            }
+        }
+    }
+    Ok(refs)
 }
 
 impl Database {
@@ -200,6 +292,54 @@ impl Database {
                     }
                 }
             };
+            if lookup_name != name {
+                // Keep every stored template in the same transaction as the
+                // variable rename. Updating through the public provider DAO
+                // would acquire the connection again and could leave partial
+                // rewrites behind on failure.
+                let provider_rows = {
+                    let mut stmt = tx
+                        .prepare(
+                            "SELECT id, app_type, settings_config FROM providers ORDER BY app_type, id",
+                        )
+                        .map_err(db_err)?;
+                    let rows = stmt
+                        .query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                            ))
+                        })
+                        .map_err(db_err)?;
+                    rows.collect::<Result<Vec<_>, _>>().map_err(db_err)?
+                };
+                for (id, app_type, raw_settings) in provider_rows {
+                    let Ok(app) = AppType::from_str(&app_type) else {
+                        continue;
+                    };
+                    let settings = serde_json::from_str(&raw_settings).map_err(|e| {
+                        AppError::Database(format!(
+                            "Failed to parse settings_config for {app_type}/{id}: {e}"
+                        ))
+                    })?;
+                    if let Some(rewritten) =
+                        resolve::rewrite_refs(&app, &settings, lookup_name, name)
+                    {
+                        let json = serde_json::to_string(&rewritten).map_err(|e| {
+                            AppError::Database(format!(
+                                "Failed to serialize settings_config for {app_type}/{id}: {e}"
+                            ))
+                        })?;
+                        tx.execute(
+                            "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3",
+                            params![json, id, app_type],
+                        )
+                        .map_err(db_err)?;
+                    }
+                }
+                rewrite_api_key_var_refs_in_tx(&tx, lookup_name, name)?;
+            }
             tx.commit().map_err(db_err)?;
             if lookup_name != name {
                 resolve::cache_rename(lookup_name, name);
@@ -232,6 +372,42 @@ impl Database {
             deleted
         };
         Ok(n > 0)
+    }
+
+    /// Delete a variable only when no persisted provider or unified-provider
+    /// API-key field refers to it. The reference scan and DELETE share one
+    /// transaction, closing the check-then-delete race in the service layer.
+    pub fn delete_api_key_var_if_unused(
+        &self,
+        name: &str,
+    ) -> Result<DeleteApiKeyVarOutcome, AppError> {
+        let outcome = {
+            let mut conn = lock_conn!(self.conn);
+            let tx = conn.transaction().map_err(db_err)?;
+            let timestamps = tx
+                .query_row(
+                    "SELECT created_at, updated_at FROM api_key_vars WHERE name = ?1",
+                    params![name],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .optional()
+                .map_err(db_err)?;
+            let Some((created_at, updated_at)) = timestamps else {
+                return Ok(DeleteApiKeyVarOutcome::NotFound);
+            };
+            let references = references_in_tx(&tx, name)?;
+            if !references.is_empty() {
+                return Ok(DeleteApiKeyVarOutcome::InUse(references));
+            }
+            tx.execute("DELETE FROM api_key_vars WHERE name = ?1", params![name])
+                .map_err(db_err)?;
+            tx.commit().map_err(db_err)?;
+            observe_timestamp(created_at);
+            observe_timestamp(updated_at);
+            resolve::cache_remove(name);
+            DeleteApiKeyVarOutcome::Deleted
+        };
+        Ok(outcome)
     }
 
     /// 写入一次刷新结果（`value` 为 None 时保留旧值）
@@ -320,6 +496,8 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
+    use crate::provider::UniversalProvider;
 
     fn cfg(dir: &str, enabled: bool) -> ApiKeyRefreshConfig {
         ApiKeyRefreshConfig {
@@ -328,6 +506,235 @@ mod tests {
             timeout_secs: Some(10),
             lead_time_secs: None,
         }
+    }
+
+    fn insert_claude_provider(db: &Database, id: &str, key: &str) -> Result<(), AppError> {
+        let conn = crate::database::lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, meta)
+             VALUES (?1, ?2, ?3, ?4, '{}')",
+            params![
+                id,
+                AppType::Claude.as_str(),
+                id,
+                serde_json::json!({"env": {"ANTHROPIC_AUTH_TOKEN": key}}).to_string(),
+            ],
+        )
+        .map_err(db_err)?;
+        Ok(())
+    }
+
+    fn claude_provider_key(db: &Database, id: &str) -> Result<String, AppError> {
+        let conn = crate::database::lock_conn!(db.conn);
+        let raw: String = conn
+            .query_row(
+                "SELECT settings_config FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![id, AppType::Claude.as_str()],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        serde_json::from_str::<serde_json::Value>(&raw)
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .pointer("/env/ANTHROPIC_AUTH_TOKEN")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| AppError::Database("missing test provider key".to_string()))
+    }
+
+    fn save_universal_ref(db: &Database, id: &str, key: &str) -> Result<(), AppError> {
+        db.save_universal_provider(&UniversalProvider::new(
+            id.to_string(),
+            id.to_string(),
+            "custom".to_string(),
+            "https://example.invalid/v1".to_string(),
+            key.to_string(),
+        ))
+    }
+
+    #[test]
+    fn rename_rewrites_provider_and_universal_templates_atomically() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.upsert_api_key_var(None, "DAO_T_RENAME_OLD", &cfg("/old", true))?;
+        db.update_api_key_var_result(
+            "DAO_T_RENAME_OLD",
+            Some("test-key-value-old"),
+            &ApiKeyRefreshState::default(),
+        )?;
+        db.update_api_key_var_result(
+            "DAO_T_RENAME_OLD",
+            Some("test-key-value"),
+            &ApiKeyRefreshState::default(),
+        )?;
+        insert_claude_provider(&db, "rename-provider", "{{DAO_T_RENAME_OLD}}")?;
+        save_universal_ref(&db, "rename-universal", "{{DAO_T_RENAME_OLD}}")?;
+
+        db.upsert_api_key_var(
+            Some("DAO_T_RENAME_OLD"),
+            "DAO_T_RENAME_NEW",
+            &cfg("/old", true),
+        )?;
+
+        assert_eq!(
+            claude_provider_key(&db, "rename-provider")?,
+            "{{DAO_T_RENAME_NEW}}"
+        );
+        assert_eq!(
+            db.get_universal_provider("rename-universal")?
+                .expect("universal provider")
+                .api_key,
+            "{{DAO_T_RENAME_NEW}}"
+        );
+        assert!(db.get_api_key_var("DAO_T_RENAME_OLD")?.is_none());
+        assert_eq!(
+            resolve::lookup("DAO_T_RENAME_NEW"),
+            (resolve::RefStatus::Ok, Some("test-key-value".to_string()))
+        );
+        assert_eq!(
+            resolve::known_values("DAO_T_RENAME_NEW"),
+            vec![
+                "test-key-value".to_string(),
+                "test-key-value-old".to_string()
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rename_rolls_back_when_provider_rewrite_fails() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.upsert_api_key_var(None, "DAO_T_PROVIDER_ABORT_OLD", &cfg("/old", true))?;
+        insert_claude_provider(&db, "provider-abort", "{{DAO_T_PROVIDER_ABORT_OLD}}")?;
+        save_universal_ref(
+            &db,
+            "provider-abort-universal",
+            "{{DAO_T_PROVIDER_ABORT_OLD}}",
+        )?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER api_key_var_provider_abort BEFORE UPDATE ON providers
+                 BEGIN SELECT RAISE(ABORT, 'provider rewrite rejected'); END;",
+            )
+            .map_err(db_err)?;
+        }
+
+        assert!(db
+            .upsert_api_key_var(
+                Some("DAO_T_PROVIDER_ABORT_OLD"),
+                "DAO_T_PROVIDER_ABORT_NEW",
+                &cfg("/old", true),
+            )
+            .is_err());
+        assert!(db.get_api_key_var("DAO_T_PROVIDER_ABORT_OLD")?.is_some());
+        assert!(db.get_api_key_var("DAO_T_PROVIDER_ABORT_NEW")?.is_none());
+        assert_eq!(
+            claude_provider_key(&db, "provider-abort")?,
+            "{{DAO_T_PROVIDER_ABORT_OLD}}"
+        );
+        assert_eq!(
+            db.get_universal_provider("provider-abort-universal")?
+                .expect("universal provider")
+                .api_key,
+            "{{DAO_T_PROVIDER_ABORT_OLD}}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rename_rolls_back_when_universal_rewrite_fails() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.upsert_api_key_var(None, "DAO_T_UNIVERSAL_ABORT_OLD", &cfg("/old", true))?;
+        insert_claude_provider(&db, "universal-abort", "{{DAO_T_UNIVERSAL_ABORT_OLD}}")?;
+        save_universal_ref(
+            &db,
+            "universal-abort-provider",
+            "{{DAO_T_UNIVERSAL_ABORT_OLD}}",
+        )?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER api_key_var_universal_abort BEFORE UPDATE ON settings
+                 WHEN NEW.key = 'universal_providers'
+                 BEGIN SELECT RAISE(ABORT, 'universal rewrite rejected'); END;",
+            )
+            .map_err(db_err)?;
+        }
+
+        assert!(db
+            .upsert_api_key_var(
+                Some("DAO_T_UNIVERSAL_ABORT_OLD"),
+                "DAO_T_UNIVERSAL_ABORT_NEW",
+                &cfg("/old", true),
+            )
+            .is_err());
+        assert!(db.get_api_key_var("DAO_T_UNIVERSAL_ABORT_OLD")?.is_some());
+        assert!(db.get_api_key_var("DAO_T_UNIVERSAL_ABORT_NEW")?.is_none());
+        assert_eq!(
+            claude_provider_key(&db, "universal-abort")?,
+            "{{DAO_T_UNIVERSAL_ABORT_OLD}}"
+        );
+        assert_eq!(
+            db.get_universal_provider("universal-abort-provider")?
+                .expect("universal provider")
+                .api_key,
+            "{{DAO_T_UNIVERSAL_ABORT_OLD}}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn guarded_delete_rechecks_provider_and_universal_references() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.upsert_api_key_var(None, "DAO_T_DELETE_GUARD", &cfg("/delete", true))?;
+        insert_claude_provider(&db, "delete-guard-provider", "{{DAO_T_DELETE_GUARD}}")?;
+        save_universal_ref(&db, "delete-guard-universal", "{{DAO_T_DELETE_GUARD}}")?;
+
+        let DeleteApiKeyVarOutcome::InUse(references) =
+            db.delete_api_key_var_if_unused("DAO_T_DELETE_GUARD")?
+        else {
+            panic!("persisted references must prevent deletion");
+        };
+        assert_eq!(references.len(), 2);
+        assert!(references.iter().any(|reference| {
+            reference.app == "claude" && reference.provider_name == "delete-guard-provider"
+        }));
+        assert!(references.iter().any(|reference| {
+            reference.app == "universal" && reference.provider_name == "delete-guard-universal"
+        }));
+        assert!(db.get_api_key_var("DAO_T_DELETE_GUARD")?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn guarded_delete_keeps_cache_when_database_delete_rolls_back() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.upsert_api_key_var(None, "DAO_T_DELETE_ABORT", &cfg("/delete", true))?;
+        db.update_api_key_var_result(
+            "DAO_T_DELETE_ABORT",
+            Some("delete-guard-value"),
+            &ApiKeyRefreshState::default(),
+        )?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER api_key_var_delete_abort BEFORE DELETE ON api_key_vars
+                 BEGIN SELECT RAISE(ABORT, 'delete rejected'); END;",
+            )
+            .map_err(db_err)?;
+        }
+
+        assert!(db
+            .delete_api_key_var_if_unused("DAO_T_DELETE_ABORT")
+            .is_err());
+        assert!(db.get_api_key_var("DAO_T_DELETE_ABORT")?.is_some());
+        assert_eq!(
+            resolve::lookup("DAO_T_DELETE_ABORT"),
+            (
+                resolve::RefStatus::Ok,
+                Some("delete-guard-value".to_string())
+            )
+        );
+        Ok(())
     }
 
     #[test]

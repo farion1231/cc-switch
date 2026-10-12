@@ -4033,6 +4033,65 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn opencode_v2_reimport_preserves_template_from_legacy_full_wrapper() {
+        use crate::provider::OpenCodeConfigFormat;
+
+        with_test_home(|state, _| {
+            crate::services::api_key_vars::resolve::cache_set(
+                "OPENCODE_V2_TEMPLATE",
+                true,
+                Some("resolved-opencode-secret"),
+            );
+            let id = "wrapped-v2-template";
+            let fragment = json!({
+                "settings": {
+                    "baseURL": "https://api.example.com/v1",
+                    "apiKey": "{{OPENCODE_V2_TEMPLATE}}"
+                }
+            });
+            let mut wrapped_settings = json!({"providers": {}});
+            wrapped_settings["providers"][id] = fragment;
+            let mut provider = Provider::with_id(
+                id.to_string(),
+                "Wrapped V2".to_string(),
+                wrapped_settings,
+                None,
+            );
+            provider.meta = Some(ProviderMeta {
+                opencode_config_format: Some(OpenCodeConfigFormat::V2),
+                ..Default::default()
+            });
+
+            // Existing synced rows can still be full-config wrappers. Enabling
+            // projects the resolved V2 fragment, then a live import must put
+            // the original template back in the database.
+            ProviderService::add(state, AppType::OpenCode, provider, true)
+                .expect("enable wrapped V2 provider");
+            assert_eq!(
+                crate::opencode_config::read_opencode_config().unwrap()["providers"][id]
+                    ["settings"]["apiKey"],
+                json!("resolved-opencode-secret")
+            );
+
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+            let saved = state
+                .db
+                .get_provider_by_id(id, AppType::OpenCode.as_str())
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                saved.settings_config["settings"]["apiKey"],
+                json!("{{OPENCODE_V2_TEMPLATE}}")
+            );
+            assert_eq!(
+                saved.meta.unwrap().opencode_config_format,
+                Some(OpenCodeConfigFormat::V2)
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn malformed_native_opencode_provider_allows_legacy_import_update_and_sync() {
         use crate::provider::OpenCodeConfigFormat;
         for native in [
@@ -5464,7 +5523,13 @@ impl ProviderService {
                     if let Some(name) = config.get("name").and_then(Value::as_str) {
                         provider.name = name.into();
                     }
-                    provider.settings_config = config.clone();
+                    provider.settings_config =
+                        crate::services::api_key_vars::resolve::preserve_refs(
+                            &AppType::Mcode,
+                            &provider.settings_config,
+                            config,
+                        )
+                        .unwrap_or_else(|| config.clone());
                 }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
                 state.db.save_provider("mcode", provider)?;
@@ -5504,12 +5569,17 @@ impl ProviderService {
         let previous = state.db.get_provider_by_id(&provider.id, "mcode")?;
         state.db.save_provider("mcode", provider)?;
         if write_live {
-            let config = provider.settings_config.clone();
-            let written = if create {
-                crate::mcode_config::add_provider(&provider.id, config)
-            } else {
-                crate::mcode_config::set_provider(&provider.id, config)
-            };
+            let written = crate::services::api_key_vars::resolve::resolve_settings(
+                &AppType::Mcode,
+                &provider.settings_config,
+            )
+            .and_then(|config| {
+                if create {
+                    crate::mcode_config::add_provider(&provider.id, config.into_owned())
+                } else {
+                    crate::mcode_config::set_provider(&provider.id, config.into_owned())
+                }
+            });
             if let Err(error) = written {
                 match previous {
                     Some(previous) => state.db.save_provider("mcode", &previous)?,
@@ -6868,6 +6938,14 @@ impl ProviderService {
         McpService::sync_enabled_for_app(state, &app_type)
     }
 
+    pub(crate) fn sync_api_key_var_for_provider(
+        state: &AppState,
+        app_type: &AppType,
+        provider_id: &str,
+    ) -> Result<bool, AppError> {
+        live::sync_api_key_var_for_provider(state, app_type, provider_id)
+    }
+
     pub fn migrate_legacy_common_config_usage(
         state: &AppState,
         app_type: AppType,
@@ -8091,6 +8169,12 @@ impl ProviderService {
         provider: UniversalProvider,
     ) -> Result<bool, AppError> {
         icon::validate_icon(provider.icon.as_deref())?;
+        if crate::services::api_key_vars::resolve::is_malformed_ref(&provider.api_key) {
+            return Err(crate::services::api_key_vars::resolve::unresolved_error(
+                &provider.api_key,
+                &crate::services::api_key_vars::resolve::RefStatus::Malformed,
+            ));
+        }
         // 保存统一供应商
         state.db.save_universal_provider(&provider)?;
 

@@ -4813,7 +4813,7 @@
       "filesTitle": "テンプレートファイル（ZIP と同じ内容）"
     },
     "title": "API キー変数",
-    "description": "ローカルスクリプトで自動更新される API キーを定義します。Claude・Codex・Gemini・Grok のプロバイダーの API キー欄に、変数名を二重の波かっこで囲んで入力すると参照できます。更新されると、使用中のプロバイダーの設定も自動で更新されます。スクリプトディレクトリから index.mjs、次に index.js を探して node で実行し、stdout に JSON（apiKey、expiresAt（任意）、refreshAfter（任意）、message（任意））を出力します。終了コード 2 は手動対応が必要、それ以外の 0 以外のコードは自動で再試行します。値はこのデバイスにのみ保存され、エクスポートや同期はされません。",
+    "description": "ローカルスクリプトで自動更新される API キーを定義します。Claude、Claude Desktop、Codex、Gemini、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code と統合プロバイダーの API キー欄で、変数名を二重の波かっこで囲んで入力すると参照できます。モデル単位の apiKey、api_key も対応します。更新されると、使用中のプロバイダーの設定も自動で更新されます。スクリプトディレクトリから index.mjs、次に index.js を探して node で実行し、stdout に JSON（apiKey、expiresAt（任意）、refreshAfter（任意）、message（任意））を出力します。終了コード 2 は手動対応が必要、それ以外の 0 以外のコードは自動で再試行します。値はこのデバイスにのみ保存され、エクスポートや同期はされません。",
     "add": "変数を追加",
     "empty": "変数はまだありません。スクリプトディレクトリを指定して追加し、プロバイダーの API キーで参照してください。",
     "status": {
@@ -4828,6 +4828,7 @@
     "noValue": "値なし",
     "noScriptDir": "スクリプトディレクトリ未設定",
     "referencedBy": "使用中：{{list}}",
+    "universalProvider": "統合プロバイダー/{{name}}",
     "unreferenced": "どのプロバイダーからも参照されていません",
     "refreshNow": "今すぐ更新",
     "deleteBlocked": "プロバイダーから参照されているため削除できません",

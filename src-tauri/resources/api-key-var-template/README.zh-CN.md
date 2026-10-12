@@ -10,6 +10,10 @@
 
 演示 Key 不能访问真实 API，只用于验证脚本契约和多文件导入。
 
+## 支持的 API Key 字段
+
+在支持的 API Key 字段中将 `{{MY_KEY}}` 作为完整值填写即可。CC Switch 会为 Claude、Claude Desktop、Codex、Gemini、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code 和统一供应商解析它；原生配置编辑器中的模型级 `apiKey`、`api_key` 字段也包含在内。不会在 `Bearer` 字符串、任意请求头、MCP/工具凭据、用量设置或 OAuth 凭据中插值。
+
 ## 配置 HTTP 供应商
 
 1. 编辑 `config.mjs`，或在启动 CC Switch 前设置 `API_KEY_TEMPLATE_MODE=http` 和 `API_KEY_REFRESH_URL=https://your-provider.example/refresh`。默认的 `example.invalid` 地址会被刻意拒绝。

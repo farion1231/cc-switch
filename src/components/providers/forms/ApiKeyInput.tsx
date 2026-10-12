@@ -19,7 +19,7 @@ interface ApiKeyInputProps {
   labelAside?: React.ReactNode;
   /** 输入框下方的说明文字 */
   hint?: React.ReactNode;
-  /** 允许填写 `{{NAME}}` 引用 API Key 变量（Claude / Codex / Gemini / Grok） */
+  /** 允许填写 `{{NAME}}` 引用 API Key 变量 */
   allowVarRef?: boolean;
 }
 

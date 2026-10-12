@@ -568,6 +568,54 @@ pub fn set_provider_with_format(
     .map(|_| ())
 }
 
+/// Replace only a declaration that still exists in the same OpenCode format.
+/// The membership check is performed under the document lock so a provider
+/// removed by OpenCode after scheduling a refresh is never recreated.
+pub(crate) fn replace_provider_if_present_with_format(
+    id: &str,
+    config: Value,
+    format: OpenCodeConfigFormat,
+) -> Result<bool, AppError> {
+    let _guard = opencode_config_lock().lock()?;
+    let path = get_opencode_config_path()?;
+    let mut document = OpenCodeDocument::load(&path)?;
+    if document.previous_contents.is_none() {
+        return Ok(false);
+    }
+    let mut desired = document.document.value().clone();
+    let key = match format {
+        OpenCodeConfigFormat::V1 => {
+            // A valid native declaration wins over a legacy declaration. Do not
+            // revive or modify the shadowed V1 source during a refresh.
+            if desired
+                .get("providers")
+                .and_then(|providers| providers.get(id))
+                .is_some_and(is_native_provider)
+            {
+                return Ok(false);
+            }
+            "provider"
+        }
+        OpenCodeConfigFormat::V2 => "providers",
+    };
+    let Some(providers) = desired.get_mut(key).and_then(Value::as_object_mut) else {
+        return Ok(false);
+    };
+    if !providers.contains_key(id) {
+        return Ok(false);
+    }
+    if format == OpenCodeConfigFormat::V2 {
+        validate_native_provider(id, &config)?;
+    }
+    providers.insert(id.to_string(), config);
+    if !document.document.apply(&desired)? {
+        // The declaration is present and already matches the refresh payload.
+        return Ok(true);
+    }
+    document.save()?;
+    Ok(true)
+}
+
 pub fn remove_provider(id: &str) -> Result<(), AppError> {
     edit_config(get_opencode_config_path, |config| {
         let removed_legacy = config
@@ -704,6 +752,48 @@ mod tests {
         let dir = home.join(".config").join("opencode");
         std::fs::create_dir_all(&dir).expect("create config dir");
         std::fs::write(dir.join("opencode.json"), content).expect("write config");
+    }
+
+    #[test]
+    fn replace_if_present_preserves_absent_document_and_updates_matching_format() {
+        let home = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(home.path());
+        write_config(
+            home.path(),
+            r#"{"provider":{"one":{"apiKey":"old","extra":1}},"providers":{"two":{"package":"x"}}}"#,
+        );
+        let path = get_opencode_config_path().unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+        assert!(!replace_provider_if_present_with_format(
+            "missing",
+            json!({"apiKey":"new"}),
+            OpenCodeConfigFormat::V1
+        )
+        .unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        assert!(replace_provider_if_present_with_format(
+            "one",
+            json!({"apiKey":"new","extra":1}),
+            OpenCodeConfigFormat::V1
+        )
+        .unwrap());
+        assert_eq!(
+            read_opencode_config().unwrap()["provider"]["one"]["apiKey"],
+            "new"
+        );
+        assert!(replace_provider_if_present_with_format(
+            "one",
+            json!({"apiKey":"new","extra":1}),
+            OpenCodeConfigFormat::V1
+        )
+        .unwrap());
+        // V1 refresh must not write a foreign V2 declaration.
+        assert!(!replace_provider_if_present_with_format(
+            "two",
+            json!({"apiKey":"new"}),
+            OpenCodeConfigFormat::V1
+        )
+        .unwrap());
     }
 
     #[test]

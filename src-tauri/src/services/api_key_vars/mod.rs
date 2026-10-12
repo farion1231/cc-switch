@@ -1,7 +1,7 @@
 //! API Key 变量：在「设置 → API Key 变量」中定义、由本机脚本自动刷新的命名 Key。
 //!
 //! 供应商的 API Key 字段写 `{{NAME}}` 引用变量（数据库保存字面模板），在用到 Key 的
-//! 地方再解析（见 [`resolve`]）。变量刷新成功后，重写所有引用它的当前供应商的 live 配置。
+//! 地方再解析（见 [`resolve`]）。刷新只更新正在使用的切换式供应商及原生配置中已启用的累加式供应商。
 
 pub mod resolve;
 pub mod runner;
@@ -171,12 +171,10 @@ fn current_provider_id(db: &Database, app: &AppType) -> Option<String> {
 }
 
 /// 所有供应商对变量的引用：name -> 引用列表
-pub fn all_references(db: &Database) -> HashMap<String, Vec<VarReference>> {
+pub fn all_references(db: &Database) -> Result<HashMap<String, Vec<VarReference>>, AppError> {
     let mut out: HashMap<String, Vec<VarReference>> = HashMap::new();
     for app in resolve::supported_apps() {
-        let Ok(providers) = db.get_all_providers(app.as_str()) else {
-            continue;
-        };
+        let providers = db.get_all_providers(app.as_str())?;
         let current = current_provider_id(db, &app);
         for provider in providers.values() {
             for name in resolve::referenced_vars(&app, &provider.settings_config) {
@@ -189,7 +187,17 @@ pub fn all_references(db: &Database) -> HashMap<String, Vec<VarReference>> {
             }
         }
     }
-    out
+    for provider in db.get_all_universal_providers()?.values() {
+        if let Some(name) = resolve::parse_ref(&provider.api_key) {
+            out.entry(name.to_string()).or_default().push(VarReference {
+                app: "universal".to_string(),
+                provider_id: provider.id.clone(),
+                provider_name: provider.name.clone(),
+                is_current: false,
+            });
+        }
+    }
+    Ok(out)
 }
 
 fn to_view(rec: ApiKeyVarRecord, refs: &HashMap<String, Vec<VarReference>>) -> ApiKeyVarView {
@@ -207,7 +215,7 @@ fn to_view(rec: ApiKeyVarRecord, refs: &HashMap<String, Vec<VarReference>>) -> A
 }
 
 pub fn list_views(db: &Database) -> Result<Vec<ApiKeyVarView>, AppError> {
-    let refs = all_references(db);
+    let refs = all_references(db)?;
     Ok(db
         .list_api_key_vars()?
         .into_iter()
@@ -329,45 +337,35 @@ pub fn upsert(
 
     if renaming {
         let old = original.unwrap_or_default();
-        let mut rewritten = 0usize;
-        for app in resolve::supported_apps() {
-            for provider in db.get_all_providers(app.as_str())?.values() {
-                if let Some(new_settings) =
-                    resolve::rewrite_refs(&app, &provider.settings_config, old, name)
-                {
-                    db.update_provider_settings_config(app.as_str(), &provider.id, &new_settings)?;
-                    rewritten += 1;
-                }
-            }
-        }
-        log::info!("[ApiKeyVars] 变量 {old} 改名为 {name}，改写了 {rewritten} 个供应商的引用");
+        log::info!("[ApiKeyVars] 变量 {old} 改名为 {name}，已在同一事务中更新供应商引用");
     }
     wake_scheduler();
-    let refs = all_references(db);
+    let refs = all_references(db)?;
     Ok(to_view(record, &refs))
 }
 
 /// 删除变量：仍被引用时拒绝
 pub fn delete(state: &AppState, name: &str) -> Result<(), AppError> {
-    let refs = all_references(&state.db);
-    if let Some(list) = refs.get(name).filter(|l| !l.is_empty()) {
-        let names = list
-            .iter()
-            .map(|r| format!("{}/{}", r.app, r.provider_name))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(AppError::localized(
-            "api_key_vars.in_use",
-            format!("变量 {name} 正被以下供应商引用，无法删除：{names}"),
-            format!(
+    use crate::database::DeleteApiKeyVarOutcome;
+
+    match state.db.delete_api_key_var_if_unused(name)? {
+        DeleteApiKeyVarOutcome::Deleted => Ok(()),
+        DeleteApiKeyVarOutcome::NotFound => Err(var_not_found(name)),
+        DeleteApiKeyVarOutcome::InUse(references) => {
+            let names = references
+                .iter()
+                .map(|r| format!("{}/{}", r.app, r.provider_name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(AppError::localized(
+                "api_key_vars.in_use",
+                format!("变量 {name} 正被以下供应商引用，无法删除：{names}"),
+                format!(
                 "Variable {name} is referenced by these providers and cannot be deleted: {names}"
             ),
-        ));
+            ))
+        }
     }
-    if !state.db.delete_api_key_var(name)? {
-        return Err(var_not_found(name));
-    }
-    Ok(())
 }
 
 /// 切换前检查：目标供应商引用的变量都能解析
@@ -404,36 +402,46 @@ async fn execute(rec: &ApiKeyVarRecord, reason: RefreshReason) -> Result<ScriptR
     run_script(&rec.config, &ctx, node_setting.as_deref(), &secrets).await
 }
 
-/// 重写所有引用 `name` 的当前供应商的 live 配置
+/// 更新引用 `name` 且已启用的供应商，逐项报告失败；不能启用仅保存在库中的供应商。
 pub fn propagate(state: &AppState, name: &str) -> (Vec<VarReference>, Vec<String>) {
     let mut updated = Vec::new();
     let mut errors = Vec::new();
     for app in resolve::supported_apps() {
-        let Some(current) = current_provider_id(&state.db, &app) else {
-            continue;
+        let providers = match state.db.get_all_providers(app.as_str()) {
+            Ok(providers) => providers,
+            Err(error) => {
+                errors.push(format!("{}: {error}", app.as_str()));
+                continue;
+            }
         };
-        let Ok(Some(provider)) = state.db.get_provider_by_id(&current, app.as_str()) else {
-            continue;
-        };
-        if !resolve::referenced_vars(&app, &provider.settings_config)
-            .iter()
-            .any(|n| n == name)
-        {
-            continue;
-        }
-        match crate::services::ProviderService::sync_current_provider_for_app(state, app.clone()) {
-            Ok(()) => updated.push(VarReference {
-                app: app.as_str().to_string(),
-                provider_id: provider.id.clone(),
-                provider_name: provider.name.clone(),
-                is_current: true,
-            }),
-            Err(e) => {
-                log::warn!(
-                    "[ApiKeyVars] 变量 {name} 刷新后重写 {} live 配置失败: {e}",
-                    app.as_str()
-                );
-                errors.push(format!("{}/{}: {e}", app.as_str(), provider.name));
+        let current = current_provider_id(&state.db, &app);
+        for provider in providers.values() {
+            if !resolve::referenced_vars(&app, &provider.settings_config)
+                .iter()
+                .any(|n| n == name)
+            {
+                continue;
+            }
+            match crate::services::ProviderService::sync_api_key_var_for_provider(
+                state,
+                &app,
+                &provider.id,
+            ) {
+                Ok(true) => updated.push(VarReference {
+                    app: app.as_str().to_string(),
+                    provider_id: provider.id.clone(),
+                    provider_name: provider.name.clone(),
+                    is_current: current.as_deref() == Some(provider.id.as_str()),
+                }),
+                Ok(false) => {}
+                Err(error) => {
+                    log::warn!(
+                        "[ApiKeyVars] 变量 {name} 刷新后重写 {}/{} live 配置失败: {error}",
+                        app.as_str(),
+                        provider.name
+                    );
+                    errors.push(format!("{}/{}: {error}", app.as_str(), provider.name));
+                }
             }
         }
     }

@@ -4813,7 +4813,7 @@
       "filesTitle": "模板文件（与 ZIP 内容一致）"
     },
     "title": "API Key 变量",
-    "description": "定义由本机脚本自动刷新的 API Key。在 Claude、Codex、Gemini、Grok 供应商的 API Key 输入框中填写以两层花括号包住的变量名即可引用；变量刷新后，正在使用它的供应商配置会自动更新。脚本目录中按 index.mjs、index.js 的顺序查找入口并用 node 运行，stdout 输出 JSON：apiKey、expiresAt（可选）、refreshAfter（可选）、message（可选）。退出码 2 表示需要人工处理，其他非 0 退出码会自动重试。变量的值只保存在本机，不会被导出或同步。",
+    "description": "定义由本机脚本自动刷新的 API Key。Claude、Claude Desktop、Codex、Gemini、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code 及统一供应商的 API Key 字段均可填写以两层花括号包住的变量名；模型级 apiKey、api_key 字段也支持。变量刷新后，正在使用它的供应商配置会自动更新。脚本目录中按 index.mjs、index.js 的顺序查找入口并用 node 运行，stdout 输出 JSON：apiKey、expiresAt（可选）、refreshAfter（可选）、message（可选）。退出码 2 表示需要人工处理，其他非 0 退出码会自动重试。变量的值只保存在本机，不会被导出或同步。",
     "add": "添加变量",
     "empty": "还没有变量。添加一个变量并指定脚本目录，然后在供应商的 API Key 中引用它。",
     "status": {
@@ -4828,6 +4828,7 @@
     "noValue": "尚无值",
     "noScriptDir": "未设置脚本目录",
     "referencedBy": "被引用：{{list}}",
+    "universalProvider": "统一供应商/{{name}}",
     "unreferenced": "未被任何供应商引用",
     "refreshNow": "立即刷新",
     "deleteBlocked": "仍被供应商引用，无法删除",

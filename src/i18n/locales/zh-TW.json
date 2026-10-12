@@ -4814,7 +4814,7 @@
       "filesTitle": "範本檔案（與 ZIP 內容一致）"
     },
     "title": "API Key 變數",
-    "description": "定義由本機指令碼自動重新整理的 API Key。在 Claude、Codex、Gemini、Grok 供應商的 API Key 輸入框中填寫以兩層大括號包住的變數名即可引用；變數重新整理後，正在使用它的供應商設定會自動更新。指令碼目錄中依 index.mjs、index.js 的順序尋找進入點並以 node 執行，stdout 輸出 JSON：apiKey、expiresAt（選填）、refreshAfter（選填）、message（選填）。結束碼 2 表示需要人工處理，其他非 0 結束碼會自動重試。變數的值只儲存在本機，不會被匯出或同步。",
+    "description": "定義由本機指令碼自動重新整理的 API Key。Claude、Claude Desktop、Codex、Gemini、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code 及統一供應商的 API Key 欄位都可填寫以兩層大括號包住的變數名稱；模型層級的 apiKey、api_key 欄位也支援。變數重新整理後，正在使用它的供應商設定會自動更新。指令碼目錄中依 index.mjs、index.js 的順序尋找進入點並以 node 執行，stdout 輸出 JSON：apiKey、expiresAt（選填）、refreshAfter（選填）、message（選填）。結束碼 2 表示需要人工處理，其他非 0 結束碼會自動重試。變數的值只儲存在本機，不會被匯出或同步。",
     "add": "新增變數",
     "empty": "還沒有變數。新增一個變數並指定指令碼目錄，然後在供應商的 API Key 中引用它。",
     "status": {
@@ -4829,6 +4829,7 @@
     "noValue": "尚無值",
     "noScriptDir": "未設定指令碼目錄",
     "referencedBy": "被引用：{{list}}",
+    "universalProvider": "統一供應商/{{name}}",
     "unreferenced": "未被任何供應商引用",
     "refreshNow": "立即重新整理",
     "deleteBlocked": "仍被供應商引用，無法刪除",

@@ -4813,7 +4813,7 @@
       "filesTitle": "Template files (identical to the ZIP)"
     },
     "title": "API Key Variables",
-    "description": "Define API keys that a local script refreshes automatically. Reference one in the API key field of a Claude, Codex, Gemini or Grok provider by typing the variable name wrapped in double curly braces; when it refreshes, providers in use are updated automatically. The script directory is searched for index.mjs, then index.js, run with node, and must print JSON to stdout: apiKey, expiresAt (optional), refreshAfter (optional), message (optional). Exit code 2 means manual action is needed; other non-zero codes are retried. Values stay on this device and are never exported or synced.",
+    "description": "Define API keys that a local script refreshes automatically. Reference one by entering its name in double curly braces in any supported provider API Key field: Claude, Claude Desktop, Codex, Gemini, Grok Build, OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, or a universal provider. Model-level apiKey and api_key fields are supported too. When it refreshes, providers in use are updated automatically. The script directory is searched for index.mjs, then index.js, run with node, and must print JSON to stdout: apiKey, expiresAt (optional), refreshAfter (optional), message (optional). Exit code 2 means manual action is needed; other non-zero codes are retried. Values stay on this device and are never exported or synced.",
     "add": "Add variable",
     "empty": "No variables yet. Add one with a script directory, then reference it in a provider's API key.",
     "status": {
@@ -4828,6 +4828,7 @@
     "noValue": "No value yet",
     "noScriptDir": "No script directory",
     "referencedBy": "Used by: {{list}}",
+    "universalProvider": "Universal provider/{{name}}",
     "unreferenced": "Not used by any provider",
     "refreshNow": "Refresh now",
     "deleteBlocked": "Still used by providers; cannot delete",

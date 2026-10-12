@@ -10,6 +10,10 @@ This directory is a complete, dependency-free Node.js 20+ refresh script for CC 
 
 The demo key cannot authenticate with any API. It only verifies the script contract and multi-file imports.
 
+## Supported API Key fields
+
+Use `{{MY_KEY}}` as the complete value of any supported API Key field. CC Switch resolves it for Claude, Claude Desktop, Codex, Gemini, Grok Build, OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, and universal providers. This also includes model-level `apiKey` and `api_key` fields in native configuration editors. It does not interpolate references into `Bearer` strings, arbitrary headers, MCP/tool credentials, usage settings, or OAuth credentials.
+
 ## Connect an HTTP provider
 
 1. Edit `config.mjs` or start CC Switch with `API_KEY_TEMPLATE_MODE=http` and `API_KEY_REFRESH_URL=https://your-provider.example/refresh`. The default `example.invalid` URL is intentionally rejected.

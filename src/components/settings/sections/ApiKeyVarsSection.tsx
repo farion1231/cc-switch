@@ -237,7 +237,13 @@ export function ApiKeyVarsSection({
                       {v.references.length
                         ? t("apiKeyVars.referencedBy", {
                             list: v.references
-                              .map((r) => `${r.app}/${r.providerName}`)
+                              .map((r) =>
+                                r.app === "universal"
+                                  ? t("apiKeyVars.universalProvider", {
+                                      name: r.providerName,
+                                    })
+                                  : `${r.app}/${r.providerName}`,
+                              )
                               .join(", "),
                           })
                         : t("apiKeyVars.unreferenced")}

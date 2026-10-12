@@ -35,7 +35,7 @@ export function ApiKeySection({
   disabled,
   required = false,
   partnerPromotionKey,
-  allowVarRef,
+  allowVarRef = true,
 }: ApiKeySectionProps) {
   const { t } = useTranslation();
 
