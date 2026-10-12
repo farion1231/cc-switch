@@ -41,7 +41,7 @@ const MIN_FONT_SIZE = 12;
 const MAX_FONT_SIZE = 18;
 const MIN_PAGE_ZOOM = 0.5;
 const MAX_PAGE_ZOOM = 2;
-const PAGE_ZOOM_STEP = 0.2;
+const PAGE_ZOOM_LEVELS = [0.5, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2] as const;
 
 export const FONT_SIZE_OPTIONS = [12, 13, 14, 15, 16, 17, 18] as const;
 
@@ -93,14 +93,28 @@ const isFontFamily = (value: unknown): value is FontFamily =>
 const clampFontSize = (value: number) =>
   Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, Math.round(value)));
 
-const clampPageZoom = (value: number) =>
-  Math.min(
-    MAX_PAGE_ZOOM,
-    Math.max(
-      MIN_PAGE_ZOOM,
-      Math.round(value / PAGE_ZOOM_STEP) * PAGE_ZOOM_STEP,
-    ),
+const clampPageZoom = (value: number) => {
+  const bounded = Math.min(MAX_PAGE_ZOOM, Math.max(MIN_PAGE_ZOOM, value));
+  return PAGE_ZOOM_LEVELS.reduce(
+    (closest, candidate) =>
+      Math.abs(candidate - bounded) < Math.abs(closest - bounded)
+        ? candidate
+        : closest,
+    PAGE_ZOOM_LEVELS[0],
   );
+};
+
+const stepPageZoom = (value: number, direction: -1 | 1) => {
+  const current = clampPageZoom(value);
+  const currentIndex = PAGE_ZOOM_LEVELS.findIndex(
+    (candidate) => candidate === current,
+  );
+  const nextIndex = Math.min(
+    PAGE_ZOOM_LEVELS.length - 1,
+    Math.max(0, currentIndex + direction),
+  );
+  return PAGE_ZOOM_LEVELS[nextIndex];
+};
 
 const readPreferences = (): AppearancePreferences => {
   if (typeof window === "undefined") {
@@ -151,6 +165,10 @@ function applyFontPreferences(preferences: AppearancePreferences) {
 }
 
 async function applyPageZoom(pageZoom: number) {
+  // Native WebView zoom also scales CSS dimensions; keep this value available for
+  // macOS Overlay title-bar layout to compensate native traffic-light spacing.
+  document.documentElement.style.setProperty("--page-zoom", String(pageZoom));
+
   try {
     await getCurrentWebview().setZoom(pageZoom);
     document.documentElement.style.removeProperty("zoom");
@@ -205,14 +223,14 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const zoomIn = useCallback(() => {
     setPreferences((prev) => ({
       ...prev,
-      pageZoom: clampPageZoom(prev.pageZoom + PAGE_ZOOM_STEP),
+      pageZoom: stepPageZoom(prev.pageZoom, 1),
     }));
   }, []);
 
   const zoomOut = useCallback(() => {
     setPreferences((prev) => ({
       ...prev,
-      pageZoom: clampPageZoom(prev.pageZoom - PAGE_ZOOM_STEP),
+      pageZoom: stepPageZoom(prev.pageZoom, -1),
     }));
   }, []);
 
