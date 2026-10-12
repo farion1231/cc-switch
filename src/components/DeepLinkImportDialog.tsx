@@ -286,6 +286,10 @@ export function DeepLinkImportDialog() {
       ? `${request.apiKey.substring(0, 4)}${"*".repeat(20)}`
       : "****";
 
+  // 导入后用量查询是否启用：链接写了 usageEnabled 就照办，没写时带脚本即启用（与后端一致）
+  const usageWillBeEnabled =
+    request?.usageEnabled ?? Boolean(request?.usageScript);
+
   // Check if config file is present
   const hasConfigFile = !!(request?.config || request?.configUrl);
   const configSource = request?.config
@@ -678,18 +682,18 @@ export function DeepLinkImportDialog() {
                           </div>
                           <div className="col-span-2 text-sm">
                             {/*
-                            判据是 `=== true`，与后端 `usage_enabled.unwrap_or(false)`
-                            严格对齐。此前用的 `!== false` 会把"链接没说"渲染成绿色的
-                            「已启用」——徽章必须显示实际会发生的事，不能比后端更乐观。
+                            与后端 `usage_enabled.unwrap_or(!code.is_empty())` 严格对齐：
+                            链接写了就照办，没写时带脚本即启用。徽章必须显示实际会发生
+                            的事，不能比后端更乐观，也不能更保守。
                           */}
                             <span
                               className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${
-                                request.usageEnabled === true
+                                usageWillBeEnabled
                                   ? "bg-success-soft text-success-text"
                                   : "bg-subtle text-fg-2"
                               }`}
                             >
-                              {request.usageEnabled === true
+                              {usageWillBeEnabled
                                 ? t("deeplink.usageScriptEnabled", {
                                     defaultValue: "已启用",
                                   })

@@ -264,18 +264,17 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         String::new()
     };
 
-    // Determine enabled state: explicit param only, defaulting to disabled.
+    // 启用状态：链接写了 `usageEnabled` 就照办；没写时，带了脚本就启用。
     //
-    // 「携带了代码」不构成用户的启用决定。此处的输入来自 deeplink——即第三方
-    // 构造、经浏览器抵达的不可信载荷——而 `code` 是一段会在查询用量时执行的
-    // JavaScript。若以 `!code.is_empty()` 作默认，一条链接就能让脚本在用户
-    // 从未勾选过的情况下进入启用态。
+    // 站长放脚本就是为了让用户看到余额，导入后还要再手动打开一次是多余的一步。
+    // 默认启用的代价可控：脚本跑在受限的 QuickJS 里，只能发一个请求，且必须是
+    // 与 base_url 同源的 HTTPS（`usage_script::validate_request_url`；深链接导入
+    // 的脚本没有 template_type，不算自定义模板，这项检查不会被跳过）。
     //
-    // 要启用，链接必须显式携带 `usageEnabled=true`。注意该参数是**链接作者**的
-    // 请求，不构成用户的同意；用户的同意体现在确认框展示了完整脚本正文与启用
-    // 徽章之后仍点了导入——所以那两处展示是本设计的承重部分，不可省略。
-    // 用户在应用内手动配置的脚本不走这条路径。
-    let enabled = request.usage_enabled.unwrap_or(false);
+    // 用户的同意仍然体现在确认框：完整的脚本正文和启用徽章都展示过之后才点导入，
+    // 所以那两处展示是本设计的承重部分，不可省略。前端徽章的判断必须和这里一致。
+    // 链接想导入但不启用，就显式写 `usageEnabled=false`。
+    let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
 
     let usage_script = UsageScript {
         enabled,

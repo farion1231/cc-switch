@@ -110,6 +110,37 @@ describe("DeepLinkImportDialog", () => {
     expect(screen.queryByText("脚本代码")).not.toBeInTheDocument();
   });
 
+  // 徽章要和后端 `usage_enabled.unwrap_or(!code.is_empty())` 一致：
+  // 链接写了 usageEnabled 就照办，没写时带脚本即启用
+  it.each([
+    { usageEnabled: undefined, expected: "已启用" },
+    { usageEnabled: true, expected: "已启用" },
+    { usageEnabled: false, expected: "未启用" },
+  ])(
+    "shows the usage badge as $expected when usageEnabled is $usageEnabled and a script is attached",
+    async ({ usageEnabled, expected }) => {
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+      act(() => {
+        deliverDeepLink({
+          version: "v1",
+          resource: "provider",
+          app: "claude",
+          name: "Usage Provider",
+          homepage: "https://example.com",
+          endpoint: "https://api.example.com",
+          apiKey: "sk-provider-key",
+          usageScript: btoa("console.log('usage');"),
+          ...(usageEnabled === undefined ? {} : { usageEnabled }),
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(expected)).toBeInTheDocument();
+      });
+    },
+  );
+
   it("shows a link that arrived before the dialog mounted (cold start)", async () => {
     // 冷启动时链接早于前端监听到达，后端已暂存；组件挂载后必须主动取一次
     setPendingDeepLink({
