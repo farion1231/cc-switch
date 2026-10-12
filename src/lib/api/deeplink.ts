@@ -24,6 +24,8 @@ export interface DeepLinkImportRequest {
   endpoint?: string;
   apiKey?: string;
   icon?: string;
+  /** 图标下载地址；确认框里经 `fetchDeeplinkIcon` 下载、重新编码后放进 `icon` */
+  iconUrl?: string;
   model?: string;
   notes?: string;
   haikuModel?: string;
@@ -127,6 +129,14 @@ export const deeplinkApi = {
     request: DeepLinkImportRequest,
   ): Promise<DeepLinkImportRequest> => {
     return invoke("merge_deeplink_config", { request });
+  },
+
+  /**
+   * 下载链接里 `iconUrl` 指向的图标，返回核对过类型的 data URI；
+   * 任何失败（地址不合规、超时、类型不符等）都返回 null，原因只进后端日志
+   */
+  fetchDeeplinkIcon: async (url: string): Promise<string | null> => {
+    return invoke("fetch_deeplink_icon", { url });
   },
 
   /**

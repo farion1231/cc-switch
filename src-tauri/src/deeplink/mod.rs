@@ -10,6 +10,7 @@
 
 mod codex_link;
 mod grok_link;
+mod icon_fetch;
 mod mcp;
 mod parser;
 mod prompt;
@@ -25,6 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 // Re-export public API
+pub use icon_fetch::fetch_deeplink_icon;
 pub use mcp::import_mcp_from_deeplink;
 pub use parser::parse_deeplink_url;
 pub use prompt::import_prompt_from_deeplink;
@@ -118,6 +120,10 @@ pub struct DeepLinkImportRequest {
     /// Optional built-in provider icon name; anything else is dropped by the parser
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// 供应商图标的下载地址（https）。确认框打开时由 `fetch_deeplink_icon` 下载、前端重新编码后
+    /// 放进 `icon`；导入本身从不下载它，下载失败就用 `icon` 里的内置图标或首字母
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
     /// Optional model name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,

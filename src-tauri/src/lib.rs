@@ -1566,6 +1566,7 @@ pub fn run() {
             // Deep link import
             commands::parse_deeplink,
             commands::merge_deeplink_config,
+            commands::fetch_deeplink_icon,
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
             commands::peek_pending_deeplink,

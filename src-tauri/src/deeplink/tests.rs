@@ -98,6 +98,35 @@ fn test_parse_deeplink_drops_icon_that_is_not_a_builtin_name() {
 }
 
 #[test]
+fn test_parse_deeplink_keeps_only_allowed_icon_urls() {
+    let base = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&icon=deepseek";
+
+    let request = parse_deeplink_url(&format!(
+        "{base}&iconUrl=https%3A%2F%2Fcdn.example.com%2Flogo.svg"
+    ))
+    .unwrap();
+    assert_eq!(
+        request.icon_url.as_deref(),
+        Some("https://cdn.example.com/logo.svg")
+    );
+    // 内置图标照常保留，下载失败时用它
+    assert_eq!(request.icon.as_deref(), Some("deepseek"));
+
+    // http、IP、内网主机名、带端口：丢掉，链接本身照常解析
+    for url in [
+        "http%3A%2F%2Fexample.com%2Flogo.png",
+        "https%3A%2F%2F127.0.0.1%2Flogo.png",
+        "https%3A%2F%2F%5B%3A%3A1%5D%2Flogo.png",
+        "https%3A%2F%2Flocalhost%2Flogo.png",
+        "https%3A%2F%2Fexample.com%3A8080%2Flogo.png",
+        "data%3Aimage%2Fpng%3Bbase64%2CiVBORw0KGgo%3D",
+    ] {
+        let request = parse_deeplink_url(&format!("{base}&iconUrl={url}")).unwrap();
+        assert_eq!(request.icon_url, None, "{url}");
+    }
+}
+
+#[test]
 fn test_parse_deeplink_with_notes() {
     let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&homepage=https%3A%2F%2Fcodex.com&endpoint=https%3A%2F%2Fapi.codex.com&apiKey=key123&notes=Test%20notes";
 
@@ -308,6 +337,7 @@ fn test_build_gemini_provider_with_model() {
         config: None,
         config_format: None,
         config_url: None,
+        icon_url: None,
         apps: None,
         repo: None,
         directory: None,
@@ -362,6 +392,7 @@ fn test_build_gemini_provider_without_model() {
         config: None,
         config_format: None,
         config_url: None,
+        icon_url: None,
         apps: None,
         repo: None,
         directory: None,
@@ -409,6 +440,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
         config: None,
         config_format: None,
         config_url: None,
+        icon_url: None,
         apps: None,
         repo: None,
         directory: None,
@@ -457,6 +489,7 @@ fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImpo
         config: None,
         config_format: None,
         config_url: None,
+        icon_url: None,
         apps: None,
         repo: None,
         directory: None,
@@ -574,6 +607,7 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
         config: None,
         config_format: None,
         config_url: None,
+        icon_url: None,
         apps: None,
         repo: None,
         directory: None,
@@ -623,6 +657,7 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
         config: None,
         config_format: None,
         config_url: None,
+        icon_url: None,
         apps: None,
         repo: None,
         directory: None,
@@ -677,6 +712,7 @@ fn test_parse_and_merge_config_claude() {
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
+        icon_url: None,
         apps: None,
         repo: None,
         directory: None,
@@ -801,6 +837,7 @@ fn test_parse_and_merge_config_url_override() {
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
+        icon_url: None,
         apps: None,
         repo: None,
         directory: None,
@@ -865,6 +902,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
+        icon_url: None,
         apps: None,
         repo: None,
         directory: None,
@@ -921,6 +959,7 @@ fn test_build_claude_provider_without_config_unchanged() {
         config: None,
         config_format: None,
         config_url: None,
+        icon_url: None,
         apps: None,
         repo: None,
         directory: None,
@@ -1866,4 +1905,52 @@ fn test_first_switch_mode_provider_takes_effect_when_the_toggle_is_on() {
     let settings = std::fs::read_to_string(crate::config::get_claude_settings_path())
         .expect("client config written");
     assert!(settings.contains("https://api.example.com/v1"));
+}
+
+// =============================================================================
+// 确认框下载的图标经前端重新编码后放进 icon，导入时按自定义图标的规则校验
+// =============================================================================
+
+fn png_data_uri(width: u32, height: u32) -> String {
+    use base64::Engine;
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer
+            .write_image_data(&vec![0u8; (width * height * 4) as usize])
+            .unwrap();
+    }
+    format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(out)
+    )
+}
+
+#[test]
+#[serial_test::serial]
+fn test_import_stores_a_valid_custom_icon_and_rejects_a_broken_one() {
+    let _home = TestHomeGuard::new();
+    let link = format!(
+        "{}&iconUrl=https%3A%2F%2Fcdn.example.com%2Flogo.png",
+        provider_link("claude", None)
+    );
+
+    let icon = png_data_uri(96, 96);
+    let mut request = parse_deeplink_url(&link).expect("parse link");
+    request.icon = Some(icon.clone());
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db);
+    let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
+    let stored = state.db.get_provider_by_id(&id, "claude").unwrap().unwrap();
+    assert_eq!(stored.icon.as_deref(), Some(icon.as_str()));
+
+    // 截断的 PNG：保存校验拒绝
+    let mut request = parse_deeplink_url(&link).expect("parse link");
+    request.icon = Some(icon[..icon.len() - 16].to_string());
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db);
+    assert!(super::import_provider_from_deeplink(&state, request).is_err());
 }

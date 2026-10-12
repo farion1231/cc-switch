@@ -34,6 +34,13 @@ pub fn merge_deeplink_config(
     crate::deeplink::parse_and_merge_config(&request).map_err(|e| e.to_string())
 }
 
+/// 下载深链接 `iconUrl` 指向的图标，返回核对过类型的 data URI；任何失败都返回 None，
+/// 确认框退回内置图标或首字母（原因只写日志，见 `deeplink::icon_fetch`）
+#[tauri::command]
+pub async fn fetch_deeplink_icon(url: String) -> Option<String> {
+    crate::deeplink::fetch_deeplink_icon(&url).await
+}
+
 /// Import a provider from a deep link request (legacy, kept for compatibility)
 #[tauri::command]
 pub fn import_from_deeplink(

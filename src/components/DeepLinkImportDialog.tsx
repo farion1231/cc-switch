@@ -33,6 +33,7 @@ import {
 import { decodeBase64Utf8 } from "@/lib/utils/base64";
 import { Switch } from "@/components/ui/switch";
 import { getAppLabel, isAdditiveAppId } from "@/config/appConfig";
+import { normalizeIconDataUri } from "@/utils/customIcon";
 
 const API_FORMAT_LABELS: Record<
   NonNullable<DeepLinkImportRequest["apiFormat"]>,
@@ -43,6 +44,20 @@ const API_FORMAT_LABELS: Record<
   openai_responses: "OpenAI Responses",
   gemini_native: "Gemini",
 };
+
+/**
+ * 下载链接里的 `iconUrl`，按上传图标的流程重新编码成 96×96 PNG。
+ * 任何一步失败都返回 undefined，确认框退回链接里的内置图标或首字母，不提示用户。
+ */
+async function loadLinkIcon(url: string): Promise<string | undefined> {
+  try {
+    const dataUri = await deeplinkApi.fetchDeeplinkIcon(url);
+    return dataUri ? await normalizeIconDataUri(dataUri) : undefined;
+  } catch (error) {
+    console.warn("Failed to load the deep link icon", error);
+    return undefined;
+  }
+}
 
 /**
  * 「导入后立即生效」开关的初始值：链接里的 `enabled` 只是建议，导入时以开关为准。
@@ -71,6 +86,27 @@ export function DeepLinkImportDialog() {
 
   useEffect(() => {
     if (request) setActivateAfterImport(initialActivation(request));
+  }, [request]);
+
+  // 链接带 iconUrl 时，确认框一打开就下载图标并直接预览，不再单独询问；
+  // 导入时等这次下载结束（最多几秒），拿到的图标随请求交给后端，后端保存时再完整校验
+  const [linkIcon, setLinkIcon] = useState<string>();
+  const linkIconTaskRef = useRef<Promise<string | undefined>>();
+  useEffect(() => {
+    setLinkIcon(undefined);
+    const url = request?.resource === "provider" ? request.iconUrl : undefined;
+    if (!url) {
+      linkIconTaskRef.current = undefined;
+      return;
+    }
+    let stale = false;
+    linkIconTaskRef.current = loadLinkIcon(url).then((icon) => {
+      if (!stale) setLinkIcon(icon);
+      return icon;
+    });
+    return () => {
+      stale = true;
+    };
   }, [request]);
 
   // 容错判断：MCP 导入结果可能缺少 type 字段
@@ -204,10 +240,18 @@ export function DeepLinkImportDialog() {
 
     try {
       // 供应商和提示词的「立即生效」由用户在确认框里决定，覆盖链接里的值
-      const payload =
+      let payload: DeepLinkImportRequest =
         request.resource === "provider" || request.resource === "prompt"
           ? { ...request, enabled: activateAfterImport }
           : request;
+      if (request.resource === "provider" && request.iconUrl) {
+        const icon = await linkIconTaskRef.current;
+        payload = {
+          ...payload,
+          icon: icon ?? request.icon,
+          iconUrl: undefined,
+        };
+      }
       const result = await deeplinkApi.importFromDeeplink(payload);
       const refreshMcp = async (summary: {
         importedCount: number;
@@ -423,11 +467,12 @@ export function DeepLinkImportDialog() {
               {(request.resource === "provider" || !request.resource) && (
                 <>
                   {/* Provider Icon - enlarge and center near the top */}
-                  {request.icon && (
+                  {(request.icon || request.iconUrl) && (
                     <div className="flex justify-center pt-2 pb-1">
+                      {/* 下载中或下载失败时显示内置图标或首字母 */}
                       <ProviderIcon
-                        icon={request.icon}
-                        name={request.name || request.icon}
+                        icon={linkIcon ?? request.icon}
+                        name={request.name || request.icon || ""}
                         size={80}
                         className="drop-shadow-sm"
                       />

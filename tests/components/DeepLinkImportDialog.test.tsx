@@ -8,6 +8,16 @@ import i18n from "i18next";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
 import { peekPendingDeepLink, setPendingDeepLink } from "../msw/state";
+import { pngDataUri } from "../fixtures/customIcon";
+
+// jsdom 没有 canvas，重新编码这一步换成可控的假实现
+const { normalizeIconDataUri } = vi.hoisted(() => ({
+  normalizeIconDataUri: vi.fn<(dataUri: string) => Promise<string>>(),
+}));
+vi.mock("@/utils/customIcon", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/customIcon")>()),
+  normalizeIconDataUri,
+}));
 
 // 模拟后端：先暂存链接，再发 deeplink-pending 通知前端来取
 const deliverDeepLink = (request: Record<string, unknown>) => {
@@ -325,6 +335,132 @@ describe("DeepLinkImportDialog", () => {
       await user.click(screen.getByRole("button", { name: "deeplink.import" }));
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].enabled).toBe(false);
+    });
+  });
+
+  describe("the link's iconUrl", () => {
+    const DOWNLOADED = "data:image/svg+xml;base64,PHN2Zy8+";
+    const NORMALIZED = pngDataUri(96, 96);
+
+    const iconLink = (extra: Record<string, unknown> = {}) => ({
+      version: "v1",
+      resource: "provider",
+      app: "claude",
+      name: "Icon Provider",
+      endpoint: "https://api.example.com",
+      apiKey: "sk-provider-key",
+      iconUrl: "https://cdn.example.com/logo.svg",
+      ...extra,
+    });
+
+    // 记下下载请求和导入请求；download 决定后端返回什么
+    const mockBackend = (download: () => Promise<string | null>) => {
+      const fetched: string[] = [];
+      const sent: Array<Record<string, unknown>> = [];
+      server.use(
+        http.post(
+          "http://tauri.local/fetch_deeplink_icon",
+          async ({ request }) => {
+            const { url } = (await request.json()) as { url: string };
+            fetched.push(url);
+            return HttpResponse.json(await download());
+          },
+        ),
+        http.post(
+          "http://tauri.local/import_from_deeplink_unified",
+          async ({ request }) => {
+            const body = (await request.json()) as {
+              request: Record<string, unknown>;
+            };
+            sent.push(body.request);
+            return HttpResponse.json({ type: "provider", id: "p1" });
+          },
+        ),
+      );
+      return { fetched, sent };
+    };
+
+    afterEach(() => {
+      normalizeIconDataUri.mockReset();
+    });
+
+    it("downloads the icon on open, previews it and imports it without asking", async () => {
+      normalizeIconDataUri.mockResolvedValue(NORMALIZED);
+      const { fetched, sent } = mockBackend(async () => DOWNLOADED);
+      const user = userEvent.setup();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() => deliverDeepLink(iconLink({ icon: "deepseek" })));
+
+      const preview = await screen.findByAltText("Icon Provider");
+      expect(preview).toHaveAttribute("src", NORMALIZED);
+      expect(fetched).toEqual(["https://cdn.example.com/logo.svg"]);
+      expect(normalizeIconDataUri).toHaveBeenCalledWith(DOWNLOADED);
+
+      await user.click(screen.getByRole("button", { name: "deeplink.import" }));
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].icon).toBe(NORMALIZED);
+      expect(sent[0]).not.toHaveProperty("iconUrl");
+    });
+
+    it("falls back to the built-in icon when the download fails", async () => {
+      const { sent } = mockBackend(async () => null);
+      const user = userEvent.setup();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() => deliverDeepLink(iconLink({ icon: "deepseek" })));
+
+      await user.click(
+        await screen.findByRole("button", { name: "deeplink.import" }),
+      );
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].icon).toBe("deepseek");
+      expect(normalizeIconDataUri).not.toHaveBeenCalled();
+    });
+
+    it("imports without an icon when re-encoding fails and there is no fallback", async () => {
+      normalizeIconDataUri.mockRejectedValue(new Error("tainted canvas"));
+      const { sent } = mockBackend(async () => DOWNLOADED);
+      const user = userEvent.setup();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() => deliverDeepLink(iconLink()));
+
+      // 首字母占位
+      expect(await screen.findByText("IP")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "deeplink.import" }));
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].icon).toBeUndefined();
+    });
+
+    it("waits for a download still in flight when the user imports", async () => {
+      normalizeIconDataUri.mockResolvedValue(NORMALIZED);
+      let finishDownload!: (value: string) => void;
+      const download = new Promise<string>((resolve) => {
+        finishDownload = resolve;
+      });
+      const { fetched, sent } = mockBackend(() => download);
+      const user = userEvent.setup();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() => deliverDeepLink(iconLink()));
+
+      await waitFor(() => expect(fetched).toHaveLength(1));
+      await user.click(screen.getByRole("button", { name: "deeplink.import" }));
+      // 下载没完成之前不提交
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(sent).toHaveLength(0);
+
+      finishDownload(DOWNLOADED);
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].icon).toBe(NORMALIZED);
+    });
+
+    it("does not download for links without iconUrl", async () => {
+      const { fetched } = mockBackend(async () => DOWNLOADED);
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() =>
+        deliverDeepLink(iconLink({ iconUrl: undefined, icon: "deepseek" })),
+      );
+
+      await screen.findByRole("button", { name: "deeplink.import" });
+      expect(fetched).toHaveLength(0);
     });
   });
 

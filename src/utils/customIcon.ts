@@ -182,7 +182,30 @@ export async function normalizeIconFile(file: File): Promise<string> {
   if (!mimeType) throw new CustomIconError("unsupported");
   if (file.size > MAX_UPLOAD_BYTES) throw new CustomIconError("tooLarge");
 
-  const img = await loadImage(await readAsDataUrl(file, mimeType));
+  return rasterize(await readAsDataUrl(file, mimeType));
+}
+
+/** 后端下载的图标最大 256 KB，base64 之后再留一点前缀的余量 */
+const MAX_DOWNLOADED_DATA_URI_LENGTH = Math.ceil((256 * 1024 * 4) / 3) + 64;
+
+/**
+ * 把深链接 `iconUrl` 下载回来的图片（后端 `fetch_deeplink_icon` 核对过类型的 data URI）
+ * 转成可以存进 `provider.icon` 的 PNG data URI，流程和上传一样。
+ */
+export async function normalizeIconDataUri(dataUri: string): Promise<string> {
+  const accepted = Object.keys(ACCEPTED_TYPES).some((type) =>
+    dataUri.startsWith(`data:${type};base64,`),
+  );
+  if (!accepted) throw new CustomIconError("unsupported");
+  if (dataUri.length > MAX_DOWNLOADED_DATA_URI_LENGTH) {
+    throw new CustomIconError("tooLarge");
+  }
+  return rasterize(dataUri);
+}
+
+/** 加载图片并画成 96×96 PNG data URI */
+async function rasterize(src: string): Promise<string> {
+  const img = await loadImage(src);
 
   // 没写宽高的 SVG 可能报 0，按正方形处理
   const width = img.naturalWidth || OUTPUT_SIZE;

@@ -5,6 +5,7 @@ import {
   MAX_CUSTOM_ICON_LENGTH,
   MAX_UPLOAD_BYTES,
   isCustomIcon,
+  normalizeIconDataUri,
   normalizeIconFile,
 } from "@/utils/customIcon";
 import { pngDataUri } from "../fixtures/customIcon";
@@ -98,5 +99,27 @@ describe("normalizeIconFile", () => {
     // 类型为空、扩展名是 .svg：通过格式检查，体积超限才被拒，说明扩展名被认出来了
     const svg = new File([new Uint8Array(MAX_UPLOAD_BYTES + 1)], "logo.SVG");
     expect(await rejectCode(svg)).toBe("tooLarge");
+  });
+});
+
+describe("normalizeIconDataUri", () => {
+  const expectCode = async (dataUri: string, code: string) => {
+    await expect(normalizeIconDataUri(dataUri)).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof CustomIconError && error.code === code,
+    );
+  };
+
+  it("only takes the image types the backend download allows", async () => {
+    await expectCode("data:image/gif;base64,R0lGODlhAQABAAAAACw=", "unsupported");
+    await expectCode("data:text/html;base64,PHN2Zy8+", "unsupported");
+    await expectCode("https://example.com/logo.png", "unsupported");
+    // 前缀里少了 ;base64
+    await expectCode("data:image/png,abc", "unsupported");
+  });
+
+  it("rejects data larger than the 256 KB download limit", async () => {
+    const oversized = `data:image/png;base64,${"A".repeat(400 * 1024)}`;
+    await expectCode(oversized, "tooLarge");
   });
 });

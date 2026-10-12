@@ -147,6 +147,12 @@ fn parse_provider_deeplink(
         .get("icon")
         .map(|v| v.trim().to_lowercase())
         .filter(|v| is_builtin_icon_name(v));
+    // iconUrl 只在确认框里由专门的命令下载（见 `icon_fetch`）。形状不合格的地址同样丢掉，
+    // 不让整条链接失败
+    let icon_url = params
+        .get("iconUrl")
+        .and_then(|v| super::icon_fetch::parse_icon_url(v))
+        .map(|url| url.to_string());
     let config = params.get("config").cloned();
     let config_format = params.get("configFormat").cloned();
     // 远程配置还没实现。在解析阶段就拒绝，用户当场看到原因，而不是确认导入之后才失败
@@ -197,6 +203,7 @@ fn parse_provider_deeplink(
         config,
         config_format,
         config_url,
+        icon_url,
         usage_enabled,
         usage_script,
         usage_api_key,
@@ -286,6 +293,7 @@ fn parse_prompt_deeplink(
         config: None,
         config_format: None,
         config_url: None,
+        icon_url: None,
         usage_enabled: None,
         usage_script: None,
         usage_api_key: None,
@@ -361,6 +369,7 @@ fn parse_mcp_deeplink(
         directory: None,
         branch: None,
         config_url: None,
+        icon_url: None,
         usage_enabled: None,
         usage_script: None,
         usage_api_key: None,
@@ -417,6 +426,7 @@ fn parse_skill_deeplink(
         config: None,
         config_format: None,
         config_url: None,
+        icon_url: None,
         usage_enabled: None,
         usage_script: None,
         usage_api_key: None,

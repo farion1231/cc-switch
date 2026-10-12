@@ -75,6 +75,8 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/peek_pending_deeplink`, () =>
     success(peekPendingDeepLink()),
   ),
+  // 默认下载失败：确认框退回内置图标或首字母
+  http.post(`${TAURI_ENDPOINT}/fetch_deeplink_icon`, () => success(null)),
   http.post(`${TAURI_ENDPOINT}/ack_pending_deeplink`, async ({ request }) => {
     const { id } = await withJson<{ id: number }>(request);
     ackPendingDeepLink(id);
