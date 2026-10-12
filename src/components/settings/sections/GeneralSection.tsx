@@ -61,7 +61,8 @@ export function GeneralSection({
     pageZoom,
     setFontFamily,
     setFontSize,
-    setPageZoom,
+    zoomIn,
+    zoomOut,
     resetPageZoom,
   } = useAppearance();
 
@@ -158,7 +159,7 @@ export function GeneralSection({
                   variant="quiet"
                   size="icon-compact"
                   aria-label={t("settings.zoomOut")}
-                  onClick={() => setPageZoom(pageZoom - 0.2)}
+                  onClick={zoomOut}
                   disabled={pageZoom <= 0.5}
                 >
                   <Minus className="h-4 w-4" />
@@ -175,7 +176,7 @@ export function GeneralSection({
                   variant="quiet"
                   size="icon-compact"
                   aria-label={t("settings.zoomIn")}
-                  onClick={() => setPageZoom(pageZoom + 0.2)}
+                  onClick={zoomIn}
                   disabled={pageZoom >= 2}
                 >
                   <Plus className="h-4 w-4" />
