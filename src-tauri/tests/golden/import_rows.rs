@@ -52,6 +52,38 @@ fn deeplink_codex_rows() {
     );
 }
 
+/// 带 `config.toml` 的 Codex 链接：按白名单收下供应商自己的键，选路统一写成 custom。
+#[test]
+fn deeplink_codex_config_rows() {
+    use base64::prelude::*;
+
+    let config = serde_json::json!({
+        "auth": { "OPENAI_API_KEY": "sk-relay-codex" },
+        "config": concat!(
+            "model_provider = \"relay\"\n",
+            "model = \"gpt-5.5\"\n",
+            "model_reasoning_effort = \"medium\"\n",
+            "web_search = \"live\"\n",
+            "approval_policy = \"never\"\n\n",
+            "[features]\nstandalone_web_search = true\n\n",
+            "[model_providers.relay]\n",
+            "name = \"Relay Upstream\"\n",
+            "base_url = \"https://api.relay.example/v1\"\n",
+            "wire_api = \"responses\"\n",
+            "requires_openai_auth = false\n",
+            "http_headers = { \"x-relay-client\" = \"cc-switch\" }\n",
+            "supports_websockets = true\n",
+            "model_catalog_url = \"https://api.relay.example/v1/models?format=codex\"\n",
+            "experimental_bearer_token = \"sk-relay-codex\"\n",
+        )
+    });
+    let url = format!(
+        "ccswitch://v1/import?resource=provider&app=codex&name=Relay%20Codex%20Config&configFormat=json&config={}",
+        BASE64_URL_SAFE_NO_PAD.encode(config.to_string())
+    );
+    import_deeplinks(AppType::Codex, &[&url], "rows/deeplink-codex-config.txt");
+}
+
 #[test]
 fn deeplink_gemini_rows() {
     import_deeplinks(

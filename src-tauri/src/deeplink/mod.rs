@@ -8,6 +8,7 @@
 //! - Skills
 //!
 
+mod codex_link;
 mod mcp;
 mod parser;
 mod prompt;

@@ -3384,6 +3384,7 @@
     "importSuccessDescription": "供应商 \"{{name}}\" 已成功导入",
     "importError": "导入失败",
     "configSource": "配置来源",
+    "codexConfigScopeHint": "只导入其中属于这个供应商的设置（地址、鉴权、模型、推理强度等）；[features]、MCP、权限这类全局设置不会导入。",
     "configEmbedded": "内嵌配置",
     "configRemote": "远程配置",
     "configDetails": "配置详情",

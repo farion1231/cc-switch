@@ -3384,6 +3384,7 @@
     "importSuccessDescription": "Provider \"{{name}}\" has been successfully imported",
     "importError": "Failed to import",
     "configSource": "Config Source",
+    "codexConfigScopeHint": "Only the settings that belong to this provider (endpoint, auth, model, reasoning effort, etc.) are imported; global settings such as [features], MCP and permissions are skipped.",
     "configEmbedded": "Embedded Config",
     "configRemote": "Remote Config",
     "configDetails": "Config Details",

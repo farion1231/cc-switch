@@ -3385,6 +3385,7 @@
     "importSuccessDescription": "供應商 \"{{name}}\" 已成功匯入",
     "importError": "匯入失敗",
     "configSource": "設定來源",
+    "codexConfigScopeHint": "只匯入其中屬於這個供應商的設定（位址、驗證、模型、推理強度等）；[features]、MCP、權限這類全域設定不會匯入。",
     "configEmbedded": "內嵌設定",
     "configRemote": "遠端設定",
     "configDetails": "設定詳情",

@@ -620,6 +620,12 @@ export function DeepLinkImportDialog() {
                                   <pre className="text-xs font-mono bg-surface p-2 rounded overflow-auto max-h-24 whitespace-pre-wrap break-all">
                                     {parsedConfig.tomlConfig}
                                   </pre>
+                                  {/* 后端按白名单收（deeplink/codex_link.rs），原文里的全局设置不会导入 */}
+                                  {parsedConfig.type === "codex" && (
+                                    <p className="text-xs text-fg-2">
+                                      {t("deeplink.codexConfigScopeHint")}
+                                    </p>
+                                  )}
                                 </div>
                               )}
                             </div>
