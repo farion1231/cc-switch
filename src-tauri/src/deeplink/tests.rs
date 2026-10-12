@@ -1421,3 +1421,105 @@ fn test_codex_link_accepts_a_whole_config_toml() {
         Some("Toml Relay")
     );
 }
+
+// ============ Grok Build：链接附带的 config.toml ============
+
+fn import_grok_with_config(config_toml: &str) -> Result<serde_json::Value, crate::error::AppError> {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("grokbuild".to_string()),
+        name: Some("Relay Card".to_string()),
+        endpoint: Some("https://api.relay.example/v1".to_string()),
+        api_key: Some("xai-link".to_string()),
+        config: Some(
+            BASE64_STANDARD.encode(serde_json::json!({ "config": config_toml }).to_string()),
+        ),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+    let merged = parse_and_merge_config(&request)?;
+    Ok(build_provider_from_request(&AppType::GrokBuild, &merged)?.settings_config)
+}
+
+#[test]
+fn test_grok_link_config_keeps_the_selected_profile_fields() {
+    // #6457：显示名、说明、窗口等来自链接的模型表；地址和 Key 用链接参数
+    let settings = import_grok_with_config(concat!(
+        "[models]\ndefault = \"grok-4.6\"\n\n",
+        "[model.\"grok-4.6\"]\nmodel = \"grok-4.6\"\nname = \"Grok 4.6 (Relay)\"\n",
+        "description = \"Fast coding model\"\n",
+        "base_url = \"https://untrusted.example/v1\"\napi_key = \"sk-in-config\"\n",
+        "env_key = \"RELAY_KEY\"\n",
+        "api_backend = \"chat_completions\"\ncontext_window = 256000\n",
+        "reasoning_summary = \"auto\"\nextra_headers = { \"x-relay\" = \"1\" }\n\n",
+        "[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nname = \"Grok 4.5\"\n",
+        "base_url = \"https://untrusted.example/v1\"\napi_key = \"sk-in-config\"\n",
+        "api_backend = \"responses\"\ncontext_window = 500000\n",
+    ))
+    .unwrap();
+
+    let text = settings["config"].as_str().unwrap();
+    let doc: toml_edit::DocumentMut = text.parse().unwrap();
+    assert_eq!(doc["models"]["default"].as_str(), Some("grok-4.6"));
+    let table = &doc["model"]["grok-4.6"];
+    assert_eq!(table["name"].as_str(), Some("Grok 4.6 (Relay)"));
+    assert_eq!(table["description"].as_str(), Some("Fast coding model"));
+    assert_eq!(table["api_backend"].as_str(), Some("chat_completions"));
+    assert_eq!(table["context_window"].as_integer(), Some(256000));
+    assert_eq!(table["reasoning_summary"].as_str(), Some("auto"));
+    assert_eq!(table["extra_headers"]["x-relay"].as_str(), Some("1"));
+    assert_eq!(
+        table["base_url"].as_str(),
+        Some("https://api.relay.example/v1")
+    );
+    assert_eq!(table["api_key"].as_str(), Some("xai-link"));
+    assert!(table.get("env_key").is_none(), "{text}");
+    // 一个供应商只拥有一张模型表，其余的不导入
+    assert!(doc["model"].get("grok-4.5").is_none(), "{text}");
+
+    // 行能被投影（切换时写进 live 的就是这张表）
+    let projection = crate::live::project::grok::GrokProjection::of(&settings, false).unwrap();
+    assert_eq!(projection.table_name(), Some("grok-4.6"));
+}
+
+#[test]
+fn test_grok_link_config_fills_template_defaults_for_missing_fields() {
+    let settings = import_grok_with_config(
+        "[models]\ndefault = \"relay\"\n\n[model.relay]\nmodel = \"relay-model\"\n",
+    )
+    .unwrap();
+    let doc: toml_edit::DocumentMut = settings["config"].as_str().unwrap().parse().unwrap();
+    let table = &doc["model"]["relay"];
+    assert_eq!(table["name"].as_str(), Some("Relay Card"));
+    assert_eq!(table["model"].as_str(), Some("relay-model"));
+    assert_eq!(
+        table["api_backend"].as_str(),
+        Some(crate::grok_config::DEFAULT_API_BACKEND)
+    );
+    assert_eq!(
+        table["context_window"].as_integer(),
+        Some(crate::grok_config::DEFAULT_CONTEXT_WINDOW)
+    );
+    crate::live::project::grok::GrokProjection::of(&settings, false).unwrap();
+}
+
+#[test]
+fn test_grok_link_config_rejects_credential_providers_and_local_files() {
+    for (key, line) in [
+        ("auth_provider", "auth_provider = \"corp-sso\"\n"),
+        (
+            "env_http_headers",
+            "env_http_headers = { \"x-key\" = \"HOME\" }\n",
+        ),
+        ("mtls_cert_dir", "mtls_cert_dir = \"/etc/ssl/private\"\n"),
+    ] {
+        let config = format!(
+            "[models]\ndefault = \"relay\"\n\n[model.relay]\nmodel = \"relay-model\"\n{line}"
+        );
+        let err = import_grok_with_config(&config).unwrap_err();
+        assert!(err.to_string().contains(key), "{key}: {err}");
+    }
+}

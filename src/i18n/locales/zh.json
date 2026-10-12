@@ -3385,6 +3385,7 @@
     "importError": "导入失败",
     "configSource": "配置来源",
     "codexConfigScopeHint": "只导入其中属于这个供应商的设置（地址、鉴权、模型、推理强度等）；[features]、MCP、权限这类全局设置不会导入。",
+    "grokConfigScopeHint": "只导入 [models] default 指向的那张模型表（显示名、说明、接口类型、窗口等）；地址和 Key 用链接参数，其他模型表不导入。",
     "configEmbedded": "内嵌配置",
     "configRemote": "远程配置",
     "configDetails": "配置详情",

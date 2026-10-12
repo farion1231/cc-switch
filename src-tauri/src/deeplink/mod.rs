@@ -9,6 +9,7 @@
 //!
 
 mod codex_link;
+mod grok_link;
 mod mcp;
 mod parser;
 mod prompt;

@@ -3385,6 +3385,7 @@
     "importError": "インポートに失敗しました",
     "configSource": "設定ソース",
     "codexConfigScopeHint": "このプロバイダーに属する設定（エンドポイント、認証、モデル、推論レベルなど）のみをインポートします。[features]、MCP、権限などのグローバル設定はインポートされません。",
+    "grokConfigScopeHint": "[models] default が指すモデルテーブル（表示名、説明、API バックエンド、コンテキストウィンドウなど）のみをインポートします。エンドポイントとキーはリンクのパラメーターを使用し、他のモデルテーブルはインポートされません。",
     "configEmbedded": "埋め込み設定",
     "configRemote": "リモート設定",
     "configDetails": "設定の詳細",

@@ -106,6 +106,33 @@ fn deeplink_grokbuild_rows() {
     );
 }
 
+/// 带 `config.toml` 的 Grok Build 链接：只收 `models.default` 指向的那张表，地址和 Key
+/// 用链接参数。
+#[test]
+fn deeplink_grokbuild_config_rows() {
+    use base64::prelude::*;
+
+    let config = serde_json::json!({
+        "config": concat!(
+            "[models]\ndefault = \"grok-4.6\"\n\n",
+            "[model.\"grok-4.6\"]\nmodel = \"grok-4.6\"\nname = \"Grok 4.6 (Relay)\"\n",
+            "description = \"Fast coding model\"\n",
+            "base_url = \"https://ignored.example/v1\"\napi_key = \"sk-ignored\"\n",
+            "api_backend = \"chat_completions\"\ncontext_window = 256000\n\n",
+            "[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nname = \"Grok 4.5\"\n",
+        )
+    });
+    let url = format!(
+        "ccswitch://v1/import?resource=provider&app=grokbuild&name=Relay%20Grok%20Config&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=xai-relay&configFormat=json&config={}",
+        BASE64_URL_SAFE_NO_PAD.encode(config.to_string())
+    );
+    import_deeplinks(
+        AppType::GrokBuild,
+        &[&url],
+        "rows/deeplink-grokbuild-config.txt",
+    );
+}
+
 /// 首启：先把 live 导入成 `default`，再 seed 官方预设（顺序同 `lib.rs` 的启动流程）。
 /// live 里供应商以外的部分进了通用配置片段，片段也一起锁。关键字段（模型名、推理档位
 /// 等）不进片段、留在 `default` 行里：片段已冻结，收进去就再也写不回 live。

@@ -3,6 +3,7 @@
 //! Handles importing provider configurations via ccswitch:// URLs.
 
 use super::codex_link::{self, CodexLinkConfig};
+use super::grok_link::GrokLinkProfile;
 use super::utils::{decode_base64_param, infer_homepage_from_endpoint};
 use super::DeepLinkImportRequest;
 use crate::error::AppError;
@@ -149,7 +150,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),
-        AppType::GrokBuild => build_grokbuild_settings(request),
+        AppType::GrokBuild => build_grokbuild_settings(request)?,
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
@@ -491,7 +492,11 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     json!({ "env": env })
 }
 
-fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+/// 链接附带了 `config.toml` 时，按白名单收下选中的那张模型表（[`grok_link`]）；没带时用
+/// 固定模板。模板的字节由 golden 测试锁住（降级后旧版会把行里的 config 整份写进 live）。
+fn build_grokbuild_settings(
+    request: &DeepLinkImportRequest,
+) -> Result<serde_json::Value, AppError> {
     let model = request
         .model
         .as_deref()
@@ -507,18 +512,23 @@ fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Valu
     let endpoint = get_primary_endpoint(request).trim().to_string();
     let api_key = request.api_key.as_deref().unwrap_or("").trim();
 
+    if let Some(config) = decode_link_config(request)? {
+        let profile = GrokLinkProfile::parse(&grokbuild_config_text(&config)?)?;
+        return Ok(json!({ "config": profile.render(name, model, &endpoint, api_key) }));
+    }
+
     let model_value = toml_edit::Value::from(model).to_string();
     let name_value = toml_edit::Value::from(name).to_string();
     let endpoint_value = toml_edit::Value::from(endpoint.as_str()).to_string();
     let api_key_value = toml_edit::Value::from(api_key).to_string();
 
-    json!({
+    Ok(json!({
         "config": format!(
             "[models]\ndefault = {model_value}\n\n[model.{model_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {}\n",
             crate::grok_config::DEFAULT_API_BACKEND,
             crate::grok_config::DEFAULT_CONTEXT_WINDOW,
         )
-    })
+    }))
 }
 
 /// Build OpenCode settings configuration
@@ -867,23 +877,24 @@ fn merge_gemini_config(
     Ok(())
 }
 
+/// 链接 config 参数里的 Grok Build `config.toml` 文本：`{"config": "<toml 文本>"}`，或者
+/// 整份就是 config.toml（`configFormat=toml`，或 JSON 写的同一份内容）。
+fn grokbuild_config_text(config: &serde_json::Value) -> Result<String, AppError> {
+    if let Some(config_toml) = config.get("config").and_then(|v| v.as_str()) {
+        return Ok(config_toml.to_string());
+    }
+    let toml_value: toml::Value = serde_json::from_value(config.clone())
+        .map_err(|error| AppError::InvalidInput(format!("Invalid Grok Build config: {error}")))?;
+    toml::to_string(&toml_value)
+        .map_err(|error| AppError::InvalidInput(format!("Invalid Grok Build config: {error}")))
+}
+
 fn merge_grokbuild_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
-    let config_toml = if let Some(config_toml) = config.get("config").and_then(|v| v.as_str()) {
-        config_toml.to_string()
-    } else {
-        let toml_value: toml::Value = serde_json::from_value(config.clone()).map_err(|error| {
-            AppError::InvalidInput(format!("Invalid Grok Build config: {error}"))
-        })?;
-        toml::to_string(&toml_value).map_err(|error| {
-            AppError::InvalidInput(format!("Invalid Grok Build config: {error}"))
-        })?
-    };
-    let model = crate::grok_config::extract_model_config(&config_toml).ok_or_else(|| {
-        AppError::InvalidInput("Invalid Grok Build config.toml model profile".to_string())
-    })?;
+    // 先过白名单：拒绝的键在确认框打开时就报出来，而不是点了导入才失败
+    let profile = GrokLinkProfile::parse(&grokbuild_config_text(config)?)?;
 
     if request
         .api_key
@@ -896,7 +907,7 @@ fn merge_grokbuild_config(
         // victim's environment secret into the imported provider's config.toml
         // and ship it to whatever `base_url` the link declares. `env_key` is an
         // indirection that must stay a name, not a resolved secret, on import.
-        request.api_key = model.api_key;
+        request.api_key = profile.api_key();
 
         // An `env_key`-only link is not importable at all, and saying so beats
         // falling through to the generic "API key is required" (which reads like
@@ -909,7 +920,7 @@ fn merge_grokbuild_config(
             .api_key
             .as_ref()
             .is_none_or(|value| value.is_empty())
-            && model.env_key.is_some()
+            && profile.declares_env_key
         {
             return Err(AppError::InvalidInput(
                 "This link supplies its API key indirectly through `env_key`, which cannot be \
@@ -924,10 +935,10 @@ fn merge_grokbuild_config(
         .as_ref()
         .is_none_or(|value| value.is_empty())
     {
-        request.endpoint = Some(model.base_url);
+        request.endpoint = profile.base_url();
     }
     if request.model.is_none() {
-        request.model = Some(model.model);
+        request.model = profile.model();
     }
     if request
         .homepage
@@ -1032,7 +1043,7 @@ mod tests {
         });
 
         merge_grokbuild_config(&mut request, &config).expect("merge should succeed");
-        let settings = build_grokbuild_settings(&request);
+        let settings = build_grokbuild_settings(&request).unwrap();
         let rendered = settings["config"].as_str().expect("config string");
 
         assert!(

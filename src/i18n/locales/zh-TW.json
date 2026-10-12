@@ -3386,6 +3386,7 @@
     "importError": "匯入失敗",
     "configSource": "設定來源",
     "codexConfigScopeHint": "只匯入其中屬於這個供應商的設定（位址、驗證、模型、推理強度等）；[features]、MCP、權限這類全域設定不會匯入。",
+    "grokConfigScopeHint": "只匯入 [models] default 指向的那張模型表（顯示名稱、說明、介面類型、視窗等）；位址和 Key 使用連結參數，其他模型表不會匯入。",
     "configEmbedded": "內嵌設定",
     "configRemote": "遠端設定",
     "configDetails": "設定詳情",

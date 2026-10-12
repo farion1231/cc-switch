@@ -3385,6 +3385,7 @@
     "importError": "Failed to import",
     "configSource": "Config Source",
     "codexConfigScopeHint": "Only the settings that belong to this provider (endpoint, auth, model, reasoning effort, etc.) are imported; global settings such as [features], MCP and permissions are skipped.",
+    "grokConfigScopeHint": "Only the model table named by [models] default is imported (display name, description, API backend, context window, etc.); the endpoint and key come from the link parameters, and other model tables are skipped.",
     "configEmbedded": "Embedded Config",
     "configRemote": "Remote Config",
     "configDetails": "Config Details",
