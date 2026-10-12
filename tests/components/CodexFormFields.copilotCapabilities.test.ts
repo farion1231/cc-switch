@@ -46,4 +46,19 @@ describe("Codex Copilot capabilities", () => {
   it("rejects an absent capabilities field", () => {
     expect(isCopilotModelSupportedByCodex(model())).toBe(false);
   });
+
+  it("supports copilot-auto for auto and openai_chat, but rejects openai_responses", () => {
+    const autoModel: CopilotModel = {
+      id: "copilot-auto",
+      name: "Copilot Auto",
+      vendor: "GitHub",
+      model_picker_enabled: true,
+      supported_endpoints: ["/chat/completions"],
+    };
+    expect(isCopilotModelSupportedByCodex(autoModel, "auto")).toBe(true);
+    expect(isCopilotModelSupportedByCodex(autoModel, "openai_chat")).toBe(true);
+    expect(isCopilotModelSupportedByCodex(autoModel, "openai_responses")).toBe(
+      false,
+    );
+  });
 });

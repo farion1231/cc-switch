@@ -1057,6 +1057,7 @@ export function ClaudeDesktopProviderForm({
                       </Select>
                       {activeProviderType === "github_copilot" && (
                         <p className="text-xs leading-relaxed text-fg-2">
+                          {t("copilot.autoModelHint")}{" "}
                           {t("copilot.automaticFormatHint")}
                         </p>
                       )}

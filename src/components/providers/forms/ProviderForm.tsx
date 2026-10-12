@@ -137,6 +137,7 @@ import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
+import { isCopilotAutoModel } from "@/utils/copilotAuto";
 
 type PresetEntry = {
   id: string;
@@ -1250,6 +1251,22 @@ function ProviderFormFull({
     (appId === "claude" || appId === "codex") && category !== "official";
 
   const handleSubmit = async (values: ProviderFormData) => {
+    // All configured models share this provider's upstream protocol, including
+    // manually entered catalog rows and subagent defaults.
+    if (
+      appId === "codex" &&
+      isCopilotProvider &&
+      effectiveCodexCopilotApiFormat === "openai_responses" &&
+      [
+        extractCodexModelName(codexConfig ?? "") || "",
+        codexSubagentModel,
+        ...codexCatalogModels.map((model) => model.model),
+      ].some(isCopilotAutoModel)
+    ) {
+      toast.error(t("copilot.autoModelFormatError"));
+      return;
+    }
+
     const overridesResult = shouldApplyLocalProxyRequestOverrides
       ? buildLocalProxyRequestOverrides(
           localProxyHeadersOverride,
