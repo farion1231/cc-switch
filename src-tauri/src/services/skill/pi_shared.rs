@@ -401,51 +401,108 @@ pub(crate) fn resolve_pi_skill_sources() -> PiSkillSources {
     sources
 }
 
+/// 条目的静态分类（纯字符串判定，不触盘）——供共享配置编辑器的
+/// 徽章展示与警告；与 classify_entry 的分流判定共享同一核心，防漂移。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PiEntryKind {
+    /// 纯路径（扫描根候选，实际生效需目录存在）
+    ScanPath,
+    /// `!pattern`：glob 排除
+    Exclude,
+    /// `+path`：精确强制启用
+    ForceInclude,
+    /// `-path`：精确强制排除
+    ForceExclude,
+    /// 无前缀含通配符：include 白名单（仅作用扫描根）
+    IncludeWhitelist,
+    /// package scheme（pi 当普通路径解析，实际不存在的包引用）
+    PackageScheme,
+}
+
+/// 判定核心：scheme → 前缀 → 通配符 → 纯路径（对齐 pi splitPatterns/isPattern）
+pub(crate) fn classify_entry_kind(raw: &str) -> PiEntryKind {
+    const SCHEMES: [&str; 7] = [
+        "npm:", "git:", "github:", "http:", "https:", "ssh:", "builtin:",
+    ];
+    match raw.as_bytes().first().copied() {
+        Some(b'!') => return PiEntryKind::Exclude,
+        Some(b'+') => return PiEntryKind::ForceInclude,
+        Some(b'-') => return PiEntryKind::ForceExclude,
+        _ => {}
+    }
+    if raw.contains('*') || raw.contains('?') {
+        return PiEntryKind::IncludeWhitelist;
+    }
+    if SCHEMES.iter().any(|s| raw.starts_with(s)) {
+        return PiEntryKind::PackageScheme;
+    }
+    PiEntryKind::ScanPath
+}
+
+/// 编辑器警告（不阻断，对齐 pi 容错语义）：
+/// - 死模式：模式条目剥前缀后以 `~` 开头——pi 不展开模式中的 `~`，永不匹配
+///   （上游 issue #10765；`foo~bar` 这类含 ~ 的合法备份文件模式不误报）；
+/// - 字面路径陷阱：纯路径条目含通配符会被 pi 当 include 模式，
+///   无法按字面路径引用（如目录名恰含 ? 或 *）。
+#[expect(dead_code)] // T2/T3 编辑器消费后移除
+pub(crate) fn entry_warnings(raw: &str) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let kind = classify_entry_kind(raw);
+    let stripped = match kind {
+        PiEntryKind::Exclude | PiEntryKind::ForceInclude | PiEntryKind::ForceExclude => &raw[1..],
+        _ => raw,
+    };
+    let is_pattern = !matches!(kind, PiEntryKind::ScanPath | PiEntryKind::PackageScheme);
+    if is_pattern && (stripped.starts_with('~')) {
+        warnings.push("模式中的 ~ 不会被 pi 展开，该规则永远不会生效".to_string());
+    }
+    if !is_pattern && (raw.contains('*') || raw.contains('?')) {
+        warnings.push("路径含通配符，pi 会将其当作 include 白名单模式而非字面路径".to_string());
+    }
+    warnings
+}
+
 /// settings `skills` 条目分类（对齐 pi splitPatterns/isPattern：**原始串**判定，先于 trim）：
 /// `!`/`+`/`-` 前缀或含 `*`/`?` → 模式；scheme 仅在纯路径分支跳过
 /// （pi 把 `npm:x*` 当 include 模式而非包，故通配符判定必须在前）。
 fn classify_entry(raw: &str, agent_dir: &Option<PathBuf>, sources: &mut PiSkillSources) {
-    const SCHEMES: [&str; 7] = [
-        "npm:", "git:", "github:", "http:", "https:", "ssh:", "builtin:",
-    ];
-    let stripped = match raw.as_bytes().first().copied() {
-        Some(b'!') => {
+    // 分流核心与编辑器共用的 classify_entry_kind 一致，防双份逻辑漂移
+    match classify_entry_kind(raw) {
+        PiEntryKind::Exclude => {
             if let Some(w) = push_pattern(&mut sources.patterns.excludes, &raw[1..]) {
                 sources.approximate = true;
                 sources.warnings.push(w);
             }
             return;
         }
-        Some(b'+') => {
+        PiEntryKind::ForceInclude => {
             if let Some(w) = push_pattern(&mut sources.patterns.force_includes, &raw[1..]) {
                 sources.approximate = true;
                 sources.warnings.push(w);
             }
             return;
         }
-        Some(b'-') => {
+        PiEntryKind::ForceExclude => {
             if let Some(w) = push_pattern(&mut sources.patterns.force_excludes, &raw[1..]) {
                 sources.approximate = true;
                 sources.warnings.push(w);
             }
             return;
         }
-        _ => raw,
-    };
-    if stripped.contains('*') || stripped.contains('?') {
-        if let Some(w) = push_pattern(&mut sources.patterns.includes, stripped) {
-            sources.approximate = true;
-            sources.warnings.push(w);
+        PiEntryKind::IncludeWhitelist => {
+            if let Some(w) = push_pattern(&mut sources.patterns.includes, raw) {
+                sources.approximate = true;
+                sources.warnings.push(w);
+            }
+            return;
         }
-        return;
-    }
-    // 纯路径分支：pi 把 scheme 条目当普通相对路径解析（agentDir/npm:xxx
-    // 不存在 → 告警跳过）；这里显式跳过，净效果一致。
-    if SCHEMES.iter().any(|s| raw.starts_with(s)) {
-        return;
+        // pi 把 scheme 条目当普通相对路径解析（agentDir/npm:xxx 不存在 →
+        // 告警跳过）；这里显式跳过，净效果一致。
+        PiEntryKind::PackageScheme => return,
+        PiEntryKind::ScanPath => {}
     }
     // 纯路径 → 扫描根
-    let resolved = resolve_entry_path(stripped, agent_dir);
+    let resolved = resolve_entry_path(raw, agent_dir);
     if let Some(path) = resolved {
         push_root(
             &mut sources.roots,
@@ -1716,6 +1773,50 @@ mod tests {
         file_url_path_posix, file_url_to_path_win, is_absolute_win, normalize_windows_shell_path,
         posix_separated, resolve_plain_entry, resolve_win,
     };
+
+    // ===== 轻量条目分类与警告（编辑器用，纯字符串无 IO）=====
+
+    use super::{classify_entry_kind, entry_warnings, PiEntryKind};
+
+    #[test]
+    fn entry_kind_matrix_matches_classify_entry_semantics() {
+        assert_eq!(classify_entry_kind("!pdf"), PiEntryKind::Exclude);
+        assert_eq!(
+            classify_entry_kind("+skills/pdf"),
+            PiEntryKind::ForceInclude
+        );
+        assert_eq!(
+            classify_entry_kind("-skills/doc"),
+            PiEntryKind::ForceExclude
+        );
+        assert_eq!(classify_entry_kind("foo*"), PiEntryKind::IncludeWhitelist);
+        assert_eq!(classify_entry_kind("a?b"), PiEntryKind::IncludeWhitelist);
+        assert_eq!(
+            classify_entry_kind("npm:@scope/pkg"),
+            PiEntryKind::PackageScheme
+        );
+        assert_eq!(classify_entry_kind("~/skills"), PiEntryKind::ScanPath);
+        assert_eq!(classify_entry_kind("/abs/path"), PiEntryKind::ScanPath);
+        // 通配符判定先于 scheme（pi 把 npm:x* 当 include 模式）
+        assert_eq!(classify_entry_kind("npm:x*"), PiEntryKind::IncludeWhitelist);
+    }
+
+    #[test]
+    fn entry_warnings_dead_pattern_and_literal_wildcard() {
+        // 死模式：剥前缀后以 ~ 开头（明确的主目录展开意图）
+        assert!(!entry_warnings("!pdf").is_empty() == false);
+        assert_eq!(entry_warnings("!~/backup").len(), 1);
+        assert_eq!(entry_warnings("+~/x").len(), 1);
+        assert_eq!(entry_warnings("-~/x").len(), 1);
+        // foo~bar 是合法的备份文件匹配模式，不误报
+        assert!(entry_warnings("!foo~bar").is_empty());
+        assert!(entry_warnings("!**/~tmp").is_empty());
+        // 纯路径含通配符 → include 白名单提示
+        assert_eq!(entry_warnings("~/a?b").len(), 1);
+        // 正常条目无警告
+        assert!(entry_warnings("!pdf").is_empty());
+        assert!(entry_warnings("~/.claude/skills").is_empty());
+    }
 
     #[test]
     #[serial]
