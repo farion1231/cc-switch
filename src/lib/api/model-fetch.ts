@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import { toast } from "@/lib/toast";
+import { parseHeaderOverrideJson } from "@/lib/requestOverrides";
 
 export interface FetchedModel {
   id: string;
@@ -10,6 +11,22 @@ export interface FetchedModel {
 export interface ModelFetchOptions {
   apiFormat?: string;
   requestHeaders?: Record<string, string>;
+}
+
+/**
+ * 把表单里的本地代理 Header 覆盖 JSON 解析成取模型列表时要携带的请求头。
+ *
+ * 与转发路径共用 parseHeaderOverrideJson 的校验规则；解析失败或覆盖为空时
+ * 静默返回 undefined（回退到不带覆盖头取模型），格式错误由表单字段本身提示。
+ */
+export function modelFetchRequestHeaders(
+  headersJson: string,
+): Record<string, string> | undefined {
+  const { headers, error } = parseHeaderOverrideJson(headersJson);
+  if (error || !headers || Object.keys(headers).length === 0) {
+    return undefined;
+  }
+  return headers;
 }
 
 /**

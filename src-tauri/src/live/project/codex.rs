@@ -2,7 +2,8 @@
 //!
 //! 行的形状是 `{auth, config}`（`config` 是 TOML 文本）。投影只取关键字段，第三方路由
 //! 一律写成 `[model_providers.custom]`：行里用别的 id（`deepseek`）、旧形态的顶层
-//! `openai_base_url`、旧版留下的保留 id 表（`[model_providers.openai]`），都在这里归一。
+//! `openai_base_url` 或顶层 `base_url`、旧版留下的保留 id 表（`[model_providers.openai]`），
+//! 都在这里归一。
 //! 行里其余内容（旧版回填进来的 MCP、projects、插件）不投影，归用户和 Codex。
 //!
 //! Key 写成路由表的 `experimental_bearer_token`：Codex 0.149 起自定义 provider 不再读
@@ -318,7 +319,18 @@ fn third_party_route(doc: &DocumentMut, input: &RowInput<'_>) -> Result<Route, A
                 table.insert("wire_api", toml_edit::value("responses"));
                 (table, "Custom".to_string())
             }
-            None if selector.is_none() => return default_route(doc, input),
+            // 旧形态：没有选路，地址直接写在顶层 `base_url`（Codex 不认，代理认）。不收进
+            // 路由表的话，存行时它作为关键字段被剥掉、再也写不回来（#8039）。
+            None if selector.is_none() => match non_empty_str(doc.get("base_url")) {
+                Some(base_url) => {
+                    let mut table = Table::new();
+                    table.insert("name", toml_edit::value("Custom"));
+                    table.insert("base_url", toml_edit::value(base_url));
+                    table.insert("wire_api", toml_edit::value("responses"));
+                    (table, "Custom".to_string())
+                }
+                None => return default_route(doc, input),
+            },
             None => return built_in_route("openai", providers, doc, input),
         },
         Some(id) => return built_in_route(id, providers, doc, input),
@@ -1054,6 +1066,34 @@ mod tests {
             Some("responses")
         );
         assert_eq!(table.get("name").and_then(Item::as_str), Some("Custom"));
+
+        // 顶层 base_url（#8039）：没有选路也是第三方路由，Key 照常注入。
+        let top_level = row(
+            json!({ "OPENAI_API_KEY": "sk" }),
+            "base_url = \"https://relay.example/v1\"\nmodel = \"m\"\nwire_api = \"chat\"\n",
+        );
+        let projection = project(&top_level).unwrap();
+        let (table, auth) = custom(&projection);
+        assert_eq!(auth, RouteAuth::Bearer);
+        assert_eq!(
+            table.get("base_url").and_then(Item::as_str),
+            Some("https://relay.example/v1")
+        );
+        assert_eq!(
+            table.get("wire_api").and_then(Item::as_str),
+            Some("responses")
+        );
+        assert_eq!(
+            table
+                .get("experimental_bearer_token")
+                .and_then(Item::as_str),
+            Some("sk")
+        );
+
+        // 没填 Key 也放行：没有回退指令，不会去用 auth.json 的登录。
+        let keyless = row(json!({}), "base_url = \"https://relay.example/v1\"\n");
+        let projection = project(&keyless).unwrap();
+        assert_eq!(custom(&projection).1, RouteAuth::None);
     }
 
     fn apply(route: RouteWrite, live: &str) -> DocumentMut {

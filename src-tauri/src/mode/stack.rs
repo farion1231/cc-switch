@@ -621,9 +621,19 @@ pub struct StackView {
     /// 暂不可用；`officialModelsOutdated` 本机 Codex 太旧，拉到的官方列表里没有能选的模型。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notice: Option<&'static str>,
+    /// `notice` 是 `officialModelsBundled` / `officialModelsUnavailable` 时，没取到列表的原因
+    /// 码：先是官方列表的（`noLogin`、`loginStale`、`loginIncomplete`、`noVersion`、
+    /// `fetchFailed`、`invalidList`），不可用时再跟自带列表的（`noCli`、`cliFailed`、
+    /// `nothingUsable`）。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notice_reasons: Vec<&'static str>,
     /// Codex 客户端还在用旧的模型列表（启动时读的目录），Stack 模型看不到，要重启才行。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale_clients: Option<StaleClients>,
+    /// `stale_clients` 对应的目录和登录（见 `codex_client_catalog::revision`）：用户关掉提示后，
+    /// 同一个供应商上目录又改了，这个值变了，前端重新显示。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale_revision: Option<String>,
 }
 
 pub fn member_views(members: &[Member]) -> Vec<StackMemberView> {
