@@ -1564,6 +1564,8 @@ pub fn run() {
             commands::uninstall_skill_unified,
             commands::restore_skill_backup,
             commands::toggle_skill_app,
+            commands::get_pi_skills_config,
+            commands::set_pi_skills_entries,
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
             commands::discover_available_skills,
