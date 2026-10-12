@@ -26,6 +26,10 @@ import {
   setMcpServerEnabled,
   upsertMcpServer,
   deleteMcpServer,
+  listCustomIcons,
+  addCustomIcon,
+  renameCustomIcon,
+  deleteCustomIcon,
 } from "./state";
 
 const TAURI_ENDPOINT = "http://tauri.local";
@@ -560,4 +564,22 @@ export const handlers = [
       userEnabled: true,
     }),
   ),
+  http.post(`${TAURI_ENDPOINT}/get_custom_icons`, () =>
+    success(listCustomIcons()),
+  ),
+  http.post(`${TAURI_ENDPOINT}/add_custom_icon`, async ({ request }) => {
+    const { name, data } = await withJson<{ name: string; data: string }>(
+      request,
+    );
+    return success(addCustomIcon(name, data));
+  }),
+  http.post(`${TAURI_ENDPOINT}/rename_custom_icon`, async ({ request }) => {
+    const { id, name } = await withJson<{ id: string; name: string }>(request);
+    return success(renameCustomIcon(id, name));
+  }),
+  http.post(`${TAURI_ENDPOINT}/delete_custom_icon`, async ({ request }) => {
+    const { id } = await withJson<{ id: string }>(request);
+    deleteCustomIcon(id);
+    return success(null);
+  }),
 ];

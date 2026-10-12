@@ -4,7 +4,8 @@
 //! 小尺寸 PNG，以 `data:image/png;base64,…` 的形式写进来，随行数据一起同步、复制。
 //! 原始文件（SVG、带 EXIF 的 JPEG 等）不进库。保存时用 [`validate_icon`] 完整解码一遍；
 //! SQL 导入和云同步不经过保存，由 [`strip_invalid_custom_icons`] 在暂存库里清理
-//! （`providers` 表和 settings 里的统一供应商 JSON 都要清）。
+//! （`providers` 表、settings 里的统一供应商 JSON 和「我的图标」库都要清）。
+//! 「我的图标」是用户上传过的图片，存在 settings 的 `custom_icons` 键下，供选择器复用。
 //! 前端渲染时另有一道同样的长度、宽高检查兜底（`src/utils/customIcon.ts`）。
 
 use std::io::Cursor;
@@ -12,6 +13,7 @@ use std::io::Cursor;
 use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::database::{CustomIconEntry, Database, CUSTOM_ICONS_KEY};
 use crate::error::AppError;
 
 /// 自定义图标的前缀，和前端 `src/utils/customIcon.ts` 的 `CUSTOM_ICON_PREFIX` 一致。
@@ -88,8 +90,9 @@ fn is_valid_custom_icon(icon: &str) -> bool {
 /// SQL 导入、云同步在替换主库前调用：把暂存库里不合格的自定义图标清空（退回首字母），
 /// 其余数据原样保留，不让一个坏图标挡住整份备份。返回清掉的个数。
 ///
-/// 图标存在两处：`providers.icon` 列，和 settings 表 `universal_providers` 键下的 JSON
-/// （统一供应商）。两处都要清，后者同步到应用时会原样复制给子供应商。
+/// 图标存在三处：`providers.icon` 列、settings 表 `universal_providers` 键下的 JSON
+/// （统一供应商，同步到应用时会原样复制给子供应商），以及 `custom_icons` 键下的图标库
+/// （选中后原样写进供应商）。三处都要清。
 pub fn strip_invalid_custom_icons(conn: &Connection) -> Result<usize, AppError> {
     let db_err = |e: rusqlite::Error| AppError::Database(e.to_string());
 
@@ -118,6 +121,7 @@ pub fn strip_invalid_custom_icons(conn: &Connection) -> Result<usize, AppError> 
     }
 
     stripped += strip_invalid_universal_icons(conn)?;
+    stripped += strip_invalid_library_icons(conn)?;
 
     if stripped > 0 {
         log::warn!("导入的数据里有 {stripped} 个无效的自定义图标，已清空");
@@ -169,6 +173,166 @@ fn strip_invalid_universal_icons(conn: &Connection) -> Result<usize, AppError> {
         .map_err(db_err)?;
     }
     Ok(stripped)
+}
+
+/// 图标库里 `data` 不是合格自定义图标的条目整条删掉。和统一供应商一样按 JSON 改写，
+/// 保留其余条目的未知字段；数组解析不了就不动（读取时按空库处理）。
+fn strip_invalid_library_icons(conn: &Connection) -> Result<usize, AppError> {
+    let db_err = |e: rusqlite::Error| AppError::Database(e.to_string());
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [CUSTOM_ICONS_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_err)?;
+    let Some(raw) = raw else {
+        return Ok(0);
+    };
+    let Ok(mut entries) = serde_json::from_str::<Vec<serde_json::Value>>(&raw) else {
+        return Ok(0);
+    };
+    let before = entries.len();
+    entries.retain(|entry| {
+        entry
+            .get("data")
+            .and_then(|data| data.as_str())
+            .is_some_and(is_valid_custom_icon)
+    });
+    let stripped = before - entries.len();
+    if stripped > 0 {
+        conn.execute(
+            "UPDATE settings SET value = ?1 WHERE key = ?2",
+            params![
+                serde_json::Value::Array(entries).to_string(),
+                CUSTOM_ICONS_KEY
+            ],
+        )
+        .map_err(db_err)?;
+    }
+    Ok(stripped)
+}
+
+// --- 我的图标（图标库） ---
+
+/// 图标库条目数上限：每张 96×96 的 PNG 一般几 KB，最坏不到 64 KiB，整个库都存在一个
+/// settings 值里，打开选择器时一次读出
+pub const MAX_LIBRARY_ICONS: usize = 100;
+
+/// 名称长度上限（按字符数）
+pub const MAX_LIBRARY_NAME_CHARS: usize = 64;
+
+/// [`add_library_icon`] 的结果：同一张图已经在库里时返回原条目，`existed` 为 true
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddLibraryIconResult {
+    pub icon: CustomIconEntry,
+    pub existed: bool,
+}
+
+fn normalize_library_name(name: &str) -> Result<String, AppError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::localized(
+            "customIcon.nameEmpty",
+            "请给图标起个名字",
+            "Please name the icon",
+        ));
+    }
+    if name.chars().count() > MAX_LIBRARY_NAME_CHARS {
+        return Err(AppError::localized(
+            "customIcon.nameTooLong",
+            format!("图标名称不能超过 {MAX_LIBRARY_NAME_CHARS} 个字符"),
+            format!("The icon name cannot exceed {MAX_LIBRARY_NAME_CHARS} characters"),
+        ));
+    }
+    Ok(name.to_string())
+}
+
+fn library_icon_not_found() -> AppError {
+    AppError::localized(
+        "customIcon.notFound",
+        "这个图标已经不在「我的图标」里了",
+        "This icon is no longer in My Icons",
+    )
+}
+
+pub fn list_library_icons(db: &Database) -> Result<Vec<CustomIconEntry>, AppError> {
+    db.get_custom_icons()
+}
+
+/// 存进图标库，新的排在最前面。图片和供应商保存时一样完整校验；同一张图已经在库里时
+/// 不重复存，返回原条目（名称不改）。
+pub fn add_library_icon(
+    db: &Database,
+    name: &str,
+    data: &str,
+) -> Result<AddLibraryIconResult, AppError> {
+    let name = normalize_library_name(name)?;
+    if !is_valid_custom_icon(data) {
+        return Err(AppError::localized(
+            "provider.icon.invalid",
+            "自定义图标无效，请重新上传",
+            "The custom icon is invalid, please upload it again",
+        ));
+    }
+    let mut icons = db.get_custom_icons()?;
+    if let Some(existing) = icons.iter().find(|icon| icon.data == data) {
+        return Ok(AddLibraryIconResult {
+            icon: existing.clone(),
+            existed: true,
+        });
+    }
+    if icons.len() >= MAX_LIBRARY_ICONS {
+        return Err(AppError::localized(
+            "customIcon.libraryFull",
+            format!("「我的图标」最多存 {MAX_LIBRARY_ICONS} 个，请先删掉一些"),
+            format!("My Icons holds up to {MAX_LIBRARY_ICONS} icons, please delete some first"),
+        ));
+    }
+    let icon = CustomIconEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        data: data.to_string(),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        extra: serde_json::Map::new(),
+    };
+    icons.insert(0, icon.clone());
+    db.save_custom_icons(&icons)?;
+    Ok(AddLibraryIconResult {
+        icon,
+        existed: false,
+    })
+}
+
+pub fn rename_library_icon(
+    db: &Database,
+    id: &str,
+    name: &str,
+) -> Result<CustomIconEntry, AppError> {
+    let name = normalize_library_name(name)?;
+    let mut icons = db.get_custom_icons()?;
+    let icon = icons
+        .iter_mut()
+        .find(|icon| icon.id == id)
+        .ok_or_else(library_icon_not_found)?;
+    icon.name = name;
+    let renamed = icon.clone();
+    db.save_custom_icons(&icons)?;
+    Ok(renamed)
+}
+
+/// 只删图标库里的条目，已经选了这张图的供应商自己存着图片，不受影响。
+/// 条目已经不在（比如另一台设备删了又同步过来）时什么都不做。
+pub fn delete_library_icon(db: &Database, id: &str) -> Result<(), AppError> {
+    let mut icons = db.get_custom_icons()?;
+    let before = icons.len();
+    icons.retain(|icon| icon.id != id);
+    if icons.len() != before {
+        db.save_custom_icons(&icons)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -318,5 +482,123 @@ mod tests {
         assert_eq!(after["u1"]["futureField"], 1);
         assert_eq!(after["u2"]["icon"], good);
         assert_eq!(after["u3"]["icon"], "claude");
+    }
+
+    #[test]
+    fn strips_invalid_entries_from_icon_library_and_keeps_others() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE providers (id TEXT, app_type TEXT, icon TEXT, icon_color TEXT);
+             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);",
+        )
+        .unwrap();
+        let good = data_uri(&encode_png(96, 96));
+        let header_only = data_uri(&encode_png(96, 96)[..33]);
+        let library = serde_json::json!([
+            { "id": "a", "name": "Good", "data": good, "futureField": 1 },
+            { "id": "b", "name": "Bad", "data": header_only },
+            { "id": "c", "name": "Builtin", "data": "claude" },
+            { "id": "d", "name": "No data" },
+        ]);
+        conn.execute(
+            "INSERT INTO settings VALUES ('custom_icons', ?1)",
+            params![library.to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(strip_invalid_custom_icons(&conn).unwrap(), 3);
+
+        let raw: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'custom_icons'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!([{ "id": "a", "name": "Good", "data": good, "futureField": 1 }])
+        );
+    }
+
+    #[test]
+    fn library_add_dedupes_validates_and_puts_newest_first() {
+        let db = Database::memory().unwrap();
+        let first = data_uri(&encode_png(96, 96));
+        let second = data_uri(&encode_png(64, 64));
+
+        let added = add_library_icon(&db, "  Relay  ", &first).unwrap();
+        assert!(!added.existed);
+        assert_eq!(added.icon.name, "Relay");
+
+        // 同一张图不重复存，名称也不改
+        let again = add_library_icon(&db, "Other", &first).unwrap();
+        assert!(again.existed);
+        assert_eq!(again.icon.id, added.icon.id);
+        assert_eq!(again.icon.name, "Relay");
+
+        add_library_icon(&db, "Second", &second).unwrap();
+        let names: Vec<_> = list_library_icons(&db)
+            .unwrap()
+            .into_iter()
+            .map(|icon| icon.name)
+            .collect();
+        assert_eq!(names, ["Second", "Relay"]);
+
+        assert!(add_library_icon(&db, " ", &second).is_err());
+        assert!(add_library_icon(&db, &"x".repeat(MAX_LIBRARY_NAME_CHARS + 1), &second).is_err());
+        assert!(add_library_icon(&db, "Name", "claude").is_err());
+        let header_only = data_uri(&encode_png(96, 96)[..33]);
+        assert!(add_library_icon(&db, "Name", &header_only).is_err());
+        assert_eq!(list_library_icons(&db).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn library_rename_and_delete_keep_unknown_fields() {
+        let db = Database::memory().unwrap();
+        let good = data_uri(&encode_png(96, 96));
+        db.set_setting(
+            CUSTOM_ICONS_KEY,
+            &serde_json::json!([
+                { "id": "a", "name": "Old", "data": good, "createdAt": 1, "futureField": true },
+                { "id": "b", "name": "Gone", "data": good },
+            ])
+            .to_string(),
+        )
+        .unwrap();
+
+        let renamed = rename_library_icon(&db, "a", "New").unwrap();
+        assert_eq!(renamed.name, "New");
+        assert!(rename_library_icon(&db, "missing", "New").is_err());
+        assert!(rename_library_icon(&db, "a", "").is_err());
+
+        delete_library_icon(&db, "b").unwrap();
+        delete_library_icon(&db, "missing").unwrap();
+
+        let raw = db.get_setting(CUSTOM_ICONS_KEY).unwrap().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!([
+                { "id": "a", "name": "New", "data": good, "createdAt": 1, "futureField": true }
+            ])
+        );
+    }
+
+    #[test]
+    fn library_is_capped() {
+        let db = Database::memory().unwrap();
+        let entries: Vec<_> = (0..MAX_LIBRARY_ICONS)
+            .map(|i| CustomIconEntry {
+                id: i.to_string(),
+                name: i.to_string(),
+                data: format!("{CUSTOM_ICON_PREFIX}{i}"),
+                created_at: 0,
+                extra: serde_json::Map::new(),
+            })
+            .collect();
+        db.save_custom_icons(&entries).unwrap();
+        assert!(add_library_icon(&db, "One more", &data_uri(&encode_png(96, 96))).is_err());
     }
 }
