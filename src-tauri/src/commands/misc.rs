@@ -1633,6 +1633,33 @@ fn build_final_shell_cd_command(shell: &str, cwd: Option<&Path>) -> String {
     .unwrap_or_default()
 }
 
+#[cfg_attr(windows, allow(dead_code))]
+fn build_posix_provider_launcher_script(
+    config_path: &str,
+    script_path: &str,
+    provider_command: &str,
+    final_cd_command: &str,
+    exec_line: &str,
+) -> String {
+    let quoted_config_path = shell_single_quote(config_path);
+    let quoted_script_path = shell_single_quote(script_path);
+
+    format!(
+        r#"#!/usr/bin/env sh
+cleanup() {{
+    rm -f {quoted_config_path} {quoted_script_path}
+}}
+trap cleanup EXIT
+echo "Using provider-specific claude config:"
+echo {quoted_config_path}
+{provider_command}
+{final_cd_command}cleanup
+trap - EXIT
+{exec_line}
+"#
+    )
+}
+
 #[cfg(target_os = "windows")]
 fn try_get_version_wsl(
     tool: &str,
@@ -4597,22 +4624,14 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let config_path = config_file.to_string_lossy();
     let provider_command = build_provider_command_line(&shell, &config_path, cwd);
 
-    // Write the shell script to a temp file
-    // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
-    let script_content = format!(
-        r#"#!/usr/bin/env sh
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-{provider_command}
-{final_cd_command}
-{exec_line}
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        provider_command = provider_command,
-        final_cd_command = final_cd_command,
-        exec_line = exec_line,
+    // Write the shell script to a temp file. It removes the provider config before
+    // exec replaces the launcher, while the EXIT trap still handles early exits.
+    let script_content = build_posix_provider_launcher_script(
+        &config_path,
+        &script_file.to_string_lossy(),
+        &provider_command,
+        &final_cd_command,
+        &exec_line,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -5002,20 +5021,12 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let config_path = config_file.to_string_lossy();
     let provider_command = build_provider_command_line(&shell, &config_path, cwd);
 
-    let script_content = format!(
-        r#"#!/usr/bin/env sh
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-{provider_command}
-{final_cd_command}
-{exec_line}
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        provider_command = provider_command,
-        final_cd_command = final_cd_command,
-        exec_line = exec_line,
+    let script_content = build_posix_provider_launcher_script(
+        &config_path,
+        &script_file.to_string_lossy(),
+        &provider_command,
+        &final_cd_command,
+        &exec_line,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -5918,6 +5929,49 @@ mod tests {
         assert_eq!(
             build_final_shell_cd_command("/bin/bash", Some(Path::new("/tmp/project O'Brien"))),
             "cd '/tmp/project O'\"'\"'Brien' || exit 1\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_provider_launcher_does_not_accumulate_successful_launch_artifacts() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let artifact_dir = temp.path().join("provider artifacts O'Brien");
+        std::fs::create_dir(&artifact_dir).expect("artifact dir should be created");
+        let script_file = artifact_dir.join("cc_switch_launcher.sh");
+
+        for launch in 0..3 {
+            let config_file = artifact_dir.join(format!("claude_{launch}.json"));
+            std::fs::write(&config_file, r#"{"env":{"TOKEN":"fake-token"}}"#)
+                .expect("config fixture should be written");
+            let script_content = build_posix_provider_launcher_script(
+                &config_file.to_string_lossy(),
+                &script_file.to_string_lossy(),
+                "/bin/true",
+                "",
+                "exec /bin/true",
+            );
+            std::fs::write(&script_file, script_content)
+                .expect("launcher fixture should be written");
+
+            let output = std::process::Command::new("/bin/sh")
+                .arg(&script_file)
+                .output()
+                .expect("launcher should run");
+            assert!(
+                output.status.success(),
+                "launcher failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(!config_file.exists(), "provider config should be removed");
+            assert!(!script_file.exists(), "launcher script should be removed");
+        }
+
+        assert_eq!(
+            std::fs::read_dir(artifact_dir)
+                .expect("artifact dir should remain readable")
+                .count(),
+            0
         );
     }
 
