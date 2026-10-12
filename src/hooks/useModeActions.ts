@@ -62,7 +62,12 @@ export function useModeActions(app: AppId) {
                 app: appName,
                 provider: routeName ?? "",
               })
-            : t("mode.toast.enteredStack", { app: appName }),
+            : t(
+                app === "codex"
+                  ? "mode.toast.enteredStack"
+                  : "mode.toast.enteredStackLive",
+                { app: appName },
+              ),
           { closeButton: true },
         );
       } finally {

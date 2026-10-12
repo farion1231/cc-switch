@@ -19,16 +19,21 @@ fn key_of(parts: &Value) -> String {
     sha256_hex(&serde_json::to_vec(parts).expect("contract parts serialize"))
 }
 
-/// Claude Code：契约就是代理投影里的关键字段和独有字段。
+/// Claude Code：契约就是代理投影里的关键字段和独有字段。顶层关键字段只有聚合模式才有
+/// （`modelPicker`），没有时不进摘要，路由模式的契约和原来逐字节一致。
 pub fn claude(projection: &ClaudeProjection) -> Contract {
+    let mut parts = json!({
+        "app": "claude",
+        "version": CONTRACT_VERSION,
+        "env": sorted(&projection.env),
+        "exclusive": sorted(&projection.exclusive),
+    });
+    if !projection.top.is_empty() {
+        parts["top"] = sorted(&projection.top);
+    }
     Contract {
         version: CONTRACT_VERSION,
-        key: key_of(&json!({
-            "app": "claude",
-            "version": CONTRACT_VERSION,
-            "env": sorted(&projection.env),
-            "exclusive": sorted(&projection.exclusive),
-        })),
+        key: key_of(&parts),
         exclusive: projection.exclusive.clone(),
     }
 }

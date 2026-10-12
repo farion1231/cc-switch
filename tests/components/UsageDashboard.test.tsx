@@ -160,6 +160,7 @@ describe("UsageDashboard", () => {
       data: [
         {
           providerId: "p1",
+          appType: "claude",
           providerName: "DeepSeek",
           requestCount: 12,
           totalTokens: 100,

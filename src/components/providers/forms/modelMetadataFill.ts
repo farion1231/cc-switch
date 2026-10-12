@@ -106,6 +106,11 @@ export function fillOpenCodeModel(
       output: metadata.outputModalities ?? ["text"],
     };
   }
+  // OpenCode 只给 reasoning 为真的模型生成思考档位（ctrl+t）。只补 true：
+  // 写 false 会盖住 models.dev 同名条目，用户明确写的 false 也不动。
+  if (model.reasoning === undefined && metadata.reasoning === true) {
+    next.reasoning = true;
+  }
   return next;
 }
 

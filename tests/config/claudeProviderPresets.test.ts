@@ -87,6 +87,31 @@ describe("OpenCode Go Provider Preset", () => {
   });
 });
 
+describe("OpenCode Zen Provider Preset", () => {
+  const openCodeZen = providerPresets.find((p) => p.name === "OpenCode Zen");
+
+  it("should connect Claude models to Zen /messages directly with x-api-key auth", () => {
+    expect(openCodeZen).toBeDefined();
+    expect(openCodeZen!.family).toBe("opencode");
+
+    const env = (openCodeZen!.settingsConfig as any).env;
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://opencode.ai/zen");
+    // 和 Go 同一套网关：/messages 只认 x-api-key
+    expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+    expect(openCodeZen!.apiKeyField).toBe("ANTHROPIC_API_KEY");
+    expect(openCodeZen!.apiFormat).toBeUndefined();
+    // 免费模型外部调用会被 403，默认模型不能是 *-free / big-pickle
+    for (const key of [
+      "ANTHROPIC_MODEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    ]) {
+      expect(env[key]).toMatch(/^claude-/);
+    }
+  });
+});
+
 describe("AWS Bedrock Provider Presets", () => {
   const bedrockAksk = providerPresets.find(
     (p) => p.name === "AWS Bedrock (AKSK)",

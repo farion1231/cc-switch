@@ -272,7 +272,7 @@ export function UsageDateRangePicker({
           isEndLive
             ? "border-border bg-subtle cursor-not-allowed opacity-50"
             : isActive
-              ? "border-border-strong ring-1 ring-ring bg-surface cursor-pointer"
+              ? "border-ring ring-1 ring-ring bg-surface cursor-pointer"
               : "border-border hover:border-border cursor-pointer",
         )}
         onClick={() => {
@@ -286,7 +286,7 @@ export function UsageDateRangePicker({
           <Input
             type="date"
             className={cn(
-              "h-7 flex-1 border-0 bg-transparent p-0 text-body shadow-none focus-visible:ring-0",
+              "h-7 flex-1 border-0 bg-transparent p-0 text-body shadow-none focus:ring-0 focus-visible:ring-0",
               isEndLive && "pointer-events-none",
             )}
             value={fmtDate(ts)}
@@ -307,7 +307,7 @@ export function UsageDateRangePicker({
             type="time"
             step={60}
             className={cn(
-              "h-7 w-[90px] flex-none border-0 bg-transparent p-0 text-body shadow-none focus-visible:ring-0",
+              "h-7 w-[90px] flex-none border-0 bg-transparent p-0 text-body shadow-none focus:ring-0 focus-visible:ring-0",
               isEndLive && "pointer-events-none",
             )}
             value={fmtTime(ts)}
@@ -371,7 +371,7 @@ export function UsageDateRangePicker({
           ))}
         </div>
 
-        <div className="usage-range-layout flex flex-col gap-3">
+        <div className="usage-range-layout mt-3 flex flex-col gap-3">
           {/* Left: date fields */}
           <div className="usage-range-fields space-y-2">
             <p className="text-caption text-fg-2">

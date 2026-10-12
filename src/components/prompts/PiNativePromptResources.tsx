@@ -29,9 +29,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Sheet,
-  SheetContent,
   SheetDescription,
-  SheetTitle,
+  SheetPageContent,
 } from "@/components/ui/sheet";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
@@ -88,6 +87,8 @@ const promptFileKey = (kind: EditablePiPromptFileKind) =>
   ["pi", "promptFile", kind] as const;
 
 export const promptTemplatesKey = ["pi", "promptTemplates"] as const;
+/** 编辑页保存用的 mutation key：页面据此在保存进行中锁住导航 */
+export const PI_PROMPT_SAVE_MUTATION_KEY = ["pi", "promptSave"] as const;
 
 export function usePiPromptTemplatesQuery() {
   return useQuery({
@@ -100,7 +101,7 @@ function showMutationError(error: unknown, fallback: string) {
   toast.error(extractErrorMessage(error) || fallback);
 }
 
-/** 抽屉外壳（宽 560）：标题栏 52、正文滚动、底栏 56。 */
+/** 编辑页外壳：整页（带返回按钮的页头）、正文滚动、底栏 56。 */
 function PromptDrawer({
   title,
   description,
@@ -120,27 +121,20 @@ function PromptDrawer({
   return (
     <Sheet
       open
+      modal={false}
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
     >
-      <SheetContent width={560} closeLabel={t("common.close")}>
-        <div className="flex h-[52px] shrink-0 items-center border-b border-border pe-12 ps-6">
-          <SheetTitle
-            title={title}
-            className="min-w-0 truncate text-title text-fg-1"
-          >
-            {title}
-          </SheetTitle>
-          <SheetDescription className="sr-only">{description}</SheetDescription>
-        </div>
+      <SheetPageContent title={title} closeLabel={t("common.back")}>
+        <SheetDescription className="sr-only">{description}</SheetDescription>
         <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5">
           {children}
         </div>
         <div className="flex h-14 shrink-0 items-center gap-2 border-t border-border px-6">
           {footer}
         </div>
-      </SheetContent>
+      </SheetPageContent>
     </Sheet>
   );
 }
@@ -167,6 +161,7 @@ function PiInstructionFileEditor({
   const queryKey = promptFileKey(file.kind);
 
   const save = useMutation({
+    mutationKey: PI_PROMPT_SAVE_MUTATION_KEY,
     mutationFn: () =>
       promptsApi.replacePiPromptFile(file.kind, baseSnapshot.revision, draft),
     onSuccess: (nextSnapshot) => {
@@ -513,7 +508,6 @@ interface PiPromptTemplateEditorProps {
   existingSlugs: Set<string>;
   onClose: () => void;
   onChanged: () => Promise<void>;
-  onDelete?: (template: PiPromptTemplate) => void;
 }
 
 function PiPromptTemplateEditor({
@@ -521,7 +515,6 @@ function PiPromptTemplateEditor({
   existingSlugs,
   onClose,
   onChanged,
-  onDelete,
 }: PiPromptTemplateEditorProps) {
   const { t } = useTranslation();
   const baseId = useId();
@@ -573,6 +566,7 @@ function PiPromptTemplateEditor({
           });
 
   const save = useMutation({
+    mutationKey: PI_PROMPT_SAVE_MUTATION_KEY,
     mutationFn: () =>
       promptsApi.upsertPiPromptTemplate(
         normalizedSlug,
@@ -623,18 +617,6 @@ function PiPromptTemplateEditor({
       busy={busy}
       footer={
         <>
-          {!isCreate && onDelete ? (
-            <Button
-              type="button"
-              variant="quiet"
-              size="regular"
-              disabled={busy}
-              onClick={() => onDelete(template)}
-              className="-ms-2.5 text-danger-text"
-            >
-              {t("common.delete")}
-            </Button>
-          ) : null}
           <div className="flex-1" />
           <Button
             type="button"
@@ -1037,7 +1019,6 @@ export const PiPromptTemplates = forwardRef<
           existingSlugs={existingSlugs}
           onClose={() => setEditor(null)}
           onChanged={refresh}
-          onDelete={(template) => remove.mutate(template)}
         />
       )}
     </>

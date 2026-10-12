@@ -1,18 +1,33 @@
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import { RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { TONE_FILL, TONE_TEXT, useNow } from "@/components/quota/QuotaLines";
 import {
+  ResetSlot,
+  TONE_FILL,
+  TONE_TEXT,
+  TonedText,
+  useNow,
+} from "@/components/quota/QuotaLines";
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import {
+  QuotaBreakdownChevron,
+  QuotaBreakdownRow,
+} from "@/components/quota/QuotaBreakdown";
+import {
+  barPercent,
+  countdownStr,
   formatRelativeTime,
+  lineHint,
   tierLine,
+  type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
 import {
   quotaFailureReason,
-  tierLines,
+  quotaRows,
 } from "@/components/SubscriptionQuotaFooter";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
@@ -41,8 +56,8 @@ interface AccountQuotaColumnProps {
 }
 
 /**
- * 授权中心账号行右侧的额度（v7 Auth 画板）：212 宽的额度条（条和数字都按「剩余」画，
- * 平时 --chart-1；不到 10% 换 warning，用完换 danger）+ 84 宽的「x 分钟前 ↻」。
+ * 授权中心账号行右侧的额度（v7 Auth 画板）：212 宽的额度条（条和数字按设置写剩余或已用，
+ * 平时 --chart-1；不到 20% 换 warning，用完换 danger）+ 84 宽的「x 分钟前 ↻」。
  * 打开页面时查一次，不轮询；↻ 手动重查。
  */
 export function AccountQuotaColumn({
@@ -53,9 +68,20 @@ export function AccountQuotaColumn({
   onRefresh,
 }: AccountQuotaColumnProps) {
   const { t } = useTranslation();
-  const now = useNow(Boolean(queriedAt));
+  const now = useNow(
+    Boolean(queriedAt) ||
+      (state?.kind === "rows" && state.rows.some(({ line }) => line.resetsAt)),
+  );
   const agoId = useId();
   if (!state) return null;
+  // 有一档带重置时间，每行数值后面都留出倒计时那一格（各行对齐），整列加宽
+  const showReset =
+    state.kind === "rows" &&
+    state.rows.some(({ line }) => countdownStr(line.resetsAt, now));
+  const resetCell = (line: QuotaLine) =>
+    showReset ? (
+      <ResetSlot countdown={countdownStr(line.resetsAt, now)} className="" />
+    ) : null;
 
   const ago = queriedAt ? formatRelativeTime(queriedAt, now, t) : "";
   const agoText = loading
@@ -64,49 +90,39 @@ export function AccountQuotaColumn({
 
   return (
     <>
-      <div className="flex w-[212px] shrink-0 flex-col gap-0.5">
+      <div
+        className={cn(
+          "flex shrink-0 flex-col gap-0.5",
+          showReset ? "w-[272px]" : "w-[212px]",
+        )}
+      >
         {state.kind === "rows" &&
-          state.rows.map(({ label, line }) => {
-            const width = Number.isFinite(line.left)
-              ? Math.max(0, Math.min(100, line.left))
-              : 100;
-            const value = line.value ?? line.text;
-            return (
+          state.rows.map(({ label, line }) =>
+            line.breakdown ? (
+              <QuotaBreakdownRow
+                key={line.key}
+                line={line}
+                breakdown={line.breakdown}
+                className={ROW_CLASS}
+              >
+                <QuotaRowCells
+                  label={label}
+                  line={line}
+                  trailing={<QuotaBreakdownChevron />}
+                />
+                {resetCell(line)}
+              </QuotaBreakdownRow>
+            ) : (
               <div
                 key={line.key}
-                title={line.detail ?? value}
-                className="flex h-[18px] items-center gap-2 text-caption"
+                title={lineHint(t, line, now)}
+                className={ROW_CLASS}
               >
-                <span className="min-w-[52px] shrink-0 whitespace-nowrap text-fg-2">
-                  {label}
-                </span>
-                <span
-                  role="meter"
-                  aria-label={`${label}: ${value}`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(width)}
-                  className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-chart-grid"
-                >
-                  <span
-                    className={cn(
-                      "absolute inset-y-0 start-0 rounded-full",
-                      TONE_FILL[line.tone],
-                    )}
-                    style={{ width: `${width}%` }}
-                  />
-                </span>
-                <span
-                  className={cn(
-                    "w-14 shrink-0 whitespace-nowrap text-end tabular-nums",
-                    line.tone === "normal" ? "text-fg-1" : TONE_TEXT[line.tone],
-                  )}
-                >
-                  {value}
-                </span>
+                <QuotaRowCells label={label} line={line} />
+                {resetCell(line)}
               </div>
-            );
-          })}
+            ),
+          )}
         {state.kind === "failed" && (
           <>
             <span className="h-[18px] text-caption font-medium text-danger-text">
@@ -160,11 +176,68 @@ export function AccountQuotaColumn({
   );
 }
 
+const ROW_CLASS = "flex h-[18px] items-center gap-2 text-caption";
+
+/** 一行额度：档名 + 额度条（或一句说明）+ 剩余 */
+function QuotaRowCells({
+  label,
+  line,
+  trailing,
+}: {
+  label: string;
+  line: QuotaLine;
+  /** 跟在说明文字后面的小图标（可点开的行用） */
+  trailing?: ReactNode;
+}) {
+  const width = barPercent(line);
+  const value = line.value ?? line.text;
+  return (
+    <>
+      <span className="min-w-[52px] shrink-0 whitespace-nowrap text-fg-2">
+        {label}
+      </span>
+      {line.caption ? (
+        <span className="flex min-w-0 flex-1 items-center gap-0.5 text-fg-3">
+          <span className="truncate">{line.caption}</span>
+          {trailing}
+        </span>
+      ) : (
+        <span
+          role="meter"
+          aria-label={`${label}: ${value}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(width)}
+          className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-chart-grid"
+        >
+          <span
+            className={cn(
+              "absolute inset-y-0 start-0 rounded-full",
+              TONE_FILL[line.tone],
+            )}
+            style={{ width: `${width}%` }}
+          />
+        </span>
+      )}
+      {/* 旁边已有额度条，正常时数值不上色 */}
+      <span className="w-14 shrink-0 whitespace-nowrap text-end tabular-nums text-fg-1">
+        <TonedText
+          text={value}
+          line={line}
+          className={line.tone === "normal" ? "" : TONE_TEXT[line.tone]}
+        />
+      </span>
+    </>
+  );
+}
+
 /** SubscriptionQuota（ChatGPT / xAI 账号的订阅额度）→ 额度列状态 */
 export function subscriptionQuotaState(
   t: TFunction,
   quota: SubscriptionQuota | undefined,
   loading: boolean,
+  locale: string,
+  display: QuotaDisplay = "left",
 ): AccountQuotaState {
   if (!quota) return loading ? { kind: "loading" } : null;
   // 没有凭据 / 凭据解析失败：和供应商卡片一样不显示
@@ -180,7 +253,7 @@ export function subscriptionQuotaState(
       reason: quotaFailureReason(t, quota),
     };
   }
-  const rows = tierLines(t, quota.tiers || []);
+  const rows = quotaRows(t, quota, locale, { display });
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
@@ -193,6 +266,7 @@ export function CopilotAccountQuota({
   login: string;
 }) {
   const { t } = useTranslation();
+  const display = useQuotaDisplay();
   const query = useCopilotQuota(accountId, { enabled: true, autoQuery: false });
   const { data: quota, isFetching: loading } = query;
 
@@ -205,7 +279,7 @@ export function CopilotAccountQuota({
             kind: "rows",
             rows: quota.tiers.map((tier) => ({
               label,
-              line: tierLine(t, tier, label),
+              line: tierLine(t, tier, label, { display }),
             })),
           }
         : null;
@@ -242,7 +316,8 @@ export function XaiAccountQuota({
   accountId: string;
   login: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
   const {
     data: quota,
     isFetching: loading,
@@ -254,7 +329,7 @@ export function XaiAccountQuota({
   return (
     <AccountQuotaColumn
       login={login}
-      state={subscriptionQuotaState(t, quota, loading)}
+      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}

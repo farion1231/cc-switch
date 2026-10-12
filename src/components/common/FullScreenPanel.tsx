@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { useUnsavedChangesTracker } from "@/lib/unsavedChanges";
 import { cn } from "@/lib/utils";
 
 interface FullScreenPanelProps {
@@ -22,12 +23,17 @@ interface FullScreenPanelProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   /** Entry/exit motion. Nested navigation panels can opt into a horizontal transition. */
-  motionPreset?: "fade" | "slide-from-right";
+  motionPreset?: "none" | "fade" | "slide-from-right";
   /**
    * 覆盖内容区滚动容器的内边距/间距类。默认 `px-6 py-6 space-y-6`。
    * 通过 `cn`(twMerge) 合并，传入如 `pt-3` 只覆盖顶部内边距，其余保持默认。
    */
   contentClassName?: string;
+  /**
+   * 编辑表单：用户改过内容后，从侧栏、托盘、⌘, 离开当前页前会先确认。
+   * 只给编辑页打开；授权中心、测速这类页面不需要。
+   */
+  trackUnsavedChanges?: boolean;
 }
 
 /** 外壳里的内容区（App 的 <main id="content-area">）：二级页只盖住它，侧栏留着 */
@@ -68,9 +74,15 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   footer,
   contentClassName,
   motionPreset = "fade",
+  trackUnsavedChanges = false,
 }) => {
+  // 面板关掉后组件可能还挂着：只在打开时登记，关掉即撤销
+  const unsavedChangesHandlers = useUnsavedChangesTracker(
+    trackUnsavedChanges && isOpen,
+  );
   const { t } = useTranslation();
   const prefersReducedMotion = useReducedMotion();
+  const disableMotion = motionPreset === "none" || prefersReducedMotion;
   const shouldSlideFromRight =
     motionPreset === "slide-from-right" && !prefersReducedMotion;
 
@@ -124,18 +136,24 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
       {isOpen && (
         <motion.div
           initial={
-            prefersReducedMotion
+            disableMotion
               ? false
               : shouldSlideFromRight
                 ? { x: "100%" }
                 : { opacity: 0 }
           }
           animate={shouldSlideFromRight ? { x: 0 } : { opacity: 1 }}
-          exit={shouldSlideFromRight ? { x: "100%" } : { opacity: 0 }}
+          exit={
+            disableMotion
+              ? { opacity: 1 }
+              : shouldSlideFromRight
+                ? { x: "100%" }
+                : { opacity: 0 }
+          }
           transition={
             shouldSlideFromRight
               ? { duration: 0.26, ease: [0.22, 1, 0.36, 1] }
-              : { duration: prefersReducedMotion ? 0 : 0.2 }
+              : { duration: disableMotion ? 0 : 0.2 }
           }
           className={cn(
             "inset-0 z-[60] flex flex-col bg-app",
@@ -145,6 +163,8 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           <AppPageHeader
             variant="app"
             title={title}
+            // 标题里常带用户起的名字，不限长度；必须能收缩截断，否则会把窗口按钮挤出可视区
+            truncateTitle
             subtitle={subtitle}
             actions={actions}
             leading={
@@ -164,7 +184,10 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           />
 
           <div className="flex-1 overflow-y-auto scroll-stable">
-            <div className={cn("w-full space-y-6 px-6 py-6", contentClassName)}>
+            <div
+              className={cn("w-full space-y-6 px-6 py-6", contentClassName)}
+              {...unsavedChangesHandlers}
+            >
               {children}
             </div>
           </div>

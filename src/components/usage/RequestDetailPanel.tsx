@@ -29,6 +29,7 @@ import {
   parseFiniteNumber,
 } from "./format";
 import { appDisplayName } from "./RequestLogTable";
+import { getUsageProviderLabel } from "./providerLabel";
 
 interface RequestDetailPanelProps {
   /** 要看的请求；null 时抽屉关闭 */
@@ -113,7 +114,7 @@ function useDetailSections(request: RequestLog) {
     {
       key: "provider",
       label: t("usage.provider"),
-      value: request.providerName || t("usage.unknownProvider"),
+      value: getUsageProviderLabel(request.providerName, t).shortLabel,
     },
     {
       key: "providerId",
@@ -226,7 +227,7 @@ function useDetailSections(request: RequestLog) {
 
   let performance: DetailRow[];
   if (!isProxy) {
-    // 会话日志没有首字计时；耗时是导入时按日志时间戳估的（0 = 没估出来）
+    // 会话日志的耗时和首字是导入时按日志时间戳估的（耗时 0 = 没估出来）
     if (latency == null || latency <= 0) {
       performance = [
         {
@@ -260,6 +261,14 @@ function useDetailSections(request: RequestLog) {
           title: `${fmtInt(latency, locale)} ms`,
         },
       ];
+      // 首字也是按时间戳推出来的；第一块不是思考、或 Codex 一开头就调工具时推不出来
+      if (firstToken != null) {
+        performance.splice(1, 0, {
+          key: "ttft",
+          label: t("usage.detail.firstTokenEstimated"),
+          value: `${(firstToken / 1000).toFixed(1)}s`,
+        });
+      }
     }
   } else {
     const speedRow: DetailRow =
@@ -356,7 +365,7 @@ export function RequestDetailPanel({
     ? [
         new Date(request.createdAt * 1000).toLocaleString(),
         appDisplayName(request.appType),
-        request.providerName || t("usage.unknownProvider"),
+        getUsageProviderLabel(request.providerName, t).shortLabel,
       ].join(" · ")
     : undefined;
 

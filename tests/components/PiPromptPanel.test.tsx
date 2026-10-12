@@ -1,4 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+} from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -117,6 +121,38 @@ describe("Pi prompts page", () => {
       screen.getAllByRole("button", { name: "pi.prompts.newTemplate" }).length,
     ).toBeGreaterThan(0);
     expect(screen.getByText("~/.pi/agent/prompts/")).toBeInTheDocument();
+  });
+
+  it("locks navigation while a system prompt or template editor is saving", async () => {
+    function PendingNativeSave() {
+      const save = useMutation({
+        mutationKey: ["pi", "promptSave"],
+        mutationFn: () => new Promise<void>(() => {}),
+      });
+      return (
+        <button type="button" onClick={() => save.mutate()}>
+          start-native-save
+        </button>
+      );
+    }
+    const onNavigationBlockedChange = vi.fn();
+    renderWithClient(
+      <>
+        <PromptPanel
+          appId="pi"
+          apps={["claude", "pi"]}
+          onAppChange={vi.fn()}
+          onNavigationBlockedChange={onNavigationBlockedChange}
+        />
+        <PendingNativeSave />
+      </>,
+    );
+    await screen.findByRole("button", { name: "prompts.add" });
+    expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByRole("button", { name: "start-native-save" }));
+    await waitFor(() =>
+      expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(true),
+    );
   });
 
   it("warns about an external AGENTS.md and stores it in the library", async () => {

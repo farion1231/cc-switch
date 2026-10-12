@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useIsMutating } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -16,6 +17,7 @@ import {
 } from "./PromptLibrary";
 import { PromptPageFrame } from "./PromptPageFrame";
 import {
+  PI_PROMPT_SAVE_MUTATION_KEY,
   PiPromptTemplates,
   PiSystemPromptFiles,
   usePiPromptTemplatesQuery,
@@ -86,7 +88,11 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
   const writePending = Boolean(togglingId) || busy;
   const interactionBlocked =
     loading || writePending || isFormOpen || dialogOpen;
-  const navigationBlocked = writePending || isFormOpen || dialogOpen;
+  // 系统提示 / 模板编辑页自己的保存，按 mutation key 单独看
+  const nativeSaving =
+    useIsMutating({ mutationKey: PI_PROMPT_SAVE_MUTATION_KEY }) > 0;
+  // 编辑页只盖住内容区，不锁导航：离开页面就关掉它（同供应商编辑页）；保存进行中仍锁
+  const navigationBlocked = writePending || dialogOpen || nativeSaving;
   // 外观上的禁用晚 300ms 才出现：点一下启用这类很快的写入不让整列按钮闪一下变灰。
   // 拦截仍看 interactionBlocked；表单、对话框打开时照常立即禁用。
   const controlsDisabled =
@@ -532,10 +538,6 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
           initialData={editingId ? prompts[editingId] : undefined}
           onSave={handleSave}
           onClose={() => setIsFormOpen(false)}
-          onDelete={(id) => {
-            setIsFormOpen(false);
-            performDelete(id);
-          }}
         />
       )}
 

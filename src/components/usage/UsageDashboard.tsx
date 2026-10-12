@@ -53,6 +53,7 @@ import { UsageDataSourcesSheet } from "./UsageDataSourcesSheet";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
+import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 
 const DEFAULT_REFRESH_INTERVAL_MS = 30000;
 const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
@@ -522,10 +523,16 @@ export function UsageDashboard({
             variant="neutral"
             size="regular"
             className="min-w-[78px] max-w-[156px] shrink gap-1 pe-2 ps-3"
-            title={providerName ?? t("usage.providerFilter.title")}
+            title={
+              providerName
+                ? usageProviderTitle(getUsageProviderLabel(providerName, t))
+                : t("usage.providerFilter.title")
+            }
           >
             <span className="min-w-0 truncate">
-              {providerName ?? t("usage.providerFilter.label")}
+              {providerName
+                ? getUsageProviderLabel(providerName, t).label
+                : t("usage.providerFilter.label")}
             </span>
             <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-2" />
           </Button>
@@ -543,18 +550,21 @@ export function UsageDashboard({
             {t("usage.providerFilter.all")}
             <MenuMeta>{fmtInt(providerTotal, locale)}</MenuMeta>
           </DropdownMenuItem>
-          {providerOptions.map((option) => (
-            <DropdownMenuItem
-              key={option.name}
-              className={menuItemClass}
-              title={option.name}
-              onSelect={() => changeProviderName(option.name)}
-            >
-              <MenuCheck checked={providerName === option.name} />
-              <span className="min-w-0 truncate">{option.name}</span>
-              <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
-            </DropdownMenuItem>
-          ))}
+          {providerOptions.map((option) => {
+            const label = getUsageProviderLabel(option.name, t);
+            return (
+              <DropdownMenuItem
+                key={option.name}
+                className={menuItemClass}
+                title={usageProviderTitle(label)}
+                onSelect={() => changeProviderName(option.name)}
+              >
+                <MenuCheck checked={providerName === option.name} />
+                <span className="min-w-0 truncate">{label.label}</span>
+                <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
+              </DropdownMenuItem>
+            );
+          })}
         </DropdownMenuContent>
       </DropdownMenu>
       <DropdownMenu>

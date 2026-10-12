@@ -80,7 +80,7 @@ requires_openai_auth = true`;
 }
 
 export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
-  // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
+  // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.ai",
@@ -178,6 +178,16 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "runapi",
   },
   {
+    name: "OpenModel",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
+    auth: grokAuth(),
+    config: grokPresetConfig("OpenModel", "https://api.openmodel.ai/v1"),
+    category: "aggregator",
+    isPartner: true,
+    icon: "openmodel",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -236,6 +246,19 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "subrouter",
     icon: "subrouter",
+  },
+  {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    auth: grokAuth(),
+    config: grokPresetConfig("88API", "https://api.88api.ai/v1"),
+    endpointCandidates: ["https://api.88api.ai/v1", "https://88api.ai/v1"],
+    apiFormat: "openai_responses",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
   },
   {
     name: "APIKEY.FUN",
@@ -466,6 +489,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "dmxapi",
+    icon: "dmxapi",
   },
   {
     name: "SudoCode.chat",
@@ -499,6 +523,23 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "sudocode-us",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
+  {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("Tu-zi", "https://api.tu-zi.com/v1"),
+    endpointCandidates: [
+      "https://api.tu-zi.com/v1",
+      "https://api.ourzhishi.top/v1",
+      "https://api.sydney-ai.com/v1",
+      "https://apicdn.tu-zi.com/v1",
+    ],
+    apiFormat: "openai_responses",
+    category: "aggregator",
+    icon: "tuzi",
+  },
   {
     name: "xAI (Grok)",
     websiteUrl: "https://x.ai/api",
@@ -604,5 +645,81 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     ),
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
+    icon: "therouter",
+  },
+  {
+    name: "SoruxGPT",
+    websiteUrl: "https://ai.soruxgpt.com",
+    apiKeyUrl: "https://ai.soruxgpt.com/console/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("SoruxGPT", "https://ai.soruxgpt.com/v1"),
+    endpointCandidates: [
+      "https://ai.soruxgpt.com/v1",
+      "https://api-cf.soruxgpt.com/v1",
+      "https://api-host.soruxgpt.com/v1",
+      "https://api-node6.soruxgpt.com/v1",
+      "https://api-node3.soruxgpt.com/v1",
+    ],
+    category: "aggregator",
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("IKunCode", "https://api.ikuncode.ai/v1"),
+    endpointCandidates: [
+      "https://api.ikuncode.ai/v1",
+      "https://api.ikuncode.cc/v1",
+    ],
+    category: "aggregator",
+    icon: "ikuncode",
+  },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("RunToken", "https://www.runtoken.ai/v1"),
+    endpointCandidates: [
+      "https://www.runtoken.ai/v1",
+      "https://fast.runtoken.ai/v1",
+    ],
+    category: "aggregator",
+    icon: "runtoken",
+  },
+  {
+    name: "BotCF",
+    websiteUrl: "https://botcf.com",
+    apiKeyUrl: "https://botcf.com/console/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("BotCF", "https://botcf.com/v1"),
+    category: "aggregator",
+    icon: "botcf",
+  },
+  {
+    name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    auth: grokAuth(),
+    config: grokPresetConfig("YYLX", "https://app.yylx.io/v1"),
+    endpointCandidates: [
+      "https://app.yylx.io/v1",
+      "https://global.yylx.io/v1",
+      "https://cn.yylx.io/v1",
+    ],
+    category: "aggregator",
+    icon: "yylx",
+  },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    auth: grokAuth(),
+    config: grokPresetConfig("TokenFlux", "https://tokenflux.dev/v1"),
+    category: "aggregator",
+    icon: "tokenflux",
   },
 ];

@@ -9,7 +9,9 @@ import { proxyApi } from "@/lib/api/proxy";
 import { useProvidersQuery } from "@/lib/query";
 import {
   useGlobalProxyConfig,
+  useProxyClientHost,
   useProxyStatusQuery,
+  useSetProxyClientHost,
   useUpdateGlobalProxyConfig,
 } from "@/lib/query/proxy";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
@@ -53,6 +55,26 @@ const isValidListenAddress = (address: string): boolean => {
   }
 };
 
+/** 客户端地址：空（按监听地址）、IP 或主机名；`0.0.0.0` / `::` 客户端连不上 */
+const isValidClientHost = (host: string): boolean => {
+  if (host === "") return true;
+  if (host === "0.0.0.0" || host === "::") return false;
+  if (/^[\d.]+$/.test(host) || host.includes(":")) {
+    return isValidListenAddress(host);
+  }
+  return /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i.test(
+    host,
+  );
+};
+
+/** 没设客户端地址时写给客户端的主机，和后端 `proxy_origin` 一致 */
+const defaultClientHost = (listenAddress: string): string =>
+  listenAddress === "0.0.0.0"
+    ? "127.0.0.1"
+    : listenAddress === "::"
+      ? "::1"
+      : listenAddress;
+
 function formatUptime(seconds: number, t: TFunction) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -73,10 +95,14 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     useProxyStatus();
   const { data: config } = useGlobalProxyConfig();
   const updateConfig = useUpdateGlobalProxyConfig();
+  const { data: savedClientHost } = useProxyClientHost();
+  const saveClientHostMutation = useSetProxyClientHost();
   const [address, setAddress] = useState("127.0.0.1");
   const [port, setPort] = useState("15721");
   const [addressError, setAddressError] = useState<string | null>(null);
   const [portError, setPortError] = useState<string | null>(null);
+  const [clientHost, setClientHost] = useState("");
+  const [clientHostError, setClientHostError] = useState<string | null>(null);
   const [confirmExitAll, setConfirmExitAll] = useState(false);
   const [failoverApp, setFailoverApp] = useState<ProxyAppId>("claude");
 
@@ -86,6 +112,10 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
       setPort(String(config.listenPort));
     }
   }, [config]);
+
+  useEffect(() => {
+    if (savedClientHost !== undefined) setClientHost(savedClientHost);
+  }, [savedClientHost]);
 
   const modeQueries = useQueries({
     queries: PROXY_APP_IDS.map((app) => ({
@@ -141,6 +171,18 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     !!config &&
     (address.trim() !== config.listenAddress ||
       port.trim() !== String(config.listenPort));
+
+  const saveClientHost = async () => {
+    const trimmed = clientHost.trim();
+    const ok = isValidClientHost(trimmed);
+    setClientHostError(ok ? null : t("routingSettings.clientHostInvalid"));
+    if (!ok) return;
+    try {
+      await saveClientHostMutation.mutateAsync(trimmed);
+    } catch {
+      // useSetProxyClientHost 的 onSuccess / onError 已经弹过 toast
+    }
+  };
 
   const toggleLogging = async (enabled: boolean) => {
     if (!config) return;
@@ -286,6 +328,48 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   )}
                   {t("routingSettings.saveAndRestart")}
+                </Button>
+              </div>
+            }
+          />
+          <SettingsRow
+            label={t("routingSettings.clientHost")}
+            help={{
+              title: t("routingSettings.clientHost"),
+              body: t("routingSettings.clientHostHelp"),
+            }}
+            control={
+              <div className="flex items-start gap-3">
+                <label className="space-y-1">
+                  <Input
+                    value={clientHost}
+                    placeholder={defaultClientHost(
+                      config?.listenAddress ?? "127.0.0.1",
+                    )}
+                    onChange={(event) => setClientHost(event.target.value)}
+                    aria-label={t("routingSettings.clientHost")}
+                    aria-invalid={clientHostError ? true : undefined}
+                    className="w-[262px]"
+                  />
+                  <span
+                    className={cn(
+                      "block text-caption",
+                      clientHostError ? "text-danger-text" : "text-fg-3",
+                    )}
+                  >
+                    {clientHostError ?? t("routingSettings.clientHostHint")}
+                  </span>
+                </label>
+                <Button
+                  variant="neutral"
+                  size="regular"
+                  disabled={
+                    savedClientHost === undefined ||
+                    saveClientHostMutation.isPending
+                  }
+                  onClick={() => void saveClientHost()}
+                >
+                  {t("common.save")}
                 </Button>
               </div>
             }

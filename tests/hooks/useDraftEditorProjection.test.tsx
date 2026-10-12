@@ -1,9 +1,19 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useDraftEditorProjection } from "@/components/providers/forms/hooks/useDraftEditorProjection";
+import {
+  useDraftEditorProjection,
+  type EditorBaseChange,
+} from "@/components/providers/forms/hooks/useDraftEditorProjection";
+import type { AppId } from "@/lib/api";
+import type { ProviderMeta } from "@/types";
 
 const getEditorView = vi.fn();
 const toastError = vi.fn();
+const copilotMeta: ProviderMeta = {
+  providerType: "github_copilot",
+  apiFormat: "openai_responses",
+  codexCopilotApiFormat: "openai_responses",
+};
 
 vi.mock("@/lib/api", () => ({
   providersApi: {
@@ -44,13 +54,28 @@ describe("useDraftEditorProjection", () => {
     );
 
     act(() => {
-      result.current.projectDraft({ config: "a" }, undefined, apply);
+      result.current.projectDraft(
+        { config: "a" },
+        undefined,
+        apply,
+        copilotMeta,
+      );
       result.current.projectDraft({ config: "b" }, "official", apply);
     });
+    expect(getEditorView).toHaveBeenNthCalledWith(
+      1,
+      "codex",
+      { config: "a" },
+      undefined,
+      undefined,
+      copilotMeta,
+    );
     expect(getEditorView).toHaveBeenLastCalledWith(
       "codex",
       { config: "b" },
       "official",
+      undefined,
+      undefined,
     );
 
     await act(async () => {
@@ -120,4 +145,44 @@ describe("useDraftEditorProjection", () => {
     });
     expect(getEditorView).not.toHaveBeenCalled();
   });
+
+  it.each(["app change", "receiver change", "unmount"])(
+    "discards a pending Copilot projection after a form lifecycle %s",
+    async (lifecycle) => {
+      const pending = deferred<{ settings: Record<string, unknown> }>();
+      getEditorView.mockReturnValueOnce(pending.promise);
+      const onBase = vi.fn();
+      const apply = vi.fn();
+      const initialProps: { appId: AppId; onBase?: EditorBaseChange } = {
+        appId: "codex",
+        onBase,
+      };
+      const { result, rerender, unmount } = renderHook(
+        ({ appId, onBase }) => useDraftEditorProjection(appId, onBase),
+        { initialProps },
+      );
+      act(() => {
+        result.current.projectDraft(
+          { config: "copilot" },
+          "third_party",
+          apply,
+          copilotMeta,
+        );
+      });
+      if (lifecycle === "app change") {
+        rerender({ ...initialProps, appId: "gemini" });
+      } else if (lifecycle === "receiver change") {
+        rerender({ ...initialProps, onBase: undefined });
+      } else {
+        unmount();
+      }
+      await act(async () => {
+        pending.resolve({ settings: { config: "old Copilot projection" } });
+        await pending.promise;
+      });
+      expect(apply).not.toHaveBeenCalled();
+      expect(onBase).toHaveBeenCalledTimes(1);
+      expect(onBase).toHaveBeenCalledWith(null);
+    },
+  );
 });

@@ -26,15 +26,24 @@ export function useSlidingIndicator<T extends HTMLElement>(
     if (!container) return;
     const measure = () => {
       const target = container.querySelector<HTMLElement>(selector);
-      setRect(
-        target
-          ? {
-              x: target.offsetLeft,
-              y: target.offsetTop,
-              width: target.offsetWidth,
-              height: target.offsetHeight,
-            }
-          : null,
+      const next = target
+        ? {
+            x: target.offsetLeft,
+            y: target.offsetTop,
+            width: target.offsetWidth,
+            height: target.offsetHeight,
+          }
+        : null;
+      // 侧栏开合时容器每帧都在变宽，选中项位置多半没动：没变就不触发重渲染
+      setRect((prev) =>
+        prev &&
+        next &&
+        prev.x === next.x &&
+        prev.y === next.y &&
+        prev.width === next.width &&
+        prev.height === next.height
+          ? prev
+          : next,
       );
     };
     measure();
@@ -57,7 +66,15 @@ export function useSlidingIndicator<T extends HTMLElement>(
 const MOTION =
   "transition-[transform,width,height] duration-200 ease-out motion-reduce:transition-none";
 
-/** 分段控件的白底凸起块，垫在选中项下面。按钮自己要 relative + 不画底色。 */
+/** 滑块挪的是 left / top，不用 transform，理由见 SegmentThumb。 */
+const THUMB_MOTION =
+  "transition-[left,top,width,height] duration-200 ease-out motion-reduce:transition-none";
+
+/**
+ * 分段控件的白底凸起块，垫在选中项下面。按钮自己要 relative + 不画底色。
+ * 不用 transform 滑：WebKit 给 transform 过渡开合成层，压在滑块上的按钮也被提成层，
+ * 层按整像素对齐，图标在滑动开始和结束时会抖半个像素。
+ */
 export function SegmentThumb({
   rect,
   animate,
@@ -73,12 +90,13 @@ export function SegmentThumb({
     <span
       aria-hidden="true"
       className={cn(
-        "pointer-events-none absolute left-0 top-0 bg-surface shadow-v7-sm",
-        animate && MOTION,
+        "pointer-events-none absolute bg-surface shadow-v7-sm",
+        animate && THUMB_MOTION,
         className,
       )}
       style={{
-        transform: `translate(${rect.x}px, ${rect.y}px)`,
+        left: rect.x,
+        top: rect.y,
         width: rect.width,
         height: rect.height,
       }}
