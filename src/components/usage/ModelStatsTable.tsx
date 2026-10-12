@@ -11,7 +11,7 @@ import {
   getResolvedLang,
 } from "./format";
 import { usageTable } from "./usageTable";
-import { SuccessSpeedCells, SuccessSpeedHeaders } from "./statsColumns";
+import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
 import type { UsageRangeSelection } from "@/types/usage";
 
 interface ModelStatsTableProps {
@@ -65,13 +65,13 @@ export function ModelStatsTable({
               <th className={usageTable.thEnd}>{t("usage.requests")}</th>
               <th className={usageTable.thEnd}>{t("usage.tokens")}</th>
               <th className={usageTable.thEnd}>{t("usage.cost")}</th>
-              <SuccessSpeedHeaders />
+              <PerformanceHeaders />
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className={usageTable.empty}>
+                <td colSpan={7} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>
@@ -101,7 +101,7 @@ export function ModelStatsTable({
                   >
                     {fmtUsd(stat.totalCost, 2)}
                   </td>
-                  <SuccessSpeedCells stat={stat} />
+                  <PerformanceCells stat={stat} />
                 </tr>
               ))
             )}

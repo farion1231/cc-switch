@@ -17,9 +17,11 @@ import {
   fmtInt,
   fmtUsd,
   formatEstimatedTokensPerSecond,
+  formatFirstTokenSeconds,
   formatOutputTokensPerSecond,
   formatTokensCompact,
   getLocaleFromLanguage,
+  isSessionLogRequest,
   parseFiniteNumber,
 } from "./format";
 import { usageTable } from "./usageTable";
@@ -173,17 +175,28 @@ export function RequestLogTable({
     const tps = exactTps ?? estimatedTps;
     const latency = parseFiniteNumber(log.latencyMs);
     const firstToken = parseFiniteNumber(log.firstTokenMs);
-    const timingTip =
-      latency != null && latency > 0 && firstToken != null
-        ? t("usage.timingTip", {
+    const firstTokenText = formatFirstTokenSeconds(firstToken);
+    // 会话日志的耗时和首字都是按时间戳估的，带 ≈
+    const isSession = isSessionLogRequest(log);
+    const timing =
+      latency != null && latency > 0
+        ? {
             duration: (latency / 1000).toFixed(1),
-            ttft: (firstToken / 1000).toFixed(1),
-          })
-        : estimatedTps != null && latency != null
-          ? t("usage.estimatedTimingTip", {
-              duration: (latency / 1000).toFixed(1),
-            })
-          : undefined;
+            ttft: firstToken != null ? (firstToken / 1000).toFixed(1) : null,
+          }
+        : null;
+    const timingTip =
+      timing == null
+        ? undefined
+        : !isSession
+          ? timing.ttft != null
+            ? t("usage.timingTip", timing)
+            : undefined
+          : timing.ttft != null
+            ? t("usage.estimatedTimingTipWithFirstToken", timing)
+            : estimatedTps != null
+              ? t("usage.estimatedTimingTip", timing)
+              : undefined;
     const multiplier = parseFiniteNumber(log.costMultiplier);
     const modelTitle =
       log.requestModel && log.requestModel !== log.model
@@ -311,6 +324,16 @@ export function RequestLogTable({
             </>
           )}
         </td>
+        <td
+          className={cn(
+            usageTable.tdEnd,
+            firstTokenText == null && usageTable.muted,
+          )}
+          title={timingTip}
+        >
+          {isSession && firstTokenText != null && "≈"}
+          {firstTokenText ?? "—"}
+        </td>
       </tr>
     );
   };
@@ -341,12 +364,20 @@ export function RequestLogTable({
                   </HelpTip>
                 </span>
               </th>
+              <th className={usageTable.thEnd}>
+                <span className="inline-flex items-center gap-0.5">
+                  {t("usage.firstToken")}
+                  <HelpTip title={t("usage.firstTokenHelpTitle")} align="end">
+                    {t("usage.firstTokenHelp")}
+                  </HelpTip>
+                </span>
+              </th>
             </tr>
           </thead>
           <tbody>
             {logs.length === 0 ? (
               <tr>
-                <td colSpan={9} className={usageTable.empty}>
+                <td colSpan={10} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>
