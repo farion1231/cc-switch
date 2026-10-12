@@ -1030,7 +1030,8 @@
     },
     "data": {
       "location": "存储位置"
-    }
+    },
+    "languageOptionTurkish": "土耳其语"
   },
   "apps": {
     "claude": "Claude",

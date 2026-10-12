@@ -166,6 +166,8 @@ fn map_locale_to_tray_language(locale: &str) -> &'static str {
         "zh"
     } else if locale.starts_with("ja") {
         "ja"
+    } else if locale.starts_with("tr") {
+        "tr"
     } else if locale.starts_with("en") {
         "en"
     } else {
@@ -243,6 +245,64 @@ impl TrayTexts {
                 reset_on_date: "{label} quota resets {when}",
                 reset_at_time: "{label} quota resets at {when}",
                 date_format: "%b %-d",
+                quota_used: false,
+            },
+            "tr" => Self {
+                show_main: "CC Switch'i aç",
+                open_website: "Resmî web sitesini aç",
+                lightweight_mode: "Hafif mod",
+                quit: "CC Switch'ten çık",
+                quit_stops_routing: "CC Switch'ten çık (yönlendirme hizmeti durur)",
+                projects_label: "Projeler",
+                no_project_label: "Proje yok",
+                header_direct: "Doğrudan",
+                header_route: "Yönlendirme",
+                header_failover: "Yönlendirme · Yedek sağlayıcıya geçiş açık",
+                header_stack: "Birleştirme · Varsayılan sağlayıcı",
+                header_stack_default: "Birleştirme · Varsayılan: {name}",
+                failover_note: "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz",
+                mode_route: "Yönlendirme",
+                mode_stack: "Birleştirme",
+                mode_mapping: "Model eşleme",
+                needs_routing_suffix: " (yönlendirme gerekir)…",
+                official_blocked_suffix: " (resmî abonelikler yönlendirmeyi kullanmaz)",
+                mapping_suffix: " · Model eşleme",
+                open_app_page: "{app} sayfasını aç",
+                add_provider: "Sağlayıcı ekle…",
+                almost_out: "bitmek üzere",
+                needs_attention: "ilgilenilmesi gerekiyor",
+                problem_service_down: "Yönlendirme hizmeti çalışmıyor (port {port})",
+                problem_attach_failed: "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü",
+                problem_switch_failed: "{app} geçiş yapamadı: {reason}",
+                problem_more: "{count} sorun daha var — görmek için CC Switch'i açın",
+                desktop_unavailable: "Yönlendirme hizmeti çalışmıyor; {name} şu anda kullanılamıyor",
+                tooltip_problem: "CC Switch · İlgilenilmesi gerekiyor: {problem}",
+                feedback_switched: "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın",
+                feedback_stack_default: "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın",
+                feedback_profile: "{name} projesi {app} uygulamasına uygulandı",
+                tier_five_hour: "5 saatlik",
+                tier_weekly: "Haftalık",
+                tier_fable: "Fable",
+                tier_monthly: "Aylık",
+                tier_thirty_day: "30 günlük",
+                tier_credits: "Krediler",
+                tier_gemini_pro: "Pro",
+                tier_gemini_flash: "Flash",
+                tier_gemini_flash_lite: "Flash Lite",
+                tier_premium: "Premium",
+                tier_left: "{label} %{value} kaldı",
+                tier_used: "{label} %{value} kullanıldı",
+                tier_used_up: "{label} tükendi",
+                balance: "Bakiye {value}",
+                balance_used_up: "Bakiye tükendi",
+                plan_expired: "Planın süresi doldu",
+                used_amount: "Kullanılan: {value}",
+                quota_failed: "Kota bilgisi alınamıyor",
+                quota_failed_login_expired: "Kota bilgisi alınamıyor: oturumun süresi doldu",
+                quota_failed_token_refresh_pending: "Kota bilgisi alınamıyor: token yenilenmesi bekleniyor",
+                reset_on_date: "{label} kotası {when} tarihinde sıfırlanır",
+                reset_at_time: "{label} kotası {when} saatinde sıfırlanır",
+                date_format: "%d.%m",
                 quota_used: false,
             },
             "ja" => Self {
@@ -2916,6 +2976,8 @@ mod tests {
 
     #[test]
     fn locale_maps_japanese_and_english() {
+        assert_eq!(map_locale_to_tray_language("tr-TR"), "tr");
+        assert_eq!(map_locale_to_tray_language("tr"), "tr");
         assert_eq!(map_locale_to_tray_language("ja-JP"), "ja");
         assert_eq!(map_locale_to_tray_language("ja"), "ja");
         assert_eq!(map_locale_to_tray_language("en-US"), "en");
@@ -4050,7 +4112,7 @@ mod tests {
             quit_text(&en(), true),
             "Quit CC Switch (stops the routing service)"
         );
-        for language in ["zh", "zh-TW", "en", "ja"] {
+        for language in ["zh", "zh-TW", "en", "ja", "tr"] {
             let texts = TrayTexts::from_language(language);
             assert_ne!(texts.quit, texts.quit_stops_routing, "{language}");
             assert!(

@@ -1030,7 +1030,8 @@
     },
     "data": {
       "location": "Location"
-    }
+    },
+    "languageOptionTurkish": "Turkish"
   },
   "apps": {
     "claude": "Claude",

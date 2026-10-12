@@ -1030,7 +1030,8 @@
     },
     "data": {
       "location": "保存場所"
-    }
+    },
+    "languageOptionTurkish": "トルコ語"
   },
   "apps": {
     "claude": "Claude",

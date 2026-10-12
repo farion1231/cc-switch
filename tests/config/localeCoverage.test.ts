@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import tr from "@/i18n/locales/tr.json";
 import en from "@/i18n/locales/en.json";
 import ja from "@/i18n/locales/ja.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
@@ -47,6 +48,7 @@ const piProductReferences = new Map(
   [...reference].filter(([, value]) => /\bPi\b/.test(value)),
 );
 const locales = [
+  ["tr", tr],
   ["zh", zh],
   ["ja", ja],
   ["zh-TW", zhTW],
@@ -91,4 +93,30 @@ describe("locale coverage", () => {
       expect(missingMentions).toEqual([]);
     },
   );
+});
+
+describe("Turkish locale", () => {
+  it("covers the complete English catalog without stale keys or empty values", () => {
+    const translations = flattenStrings(tr);
+    expect([...translations.keys()].sort()).toEqual(
+      [...reference.keys()].sort(),
+    );
+    expect(
+      [...translations].filter(
+        ([key, value]) => reference.get(key)?.trim() && !value.trim(),
+      ),
+    ).toEqual([]);
+  });
+  it("preserves interpolation variables across the full catalog", () => {
+    const translations = flattenStrings(tr);
+    expect(
+      [...reference]
+        .filter(
+          ([key, value]) =>
+            interpolationVariables(value).join("\0") !==
+            interpolationVariables(translations.get(key) ?? "").join("\0"),
+        )
+        .map(([key]) => key),
+    ).toEqual([]);
+  });
 });
