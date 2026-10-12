@@ -4156,6 +4156,7 @@
       "enable": "Enable",
       "disable": "Disable",
       "edit": "Edit {{name}}",
+      "visitWebsite": "Visit website · {{host}}",
       "more": "More actions for {{name}}",
       "moveUp": "Move {{name}} up",
       "moveDown": "Move {{name}} down"

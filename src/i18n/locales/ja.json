@@ -4156,6 +4156,7 @@
       "enable": "有効にする",
       "disable": "無効にする",
       "edit": "{{name}} を編集",
+      "visitWebsite": "公式サイトを開く · {{host}}",
       "more": "{{name}} のその他の操作",
       "moveUp": "{{name}} を上へ",
       "moveDown": "{{name}} を下へ"
