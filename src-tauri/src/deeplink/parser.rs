@@ -81,7 +81,7 @@ fn parse_provider_deeplink(
     // Validate app type
     if !matches!(
         app.as_str(),
-        "claude" | "codex" | "gemini" | "grokbuild" | "opencode" | "openclaw" | "hermes"
+        "claude" | "codex" | "gemini" | "grokbuild" | "opencode" | "openclaw" | "hermes" | "pi"
     ) {
         return Err(AppError::InvalidInput(format!(
             "Invalid provider app type: '{app}'"
@@ -116,10 +116,21 @@ fn parse_provider_deeplink(
 
     // Extract optional fields
     let model = params.get("model").cloned();
+    // Pi 的节点没有模型就选不到任何模型（见 `provider::build_pi_settings`）
+    if app == "pi" && model.as_deref().is_none_or(|model| model.trim().is_empty()) {
+        return Err(AppError::InvalidInput(
+            "Pi providers need a model; add 'model' to the link".to_string(),
+        ));
+    }
     let notes = params.get("notes").cloned();
     let haiku_model = params.get("haikuModel").cloned();
     let sonnet_model = params.get("sonnetModel").cloned();
     let opus_model = params.get("opusModel").cloned();
+    // 在解析阶段就核对，用户当场看到「这个应用不支持这种接口」，而不是确认导入之后才失败
+    let api_format = params.get("apiFormat").cloned();
+    if let Some(ref format) = api_format {
+        super::provider::check_api_format(&app, format)?;
+    }
     let icon = params
         .get("icon")
         .map(|v| v.trim().to_lowercase())
@@ -149,7 +160,7 @@ fn parse_provider_deeplink(
         .get("usageAutoInterval")
         .and_then(|v| v.parse::<u64>().ok());
 
-    Ok(DeepLinkImportRequest {
+    let request = DeepLinkImportRequest {
         version,
         resource,
         app: Some(app),
@@ -164,6 +175,7 @@ fn parse_provider_deeplink(
         haiku_model,
         sonnet_model,
         opus_model,
+        api_format,
         content: None,
         description: None,
         apps: None,
@@ -180,7 +192,17 @@ fn parse_provider_deeplink(
         usage_access_token,
         usage_user_id,
         usage_auto_interval,
-    })
+    };
+    // 累加式应用会把某些写法当成命令、环境变量或文件引用，解析阶段就拒绝
+    if let Ok(app_type) = request
+        .app
+        .as_deref()
+        .unwrap_or("")
+        .parse::<crate::AppType>()
+    {
+        super::provider::check_link_values(&app_type, &request)?;
+    }
+    Ok(request)
 }
 
 /// Parse prompt deep link parameters
@@ -244,6 +266,7 @@ fn parse_prompt_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         apps: None,
         repo: None,
         directory: None,
@@ -319,6 +342,7 @@ fn parse_mcp_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         content: None,
         description: None,
         repo: None,
@@ -374,6 +398,7 @@ fn parse_skill_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         content: None,
         description: None,
         apps: None,

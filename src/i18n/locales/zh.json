@@ -3380,6 +3380,10 @@
     "importing": "导入中...",
     "warning": "请确认以上信息准确无误后再导入。导入后可在供应商列表中编辑或删除。",
     "providerEnabledWarning": "导入后将立即切换到此供应商，客户端请求会改发到上面的地址",
+    "apiFormat": "接口格式",
+    "switchAfterImport": "导入后立即切换到这个供应商",
+    "addToAppAfterImport": "导入后立即添加到 {{app}} 配置",
+    "enableInPiAfterImport": "导入后立即在 Pi 中启用",
     "parseError": "深链接解析失败",
     "importSuccess": "导入成功",
     "importSuccessDescription": "供应商 \"{{name}}\" 已成功导入",
@@ -3409,7 +3413,8 @@
       "name": "名称",
       "description": "描述",
       "contentPreview": "内容预览",
-      "enabledWarning": "导入后将立即启用此提示词，其他提示词将被禁用"
+      "enabledWarning": "导入后将立即启用此提示词，其他提示词将被禁用",
+      "enableAfterImport": "导入后立即启用"
     },
     "skill": {
       "title": "添加 Claude Skill 仓库",

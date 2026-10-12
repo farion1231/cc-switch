@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
@@ -207,6 +208,124 @@ describe("DeepLinkImportDialog", () => {
     expect(
       screen.queryByText("deeplink.providerEnabledWarning"),
     ).not.toBeInTheDocument();
+  });
+
+  describe("the activate-after-import switch", () => {
+    // 记下导入请求里的 enabled：开关的值必须覆盖链接里的 enabled
+    const captureImport = () => {
+      const sent: Array<Record<string, unknown>> = [];
+      server.use(
+        http.post(
+          "http://tauri.local/import_from_deeplink_unified",
+          async ({ request }) => {
+            const body = (await request.json()) as {
+              request: Record<string, unknown>;
+            };
+            sent.push(body.request);
+            return HttpResponse.json(
+              body.request.resource === "prompt"
+                ? { type: "prompt", id: "p1" }
+                : { type: "provider", id: "p1" },
+            );
+          },
+        ),
+      );
+      return sent;
+    };
+
+    const providerLink = (extra: Record<string, unknown>) => ({
+      version: "v1",
+      resource: "provider",
+      name: "Toggle Provider",
+      homepage: "https://example.com",
+      endpoint: "https://api.example.com",
+      apiKey: "sk-provider-key",
+      ...extra,
+    });
+
+    it("starts from the link's enabled and lets the user turn switching off", async () => {
+      const sent = captureImport();
+      const user = userEvent.setup();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() => deliverDeepLink(providerLink({ app: "claude", enabled: true })));
+
+      const toggle = await screen.findByRole("switch");
+      expect(toggle).toBeChecked();
+      expect(
+        screen.getByText("deeplink.providerEnabledWarning"),
+      ).toBeInTheDocument();
+
+      await user.click(toggle);
+      expect(toggle).not.toBeChecked();
+      expect(
+        screen.queryByText("deeplink.providerEnabledWarning"),
+      ).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "deeplink.import" }));
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].enabled).toBe(false);
+    });
+
+    it("lets the user opt into switching when the link does not ask for it", async () => {
+      const sent = captureImport();
+      const user = userEvent.setup();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() => deliverDeepLink(providerLink({ app: "codex" })));
+
+      const toggle = await screen.findByRole("switch");
+      expect(toggle).not.toBeChecked();
+      expect(screen.getByText("deeplink.switchAfterImport")).toBeInTheDocument();
+
+      await user.click(toggle);
+      expect(
+        screen.getByText("deeplink.providerEnabledWarning"),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "deeplink.import" }));
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].enabled).toBe(true);
+    });
+
+    it("adds additive-app providers to the app config unless the link opts out", async () => {
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() => deliverDeepLink(providerLink({ app: "opencode" })));
+
+      const toggle = await screen.findByRole("switch");
+      expect(toggle).toBeChecked();
+      expect(
+        screen.getByText("deeplink.addToAppAfterImport"),
+      ).toBeInTheDocument();
+      // 累加式应用没有「切换」，不提示改发请求
+      expect(
+        screen.queryByText("deeplink.providerEnabledWarning"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("lets the user decide whether an imported prompt is enabled", async () => {
+      const sent = captureImport();
+      const user = userEvent.setup();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() =>
+        deliverDeepLink({
+          version: "v1",
+          resource: "prompt",
+          app: "claude",
+          name: "Review Prompt",
+          content: btoa("# review"),
+          enabled: true,
+        }),
+      );
+
+      const toggle = await screen.findByRole("switch");
+      expect(toggle).toBeChecked();
+      expect(
+        screen.getByText("deeplink.prompt.enabledWarning"),
+      ).toBeInTheDocument();
+
+      await user.click(toggle);
+      await user.click(screen.getByRole("button", { name: "deeplink.import" }));
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].enabled).toBe(false);
+    });
   });
 
   describe("when processing is interrupted after the link was read", () => {

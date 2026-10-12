@@ -100,7 +100,8 @@ pub struct DeepLinkImportRequest {
     /// Resource name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Whether to enable after import (default: false)
+    /// 导入后是否立即生效：供应商（切换式应用）切过去、累加式应用写进配置文件、提示词启用。
+    /// 确认框里有对应开关，链接里的值只是开关的初始值，导入时以开关为准。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
 
@@ -132,6 +133,10 @@ pub struct DeepLinkImportRequest {
     /// Optional Opus model (Claude only, v3.7.1+)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opus_model: Option<String>,
+    /// 供应商的接口格式：`anthropic` | `openai_chat` | `openai_responses` | `gemini_native`，
+    /// 按应用换算成各自的字段（见 `provider::ApiFormat`）。没写时用各应用的默认格式。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_format: Option<String>,
 
     // ============ Prompt-specific fields ============
     /// Base64 encoded Markdown content

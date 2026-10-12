@@ -31,6 +31,35 @@ import {
   riskI18nKey,
 } from "@/utils/deeplinkRisk";
 import { decodeBase64Utf8 } from "@/lib/utils/base64";
+import { Switch } from "@/components/ui/switch";
+import { getAppLabel, isAdditiveAppId } from "@/config/appConfig";
+
+const API_FORMAT_LABELS: Record<
+  NonNullable<DeepLinkImportRequest["apiFormat"]>,
+  string
+> = {
+  anthropic: "Anthropic Messages",
+  openai_chat: "OpenAI Chat Completions",
+  openai_responses: "OpenAI Responses",
+  gemini_native: "Gemini",
+};
+
+/**
+ * 「导入后立即生效」开关的初始值：链接里的 `enabled` 只是建议，导入时以开关为准。
+ *
+ * 累加式应用（OpenCode、OpenClaw、Hermes、Pi）的开关决定写不写进应用配置，旧链接没写时
+ * 一直是写进去的，初始值保持打开；切换式应用和提示词默认关闭。
+ */
+function initialActivation(request: DeepLinkImportRequest): boolean {
+  if (
+    request.resource === "provider" &&
+    request.app &&
+    isAdditiveAppId(request.app)
+  ) {
+    return request.enabled ?? true;
+  }
+  return request.enabled === true;
+}
 
 export function DeepLinkImportDialog() {
   const { t } = useTranslation();
@@ -38,6 +67,11 @@ export function DeepLinkImportDialog() {
   const [request, setRequest] = useState<DeepLinkImportRequest | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [activateAfterImport, setActivateAfterImport] = useState(false);
+
+  useEffect(() => {
+    if (request) setActivateAfterImport(initialActivation(request));
+  }, [request]);
 
   // 容错判断：MCP 导入结果可能缺少 type 字段
   const isMcpImportResult = (
@@ -151,7 +185,7 @@ export function DeepLinkImportDialog() {
     };
   }, []);
 
-  // 托盘列出供应商和当前项，导入（以及 enabled=true 时的切换）后要重建
+  // 托盘列出供应商和当前项，导入（以及打开开关时的切换）后要重建
   const refreshTrayMenu = async () => {
     try {
       await providersApi.updateTrayMenu();
@@ -169,7 +203,12 @@ export function DeepLinkImportDialog() {
     setIsImporting(true);
 
     try {
-      const result = await deeplinkApi.importFromDeeplink(request);
+      // 供应商和提示词的「立即生效」由用户在确认框里决定，覆盖链接里的值
+      const payload =
+        request.resource === "provider" || request.resource === "prompt"
+          ? { ...request, enabled: activateAfterImport }
+          : request;
+      const result = await deeplinkApi.importFromDeeplink(payload);
       const refreshMcp = async (summary: {
         importedCount: number;
         importedIds: string[];
@@ -367,7 +406,11 @@ export function DeepLinkImportDialog() {
             {/* 主体内容整体右移，略大于标题内边距，让内容看起来不贴边 */}
             <div className="space-y-4 px-8 py-4 max-h-[60vh] overflow-y-auto [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:block [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-subtle">
               {request.resource === "prompt" && (
-                <PromptConfirmation request={request} />
+                <PromptConfirmation
+                  request={request}
+                  enableAfterImport={activateAfterImport}
+                  onEnableAfterImportChange={setActivateAfterImport}
+                />
               )}
               {request.resource === "mcp" && (
                 <McpConfirmation request={request} />
@@ -530,6 +573,18 @@ export function DeepLinkImportDialog() {
                         </div>
                       )}
                     </>
+                  )}
+
+                  {request.apiFormat && (
+                    <div className="grid grid-cols-3 items-center gap-4">
+                      <div className="font-medium text-sm text-fg-2">
+                        {t("deeplink.apiFormat")}
+                      </div>
+                      <div className="col-span-2 text-sm">
+                        {API_FORMAT_LABELS[request.apiFormat] ??
+                          request.apiFormat}
+                      </div>
+                    </div>
                   )}
 
                   {/* Notes (if present) */}
@@ -825,15 +880,35 @@ export function DeepLinkImportDialog() {
                   )}
 
                   {/*
-                    enabled=true 会在导入后立即切到这家，客户端流量随之改走链接里的地址。
-                    提示词和 MCP 都有同类提示，供应商不能例外。
+                    导入后是否立即生效由用户决定，链接里的 enabled 只是初始值。切换式应用打开后
+                    会立即切到这家，客户端流量随之改走链接里的地址，所以打开时要给出提示。
                   */}
-                  {request.enabled === true && (
-                    <div className="text-warning-text text-sm flex items-start gap-2">
-                      <span aria-hidden="true">⚠️</span>
-                      <span>{t("deeplink.providerEnabledWarning")}</span>
-                    </div>
-                  )}
+                  <div className="flex items-center justify-between gap-4 pt-2 border-t border-border">
+                    <label
+                      htmlFor="deeplink-activate-after-import"
+                      className="text-sm font-medium"
+                    >
+                      {request.app && isAdditiveAppId(request.app)
+                        ? request.app === "pi"
+                          ? t("deeplink.enableInPiAfterImport")
+                          : t("deeplink.addToAppAfterImport", {
+                              app: getAppLabel(request.app),
+                            })
+                        : t("deeplink.switchAfterImport")}
+                    </label>
+                    <Switch
+                      id="deeplink-activate-after-import"
+                      checked={activateAfterImport}
+                      onCheckedChange={setActivateAfterImport}
+                    />
+                  </div>
+                  {activateAfterImport &&
+                    !(request.app && isAdditiveAppId(request.app)) && (
+                      <div className="text-warning-text text-sm flex items-start gap-2">
+                        <span aria-hidden="true">⚠️</span>
+                        <span>{t("deeplink.providerEnabledWarning")}</span>
+                      </div>
+                    )}
 
                   {/* Warning */}
                   <div className="rounded-lg bg-warning-soft p-3 text-sm text-warning-text">

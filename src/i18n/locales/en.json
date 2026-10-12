@@ -3380,6 +3380,10 @@
     "importing": "Importing...",
     "warning": "Please confirm the information above is correct before importing. You can edit or delete it later in the provider list.",
     "providerEnabledWarning": "After import, CC Switch will switch to this provider immediately, and client requests will go to the endpoint above",
+    "apiFormat": "API format",
+    "switchAfterImport": "Switch to this provider after import",
+    "addToAppAfterImport": "Add to the {{app}} config after import",
+    "enableInPiAfterImport": "Enable in Pi after import",
     "parseError": "Failed to parse deep link",
     "importSuccess": "Import successful",
     "importSuccessDescription": "Provider \"{{name}}\" has been successfully imported",
@@ -3409,7 +3413,8 @@
       "name": "Name",
       "description": "Description",
       "contentPreview": "Content Preview",
-      "enabledWarning": "After import, this prompt will be enabled immediately and other prompts will be disabled"
+      "enabledWarning": "After import, this prompt will be enabled immediately and other prompts will be disabled",
+      "enableAfterImport": "Enable after import"
     },
     "skill": {
       "title": "Add Claude Skill Repository",
