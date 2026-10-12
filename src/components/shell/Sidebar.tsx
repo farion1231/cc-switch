@@ -115,8 +115,8 @@ function SidebarTopBar({
           ...NO_DRAG,
           ...(isMac()
             ? {
-                width: "calc(28px / var(--page-zoom, 1))",
-                height: "calc(28px / var(--page-zoom, 1))",
+                width: "var(--mac-titlebar-button-size, 28px)",
+                height: "var(--mac-titlebar-button-size, 28px)",
               }
             : {}),
         }}
@@ -127,8 +127,8 @@ function SidebarTopBar({
           style={
             isMac()
               ? {
-                  width: "calc(16px / var(--page-zoom, 1))",
-                  height: "calc(16px / var(--page-zoom, 1))",
+                  width: "var(--mac-titlebar-icon-size, 16px)",
+                  height: "var(--mac-titlebar-icon-size, 16px)",
                 }
               : undefined
           }
@@ -147,7 +147,7 @@ function SidebarTopBar({
           {...DRAG_REGION_ATTR}
           style={{
             ...(DRAG_REGION_STYLE as React.CSSProperties),
-            height: "calc(44px / var(--page-zoom, 1))",
+            height: "var(--mac-titlebar-spacer-height, 44px)",
           }}
         />
         {/* 品牌区与导航之间不画分隔线：靠侧栏底色和留白分开，免得和右侧页头下边框近似平行却差 11px */}
@@ -156,9 +156,9 @@ function SidebarTopBar({
           {...DRAG_REGION_ATTR}
           style={{
             ...(DRAG_REGION_STYLE as React.CSSProperties),
-            marginTop: "calc(-18px / var(--page-zoom, 1))",
-            marginBottom: "calc(8px / var(--page-zoom, 1))",
-            height: "calc(36px / var(--page-zoom, 1))",
+            marginTop: "var(--mac-titlebar-expanded-row-margin-top, -18px)",
+            marginBottom: "var(--mac-titlebar-expanded-row-margin-bottom, 8px)",
+            height: "var(--mac-titlebar-expanded-row-height, 36px)",
           }}
         >
           <img
@@ -185,15 +185,15 @@ function SidebarTopBar({
           {...DRAG_REGION_ATTR}
           style={{
             ...(DRAG_REGION_STYLE as React.CSSProperties),
-            height: "calc(44px / var(--page-zoom, 1))",
+            height: "var(--mac-titlebar-spacer-height, 44px)",
           }}
         />
         {/* 往上贴近红绿灯，和展开时品牌行同高（中心 y≈44） */}
         <div
           className="-mt-4 flex h-8 shrink-0 items-center justify-center"
           style={{
-            marginTop: "calc(-16px / var(--page-zoom, 1))",
-            height: "calc(32px / var(--page-zoom, 1))",
+            marginTop: "var(--mac-titlebar-collapsed-row-margin-top, -16px)",
+            height: "var(--mac-titlebar-collapsed-row-height, 32px)",
           }}
         >
           {toggleButton}
