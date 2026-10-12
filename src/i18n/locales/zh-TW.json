@@ -2459,6 +2459,7 @@
     "templateCustom": "自訂",
     "templateGeneral": "通用範本",
     "templateNewAPI": "NewAPI",
+    "templateSub2API": "Sub2API",
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
     "templateBalance": "官方",

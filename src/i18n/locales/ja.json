@@ -2458,6 +2458,7 @@
     "templateCustom": "カスタム",
     "templateGeneral": "General",
     "templateNewAPI": "NewAPI",
+    "templateSub2API": "Sub2API",
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
     "templateBalance": "公式",
