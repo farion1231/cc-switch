@@ -307,6 +307,40 @@ mod tests {
         path
     }
 
+    /// 打开会话详情走的是 `validate_source` → `load_transcript`，而不是
+    /// `load_messages`：`validate_source` 会先把 `sqlite:` 源解析成真实库路径并
+    /// 与「本 provider 自己的数据库」比对。DevEco 最初没有登记这条分支，于是列表
+    /// 能出、点开就报 `Unsupported provider: deveco`。
+    #[test]
+    fn transcript_loads_through_the_validated_source_path() {
+        let temp = tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let data_dir = home.join(".local").join("share").join("deveco");
+        std::fs::create_dir_all(&data_dir).expect("create data dir");
+        let db = data_dir.join("deveco.db");
+
+        {
+            let conn = Connection::open(&db).expect("open db");
+            create_schema(&conn);
+            seed(&conn);
+        }
+
+        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &home);
+
+        let source = format!("sqlite:{}:ses_root", db.display());
+        let loaded = crate::session_manager::load_transcript(PROVIDER_ID, &source);
+
+        match previous {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+
+        let loaded = loaded.expect("transcript must load through validate_source");
+        assert_eq!(loaded.transcript.messages.len(), 2);
+        assert_eq!(loaded.transcript.messages[0].content, "Hello");
+    }
+
     #[test]
     fn scan_lists_root_sessions_only_and_falls_back_to_directory_name() {
         let temp = tempdir().expect("tempdir");
