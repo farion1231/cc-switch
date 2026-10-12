@@ -99,12 +99,22 @@ describe("fillHermesModel", () => {
 });
 
 describe("fillOpenCodeModel", () => {
-  it("fills missing limits and modalities", () => {
+  it("fills missing limits, modalities and reasoning", () => {
     expect(fillOpenCodeModel({ name: "m" }, metadata)).toEqual({
       name: "m",
       limit: { context: 262144, output: 32768 },
+      reasoning: true,
       modalities: { input: ["text", "image", "video"], output: ["text"] },
     });
+  });
+
+  it("only fills reasoning towards true and keeps an explicit value", () => {
+    expect(fillOpenCodeModel({ name: "m" }, { reasoning: false })).toEqual({
+      name: "m",
+    });
+    expect(
+      fillOpenCodeModel({ name: "m", reasoning: false }, { reasoning: true }),
+    ).toEqual({ name: "m", reasoning: false });
   });
 
   it("only fills the missing half of limit", () => {
@@ -121,6 +131,7 @@ describe("fillOpenCodeModel", () => {
       name: "m",
       limit: { context: 1000, output: 32768 },
       modalities: { input: ["text"] },
+      reasoning: true,
     });
   });
 

@@ -14,7 +14,7 @@ function getStartOfLocalDayDate(nowMs: number): Date {
 }
 
 function getPresetLookbackStart(
-  preset: Exclude<UsageRangePreset, "today" | "1d" | "custom">,
+  preset: Exclude<UsageRangePreset, "today" | "1d" | "all" | "custom">,
   nowMs: number,
 ): number {
   const dayCount = preset === "7d" ? 7 : preset === "14d" ? 14 : 30;
@@ -47,6 +47,9 @@ export function resolveUsageRange(
         startDate: getPresetLookbackStart(selection.preset, nowMs),
         endDate,
       };
+    // 全部：从最早的记录算起，汇总和明细表按全量统计
+    case "all":
+      return { startDate: 0, endDate };
     case "custom": {
       const startDate = selection.customStartDate ?? endDate - DAY_SECONDS;
       const customEndDate = selection.liveEndTime
@@ -75,6 +78,8 @@ export function getUsageRangePresetLabel(
       return t("usage.preset14d", { defaultValue: "14d" });
     case "30d":
       return t("usage.preset30d", { defaultValue: "30d" });
+    case "all":
+      return t("usage.presetAll", { defaultValue: "全部" });
     case "custom":
       return t("usage.customRange", { defaultValue: "日历筛选" });
   }

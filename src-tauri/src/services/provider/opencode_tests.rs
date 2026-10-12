@@ -197,6 +197,9 @@ fn opencode_builtin_removed_override_cannot_reuse_live_membership() {
 #[test]
 #[serial]
 fn opencode_builtin_credential_only_import_does_not_create_config() {
+    if crate::config::sqlite_unsupported_in_temp_dir() {
+        return;
+    }
     let fixture = Fixture::new();
     let db_path = opencode_config::get_opencode_db_path();
     let db = rusqlite::Connection::open(&db_path).unwrap();

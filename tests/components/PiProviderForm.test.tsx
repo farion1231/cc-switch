@@ -60,10 +60,9 @@ describe("PiProviderForm", () => {
       />,
     );
 
-    expect(container.querySelector("#provider-form")).toHaveClass(
+    // 表单直接铺在添加页里，不再套一层卡片
+    expect(container.querySelector("#provider-form")).not.toHaveClass(
       "glass",
-      "rounded-xl",
-      "p-6",
     );
     expect(screen.getByLabelText("provider.name")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.notes")).toBeInTheDocument();

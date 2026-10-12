@@ -1,58 +1,84 @@
 import { useState } from "react";
-import { AlertTriangle, RotateCw } from "lucide-react";
+import { RotateCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { useRestartCodexAppServerDaemon } from "@/lib/query/proxy";
+import {
+  useAcknowledgeCodexStaleClients,
+  useRestartCodexAppServerDaemon,
+} from "@/lib/query/proxy";
 import type { CodexStaleClients } from "@/types/proxy";
 
 interface CodexStaleClientsNoticeProps {
   staleClients: CodexStaleClients;
+  onDismiss?: () => void;
 }
 
 /**
- * Stack 模式下 Codex 客户端还在用旧的模型列表（它们只在启动时读模型目录）。命令行连的守护
- * 进程确认后一键重启；桌面版、编辑器插件只提示用户彻底退出再开。重启会中断守护进程里正在
- * 运行的任务，执行期间确认框保持打开。
+ * Codex 客户端可能缓存着旧账号或模型列表（模型目录只在启动时读，切换账号或直连、路由、聚合
+ * 模式后都会变）。命令行连的守护进程确认后一键重启；桌面版、编辑器插件只提示用户彻底退出再
+ * 开。重启会中断守护进程里正在运行的任务，执行期间确认框保持打开。看不到桌面版、编辑器插件
+ * 进程时（Windows），只能说「可能」，关掉提示时让后端记下现在这份，同一份不再提示。
  */
 export function CodexStaleClientsNotice({
   staleClients,
+  onDismiss,
 }: CodexStaleClientsNoticeProps) {
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
   const restart = useRestartCodexAppServerDaemon();
+  const acknowledge = useAcknowledgeCodexStaleClients();
+  const dismiss = () => {
+    if (staleClients.unverified) acknowledge.mutate();
+    onDismiss?.();
+  };
 
   return (
-    <div
-      role="alert"
-      className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
-    >
-      <div className="flex items-center gap-2 font-medium">
-        <AlertTriangle className="h-4 w-4 shrink-0" />
-        {t("proxy.stackMode.codexStale.title")}
-      </div>
-      <ul className="mt-2 space-y-1 text-xs leading-relaxed">
+    <>
+      <Notice
+        tone="warning"
+        title={t(
+          staleClients.unverified
+            ? "proxy.stackMode.codexStale.unverifiedTitle"
+            : staleClients.auth
+              ? "proxy.stackMode.codexStale.authTitle"
+              : "proxy.stackMode.codexStale.title",
+        )}
+        onDismiss={onDismiss || staleClients.unverified ? dismiss : undefined}
+        dismissLabel={t("common.close")}
+        actions={
+          staleClients.daemon ? (
+            <Button
+              variant="neutral"
+              size="compact"
+              disabled={restart.isPending}
+              onClick={() => setConfirming(true)}
+            >
+              <RotateCw
+                className={`h-3.5 w-3.5 ${restart.isPending ? "animate-spin" : ""}`}
+              />
+              {t("proxy.stackMode.codexStale.restart")}
+            </Button>
+          ) : undefined
+        }
+      >
         {staleClients.daemon && (
-          <li>{t("proxy.stackMode.codexStale.daemon")}</li>
+          <span className="block">
+            {t("proxy.stackMode.codexStale.daemon")}
+          </span>
         )}
         {staleClients.others && (
-          <li>{t("proxy.stackMode.codexStale.others")}</li>
+          <span className="block">
+            {t("proxy.stackMode.codexStale.others")}
+          </span>
         )}
-      </ul>
-      {staleClients.daemon && (
-        <Button
-          size="sm"
-          variant="outline"
-          className="mt-3 gap-1.5"
-          disabled={restart.isPending}
-          onClick={() => setConfirming(true)}
-        >
-          <RotateCw
-            className={`h-3.5 w-3.5 ${restart.isPending ? "animate-spin" : ""}`}
-          />
-          {t("proxy.stackMode.codexStale.restart")}
-        </Button>
-      )}
+        {staleClients.unverified && (
+          <span className="block">
+            {t("proxy.stackMode.codexStale.unverifiedHint")}
+          </span>
+        )}
+      </Notice>
       <ConfirmDialog
         isOpen={confirming}
         title={t("proxy.stackMode.codexStale.confirmTitle")}
@@ -66,6 +92,6 @@ export function CodexStaleClientsNotice({
         }
         onCancel={() => setConfirming(false)}
       />
-    </div>
+    </>
   );
 }

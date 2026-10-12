@@ -28,6 +28,7 @@ export interface RequestLog {
   totalCostUsd: string;
   isStreaming: boolean;
   latencyMs: number;
+  /** 路由服务记的是精确首字；会话日志导入的是按时间戳推出来的估算值（看 dataSource） */
   firstTokenMs?: number;
   durationMs?: number;
   statusCode: number;
@@ -113,20 +114,44 @@ export interface DailyStats {
 
 export interface ProviderStats {
   providerId: string;
+  appType: string;
   providerName: string;
   requestCount: number;
+  /** 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径 */
   totalTokens: number;
   totalCost: string;
   successRate: number;
   avgLatencyMs: number;
+  /** 速度分子：有首字、输出 ≥ 100 token 的明细请求的输出之和（日汇总不计） */
+  speedOutputTokens?: number;
+  /** 速度分母：同一批请求的（耗时 − 首字）之和，毫秒 */
+  speedGenerationMs?: number;
+  /** 估算速度分子：会话日志导入、有估算耗时、输出 ≥ 200 token 的请求的输出之和 */
+  estSpeedOutputTokens?: number;
+  /** 估算速度分母：同一批请求的估算耗时（含首字等待）之和，毫秒 */
+  estSpeedDurationMs?: number;
+  /** 首字时间中位数（毫秒）：经路由服务、成功的流式明细请求；没有时为 null */
+  firstTokenMedianMs?: number | null;
+  /** 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的请求；没有精确值时才显示，带 ≈ */
+  estFirstTokenMedianMs?: number | null;
 }
 
 export interface ModelStats {
   model: string;
   requestCount: number;
+  /** 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径 */
   totalTokens: number;
   totalCost: string;
   avgCostPerRequest: string;
+  successRate: number;
+  /** 速度分子分母，口径同 ProviderStats 的四个速度字段 */
+  speedOutputTokens?: number;
+  speedGenerationMs?: number;
+  estSpeedOutputTokens?: number;
+  estSpeedDurationMs?: number;
+  /** 首字时间中位数，口径同 ProviderStats 的那两个字段 */
+  firstTokenMedianMs?: number | null;
+  estFirstTokenMedianMs?: number | null;
 }
 
 export interface LogFilters {
@@ -162,7 +187,14 @@ export interface ProviderLimitStatus {
   monthlyExceeded: boolean;
 }
 
-export type UsageRangePreset = "today" | "1d" | "7d" | "14d" | "30d" | "custom";
+export type UsageRangePreset =
+  | "today"
+  | "1d"
+  | "7d"
+  | "14d"
+  | "30d"
+  | "all"
+  | "custom";
 
 export interface UsageRangeSelection {
   preset: UsageRangePreset;

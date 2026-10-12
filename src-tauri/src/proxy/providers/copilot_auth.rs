@@ -16,12 +16,15 @@
 //! - 自动迁移 v1 单账号格式到 v3 多账号 + 默认账号格式
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+
+use crate::proxy::error::ProxyError;
 
 /// GitHub OAuth 客户端 ID（VS Code）- 用于 github.com
 const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
@@ -139,6 +142,70 @@ pub const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.38.2";
 pub const COPILOT_API_VERSION: &str = "2025-10-01";
 pub const COPILOT_INTEGRATION_ID: &str = "vscode-chat";
 
+/// Build the Copilot request identity shared by every proxy adapter.
+///
+/// The forwarder adds the session-derived interaction ID separately because
+/// it is not available at the provider-adapter seam.
+pub fn build_copilot_request_headers(
+    token: &str,
+) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
+    use super::adapter::auth_header_value;
+
+    let mut bearer = String::from("Bearer ");
+    bearer.push_str(token);
+    let request_id = uuid::Uuid::new_v4().to_string();
+    Ok(vec![
+        (
+            http::HeaderName::from_static("authorization"),
+            auth_header_value(&bearer)?,
+        ),
+        (
+            http::HeaderName::from_static("editor-version"),
+            http::HeaderValue::from_static(COPILOT_EDITOR_VERSION),
+        ),
+        (
+            http::HeaderName::from_static("editor-plugin-version"),
+            http::HeaderValue::from_static(COPILOT_PLUGIN_VERSION),
+        ),
+        (
+            http::HeaderName::from_static("copilot-integration-id"),
+            http::HeaderValue::from_static(COPILOT_INTEGRATION_ID),
+        ),
+        (
+            http::HeaderName::from_static("user-agent"),
+            http::HeaderValue::from_static(COPILOT_USER_AGENT),
+        ),
+        (
+            http::HeaderName::from_static("x-github-api-version"),
+            http::HeaderValue::from_static(COPILOT_API_VERSION),
+        ),
+        (
+            http::HeaderName::from_static("openai-intent"),
+            http::HeaderValue::from_static("conversation-agent"),
+        ),
+        (
+            http::HeaderName::from_static("x-initiator"),
+            http::HeaderValue::from_static("user"),
+        ),
+        (
+            http::HeaderName::from_static("x-interaction-type"),
+            http::HeaderValue::from_static("conversation-agent"),
+        ),
+        (
+            http::HeaderName::from_static("x-vscode-user-agent-library-version"),
+            http::HeaderValue::from_static("electron-fetch"),
+        ),
+        (
+            http::HeaderName::from_static("x-request-id"),
+            auth_header_value(&request_id)?,
+        ),
+        (
+            http::HeaderName::from_static("x-agent-task-id"),
+            auth_header_value(&request_id)?,
+        ),
+    ])
+}
+
 /// Copilot 使用量响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotUsageResponse {
@@ -198,6 +265,31 @@ pub struct CopilotModel {
     pub vendor: String,
     /// 是否在模型选择器中显示
     pub model_picker_enabled: bool,
+    /// Copilot-reported maximum prompt limit for this exact model ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    /// Upstream protocols supported by this exact model ID.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_endpoints: Vec<String>,
+    /// Whether the model supports parallel tool calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_parallel_tool_calls: Option<bool>,
+    /// Copilot-reported reasoning effort levels supported by this model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<Vec<CopilotReasoningEffort>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CopilotReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+    Ultra,
 }
 
 /// Copilot Models API 响应
@@ -213,6 +305,54 @@ struct CopilotModelsResponseItem {
     name: String,
     vendor: String,
     model_picker_enabled: bool,
+    #[serde(default)]
+    supported_endpoints: Vec<String>,
+    #[serde(default)]
+    capabilities: Option<Value>,
+}
+
+fn positive_capability_limit(capabilities: &Value, pointer: &str) -> Option<u64> {
+    capabilities
+        .pointer(pointer)?
+        .as_u64()
+        .filter(|tokens| *tokens > 0)
+}
+
+fn extract_copilot_prompt_limit(capabilities: Option<&Value>) -> Option<u64> {
+    let capabilities = capabilities?;
+    positive_capability_limit(capabilities, "/limits/max_prompt_tokens")
+        .or_else(|| positive_capability_limit(capabilities, "/limits/max_context_window_tokens"))
+}
+
+fn extract_copilot_parallel_tool_calls(capabilities: Option<&Value>) -> Option<bool> {
+    capabilities?
+        .pointer("/supports/parallel_tool_calls")?
+        .as_bool()
+}
+
+fn extract_copilot_reasoning_effort(
+    capabilities: Option<&Value>,
+) -> Option<Vec<CopilotReasoningEffort>> {
+    let efforts = capabilities?
+        .pointer("/supports/reasoning_effort")
+        .or_else(|| capabilities?.get("reasoning_effort"))?
+        .as_array()?;
+    Some(
+        efforts
+            .iter()
+            .filter_map(|effort| match effort.as_str()? {
+                "none" => Some(CopilotReasoningEffort::None),
+                "minimal" => Some(CopilotReasoningEffort::Minimal),
+                "low" => Some(CopilotReasoningEffort::Low),
+                "medium" => Some(CopilotReasoningEffort::Medium),
+                "high" => Some(CopilotReasoningEffort::High),
+                "xhigh" => Some(CopilotReasoningEffort::Xhigh),
+                "max" => Some(CopilotReasoningEffort::Max),
+                "ultra" => Some(CopilotReasoningEffort::Ultra),
+                _ => None,
+            })
+            .collect(),
+    )
 }
 
 /// Copilot 认证错误
@@ -798,6 +938,18 @@ impl CopilotAuthManager {
         &self,
         account_id: &str,
     ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
+        Ok(self
+            .fetch_all_models_for_account(account_id)
+            .await?
+            .into_iter()
+            .filter(|model| model.model_picker_enabled)
+            .collect())
+    }
+
+    async fn fetch_all_models_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
         self.ensure_migration_complete().await?;
 
         {
@@ -859,12 +1011,17 @@ impl CopilotAuthManager {
         let models: Vec<CopilotModel> = models_response
             .data
             .into_iter()
-            .filter(|m| m.model_picker_enabled)
             .map(|m| CopilotModel {
                 id: m.id,
                 name: m.name,
                 vendor: m.vendor,
                 model_picker_enabled: m.model_picker_enabled,
+                context_window: extract_copilot_prompt_limit(m.capabilities.as_ref()),
+                supported_endpoints: m.supported_endpoints,
+                supports_parallel_tool_calls: extract_copilot_parallel_tool_calls(
+                    m.capabilities.as_ref(),
+                ),
+                reasoning_effort: extract_copilot_reasoning_effort(m.capabilities.as_ref()),
             })
             .collect();
 
@@ -878,11 +1035,20 @@ impl CopilotAuthManager {
         account_id: &str,
         model_id: &str,
     ) -> Result<Option<String>, CopilotAuthError> {
-        let models = self.fetch_models_for_account(account_id).await?;
-        Ok(models
-            .into_iter()
-            .find(|model| model.id == model_id)
-            .map(|model| model.vendor))
+        let models = self.fetch_all_models_for_account(account_id).await?;
+        Ok(super::copilot_model_map::resolve_model(model_id, &models).map(|model| model.vendor))
+    }
+
+    pub async fn resolve_model_for_account(
+        &self,
+        account_id: &str,
+        model_id: &str,
+        api_format: crate::provider::CodexCopilotApiFormat,
+    ) -> Result<Option<super::copilot_model_map::ResolvedCopilotModel>, CopilotAuthError> {
+        let models = self.fetch_all_models_for_account(account_id).await?;
+        Ok(super::copilot_model_map::resolve_model_with_format(
+            model_id, &models, api_format,
+        ))
     }
 
     /// 获取 Copilot 可用模型列表（向后兼容：使用第一个账号）
@@ -899,6 +1065,20 @@ impl CopilotAuthManager {
     ) -> Result<Option<String>, CopilotAuthError> {
         match self.resolve_default_account_id().await {
             Some(id) => self.get_model_vendor_for_account(&id, model_id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
+    }
+
+    pub async fn resolve_model(
+        &self,
+        model_id: &str,
+        api_format: crate::provider::CodexCopilotApiFormat,
+    ) -> Result<Option<super::copilot_model_map::ResolvedCopilotModel>, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => {
+                self.resolve_model_for_account(&id, model_id, api_format)
+                    .await
+            }
             None => Err(CopilotAuthError::GitHubTokenInvalid),
         }
     }
@@ -1515,7 +1695,136 @@ impl CopilotAuthManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::CodexCopilotApiFormat;
     use tempfile::tempdir;
+
+    #[test]
+    fn extracts_model_capabilities_and_supported_endpoints() {
+        let item: CopilotModelsResponseItem = serde_json::from_value(serde_json::json!({
+            "id": "gpt-5.6",
+            "name": "GPT-5.6",
+            "vendor": "OpenAI",
+            "model_picker_enabled": true,
+            "supported_endpoints": ["/responses", "/chat/completions"],
+            "capabilities": {
+                "limits": {
+                    "max_prompt_tokens": 922000,
+                    "max_context_window_tokens": 400000
+                },
+                "supports": {
+                    "parallel_tool_calls": true,
+                    "reasoning_effort": ["none", "low", "turbo", "max", 7]
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            extract_copilot_prompt_limit(item.capabilities.as_ref()),
+            Some(922_000)
+        );
+        assert_eq!(
+            extract_copilot_parallel_tool_calls(item.capabilities.as_ref()),
+            Some(true)
+        );
+        assert_eq!(
+            extract_copilot_reasoning_effort(item.capabilities.as_ref()),
+            Some(vec![
+                CopilotReasoningEffort::None,
+                CopilotReasoningEffort::Low,
+                CopilotReasoningEffort::Max,
+            ])
+        );
+        assert_eq!(
+            item.supported_endpoints,
+            vec!["/responses", "/chat/completions"]
+        );
+    }
+
+    #[test]
+    fn prompt_limit_falls_back_to_positive_context_window() {
+        let capabilities = serde_json::json!({
+            "limits": {
+                "max_prompt_tokens": 0,
+                "max_context_window_tokens": 400000
+            }
+        });
+
+        assert_eq!(
+            extract_copilot_prompt_limit(Some(&capabilities)),
+            Some(400_000)
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_preserves_absent_and_explicit_empty_capabilities() {
+        assert_eq!(extract_copilot_reasoning_effort(None), None);
+        assert_eq!(
+            extract_copilot_reasoning_effort(Some(&serde_json::json!({
+                "supports": { "reasoning_effort": [] }
+            }))),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn serializes_optional_live_model_capabilities() {
+        let model = CopilotModel {
+            id: "gpt-5.6-sol".to_string(),
+            name: "GPT-5.6 Sol".to_string(),
+            vendor: "OpenAI".to_string(),
+            model_picker_enabled: true,
+            context_window: Some(922_000),
+            supported_endpoints: vec!["/responses".to_string()],
+            supports_parallel_tool_calls: Some(true),
+            reasoning_effort: Some(vec![
+                CopilotReasoningEffort::None,
+                CopilotReasoningEffort::Xhigh,
+                CopilotReasoningEffort::Max,
+            ]),
+        };
+
+        assert_eq!(
+            serde_json::to_value(model).unwrap(),
+            serde_json::json!({
+                "id": "gpt-5.6-sol",
+                "name": "GPT-5.6 Sol",
+                "vendor": "OpenAI",
+                "model_picker_enabled": true,
+                "context_window": 922000,
+                "supported_endpoints": ["/responses"],
+                "supports_parallel_tool_calls": true,
+                "reasoning_effort": ["none", "xhigh", "max"]
+            })
+        );
+    }
+
+    #[test]
+    fn shared_request_headers_include_copilot_identity() {
+        let headers = build_copilot_request_headers("test-token").unwrap();
+        let headers = headers.into_iter().collect::<http::HeaderMap>();
+
+        assert_eq!(
+            headers
+                .get(http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer test-token")
+        );
+        assert_eq!(
+            headers
+                .get("editor-version")
+                .and_then(|value| value.to_str().ok()),
+            Some(COPILOT_EDITOR_VERSION)
+        );
+        assert_eq!(
+            headers
+                .get("copilot-integration-id")
+                .and_then(|value| value.to_str().ok()),
+            Some(COPILOT_INTEGRATION_ID)
+        );
+        assert!(headers.contains_key("x-request-id"));
+        assert_eq!(headers.get("x-request-id"), headers.get("x-agent-task-id"));
+    }
 
     #[test]
     fn test_copilot_token_expiry() {
@@ -1731,12 +2040,33 @@ mod tests {
                         name: "GPT-5.4".to_string(),
                         vendor: "OpenAI".to_string(),
                         model_picker_enabled: true,
+                        context_window: None,
+                        supported_endpoints: Vec::new(),
+                        supports_parallel_tool_calls: None,
+                        reasoning_effort: None,
                     },
                     CopilotModel {
                         id: "claude-sonnet-4".to_string(),
                         name: "Claude Sonnet 4".to_string(),
                         vendor: "Anthropic".to_string(),
                         model_picker_enabled: true,
+                        context_window: None,
+                        supported_endpoints: Vec::new(),
+                        supports_parallel_tool_calls: None,
+                        reasoning_effort: None,
+                    },
+                    CopilotModel {
+                        id: "gpt-hidden".to_string(),
+                        name: "GPT Hidden".to_string(),
+                        vendor: "OpenAI".to_string(),
+                        model_picker_enabled: false,
+                        context_window: Some(128_000),
+                        supported_endpoints: vec![
+                            "/v1/chat/completions".to_string(),
+                            "/responses".to_string(),
+                        ],
+                        supports_parallel_tool_calls: None,
+                        reasoning_effort: None,
                     },
                 ],
             );
@@ -1750,6 +2080,134 @@ mod tests {
 
         let default_vendor = manager.get_model_vendor("claude-sonnet-4").await.unwrap();
         assert_eq!(default_vendor.as_deref(), Some("Anthropic"));
+
+        let hidden = manager
+            .resolve_model_for_account("12345", "gpt-hidden", CodexCopilotApiFormat::Auto)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            hidden.transport,
+            Some(super::super::copilot_model_map::CopilotTransport {
+                protocol: super::super::copilot_model_map::CopilotProtocol::Responses,
+                endpoint: "/responses".to_string(),
+            })
+        );
+        for (api_format, protocol, endpoint) in [
+            (
+                CodexCopilotApiFormat::OpenaiChat,
+                super::super::copilot_model_map::CopilotProtocol::Chat,
+                "/v1/chat/completions",
+            ),
+            (
+                CodexCopilotApiFormat::OpenaiResponses,
+                super::super::copilot_model_map::CopilotProtocol::Responses,
+                "/responses",
+            ),
+        ] {
+            let account_model = manager
+                .resolve_model_for_account("12345", "GPT-HIDDEN", api_format)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(account_model.id, "gpt-hidden");
+            assert_eq!(
+                account_model.transport,
+                Some(super::super::copilot_model_map::CopilotTransport {
+                    protocol,
+                    endpoint: endpoint.to_string(),
+                })
+            );
+            assert_eq!(
+                manager
+                    .resolve_model("GPT-HIDDEN", api_format)
+                    .await
+                    .unwrap(),
+                Some(account_model)
+            );
+        }
+        assert!(manager
+            .fetch_models_for_account("12345")
+            .await
+            .unwrap()
+            .iter()
+            .all(|model| model.id != "gpt-hidden"));
+    }
+
+    #[tokio::test]
+    async fn test_cached_vendor_fallback_is_independent_of_codex_transport_filter() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+        let model = |endpoints: &[&str]| CopilotModel {
+            id: "claude-opus-4.7".to_string(),
+            name: "Claude Opus 4.7".to_string(),
+            vendor: "Anthropic".to_string(),
+            model_picker_enabled: false,
+            context_window: Some(1_000_000),
+            supported_endpoints: endpoints
+                .iter()
+                .map(|endpoint| endpoint.to_string())
+                .collect(),
+            supports_parallel_tool_calls: None,
+            reasoning_effort: None,
+        };
+        manager.copilot_models.write().await.extend([
+            ("messages-only".to_string(), vec![model(&["/v1/messages"])]),
+            ("no-metadata".to_string(), vec![model(&[])]),
+            (
+                "chat-capable".to_string(),
+                vec![model(&["/chat/completions"])],
+            ),
+        ]);
+
+        for account in ["messages-only", "no-metadata"] {
+            assert!(manager
+                .fetch_models_for_account(account)
+                .await
+                .unwrap()
+                .is_empty());
+            assert_eq!(
+                manager
+                    .get_model_vendor_for_account(account, "claude-opus-4-8")
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("Anthropic"),
+                "{account}"
+            );
+            for format in [
+                CodexCopilotApiFormat::Auto,
+                CodexCopilotApiFormat::OpenaiChat,
+                CodexCopilotApiFormat::OpenaiResponses,
+            ] {
+                assert_eq!(
+                    manager
+                        .resolve_model_for_account(account, "claude-opus-4-8", format)
+                        .await
+                        .unwrap(),
+                    None,
+                    "{account}: {format:?}"
+                );
+            }
+        }
+
+        let resolved = manager
+            .resolve_model_for_account(
+                "chat-capable",
+                "claude-opus-4-8",
+                CodexCopilotApiFormat::Auto,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.id, "claude-opus-4.7");
+        assert_eq!(
+            resolved.transport,
+            Some(super::super::copilot_model_map::CopilotTransport {
+                protocol: super::super::copilot_model_map::CopilotProtocol::Chat,
+                endpoint: "/chat/completions".to_string(),
+            })
+        );
     }
 
     #[tokio::test]

@@ -1,4 +1,5 @@
 import type { ProviderCategory } from "@/types";
+import type { PresetFamilyFields } from "./presetFamilies";
 
 /**
  * Gemini 预设供应商的视觉主题配置
@@ -12,7 +13,7 @@ export interface GeminiPresetTheme {
   textColor?: string;
 }
 
-export interface GeminiProviderPreset {
+export interface GeminiProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
@@ -23,7 +24,7 @@ export interface GeminiProviderPreset {
   description?: string;
   category?: ProviderCategory;
   isPartner?: boolean;
-  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
+  primePartner?: boolean; // 旧版的置顶合作伙伴标记；v7 起界面不再读取，新预设不写
   partnerPromotionKey?: string;
   endpointCandidates?: string[];
   theme?: GeminiPresetTheme;
@@ -51,7 +52,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "gemini",
     iconColor: "#4285F4",
   },
-  // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
+  // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.ai",
@@ -115,6 +116,23 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://api.aicodemirror.ai/api/gemini"],
     icon: "aicodemirror",
     iconColor: "#000000",
+  },
+  {
+    name: "OpenModel",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.openmodel.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.openmodel.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "OpenModel",
+    category: "aggregator",
+    isPartner: true,
+    icon: "openmodel",
   },
   {
     name: "Shengsuanyun",
@@ -216,6 +234,26 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "subrouter",
     endpointCandidates: ["https://subrouter.ai/v1beta"],
     icon: "subrouter",
+  },
+  {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.88api.ai",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.88api.ai",
+    model: "gemini-3.8-flash",
+    description: "88API",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    endpointCandidates: ["https://api.88api.ai", "https://88api.ai"],
+    icon: "88api",
   },
   {
     name: "APIKEY.FUN",
@@ -346,26 +384,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "soleapi",
   },
   {
-    name: "ETok.ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.etok.ai/v1beta",
-        GEMINI_MODEL: "gemini-3.6-flash",
-      },
-    },
-    baseURL: "https://api.etok.ai/v1beta",
-    model: "gemini-3.6-flash",
-    description: "ETok",
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "etok",
-    endpointCandidates: ["https://api.etok.ai/v1beta"],
-    icon: "etok",
-    iconColor: "#000000",
-  },
-  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
@@ -451,6 +469,30 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.tu-zi.com",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.tu-zi.com",
+    model: "gemini-3.8-flash",
+    description: "Tu-zi",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://api.tu-zi.com",
+      "https://api.ourzhishi.top",
+      "https://api.sydney-ai.com",
+      "https://apicdn.tu-zi.com",
+    ],
+    icon: "tuzi",
+  },
+  {
     name: "E-FlowCode",
     websiteUrl: "https://e-flowcode.cc",
     apiKeyUrl: "https://e-flowcode.cc",
@@ -535,6 +577,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "TheRouter",
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],
+    icon: "therouter",
   },
   {
     name: "AICodeWith",
@@ -555,17 +598,99 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#3A3B40",
   },
   {
-    name: "自定义",
-    websiteUrl: "",
+    name: "SoruxGPT",
+    websiteUrl: "https://ai.soruxgpt.com",
+    apiKeyUrl: "https://ai.soruxgpt.com/console/token",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "",
-        GEMINI_MODEL: "gemini-3.6-flash",
+        GOOGLE_GEMINI_BASE_URL: "https://ai.soruxgpt.com",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
       },
     },
-    model: "gemini-3.6-flash",
-    description: "自定义 Gemini API 端点",
-    category: "custom",
+    baseURL: "https://ai.soruxgpt.com",
+    model: "gemini-3.1-pro-preview",
+    description: "SoruxGPT",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://ai.soruxgpt.com",
+      "https://api-cf.soruxgpt.com",
+      "https://api-host.soruxgpt.com",
+      "https://api-node6.soruxgpt.com",
+      "https://api-node3.soruxgpt.com",
+    ],
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.ikuncode.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.ikuncode.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "IKunCode",
+    category: "aggregator",
+    endpointCandidates: ["https://api.ikuncode.ai", "https://api.ikuncode.cc"],
+    icon: "ikuncode",
+  },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.runtoken.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://www.runtoken.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "RunToken",
+    category: "aggregator",
+    endpointCandidates: ["https://www.runtoken.ai", "https://fast.runtoken.ai"],
+    icon: "runtoken",
+  },
+  {
+    name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://app.yylx.io",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://app.yylx.io",
+    model: "gemini-3.1-pro-preview",
+    description: "YYLX",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://app.yylx.io",
+      "https://global.yylx.io",
+      "https://cn.yylx.io",
+    ],
+    icon: "yylx",
+  },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://tokenflux.dev",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://tokenflux.dev",
+    model: "gemini-3.1-pro",
+    description: "TokenFlux",
+    category: "aggregator",
+    icon: "tokenflux",
   },
 ];
 
