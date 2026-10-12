@@ -101,6 +101,10 @@ pub const CLAUDE_EXCLUSIVE_ENV: &[&str] = &[
     // auto mode 的服务端分类器只有官方端点支持；网关场景要设 0，否则会话被
     // 阻断式提示卡住（官方文档给代理、网关的兼容选项）。
     "CLAUDE_CODE_AUTO_MODE_SERVER",
+    // 网关提示头开关：开了客户端才发 `x-claude-code-request-class`，辅助请求队列
+    // 靠它认分类器流量（2.1.273 起支持，更早的版本无视该变量）。代理接管默认补 1，
+    // 供应商行里显式写 0 可关。
+    "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
     // 窗口类：取值由上游模型的窗口决定。
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW",

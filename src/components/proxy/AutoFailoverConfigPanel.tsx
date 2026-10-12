@@ -172,6 +172,8 @@ export function AutoFailoverConfigPanel({
         circuitTimeoutSeconds: raw.circuitTimeoutSeconds,
         circuitErrorRateThreshold: raw.circuitErrorRateThreshold / 100,
         circuitMinRequests: raw.circuitMinRequests,
+        // 本面板不编辑分类器开关，但整份配置是全量覆盖写入，必须原样带回
+        auxiliaryQueueEnabled: config.auxiliaryQueueEnabled,
       });
       toast.success(
         t("proxy.autoFailover.configSaved", "自动故障转移配置已保存"),
