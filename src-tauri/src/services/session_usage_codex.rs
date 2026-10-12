@@ -10,7 +10,7 @@
 //!
 //! ## 解析的事件类型
 //! - `session_meta` → 提取唯一 thread_id（子代理的 session_id 指向父线程）
-//! - `turn_context` → 提取当前 model
+//! - `turn_context` / `event_msg` (type=thread_settings_applied) → 提取当前 model
 //! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
 
 use crate::codex_config::get_codex_config_dir;
@@ -1086,7 +1086,10 @@ fn parse_codex_file(
         if !is_event_msg && !is_turn_context && !is_session_meta {
             continue;
         }
-        if is_event_msg && !line.contains("\"token_count\"") {
+        if is_event_msg
+            && !line.contains("\"token_count\"")
+            && !line.contains("\"thread_settings_applied\"")
+        {
             continue;
         }
 
@@ -1161,6 +1164,23 @@ fn parse_codex_file(
                 let Some(payload) = value.get("payload") else {
                     continue;
                 };
+                if payload.get("type").and_then(serde_json::Value::as_str)
+                    == Some("thread_settings_applied")
+                {
+                    // Resumed/Desktop threads may change models without another
+                    // turn_context. Only update attribution: the cumulative token
+                    // baseline and duplicate snapshots still belong to the session.
+                    if let Some(model) = payload
+                        .get("thread_settings")
+                        .and_then(|settings| settings.get("model"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|model| !model.is_empty())
+                    {
+                        current_model = normalize_codex_model(model);
+                    }
+                    continue;
+                }
                 if payload.get("type").and_then(serde_json::Value::as_str) != Some("token_count") {
                     continue;
                 }
@@ -1942,6 +1962,17 @@ mod tests {
 
     fn turn_context() -> serde_json::Value {
         turn_context_at("2026-07-10T03:00:01Z")
+    }
+
+    fn thread_settings_at(model: serde_json::Value, timestamp: &str) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "event_msg",
+            "payload": {
+                "type": "thread_settings_applied",
+                "thread_settings": { "model": model }
+            }
+        })
     }
 
     fn token_count_at(input: u64, cached: u64, output: u64, timestamp: &str) -> serde_json::Value {
@@ -2859,6 +2890,148 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(deltas, vec![100, 50]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_thread_settings_model_switch_imports_correct_usage_and_cost() -> Result<(), AppError> {
+        use std::io::Write;
+
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let first_usage = token_count_at(100, 50, 10, "2026-07-10T03:00:02Z");
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context_for_model_at("gpt-6-astra", "2026-07-10T03:00:01Z"),
+                first_usage.clone(),
+            ],
+        );
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&file).unwrap();
+            for event in [
+                thread_settings_at(
+                    serde_json::json!("OpenAI/GPT-6.1-SOL-2026-10-01"),
+                    "2026-07-10T03:00:03Z",
+                ),
+                // A model change must not turn a repeated snapshot into usage.
+                first_usage,
+                token_count_at(150, 75, 15, "2026-07-10T03:00:04Z"),
+            ] {
+                writeln!(writer, "{event}").unwrap();
+            }
+        }
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+        assert_unchanged_codex_file_is_skipped(&db, &file)?;
+
+        let conn = lock_conn!(db.conn);
+        let mut statement = conn.prepare(
+            "SELECT model, request_model, input_tokens, cache_read_tokens, output_tokens,
+                    total_cost_usd, request_id
+             FROM proxy_request_logs ORDER BY created_at",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, u32>(3)?,
+                    row.get::<_, u32>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(rows.len(), 2);
+        for (row, (model, input, cached, output, cost, index)) in rows.iter().zip([
+            ("gpt-6-astra", 100, 50, 10, "0.00105", 1),
+            ("gpt-6.1-sol", 50, 25, 5, "0.0001025", 2),
+        ]) {
+            assert_eq!(
+                (&*row.0, &*row.1, row.2, row.3, row.4),
+                (model, model, input, cached, output)
+            );
+            assert_eq!(
+                row.5.parse::<Decimal>().unwrap(),
+                cost.parse::<Decimal>().unwrap()
+            );
+            assert_eq!(
+                row.6,
+                format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:{index}")
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_thread_settings_model_without_turn_context() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                thread_settings_at(serde_json::json!("gpt-6.1-sol"), "2026-07-10T03:00:01Z"),
+                token_count(100, 50, 10),
+            ],
+        );
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        assert_eq!(parsed.token_events.len(), 1);
+        assert_eq!(parsed.token_events[0].model, "gpt-6.1-sol");
+        Ok(())
+    }
+
+    #[test]
+    fn test_thread_settings_model_ignores_invalid_metadata_and_allows_overrides(
+    ) -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut events = vec![
+            session_meta(PARENT_ID),
+            thread_settings_at(serde_json::json!("gpt-6.1-sol"), "2026-07-10T03:00:01Z"),
+        ];
+        for model in [
+            serde_json::Value::Null,
+            serde_json::json!(42),
+            serde_json::json!(""),
+            serde_json::json!(" \t "),
+        ] {
+            events.push(thread_settings_at(model, "2026-07-10T03:00:02Z"));
+        }
+        events.push(serde_json::json!({
+            "type": "event_msg",
+            "payload": { "type": "thread_settings_applied", "thread_settings": { "service_tier": "priority" } }
+        }));
+        // The fast text filter is not sufficient evidence of an applied setting.
+        let mut unrelated =
+            thread_settings_at(serde_json::json!("wrong-model"), "2026-07-10T03:00:02Z");
+        unrelated["type"] = serde_json::json!("response_item");
+        events.push(unrelated);
+        events.push(token_count(100, 50, 10));
+        events.push(turn_context_for_model_at(
+            "gpt-6-astra",
+            "2026-07-10T03:00:03Z",
+        ));
+        events.push(token_count_at(150, 75, 15, "2026-07-10T03:00:04Z"));
+        let mut explicit_model = token_count_at(200, 100, 20, "2026-07-10T03:00:05Z");
+        explicit_model["payload"]["info"]["model"] = serde_json::json!("custom-model");
+        events.push(explicit_model);
+        write_jsonl(&file, &events);
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        assert_eq!(
+            parsed
+                .token_events
+                .iter()
+                .map(|event| event.model.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gpt-6.1-sol", "gpt-6-astra", "custom-model"]
+        );
         Ok(())
     }
 
