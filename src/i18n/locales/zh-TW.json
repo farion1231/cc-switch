@@ -4623,6 +4623,8 @@
       "addPlaceholder": "新增條目（如 ~/.claude/skills 或 !排除模式）…",
       "alreadyListed": "已新增",
       "description": "編輯 pi settings.json 的 skills 陣列：額外掃描目錄與排除/強制規則。儲存後同步重新整理技能列表。",
+      "dirNotExists": "目錄未建立",
+      "dirNotExistsHint": "該應用的技能目錄尚不存在，新增後 pi 會忽略直到目錄建立",
       "editMode": "編輯模式",
       "emptyEntryRejected": "條目不能為空或純空白",
       "emptyHint": "暫無條目。skills 陣列控制 pi 額外掃描的目錄與排除規則；~/.agents/skills 由 pi 自動發現，無需設定。",

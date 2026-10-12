@@ -4622,6 +4622,8 @@
       "addPlaceholder": "Add an entry (e.g. ~/.claude/skills or an exclusion pattern)…",
       "alreadyListed": "Already added",
       "description": "Edit the skills array of pi's settings.json: extra scan directories and exclusion/force rules. Saving refreshes the skills list.",
+      "dirNotExists": "Not created",
+      "dirNotExistsHint": "This app's skill directory does not exist yet; pi will skip it until the directory is created",
       "editMode": "Edit mode",
       "emptyEntryRejected": "Entries cannot be empty or whitespace-only",
       "emptyHint": "No entries yet. The skills array controls the directories pi scans and its exclusion rules; ~/.agents/skills is auto-discovered by pi and needs no entry.",

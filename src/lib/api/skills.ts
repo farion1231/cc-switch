@@ -73,6 +73,8 @@ export interface PiSkillsSourceInfo {
   app: string;
   path: string;
   alreadyListed: boolean;
+  /** 技能目录当前是否存在（不存在也可添加：pi 容忍，装技能后即生效） */
+  exists: boolean;
 }
 
 /** 对 pi 的可见性五态：inactive / inactive-excluded / native / shared / native-shared

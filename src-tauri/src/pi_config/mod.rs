@@ -574,17 +574,21 @@ pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig
     }
     config.entries = Some(entries);
 
-    // 复选候选源：各应用技能目录（排除 Pi 自身），仅列存在的
-    for app in crate::app_config::AppType::all() {
-        if matches!(app, crate::app_config::AppType::Pi) {
-            continue;
-        }
+    // 复选候选源：cc-switch 支持技能管理的全部客户端（对齐前端 SKILLS_APP_IDS
+    // 去掉 Pi 自身）；目录不存在的也列出（pi 容忍不存在的扫描根，装技能后
+    // 即生效），由 exists 标记供前端提示
+    for app in [
+        crate::app_config::AppType::Claude,
+        crate::app_config::AppType::Codex,
+        crate::app_config::AppType::Gemini,
+        crate::app_config::AppType::GrokBuild,
+        crate::app_config::AppType::OpenCode,
+        crate::app_config::AppType::Hermes,
+        crate::app_config::AppType::Mcode,
+    ] {
         let Ok(dir) = crate::services::skill::SkillService::get_app_skills_dir(&app) else {
             continue;
         };
-        if !dir.is_dir() {
-            continue;
-        }
         let listed = config
             .entries
             .as_deref()
@@ -595,6 +599,7 @@ pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig
             app: app.as_str().to_string(),
             path: dir.display().to_string(),
             already_listed: listed,
+            exists: dir.is_dir(),
         });
     }
     Ok(config)

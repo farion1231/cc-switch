@@ -412,8 +412,9 @@ describe("UnifiedSkillsPanel", () => {
       path: "/home/u/.pi/agent/settings.json",
       revision: "rev-1",
       sources: [
-        { app: "claude", path: "/home/u/.claude/skills", alreadyListed: false },
-        { app: "codex", path: "/home/u/.codex/skills", alreadyListed: true },
+        { app: "claude", path: "/home/u/.claude/skills", alreadyListed: false, exists: true },
+        { app: "codex", path: "/home/u/.codex/skills", alreadyListed: true, exists: true },
+        { app: "gemini", path: "/home/u/.gemini/skills", alreadyListed: false, exists: false },
       ],
       entries: [
         { raw: "~/.claude/skills", kind: "scanPath", warnings: [] },
@@ -452,6 +453,10 @@ describe("UnifiedSkillsPanel", () => {
     });
     expect(codexBox).toBeDisabled();
     expect(codexBox).toBeChecked();
+    // 目录不存在的客户端也列出（可勾选，带"目录未创建"提示）
+    expect(
+      screen.getByText("skillsPage.piConfig.dirNotExists"),
+    ).toBeInTheDocument();
 
     // 删除死模式条目后保存
     const removeButtons = screen.getAllByRole("button", {

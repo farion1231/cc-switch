@@ -4622,6 +4622,8 @@
       "addPlaceholder": "添加条目（如 ~/.claude/skills 或 !排除模式）…",
       "alreadyListed": "已添加",
       "description": "编辑 pi settings.json 的 skills 数组：额外扫描目录与排除/强制规则。保存后同步刷新技能列表。",
+      "dirNotExists": "目录未创建",
+      "dirNotExistsHint": "该应用的技能目录尚不存在，添加后 pi 会忽略直到目录创建",
       "editMode": "编辑模式",
       "emptyEntryRejected": "条目不能为空或纯空白",
       "emptyHint": "暂无条目。skills 数组控制 pi 额外扫描的目录与排除规则；~/.agents/skills 由 pi 自动发现，无需配置。",

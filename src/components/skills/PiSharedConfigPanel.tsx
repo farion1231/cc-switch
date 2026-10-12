@@ -425,12 +425,24 @@ export function PiSharedConfigPanel({
                                   {s.path}
                                 </span>
                               </span>
-                              {(s.alreadyListed ||
-                                entries.includes(s.path)) && (
-                                <span className="shrink-0 text-caption text-fg-3">
-                                  {t("skillsPage.piConfig.alreadyListed")}
-                                </span>
-                              )}
+                              <span className="flex shrink-0 items-center gap-1.5">
+                                {!s.exists && (
+                                  <span
+                                    className="text-caption text-fg-3"
+                                    title={t(
+                                      "skillsPage.piConfig.dirNotExistsHint",
+                                    )}
+                                  >
+                                    {t("skillsPage.piConfig.dirNotExists")}
+                                  </span>
+                                )}
+                                {(s.alreadyListed ||
+                                  entries.includes(s.path)) && (
+                                  <span className="text-caption text-fg-3">
+                                    {t("skillsPage.piConfig.alreadyListed")}
+                                  </span>
+                                )}
+                              </span>
                             </li>
                           ))}
                         </ul>

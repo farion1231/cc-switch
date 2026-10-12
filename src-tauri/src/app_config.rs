@@ -304,6 +304,9 @@ pub struct PiSkillsSourceInfo {
     /// 是否已出现在 skills 数组中（canonicalize 去重）
     #[serde(default)]
     pub already_listed: bool,
+    /// 技能目录当前是否存在（不存在也可添加：pi 容忍，装技能后即生效）
+    #[serde(default)]
+    pub exists: bool,
 }
 
 /// `InstalledSkill.piVisibility` 的载荷（由 skill::pi_shared 判定引擎每次
