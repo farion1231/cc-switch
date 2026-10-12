@@ -1,5 +1,7 @@
 # 在你的网站上放「一键导入 CC Switch」按钮：站长接入指南
 
+如果你是站长，可以通过 CC Switch 让你的用户一键把你的供应商导入到 Claude Code、Codex 等 Agent 应用中使用。
+
 > 适用版本：CC Switch v4.0.10 及以上。文中标了「v4.0.10 起」的行为在更早的版本上不同，差异见文末「兼容旧版本」。本文根据当前代码整理，示例里的域名和 Key 都是假的。
 
 ## 这篇写给谁
@@ -102,12 +104,35 @@ Claude Desktop、MiniMax Code 的供应商暂不支持深链接导入，链接�
 | `model` | 默认模型。Claude Code 用原版 Claude 模型时留空；Codex 不写会用 `gpt-5-codex`，Grok Build 不写会用 `grok-4.5`；Pi 必填 |
 | `haikuModel` / `sonnetModel` / `opusModel` | 仅 Claude Code：三档模型别名对应的真实模型名，非原生模型才需要 |
 | `homepage` | 官网。不写时从地址推断（去掉 `api.` 前缀） |
-| `icon` | CC Switch 内置图标的名字（小写），不认识的名字显示名称首字母。你的品牌没有内置图标时不用写 |
+| `icon` | CC Switch 内置图标的名字，只能是小写字母、数字和 `. _ -`，其他写法会被丢掉；不认识的名字显示名称首字母。你的品牌没有内置图标时不用写 |
+| `iconUrl` | 你自己的图标图片地址，见下文「带上你的图标」。下载失败时退回 `icon` |
 | `notes` | 备注，显示在供应商卡片上 |
 | `enabled` | 确认框里「导入后立即切换 / 添加」开关的初始值，用户可以改。一般不用写 |
 | `config` + `configFormat` | 附带配置原文，Base64。`configFormat` 取 `json`（默认）或 `toml` |
 
 `configUrl`（远程配置）还没实现，带了这个参数的链接会被直接拒绝。
+
+### 带上你的图标：iconUrl
+
+CC Switch 内置图标里没有你的品牌时，用 `iconUrl` 给一个图片地址。确认框一打开，CC Switch 就下载这张图并显示在顶部，用户导入后它就是卡片图标，不需要用户再点什么。
+
+图片会被重新画成 96×96 的 PNG 存进 CC Switch，之后不再访问这个地址。你以后换了图标，已经导入的用户不会跟着变。
+
+地址和图片要满足下面的条件，任何一条不满足，确认框不报错，图标退回 `icon` 指定的内置图标，没写 `icon` 就显示名称首字母：
+
+- `https://` 开头，主机是域名（不能是 IP），默认端口，不带账号密码。形状不对的地址在解析链接时就被丢掉，链接其余部分照常导入。
+- 公开可访问：CC Switch 下载时不带 Cookie 和 Referer，也不走用户的系统代理。需要登录、开了防盗链的地址都会失败。
+- 域名解析到的地址必须是公网地址，指向内网、本机的一律不下载。
+- 5 秒内下载完，最多跟 3 次重定向，每次重定向的目标也要满足上面这些条件。
+- 不超过 256 KB。
+- 响应头 `Content-Type` 是 `image/png`、`image/jpeg`、`image/webp` 或 `image/svg+xml` 之一，并且和文件实际格式一致。`application/octet-stream` 之类的通用类型不行。
+- 位图宽高不超过 4096 像素。
+
+图片本身的建议：
+
+- 用方形图。四角不透明的方图会铺满整个图标框；四角透明的 logo 会缩到中间，四周留白，和内置图标的样子一致。
+- SVG 只当图片显示，里面的脚本不执行，引用的外部字体、图片也不加载，文字请转成路径。
+- 每个用户打开确认框时都会请求一次这个地址，放在 CDN 上即可。
 
 ### Claude Code：附带环境变量
 
@@ -346,6 +371,8 @@ function claudeImportLink(user) {
     // 提供原版 Claude 模型时模型全部留空；DeepSeek、Kimi 这类非原生模型才写
     // model / haikuModel / sonnetModel / opusModel
     homepage: "https://example.com",
+    // 内置图标里没有你的品牌时，给一个自己的图标地址，见「带上你的图标」
+    iconUrl: "https://example.com/static/logo.png",
     usageScript: b64(usageScript),
     usageEnabled: "true",
   });
@@ -427,6 +454,7 @@ function b64(text) {
 2. 确认框直接报错时，错误信息就是原因，对照上面「会被拒绝的链接」排查。
 3. 导入成功但余额不显示：在供应商卡片上打开「配置用量查询」，点「测试脚本」看报什么错。最常见的是请求地址不同源、余额接口返回的不是 JSON、`extractor` 里取错了字段。
 4. 导入成功但切过去后请求失败：多半是接口格式不对（见「支持哪些应用」），或模型名不对。
+5. `iconUrl` 的图标没显示：下载失败不会报错，原因写在 CC Switch 的日志里（`~/.cc-switch/logs/cc-switch.log`，搜 `Skipped deep link icon`）。最常见的是 `Content-Type` 不对、图片超过 256 KB、地址要登录或开了防盗链，用 `curl -I` 看一下响应头。
 
 ## 兼容旧版本
 
@@ -440,6 +468,7 @@ function b64(text) {
 | CC Switch 没开着时点链接 | 启动后弹出确认框 | 偶尔丢失，要再点一次 |
 | `apiFormat` | 按应用换算 | 忽略，一律用默认格式 |
 | `app=pi` | 支持 | 拒绝导入 |
+| `iconUrl` | 下载并作为卡片图标 | 忽略，显示 `icon` 或名称首字母 |
 | 「导入后立即切换 / 启用」 | 确认框里的开关，`enabled` 是初始值 | 直接按链接的 `enabled` 执行；OpenCode / OpenClaw / Hermes 总是写进应用配置 |
 
 想让各个版本表现一致：用量查询显式写 `usageEnabled=true`；Codex / Grok Build 的关键信息（地址、Key、模型）同时写进 URL 参数，不要只放在 `config` 里。你的接口不是应用的默认格式时，旧版本导入的卡片格式会不对，可以在按钮旁提示用户升级 CC Switch。
