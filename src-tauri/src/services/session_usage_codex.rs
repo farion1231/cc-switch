@@ -481,12 +481,26 @@ struct CodexReplayCaches {
     parent_timelines: HashMap<PathBuf, CachedParentTimeline>,
     replay_prefixes: HashMap<PathBuf, CachedReplayPrefix>,
     pending: HashMap<PathBuf, PendingEntry>,
+    #[cfg(test)]
+    warn_count: u32,
 }
 
 static CODEX_REPLAY_CACHES: OnceLock<Mutex<CodexReplayCaches>> = OnceLock::new();
 
 fn replay_caches() -> &'static Mutex<CodexReplayCaches> {
     CODEX_REPLAY_CACHES.get_or_init(|| Mutex::new(CodexReplayCaches::default()))
+}
+
+#[cfg(test)]
+pub(crate) fn take_test_codex_warn_count() -> u32 {
+    replay_caches()
+        .lock()
+        .map(|mut caches| {
+            let count = caches.warn_count;
+            caches.warn_count = 0;
+            count
+        })
+        .unwrap_or(0)
 }
 
 pub(crate) fn clear_codex_replay_caches() {
@@ -1492,6 +1506,10 @@ fn mark_deferred(
         .as_ref()
         != Some(&entry);
     if should_warn {
+        #[cfg(test)]
+        if let Ok(mut caches) = replay_caches().lock() {
+            caches.warn_count = caches.warn_count.saturating_add(1);
+        }
         let reason = match &entry.reason {
             PendingReason::MissingParent(parent) => format!("找不到父 rollout {parent}"),
             PendingReason::Stable(reason) | PendingReason::Retryable(reason) => reason.clone(),
@@ -1561,7 +1579,7 @@ fn sync_single_codex_file(
         return Ok(CodexFileSyncResult::default());
     }
 
-    if let Ok(mut caches) = replay_caches().lock() {
+    if let Ok(caches) = replay_caches().lock() {
         if let Some(pending) = caches.pending.get(file_path).cloned() {
             if pending.modified == file_modified && pending.size == file_size {
                 match &pending.reason {
@@ -1578,10 +1596,13 @@ fn sync_single_codex_file(
                         });
                     }
                     PendingReason::Retryable(_) => {
-                        caches.pending.remove(file_path);
+                        // 保留 pending 缓存：本轮仍会尝试解析并重试，但如果解析失败且未决原因保持不变，
+                        // mark_deferred 能识别出 (modified, size, reason) 未变并抑制重复的 WARN 日志。
+                        // 若重试成功，会在成功路径主动从 caches.pending 中移除。
                     }
                     _ => {
-                        caches.pending.remove(file_path);
+                        // 缺少父节点但父节点已出现在索引中，本轮进入重试；保留缓存，
+                        // 使得未决原因变化或成功时由相应路径更新或清除。
                     }
                 }
             }
@@ -3535,6 +3556,85 @@ mod tests {
             (result.imported, result.skipped, result.deferred),
             (1, 0, false)
         );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_retryable_deferred_file_preserves_pending_entry_across_passes() -> Result<(), AppError>
+    {
+        clear_codex_replay_caches();
+        take_test_codex_warn_count();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let child = rollout_path(temp.path(), CHILD_A_ID);
+
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, None, Some(PARENT_ID), "2026-07-10T03:00:05Z"),
+                token_count_at(900, 400, 90, "2026-07-10T03:00:06Z"),
+            ],
+        );
+
+        let first = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(first.deferred);
+        assert_eq!(
+            take_test_codex_warn_count(),
+            1,
+            "第一轮未决时应输出 1 次告警"
+        );
+
+        let initial_entry = replay_caches().lock().unwrap().pending.get(&child).cloned();
+        assert!(initial_entry.is_some(), "第一轮同步后应记录 pending 条目");
+        let initial_entry = initial_entry.unwrap();
+        assert!(matches!(initial_entry.reason, PendingReason::Retryable(_)));
+
+        let second = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(second.deferred);
+        assert_eq!(
+            take_test_codex_warn_count(),
+            0,
+            "第二轮文件未变动，重复告警必须被抑制（输出 0 次）"
+        );
+
+        let preserved_entry = replay_caches().lock().unwrap().pending.get(&child).cloned();
+        assert_eq!(
+            preserved_entry,
+            Some(initial_entry),
+            "第二轮同步前不应提前 evict Retryable 缓存，防重条目必须保留以抑制重复告警"
+        );
+
+        // 父文件推进到 cutoff 之后，第三轮重试成功
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                turn_context_at("2026-07-10T03:00:10Z"),
+            ],
+        );
+        let third = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!((third.imported, third.deferred), (1, false));
+        assert_eq!(take_test_codex_warn_count(), 0);
+        assert!(
+            replay_caches()
+                .lock()
+                .unwrap()
+                .pending
+                .get(&child)
+                .is_none(),
+            "重试成功后 pending 缓存条目应被主动清除"
+        );
+
         Ok(())
     }
 
