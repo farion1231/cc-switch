@@ -319,6 +319,50 @@ CC Switch 的供应商卡片可以显示余额或套餐用量，数据来自一�
 
 `500000` 是 NewAPI 默认的额度换算比例，你改过的话按自己的值写。系统访问令牌的权限比 API Key 大，只在用户本人登录后生成的链接里放。
 
+### Sub2API 系的站
+
+Sub2API 自带给 CC Switch 用的 `GET /v1/usage` 接口，用 API Key 认证，不需要 `usageAccessToken`。返回的顶层字段就是 CC Switch 认的 `isValid`、`planName`、`remaining`、`unit`，脚本基本照搬：
+
+```javascript
+({
+  request: {
+    url: "{{baseUrl}}".replace(/\/+$/, "").replace(/\/v1$/, "") + "/v1/usage",
+    method: "GET",
+    headers: {
+      "Authorization": "Bearer {{apiKey}}",
+      "User-Agent": "cc-switch/1.0"
+    }
+  },
+  extractor: function (response) {
+    var quota = response.quota || {};
+    var result = {
+      isValid: response.isValid !== false,
+      unit: response.unit || quota.unit || "USD"
+    };
+    if (typeof response.planName === "string") result.planName = response.planName;
+    if (typeof response.remaining === "number" && response.remaining >= 0) {
+      result.remaining = response.remaining;
+    }
+    if (quota.limit > 0) {
+      result.used = quota.used;
+      result.total = quota.limit;
+    }
+    if (!result.isValid) {
+      result.invalidMessage = response.status
+        ? String(response.status)
+        : "查询失败";
+    }
+    return result;
+  },
+})
+```
+
+- Codex、Grok Build 的供应商地址带 `/v1`，Claude Code 的不带。脚本先去掉末尾的 `/v1` 再拼接，所以各个应用通用，不用写 `usageBaseUrl`。
+- 三种情况都有 `remaining`：钱包余额（`planName` 是「钱包余额」）、订阅分组（`planName` 是分组名，取日 / 周 / 月限额里剩得最少的那个）、Key 单独设了总额度（另有 `quota.used` 和 `quota.limit`）。订阅分组没设任何限额时 `remaining` 是 `-1`，表示不限量，脚本不显示这个数。
+- 响应里还有 `rate_limits`（Key 的 5 小时 / 1 天 / 7 天窗口）和 `subscription`（分组的日 / 周 / 月用量和限额）。想在卡片上分行显示，可以让 `extractor` 返回数组，每个元素一行。
+- 这份脚本和 CC Switch 应用内「配置用量查询」的 Sub2API 模板（v4.0.10 起）完全一样，用户手动添加你的站时也能一键选用。
+- Sub2API 后台「导入到 CC Switch」按钮生成的链接自带一份查询脚本，用了 `?.` 和 `??` 写法，CC Switch 也能运行，但订阅分组不限量时会显示 `-1`。
+
 ## MCP、提示词、Skill 链接
 
 这三类和你的 API 服务关系不大，但有的站会顺带分发配套工具，简单列一下要点。
