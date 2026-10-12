@@ -369,7 +369,11 @@ describe("RequestLogTable optional columns", () => {
     providerName: "DeepSeek",
     model: "m",
     costMultiplier: "1",
+    inputTokens: 0,
+    freshInputTokens: 0,
     outputTokens: 10,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
     inputCostUsd: "0",
     outputCostUsd: "0",
     cacheReadCostUsd: "0",
@@ -424,19 +428,34 @@ describe("RequestLogTable optional columns", () => {
             requestId: "claude",
             appType: "claude",
             inputTokens: 200,
+            freshInputTokens: 200,
             cacheCreationTokens: 800,
             cacheReadTokens: 9_000,
             latencyMs: 12_340,
             statusCode: 200,
           },
-          // Codex：输入含命中；不报缓存写入
+          // Gemini：不上报缓存写入。命中率用后端给的新增输入：1 + 0 + 999
+          {
+            ...base,
+            requestId: "gemini",
+            appType: "gemini",
+            inputTokens: 1_000,
+            freshInputTokens: 1,
+            cacheCreationTokens: 0,
+            cacheReadTokens: 999,
+            latencyMs: 4_000,
+            dataSource: "gemini_session",
+            statusCode: 200,
+          },
+          // Codex：上报缓存写入，数字要显示出来
           {
             ...base,
             requestId: "codex",
             appType: "codex",
             inputTokens: 1_000,
-            cacheCreationTokens: 0,
-            cacheReadTokens: 999,
+            freshInputTokens: 100,
+            cacheCreationTokens: 600,
+            cacheReadTokens: 300,
             latencyMs: 4_000,
             dataSource: "codex_session",
             statusCode: 200,
@@ -446,15 +465,12 @@ describe("RequestLogTable optional columns", () => {
             ...base,
             requestId: "failed",
             appType: "claude",
-            inputTokens: 0,
-            cacheCreationTokens: 0,
-            cacheReadTokens: 0,
             latencyMs: 0,
             statusCode: 429,
             errorMessage: "rate limited",
           },
         ].map((log) => ({ ...log, model: log.requestId })),
-        total: 3,
+        total: 4,
         page: 0,
         pageSize: 20,
       },
@@ -469,7 +485,7 @@ describe("RequestLogTable optional columns", () => {
       />,
     );
     // 给每行打个标记，按列头找单元格
-    for (const id of ["claude", "codex", "failed"]) {
+    for (const id of ["claude", "gemini", "codex", "failed"]) {
       screen.getByTitle(id).setAttribute("data-request", id);
     }
 
@@ -479,15 +495,23 @@ describe("RequestLogTable optional columns", () => {
     expect(claude("usage.logColumns.duration")).toHaveTextContent("12.3s");
     expect(claude("usage.statusCode")).toHaveTextContent("200");
 
-    const codex = cellsOf("codex");
-    expect(codex("usage.logColumns.cacheWrite")).toHaveTextContent("—");
-    expect(codex("usage.logColumns.cacheWrite")).toHaveAttribute(
+    const gemini = cellsOf("gemini");
+    expect(gemini("usage.logColumns.cacheWrite")).toHaveTextContent("—");
+    expect(gemini("usage.logColumns.cacheWrite")).toHaveAttribute(
       "title",
       "usage.cacheWriteNotReported",
     );
     // 999 / 1000 不进成 100%
-    expect(codex("usage.logColumns.hitRate")).toHaveTextContent("99.9%");
-    expect(codex("usage.logColumns.duration")).toHaveTextContent("≈4.0s");
+    expect(gemini("usage.logColumns.hitRate")).toHaveTextContent("99.9%");
+    expect(gemini("usage.logColumns.duration")).toHaveTextContent("≈4.0s");
+
+    const codex = cellsOf("codex");
+    expect(codex("usage.logColumns.cacheWrite")).toHaveTextContent("600");
+    expect(codex("usage.logColumns.cacheWrite")).toHaveAttribute(
+      "title",
+      "600",
+    );
+    expect(codex("usage.logColumns.hitRate")).toHaveTextContent("30.0%");
 
     const failed = cellsOf("failed");
     expect(failed("usage.logColumns.hitRate")).toHaveTextContent("—");
