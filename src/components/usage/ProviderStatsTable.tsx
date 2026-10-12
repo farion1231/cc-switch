@@ -64,9 +64,9 @@ export function ProviderStatsTable({
           <thead>
             <tr className={usageTable.headRow}>
               <th className={usageTable.th}>{t("usage.provider")}</th>
-              <th className={usageTable.thEnd}>{t("usage.requests")}</th>
-              <th className={usageTable.thEnd}>{t("usage.tokens")}</th>
-              <th className={usageTable.thEnd}>{t("usage.cost")}</th>
+              <th className={usageTable.th}>{t("usage.requests")}</th>
+              <th className={usageTable.th}>{t("usage.tokens")}</th>
+              <th className={usageTable.th}>{t("usage.cost")}</th>
               <PerformanceHeaders />
             </tr>
           </thead>
@@ -93,17 +93,17 @@ export function ProviderStatsTable({
                         {provider.label}
                       </span>
                     </td>
-                    <td className={usageTable.tdEnd}>
+                    <td className={usageTable.td}>
                       {fmtInt(stat.requestCount, locale)}
                     </td>
                     <td
-                      className={usageTable.tdEnd}
+                      className={usageTable.td}
                       title={fmtInt(stat.totalTokens, locale)}
                     >
                       {formatTokensCompact(stat.totalTokens, locale)}
                     </td>
                     <td
-                      className={cn(usageTable.tdEnd, "font-medium")}
+                      className={cn(usageTable.td, "font-medium")}
                       title={fmtUsd(stat.totalCost, 6)}
                     >
                       {fmtUsd(stat.totalCost, 2)}

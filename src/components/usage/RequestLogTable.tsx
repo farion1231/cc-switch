@@ -255,8 +255,9 @@ export function RequestLogTable({
           </span>
         </td>
         {/* 供应商、模型两列按比例取宽（max-w-0 让百分比宽度生效、内容截断）；
-            比例合计 40%，再大就会把数值列挤到只剩内容宽度。模型名通常比供应商名长 */}
-        <td className={cn(usageTable.td, "w-[18%] max-w-0")}>
+            比例合计 32%：40% 时常见窗口下数值列就只剩内容宽度，左松右挤。模型名通常比供应商名长，
+            放不下的截断、悬停看全名 */}
+        <td className={cn(usageTable.td, "w-[14%] max-w-0")}>
           <span
             className="block truncate"
             title={usageProviderTitle(providerLabel)}
@@ -264,13 +265,13 @@ export function RequestLogTable({
             {provider}
           </span>
         </td>
-        <td className={cn(usageTable.td, usageTable.mono, "w-[22%] max-w-0")}>
+        <td className={cn(usageTable.td, usageTable.mono, "w-[18%] max-w-0")}>
           <span className="block truncate" title={modelTitle}>
             {log.model}
           </span>
         </td>
         <td
-          className={usageTable.tdEnd}
+          className={usageTable.td}
           title={
             isCacheInclusive
               ? `${fmtInt(freshInput, locale)} (${t("usage.rawInputLabel")}: ${fmtInt(log.inputTokens, locale)})`
@@ -279,14 +280,11 @@ export function RequestLogTable({
         >
           {formatTokensCompact(freshInput, locale)}
         </td>
-        <td
-          className={usageTable.tdEnd}
-          title={fmtInt(log.outputTokens, locale)}
-        >
+        <td className={usageTable.td} title={fmtInt(log.outputTokens, locale)}>
           {formatTokensCompact(log.outputTokens, locale)}
         </td>
         <td
-          className={cn(usageTable.tdEnd, !hasCache && usageTable.muted)}
+          className={cn(usageTable.td, !hasCache && usageTable.muted)}
           title={t("usage.cacheTip", {
             read: fmtInt(log.cacheReadTokens, locale),
             write: fmtInt(log.cacheCreationTokens, locale),
@@ -296,7 +294,7 @@ export function RequestLogTable({
         </td>
         <td
           className={cn(
-            usageTable.tdEnd,
+            usageTable.td,
             "font-medium",
             unpriced && "font-normal text-fg-3",
           )}
@@ -309,7 +307,7 @@ export function RequestLogTable({
           {unpriced ? t("usage.unpriced") : fmtUsd(log.totalCostUsd, 4)}
         </td>
         <td
-          className={cn(usageTable.tdEnd, tps == null && usageTable.muted)}
+          className={cn(usageTable.td, tps == null && usageTable.muted)}
           title={timingTip}
         >
           {tps == null ? (
@@ -326,7 +324,7 @@ export function RequestLogTable({
         </td>
         <td
           className={cn(
-            usageTable.tdEnd,
+            usageTable.td,
             firstTokenText == null && usageTable.muted,
           )}
           title={timingTip}
@@ -352,11 +350,11 @@ export function RequestLogTable({
               <th className={usageTable.th}>{t("usage.app")}</th>
               <th className={usageTable.th}>{t("usage.provider")}</th>
               <th className={usageTable.th}>{t("usage.model")}</th>
-              <th className={usageTable.thEnd}>{t("usage.freshInput")}</th>
-              <th className={usageTable.thEnd}>{t("usage.outputTokens")}</th>
-              <th className={usageTable.thEnd}>{t("usage.cacheReadTokens")}</th>
-              <th className={usageTable.thEnd}>{t("usage.cost")}</th>
-              <th className={usageTable.thEnd}>
+              <th className={usageTable.th}>{t("usage.freshInput")}</th>
+              <th className={usageTable.th}>{t("usage.outputTokens")}</th>
+              <th className={usageTable.th}>{t("usage.cacheReadTokens")}</th>
+              <th className={usageTable.th}>{t("usage.cost")}</th>
+              <th className={usageTable.th}>
                 <span className="inline-flex items-center gap-0.5">
                   {t("usage.speed")}
                   <HelpTip title={t("usage.speedHelpTitle")} align="end">
@@ -364,7 +362,7 @@ export function RequestLogTable({
                   </HelpTip>
                 </span>
               </th>
-              <th className={usageTable.thEnd}>
+              <th className={usageTable.th}>
                 <span className="inline-flex items-center gap-0.5">
                   {t("usage.firstToken")}
                   <HelpTip title={t("usage.firstTokenHelpTitle")} align="end">

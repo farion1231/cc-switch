@@ -43,8 +43,8 @@ export function PerformanceHeaders() {
   const { t } = useTranslation();
   return (
     <>
-      <th className={usageTable.thEnd}>{t("usage.successRate")}</th>
-      <th className={usageTable.thEnd}>
+      <th className={usageTable.th}>{t("usage.successRate")}</th>
+      <th className={usageTable.th}>
         <span className="inline-flex items-center gap-0.5">
           {t("usage.speed")}
           <HelpTip title={t("usage.speedSumHelpTitle")} align="end">
@@ -52,7 +52,7 @@ export function PerformanceHeaders() {
           </HelpTip>
         </span>
       </th>
-      <th className={usageTable.thEnd}>
+      <th className={usageTable.th}>
         <span className="inline-flex items-center gap-0.5">
           {t("usage.firstToken")}
           <HelpTip title={t("usage.firstTokenSumHelpTitle")} align="end">
@@ -82,10 +82,10 @@ export function PerformanceCells({
   const firstToken = exactFirstToken ?? estimatedFirstToken;
   return (
     <>
-      <td className={usageTable.tdEnd}>
+      <td className={usageTable.td}>
         {stat.successRate.toFixed(stat.successRate >= 99.95 ? 0 : 1)}%
       </td>
-      <td className={cn(usageTable.tdEnd, speed == null && usageTable.muted)}>
+      <td className={cn(usageTable.td, speed == null && usageTable.muted)}>
         {speed == null ? (
           "—"
         ) : (
@@ -98,9 +98,7 @@ export function PerformanceCells({
           </>
         )}
       </td>
-      <td
-        className={cn(usageTable.tdEnd, firstToken == null && usageTable.muted)}
-      >
+      <td className={cn(usageTable.td, firstToken == null && usageTable.muted)}>
         {estimatedFirstToken != null && "≈"}
         {firstToken ?? "—"}
       </td>
