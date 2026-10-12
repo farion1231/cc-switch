@@ -1,5 +1,7 @@
 # 在你的网站上放「一键导入 CC Switch」按钮：站长接入指南
 
+中文 | [English](deeplink-site-integration-guide-en.md) | [日本語](deeplink-site-integration-guide-ja.md)
+
 如果你是站长，可以通过 CC Switch 让你的用户一键把你的供应商导入到 Claude Code、Codex 等 Agent 应用中使用。
 
 > 适用版本：CC Switch v4.0.10 及以上。文中标了「v4.0.10 起」的行为在更早的版本上不同，差异见文末「兼容旧版本」。本文根据当前代码整理，示例里的域名和 Key 都是假的。
