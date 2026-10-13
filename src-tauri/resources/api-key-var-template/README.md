@@ -57,7 +57,7 @@ A successful manual run prints exactly one line, for example:
 
 ## Runtime contract
 
-CC Switch executes `index.mjs` from the selected directory with Node 20+ (configure the Node executable under **Script runtime** when discovery fails). On success, stdout must contain only one JSON object no larger than 64 KiB. Put diagnostics on stderr; never log credentials, keys, authorization headers, or raw provider responses.
+CC Switch executes `index.mjs` from the selected directory with Node 20+ (configure the Node executable under **Script runtime** when discovery fails). Scripts run with your user permissions and are not sandboxed, so select only a trusted local directory. On success, stdout must contain only one JSON object no larger than 64 KiB. Put diagnostics on stderr; never log credentials, keys, authorization headers, or raw provider responses.
 
 CC Switch supplies these environment variables:
 

@@ -16,7 +16,7 @@ type OmoProviderRow = (
     String,
 );
 
-/// API Key 变量写回保护：见 `services::api_key_vars::resolve::preserve_refs`
+/// API Key 变量写回保护：派生的客户端配置回读以数据库模板为准。
 fn guard_key_refs(
     app_type: &str,
     old_json: &str,
@@ -27,7 +27,9 @@ fn guard_key_refs(
     }
     let app = <crate::app_config::AppType as std::str::FromStr>::from_str(app_type).ok()?;
     let old: serde_json::Value = serde_json::from_str(old_json).ok()?;
-    let restored = crate::services::api_key_vars::resolve::preserve_refs(&app, &old, new)?;
+    let restored = crate::services::api_key_vars::resolve::preserve_refs_from_stored_template(
+        &app, &old, new,
+    )?;
     log::info!("[ApiKeyVars] {app_type} 供应商配置写回时保留了变量引用模板");
     Some(restored)
 }

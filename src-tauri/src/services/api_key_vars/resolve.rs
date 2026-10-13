@@ -581,6 +581,32 @@ pub fn preserve_refs(app: &AppType, old: &Value, new: &Value) -> Option<Value> {
     })
 }
 
+/// Restore API-key variable templates from the persisted provider row after a
+/// derived client-config readback.  The persisted template is authoritative in
+/// this direction: client files contain resolved values and cache history may
+/// be unavailable after restart.  User-originated saves must use their
+/// separate DAO entry point so an explicit literal can still detach a ref.
+pub fn preserve_refs_from_stored_template(
+    app: &AppType,
+    old: &Value,
+    new: &Value,
+) -> Option<Value> {
+    if !supports_app(app) {
+        return None;
+    }
+    let old_refs: HashMap<String, String> = key_field_entries(app, old)
+        .into_iter()
+        .filter(|(_, value)| parse_ref(value).is_some())
+        .collect();
+    if old_refs.is_empty() {
+        return None;
+    }
+    map_key_fields(app, new, &mut |loc, value| {
+        let template = old_refs.get(loc)?;
+        parse_ref(value).is_none().then(|| template.clone())
+    })
+}
+
 /// 写入引擎的最后一道检查：新内容里出现了旧内容没有的 `"{{NAME}}"` / `={{NAME}}`
 /// 字面引用时返回该变量名。
 pub fn new_literal_ref(pre: Option<&[u8]>, planned: Option<&[u8]>) -> Option<String> {
@@ -829,6 +855,24 @@ mod tests {
         let grok_new = json!({"config": "[model.m]\napi_key = \"sk-new-value\"\n"});
         let r = preserve_refs(&AppType::GrokBuild, &grok_old, &grok_new).unwrap();
         assert!(r["config"].as_str().unwrap().contains("{{RT_PRESERVE}}"));
+    }
+
+    #[test]
+    fn stored_template_readback_does_not_depend_on_cache_history() {
+        cache_load([(
+            String::from("RT_STORED"),
+            true,
+            Some(String::from("sk-current")),
+        )]);
+        let old = json!({"env": {"ANTHROPIC_AUTH_TOKEN": "{{RT_STORED}}"}});
+        let readback = json!({"env": {"ANTHROPIC_AUTH_TOKEN": "sk-stale"}});
+
+        // A restarted process has no historical value for `sk-stale`, but a
+        // client-config readback still has to preserve the database template.
+        assert!(preserve_refs(&AppType::Claude, &old, &readback).is_none());
+        let restored =
+            preserve_refs_from_stored_template(&AppType::Claude, &old, &readback).unwrap();
+        assert_eq!(restored["env"]["ANTHROPIC_AUTH_TOKEN"], "{{RT_STORED}}");
     }
 
     #[test]

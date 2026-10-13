@@ -57,7 +57,7 @@ node index.mjs
 
 ## 运行契约
 
-CC Switch 在所选目录执行 `index.mjs`，需要 Node 20+；自动发现失败时可在 **脚本运行环境** 设置 Node 可执行文件路径。成功时 stdout 只能输出一个不超过 64 KiB 的 JSON 对象。诊断信息写入 stderr，且不得记录凭据、Key、认证头或原始供应商响应。
+CC Switch 在所选目录执行 `index.mjs`，需要 Node 20+；自动发现失败时可在 **脚本运行环境** 设置 Node 可执行文件路径。脚本使用当前用户权限运行，并未运行在沙箱中，因此只能选择受信任的本地目录。成功时 stdout 只能输出一个不超过 64 KiB 的 JSON 对象。诊断信息写入 stderr，且不得记录凭据、Key、认证头或原始供应商响应。
 
 CC Switch 会提供：
 

@@ -72,6 +72,13 @@ pub const MAX_STDERR_KEEP_BYTES: usize = 4 * 1024;
 // Keep enough context to redact a maximum-length returned key before taking
 // the final log tail. Truncating first could expose a large key's suffix.
 const MAX_STDERR_CAPTURE_BYTES: usize = MAX_STDERR_KEEP_BYTES + MAX_STDOUT_BYTES;
+// Script stdout and captured stderr are already bounded. Keep redaction bounded
+// as well because this routine also protects status messages reconstructed from
+// persisted state.
+const MAX_REDACTION_BYTES: usize = MAX_STDERR_CAPTURE_BYTES;
+const MAX_REDACTION_SECRETS: usize = 128;
+const MAX_REDACTION_SECRET_BYTES: usize = MAX_STDOUT_BYTES;
+const REDACTION_OMITTED: &str = "[REDACTED: diagnostic omitted]";
 const MAX_MESSAGE_CHARS: usize = 500;
 const MAX_ERROR_SUMMARY_CHARS: usize = 200;
 const SCRIPT_CANDIDATES: [&str; 2] = ["index.mjs", "index.js"];
@@ -551,15 +558,172 @@ pub fn mask_key(key: &str) -> String {
 }
 
 pub fn redact(text: &str, secrets: &[&str]) -> String {
-    let mut out = text.to_string();
-    // Short keys occur in test and development providers. They are still secrets,
-    // and only an empty string is unsafe to pass to `replace`.
-    let mut secrets: Vec<_> = secrets.iter().filter(|s| !s.is_empty()).collect();
-    secrets.sort_unstable_by_key(|secret| std::cmp::Reverse(secret.len()));
-    for secret in secrets {
-        out = out.replace(secret, "[REDACTED]");
+    if text.len() > MAX_REDACTION_BYTES {
+        return REDACTION_OMITTED.to_string();
     }
+
+    // A script often logs a key through JSON.stringify, which escapes quotes,
+    // backslashes and sometimes Unicode. Decode at most two JSON-escape layers
+    // into a shadow representation, then replace the original byte ranges. Two
+    // layers cover a JSON string that itself contains an escaped diagnostic; more
+    // layers are deliberately not chased to keep processing bounded.
+    let source = json_unescape_tokens(text);
+    let mut normalized_secrets = Vec::new();
+    let mut total_secret_bytes = 0usize;
+    let mut seen = HashSet::new();
+    for secret in secrets.iter().copied().filter(|secret| !secret.is_empty()) {
+        total_secret_bytes = total_secret_bytes.saturating_add(secret.len());
+        if normalized_secrets.len() >= MAX_REDACTION_SECRETS
+            || total_secret_bytes > MAX_REDACTION_SECRET_BYTES
+        {
+            return REDACTION_OMITTED.to_string();
+        }
+        let normalized: String = json_unescape_tokens(secret)
+            .into_iter()
+            .map(|token| token.ch)
+            .collect();
+        if !normalized.is_empty() && seen.insert(normalized.clone()) {
+            normalized_secrets.push(normalized);
+        }
+    }
+    if normalized_secrets.is_empty() {
+        return text.to_string();
+    }
+    normalized_secrets.sort_unstable_by_key(|secret| std::cmp::Reverse(secret.chars().count()));
+
+    let normalized: String = source.iter().map(|token| token.ch).collect();
+    let mut boundaries: Vec<_> = normalized.char_indices().map(|(index, _)| index).collect();
+    boundaries.push(normalized.len());
+    let mut matched = vec![false; source.len()];
+    for secret in normalized_secrets {
+        for (start_byte, _) in normalized.match_indices(&secret) {
+            let end_byte = start_byte + secret.len();
+            let start = boundaries
+                .binary_search(&start_byte)
+                .expect("char boundary");
+            let end = boundaries.binary_search(&end_byte).expect("char boundary");
+            matched[start..end].fill(true);
+        }
+    }
+
+    let mut ranges = Vec::new();
+    let mut index = 0;
+    while index < source.len() {
+        if !matched[index] {
+            index += 1;
+            continue;
+        }
+        let start = source[index].start;
+        let mut end = source[index].end;
+        index += 1;
+        while index < source.len() && matched[index] {
+            end = source[index].end;
+            index += 1;
+        }
+        ranges.push((start, end));
+    }
+    if ranges.is_empty() {
+        return text.to_string();
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for (start, end) in ranges {
+        out.push_str(&text[cursor..start]);
+        out.push_str("[REDACTED]");
+        cursor = end;
+    }
+    out.push_str(&text[cursor..]);
     out
+}
+
+#[derive(Clone, Copy)]
+struct RedactionToken {
+    ch: char,
+    start: usize,
+    end: usize,
+}
+
+fn json_unescape_tokens(text: &str) -> Vec<RedactionToken> {
+    let mut tokens: Vec<_> = text
+        .char_indices()
+        .map(|(start, ch)| RedactionToken {
+            ch,
+            start,
+            end: start + ch.len_utf8(),
+        })
+        .collect();
+    // A fixed pass count prevents adversarial nested escapes from turning a
+    // diagnostic into unbounded work.
+    for _ in 0..2 {
+        let mut decoded = Vec::with_capacity(tokens.len());
+        let mut index = 0;
+        while index < tokens.len() {
+            if let Some((ch, consumed)) = json_escape_at(&tokens, index) {
+                decoded.push(RedactionToken {
+                    ch,
+                    start: tokens[index].start,
+                    end: tokens[index + consumed - 1].end,
+                });
+                index += consumed;
+            } else {
+                decoded.push(tokens[index]);
+                index += 1;
+            }
+        }
+        tokens = decoded;
+    }
+    tokens
+}
+
+fn json_escape_at(tokens: &[RedactionToken], index: usize) -> Option<(char, usize)> {
+    if tokens.get(index)?.ch != '\\' {
+        return None;
+    }
+    let escape = tokens.get(index + 1)?.ch;
+    let simple = match escape {
+        '"' => Some('"'),
+        '\\' => Some('\\'),
+        '/' => Some('/'),
+        'b' => Some('\u{0008}'),
+        'f' => Some('\u{000C}'),
+        'n' => Some('\n'),
+        'r' => Some('\r'),
+        't' => Some('\t'),
+        _ => None,
+    };
+    if let Some(ch) = simple {
+        return Some((ch, 2));
+    }
+    if escape != 'u' {
+        return None;
+    }
+    let first = json_u16(tokens, index + 2)?;
+    if (0xD800..=0xDBFF).contains(&first) {
+        let low_start = index + 6;
+        if tokens.get(low_start)?.ch != '\\' || tokens.get(low_start + 1)?.ch != 'u' {
+            return None;
+        }
+        let second = json_u16(tokens, low_start + 2)?;
+        if !(0xDC00..=0xDFFF).contains(&second) {
+            return None;
+        }
+        let codepoint = 0x1_0000 + (((first as u32 - 0xD800) << 10) | (second as u32 - 0xDC00));
+        return char::from_u32(codepoint).map(|ch| (ch, 12));
+    }
+    if (0xDC00..=0xDFFF).contains(&first) {
+        return None;
+    }
+    char::from_u32(first as u32).map(|ch| (ch, 6))
+}
+
+fn json_u16(tokens: &[RedactionToken], start: usize) -> Option<u16> {
+    let mut value = 0u16;
+    for token in tokens.get(start..start + 4)? {
+        value = value.checked_mul(16)?;
+        value = value.checked_add(token.ch.to_digit(16)? as u16)?;
+    }
+    Some(value)
 }
 
 /// Redact script-supplied status text before applying the UI/storage length limit.
@@ -1125,6 +1289,24 @@ mod tests {
         assert_eq!(last_line_summary("a\nlast \n\n").as_deref(), Some("last"));
     }
 
+    #[test]
+    fn redaction_canonicalizes_json_escaped_and_double_escaped_keys() {
+        let key = "sk-quote\"slash\\é🔑";
+        let json_escaped = r#"sk-quote\"slash\\\u00e9\uD83D\uDD11"#;
+        assert_eq!(
+            redact(&format!("backend rejected {json_escaped}"), &[key]),
+            "backend rejected [REDACTED]"
+        );
+        assert_eq!(
+            redact("backend rejected s\\\\u0065cret", &["secret"]),
+            "backend rejected [REDACTED]"
+        );
+        assert_eq!(
+            redact(&"x".repeat(MAX_REDACTION_BYTES + 1), &["secret"]),
+            REDACTION_OMITTED
+        );
+    }
+
     fn node_available() -> bool {
         std::process::Command::new("node")
             .arg("--version")
@@ -1291,6 +1473,48 @@ process.exitCode = 1;"#
             assert!(failure.error.contains("[REDACTED]"), "{}", failure.error);
             assert!(!failure.error.contains(key), "{}", failure.error);
         }
+    }
+
+    #[tokio::test]
+    async fn run_script_redacts_json_escaped_keys_in_messages_and_stderr() {
+        assert!(node_available(), "Node is required for this regression");
+        let dir = tempfile::tempdir().unwrap();
+        let key = "sk-quote\"slash\\é";
+        let key_js = serde_json::to_string(key).unwrap();
+        let encoded = r#"sk-quote\"slash\\\u00e9"#;
+
+        std::fs::write(
+            dir.path().join("index.mjs"),
+            format!(
+                r#"const key = {key_js};
+const encoded = JSON.stringify(key).slice(1, -1).replace("é", "\\u00e9");
+console.error("backend " + encoded);
+process.stdout.write(JSON.stringify({{ apiKey: key, message: "status " + encoded }}));"#
+            ),
+        )
+        .unwrap();
+        let success = run_script(&script_cfg(dir.path()), &test_ctx(), None, &[])
+            .await
+            .unwrap();
+        assert_eq!(success.output.message.as_deref(), Some("status [REDACTED]"));
+
+        std::fs::write(
+            dir.path().join("index.mjs"),
+            format!(
+                r#"const key = {key_js};
+const encoded = JSON.stringify(key).slice(1, -1).replace("é", "\\u00e9");
+process.stdout.write(JSON.stringify({{ apiKey: key }}));
+console.error("backend " + encoded);
+process.exitCode = 1;"#
+            ),
+        )
+        .unwrap();
+        let failure = run_script(&script_cfg(dir.path()), &test_ctx(), None, &[])
+            .await
+            .unwrap_err();
+        assert!(failure.error.contains("[REDACTED]"), "{}", failure.error);
+        assert!(!failure.error.contains(key), "{}", failure.error);
+        assert!(!failure.error.contains(encoded), "{}", failure.error);
     }
 
     #[tokio::test]
