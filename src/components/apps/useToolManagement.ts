@@ -534,18 +534,18 @@ export function useToolManagement() {
   const diagnoseToolSilently = useCallback(async (toolName: ToolName) => {
     try {
       const [report] = await settingsApi.probeToolInstallations([toolName]);
+      // 没拿到报告代表状态未知，不能把它当成「没有其他安装」。
+      if (!report) return false;
       // 同一份报告也是行上的路径 / 来源 / 「另有 N 处安装」：装完、升级完就刷新，
       // 不用等手动「检查更新」
-      if (report) {
-        updateToolManagementState({
-          installReports: {
-            ...(toolManagementState.installReports ?? {}),
-            [toolName]: report,
-          },
-        });
-      }
+      updateToolManagementState({
+        installReports: {
+          ...(toolManagementState.installReports ?? {}),
+          [toolName]: report,
+        },
+      });
       setToolDiagnostics((prev) => {
-        if (report?.is_conflict) {
+        if (report.is_conflict) {
           return { ...prev, [toolName]: report.installs };
         }
         // 无冲突：清掉残留;无旧结果则返回同引用，避免无谓 re-render。
@@ -554,11 +554,13 @@ export function useToolManagement() {
         delete next[toolName];
         return next;
       });
+      return true;
     } catch (error) {
       console.error(
         `[useToolManagement] Auto-diagnose failed for ${toolName}`,
         error,
       );
+      return false;
     }
   }, []);
 
@@ -662,9 +664,9 @@ export function useToolManagement() {
             );
             const tool = refreshed.find((t) => t.name === toolName);
             if (action === "uninstall") {
-              await diagnoseToolSilently(toolName);
+              const diagnosed = await diagnoseToolSilently(toolName);
               const warnings: string[] = [];
-              if (!tool) {
+              if (!tool || !diagnosed) {
                 warnings.push(t("settings.toolUninstallCheckFailed"));
               }
               if (

@@ -830,6 +830,54 @@ describe("AppsPage concurrent CLI upgrades", () => {
   });
 
   it.each(["rejected", "empty"])(
+    "warns when uninstall succeeds but installation diagnostics are %s",
+    async (result) => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await renderApps();
+        mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+          missing.add("claude");
+          if (result === "rejected") {
+            mocks.probeToolInstallations.mockRejectedValueOnce(
+              new Error("diagnostics failed"),
+            );
+          } else {
+            mocks.probeToolInstallations.mockResolvedValueOnce([]);
+          }
+        });
+        fireEvent.click(
+          card("Claude Code").getByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        fireEvent.click(
+          await within(screen.getByRole("dialog")).findByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        await waitFor(() =>
+          expect(mocks.warning).toHaveBeenCalledWith(
+            "settings.toolUninstallWarningTitle",
+            {
+              description: "settings.toolUninstallCheckFailed",
+              closeButton: true,
+            },
+          ),
+        );
+        expect(mocks.error).not.toHaveBeenCalled();
+        expect(mocks.success).not.toHaveBeenCalled();
+        expect(
+          card("Claude Code").getByRole("button", {
+            name: "settings.toolInstall",
+          }),
+        ).toBeEnabled();
+      } finally {
+        errorLog.mockRestore();
+      }
+    },
+  );
+
+  it.each(["rejected", "empty"])(
     "warns when uninstall succeeds but the status refresh is %s",
     async (result) => {
       const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});

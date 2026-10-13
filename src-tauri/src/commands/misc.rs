@@ -3985,38 +3985,9 @@ fn run_windows_tool_command_capture(
     extra_env: &[(&str, String)],
     working_dir: &Path,
 ) -> Result<std::process::Output, String> {
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
-    let mut cmd = if is_windows_command_script(tool_path) {
-        let path = tool_path.to_string_lossy();
-        let args = args
-            .iter()
-            .map(|arg| windows_cmd_double_quote_arg(arg))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let command = format!(
-            "call {}{}",
-            win_quote_path_for_batch(&path),
-            if args.is_empty() {
-                String::new()
-            } else {
-                format!(" {args}")
-            }
-        );
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/D", "/S", "/C"])
-            .raw_arg(&command)
-            .env("PATH", new_path)
-            .creation_flags(CREATE_NO_WINDOW);
-        cmd
-    } else {
-        let mut cmd = Command::new(tool_path);
-        cmd.args(args)
-            .env("PATH", new_path)
-            .creation_flags(CREATE_NO_WINDOW);
-        cmd
-    };
-
+    let mut cmd = build_windows_tool_command(tool_path, args, new_path);
     apply_extra_env(&mut cmd, extra_env);
     cmd.current_dir(working_dir)
         .stdout(Stdio::piped())
@@ -9045,6 +9016,45 @@ mod tests {
         let preferred = windows_runnable_sibling_for_extensionless_tool(&extensionless);
 
         assert_eq!(preferred.as_deref(), Some(cmd.as_path()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_tool_capture_accepts_canonicalized_batch_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("模型 tools & helpers");
+        std::fs::create_dir(&bin).unwrap();
+        std::fs::write(
+            bin.join("cc_switch_capture_helper.cmd"),
+            "@echo helper-found\r\n@exit /b 23\r\n",
+        )
+        .unwrap();
+        let path = format!("{};{}", bin.display(), effective_path_string());
+        for extension in ["cmd", "bat"] {
+            let entry = bin.join(format!("opencode.{extension}"));
+            std::fs::write(
+                &entry,
+                "@echo off\r\necho arg=%~1\r\necho env=%CC_SWITCH_CAPTURE_TEST%\r\necho captured-stderr 1>&2\r\ncmd /D /C cc_switch_capture_helper.cmd\r\nexit /b %errorlevel%\r\n",
+            )
+            .unwrap();
+            let canonical = std::fs::canonicalize(entry).unwrap();
+            assert!(canonical.to_string_lossy().starts_with(r"\\?\"));
+            let output = run_windows_tool_command_capture(
+                &canonical,
+                &["models"],
+                &path,
+                CommandDeadline::from_timeout(Some(std::time::Duration::from_secs(10))),
+                &[("CC_SWITCH_CAPTURE_TEST", "preserved".into())],
+                root.path(),
+            )
+            .unwrap();
+            let stdout = decode_command_output(&output.stdout);
+            assert_eq!(output.status.code(), Some(23), "{output:?}");
+            assert!(stdout.contains("arg=models"), "{stdout}");
+            assert!(stdout.contains("env=preserved"), "{stdout}");
+            assert!(stdout.contains("helper-found"), "{stdout}");
+            assert!(decode_command_output(&output.stderr).contains("captured-stderr"));
+        }
     }
 
     #[cfg(target_os = "windows")]
