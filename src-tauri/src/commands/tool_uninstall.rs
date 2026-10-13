@@ -635,9 +635,12 @@ mod tests {
                 "uninstall -g --prefix {} @openai/codex",
                 quote(&prefix.to_string_lossy())
             );
+            // PATH lookup expands 8.3 aliases (e.g. RUNNER~1) before removing the
+            // verbatim prefix, so the batch path may differ from the fixture spelling.
+            let npm_for_batch = windows_shell_compatible_path(&resolved);
             assert_eq!(
                 plan.command,
-                format!("{} {arguments}", quote(&npm.to_string_lossy()))
+                format!("{} {arguments}", quote(&npm_for_batch.to_string_lossy()))
             );
             assert!(!plan.native);
             assert!(!plan.command.contains(r"\\?\"));
