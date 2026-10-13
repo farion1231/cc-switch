@@ -121,6 +121,13 @@ function useDetailSections(request: RequestLog) {
       mono: true,
     },
     { key: "model", label: t("usage.model"), value: request.model, mono: true },
+    {
+      key: "reasoningEffort",
+      label: t("usage.reasoningEffort"),
+      value: request.reasoningEffort || "—",
+      mono: true,
+      muted: !request.reasoningEffort,
+    },
   ];
   if (request.requestModel && request.requestModel !== request.model) {
     basic.push({

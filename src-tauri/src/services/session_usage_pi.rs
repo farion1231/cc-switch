@@ -133,7 +133,13 @@ impl PiReasoningContext {
                 .map(str::to_owned);
         }
         if let Some(id) = entry_id {
-            self.levels_by_entry.insert(id.to_string(), level.clone());
+            if level.is_some() {
+                // Any earlier entry can become a future branch parent, but
+                // unknown levels are already represented by a missing key.
+                self.levels_by_entry.insert(id.to_string(), level.clone());
+            } else {
+                self.levels_by_entry.remove(id);
+            }
         }
         self.legacy_level = level.clone();
         level
@@ -1098,6 +1104,13 @@ mod tests {
         assert_reasoning_effort(&db, &branch, Some("high"))?;
         assert_reasoning_effort(&db, &disabled, Some("off"))?;
         assert_reasoning_effort(&db, &unknown, None)?;
+        let serialized: String = lock_conn!(db.conn).query_row(
+            "SELECT pi_usage_context FROM session_log_sync WHERE file_path = ?1",
+            [path.to_string_lossy().as_ref()],
+            |row| row.get(0),
+        )?;
+        let context: Value = serde_json::from_str(&serialized).unwrap();
+        assert!(context["levels_by_entry"].get("unknown").is_none());
         Ok(())
     }
 
