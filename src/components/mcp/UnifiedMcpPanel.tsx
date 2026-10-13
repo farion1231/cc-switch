@@ -112,6 +112,11 @@ const IMPORT_SOURCE_FILES: Record<
   omp: { file: "~/.omp/agent/mcp.json" },
 };
 
+/** 导入时还会读取的非应用配置源（只做导入源，没有开关位） */
+const IMPORT_EXTRA_SOURCES: { file: string }[] = [
+  { file: "%APPDATA%/Code/User/mcp.json (VS Code)" },
+];
+
 /** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
 const WRITE_THEN_SAVE_APPS: ReadonlySet<AppIdWith<"mcp">> = new Set([
   "mcode",
@@ -1225,6 +1230,21 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                               {t(IMPORT_SOURCE_FILES[app].noteKey as string)}
                             </span>
                           )}
+                        </span>
+                      </li>
+                    ))}
+                    {IMPORT_EXTRA_SOURCES.map((source) => (
+                      <li
+                        key={source.file}
+                        className="flex min-w-0 items-baseline gap-3 text-caption"
+                      >
+                        <span className="w-[84px] shrink-0 text-fg-2">
+                          {t("mcpPage.import.extraSourceLabel")}
+                        </span>
+                        <span className="min-w-0">
+                          <code className="whitespace-nowrap font-mono">
+                            {source.file}
+                          </code>
                         </span>
                       </li>
                     ))}

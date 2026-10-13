@@ -11,6 +11,7 @@
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
 //! - `omp` - Omp MCP 同步和导入
+//! - `vscode` - VS Code 用户级 mcp.json 导入（只导入，不写回）
 
 pub mod agy;
 mod claude;
@@ -41,4 +42,5 @@ pub(crate) mod copilot;
 pub(crate) mod kimi;
 pub(crate) mod mcode;
 pub(crate) mod pi;
+pub(crate) mod vscode;
 pub(crate) mod workbuddy;
