@@ -84,9 +84,16 @@ export function isModeAppId(appId: string): appId is ModeAppId {
 }
 
 /** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack` 的镜像）。 */
-export type StackAppId = Extract<ProxyAppId, "claude" | "codex">;
+export type StackAppId = Extract<
+  ModeAppId,
+  "claude" | "codex" | "claude-desktop"
+>;
 
-export const STACK_APP_IDS: StackAppId[] = ["claude", "codex"];
+export const STACK_APP_IDS: StackAppId[] = [
+  "claude",
+  "codex",
+  "claude-desktop",
+];
 
 export function isStackAppId(appId: string): appId is StackAppId {
   return (STACK_APP_IDS as string[]).includes(appId);

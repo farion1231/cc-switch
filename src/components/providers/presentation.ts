@@ -575,7 +575,11 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
         : t("providerCard.section.stackDefaultAfterSwitch"),
       help: {
         title: t("providerCard.section.stackDefault"),
-        body: t("providerCard.section.stackDefaultHelp"),
+        body: t(
+          app === "claude-desktop"
+            ? "providerCard.section.stackDefaultHelpDesktop"
+            : "providerCard.section.stackDefaultHelp",
+        ),
       },
       emptyText: t("providerCard.section.stackNoDefault"),
       items: defaultItems,

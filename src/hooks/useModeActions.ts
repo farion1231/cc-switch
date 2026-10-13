@@ -62,7 +62,9 @@ export function useModeActions(app: AppId) {
             : t(
                 app === "codex"
                   ? "mode.toast.enteredStack"
-                  : "mode.toast.enteredStackLive",
+                  : app === "claude-desktop"
+                    ? "mode.toast.enteredStackDesktop"
+                    : "mode.toast.enteredStackLive",
                 { app: appName },
               ),
           { closeButton: true },

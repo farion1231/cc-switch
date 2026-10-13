@@ -197,21 +197,38 @@ function EnterBody({
             t("mode.dialog.routeNoteSwitch"),
             t("mode.dialog.routeNoteKeepRunning"),
           ]
-        : [
-            otherMembers.length > 0
-              ? t("mode.dialog.stackNoteMembers", {
-                  names: otherMembers.map((m) => m.name).join("、"),
-                  count: memberModels,
-                })
-              : t("mode.dialog.stackNoteEmpty"),
-            t("mode.dialog.stackNoteNoFailover"),
-            // Claude Code 运行中就会读到改过的 settings.json，不用重启。
-            ...(app === "codex"
-              ? [t("mode.dialog.stackNoteRestartCodex", { app: appName })]
-              : []),
-          ];
+        : app === "claude-desktop"
+          ? [
+              otherMembers.length > 0
+                ? t("mode.dialog.desktopStackNoteMembers", {
+                    names: otherMembers.map((m) => m.name).join("、"),
+                    count: memberModels,
+                  })
+                : t("mode.dialog.stackNoteEmpty"),
+              t("mode.dialog.desktopRouteNoteRestart", { app: appName }),
+              t("mode.dialog.desktopRouteNoteKeepRunning"),
+            ]
+          : [
+              otherMembers.length > 0
+                ? t("mode.dialog.stackNoteMembers", {
+                    names: otherMembers.map((m) => m.name).join("、"),
+                    count: memberModels,
+                  })
+                : t("mode.dialog.stackNoteEmpty"),
+              t("mode.dialog.stackNoteNoFailover"),
+              // Claude Code 运行中就会读到改过的 settings.json，不用重启。
+              ...(app === "codex"
+                ? [t("mode.dialog.stackNoteRestartCodex", { app: appName })]
+                : []),
+            ];
   if (active === "stack" && target === "route") {
-    notes.push(t("mode.dialog.leaveStackNote"));
+    notes.push(
+      t(
+        app === "claude-desktop"
+          ? "mode.dialog.desktopLeaveStackNote"
+          : "mode.dialog.leaveStackNote",
+      ),
+    );
   }
 
   const confirm = async () => {

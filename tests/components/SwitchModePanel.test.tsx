@@ -337,7 +337,7 @@ describe("SwitchModePanel — Stack mode", () => {
 });
 
 describe("SwitchModePanel — Claude Desktop", () => {
-  it("offers direct and route only, without failover or route settings", async () => {
+  it("offers all three modes, without failover or route settings", async () => {
     mockMode("route", "map", "direct");
     let failoverReads = 0;
     server.use(
@@ -358,10 +358,77 @@ describe("SwitchModePanel — Claude Desktop", () => {
 
     expect(await screen.findByText("→ map")).toBeInTheDocument();
     expect(
-      screen.queryByRole("tab", { name: /mode\.stack/ }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: /mode\.names\.stack/ }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     expect(failoverReads).toBe(0);
+  });
+
+  it("enters Stack with Desktop's own notes and asks for a restart", async () => {
+    const user = userEvent.setup();
+    mockMode("route", "map", "direct");
+    const calls: unknown[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: false,
+          members: [
+            { providerId: "map", modelIds: [], route: true },
+            {
+              providerId: "kimi",
+              modelIds: ["claude-fable-ccs-473908"],
+              route: false,
+            },
+          ],
+        }),
+      ),
+      http.post(
+        `${TAURI_ENDPOINT}/set_proxy_takeover_for_app`,
+        async ({ request }) => {
+          calls.push(await request.json());
+          return HttpResponse.json(null);
+        },
+      ),
+    );
+
+    renderPanel("claude-desktop", {
+      direct: provider("direct"),
+      map: provider("map"),
+      kimi: provider("kimi"),
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: /mode\.names\.stack/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "mode.activate.stack" }),
+    );
+    expect(
+      await screen.findByText("mode.dialog.desktopStackNoteMembers"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("mode.dialog.desktopRouteNoteRestart"),
+    ).toBeVisible();
+    // Claude Code 的 /model 说明和故障转移说明不适用于 Desktop
+    expect(
+      screen.queryByText("mode.dialog.stackNoteMembers"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("mode.dialog.stackNoteNoFailover"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("mode.dialog.confirmStack"));
+    await waitFor(() =>
+      expect(calls).toEqual([
+        { appType: "claude-desktop", enabled: true, stack: true, route: "map" },
+      ]),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "mode.toast.enteredStackDesktop",
+        expect.anything(),
+      ),
+    );
   });
 
   it("shows the Desktop config check in the notice slot", async () => {
