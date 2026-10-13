@@ -46,6 +46,7 @@ pub(super) fn read(path: &Path, request: Value) -> Result<Value, String> {
         "timeout",
         "8s",
         "python3",
+        "-I",
         "-c",
         READER,
         &native,
