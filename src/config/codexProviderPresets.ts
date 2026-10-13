@@ -593,16 +593,19 @@ requires_openai_auth = true`,
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     category: "third_party",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "aigocode",
-      "https://api.aigocode.app",
+      "https://api.aigocode.dev",
       "gpt-5.6-sol",
     ),
-    endpointCandidates: ["https://api.aigocode.app"],
+    endpointCandidates: [
+      "https://api.aigocode.dev",
+      "https://api.aigocode.app",
+    ],
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "aigocode", // 促销信息 i18n key
     icon: "aigocode",

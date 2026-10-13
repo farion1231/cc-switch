@@ -752,13 +752,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AIGoCode",
       options: {
-        baseURL: "https://api.aigocode.app",
+        baseURL: "https://api.aigocode.dev",
         apiKey: "",
         setCacheKey: true,
       },

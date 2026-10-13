@@ -461,11 +461,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       name: "aigocode",
-      base_url: "https://api.aigocode.app",
+      base_url: "https://api.aigocode.dev",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [

@@ -431,11 +431,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "AIGoCode",
     providerKey: "cc-switch-aigo-code",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       name: "AIGoCode",
-      baseUrl: "https://api.aigocode.app",
+      baseUrl: "https://api.aigocode.dev",
       api: "anthropic-messages",
       apiKey: "",
       models: [

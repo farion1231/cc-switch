@@ -733,10 +733,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
-      baseUrl: "https://api.aigocode.app",
+      baseUrl: "https://api.aigocode.dev",
       apiKey: "",
       api: "anthropic-messages",
       models: [
