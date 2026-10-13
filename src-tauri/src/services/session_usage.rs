@@ -320,6 +320,10 @@ struct MessageTiming {
     /// 最先出现的那一块是不是这条回复的第一块。不是的话（前面的块在回看窗口
     /// 之外）起点会取晚、速度偏高，宁可不估。旧版日志没有 `apiBlockIndex`，按是处理。
     starts_at_first_block: bool,
+    /// 回复开始输出的时刻，即首字：第一块是思考块时，用它写完的时刻减去 Claude Code
+    /// 记的 `thinkingDurationMs`（从这一块的 content_block_start 计到 content_block_stop）。
+    /// 第一块是文字或工具调用时，块的时间戳只是它写完的时刻，推不出首字，为 None。
+    first_output_ms: Option<i64>,
     /// 各块时间戳（块写完的时刻）里最晚的一个，即回复结束。
     end_ms: Option<i64>,
 }
@@ -334,16 +338,43 @@ fn record_block_timing(
         .get("timestamp")
         .and_then(|v| v.as_str())
         .and_then(parse_timestamp_millis);
-    let timing = timings
-        .entry(msg_id.to_string())
-        .or_insert_with(|| MessageTiming {
+    let timing = timings.entry(msg_id.to_string()).or_insert_with(|| {
+        let starts_at_first_block = value
+            .get("apiBlockIndex")
+            .is_none_or(|index| index.as_u64() == Some(0));
+        MessageTiming {
             first_parent: parse_line_uuid(value, "parentUuid"),
-            starts_at_first_block: value
-                .get("apiBlockIndex")
-                .is_none_or(|index| index.as_u64() == Some(0)),
+            starts_at_first_block,
+            first_output_ms: starts_at_first_block
+                .then(|| thinking_block_start_ms(value, block_end_ms?))
+                .flatten(),
             end_ms: None,
-        });
+        }
+    });
     timing.end_ms = timing.end_ms.max(block_end_ms);
+}
+
+/// 思考块开始的时刻：块写完的时刻减去 `thinkingDurationMs`。不是思考块、
+/// 没有这个字段（旧版 Claude Code）时返回 None。
+fn thinking_block_start_ms(value: &serde_json::Value, block_end_ms: i64) -> Option<i64> {
+    let duration_ms = value.get("thinkingDurationMs")?.as_i64()?;
+    let first_block_type = value
+        .get("message")?
+        .get("content")?
+        .get(0)?
+        .get("type")?
+        .as_str()?;
+    (first_block_type == "thinking" && duration_ms > 0).then(|| block_end_ms - duration_ms)
+}
+
+/// 首字时间：起点到开始输出。必须落在 (0, 耗时] 之间，否则说明起点或首字取错了。
+pub(crate) fn estimated_first_token_ms(
+    start_ms: i64,
+    first_output_ms: i64,
+    latency_ms: i64,
+) -> Option<i64> {
+    let first_token = first_output_ms.checked_sub(start_ms)?;
+    (first_token > 0 && first_token <= latency_ms).then_some(first_token)
 }
 
 /// 沿父链往上最多走这么多行。
@@ -848,15 +879,22 @@ fn sync_single_file(
 
         // 耗时估算：只给写完整了的回复算（有 stop_reason），而且要看得到它的第一块
         // （这一批里，或游标前的回看窗口里），否则起点对不上
-        let latency_ms = timings
+        let timing = timings
             .get(&msg.message_id)
             .filter(|timing| msg.stop_reason.is_some() && timing.starts_at_first_block)
             .and_then(|timing| {
                 let start_ms = resolve_request_start_ms(&chain, timing.first_parent)?;
-                estimated_latency_ms(start_ms, timing.end_ms?)
+                let latency_ms = estimated_latency_ms(start_ms, timing.end_ms?)?;
+                let first_token_ms = timing.first_output_ms.and_then(|first_output_ms| {
+                    estimated_first_token_ms(start_ms, first_output_ms, latency_ms)
+                });
+                Some(EstimatedTiming {
+                    latency_ms,
+                    first_token_ms,
+                })
             });
 
-        match upsert_session_log_entry_on_conn(&tx, &request_id, msg, latency_ms) {
+        match upsert_session_log_entry_on_conn(&tx, &request_id, msg, timing) {
             // 补全已有的行也算进 imported：数据变了，界面要跟着刷新
             Ok(SessionRowOutcome::Inserted | SessionRowOutcome::Updated) => imported += 1,
             Ok(SessionRowOutcome::Skipped) => skipped += 1,
@@ -1003,11 +1041,20 @@ enum SessionRowOutcome {
     Skipped,
 }
 
-/// 已经在库里的那一行里，判断要不要补全用得到的三样。
+/// 按日志时间戳估出来的计时：耗时（含首字等待）和首字时间（推不出来为 None）。
+/// Claude 和 Codex 的会话日志导入共用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EstimatedTiming {
+    pub(crate) latency_ms: i64,
+    pub(crate) first_token_ms: Option<i64>,
+}
+
+/// 已经在库里的那一行里，判断要不要补全用得到的几样。
 struct StoredSessionRow {
     data_source: String,
     output_tokens: i64,
     latency_ms: i64,
+    first_token_ms: Option<i64>,
 }
 
 fn find_stored_session_row(
@@ -1015,7 +1062,7 @@ fn find_stored_session_row(
     request_id: &str,
 ) -> Result<Option<StoredSessionRow>, AppError> {
     conn.prepare_cached(
-        "SELECT COALESCE(data_source, 'proxy'), output_tokens, latency_ms
+        "SELECT COALESCE(data_source, 'proxy'), output_tokens, latency_ms, first_token_ms
          FROM proxy_request_logs WHERE request_id = ?1",
     )
     .and_then(|mut stmt| {
@@ -1024,6 +1071,7 @@ fn find_stored_session_row(
                 data_source: row.get(0)?,
                 output_tokens: row.get(1)?,
                 latency_ms: row.get(2)?,
+                first_token_ms: row.get(3)?,
             })
         })
         .optional()
@@ -1070,7 +1118,7 @@ fn refresh_session_log_entry_on_conn(
     conn: &rusqlite::Connection,
     request_id: &str,
     msg: &ParsedAssistantUsage,
-    latency_ms: Option<i64>,
+    timing: Option<EstimatedTiming>,
     stored: &StoredSessionRow,
     dedup_key: &DedupKey,
 ) -> Result<SessionRowOutcome, AppError> {
@@ -1078,15 +1126,22 @@ fn refresh_session_log_entry_on_conn(
         return Ok(SessionRowOutcome::Skipped);
     }
     let output_grew = i64::from(msg.output_tokens) > stored.output_tokens;
-    let latency_ms = latency_ms.map_or(stored.latency_ms, |ms| ms.max(stored.latency_ms));
-    if !output_grew && latency_ms == stored.latency_ms {
+    let latency_ms = timing.map_or(stored.latency_ms, |timing| {
+        timing.latency_ms.max(stored.latency_ms)
+    });
+    // 首字只看第一块，后面的块补进来不会变；先前没推出来的才补
+    let first_token_ms = stored
+        .first_token_ms
+        .or(timing.and_then(|timing| timing.first_token_ms));
+    if !output_grew && latency_ms == stored.latency_ms && first_token_ms == stored.first_token_ms {
         return Ok(SessionRowOutcome::Skipped);
     }
 
     if !output_grew {
         conn.execute(
-            "UPDATE proxy_request_logs SET latency_ms = ?1 WHERE request_id = ?2",
-            rusqlite::params![latency_ms, request_id],
+            "UPDATE proxy_request_logs SET latency_ms = ?1, first_token_ms = ?2
+             WHERE request_id = ?3",
+            rusqlite::params![latency_ms, first_token_ms, request_id],
         )
         .map_err(|e| AppError::Database(format!("更新会话日志耗时失败: {e}")))?;
         return Ok(SessionRowOutcome::Updated);
@@ -1110,8 +1165,8 @@ fn refresh_session_log_entry_on_conn(
             input_tokens = ?1, output_tokens = ?2, cache_read_tokens = ?3,
             cache_creation_tokens = ?4, input_cost_usd = ?5, output_cost_usd = ?6,
             cache_read_cost_usd = ?7, cache_creation_cost_usd = ?8, total_cost_usd = ?9,
-            latency_ms = ?10
-         WHERE request_id = ?11",
+            latency_ms = ?10, first_token_ms = ?11
+         WHERE request_id = ?12",
         rusqlite::params![
             msg.input_tokens,
             msg.output_tokens,
@@ -1123,6 +1178,7 @@ fn refresh_session_log_entry_on_conn(
             cache_creation_cost,
             total_cost,
             latency_ms,
+            first_token_ms,
             request_id,
         ],
     )
@@ -1133,13 +1189,13 @@ fn refresh_session_log_entry_on_conn(
 /// 把一条回复写进 proxy_request_logs：没入过库就插入，入过库就按需补全
 /// （见 [`refresh_session_log_entry_on_conn`]）。
 ///
-/// 调用方持有连接锁（通常在事务内）。`latency_ms` 是按日志时间戳估出来的
-/// 请求耗时（含首字等待），估不出来传 None。
+/// 调用方持有连接锁（通常在事务内）。`timing` 是按日志时间戳估出来的
+/// 请求耗时（含首字等待）和首字时间，估不出来传 None。
 fn upsert_session_log_entry_on_conn(
     conn: &rusqlite::Connection,
     request_id: &str,
     msg: &ParsedAssistantUsage,
-    latency_ms: Option<i64>,
+    timing: Option<EstimatedTiming>,
 ) -> Result<SessionRowOutcome, AppError> {
     let created_at = msg
         .timestamp
@@ -1167,7 +1223,7 @@ fn upsert_session_log_entry_on_conn(
     };
     if let Some(stored) = find_stored_session_row(conn, request_id)? {
         return refresh_session_log_entry_on_conn(
-            conn, request_id, msg, latency_ms, &stored, &dedup_key,
+            conn, request_id, msg, timing, &stored, &dedup_key,
         );
     }
     if has_matching_proxy_usage_log(conn, &dedup_key)? {
@@ -1201,8 +1257,8 @@ fn upsert_session_log_entry_on_conn(
                 cache_read_cost,
                 cache_creation_cost,
                 total_cost,
-                latency_ms.unwrap_or(0), // latency_ms: 按时间戳估算，0 = 没有计时
-                Option::<i64>::None, // first_token_ms: 会话日志无此数据
+                timing.map_or(0, |t| t.latency_ms), // latency_ms: 按时间戳估算，0 = 没有计时
+                timing.and_then(|t| t.first_token_ms), // first_token_ms: 按时间戳估算，推不出来为 NULL
                 200i64,             // status_code: 会话日志中的请求只要产生计费 token 即视为成功
                 Option::<String>::None, // error_message
                 msg.session_id,
@@ -1955,6 +2011,33 @@ mod tests {
         )
     }
 
+    /// 回复的第一块是思考块：带 Claude Code 记的 `thinkingDurationMs`
+    fn thinking_block(
+        msg_id: &str,
+        uuid: u8,
+        parent: u8,
+        timestamp: &str,
+        thinking_duration_ms: i64,
+        finished: bool,
+    ) -> String {
+        let stop_reason = if finished { "\"tool_use\"" } else { "null" };
+        format!(
+            r#"{{"parentUuid":"{}","type":"assistant","uuid":"{}","message":{{"id":"{msg_id}","model":"claude-opus-4-8","content":[{{"type":"thinking","thinking":""}}],"usage":{{"input_tokens":10,"output_tokens":900,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"stop_reason":{stop_reason}}},"thinkingDurationMs":{thinking_duration_ms},"apiBlockIndex":0,"timestamp":"{timestamp}","sessionId":"session-t"}}"#,
+            chain_uuid(parent),
+            chain_uuid(uuid)
+        )
+    }
+
+    fn first_token_of(db: &Database, msg_id: &str) -> Option<i64> {
+        let conn = db.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT first_token_ms FROM proxy_request_logs WHERE request_id = ?1",
+            [format!("session:{msg_id}")],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
     fn append_lines(file: &Path, lines: &[String]) {
         let mut content = fs::read(file).unwrap_or_default();
         content.extend_from_slice((lines.join("\n") + "\n").as_bytes());
@@ -2013,6 +2096,75 @@ mod tests {
         let file_sync = sync_single_file(&db, &file, None)?;
         assert_eq!(file_sync.imported, 1);
         assert_eq!(latency_of(&db, "msg_t"), 12_500);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_first_token_is_derived_from_a_leading_thinking_block() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        let lines = [
+            // 思考 3 秒、5 秒时写完：首字在 2 秒
+            chain_line("user", 1, None, "2026-06-07T13:00:00.000Z"),
+            thinking_block("msg_think", 2, 1, "2026-06-07T13:00:05.000Z", 3_000, true),
+            assistant_block("msg_think", 3, 2, 1, "2026-06-07T13:00:09.000Z"),
+            // 第一块是工具调用：块的时间戳只是它写完的时刻，推不出首字
+            chain_line("user", 4, Some(3), "2026-06-07T13:00:10.000Z"),
+            assistant_block("msg_tool", 5, 4, 0, "2026-06-07T13:00:14.000Z"),
+            // 思考时长比整段还长，起点对不上，不要
+            chain_line("user", 6, Some(5), "2026-06-07T13:00:20.000Z"),
+            thinking_block("msg_bad", 7, 6, "2026-06-07T13:00:22.000Z", 5_000, true),
+        ];
+        fs::write(&file, lines.join("\n") + "\n").unwrap();
+
+        sync_single_file(&db, &file, None)?;
+        assert_eq!(latency_of(&db, "msg_think"), 9_000);
+        assert_eq!(first_token_of(&db, "msg_think"), Some(2_000));
+        assert_eq!(latency_of(&db, "msg_tool"), 4_000);
+        assert_eq!(first_token_of(&db, "msg_tool"), None);
+        assert_eq!(latency_of(&db, "msg_bad"), 2_000);
+        assert_eq!(first_token_of(&db, "msg_bad"), None);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_first_token_is_filled_in_when_a_partial_reply_completes() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        // 子代理逐块写：同步落在第一块之后，这时还没有 stop_reason，不估计时
+        fs::write(
+            &file,
+            [
+                chain_line("user", 1, None, "2026-06-07T13:00:00.000Z"),
+                thinking_block("msg_sub", 2, 1, "2026-06-07T13:00:04.000Z", 2_500, false),
+            ]
+            .join("\n")
+                + "\n",
+        )
+        .unwrap();
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(first_token_of(&db, "msg_sub"), None);
+
+        // 最后一块到了：耗时和首字一起补上（首字靠游标前回看到的第一块）
+        append_lines(
+            &file,
+            &[assistant_block_with(
+                "msg_sub",
+                3,
+                2,
+                1,
+                "2026-06-07T13:00:08.000Z",
+                900,
+                true,
+            )],
+        );
+        sync_with_cursor(&db, &file)?;
+        assert_eq!(latency_of(&db, "msg_sub"), 8_000);
+        assert_eq!(first_token_of(&db, "msg_sub"), Some(1_500));
 
         fs::remove_dir_all(&tmp).ok();
         Ok(())
