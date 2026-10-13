@@ -21,9 +21,9 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    estimated_first_token_ms, estimated_latency_ms, metadata_modified_nanos,
-    parse_timestamp_millis, update_sync_state, update_sync_state_on_conn, EstimatedTiming,
-    SessionSyncResult,
+    backfill_reasoning_effort_on_conn, estimated_first_token_ms, estimated_latency_ms,
+    mark_reasoning_effort_synced, metadata_modified_nanos, parse_timestamp_millis,
+    update_sync_state, update_sync_state_on_conn, EstimatedTiming, SessionSyncResult,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
 use crate::services::usage_stats::{
@@ -210,6 +210,7 @@ struct ParsedTokenEvent {
     /// 避免把后面每次请求的 `event_index` 都往后挤。
     request_suffix: Option<String>,
     model: String,
+    reasoning_effort: Option<String>,
     timestamp: Option<String>,
     /// 按事件时间戳估出来的请求耗时（含首字等待）和首字时间；估不出来为 None。
     timing: Option<EstimatedTiming>,
@@ -766,6 +767,7 @@ struct CodexSyncPass {
     /// rollout 逻辑文件名（去掉 `.zst`）→ 记过游标的路径，供游标继承按名查找
     rollout_cursor_paths: HashMap<String, Vec<String>>,
     byte_offsets: HashMap<String, Option<i64>>,
+    reasoning_effort_synced: std::collections::HashSet<String>,
     pricing: HashMap<String, Option<ModelPricing>>,
 }
 
@@ -791,6 +793,10 @@ impl CodexSyncPass {
             })?
             .collect::<Result<HashMap<_, _>, _>>()?;
         let mut rollout_cursor_paths: HashMap<String, Vec<String>> = HashMap::new();
+        let reasoning_effort_synced = conn
+            .prepare("SELECT file_path FROM session_log_sync WHERE reasoning_effort_synced = 1")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<std::collections::HashSet<_>, _>>()?;
         for path in cursors.keys() {
             let name = codex_rollout_file::logical_file_name(path);
             if is_rollout_filename(name) {
@@ -804,6 +810,7 @@ impl CodexSyncPass {
             cursors,
             rollout_cursor_paths,
             byte_offsets,
+            reasoning_effort_synced,
             pricing: HashMap::new(),
         })
     }
@@ -842,6 +849,18 @@ fn get_codex_sync_state(
         }
         _ => Ok(state),
     }
+}
+
+/// Codex rollout turn contexts use `effort`; thread settings use `reasoning_effort`.
+fn codex_reasoning_effort(value: &serde_json::Value) -> Option<String> {
+    crate::proxy::usage::reasoning::reasoning_effort(value).or_else(|| {
+        value
+            .get("effort")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|effort| !effort.is_empty())
+            .map(str::to_owned)
+    })
 }
 
 /// 归一化 Codex 模型名
@@ -951,6 +970,7 @@ struct PendingUsageRecord {
     usage: CumulativeTokens,
     timestamp: Option<String>,
     model: String,
+    reasoning_effort: Option<String>,
 }
 
 fn push_unmatched_usage(
@@ -976,6 +996,7 @@ fn push_unmatched_usage(
         event_index: None,
         request_suffix: Some(format!("usage:{}", pending.key)),
         model: pending.model,
+        reasoning_effort: pending.reasoning_effort,
         timestamp: pending.timestamp,
         timing: None,
     });
@@ -1253,6 +1274,7 @@ fn parse_codex_file_with_index(
     let mut meta_thread_id = None;
     let mut parent = ParentResolution::None;
     let mut current_model = "unknown".to_string();
+    let mut current_reasoning_effort = None;
     // `total_token_usage` is session-cumulative, including across model and
     // rate-limit bucket changes. Divergent snapshots are handled by preferring
     // exact `last_token_usage`, not by splitting the cumulative baseline.
@@ -1419,6 +1441,8 @@ fn parse_codex_file_with_index(
             }
             "turn_context" => {
                 if let Some(payload) = value.get("payload") {
+                    current_reasoning_effort = codex_reasoning_effort(payload)
+                        .or_else(|| payload.get("info").and_then(codex_reasoning_effort));
                     if let Some(model) = payload
                         .get("model")
                         .or_else(|| payload.get("info").and_then(|info| info.get("model")))
@@ -1446,6 +1470,14 @@ fn parse_codex_file_with_index(
                         .filter(|model| !model.is_empty())
                     {
                         current_model = normalize_codex_model(model);
+                    }
+                    if let Some(settings) = payload.get("thread_settings") {
+                        if settings.get("reasoning_effort").is_some()
+                            || settings.get("effort").is_some()
+                            || settings.get("reasoning").is_some()
+                        {
+                            current_reasoning_effort = codex_reasoning_effort(settings);
+                        }
                     }
                     continue;
                 }
@@ -1597,6 +1629,7 @@ fn parse_codex_file_with_index(
                     event_index: nonzero_index,
                     request_suffix: None,
                     model: current_model.clone(),
+                    reasoning_effort: current_reasoning_effort.clone(),
                     timestamp,
                     timing,
                 });
@@ -1629,6 +1662,7 @@ fn parse_codex_file_with_index(
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_owned),
                     model: current_model.clone(),
+                    reasoning_effort: current_reasoning_effort.clone(),
                 });
             }
             _ => {}
@@ -1965,7 +1999,7 @@ fn update_codex_sync_state_on_conn(
 ) -> Result<(), AppError> {
     update_sync_state_on_conn(conn, file_path, modified, parsed.line_offset)?;
     conn.execute(
-        "UPDATE session_log_sync SET last_byte_offset = ?1 WHERE file_path = ?2",
+        "UPDATE session_log_sync SET last_byte_offset = ?1, reasoning_effort_synced = 1 WHERE file_path = ?2",
         rusqlite::params![parsed.observed_bytes, file_path],
     )?;
     Ok(())
@@ -2001,6 +2035,39 @@ fn sync_single_codex_file(
 
     // 检查同步状态
     let (last_modified, last_offset) = get_codex_sync_state(db, file_path, pass)?;
+
+    // 旧游标仍有效。只给现存的精确 request_id 补元数据，不能重放已汇总用量。
+    let backfilled = if last_offset > 0 && !pass.reasoning_effort_synced.contains(&file_path_str) {
+        let parsed = parse_codex_file_with_index(
+            file_path,
+            thread_id_from_filename(file_path),
+            Some(rollout_index),
+        )?;
+        let conn = lock_conn!(db.conn);
+        let tx = conn.unchecked_transaction()?;
+        let mut updated = 0;
+        if let Some(root) = parsed.root_thread_id.as_deref() {
+            for event in &parsed.token_events {
+                if let Some(index) = event.event_index {
+                    let request_id = format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root}:{index}");
+                    updated += backfill_reasoning_effort_on_conn(
+                        &tx,
+                        &request_id,
+                        "codex_session",
+                        event.reasoning_effort.as_deref(),
+                    )?;
+                }
+            }
+        }
+        mark_reasoning_effort_synced(&tx, &file_path_str)?;
+        tx.commit()?;
+        if updated > 0 {
+            crate::usage_events::notify_log_recorded();
+        }
+        Some(parsed)
+    } else {
+        None
+    };
 
     // Windows may keep mtime unchanged while Codex holds its write handle open.
     // Legacy cursors have no byte offset: rescan once to catch up and persist it.
@@ -2045,11 +2112,14 @@ fn sync_single_codex_file(
         }
     }
 
-    let parsed = parse_codex_file_with_index(
-        file_path,
-        thread_id_from_filename(file_path),
-        Some(rollout_index),
-    )?;
+    let parsed = match backfilled {
+        Some(parsed) => parsed,
+        None => parse_codex_file_with_index(
+            file_path,
+            thread_id_from_filename(file_path),
+            Some(rollout_index),
+        )?,
+    };
     if !parsed.has_billable_tokens {
         update_codex_sync_state(db, &file_path_str, file_modified, &parsed)?;
         return Ok(CodexFileSyncResult::default());
@@ -2228,6 +2298,7 @@ fn sync_single_codex_file(
                 &request_id,
                 &event.delta,
                 &event.model,
+                event.reasoning_effort.as_deref(),
                 Some(session_thread_id),
                 event.timestamp.as_deref(),
                 event.timing,
@@ -2279,6 +2350,7 @@ fn insert_codex_session_entry(
         request_id,
         delta,
         model,
+        None,
         session_id,
         timestamp,
         None,
@@ -2299,6 +2371,7 @@ fn insert_codex_session_entry_on_conn(
     request_id: &str,
     delta: &DeltaTokens,
     model: &str,
+    reasoning_effort: Option<&str>,
     session_id: Option<&str>,
     timestamp: Option<&str>,
     timing: Option<EstimatedTiming>,
@@ -2384,8 +2457,8 @@ fn insert_codex_session_entry_on_conn(
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source,
-            input_token_semantics
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+            input_token_semantics, reasoning_effort
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
         )
         .and_then(|mut stmt| stmt.execute(rusqlite::params![
                 request_id,
@@ -2413,6 +2486,7 @@ fn insert_codex_session_entry_on_conn(
                 created_at,
                 "codex_session",     // data_source
                 INPUT_TOKEN_SEMANTICS_TOTAL, // input_tokens 含缓存读写
+                reasoning_effort,
             ]))
         .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
 
@@ -3827,6 +3901,98 @@ mod tests {
                 row.6,
                 format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:{index}")
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_reasoning_effort_backfills_unchanged_history_without_reimport() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut turn = turn_context();
+        turn["payload"]["effort"] = serde_json::json!("xhigh");
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn,
+                token_count(100, 50, 10),
+                token_count_at(200, 100, 20, "2026-07-10T03:00:04Z"),
+            ],
+        );
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 2);
+        let kept = format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:1");
+        let pruned = format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:2");
+        let before = db.get_request_detail(&kept)?.unwrap();
+        let cursor = crate::services::session_usage::load_sync_cursors(&db)?
+            [file.to_string_lossy().as_ref()];
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "DELETE FROM proxy_request_logs WHERE request_id = ?1",
+                [&pruned],
+            )?;
+            conn.execute_batch(
+                "UPDATE proxy_request_logs SET reasoning_effort = NULL;
+                UPDATE session_log_sync SET reasoning_effort_synced = 0;",
+            )?;
+        }
+        for _ in 0..2 {
+            assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 0);
+        }
+        let after = db.get_request_detail(&kept)?.unwrap();
+        assert_eq!(after.reasoning_effort.as_deref(), Some("xhigh"));
+        assert_eq!(after.total_cost_usd, before.total_cost_usd);
+        assert_eq!(after.input_tokens, before.input_tokens);
+        assert!(db.get_request_detail(&pruned)?.is_none());
+        let new_cursor = crate::services::session_usage::load_sync_cursors(&db)?
+            [file.to_string_lossy().as_ref()];
+        assert!(new_cursor.reasoning_effort_synced);
+        assert_eq!(new_cursor.last_modified, cursor.last_modified);
+        assert_eq!(new_cursor.last_line_offset, cursor.last_line_offset);
+        assert_eq!(new_cursor.last_byte_offset, cursor.last_byte_offset);
+        Ok(())
+    }
+
+    #[test]
+    fn test_reasoning_effort_follows_turn_context_and_thread_settings() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut turn = turn_context();
+        turn["payload"]["effort"] = serde_json::json!("high");
+        let mut settings =
+            thread_settings_at(serde_json::json!("gpt-5.6-sol"), "2026-07-10T03:00:03Z");
+        settings["payload"]["thread_settings"]["reasoning_effort"] = serde_json::json!("xhigh");
+        let mut cleared = settings.clone();
+        cleared["payload"]["thread_settings"]["reasoning_effort"] = serde_json::Value::Null;
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn.clone(),
+                token_count(100, 50, 10),
+                settings,
+                token_count_at(200, 100, 20, "2026-07-10T03:00:04Z"),
+                cleared,
+                token_count_at(300, 150, 30, "2026-07-10T03:00:06Z"),
+                turn,
+                token_count_at(400, 200, 40, "2026-07-10T03:00:08Z"),
+                turn_context_at("2026-07-10T03:00:09Z"),
+                token_count_at(500, 250, 50, "2026-07-10T03:00:10Z"),
+            ],
+        );
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 5);
+        assert_unchanged_codex_file_is_skipped(&db, &file)?;
+        for (index, expected) in [Some("high"), Some("xhigh"), None, Some("high"), None]
+            .into_iter()
+            .enumerate()
+        {
+            let request_id = format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:{}", index + 1);
+            let detail = db.get_request_detail(&request_id)?.unwrap();
+            assert_eq!(detail.reasoning_effort.as_deref(), expected);
         }
         Ok(())
     }

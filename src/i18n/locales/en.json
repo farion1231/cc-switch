@@ -2291,6 +2291,7 @@
     "modelPricingDesc": "Configure token costs for each model",
     "noPricingData": "No pricing data. Click \"Add\" to add model pricing configuration.",
     "model": "Model",
+    "reasoningEffort": "Reasoning Effort",
     "pricingModel": "Pricing Model",
     "displayName": "Display Name",
     "inputCost": "Input Cost",

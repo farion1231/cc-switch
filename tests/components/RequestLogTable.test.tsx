@@ -220,6 +220,7 @@ describe("RequestLogTable", () => {
           {
             ...base,
             requestId: "fast",
+            reasoningEffort: "xhigh",
             outputTokens: 1_100,
             latencyMs: 12_900,
             firstTokenMs: 1_800,
@@ -228,6 +229,7 @@ describe("RequestLogTable", () => {
           {
             ...base,
             requestId: "short",
+            reasoningEffort: "none",
             outputTokens: 64,
             latencyMs: 2_400,
             firstTokenMs: 1_900,
@@ -244,6 +246,7 @@ describe("RequestLogTable", () => {
           {
             ...base,
             requestId: "session-estimated",
+            reasoningEffort: "high",
             outputTokens: 900,
             latencyMs: 10_000,
             dataSource: "codex_session",
@@ -285,6 +288,13 @@ describe("RequestLogTable", () => {
 
     const rows = screen.getAllByRole("row").slice(1);
     expect(rows).toHaveLength(6);
+    const headers = screen.getAllByRole("columnheader");
+    expect(headers[3]).toHaveTextContent("usage.model");
+    expect(headers[4]).toHaveTextContent("usage.reasoningEffort");
+    expect(rows[0].children[4]).toHaveTextContent("xhigh");
+    expect(rows[1].children[4]).toHaveTextContent("none");
+    expect(rows[2].children[4]).toHaveTextContent("—");
+    expect(rows[3].children[4]).toHaveTextContent("high");
     // 最后两列：速度、首字
     const speedCell = (row: HTMLElement) =>
       row.children[row.children.length - 2];

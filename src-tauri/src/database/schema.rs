@@ -208,6 +208,7 @@ impl Database {
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
             pricing_model TEXT,
+            reasoning_effort TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
@@ -320,7 +321,9 @@ impl Database {
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL,
                 last_byte_offset INTEGER,
-                last_tail_fingerprint INTEGER
+                last_tail_fingerprint INTEGER,
+                pi_usage_context TEXT,
+                reasoning_effort_synced INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )
@@ -634,6 +637,31 @@ impl Database {
                             }
                         }
                         Self::set_user_version(conn, 24)?;
+                    }
+                    24 => {
+                        if Self::table_exists(conn, "proxy_request_logs")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "proxy_request_logs",
+                                "reasoning_effort",
+                                "TEXT",
+                            )?;
+                        }
+                        if Self::table_exists(conn, "session_log_sync")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "session_log_sync",
+                                "pi_usage_context",
+                                "TEXT",
+                            )?;
+                            Self::add_column_if_missing(
+                                conn,
+                                "session_log_sync",
+                                "reasoning_effort_synced",
+                                "INTEGER NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 25)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -4087,6 +4115,55 @@ mod tests {
         let read = db.get_all_installed_skills()?;
         assert!(!read["s"].apps.agy);
         assert!(read["s"].apps.gemini);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v24_to_v25_adds_reasoning_fields_without_changing_usage_or_cursors(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE proxy_request_logs (
+                request_id TEXT PRIMARY KEY, model TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL, total_cost_usd TEXT NOT NULL
+             );
+             INSERT INTO proxy_request_logs VALUES ('existing', 'gpt-5', 123, '0.25');
+             CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY, last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL, last_synced_at INTEGER NOT NULL,
+                last_byte_offset INTEGER, last_tail_fingerprint INTEGER
+             );
+             INSERT INTO session_log_sync VALUES ('session.jsonl', 123, 7, 456, 789, 42);",
+        )?;
+        Database::set_user_version(&conn, 24)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let usage: (String, i64, String, Option<String>) = conn.query_row(
+            "SELECT model, input_tokens, total_cost_usd, reasoning_effort
+             FROM proxy_request_logs WHERE request_id = 'existing'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(usage, ("gpt-5".to_string(), 123, "0.25".to_string(), None));
+        let cursor: (i64, i64, i64, i64, i64, Option<String>, bool) = conn.query_row(
+            "SELECT last_modified, last_line_offset, last_synced_at, last_byte_offset,
+                    last_tail_fingerprint, pi_usage_context, reasoning_effort_synced
+             FROM session_log_sync WHERE file_path = 'session.jsonl'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )?;
+        assert_eq!(cursor, (123, 7, 456, 789, 42, None, false));
         Ok(())
     }
 
