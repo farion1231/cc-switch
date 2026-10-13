@@ -13,6 +13,18 @@ struct LegacySkillMigrationRow {
     app_type: String,
 }
 
+/// MCP / Skills 表上按 harness 累加的启用开关列（全部由 ALTER TABLE 添加）。
+///
+/// 新增 harness 时在这里追加 `(表名, 列名)`：`migrate_v21_to_v22` 会把它们补到
+/// 所有历史数据库上，因此升级路径不会再因为迁移步骤重新编号而漏列。
+const APP_ENABLED_COLUMNS: &[(&str, &str)] = &[
+    ("mcp_servers", "enabled_mcode"),
+    ("mcp_servers", "enabled_pi"),
+    ("mcp_servers", "enabled_deveco"),
+    ("skills", "enabled_mcode"),
+    ("skills", "enabled_deveco"),
+];
+
 impl Database {
     /// 创建所有数据库表
     pub(crate) fn create_tables(&self) -> Result<(), AppError> {
@@ -592,6 +604,11 @@ impl Database {
                             }
                         }
                         Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        log::info!("迁移数据库从 v21 到 v22（收敛 MCP/Skills 的 App 开关列）");
+                        Self::migrate_v21_to_v22(conn)?;
+                        Self::set_user_version(conn, 22)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1639,6 +1656,25 @@ impl Database {
                 "last_tail_fingerprint",
                 "INTEGER",
             )?;
+        }
+        Ok(())
+    }
+
+    /// v21 -> v22 迁移：把 `mcp_servers` / `skills` 收敛到完整的 App 开关列集合。
+    ///
+    /// 背景：DevEco 的迁移原本编号为 `19 => 20`，rebase 到上游后改到 `20 => 21`
+    /// （上游自己在 `19 => 20` 加的是 `enabled_pi`）。跑过改动前构建的数据库
+    /// `user_version` 已经到过 20，迁移循环 `while version < SCHEMA_VERSION`
+    /// 不会回头执行 v19，于是 `enabled_pi` 永远补不上；而读 MCP 的 SELECT
+    /// 直接引用该列，查询会以 `no such column: enabled_pi` 失败。
+    ///
+    /// 与其让这类库永久损坏，不如在这里把列集合补全——`add_column_if_missing`
+    /// 幂等，正常升级路径上这一步是空操作。
+    fn migrate_v21_to_v22(conn: &Connection) -> Result<(), AppError> {
+        for &(table, column) in APP_ENABLED_COLUMNS {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(conn, table, column, "BOOLEAN NOT NULL DEFAULT 0")?;
+            }
         }
         Ok(())
     }
@@ -3851,6 +3887,51 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(values, (1, 1, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v21_to_v22_repairs_flags_skipped_by_the_deveco_renumber() -> Result<(), AppError> {
+        // 复现「DevEco 迁移还挂在 19 => 20」那版构建留下的数据库：v20 时只加了
+        // enabled_deveco，user_version 已越过 v19，上游的 enabled_pi 步骤被永久跳过。
+        // 这类库再启动就是 `no such column: enabled_pi`。
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+                enabled_deveco BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+                enabled_deveco BOOLEAN NOT NULL DEFAULT 0
+            );
+            INSERT INTO mcp_servers (id, enabled_deveco) VALUES ('mcp-1', 1);",
+        )?;
+        Database::set_user_version(&conn, 21)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for column in ["enabled_mcode", "enabled_pi", "enabled_deveco"] {
+            assert!(
+                Database::has_column(&conn, "mcp_servers", column)?,
+                "mcp_servers 缺少列 {column}"
+            );
+        }
+        for column in ["enabled_mcode", "enabled_deveco"] {
+            assert!(
+                Database::has_column(&conn, "skills", column)?,
+                "skills 缺少列 {column}"
+            );
+        }
+        let deveco: i64 = conn.query_row(
+            "SELECT enabled_deveco FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(deveco, 1, "补列不应覆盖已有取值");
         Ok(())
     }
 
