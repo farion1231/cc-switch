@@ -153,6 +153,66 @@ describe("DeepLinkImportDialog", () => {
     },
   );
 
+  // 套餐地址、不带脚本：后端按套餐额度查询并默认启用，徽章与后端一致
+  it.each([
+    {
+      app: "codex",
+      endpoint: "https://api.kimi.com/coding/v1",
+      usageEnabled: undefined,
+      expected: "已启用",
+    },
+    {
+      app: "codex",
+      endpoint: "https://api.kimi.com/coding/v1",
+      usageEnabled: false,
+      expected: "未启用",
+    },
+  ])(
+    "shows the plan quota badge as $expected for $app with usageEnabled $usageEnabled",
+    async ({ app, endpoint, usageEnabled, expected }) => {
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+      act(() => {
+        deliverDeepLink({
+          version: "v1",
+          resource: "provider",
+          app,
+          name: "Plan Provider",
+          homepage: "https://example.com",
+          endpoint,
+          apiKey: "sk-provider-key",
+          ...(usageEnabled === undefined ? {} : { usageEnabled }),
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(expected)).toBeInTheDocument();
+      });
+      expect(screen.getByText("套餐额度：Kimi For Coding")).toBeInTheDocument();
+    },
+  );
+
+  it("does not show a usage row for ZenMux outside Claude", async () => {
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+    act(() => {
+      deliverDeepLink({
+        version: "v1",
+        resource: "provider",
+        app: "codex",
+        name: "ZenMux Provider",
+        homepage: "https://example.com",
+        endpoint: "https://zenmux.ai/api/v1",
+        apiKey: "sk-provider-key",
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("ZenMux Provider")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("用量查询")).not.toBeInTheDocument();
+  });
+
   it("shows a link that arrived before the dialog mounted (cold start)", async () => {
     // 冷启动时链接早于前端监听到达，后端已暂存；组件挂载后必须主动取一次
     setPendingDeepLink({

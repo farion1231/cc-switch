@@ -337,7 +337,7 @@ pub(crate) fn build_provider_from_request(
     };
 
     // Build usage script configuration if provided
-    let mut meta = build_provider_meta(request)?;
+    let mut meta = build_provider_meta(app_type, request)?;
     if matches!(app_type, AppType::ClaudeDesktop) {
         meta.get_or_insert_with(ProviderMeta::default)
             .claude_desktop_mode = Some(ClaudeDesktopMode::Direct);
@@ -423,10 +423,27 @@ fn usage_base_url_override(request: &DeepLinkImportRequest) -> Option<String> {
     }
 }
 
+/// 主地址命中套餐用量路由表时返回套餐 id，规则同前端 `injectCodingPlanUsageScript`：
+/// 所有应用一视同仁，只有 ZenMux 限 Claude（它的查询直接 GET base_url，
+/// 其他应用的推理地址没验证过能返回额度）。
+fn link_coding_plan_provider(
+    app_type: &AppType,
+    request: &DeepLinkImportRequest,
+) -> Option<&'static str> {
+    let id = crate::services::coding_plan::detect_provider_id(&get_primary_endpoint(request))?;
+    (id != "zenmux" || matches!(app_type, AppType::Claude)).then_some(id)
+}
+
 /// Build provider meta with usage script configuration
-fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
+fn build_provider_meta(
+    app_type: &AppType,
+    request: &DeepLinkImportRequest,
+) -> Result<Option<ProviderMeta>, AppError> {
+    let coding_plan_provider = link_coding_plan_provider(app_type, request);
+
     // Check if any usage script fields are provided
-    if request.usage_script.is_none()
+    if coding_plan_provider.is_none()
+        && request.usage_script.is_none()
         && request.usage_enabled.is_none()
         && request.usage_api_key.is_none()
         && request.usage_base_url.is_none()
@@ -445,6 +462,31 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
     } else {
         String::new()
     };
+
+    // 套餐地址且没带脚本：和在应用里新建一样，按套餐额度查询并默认启用
+    // （链接写了 `usageEnabled` 仍照办）。额度走后端固定端点，不执行任何脚本。
+    if let (Some(provider_id), true) = (coding_plan_provider, code.is_empty()) {
+        return Ok(Some(ProviderMeta {
+            usage_script: Some(UsageScript {
+                enabled: request.usage_enabled.unwrap_or(true),
+                language: "javascript".to_string(),
+                code,
+                timeout: Some(10),
+                api_key: usage_api_key_override(request),
+                base_url: usage_base_url_override(request),
+                access_token: None,
+                user_id: None,
+                template_type: Some("token_plan".to_string()),
+                auto_query_interval: request.usage_auto_interval.or(Some(5)),
+                coding_plan_provider: Some(provider_id.to_string()),
+                access_key_id: None,
+                secret_access_key: None,
+                team_organization_id: None,
+                team_project_id: None,
+            }),
+            ..Default::default()
+        }));
+    }
 
     // 启用状态：链接写了 `usageEnabled` 就照办；没写时，带了脚本就启用。
     //
