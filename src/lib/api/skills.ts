@@ -30,6 +30,7 @@ export interface SkillApps {
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
 export interface InstalledSkill {
+  categoryId?: string | null;
   id: string;
   name: string;
   description?: string;
@@ -185,7 +186,20 @@ export interface SkillRepo {
 
 // ========== API ==========
 
+export interface SkillCategory {
+  id: string;
+  name: string;
+}
+
 export const skillsApi = {
+  getCategories: () => invoke<SkillCategory[]>("get_skill_categories"),
+  createCategory: (name: string) =>
+    invoke<SkillCategory>("create_skill_category", { name }),
+  renameCategory: (id: string, name: string) =>
+    invoke<void>("rename_skill_category", { id, name }),
+  deleteCategory: (id: string) => invoke<void>("delete_skill_category", { id }),
+  setCategories: (ids: string[], categoryId: string | null) =>
+    invoke<void>("set_skill_categories", { ids, categoryId }),
   // ========== 统一管理 API (v3.10.0+) ==========
 
   /** 获取所有已安装的 Skills */

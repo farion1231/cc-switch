@@ -4,7 +4,7 @@
 //! - 支持三应用开关（Claude/Codex/Gemini）
 //! - SSOT 存储在 ~/.cc-switch/skills/
 
-use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
+use crate::app_config::{AppType, InstalledSkill, SkillCategory, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillAppSyncOutcome,
@@ -26,6 +26,61 @@ fn parse_app_type(app: &str) -> Result<AppType, String> {
 }
 
 // ========== 统一管理命令 ==========
+
+#[tauri::command]
+pub fn get_skill_categories(app_state: State<'_, AppState>) -> Result<Vec<SkillCategory>, String> {
+    app_state
+        .db
+        .get_skill_categories()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_skill_category(
+    name: String,
+    app_state: State<'_, AppState>,
+) -> Result<SkillCategory, String> {
+    let _guard = crate::services::skill::skill_state_write_guard();
+    app_state
+        .db
+        .create_skill_category(&name)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_skill_category(
+    id: String,
+    name: String,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    let _guard = crate::services::skill::skill_state_write_guard();
+    app_state
+        .db
+        .rename_skill_category(&id, &name)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_skill_category(id: String, app_state: State<'_, AppState>) -> Result<(), String> {
+    let _guard = crate::services::skill::skill_state_write_guard();
+    app_state
+        .db
+        .delete_skill_category(&id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_skill_categories(
+    ids: Vec<String>,
+    category_id: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    let _guard = crate::services::skill::skill_state_write_guard();
+    app_state
+        .db
+        .set_skill_categories(&ids, category_id.as_deref())
+        .map_err(|e| e.to_string())
+}
 
 /// 获取所有已安装的 Skills
 #[tauri::command]

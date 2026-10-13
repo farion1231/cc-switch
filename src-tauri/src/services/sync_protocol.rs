@@ -27,7 +27,8 @@ pub(crate) use super::webdav_sync::archive::{
 /// Retains historic "webdav" naming for backward compatibility with existing remotes.
 pub(crate) const PROTOCOL_FORMAT: &str = "cc-switch-webdav-sync";
 pub(crate) const PROTOCOL_VERSION: u32 = 2;
-pub(crate) const DB_COMPAT_VERSION: u32 = 6;
+pub(crate) const DB_COMPAT_VERSION: u32 = 7;
+pub(crate) const PREVIOUS_DB_COMPAT_VERSION: u32 = 6;
 pub(crate) const LEGACY_DB_COMPAT_VERSION: u32 = 5;
 pub(crate) const REMOTE_DB_SQL: &str = "db.sql";
 pub(crate) const REMOTE_SKILLS_ZIP: &str = "skills.zip";
@@ -70,6 +71,7 @@ pub(crate) fn should_trigger_auto_sync_for_table(table: &str) -> bool {
             | "mcp_servers"
             | "prompts"
             | "skills"
+            | "skill_categories"
             | "skill_repos"
             | "profiles"
             | "settings"
@@ -132,13 +134,57 @@ pub(crate) struct LocalSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemoteLayout {
     Current,
+    Previous,
     Legacy,
+}
+
+/// Local HTTP fixture exercises previous-path discovery and artifact verification.
+#[cfg(test)]
+pub(crate) async fn previous_snapshot_fixture(
+    prefix: &str,
+) -> (String, tokio::task::JoinHandle<()>) {
+    use axum::{routing::get, Router};
+    let db_sql = b"previous database snapshot";
+    let artifacts = BTreeMap::from([(
+        REMOTE_DB_SQL.to_string(),
+        ArtifactMeta {
+            sha256: sha256_hex(db_sql),
+            size: db_sql.len() as u64,
+        },
+    )]);
+    let manifest = serde_json::to_vec(&SyncManifest {
+        format: PROTOCOL_FORMAT.into(),
+        version: PROTOCOL_VERSION,
+        db_compat_version: Some(PREVIOUS_DB_COMPAT_VERSION),
+        device_name: "fixture".into(),
+        created_at: "2026-10-10T00:00:00Z".into(),
+        snapshot_id: compute_snapshot_id(&artifacts),
+        artifacts,
+    })
+    .unwrap();
+    let router = Router::new()
+        .route(
+            &format!("{prefix}/manifest.json"),
+            get(move || {
+                let bytes = manifest.clone();
+                async move { bytes }
+            }),
+        )
+        .route(
+            &format!("{prefix}/db.sql"),
+            get(|| async { db_sql.to_vec() }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), server)
 }
 
 impl RemoteLayout {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Current => "current",
+            Self::Previous => "previous",
             Self::Legacy => "legacy",
         }
     }
@@ -266,7 +312,9 @@ pub(crate) fn validate_manifest_compat(
         ));
     };
     match layout {
-        RemoteLayout::Current if db_compat_version != DB_COMPAT_VERSION => {
+        RemoteLayout::Current | RemoteLayout::Previous
+            if ![DB_COMPAT_VERSION, PREVIOUS_DB_COMPAT_VERSION].contains(&db_compat_version) =>
+        {
             return Err(localized(
                 "sync.manifest_db_version_incompatible",
                 format!(
@@ -621,6 +669,26 @@ mod tests {
     fn validate_manifest_compat_accepts_legacy_manifest_without_db_compat() {
         let manifest = manifest_with(PROTOCOL_FORMAT, PROTOCOL_VERSION, None);
         assert!(validate_manifest_compat(&manifest, RemoteLayout::Legacy).is_ok());
+    }
+
+    #[test]
+    fn categories_accept_previous_snapshots_and_reject_future_snapshots() {
+        let previous = manifest_with(
+            PROTOCOL_FORMAT,
+            PROTOCOL_VERSION,
+            Some(PREVIOUS_DB_COMPAT_VERSION),
+        );
+        assert!(validate_manifest_compat(&previous, RemoteLayout::Current).is_ok());
+        assert!(validate_manifest_compat(&previous, RemoteLayout::Previous).is_ok());
+        let future = manifest_with(
+            PROTOCOL_FORMAT,
+            PROTOCOL_VERSION,
+            Some(DB_COMPAT_VERSION + 1),
+        );
+        assert!(validate_manifest_compat(&future, RemoteLayout::Current).is_err());
+        // v6 clients required equality: a v7 manifest fails their compatibility gate.
+        assert_ne!(DB_COMPAT_VERSION, PREVIOUS_DB_COMPAT_VERSION);
+        assert!(should_trigger_auto_sync_for_table("skill_categories"));
     }
 
     #[test]

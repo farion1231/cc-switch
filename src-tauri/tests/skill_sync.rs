@@ -140,6 +140,7 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
     state
         .db
         .save_skill(&InstalledSkill {
+            category_id: None,
             id: "local:disabled-skill".to_string(),
             name: "Disabled".to_string(),
             description: None,
@@ -181,6 +182,7 @@ fn uninstall_skill_creates_backup_before_removing_ssot() {
     state
         .db
         .save_skill(&InstalledSkill {
+            category_id: None,
             id: "local:backup-skill".to_string(),
             name: "Backup Skill".to_string(),
             description: Some("Back me up before uninstall".to_string()),
@@ -249,6 +251,7 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
     state
         .db
         .save_skill(&InstalledSkill {
+            category_id: None,
             id: "local:restore-skill".to_string(),
             name: "Restore Skill".to_string(),
             description: Some("Bring the files back".to_string()),
@@ -267,6 +270,11 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
         })
         .expect("save skill");
 
+    let category = state.db.create_skill_category("Restorable").unwrap();
+    state
+        .db
+        .set_skill_categories(&["local:restore-skill".into()], Some(&category.id))
+        .unwrap();
     let uninstall =
         SkillService::uninstall(&state.db, "local:restore-skill").expect("uninstall skill");
     let backup_id = std::path::Path::new(
@@ -283,6 +291,7 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
         .expect("restore from backup");
 
     assert_eq!(restored.directory, "restore-skill");
+    assert_eq!(restored.category_id.as_deref(), Some(category.id.as_str()));
     assert!(restored.apps.claude, "restored skill should enable Claude");
     assert!(
         !restored.apps.codex && !restored.apps.gemini && !restored.apps.opencode,
@@ -312,6 +321,13 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
             .is_some(),
         "restored skill should be written back to the database"
     );
+    // Restore the same backup after removing its category: fallback to uncategorized.
+    SkillService::uninstall(&state.db, "local:restore-skill").unwrap();
+    state.db.delete_skill_category(&category.id).unwrap();
+    let restored =
+        SkillService::restore_from_backup(&state.db, &backup_id, &AppType::Claude).unwrap();
+    assert_eq!(restored.category_id, None);
+    assert!(restored.apps.claude);
 }
 
 #[test]
@@ -330,6 +346,7 @@ fn delete_skill_backup_removes_backup_directory() {
     state
         .db
         .save_skill(&InstalledSkill {
+            category_id: None,
             id: "local:delete-backup-skill".to_string(),
             name: "Delete Backup Skill".to_string(),
             description: Some("Remove my backup".to_string()),

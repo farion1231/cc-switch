@@ -201,6 +201,9 @@ async fn find_remote_snapshot(
     if let Some(snapshot) = fetch_remote_snapshot(settings, auth, RemoteLayout::Current).await? {
         return Ok(Some(snapshot));
     }
+    if let Some(snapshot) = fetch_remote_snapshot(settings, auth, RemoteLayout::Previous).await? {
+        return Ok(Some(snapshot));
+    }
     fetch_remote_snapshot(settings, auth, RemoteLayout::Legacy).await
 }
 
@@ -270,6 +273,11 @@ fn remote_dir_segments(settings: &WebDavSyncSettings, layout: RemoteLayout) -> V
     segs.push(format!("v{PROTOCOL_VERSION}"));
     if layout == RemoteLayout::Current {
         segs.push(format!("db-v{DB_COMPAT_VERSION}"));
+    } else if layout == RemoteLayout::Previous {
+        segs.push(format!(
+            "db-v{}",
+            super::sync_protocol::PREVIOUS_DB_COMPAT_VERSION
+        ));
     }
     segs.extend(path_segments(&settings.profile).map(str::to_string));
     segs
@@ -300,6 +308,39 @@ fn auth_for(settings: &WebDavSyncSettings) -> WebDavAuth {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn discovers_previous_snapshot_and_downloads_artifacts_from_its_path() {
+        let (base_url, server) = super::super::sync_protocol::previous_snapshot_fixture(
+            "/cc-switch-sync/v2/db-v6/default",
+        )
+        .await;
+        let settings = WebDavSyncSettings {
+            base_url,
+            username: "fixture".into(),
+            password: "fixture".into(),
+            remote_root: "cc-switch-sync".into(),
+            profile: "default".into(),
+            ..Default::default()
+        };
+        let snapshot = find_remote_snapshot(&settings, &auth_for(&settings))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(snapshot.layout, RemoteLayout::Previous);
+        assert!(validate_manifest_compat(&snapshot.manifest, snapshot.layout).is_ok());
+        let bytes = download_and_verify(
+            &settings,
+            &auth_for(&settings),
+            snapshot.layout,
+            REMOTE_DB_SQL,
+            &snapshot.manifest.artifacts,
+        )
+        .await
+        .unwrap();
+        assert_eq!(bytes, b"previous database snapshot");
+        server.abort();
+    }
+
     #[test]
     fn remote_dir_segments_uses_current_layout() {
         let settings = WebDavSyncSettings {
@@ -308,7 +349,7 @@ mod tests {
             ..WebDavSyncSettings::default()
         };
         let segs = remote_dir_segments(&settings, RemoteLayout::Current);
-        assert_eq!(segs, vec!["cc-switch-sync", "v2", "db-v6", "default"]);
+        assert_eq!(segs, vec!["cc-switch-sync", "v2", "db-v7", "default"]);
     }
 
     #[test]
