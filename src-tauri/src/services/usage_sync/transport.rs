@@ -183,6 +183,10 @@ impl UsageTransport {
                 segments.extend(webdav::path_segments(device_dir).map(str::to_string));
                 segments.push(super::protocol::PARTS_DIR.to_string());
                 let cache_key = format!("{base_url}|{}", segments.join("/"));
+                debug_assert_eq!(
+                    Some(&cache_key),
+                    self.device_dir_cache_key(device_dir).as_ref()
+                );
                 if ensured_dirs()
                     .lock()
                     .map(|dirs| dirs.contains(&cache_key))
@@ -221,6 +225,103 @@ impl UsageTransport {
             #[cfg(test)]
             Self::Memory(store) => store.put(rel, bytes),
         }
+    }
+
+    /// PUT below a device directory. If the remote directory was removed while
+    /// this process cached it as existing (WebDAV MKCOL cache), the first PUT
+    /// fails; drop the cache entry, re-create the directory and retry once.
+    pub(crate) async fn put_in_device_dir(
+        &self,
+        device_dir: &str,
+        rel: &str,
+        bytes: Vec<u8>,
+        content_type: &str,
+    ) -> Result<(), AppError> {
+        match self {
+            Self::WebDav { .. } => {
+                self.prepare_device_dir(device_dir).await?;
+                match self.put(rel, bytes.clone(), content_type).await {
+                    Ok(()) => Ok(()),
+                    Err(first) => {
+                        log::debug!(
+                            "[UsageSync] PUT failed, re-creating remote directory once: {first}"
+                        );
+                        self.forget_device_dir(device_dir);
+                        self.prepare_device_dir(device_dir).await?;
+                        self.put(rel, bytes, content_type).await
+                    }
+                }
+            }
+            _ => self.put(rel, bytes, content_type).await,
+        }
+    }
+
+    fn device_dir_cache_key(&self, device_dir: &str) -> Option<String> {
+        match self {
+            Self::WebDav { base_url, root, .. } => {
+                let mut segments = root.clone();
+                segments.extend(webdav::path_segments(device_dir).map(str::to_string));
+                segments.push(super::protocol::PARTS_DIR.to_string());
+                Some(format!("{base_url}|{}", segments.join("/")))
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn forget_device_dir(&self, device_dir: &str) {
+        if let Some(key) = self.device_dir_cache_key(device_dir) {
+            if let Ok(mut dirs) = ensured_dirs().lock() {
+                dirs.remove(&key);
+            }
+        }
+    }
+
+    /// Object names (`parts/…`) currently stored below a device directory.
+    pub(crate) async fn list_device_parts(&self, device_id: &str) -> Result<Vec<String>, AppError> {
+        let parts_rel = format!(
+            "{}/{}",
+            super::protocol::device_dir(device_id),
+            super::protocol::PARTS_DIR
+        );
+        let names: Vec<String> = match self {
+            Self::WebDav {
+                base_url,
+                auth,
+                root,
+            } => {
+                let url = Self::webdav_url(base_url, root, &parts_rel)?;
+                webdav::list_collection(&url, auth)
+                    .await?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|entry| !entry.is_collection)
+                    .map(|entry| entry.name)
+                    .collect()
+            }
+            Self::S3 { creds, prefix } => {
+                let list_prefix = format!("{}/", Self::s3_key(prefix, &parts_rel));
+                s3::list_objects(creds, &list_prefix, None)
+                    .await?
+                    .keys
+                    .into_iter()
+                    .filter_map(|key| key.strip_prefix(&list_prefix).map(str::to_string))
+                    .filter(|name| !name.contains('/'))
+                    .collect()
+            }
+            #[cfg(test)]
+            Self::Memory(store) => {
+                let prefix = format!("{parts_rel}/");
+                store
+                    .keys()
+                    .into_iter()
+                    .filter_map(|key| key.strip_prefix(&prefix).map(str::to_string))
+                    .collect()
+            }
+        };
+        Ok(names
+            .into_iter()
+            .map(|name| format!("{}/{name}", super::protocol::PARTS_DIR))
+            .collect())
     }
 
     pub(crate) async fn delete(&self, rel: &str) -> Result<(), AppError> {

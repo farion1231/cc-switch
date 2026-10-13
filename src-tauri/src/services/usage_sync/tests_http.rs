@@ -454,6 +454,40 @@ async fn webdav_two_devices_roundtrip_and_isolation() {
 }
 
 #[tokio::test]
+async fn webdav_recreates_a_device_directory_removed_while_running() {
+    init_http();
+    let (base_url, dav) = start_dav("alice", "pw").await;
+    let transport = UsageTransport::from_webdav(&webdav_settings(&base_url, "pw")).unwrap();
+    let db = device_with_logs("a", 1);
+    let report = sync_with(&db, &transport, &options("A")).await.unwrap();
+    assert!(report.upload_error.is_none(), "{report:?}");
+
+    // Someone deletes the whole usage namespace on the server; this process
+    // still believes the directories exist.
+    {
+        let mut st = dav.lock().unwrap();
+        st.files.retain(|path, _| !path.contains("/usage-v1/"));
+        st.dirs.retain(|path| !path.contains("/usage-v1"));
+    }
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute("UPDATE proxy_request_logs SET total_cost_usd = '0.5'", [])
+            .unwrap();
+    }
+    let report = sync_with(&db, &transport, &options("A")).await.unwrap();
+    assert!(report.upload_error.is_none(), "{report:?}");
+    let st = dav.lock().unwrap();
+    assert!(st.files.keys().any(|k| k.ends_with("/manifest.json")));
+    assert!(
+        st.requests
+            .iter()
+            .filter(|r| r.starts_with("MKCOL"))
+            .count()
+            > 5
+    );
+}
+
+#[tokio::test]
 async fn webdav_auth_failure_is_reported_without_credentials() {
     init_http();
     let (base_url, _dav) = start_dav("alice", "right-password").await;
@@ -595,13 +629,16 @@ mod live {
         let a = Arc::new(Database::memory().unwrap());
         let b = Arc::new(Database::memory().unwrap());
         let c = Arc::new(Database::memory().unwrap());
-        // Distinct token counts keep the local proxy/session heuristic out of the picture.
-        add_log(&a, "a-1", "proxy", NOW - 300, "0.10", 500);
+        // Distinct token counts keep the local proxy/session heuristic out of
+        // the picture. Data is 40 days old in real time: past the 30-day detail
+        // window, inside the 365-day ledger retention.
+        let at = chrono::Utc::now().timestamp() - 40 * 86_400;
+        add_log(&a, "a-1", "proxy", at - 300, "0.10", 500);
         add_log(
             &a,
             "session:msg_shared",
             "session_log",
-            NOW - 200,
+            at - 200,
             "0.05",
             100,
         );
@@ -609,12 +646,12 @@ mod live {
             &b,
             "session:msg_shared",
             "session_log",
-            NOW - 200,
+            at - 200,
             "0.05",
             100,
         );
-        add_log(&b, "b-1", "proxy", NOW - 100, "0.20", 700);
-        add_log(&c, "c-1", "proxy", NOW - 100, "0.40", 900);
+        add_log(&b, "b-1", "proxy", at - 100, "0.20", 700);
+        add_log(&c, "c-1", "proxy", at - 100, "0.40", 900);
         let mut daily = options("C");
         daily.detail_level = UsageSyncDetailLevel::Daily;
 
@@ -688,6 +725,21 @@ mod live {
             .await
             .unwrap();
         assert!(gone.is_none(), "retired object deleted on the real server");
+
+        // P1-1 over the real transport: A rolls everything up (its rows are
+        // older than 30 days) while B still has the shared request as a
+        // request-level row. Every viewer keeps the same exact totals.
+        assert!(a.rollup_and_prune(30).unwrap() > 0);
+        for (db, opts) in [(&a, options("A")), (&b, options("B")), (&c, daily.clone())] {
+            sync_with(db, &transport, &opts).await.unwrap();
+        }
+        for viewer in [&a, &b, &c] {
+            let all = scoped(viewer, UsageDeviceScope::All);
+            assert_eq!(
+                (all.total_requests, all.total_cost.as_str()),
+                (4, "0.850000")
+            );
+        }
     }
 
     trait DbConn {

@@ -44,6 +44,8 @@ pub(crate) const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_SEGMENT_DECOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
 pub(crate) const MAX_PARTITIONS: usize = 4096;
+/// Manifest sequence numbers are persisted as SQLite integers.
+pub(crate) const MAX_MANIFEST_SEQ: u64 = i64::MAX as u64;
 pub(crate) const MAX_RETIRED_OBJECTS: usize = 4096;
 /// Superseded objects stay readable this long so a reader holding the
 /// previous manifest can still finish its download.
@@ -116,6 +118,17 @@ pub(crate) struct DeviceManifest {
     pub partitions: BTreeMap<String, PartitionMeta>,
     #[serde(default)]
     pub retired: Vec<RetiredObject>,
+    /// Set when this identity was split off a copied installation; the
+    /// `inherited` history rows belong to the parent while it is present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<Lineage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Lineage {
+    pub parent_device_id: String,
+    pub forked_at: i64,
 }
 
 // ─── Segment ─────────────────────────────────────────────────
@@ -194,6 +207,58 @@ pub(crate) struct Segment {
     pub logs: Vec<LogRecord>,
     #[serde(default)]
     pub rollups: Vec<RollupRecord>,
+    // Additions within protocol v1 (older readers ignore unknown fields and
+    // keep their previous behaviour). Omitted when empty, so segments without
+    // them keep byte-identical canonical JSON and content hashes.
+    /// `d-` partitions: requests this device dropped as duplicates of its own
+    /// rows (proxy/session pair), i.e. counted through another row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<AliasRecord>,
+    /// `m-` partitions: identities of rolled-up requests and what each one
+    /// contributed to which rollup group.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ledger: Vec<LedgerRecord>,
+    /// `m-` partitions: history rows without request ids inherited from the
+    /// manifest's `lineage.parentDeviceId`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inherited: Vec<RollupRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AliasRecord {
+    pub request_id: String,
+    pub data_source: String,
+}
+
+/// Ledger kinds: the request is part of a rollup row (0) or was dropped as a
+/// duplicate of another row on the same device (1).
+pub(crate) const LEDGER_KIND_COUNTED: i64 = 0;
+pub(crate) const LEDGER_KIND_ALIAS: i64 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LedgerRecord {
+    pub request_id: String,
+    pub data_source: String,
+    pub kind: i64,
+    /// Rollup group: local date + dimensions, exactly as in usage_daily_rollups.
+    pub date: String,
+    pub app_type: String,
+    pub provider_id: String,
+    pub provider_name: String,
+    pub model: String,
+    #[serde(default)]
+    pub request_model: String,
+    #[serde(default)]
+    pub pricing_model: String,
+    pub success: i64,
+    /// Fresh-input semantics.
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub total_cost_usd: String,
 }
 
 impl Segment {
@@ -205,6 +270,9 @@ impl Segment {
             partition: partition.to_string(),
             logs: Vec::new(),
             rollups: Vec::new(),
+            aliases: Vec::new(),
+            ledger: Vec::new(),
+            inherited: Vec::new(),
         }
     }
 }
@@ -312,6 +380,17 @@ pub(crate) fn is_valid_object_name(object: &str, partition: &str) -> bool {
     rest.len() == 16 && rest.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Partition key of an object name this protocol produced (`parts/{partition}-{hash16}.json.gz`).
+pub(crate) fn partition_of_object(object: &str) -> Option<String> {
+    let stem = object
+        .strip_prefix(PARTS_DIR)?
+        .strip_prefix('/')?
+        .strip_suffix(".json.gz")?;
+    let partition = stem.get(..stem.len().checked_sub(17)?)?;
+    (is_valid_partition_key(partition) && is_valid_object_name(object, partition))
+        .then(|| partition.to_string())
+}
+
 fn is_sha256_hex(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -383,6 +462,16 @@ pub(crate) fn validate_manifest(
             "unknown detail level {}",
             manifest.detail_level
         )));
+    }
+    if manifest.seq > MAX_MANIFEST_SEQ {
+        return Err(invalid("sequence number out of range"));
+    }
+    if let Some(lineage) = &manifest.lineage {
+        if !is_valid_device_id(&lineage.parent_device_id)
+            || lineage.parent_device_id == manifest.device_id
+        {
+            return Err(invalid("bad lineage parent"));
+        }
     }
     if manifest.partitions.len() > MAX_PARTITIONS {
         return Err(invalid("too many partitions"));
@@ -509,6 +598,115 @@ pub(crate) fn validate_segment(
         }
         check_decimal("totalCostUsd", &rollup.total_cost_usd)?;
     }
+    validate_identity_extensions(segment, partition, is_month, &seen)
+}
+
+fn validate_group_row(
+    partition: &str,
+    date: &str,
+    texts: [(&str, &str); 6],
+    numbers: &[(&str, i64)],
+    cost: &str,
+) -> Result<(), AppError> {
+    if !is_valid_date(date) || month_partition_key(date) != partition {
+        return Err(invalid(format!("history row date outside {partition}")));
+    }
+    for (field, value) in texts {
+        check_text(field, value)?;
+    }
+    for (field, value) in numbers {
+        check_non_negative(field, *value)?;
+    }
+    check_decimal("totalCostUsd", cost)
+}
+
+/// Aliases only in day partitions; ledger and inherited rows only in month
+/// partitions; one identity at most once per segment and never also a log.
+fn validate_identity_extensions(
+    segment: &Segment,
+    partition: &str,
+    is_month: bool,
+    log_ids: &std::collections::HashSet<&str>,
+) -> Result<(), AppError> {
+    if is_month && !segment.aliases.is_empty() {
+        return Err(invalid(format!(
+            "monthly partition {partition} carries aliases"
+        )));
+    }
+    if !is_month && (!segment.ledger.is_empty() || !segment.inherited.is_empty()) {
+        return Err(invalid(format!(
+            "day partition {partition} carries history identities"
+        )));
+    }
+    let mut ids = std::collections::HashSet::new();
+    for alias in &segment.aliases {
+        check_text("requestId", &alias.request_id)?;
+        check_text("dataSource", &alias.data_source)?;
+        if alias.request_id.is_empty()
+            || log_ids.contains(alias.request_id.as_str())
+            || !ids.insert(alias.request_id.as_str())
+        {
+            return Err(invalid(format!("duplicate alias in {partition}")));
+        }
+    }
+    for entry in &segment.ledger {
+        if entry.request_id.is_empty() || !ids.insert(entry.request_id.as_str()) {
+            return Err(invalid(format!("duplicate ledger identity in {partition}")));
+        }
+        if entry.kind != LEDGER_KIND_COUNTED && entry.kind != LEDGER_KIND_ALIAS {
+            return Err(invalid(format!("unknown ledger kind in {partition}")));
+        }
+        check_text("requestId", &entry.request_id)?;
+        check_text("dataSource", &entry.data_source)?;
+        validate_group_row(
+            partition,
+            &entry.date,
+            [
+                ("appType", &entry.app_type),
+                ("providerId", &entry.provider_id),
+                ("providerName", &entry.provider_name),
+                ("model", &entry.model),
+                ("requestModel", &entry.request_model),
+                ("pricingModel", &entry.pricing_model),
+            ],
+            &[
+                ("success", entry.success),
+                ("inputTokens", entry.input_tokens),
+                ("outputTokens", entry.output_tokens),
+                ("cacheReadTokens", entry.cache_read_tokens),
+                ("cacheCreationTokens", entry.cache_creation_tokens),
+            ],
+            &entry.total_cost_usd,
+        )?;
+        if entry.success > 1 {
+            return Err(invalid(format!(
+                "ledger success flag out of range in {partition}"
+            )));
+        }
+    }
+    for row in &segment.inherited {
+        validate_group_row(
+            partition,
+            &row.date,
+            [
+                ("appType", &row.app_type),
+                ("providerId", &row.provider_id),
+                ("providerName", &row.provider_name),
+                ("model", &row.model),
+                ("requestModel", &row.request_model),
+                ("pricingModel", &row.pricing_model),
+            ],
+            &[
+                ("requestCount", row.request_count),
+                ("successCount", row.success_count),
+                ("inputTokens", row.input_tokens),
+                ("outputTokens", row.output_tokens),
+                ("cacheReadTokens", row.cache_read_tokens),
+                ("cacheCreationTokens", row.cache_creation_tokens),
+            ],
+            &row.total_cost_usd,
+        )?;
+    }
     Ok(())
 }
 
@@ -633,6 +831,7 @@ mod tests {
             coverage: Coverage::default(),
             partitions: BTreeMap::new(),
             retired: Vec::new(),
+            lineage: None,
         }
     }
 

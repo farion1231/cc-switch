@@ -14,7 +14,7 @@ use super::protocol::{self, manifest_path, DeviceManifest};
 use super::store;
 use super::transport::memory::MemoryStore;
 use super::transport::UsageTransport;
-use super::{sync_with, SyncOptions, UsageSyncReport};
+use super::{sync_with, SyncOptions, UsageSyncReport, ORPHAN_SWEEP_INTERVAL_SECS};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::services::usage_stats::UsageDeviceScope;
@@ -1138,6 +1138,12 @@ async fn config_snapshot_sync_neither_exports_nor_overwrites_usage_sync_state() 
         "usage_sync_remote_partitions",
         "usage_sync_remote_logs",
         "usage_sync_remote_rollups",
+        "usage_sync_remote_claims",
+        "usage_sync_remote_inherited",
+        "usage_sync_ledger_suppressed",
+        "usage_sync_remote_multi",
+        "usage_sync_inherited",
+        "usage_rollup_ledger",
     ] {
         assert!(
             !snapshot.contains(&format!("INSERT INTO \"{table}\""))
@@ -1166,6 +1172,12 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
         "usage_sync_remote_partitions",
         "usage_sync_remote_logs",
         "usage_sync_remote_rollups",
+        "usage_sync_remote_claims",
+        "usage_sync_remote_inherited",
+        "usage_sync_ledger_suppressed",
+        "usage_sync_remote_multi",
+        "usage_sync_inherited",
+        "usage_rollup_ledger",
     ] {
         conn.execute_batch(&format!("DROP TABLE {table};"))?;
     }
@@ -1187,6 +1199,12 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
         "usage_sync_remote_partitions",
         "usage_sync_remote_logs",
         "usage_sync_remote_rollups",
+        "usage_sync_remote_claims",
+        "usage_sync_remote_inherited",
+        "usage_sync_ledger_suppressed",
+        "usage_sync_remote_multi",
+        "usage_sync_inherited",
+        "usage_rollup_ledger",
     ] {
         assert!(Database::table_exists(&conn, table)?, "{table} missing");
     }
@@ -1379,4 +1397,842 @@ async fn perf_all_scope_queries_on_large_caches() {
         worst < std::time::Duration::from_secs(10),
         "worst query {worst:?}"
     );
+}
+
+// ─── R1: cross-device history identity (P1-1) ────────────────
+
+fn days_ago(days: i64) -> i64 {
+    chrono::Utc::now().timestamp() - days * 86_400
+}
+
+fn all_summary(device: &Device) -> crate::services::usage_stats::UsageSummary {
+    device.summary(UsageDeviceScope::All)
+}
+
+async fn sync_all(cloud: &Arc<MemoryStore>, devices: &[&Device]) {
+    // Two rounds so every device sees every other device's latest state.
+    for _ in 0..2 {
+        for device in devices {
+            device.sync(cloud).await;
+        }
+    }
+}
+
+fn assert_all_viewers(devices: &[&Device], requests: u64, cost: &str) {
+    for device in devices {
+        let summary = all_summary(device);
+        assert_eq!(
+            (summary.total_requests, summary.total_cost.as_str()),
+            (requests, cost),
+            "viewer {} disagrees",
+            device.name
+        );
+    }
+}
+
+#[tokio::test]
+async fn shared_request_rolled_up_on_either_side_counts_once_everywhere() {
+    for (rolled_a, rolled_b) in [(true, false), (false, true), (true, true)] {
+        let cloud = remote();
+        let a = Device::new("A");
+        let b = Device::new("B");
+        let c = Device::new("C");
+        let old = days_ago(40);
+        a.log(
+            "session:shared",
+            "session_log",
+            old,
+            "m",
+            100,
+            10,
+            "0.05",
+            200,
+        );
+        b.log(
+            "session:shared",
+            "session_log",
+            old,
+            "m",
+            100,
+            10,
+            "0.05",
+            200,
+        );
+        if rolled_a {
+            a.db.rollup_and_prune(30).unwrap();
+        }
+        if rolled_b {
+            b.db.rollup_and_prune(30).unwrap();
+        }
+        sync_all(&cloud, &[&a, &b, &c]).await;
+        assert_all_viewers(&[&a, &b, &c], 1, "0.050000");
+        // Per-device views still show each device's own data.
+        assert_eq!(a.total_requests(UsageDeviceScope::Device(b.id())), 1);
+        assert_eq!(c.total_requests(UsageDeviceScope::Device(a.id())), 1);
+    }
+}
+
+#[tokio::test]
+async fn offline_device_catching_up_never_double_counts() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    let c = Device::new("C");
+    let old = days_ago(40);
+    for device in [&a, &b] {
+        device.log("session:s1", "session_log", old, "m", 100, 10, "0.05", 200);
+    }
+    b.log("b-own", "proxy", old + 60, "m", 5, 5, "0.01", 200);
+    // Stage 1: only A is online and has rolled up.
+    a.db.rollup_and_prune(30).unwrap();
+    sync_all(&cloud, &[&a, &c]).await;
+    assert_all_viewers(&[&a, &c], 1, "0.050000");
+    // Stage 2: B comes back with request-level rows.
+    sync_all(&cloud, &[&a, &b, &c]).await;
+    assert_all_viewers(&[&a, &b, &c], 2, "0.060000");
+    // Stage 3: B rolls up later.
+    b.db.rollup_and_prune(30).unwrap();
+    sync_all(&cloud, &[&a, &b, &c]).await;
+    assert_all_viewers(&[&a, &b, &c], 2, "0.060000");
+}
+
+#[tokio::test]
+async fn deduplicated_history_keeps_exact_tokens_costs_and_dimensions() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    let old = days_ago(40);
+    // Same day, provider and model: one shared request plus independent ones.
+    a.log(
+        "session:shared",
+        "session_log",
+        old,
+        "model-x",
+        100,
+        10,
+        "0.05",
+        200,
+    );
+    b.log(
+        "session:shared",
+        "session_log",
+        old,
+        "model-x",
+        100,
+        10,
+        "0.05",
+        200,
+    );
+    a.log("a-own", "proxy", old + 10, "model-x", 30, 3, "0.02", 200);
+    b.log("b-own", "proxy", old + 20, "model-x", 7, 2, "0.03", 500);
+    b.log(
+        "b-other-model",
+        "proxy",
+        old + 30,
+        "model-y",
+        1,
+        1,
+        "0.10",
+        200,
+    );
+    a.db.rollup_and_prune(30).unwrap();
+    sync_all(&cloud, &[&a, &b]).await;
+
+    for viewer in [&a, &b] {
+        let all = all_summary(viewer);
+        assert_eq!(all.total_requests, 4);
+        assert_eq!(all.total_cost, "0.200000");
+        assert_eq!(all.total_input_tokens, 100 + 30 + 7 + 1);
+        assert_eq!(all.total_output_tokens, 10 + 3 + 2 + 1);
+        assert!((all.success_rate - 75.0).abs() < 0.01);
+        let models = viewer
+            .db
+            .get_model_stats_scoped(None, None, None, None, None, &UsageDeviceScope::All)
+            .unwrap();
+        let x = models.iter().find(|m| m.model == "model-x").unwrap();
+        let y = models.iter().find(|m| m.model == "model-y").unwrap();
+        assert_eq!((x.request_count, y.request_count), (3, 1));
+        let providers = viewer
+            .db
+            .get_provider_stats_scoped(None, None, None, None, None, &UsageDeviceScope::All)
+            .unwrap();
+        assert_eq!(providers.iter().map(|p| p.request_count).sum::<u64>(), 4);
+        let start = Some(old - 86_400);
+        let end = Some(old + 86_400);
+        let trends = viewer
+            .db
+            .get_daily_trends_scoped(start, end, None, None, None, &UsageDeviceScope::All)
+            .unwrap();
+        assert_eq!(trends.iter().map(|d| d.request_count).sum::<u64>(), 4);
+        let model_x = viewer
+            .db
+            .get_usage_summary_scoped(
+                None,
+                None,
+                None,
+                None,
+                Some("model-x"),
+                &UsageDeviceScope::All,
+            )
+            .unwrap();
+        assert_eq!(
+            (model_x.total_requests, model_x.total_cost.as_str()),
+            (3, "0.100000")
+        );
+    }
+}
+
+#[tokio::test]
+async fn proxy_session_pair_alias_is_honoured_after_either_rollup() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    let c = Device::new("C");
+    let old = days_ago(40);
+    // B ran the call through its proxy and also imported the session line;
+    // A only has the session line (synced ~/.claude).
+    b.log("proxy-uuid-9", "proxy", old, "m", 100, 10, "0.05", 200);
+    b.log(
+        "session:msg_9",
+        "session_log",
+        old + 5,
+        "m",
+        100,
+        10,
+        "0.05",
+        200,
+    );
+    a.log(
+        "session:msg_9",
+        "session_log",
+        old + 5,
+        "m",
+        100,
+        10,
+        "0.05",
+        200,
+    );
+    sync_all(&cloud, &[&a, &b, &c]).await;
+    assert_all_viewers(&[&a, &b, &c], 1, "0.050000");
+    b.db.rollup_and_prune(30).unwrap();
+    sync_all(&cloud, &[&a, &b, &c]).await;
+    assert_all_viewers(&[&a, &b, &c], 1, "0.050000");
+    a.db.rollup_and_prune(30).unwrap();
+    sync_all(&cloud, &[&a, &b, &c]).await;
+    assert_all_viewers(&[&a, &b, &c], 1, "0.050000");
+}
+
+#[tokio::test]
+async fn corrected_copies_resolve_to_one_deterministic_winner() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    let c = Device::new("C");
+    let old = days_ago(40);
+    a.log("session:s", "session_log", old, "m", 100, 10, "0.05", 200);
+    b.log("session:s", "session_log", old, "m", 100, 10, "0.05", 200);
+    a.db.rollup_and_prune(30).unwrap();
+    // B re-prices its (still request-level) copy afterwards.
+    {
+        let conn = b.db.conn.lock().unwrap();
+        conn.execute("UPDATE proxy_request_logs SET total_cost_usd = '0.07'", [])
+            .unwrap();
+    }
+    sync_all(&cloud, &[&a, &b, &c]).await;
+    let winner_cost = if a.id() < b.id() {
+        "0.050000"
+    } else {
+        "0.070000"
+    };
+    assert_all_viewers(&[&a, &b, &c], 1, winner_cost);
+}
+
+#[tokio::test]
+async fn legacy_rollups_without_ledger_stay_per_device_and_are_reported() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    let old = days_ago(40);
+    for device in [&a, &b] {
+        device.log(
+            "session:legacy",
+            "session_log",
+            old,
+            "m",
+            100,
+            10,
+            "0.05",
+            200,
+        );
+        device.db.rollup_and_prune(30).unwrap();
+        // Simulate rollups made by a version without the identity ledger.
+        device
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM usage_rollup_ledger", [])
+            .unwrap();
+    }
+    sync_all(&cloud, &[&a, &b]).await;
+    // No provable identity: counted once per device, and reported as such.
+    assert_eq!(all_summary(&a).total_requests, 2);
+    let local = {
+        let conn = a.db.conn.lock().unwrap();
+        store::local_unverified(&conn).unwrap()
+    };
+    let expected_date = {
+        let conn = a.db.conn.lock().unwrap();
+        conn.query_row("SELECT date(?1, 'unixepoch', 'localtime')", [old], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap()
+    };
+    assert_eq!(local.requests, 1);
+    assert_eq!(local.first_date.as_deref(), Some(expected_date.as_str()));
+    let remote_b = a.remote_device(&b.id()).unwrap();
+    assert_eq!(remote_b.unverified.requests, 1);
+}
+
+#[tokio::test]
+async fn ledger_is_bounded_by_retention_and_expired_history_is_unverified() {
+    let a = Device::new("A");
+    a.log("ancient", "proxy", days_ago(400), "m", 1, 1, "0.01", 200);
+    a.log("recent-old", "proxy", days_ago(40), "m", 1, 1, "0.01", 200);
+    a.db.rollup_and_prune(30).unwrap();
+    let conn = a.db.conn.lock().unwrap();
+    let ids: Vec<String> = conn
+        .prepare("SELECT request_id FROM usage_rollup_ledger ORDER BY request_id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(ids, vec!["recent-old".to_string()]);
+    assert_eq!(store::local_unverified(&conn).unwrap().requests, 1);
+}
+
+#[tokio::test]
+async fn daily_only_devices_are_reported_unverified() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let mut b = Device::new("B");
+    b.detail_level = UsageSyncDetailLevel::Daily;
+    b.log("b1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    b.log("b2", "proxy", NOW - 30, "m", 1, 1, "0.01", 200);
+    b.sync(&cloud).await;
+    a.sync(&cloud).await;
+    assert_eq!(a.remote_device(&b.id()).unwrap().unverified.requests, 2);
+}
+
+#[tokio::test]
+async fn codex_rebuild_drops_its_ledger_entries_with_its_rollups() {
+    let a = Device::new("A");
+    {
+        let conn = a.db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model,
+                input_tokens, output_tokens, total_cost_usd, latency_ms, status_code,
+                created_at, data_source)
+             VALUES ('codex_session:x', '_codex_session', 'codex', 'gpt', 1, 1, '0.01', 1, 200,
+                     ?1, 'codex_session')",
+            [days_ago(40)],
+        )
+        .unwrap();
+    }
+    a.db.rollup_and_prune(30).unwrap();
+    let conn = a.db.conn.lock().unwrap();
+    let count = |sql: &str| conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    assert_eq!(count("SELECT COUNT(*) FROM usage_rollup_ledger"), 1);
+    let dir = tempfile::tempdir().unwrap();
+    crate::services::session_usage_codex::reset_codex_usage_on_conn(&conn, dir.path()).unwrap();
+    assert_eq!(count("SELECT COUNT(*) FROM usage_daily_rollups"), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM usage_rollup_ledger"), 0);
+}
+
+// ─── R1: copied installations (P1-2) ─────────────────────────
+
+/// A real data-folder copy: the whole database, including the identity and
+/// the rollup ledger.
+fn copy_installation(from: &Device, to: &Device) {
+    let dump = from.db.export_sql_string().unwrap();
+    to.db.import_sql_string(&dump).unwrap();
+}
+
+async fn fork_after_conflict(cloud: &Arc<MemoryStore>, original: &Device, clone: &Device) {
+    original.sync(cloud).await;
+    let report = clone.sync(cloud).await;
+    assert!(report.identity_conflict, "{report:?}");
+    {
+        let conn = clone.db.conn.lock().unwrap();
+        let before = store::load_or_create_identity(&conn).unwrap().device_id;
+        let after = store::reset_identity(&conn).unwrap();
+        assert_eq!(after.parent_device_id.as_deref(), Some(before.as_str()));
+    }
+    let report = clone.sync(cloud).await;
+    assert!(
+        !report.identity_conflict && report.upload_error.is_none(),
+        "{report:?}"
+    );
+}
+
+fn seed_history(device: &Device) {
+    for i in 0..5 {
+        device.log(
+            &format!("old-{i}"),
+            "proxy",
+            days_ago(40) + i,
+            "m",
+            10,
+            1,
+            "0.01",
+            200,
+        );
+    }
+    device.log("recent", "proxy", days_ago(1), "m", 10, 1, "0.01", 200);
+    device.db.rollup_and_prune(30).unwrap();
+}
+
+#[tokio::test]
+async fn copied_installation_with_new_identity_keeps_history_once_and_counts_new_work() {
+    let cloud = remote();
+    let a = Device::new("Original");
+    let viewer = Device::new("Viewer");
+    seed_history(&a);
+    a.sync(&cloud).await;
+    let clone = Device::new("Clone");
+    copy_installation(&a, &clone);
+
+    // Both installations keep working after the copy.
+    a.log(
+        "a-after",
+        "proxy",
+        days_ago(0) - 600,
+        "m",
+        10,
+        1,
+        "0.01",
+        200,
+    );
+    clone.log(
+        "c-after",
+        "proxy",
+        days_ago(0) - 500,
+        "m",
+        10,
+        1,
+        "0.01",
+        200,
+    );
+    fork_after_conflict(&cloud, &a, &clone).await;
+    sync_all(&cloud, &[&a, &clone, &viewer]).await;
+    // 5 rolled-up + recent + a-after + c-after.
+    assert_all_viewers(&[&a, &clone, &viewer], 8, "0.080000");
+
+    // Both roll the shared and their own requests up later: still exact.
+    for device in [&a, &clone] {
+        let conn = device.db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE proxy_request_logs SET created_at = created_at - 45 * 86400",
+            [],
+        )
+        .unwrap();
+    }
+    a.db.rollup_and_prune(30).unwrap();
+    clone.db.rollup_and_prune(30).unwrap();
+    sync_all(&cloud, &[&a, &clone, &viewer]).await;
+    assert_all_viewers(&[&a, &clone, &viewer], 8, "0.080000");
+}
+
+#[tokio::test]
+async fn copied_legacy_history_is_attributed_to_the_parent_while_present() {
+    let cloud = remote();
+    let a = Device::new("Original");
+    let viewer = Device::new("Viewer");
+    seed_history(&a);
+    // History rolled up before the identity ledger existed.
+    a.db.conn
+        .lock()
+        .unwrap()
+        .execute("DELETE FROM usage_rollup_ledger", [])
+        .unwrap();
+    a.sync(&cloud).await;
+    let clone = Device::new("Clone");
+    copy_installation(&a, &clone);
+    // The original keeps writing, which is what surfaces the conflict.
+    let now = days_ago(0);
+    a.log("a-after", "proxy", now - 600, "m", 10, 1, "0.01", 200);
+    fork_after_conflict(&cloud, &a, &clone).await;
+    clone.log("c-after", "proxy", now - 500, "m", 10, 1, "0.01", 200);
+    sync_all(&cloud, &[&a, &clone, &viewer]).await;
+    // 5 legacy + recent + a-after + c-after: the legacy totals count once.
+    assert_all_viewers(&[&a, &clone, &viewer], 8, "0.080000");
+
+    // The original goes offline: its cached data stays, totals unchanged.
+    a.log("a-offline", "proxy", now - 400, "m", 10, 1, "0.01", 200);
+    sync_all(&cloud, &[&clone, &viewer]).await;
+    assert_all_viewers(&[&clone, &viewer], 8, "0.080000");
+    // It comes back: its offline work is counted, nothing twice.
+    sync_all(&cloud, &[&a, &clone, &viewer]).await;
+    assert_all_viewers(&[&a, &clone, &viewer], 9, "0.090000");
+
+    // The original is retired and hidden: the copy now carries the history.
+    for device in [&clone, &viewer] {
+        let conn = device.db.conn.lock().unwrap();
+        store::set_device_hidden(&conn, &a.id(), true).unwrap();
+    }
+    // a-after and a-offline were only ever on the original and leave with
+    // it; the copied history (5 legacy + recent) is carried by the copy.
+    assert_all_viewers(&[&clone, &viewer], 7, "0.070000");
+}
+
+#[tokio::test]
+async fn restored_backup_conflict_resolves_either_way_without_double_counting() {
+    for take_over in [true, false] {
+        let cloud = remote();
+        let a = Device::new("Machine");
+        let viewer = Device::new("Viewer");
+        seed_history(&a);
+        a.sync(&cloud).await;
+        let backup = a.db.export_sql_string().unwrap();
+        a.log(
+            "after-backup",
+            "proxy",
+            days_ago(0) - 900,
+            "m",
+            10,
+            1,
+            "0.01",
+            200,
+        );
+        a.sync(&cloud).await;
+
+        // The machine is restored from the backup (same identity, older nonce).
+        let restored = Device::new("Machine");
+        restored.db.import_sql_string(&backup).unwrap();
+        let report = restored.sync(&cloud).await;
+        assert!(report.identity_conflict);
+        if take_over {
+            let manifest = read_manifest(&cloud, &restored.id());
+            let conn = restored.db.conn.lock().unwrap();
+            store::adopt_remote_writer(&conn, &manifest.writer_nonce, manifest.seq).unwrap();
+        } else {
+            let conn = restored.db.conn.lock().unwrap();
+            store::reset_identity(&conn).unwrap();
+        }
+        restored.log(
+            "after-restore",
+            "proxy",
+            days_ago(0) - 300,
+            "m",
+            10,
+            1,
+            "0.01",
+            200,
+        );
+        sync_all(&cloud, &[&restored, &viewer]).await;
+        let expected = if take_over {
+            // The restored machine republishes its own lineage; "after-backup"
+            // existed only on the replaced database.
+            (7, "0.070000")
+        } else {
+            // The pre-restore directory stays as the parent with "after-backup".
+            (8, "0.080000")
+        };
+        assert_all_viewers(&[&restored, &viewer], expected.0, expected.1);
+    }
+}
+
+// ─── R1: protocol hardening (P3) ─────────────────────────────
+
+#[test]
+fn manifest_with_out_of_range_seq_is_rejected_by_readers() {
+    let mut manifest = DeviceManifest {
+        format: protocol::USAGE_SYNC_FORMAT.into(),
+        version: protocol::USAGE_PROTOCOL_VERSION,
+        device_id: "0f8fad5b-d9cb-469f-a165-70867728950e".into(),
+        device_name: "x".into(),
+        platform: String::new(),
+        app_version: String::new(),
+        seq: protocol::MAX_MANIFEST_SEQ,
+        writer_nonce: "n".into(),
+        updated_at: 0,
+        detail_level: protocol::DETAIL_LEVEL_RECORDS.into(),
+        utc_offset_minutes: 0,
+        coverage: Default::default(),
+        partitions: Default::default(),
+        retired: Vec::new(),
+        lineage: None,
+    };
+    assert!(protocol::validate_manifest(&manifest, &manifest.device_id.clone()).is_ok());
+    manifest.seq = protocol::MAX_MANIFEST_SEQ + 1;
+    assert!(protocol::validate_manifest(&manifest, &manifest.device_id.clone()).is_err());
+}
+
+#[tokio::test]
+async fn exhausted_own_sequence_fails_cleanly_and_does_not_wrap() {
+    let cloud = remote();
+    let a = Device::new("A");
+    a.log("a1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    a.sync(&cloud).await;
+    let mut manifest = read_manifest(&cloud, &a.id());
+    manifest.seq = protocol::MAX_MANIFEST_SEQ;
+    cloud
+        .put(
+            &manifest_path(&a.id()),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    a.log("a2", "proxy", NOW - 30, "m", 1, 1, "0.01", 200);
+    let report = a.sync(&cloud).await;
+    assert!(report.upload_error.unwrap().contains("exhausted"));
+    assert_eq!(
+        read_manifest(&cloud, &a.id()).seq,
+        protocol::MAX_MANIFEST_SEQ
+    );
+}
+
+#[tokio::test]
+async fn orphaned_objects_are_retired_and_collected() {
+    let cloud = remote();
+    let mut a = Device::new("A");
+    a.log("a1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    a.sync(&cloud).await;
+    // An object written by a losing same-identity writer: never referenced.
+    let orphan = protocol::object_name("d-2025-10-09", &"b".repeat(64));
+    let orphan_path = protocol::object_path(&a.id(), &orphan);
+    cloud.put(&orphan_path, b"orphan".to_vec()).unwrap();
+    // A foreign file in the directory is never touched.
+    let foreign = protocol::object_path(&a.id(), "parts/notes.txt");
+    cloud.put(&foreign, b"keep".to_vec()).unwrap();
+
+    a.now += ORPHAN_SWEEP_INTERVAL_SECS;
+    a.log("a2", "proxy", NOW - 30, "m", 1, 1, "0.01", 200);
+    a.sync(&cloud).await;
+    let manifest = read_manifest(&cloud, &a.id());
+    assert!(manifest.retired.iter().any(|r| r.object == orphan));
+    assert!(
+        cloud.keys().contains(&orphan_path),
+        "kept during grace period"
+    );
+
+    a.now += protocol::RETIRED_GRACE_SECS + 1;
+    a.sync(&cloud).await;
+    assert!(
+        !cloud.keys().contains(&orphan_path),
+        "collected after grace"
+    );
+    assert!(cloud.keys().contains(&foreign));
+}
+
+#[test]
+fn partition_of_object_only_accepts_protocol_names() {
+    let name = protocol::object_name("m-2026-09", &"a".repeat(64));
+    assert_eq!(
+        protocol::partition_of_object(&name).as_deref(),
+        Some("m-2026-09")
+    );
+    assert!(protocol::partition_of_object("parts/notes.txt").is_none());
+    assert!(protocol::partition_of_object("parts/../x-aaaaaaaaaaaaaaaa.json.gz").is_none());
+}
+
+#[tokio::test]
+async fn device_utc_offset_and_lineage_are_recorded_for_day_labels() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    b.log("b1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    b.sync(&cloud).await;
+    a.sync(&cloud).await;
+    let expected = i64::from(chrono::Local::now().offset().local_minus_utc() / 60);
+    let info = a.remote_device(&b.id()).unwrap();
+    assert_eq!(info.utc_offset_minutes, Some(expected));
+    assert_eq!(info.parent_device_id, None);
+}
+
+/// Opt-in: storage and query cost of the identity ledger with 4 devices that
+/// each rolled up 50k requests (10% shared between all devices).
+/// `cargo test --lib usage_sync::tests::perf_ledger -- --ignored --nocapture`
+#[tokio::test]
+#[ignore]
+async fn perf_ledger_storage_and_all_scope_queries() {
+    let cloud = remote();
+    let devices: Vec<Device> = ["A", "B", "C", "D"].into_iter().map(Device::new).collect();
+    let base = days_ago(200);
+    // Size of the ledger, measured on a separate copy before any sync.
+    for (d, device) in devices.iter().enumerate() {
+        let conn = device.db.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                        input_token_semantics, total_cost_usd, latency_ms, status_code,
+                        created_at, data_source
+                     ) VALUES (?1, ?2, 'claude', ?3, 1000, 200, 2, '0.0123', 900, 200, ?4, ?5)",
+                )
+                .unwrap();
+            for i in 0..50_000i64 {
+                let (id, source) = if i % 10 == 0 {
+                    (format!("session:shared-{i}"), "session_log")
+                } else {
+                    (format!("dev{d}-{i}-0123456789abcdef"), "proxy")
+                };
+                stmt.execute(rusqlite::params![
+                    id,
+                    format!("prov-{}", i % 7),
+                    format!("model-{}", i % 11),
+                    // 250 s apart, no wrap-around: no two rows of the same
+                    // model fall inside the local proxy/session match window.
+                    base + i * 250,
+                    source,
+                ])
+                .unwrap();
+            }
+        }
+        tx.commit().unwrap();
+    }
+    for device in &devices {
+        device.db.rollup_and_prune(30).unwrap();
+    }
+    let size = |device: &Device| -> i64 {
+        let conn = device.db.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    let (with_ledger, without_ledger) = {
+        let probe = &devices[3];
+        let copy = Device::new("Probe");
+        copy_installation(probe, &copy);
+        copy.db
+            .conn
+            .lock()
+            .unwrap()
+            .execute_batch("VACUUM")
+            .unwrap();
+        let with = size(&copy);
+        {
+            let conn = copy.db.conn.lock().unwrap();
+            conn.execute("DELETE FROM usage_rollup_ledger", []).unwrap();
+            conn.execute_batch("VACUUM").unwrap();
+        }
+        (with, size(&copy))
+    };
+    let ledger_rows: i64 = devices[0]
+        .db
+        .conn
+        .lock()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM usage_rollup_ledger", [], |r| r.get(0))
+        .unwrap();
+    let started = std::time::Instant::now();
+    for device in &devices[1..] {
+        device.sync(&cloud).await;
+    }
+    let upload = started.elapsed();
+    let started = std::time::Instant::now();
+    devices[0].sync(&cloud).await;
+    let download = started.elapsed();
+    let remote_bytes: usize = cloud.objects.lock().unwrap().values().map(Vec::len).sum();
+    let a = &devices[0];
+    let t = std::time::Instant::now();
+    let all = a.summary(UsageDeviceScope::All);
+    let all_time = t.elapsed();
+    let t = std::time::Instant::now();
+    a.db.get_daily_trends_scoped(
+        Some(days_ago(365)),
+        Some(days_ago(0)),
+        None,
+        None,
+        None,
+        &UsageDeviceScope::All,
+    )
+    .unwrap();
+    let trends_time = t.elapsed();
+    let t = std::time::Instant::now();
+    {
+        let conn = a.db.conn.lock().unwrap();
+        store::refresh_ledger_suppression(&conn).unwrap();
+    }
+    let refresh = t.elapsed();
+    println!(
+        "ledger rows/device={ledger_rows}; local DB {with_ledger} B with ledger vs {without_ledger} B without \
+         → {} B/row; remote bytes (3 devices incl. ledgers)={remote_bytes}; upload 3 devices={upload:?}; \
+         download+apply 3 devices={download:?}; suppression refresh={refresh:?}; \
+         All summary={all_time:?}; All trends 365d={trends_time:?}",
+        (with_ledger - without_ledger) / ledger_rows.max(1)
+    );
+    // 4 × 45k own + 5k shared counted once.
+    assert_eq!(all.total_requests, 4 * 45_000 + 5_000);
+}
+
+#[tokio::test]
+async fn deduplication_keeps_the_average_latency_of_rollup_groups() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    let old = days_ago(40);
+    for device in [&a, &b] {
+        device.log(
+            "session:shared",
+            "session_log",
+            old,
+            "m",
+            100,
+            10,
+            "0.05",
+            200,
+        );
+    }
+    // Two more requests on A in the same group, all at latency 120 ms.
+    a.log("a-1", "proxy", old + 10, "m", 1, 1, "0.01", 200);
+    a.log("a-2", "proxy", old + 20, "m", 1, 1, "0.01", 200);
+    a.db.rollup_and_prune(30).unwrap();
+    b.db.rollup_and_prune(30).unwrap();
+    sync_all(&cloud, &[&a, &b]).await;
+    for viewer in [&a, &b] {
+        let stats = viewer
+            .db
+            .get_provider_stats_scoped(None, None, None, None, None, &UsageDeviceScope::All)
+            .unwrap();
+        assert_eq!(stats.iter().map(|p| p.request_count).sum::<u64>(), 3);
+        for provider in &stats {
+            assert_eq!(provider.avg_latency_ms, 120, "{provider:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn shared_request_rolled_up_after_it_was_already_synced_counts_once() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    let c = Device::new("C");
+    let old = days_ago(40);
+    a.log("a-1", "proxy", old - 100, "m", 500, 10, "0.10", 200);
+    for device in [&a, &b] {
+        device.log(
+            "session:shared",
+            "session_log",
+            old,
+            "m",
+            100,
+            10,
+            "0.05",
+            200,
+        );
+    }
+    b.log("b-1", "proxy", old + 100, "m", 700, 10, "0.20", 200);
+    // Everything is request-level and synced first.
+    sync_all(&cloud, &[&a, &b, &c]).await;
+    assert_all_viewers(&[&a, &b, &c], 3, "0.350000");
+    // Then A rolls up and everyone syncs once more.
+    a.db.rollup_and_prune(30).unwrap();
+    sync_all(&cloud, &[&a, &b, &c]).await;
+    assert_all_viewers(&[&a, &b, &c], 3, "0.350000");
 }

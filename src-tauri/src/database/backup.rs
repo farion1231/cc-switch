@@ -99,6 +99,12 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_sync_remote_partitions",
     "usage_sync_remote_logs",
     "usage_sync_remote_rollups",
+    "usage_sync_remote_claims",
+    "usage_sync_remote_inherited",
+    "usage_sync_ledger_suppressed",
+    "usage_sync_remote_multi",
+    "usage_sync_inherited",
+    "usage_rollup_ledger",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -115,6 +121,12 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_sync_remote_partitions",
     "usage_sync_remote_logs",
     "usage_sync_remote_rollups",
+    "usage_sync_remote_claims",
+    "usage_sync_remote_inherited",
+    "usage_sync_ledger_suppressed",
+    "usage_sync_remote_multi",
+    "usage_sync_inherited",
+    "usage_rollup_ledger",
 ];
 
 /// A database backup entry for the UI

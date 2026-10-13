@@ -1709,9 +1709,124 @@ impl Database {
                              model, request_model, pricing_model)
              );
              CREATE INDEX IF NOT EXISTS idx_usage_sync_remote_rollups_date
-                ON usage_sync_remote_rollups(date);",
+                ON usage_sync_remote_rollups(date);
+             -- Identity ledger of rolled-up requests: what each pruned detail row
+             -- contributed to which usage_daily_rollups group. kind 0 = counted,
+             -- kind 1 = alias (suppressed locally as a duplicate of another row).
+             -- Lets cross-device statistics de-duplicate history by request id.
+             CREATE TABLE IF NOT EXISTS usage_rollup_ledger (
+                request_id TEXT PRIMARY KEY,
+                data_source TEXT NOT NULL,
+                kind INTEGER NOT NULL DEFAULT 0,
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                success INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                rolled_up_at INTEGER NOT NULL
+             ) WITHOUT ROWID;
+             CREATE INDEX IF NOT EXISTS idx_usage_rollup_ledger_group
+                ON usage_rollup_ledger(date, app_type, provider_id, model, request_model, pricing_model);
+             -- History inherited from a parent identity when a copied installation
+             -- took a new identity: rollup totals that carry no request ids.
+             CREATE TABLE IF NOT EXISTS usage_sync_inherited (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                request_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
+             );
+             -- Remote identity claims: rolled-up requests (kind 0, with contribution)
+             -- and aliases (kind 1) published by other devices.
+             CREATE TABLE IF NOT EXISTS usage_sync_remote_claims (
+                device_id TEXT NOT NULL,
+                partition_key TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                data_source TEXT NOT NULL DEFAULT 'proxy',
+                kind INTEGER NOT NULL DEFAULT 0,
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                provider_name TEXT,
+                model TEXT NOT NULL,
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                success INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                PRIMARY KEY (device_id, request_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_usage_sync_remote_claims_request
+                ON usage_sync_remote_claims(request_id, kind, device_id);
+             CREATE INDEX IF NOT EXISTS idx_usage_sync_remote_claims_partition
+                ON usage_sync_remote_claims(device_id, partition_key);
+             CREATE TABLE IF NOT EXISTS usage_sync_remote_inherited (
+                device_id TEXT NOT NULL,
+                partition_key TEXT NOT NULL,
+                parent_device_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                provider_name TEXT,
+                model TEXT NOT NULL,
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                request_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                PRIMARY KEY (device_id, partition_key, date, app_type, provider_id,
+                             model, request_model, pricing_model)
+             );
+             -- Materialized result of the cross-device rule for rolled-up copies:
+             -- ledger entries ('' = this device) whose request is counted on
+             -- another device. Rebuilt after every sync, rollup and hide/unhide.
+             -- Request ids held by more than one remote device (refreshed with the
+             -- suppression table); lets queries skip the identity rule for the
+             -- vast majority of requests that exist on one device only.
+             CREATE TABLE IF NOT EXISTS usage_sync_remote_multi (
+                request_id TEXT PRIMARY KEY
+             ) WITHOUT ROWID;
+             CREATE TABLE IF NOT EXISTS usage_sync_ledger_suppressed (
+                device_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                PRIMARY KEY (device_id, request_id)
+             ) WITHOUT ROWID;",
         )
-        .map_err(|error| AppError::Database(format!("创建跨设备用量同步表失败: {error}")))
+        .map_err(|error| AppError::Database(format!("创建跨设备用量同步表失败: {error}")))?;
+        // Columns added after the first v21 candidate (never released); keep
+        // databases created by that candidate compatible.
+        for (table, column, ty) in [
+            ("usage_sync_identity", "parent_device_id", "TEXT"),
+            ("usage_sync_identity", "forked_at", "INTEGER"),
+            ("usage_sync_devices", "utc_offset_minutes", "INTEGER"),
+            ("usage_sync_devices", "parent_device_id", "TEXT"),
+        ] {
+            Self::add_column_if_missing(conn, table, column, ty)?;
+        }
+        Ok(())
     }
 
     /// v16 -> v17: preserve session request identities after detail rollup.

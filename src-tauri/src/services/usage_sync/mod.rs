@@ -13,6 +13,8 @@ pub(crate) mod transport;
 pub(crate) mod worker;
 
 #[cfg(test)]
+mod audit_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_http;
@@ -101,6 +103,32 @@ where
     })
     .await
     .map_err(|e| AppError::Message(format!("usage sync task failed: {e}")))?
+}
+
+/// How often this process lists its own remote objects to retire orphans.
+pub(crate) const ORPHAN_SWEEP_INTERVAL_SECS: i64 = 24 * 60 * 60;
+
+fn orphan_sweeps() -> &'static std::sync::Mutex<std::collections::HashMap<String, i64>> {
+    static SWEEPS: OnceLock<std::sync::Mutex<std::collections::HashMap<String, i64>>> =
+        OnceLock::new();
+    SWEEPS.get_or_init(Default::default)
+}
+
+fn orphan_sweep_due(device_id: &str, now: i64) -> bool {
+    orphan_sweeps()
+        .lock()
+        .map(|sweeps| {
+            sweeps
+                .get(device_id)
+                .is_none_or(|last| now - last >= ORPHAN_SWEEP_INTERVAL_SECS)
+        })
+        .unwrap_or(false)
+}
+
+fn mark_orphan_sweep(device_id: &str, now: i64) {
+    if let Ok(mut sweeps) = orphan_sweeps().lock() {
+        sweeps.insert(device_id.to_string(), now);
+    }
 }
 
 /// CPU-bound work (JSON, gzip, SHA-256) off the async runtime and outside the DB lock.
@@ -257,7 +285,6 @@ async fn upload_phase(
         .unwrap_or_default();
     let mut outcome = UploadOutcome::default();
     let mut partitions: BTreeMap<String, PartitionMeta> = BTreeMap::new();
-    let mut dir_prepared = false;
 
     let coverage = export.coverage.clone();
     let encoded_parts = cpu(move || {
@@ -293,16 +320,11 @@ async fn upload_phase(
                 format!("Usage partition {key} exceeds the upload limit"),
             ));
         }
-        if !dir_prepared {
-            transport
-                .prepare_device_dir(&protocol::device_dir(&device_id))
-                .await?;
-            dir_prepared = true;
-        }
         let object = object_name(key, &encoded.content_sha256);
         let size = encoded.gz_bytes.len() as u64;
         transport
-            .put(
+            .put_in_device_dir(
+                &protocol::device_dir(&device_id),
                 &object_path(&device_id, &object),
                 encoded.gz_bytes,
                 "application/gzip",
@@ -375,9 +397,41 @@ async fn upload_phase(
         overflow_objects.extend(retired.drain(..overflow).map(|r| r.object));
     }
 
+    // Objects of this device that no manifest references (e.g. left behind by
+    // a same-identity write race, or an upload interrupted before its
+    // manifest) are retired like superseded ones. Bounded: one listing per
+    // device per ORPHAN_SWEEP_INTERVAL_SECS in this process.
+    if orphan_sweep_due(&device_id, options.now) {
+        match transport.list_device_parts(&device_id).await {
+            Ok(objects) => {
+                for object in objects {
+                    if protocol::partition_of_object(&object).is_some()
+                        && !referenced.contains(object.as_str())
+                        && !retired.iter().any(|r| r.object == object)
+                    {
+                        retired.push(RetiredObject {
+                            object,
+                            retired_at: options.now,
+                        });
+                    }
+                }
+                mark_orphan_sweep(&device_id, options.now);
+            }
+            Err(error) => log::debug!("[UsageSync] orphan sweep skipped: {error}"),
+        }
+    }
+
     let device_name = effective_device_name(identity, options);
     let detail_level = detail_level_wire(options.detail_level).to_string();
     let utc_offset_minutes = chrono::Local::now().offset().local_minus_utc() / 60;
+    let lineage = identity
+        .parent_device_id
+        .as_ref()
+        .filter(|parent| protocol::is_valid_device_id(parent))
+        .map(|parent| protocol::Lineage {
+            parent_device_id: parent.clone(),
+            forked_at: identity.forked_at.unwrap_or_default(),
+        });
     let needs_write = match &remote {
         None => true,
         Some(remote) => {
@@ -388,6 +442,7 @@ async fn upload_phase(
                 || remote.app_version != options.app_version
                 || remote.coverage != coverage
                 || remote.version != USAGE_PROTOCOL_VERSION
+                || remote.lineage != lineage
                 || options.now - remote.updated_at >= HEARTBEAT_SECS
         }
     };
@@ -395,12 +450,22 @@ async fn upload_phase(
         return Ok(outcome);
     }
 
+    // Sequence numbers are stored as SQLite integers: stay within i64 and
+    // never wrap (a wrapped seq would make every reader ignore this device).
     let seq = remote
         .as_ref()
         .map(|m| m.seq)
         .unwrap_or(0)
         .max(identity.manifest_seq)
-        + 1;
+        .checked_add(1)
+        .filter(|seq| *seq <= protocol::MAX_MANIFEST_SEQ)
+        .ok_or_else(|| {
+            AppError::localized(
+                "usage_sync.seq_exhausted",
+                "本设备的用量同步序号已用尽（远端清单可能被篡改），请在用量同步设置中改用新身份",
+                "This device's usage sync sequence is exhausted (the remote manifest may be corrupted); use a new identity in Usage Sync settings",
+            )
+        })?;
     let nonce = uuid::Uuid::new_v4().to_string();
     let manifest = DeviceManifest {
         format: USAGE_SYNC_FORMAT.to_string(),
@@ -417,6 +482,7 @@ async fn upload_phase(
         coverage,
         partitions,
         retired,
+        lineage,
     };
     let bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|source| AppError::JsonSerialize { source })?;
@@ -425,13 +491,13 @@ async fn upload_phase(
         let nonce = nonce.clone();
         blocking(db, move |conn| store::set_pending_nonce(conn, &nonce)).await?;
     }
-    if !dir_prepared {
-        transport
-            .prepare_device_dir(&protocol::device_dir(&device_id))
-            .await?;
-    }
     transport
-        .put(&manifest_path(&device_id), bytes, "application/json")
+        .put_in_device_dir(
+            &protocol::device_dir(&device_id),
+            &manifest_path(&device_id),
+            bytes,
+            "application/json",
+        )
         .await?;
     blocking(db, move |conn| store::commit_nonce(conn, &nonce, seq)).await?;
     outcome.manifest_written = true;
@@ -633,6 +699,12 @@ pub(crate) async fn sync_with(
         Err(error) => report.download_error = Some(error.to_string()),
     }
 
+    // Re-evaluate which rolled-up copies lose to another device's copy: remote
+    // data may have changed, and so may this device's own request-level rows.
+    if let Err(error) = blocking(db, store::refresh_ledger_suppression).await {
+        log::warn!("[UsageSync] refreshing cross-device suppression failed: {error}");
+    }
+
     if report.devices_updated > 0 {
         crate::usage_events::notify_log_recorded();
     }
@@ -706,6 +778,9 @@ pub struct UsageSyncThisDevice {
     pub device_id: String,
     pub device_name: String,
     pub custom_name: Option<String>,
+    pub parent_device_id: Option<String>,
+    pub utc_offset_minutes: i32,
+    pub unverified: store::UnverifiedHistory,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -737,11 +812,12 @@ pub(crate) fn backend_availability() -> UsageSyncBackendAvailability {
 
 pub fn get_overview(db: &Database) -> Result<UsageSyncOverview, AppError> {
     let settings = crate::settings::get_usage_sync_settings();
-    let (identity, devices) = {
+    let (identity, devices, unverified) = {
         let conn = lock_conn!(db.conn);
         (
             store::load_or_create_identity(&conn)?,
             store::list_remote_devices(&conn)?,
+            store::local_unverified(&conn)?,
         )
     };
     let transport = settings
@@ -760,6 +836,9 @@ pub fn get_overview(db: &Database) -> Result<UsageSyncOverview, AppError> {
             device_id: identity.device_id,
             device_name,
             custom_name: identity.custom_name,
+            parent_device_id: identity.parent_device_id,
+            utc_offset_minutes: chrono::Local::now().offset().local_minus_utc() / 60,
+            unverified,
         },
         devices,
         syncing: is_sync_running(),

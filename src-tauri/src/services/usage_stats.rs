@@ -1014,22 +1014,121 @@ const ROLLUP_UNION_COLUMNS: &str = "date, app_type, provider_id, model, request_
     cache_read_tokens, cache_creation_tokens, input_token_semantics, total_cost_usd, \
     avg_latency_ms";
 
-/// Cross-device de-duplication for remote request records, by stable identity
-/// only (never by time/token similarity):
-/// - a record this device also holds (same `request_id` in local details, or
-///   in the Pi rollup ledger) counts once, as local;
-/// - among remote devices the lexicographically smallest device id wins.
-const REMOTE_LOG_DEDUP_SQL: &str = "NOT EXISTS (SELECT 1 FROM proxy_request_logs lx \
-        WHERE lx.request_id = rl.request_id) \
-    AND NOT EXISTS (SELECT 1 FROM session_usage_dedup sx \
-        WHERE sx.data_source = rl.data_source AND sx.request_id = rl.request_id) \
-    AND NOT EXISTS (SELECT 1 FROM usage_sync_remote_logs ry \
-        WHERE ry.request_id = rl.request_id AND ry.device_id < rl.device_id)";
+/// Cross-device identity rule (viewer independent).
+///
+/// Every copy of a request id is a *claim* by one device: a request-level row,
+/// a rolled-up ledger entry (`usage_rollup_ledger` / remote `ledger`), or an
+/// alias (a row its device dropped as a duplicate of another of its own rows,
+/// i.e. already counted through that row). For one id:
+/// 1. if any device holds it as an alias, every counted copy is dropped — the
+///    aliasing device counts the request through its other row;
+/// 2. otherwise the counted copy of the smallest device id wins.
+///
+/// Losing request-level rows are filtered out; losing ledger copies become
+/// negative rows of exactly their contribution in their rollup group (see
+/// `ScopeSql::rollup_table`). Only provable identities (equal request ids) are
+/// ever merged — never time/token similarity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IdentityRules {
+    /// This device's id ('' when no identity exists yet: no remote data either).
+    local_id: String,
+}
+
+impl IdentityRules {
+    pub(crate) fn new(local_id: Option<&str>) -> Self {
+        let local_id = local_id
+            .filter(|id| crate::services::usage_sync::protocol::is_valid_device_id(id))
+            .unwrap_or_default()
+            .to_string();
+        Self { local_id }
+    }
+
+    pub(crate) fn load(conn: &Connection) -> Result<Self, AppError> {
+        let local_id: Option<String> = conn
+            .query_row(
+                "SELECT device_id FROM usage_sync_identity WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(Self::new(local_id.as_deref()))
+    }
+
+    /// Some device holds `{req}` as an alias, or this device has it only in
+    /// the legacy Pi ledger (contribution unknown, so it cannot lose).
+    pub(crate) fn alias_claimed(&self, req: &str, source: &str) -> String {
+        let local_dup = effective_usage_log_filter("la");
+        format!(
+            "(EXISTS (SELECT 1 FROM usage_sync_remote_claims ca \
+                 WHERE ca.request_id = {req} AND ca.kind = 1) \
+              OR EXISTS (SELECT 1 FROM usage_rollup_ledger ga \
+                 WHERE ga.request_id = {req} AND ga.kind = 1) \
+              OR EXISTS (SELECT 1 FROM proxy_request_logs la \
+                 WHERE la.request_id = {req} AND NOT ({local_dup})) \
+              OR (EXISTS (SELECT 1 FROM session_usage_dedup sx \
+                     WHERE sx.data_source = {source} AND sx.request_id = {req}) \
+                  AND NOT EXISTS (SELECT 1 FROM usage_rollup_ledger gp \
+                     WHERE gp.request_id = {req}) \
+                  AND NOT EXISTS (SELECT 1 FROM proxy_request_logs lp \
+                     WHERE lp.request_id = {req})))"
+        )
+    }
+
+    /// A counted copy of `{req}` exists on a device whose id sorts below `{dev}`.
+    pub(crate) fn counted_copy_below(&self, req: &str, dev: &str) -> String {
+        let local = &self.local_id;
+        let local_counted = effective_usage_log_filter("lc");
+        format!(
+            "(EXISTS (SELECT 1 FROM usage_sync_remote_logs ry \
+                 WHERE ry.request_id = {req} AND ry.device_id < {dev}) \
+              OR EXISTS (SELECT 1 FROM usage_sync_remote_claims cy \
+                 WHERE cy.request_id = {req} AND cy.kind = 0 AND cy.device_id < {dev}) \
+              OR ('{local}' < {dev} AND ( \
+                 EXISTS (SELECT 1 FROM proxy_request_logs lc \
+                    WHERE lc.request_id = {req} AND {local_counted}) \
+                 OR EXISTS (SELECT 1 FROM usage_rollup_ledger gc \
+                    WHERE gc.request_id = {req} AND gc.kind = 0))))"
+        )
+    }
+
+    /// A counted local copy (request-level row of this device) loses.
+    pub(crate) fn local_copy_loses(&self, req: &str) -> String {
+        let local = &self.local_id;
+        format!(
+            "(EXISTS (SELECT 1 FROM usage_sync_remote_claims ca \
+                 WHERE ca.request_id = {req} AND ca.kind = 1) \
+              OR EXISTS (SELECT 1 FROM usage_sync_remote_logs ry \
+                 WHERE ry.request_id = {req} AND ry.device_id < '{local}') \
+              OR EXISTS (SELECT 1 FROM usage_sync_remote_claims cy \
+                 WHERE cy.request_id = {req} AND cy.kind = 0 AND cy.device_id < '{local}'))"
+        )
+    }
+
+    /// A counted remote copy held by device `{dev}` loses. The gate (another
+    /// remote device holds the id, or this device holds it in any form) is a
+    /// handful of primary-key probes; the full rule only runs behind it.
+    pub(crate) fn remote_copy_loses(&self, req: &str, source: &str, dev: &str) -> String {
+        format!(
+            "((EXISTS (SELECT 1 FROM usage_sync_remote_multi mm WHERE mm.request_id = {req}) \
+               OR EXISTS (SELECT 1 FROM proxy_request_logs lg WHERE lg.request_id = {req}) \
+               OR EXISTS (SELECT 1 FROM usage_rollup_ledger gg WHERE gg.request_id = {req}) \
+               OR EXISTS (SELECT 1 FROM session_usage_dedup sg \
+                  WHERE sg.data_source = {source} AND sg.request_id = {req})) \
+              AND ({} OR {}))",
+            self.alias_claimed(req, source),
+            self.counted_copy_below(req, dev)
+        )
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ScopeKind {
     Local,
-    All,
+    All {
+        rules: IdentityRules,
+        /// Parent identity this installation was split from, if any.
+        parent: Option<String>,
+    },
     /// Validated remote device id (safe to inline: `[0-9a-z-]` only).
     Device(String),
 }
@@ -1044,7 +1143,23 @@ impl ScopeSql {
     pub(crate) fn resolve(conn: &Connection, scope: &UsageDeviceScope) -> Result<Self, AppError> {
         let kind = match scope {
             UsageDeviceScope::Local => ScopeKind::Local,
-            UsageDeviceScope::All => ScopeKind::All,
+            UsageDeviceScope::All => {
+                let parent: Option<String> = conn
+                    .query_row(
+                        "SELECT parent_device_id FROM usage_sync_identity WHERE id = 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .flatten()
+                    .filter(|id: &String| {
+                        crate::services::usage_sync::protocol::is_valid_device_id(id)
+                    });
+                ScopeKind::All {
+                    rules: IdentityRules::load(conn)?,
+                    parent,
+                }
+            }
             UsageDeviceScope::Device(id) => {
                 if !crate::services::usage_sync::protocol::is_valid_device_id(id) {
                     return Err(AppError::InvalidInput(format!("invalid device id: {id}")));
@@ -1074,13 +1189,19 @@ impl ScopeSql {
     pub(crate) fn detail_table(&self) -> String {
         match &self.kind {
             ScopeKind::Local => "proxy_request_logs".to_string(),
-            ScopeKind::All => format!(
-                "(SELECT {DETAIL_UNION_COLUMNS}, NULL AS remote_device_id, \
-                    NULL AS remote_provider_name FROM proxy_request_logs \
-                  UNION ALL \
-                  SELECT {REMOTE_DETAIL_COLUMNS}, rl.device_id, rl.provider_name \
-                    FROM usage_sync_remote_logs rl WHERE {REMOTE_LOG_DEDUP_SQL})"
-            ),
+            ScopeKind::All { rules, .. } => {
+                let local_loses = rules.local_copy_loses("pl.request_id");
+                let remote_loses =
+                    rules.remote_copy_loses("rl.request_id", "rl.data_source", "rl.device_id");
+                format!(
+                    "(SELECT {DETAIL_UNION_COLUMNS}, NULL AS remote_device_id, \
+                        NULL AS remote_provider_name FROM proxy_request_logs pl \
+                      WHERE NOT {local_loses} \
+                      UNION ALL \
+                      SELECT {REMOTE_DETAIL_COLUMNS}, rl.device_id, rl.provider_name \
+                        FROM usage_sync_remote_logs rl WHERE NOT {remote_loses})"
+                )
+            }
             ScopeKind::Device(id) => format!(
                 "(SELECT {REMOTE_DETAIL_COLUMNS}, rl.device_id AS remote_device_id, \
                     rl.provider_name AS remote_provider_name \
@@ -1093,13 +1214,70 @@ impl ScopeSql {
     pub(crate) fn rollup_table(&self) -> String {
         match &self.kind {
             ScopeKind::Local => "usage_daily_rollups".to_string(),
-            ScopeKind::All => format!(
-                "(SELECT {ROLLUP_UNION_COLUMNS}, NULL AS remote_device_id, \
-                    NULL AS remote_provider_name FROM usage_daily_rollups \
-                  UNION ALL \
-                  SELECT {ROLLUP_UNION_COLUMNS}, device_id, provider_name \
-                    FROM usage_sync_remote_rollups)"
-            ),
+            ScopeKind::All { rules, parent } => {
+                let local = &rules.local_id;
+                // Negative rows carry their group's average latency, so removing
+                // a duplicate leaves the latency average of the group unchanged.
+                // Inherited (id-less) history belongs to the parent while the
+                // parent's data is present on this viewer.
+                let local_inherited = match parent {
+                    Some(parent) => format!(
+                        " UNION ALL \
+                         SELECT i.date, i.app_type, i.provider_id, i.model, i.request_model, \
+                            i.pricing_model, -i.request_count, -i.success_count, -i.input_tokens, \
+                            -i.output_tokens, -i.cache_read_tokens, -i.cache_creation_tokens, \
+                            {INPUT_TOKEN_SEMANTICS_FRESH}, \
+                            CAST(-CAST(i.total_cost_usd AS REAL) AS TEXT), \
+                            COALESCE((SELECT lr.avg_latency_ms FROM usage_daily_rollups lr WHERE lr.date = i.date AND lr.app_type = i.app_type AND lr.provider_id = i.provider_id AND lr.model = i.model AND lr.request_model = i.request_model AND lr.pricing_model = i.pricing_model), 0), NULL, NULL \
+                         FROM usage_sync_inherited i \
+                         WHERE EXISTS (SELECT 1 FROM usage_sync_remote_partitions pp \
+                            WHERE pp.device_id = '{parent}')"
+                    ),
+                    None => String::new(),
+                };
+                format!(
+                    "(SELECT {ROLLUP_UNION_COLUMNS}, NULL AS remote_device_id, \
+                        NULL AS remote_provider_name FROM usage_daily_rollups \
+                      UNION ALL \
+                      SELECT {ROLLUP_UNION_COLUMNS}, device_id, provider_name \
+                        FROM usage_sync_remote_rollups \
+                      UNION ALL \
+                      SELECT g.date, g.app_type, g.provider_id, g.model, g.request_model, \
+                        g.pricing_model, -1, -g.success, -g.input_tokens, -g.output_tokens, \
+                        -g.cache_read_tokens, -g.cache_creation_tokens, \
+                        {INPUT_TOKEN_SEMANTICS_FRESH}, \
+                        CAST(-CAST(g.total_cost_usd AS REAL) AS TEXT), \
+                        COALESCE((SELECT lr.avg_latency_ms FROM usage_daily_rollups lr WHERE lr.date = g.date AND lr.app_type = g.app_type AND lr.provider_id = g.provider_id AND lr.model = g.model AND lr.request_model = g.request_model AND lr.pricing_model = g.pricing_model), 0), NULL, NULL \
+                      FROM usage_rollup_ledger g \
+                      JOIN usage_sync_ledger_suppressed sg \
+                        ON sg.device_id = '' AND sg.request_id = g.request_id \
+                      WHERE g.kind = 0 \
+                      UNION ALL \
+                      SELECT c.date, c.app_type, c.provider_id, c.model, c.request_model, \
+                        c.pricing_model, -1, -c.success, -c.input_tokens, -c.output_tokens, \
+                        -c.cache_read_tokens, -c.cache_creation_tokens, \
+                        {INPUT_TOKEN_SEMANTICS_FRESH}, \
+                        CAST(-CAST(c.total_cost_usd AS REAL) AS TEXT), \
+                        COALESCE((SELECT MAX(rr.avg_latency_ms) FROM usage_sync_remote_rollups rr WHERE rr.device_id = c.device_id AND rr.date = c.date AND rr.app_type = c.app_type AND rr.provider_id = c.provider_id AND rr.model = c.model AND rr.request_model = c.request_model AND rr.pricing_model = c.pricing_model), 0), c.device_id, \
+                        c.provider_name \
+                      FROM usage_sync_remote_claims c \
+                      JOIN usage_sync_ledger_suppressed sc \
+                        ON sc.device_id = c.device_id AND sc.request_id = c.request_id \
+                      WHERE c.kind = 0 \
+                      UNION ALL \
+                      SELECT ri.date, ri.app_type, ri.provider_id, ri.model, ri.request_model, \
+                        ri.pricing_model, -ri.request_count, -ri.success_count, \
+                        -ri.input_tokens, -ri.output_tokens, -ri.cache_read_tokens, \
+                        -ri.cache_creation_tokens, {INPUT_TOKEN_SEMANTICS_FRESH}, \
+                        CAST(-CAST(ri.total_cost_usd AS REAL) AS TEXT), \
+                        COALESCE((SELECT MAX(rr.avg_latency_ms) FROM usage_sync_remote_rollups rr WHERE rr.device_id = ri.device_id AND rr.date = ri.date AND rr.app_type = ri.app_type AND rr.provider_id = ri.provider_id AND rr.model = ri.model AND rr.request_model = ri.request_model AND rr.pricing_model = ri.pricing_model), 0), ri.device_id, \
+                        ri.provider_name \
+                      FROM usage_sync_remote_inherited ri \
+                      WHERE ri.parent_device_id = '{local}' \
+                         OR EXISTS (SELECT 1 FROM usage_sync_remote_partitions pp \
+                            WHERE pp.device_id = ri.parent_device_id){local_inherited})"
+                )
+            }
             ScopeKind::Device(id) => format!(
                 "(SELECT {ROLLUP_UNION_COLUMNS}, device_id AS remote_device_id, \
                     provider_name AS remote_provider_name \
@@ -1131,7 +1309,7 @@ impl ScopeSql {
             ScopeKind::Local => {
                 effective_usage_log_filter_for_range(conn, log_alias, start_date, end_date)
             }
-            ScopeKind::All => {
+            ScopeKind::All { .. } => {
                 let local = effective_usage_log_filter_for_range_keyed(
                     conn,
                     log_alias,
