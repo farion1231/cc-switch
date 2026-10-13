@@ -1094,7 +1094,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://opencode.ai/zen/go",
     mode: "proxy",
     // Go 网关 /messages 收除 grok-4.5 外全部模型（Chat 组靠服务端转换），
-    // anthropic 透传即可；上游只认 x-api-key，apiKey 直填默认即该头。
+    // anthropic 透传即可。
+    // 上游只认 x-api-key（Bearer 被静默忽略），本地路由按 env 里的字段名决定
+    // 发哪个头，写 ANTHROPIC_AUTH_TOKEN 会发 Authorization: Bearer，被上游当作
+    // 没带凭据而 401 "Go requires a credential"；必须与 Claude Code 侧预
+    // 设（claudeProviderPresets.ts）保持一致。
+    apiKeyField: "ANTHROPIC_API_KEY",
     apiFormat: "anthropic",
     // supports1m：deepseek-v4-flash 窗口 1M（本仓 Go 网关 Codex catalog
     // 记 1048576）。[1m] 只是 Claude Desktop 本地标记，匹配前会被剥掉，

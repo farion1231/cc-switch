@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { providerPresets } from "@/config/claudeProviderPresets";
+import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
 import type { Provider } from "@/types";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
 
@@ -84,6 +85,31 @@ describe("OpenCode Go Provider Preset", () => {
     };
 
     expect(providerNeedsRouting("claude", provider)).toBe(false);
+  });
+});
+
+describe("OpenCode Go Claude Desktop Preset", () => {
+  const cli = providerPresets.find((p) => p.name === "OpenCode Go");
+  const desktop = claudeDesktopProviderPresets.find(
+    (p) => p.name === "OpenCode Go",
+  );
+
+  // Desktop 侧的 key 写进 env 里哪个字段，由预设的 apiKeyField 决定。漏写时表单
+  // 落到 ANTHROPIC_AUTH_TOKEN，本地路由据此发 Authorization: Bearer；Go 网关会
+  // 静默忽略 Bearer，Desktop 的每次请求都 401 "Go requires a credential"。
+  it("should declare the x-api-key field for the Go gateway", () => {
+    expect(desktop).toBeDefined();
+    expect(desktop!.apiKeyField).toBe("ANTHROPIC_API_KEY");
+    expect(desktop!.baseUrl).toBe("https://opencode.ai/zen/go");
+    expect(desktop!.mode).toBe("proxy");
+    expect(desktop!.apiFormat).toBe("anthropic");
+  });
+
+  it("should agree with the Claude Code preset on the credential field", () => {
+    expect(cli).toBeDefined();
+    const cliEnv = (cli!.settingsConfig as any).env;
+
+    expect(Object.keys(cliEnv)).toContain(desktop!.apiKeyField);
   });
 });
 
