@@ -213,10 +213,9 @@ impl ProviderType {
                 ProviderType::Gemini
             }
             AppType::GrokBuild => ProviderType::Codex,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ZCode => {
-                ProviderType::Codex
-            }
-            AppType::Pi | AppType::Mcode => return None,
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => ProviderType::Codex,
+            // ZCode 不走本地路由，与 Pi/Mcode 一样没有代理适配器
+            AppType::Pi | AppType::Mcode | AppType::ZCode => return None,
         };
         Some(provider_type)
     }
@@ -271,10 +270,9 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
         AppType::GrokBuild => Box::new(CodexAdapter::new()),
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ZCode => {
-            Box::new(CodexAdapter::new())
-        }
-        AppType::Pi | AppType::Mcode => return None,
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
+        // ZCode 不走本地路由，与 Pi/Mcode 一样没有代理适配器
+        AppType::Pi | AppType::Mcode | AppType::ZCode => return None,
     })
 }
 

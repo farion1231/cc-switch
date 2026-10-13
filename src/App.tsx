@@ -124,7 +124,7 @@ import {
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
-import { invalidateZcodeProviderCaches } from "@/hooks/useZcode";
+import { invalidateZcodeProviderCaches, zcodeKeys } from "@/hooks/useZcode";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -927,7 +927,8 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
+      activeApp === "zcode"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -947,12 +948,17 @@ function App() {
                     queryKey: hermesKeys.liveProviderIds,
                     queryFn: () => providersApi.getHermesLiveProviderIds(),
                   })
-                : (
-                    await queryClient.ensureQueryData({
-                      queryKey: ["pi", "currentState"],
-                      queryFn: () => piApi.getCurrentState(),
-                    })
-                  ).enabledProviderIds;
+                : activeApp === "zcode"
+                  ? ((await queryClient.ensureQueryData({
+                      queryKey: zcodeKeys.liveProviderIds,
+                      queryFn: () => providersApi.getZCodeLiveProviderIds(),
+                    })) as string[])
+                  : (
+                      await queryClient.ensureQueryData({
+                        queryKey: ["pi", "currentState"],
+                        queryFn: () => piApi.getCurrentState(),
+                      })
+                    ).enabledProviderIds;
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",

@@ -2386,7 +2386,7 @@ function ProviderFormFull({
       zcodeForm.resetZcodeState(config);
 
       form.reset({
-        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        name: preset.name,
         websiteUrl: preset.websiteUrl ?? "",
         settingsConfig: JSON.stringify(config, null, 2),
         icon: preset.icon ?? "",

@@ -1545,6 +1545,13 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 pub fn remove_zcode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::zcode_config;
 
+    // ZCode 自管的内置节点（builtin: 前缀）不归 CC Switch 管，拒绝删除
+    if provider_id.starts_with("builtin:") {
+        return Err(AppError::InvalidInput(format!(
+            "ZCode built-in provider '{provider_id}' is managed by ZCode itself"
+        )));
+    }
+
     // Check if ZCode config directory exists
     if !zcode_config::get_zcode_dir().exists() {
         log::debug!("ZCode config directory doesn't exist, skipping removal of '{provider_id}'");
@@ -1575,6 +1582,12 @@ pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppEr
     let existing_ids = state.db.get_provider_ids("zcode")?;
 
     for (id, config) in providers {
+        // ZCode 自管的内置节点（builtin: 前缀，由桌面版的供应商家族设置管理）
+        // 不归 CC Switch 管：不导入，也不允许从 CC Switch 删除。
+        if id.starts_with("builtin:") {
+            log::debug!("Skipping ZCode built-in provider '{id}'");
+            continue;
+        }
         // Convert to Value for settings_config
         let settings_config = match serde_json::to_value(&config) {
             Ok(v) => v,

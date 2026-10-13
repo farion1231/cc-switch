@@ -243,11 +243,18 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
     // request_id 加前缀防跨源冲突
     let request_id = format!("zcode_session:{}", row.id);
 
-    // 只按 request_id 精确去重：model_usage.id 唯一，足以保证幂等。
-    // 不走指纹去重（DedupKey）——created_at 是秒级精度，同一秒内完成、
-    // token 完全相同的两次调用（典型：并行 subagent）会被误判为重复，
-    // 导致真实记录被永久跳过。
-    if proxy_request_id_exists(&conn, &request_id)? {
+    // 去重必须同时查 session_usage_dedup 台账：proxy_request_logs 里 30 天前
+    // 的明细会被 rollup_and_prune 删掉，只查它的话旧行会被重新导入并再次
+    // 滚入日汇总，历史总量无限膨胀。台账在清理时保留，参见 Pi 导入器。
+    // 只用 request_id 精确判重：model_usage.id 唯一，不走指纹去重——
+    // created_at 是秒级精度，同一秒内完成、token 完全相同的两次调用
+    // （典型：并行 subagent）会被误判为重复，导致真实记录被永久跳过。
+    let seen: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE data_source = ?1 AND request_id = ?2)",
+        rusqlite::params!["zcode_session", request_id],
+        |r| r.get(0),
+    )?;
+    if seen || proxy_request_id_exists(&conn, &request_id)? {
         return Ok(false);
     }
 
@@ -328,6 +335,18 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
     )
     .map_err(|e| AppError::Database(format!("插入 ZCode 会话日志失败: {e}")))?;
 
+    // 同步记账到去重台账：proxy_request_logs 里 30 天前的明细会被清理，
+    // 台账不清理，保证旧行不会被再次导入并重复滚入日汇总。
+    if inserted_rows > 0 {
+        conn.execute(
+            "INSERT OR IGNORE INTO session_usage_dedup
+             (data_source, request_id, semantic_id, has_entry_id)
+             VALUES (?1, ?2, ?2, 1)",
+            rusqlite::params!["zcode_session", request_id],
+        )
+        .map_err(|e| AppError::Database(format!("写入 ZCode 用量去重账本失败: {e}")))?;
+    }
+
     Ok(inserted_rows > 0)
 }
 
@@ -369,5 +388,53 @@ mod tests {
         assert_eq!(rows[0].input_tokens, 1000);
         assert_eq!(rows[0].reasoning_tokens, 50);
         assert_eq!(rows[0].cache_read_tokens, 300);
+    }
+
+    /// 回归测试（维护者审查 P1）：明细清理后，台账必须挡住旧行的重复导入，
+    /// 否则每次同步+清理循环都会把同一行再滚入日汇总一次，历史无限膨胀。
+    #[test]
+    fn old_rows_survive_prune_and_resync_without_reimport() -> Result<(), AppError> {
+        let source = rusqlite::Connection::open_in_memory()?;
+        source.execute_batch(
+            "CREATE TABLE model_usage (
+                id TEXT, provider_id TEXT, model_id TEXT,
+                input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER,
+                cache_read_input_tokens INTEGER, cache_creation_input_tokens INTEGER,
+                duration_ms INTEGER, time_to_first_token_ms INTEGER,
+                status TEXT, started_at INTEGER, session_id TEXT
+             );
+             INSERT INTO model_usage VALUES
+                ('old', 'bigmodel', 'GLM-5.2', 1000, 100, 0, 0, 0, NULL, NULL, 'completed', 1700000000000, 's1');",
+        )?;
+
+        let db = crate::database::Database::memory()?;
+        let row = query_model_usage(&source)?.remove(0);
+
+        // 第一轮：导入 + 清理（旧行进入日汇总、明细被删）
+        assert!(insert_zcode_usage(&db, &row)?);
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            let details: i64 =
+                conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |r| r.get(0))?;
+            assert_eq!(details, 0, "40 天前的明细应被清理");
+        }
+
+        // 第二轮：源行还在（ZCode 侧保留全量），台账必须拒绝重复导入
+        let row_again = query_model_usage(&source)?.remove(0);
+        assert!(!insert_zcode_usage(&db, &row_again)?);
+        assert_eq!(db.rollup_and_prune(30)?, 0);
+
+        // 日汇总仍是一份的量，没有翻倍
+        let rolled: i64 = {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.query_row(
+                "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM usage_daily_rollups",
+                [],
+                |r| r.get(0),
+            )?
+        };
+        assert_eq!(rolled, 1100, "日汇总不应被重复累计");
+        Ok(())
     }
 }

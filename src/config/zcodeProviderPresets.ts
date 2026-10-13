@@ -13,7 +13,6 @@ export const zcodeProviderKinds = [
 
 export interface ZCodeProviderPreset {
   name: string;
-  nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
   apiKeyUrl?: string;
   settingsConfig: ZCodeProviderConfig;
@@ -41,7 +40,6 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
   // ===== Z.AI / BigModel (智谱) — Anthropic-compatible coding endpoints =====
   {
     name: "Z.ai API Key",
-    nameKey: "providerForm.presets.zaiApiKey",
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
@@ -71,7 +69,6 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
   },
   {
     name: "BigModel API Key",
-    nameKey: "providerForm.presets.bigmodelApiKey",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://open.bigmodel.cn",
     settingsConfig: {
@@ -103,7 +100,6 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
   // ===== Other official CN providers observed in ZCode catalog =====
   {
     name: "Moonshot Kimi",
-    nameKey: "providerForm.presets.moonshotKimi",
     websiteUrl: "https://platform.moonshot.cn",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
@@ -132,7 +128,6 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
   },
   {
     name: "DeepSeek",
-    nameKey: "providerForm.presets.deepseek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",
     settingsConfig: {
@@ -161,7 +156,6 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
   },
   {
     name: "MiniMax",
-    nameKey: "providerForm.presets.minimax",
     websiteUrl: "https://platform.minimaxi.com",
     apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
     settingsConfig: {
@@ -190,7 +184,6 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
   },
   {
     name: "Qwen",
-    nameKey: "providerForm.presets.qwen",
     websiteUrl: "https://bailian.console.aliyun.com",
     apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
     settingsConfig: {
@@ -219,7 +212,6 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
   },
   {
     name: "Xiaomi MiMo",
-    nameKey: "providerForm.presets.xiaomiMimo",
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
     settingsConfig: {
@@ -254,7 +246,6 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
   // ===== Custom template =====
   {
     name: "Custom OpenAI-Compatible",
-    nameKey: "providerForm.presets.customOpenAICompatible",
     websiteUrl: "",
     settingsConfig: {
       name: "Custom OpenAI-Compatible",
