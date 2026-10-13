@@ -22,6 +22,7 @@ use serde_json::{json, Value};
 use tokio::sync::OwnedMutexGuard;
 
 use crate::app_config::AppType;
+use crate::claude_desktop_config::{self, DesktopTarget};
 use crate::error::AppError;
 use crate::live::engine::DeviceStore;
 use crate::live::project::claude::{
@@ -43,12 +44,14 @@ use super::operation;
 use super::stack::{self, StackModel, StackView};
 use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
-/// 支持代理模式的应用。
-pub const PROXY_APPS: [AppType; 4] = [
+/// 有路由模式的应用（[`AppType::has_route_mode`]）。Claude Desktop 也在内：它经同一个路由
+/// 服务转发，只是没有故障转移。
+pub const PROXY_APPS: [AppType; 5] = [
     AppType::Claude,
     AppType::Codex,
     AppType::Gemini,
     AppType::GrokBuild,
+    AppType::ClaudeDesktop,
 ];
 
 fn err(error: impl std::fmt::Display) -> String {
@@ -485,6 +488,21 @@ async fn write_proxy(
             .map_err(err)?;
             unchanged
         }
+        AppType::ClaudeDesktop => {
+            let profile =
+                claude_desktop_config::route_profile(&state.db, route, &proxy_url).map_err(err)?;
+            let contract = contract::claude_desktop(&profile);
+            let unchanged = !force && live_now.has_contract(&contract.key);
+            target.contract = Some(contract);
+            claude_desktop_config::run(
+                &state.db,
+                op_name,
+                (!unchanged).then_some(DesktopTarget::Profile(&profile)),
+                pending(target),
+            )
+            .map_err(err)?;
+            unchanged
+        }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     };
     Ok(!unchanged)
@@ -574,6 +592,22 @@ fn write_direct(
             )
             .map_err(err)?;
         }
+        AppType::ClaudeDesktop => {
+            // 直连那家写不进去（模型映射卡、配置不全）也不能让 Desktop 一直指着路由：退回官方。
+            let profile = if attached {
+                claude_desktop_config::direct_target(direct.as_ref()).unwrap_or_else(|error| {
+                    log::warn!("写回直连的 Claude Desktop 配置失败，改为官方: {error}");
+                    None
+                })
+            } else {
+                None
+            };
+            let write = attached.then_some(match &profile {
+                Some(profile) => DesktopTarget::Profile(profile),
+                None => DesktopTarget::Official,
+            });
+            claude_desktop_config::run(&state.db, op_name, write, pending_target).map_err(err)?;
+        }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     }
     Ok(())
@@ -619,7 +653,7 @@ fn usable_direct<'a>(app: &AppType, direct: Option<&'a Provider>) -> Option<&'a 
 }
 
 fn require_proxy_app(app: &AppType) -> Result<(), String> {
-    if app.supports_local_proxy() {
+    if app.has_route_mode() {
         Ok(())
     } else {
         Err(format!("{} 不支持本地路由", app.as_str()))
@@ -654,12 +688,12 @@ pub(crate) async fn lock_settled(
     Ok(guard)
 }
 
-/// 同步代码里用的 [`lock_settled`]。不支持代理的应用没有模式可以被并发改掉，不拿锁。
+/// 同步代码里用的 [`lock_settled`]。没有路由模式的应用没有模式可以被并发改掉，不拿锁。
 pub(crate) fn lock_settled_blocking(
     state: &AppState,
     app: &AppType,
 ) -> Result<Option<OwnedMutexGuard<()>>, AppError> {
-    if !app.supports_local_proxy() {
+    if !app.has_route_mode() {
         return Ok(None);
     }
     futures::executor::block_on(lock_settled(state, app)).map(Some)
@@ -842,8 +876,7 @@ pub async fn exit_apps_in_mode(state: &AppState, stack: bool) -> Result<Vec<Stri
         }
         exited.push(app.as_str().to_string());
     }
-    // 没有应用退出时服务不是这次用的：可能是用户手动开的，或者 Claude Desktop 的模型映射
-    // 在用，别停。
+    // 没有应用退出时服务不是这次用的：可能是用户手动开的，或者别的应用在用，别停。
     if !exited.is_empty() {
         stop_server_if_unused(state).await;
     }
@@ -913,11 +946,9 @@ fn write_direct_for_exit(
     )
 }
 
-/// 没有应用在代理模式、Claude Desktop 也没在用模型映射时，停掉代理服务。
+/// 没有应用在代理模式（含 Claude Desktop 的路由模式）时，停掉代理服务。
 async fn stop_server_if_unused(state: &AppState) {
-    if current::proxy_flags(PROXY_APPS).contains(&true)
-        || crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
-    {
+    if current::proxy_flags(PROXY_APPS).contains(&true) {
         return;
     }
     if state.proxy_service.is_running().await {
@@ -925,29 +956,6 @@ async fn stop_server_if_unused(state: &AppState) {
             log::warn!("停止代理服务失败: {error}");
         }
     }
-}
-
-/// Claude Desktop 的当前供应商是模型映射卡、代理服务却没在跑时把它拉起来：启动、切到映射卡、
-/// 应用项目之后各调一次。拉不起来只记日志，Desktop 页的状态横幅会提示服务没在运行。
-pub async fn ensure_desktop_mapping_service(state: &AppState) {
-    if !crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
-        || state.proxy_service.is_running().await
-    {
-        return;
-    }
-    if let Err(error) = state.proxy_service.start().await {
-        log::error!("Claude Desktop 正在用模型映射，启动代理服务失败: {error}");
-    }
-}
-
-/// Claude Desktop 换卡（切换、应用项目）之后对齐代理服务：从映射卡换走时，别人也不用就停掉；
-/// 换上映射卡时拉起来。`was_mapping` 是换卡前的 `current_provider_uses_proxy`：只在映射卡
-/// 被换走时才去停，别的换卡不碰服务，免得停掉用户在设置页手动开的服务。
-pub async fn sync_desktop_mapping_service(state: &AppState, was_mapping: bool) {
-    if was_mapping && !crate::claude_desktop_config::current_provider_uses_proxy(&state.db) {
-        stop_server_if_unused(state).await;
-    }
-    ensure_desktop_mapping_service(state).await;
 }
 
 /// 「关闭本地路由」：全部退回直连，再停掉代理服务。
@@ -979,8 +987,15 @@ pub async fn exit_all(state: &AppState) -> Result<(), String> {
 
 /// 退出 CC Switch 时：把接上代理的客户端都指回直连（模式不变，下次启动再接上），再停掉
 /// 代理服务。
+///
+/// Claude Desktop 不分离：它只在启动时读配置，运行中的 Desktop 改了文件也照样连着路由；
+/// 分离反而会在 CC Switch 关着时把 Desktop 换成直连那家（映射卡写不进去时是官方登录），
+/// 下次打开 CC Switch 又换回来，每次都要重启 Desktop。
 pub async fn detach_all(state: &AppState) {
-    for app in PROXY_APPS {
+    for app in PROXY_APPS
+        .into_iter()
+        .filter(|app| *app != AppType::ClaudeDesktop)
+    {
         let result = match lock_settled(state, &app).await {
             Ok(_guard) => exit_locked(state, &app, true),
             Err(error) => Err(error.to_string()),
@@ -1608,7 +1623,6 @@ pub async fn startup(state: &AppState) {
     }
     // 接上失败退回直连的应用可能已经把代理拉起来了。
     stop_server_if_unused(state).await;
-    ensure_desktop_mapping_service(state).await;
     // 记一次新启动的 Codex 会读到的目录：兜住启动时补完的操作和 CC Switch 没开时的外部修改。
     codex_client_catalog::observe(&DeviceStore::for_device());
 }
@@ -1619,7 +1633,13 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
     // 新版自己接上时写的占位符不算遗留物（比如重启更新时没来得及分离）。
     let placeholder = !mode.attached && state.proxy_service.live_has_proxy_placeholder(app);
     let legacy = had_backup || placeholder;
-    let (enabled, _) = state.db.get_proxy_flags_sync(app.as_str());
+    let enabled = if *app == AppType::ClaudeDesktop {
+        // 旧版按卡片决定 Desktop 走不走路由：直连指针是模型映射卡就是在用路由。只在第一次
+        // （模式还没有值）时看，路由到的就是这张卡（进入时路由没有值，用直连指针初始化）。
+        mode.mode.is_none() && claude_desktop_config::legacy_mapping_card(&state.db).is_some()
+    } else {
+        state.db.get_proxy_flags_sync(app.as_str()).0
+    };
     let want_proxy = if legacy {
         enabled
     } else {
@@ -5750,10 +5770,85 @@ model_provider = "c"
         assert_eq!(stack_state().members, vec!["kimi", "a"], "the list stays");
     }
 
+    /// Claude Desktop 的配置目录在 Linux 跟 `XDG_CONFIG_HOME`、在 Windows 跟 `LOCALAPPDATA`：
+    /// 测试里一并指到临时目录，别写到真实的 Desktop 配置。
+    struct DesktopDirs {
+        saved: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl DesktopDirs {
+        fn under(home: &Home) -> Self {
+            let saved = ["XDG_CONFIG_HOME", "LOCALAPPDATA"]
+                .into_iter()
+                .map(|key| {
+                    let old = std::env::var_os(key);
+                    std::env::set_var(key, home.dir.path());
+                    (key, old)
+                })
+                .collect();
+            Self { saved }
+        }
+    }
+
+    impl Drop for DesktopDirs {
+        fn drop(&mut self) {
+            for (key, old) in self.saved.drain(..) {
+                match old {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    fn desktop_card(id: &str, mapping: bool) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            id.to_uppercase(),
+            json!({ "env": {
+                "ANTHROPIC_BASE_URL": format!("https://{id}.example"),
+                "ANTHROPIC_AUTH_TOKEN": format!("sk-{id}"),
+            }}),
+            None,
+        );
+        let (mode, upstream) = if mapping {
+            (crate::provider::ClaudeDesktopMode::Proxy, "kimi-k3")
+        } else {
+            (
+                crate::provider::ClaudeDesktopMode::Direct,
+                "claude-sonnet-5",
+            )
+        };
+        provider.meta = Some(crate::provider::ProviderMeta {
+            claude_desktop_mode: Some(mode),
+            claude_desktop_model_routes: [(
+                "claude-sonnet-5".to_string(),
+                crate::provider::ClaudeDesktopModelRoute {
+                    model: upstream.to_string(),
+                    label_override: None,
+                    supports_1m: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        });
+        provider
+    }
+
+    fn desktop_profile() -> Value {
+        let path = crate::claude_desktop_config::get_config_library_path()
+            .expect("desktop paths")
+            .join(format!("{}.json", crate::claude_desktop_config::PROFILE_ID));
+        serde_json::from_slice(&std::fs::read(path).expect("read desktop profile"))
+            .expect("parse desktop profile")
+    }
+
     #[tokio::test]
     #[serial]
-    async fn claude_desktop_model_mapping_keeps_the_server_running() {
-        let _home = Home::new();
+    async fn claude_desktop_route_mode_writes_the_gateway_and_keeps_the_server_running() {
+        let home = Home::new();
+        let _dirs = DesktopDirs::under(&home);
         seed_settings(USER_SETTINGS);
         let state = state_with(
             AppType::Claude,
@@ -5761,52 +5856,86 @@ model_provider = "c"
             "a",
         )
         .await;
-        let mut mapping = Provider::with_id(
-            "map".to_string(),
-            "Map".to_string(),
-            json!({ "env": { "ANTHROPIC_BASE_URL": "https://map.example" } }),
-            None,
+        let desktop = AppType::ClaudeDesktop;
+        for card in [desktop_card("direct", false), desktop_card("map", true)] {
+            state
+                .db
+                .save_provider(desktop.as_str(), &card)
+                .expect("save desktop card");
+        }
+        crate::settings::set_current_provider(&desktop, Some("direct")).expect("desktop current");
+
+        // 路由模式：Desktop 指向本地路由的 /claude-desktop，模型列表是路由那家的映射表。
+        enter_with_route(&state, &desktop, false, Some("map"))
+            .await
+            .expect("enter desktop route");
+        assert!(current::is_proxy(&desktop));
+        assert!(state.proxy_service.is_running().await);
+        let profile = desktop_profile();
+        assert!(profile["inferenceGatewayBaseUrl"]
+            .as_str()
+            .is_some_and(|url| url.ends_with("/claude-desktop")));
+        assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-5"]));
+        assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
+
+        // Claude Code 退出路由时，Desktop 还在路由模式，服务不能跟着停。
+        enter(&state, &AppType::Claude, false).await.expect("enter");
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert!(state.proxy_service.is_running().await);
+
+        // 退出 CC Switch 不分离 Desktop：它只在启动时读配置。
+        detach_all(&state).await;
+        assert!(current::mode_state(&desktop).attached);
+        assert!(desktop_profile()["inferenceGatewayBaseUrl"]
+            .as_str()
+            .is_some_and(|url| url.ends_with("/claude-desktop")));
+
+        // 退回直连：写回直连那家，没人在用路由了，服务停掉。
+        state.proxy_service.start().await.expect("restart");
+        exit(&state, &desktop).await.expect("exit desktop");
+        assert!(!current::is_proxy(&desktop));
+        assert!(!state.proxy_service.is_running().await);
+        assert_eq!(
+            desktop_profile()["inferenceGatewayBaseUrl"],
+            json!("https://direct.example")
         );
-        mapping.meta = Some(crate::provider::ProviderMeta {
-            claude_desktop_mode: Some(crate::provider::ClaudeDesktopMode::Proxy),
-            ..Default::default()
-        });
+        assert_eq!(
+            current::mode_state(&desktop).proxy_route.as_deref(),
+            Some("map"),
+            "the route is kept for next time"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_desktop_on_a_mapping_card_starts_in_route_mode_after_upgrade() {
+        let home = Home::new();
+        let _dirs = DesktopDirs::under(&home);
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
         let desktop = AppType::ClaudeDesktop;
         state
             .db
-            .save_provider(desktop.as_str(), &mapping)
-            .expect("save mapping provider");
+            .save_provider(desktop.as_str(), &desktop_card("map", true))
+            .expect("save mapping card");
         crate::settings::set_current_provider(&desktop, Some("map")).expect("desktop current");
 
-        // Claude Code 退出路由时，Desktop 还在用模型映射，服务不能跟着停。
-        enter(&state, &AppType::Claude, false).await.expect("enter");
-        exit(&state, &AppType::Claude).await.expect("exit");
+        startup(&state).await;
+
+        let mode = current::mode_state(&desktop);
+        assert!(mode.is_proxy() && mode.attached);
+        assert_eq!(mode.proxy_route.as_deref(), Some("map"));
         assert!(state.proxy_service.is_running().await);
 
-        // 服务被手动停掉后，下一次检查（启动、切换、应用项目）会把它拉起来。
-        state.proxy_service.stop().await.expect("stop");
-        ensure_desktop_mapping_service(&state).await;
-        assert!(state.proxy_service.is_running().await);
-
-        // 从映射卡换走时 Claude Code 还在路由：服务留着，等它退出路由时再停。
-        enter(&state, &AppType::Claude, false).await.expect("enter");
-        crate::settings::set_current_provider(&desktop, None).expect("clear desktop current");
-        state
-            .db
-            .delete_provider(desktop.as_str(), "map")
-            .expect("drop mapping");
-        sync_desktop_mapping_service(&state, true).await;
-        assert!(state.proxy_service.is_running().await);
-        exit(&state, &AppType::Claude).await.expect("exit");
-        assert!(!state.proxy_service.is_running().await);
-
-        // 换卡前就不是映射卡：用户在设置页手动开的服务不碰。
-        state.proxy_service.start().await.expect("manual start");
-        sync_desktop_mapping_service(&state, false).await;
-        assert!(state.proxy_service.is_running().await);
-
-        // 从映射卡换走、没人在用：顺手停掉。
-        sync_desktop_mapping_service(&state, true).await;
+        // 第二次启动按已定下的模式接上，不再看卡片。
+        exit(&state, &desktop).await.expect("exit desktop");
+        startup(&state).await;
+        assert!(!current::is_proxy(&desktop));
         assert!(!state.proxy_service.is_running().await);
     }
 
