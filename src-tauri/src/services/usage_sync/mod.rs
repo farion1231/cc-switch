@@ -103,6 +103,17 @@ where
     .map_err(|e| AppError::Message(format!("usage sync task failed: {e}")))?
 }
 
+/// CPU-bound work (JSON, gzip, SHA-256) off the async runtime and outside the DB lock.
+async fn cpu<T, F>(work: F) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, AppError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|e| AppError::Message(format!("usage sync task failed: {e}")))?
+}
+
 // ─── Options & reports ───────────────────────────────────────
 
 /// Inputs of one sync run that do not come from the database.
@@ -248,8 +259,26 @@ async fn upload_phase(
     let mut partitions: BTreeMap<String, PartitionMeta> = BTreeMap::new();
     let mut dir_prepared = false;
 
-    for (key, segment) in &export.partitions {
-        let encoded = encode_segment(segment)?;
+    let coverage = export.coverage.clone();
+    let encoded_parts = cpu(move || {
+        export
+            .partitions
+            .into_iter()
+            .map(|(key, segment)| {
+                let encoded = encode_segment(&segment)?;
+                Ok((
+                    key,
+                    segment.logs.len() as u64,
+                    segment.rollups.len() as u64,
+                    encoded,
+                ))
+            })
+            .collect::<Result<Vec<_>, AppError>>()
+    })
+    .await?;
+
+    for (key, log_count, rollup_count, encoded) in encoded_parts {
+        let key = &key;
         if let Some(existing) = remote_partitions
             .get(key)
             .filter(|meta| meta.content_sha256 == encoded.content_sha256)
@@ -287,8 +316,8 @@ async fn upload_phase(
                 sha256: encoded.sha256,
                 size,
                 content_sha256: encoded.content_sha256,
-                logs: segment.logs.len() as u64,
-                rollups: segment.rollups.len() as u64,
+                logs: log_count,
+                rollups: rollup_count,
             },
         );
     }
@@ -357,7 +386,7 @@ async fn upload_phase(
                 || remote.device_name != device_name
                 || remote.detail_level != detail_level
                 || remote.app_version != options.app_version
-                || remote.coverage != export.coverage
+                || remote.coverage != coverage
                 || remote.version != USAGE_PROTOCOL_VERSION
                 || options.now - remote.updated_at >= HEARTBEAT_SECS
         }
@@ -385,7 +414,7 @@ async fn upload_phase(
         updated_at: options.now,
         detail_level,
         utc_offset_minutes,
-        coverage: export.coverage,
+        coverage,
         partitions,
         retired,
     };
@@ -492,8 +521,15 @@ async fn sync_remote_device(
                     format!("Remote usage object is missing: {}", meta.object),
                 )
             })?;
-        let segment = decode_segment(&bytes, meta)?;
-        validate_segment(&segment, device_id, key)?;
+        let segment = {
+            let (meta, key, device_id) = (meta.clone(), key.clone(), device_id.to_string());
+            cpu(move || {
+                let segment = decode_segment(&bytes, &meta)?;
+                validate_segment(&segment, &device_id, &key)?;
+                Ok(segment)
+            })
+            .await?
+        };
         changed.push((key.clone(), meta.clone(), segment));
     }
     let removed: Vec<String> = cached

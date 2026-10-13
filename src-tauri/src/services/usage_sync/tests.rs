@@ -1255,3 +1255,128 @@ impl FailingDeletes {
         assert_eq!(self.inner.get(&path, usize::MAX).unwrap(), Some(bytes));
     }
 }
+
+/// Opt-in timing check: 50k local rows plus 3 remote devices × 50k cached rows.
+/// `cargo test --release --lib usage_sync::tests::perf_ -- --ignored --nocapture`
+#[tokio::test]
+#[ignore]
+async fn perf_all_scope_queries_on_large_caches() {
+    let cloud = remote();
+    let devices: Vec<Device> = ["A", "B", "C", "D"].into_iter().map(Device::new).collect();
+    let now = chrono::Utc::now().timestamp();
+    for (d, device) in devices.iter().enumerate() {
+        let conn = device.db.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                        cache_read_tokens, input_token_semantics, total_cost_usd, latency_ms,
+                        status_code, created_at, data_source
+                     ) VALUES (?1, ?2, ?3, ?4, 1000, 200, 500, 2, '0.0123', 900, 200, ?5, ?6)",
+                )
+                .unwrap();
+            for i in 0..50_000i64 {
+                // Every 10th record is a session record shared by all devices.
+                let (id, source) = if i % 10 == 0 {
+                    (format!("session:shared-{i}"), "session_log")
+                } else {
+                    (format!("dev{d}-{i}"), "proxy")
+                };
+                stmt.execute(rusqlite::params![
+                    id,
+                    format!("prov-{}", i % 7),
+                    ["claude", "codex", "gemini"][(i % 3) as usize],
+                    format!("model-{}", i % 11),
+                    now - (i * 50) % (29 * 86_400),
+                    source,
+                ])
+                .unwrap();
+            }
+        }
+        tx.commit().unwrap();
+    }
+    let export_lock = {
+        let conn = devices[1].db.conn.lock().unwrap();
+        let t = std::time::Instant::now();
+        let export = store::export_local(&conn, "perf", UsageSyncDetailLevel::Records).unwrap();
+        assert_eq!(
+            export
+                .partitions
+                .values()
+                .map(|p| p.logs.len())
+                .sum::<usize>(),
+            50_000
+        );
+        t.elapsed()
+    };
+    println!("export of 50k rows (DB lock held): {export_lock:?}");
+    let started = std::time::Instant::now();
+    for device in &devices[1..] {
+        device.sync(&cloud).await;
+    }
+    let upload = started.elapsed();
+    let started = std::time::Instant::now();
+    devices[0].sync(&cloud).await;
+    let download = started.elapsed();
+    let a = &devices[0];
+    let time = |label: &str, f: &dyn Fn()| {
+        let t = std::time::Instant::now();
+        f();
+        let elapsed = t.elapsed();
+        println!("{label}: {elapsed:?}");
+        elapsed
+    };
+    let start = Some(now - 30 * 86_400);
+    let end = Some(now);
+    let all = UsageDeviceScope::All;
+    let mut worst = std::time::Duration::ZERO;
+    for elapsed in [
+        time("summary(all, 30d)", &|| {
+            a.db.get_usage_summary_scoped(start, end, None, None, None, &all)
+                .unwrap();
+        }),
+        time("trends(all, 30d)", &|| {
+            a.db.get_daily_trends_scoped(start, end, None, None, None, &all)
+                .unwrap();
+        }),
+        time("provider stats(all, 30d)", &|| {
+            a.db.get_provider_stats_scoped(start, end, None, None, None, &all)
+                .unwrap();
+        }),
+        time("model stats(all, 30d)", &|| {
+            a.db.get_model_stats_scoped(start, end, None, None, None, &all)
+                .unwrap();
+        }),
+        time("request logs page(all)", &|| {
+            a.db.get_request_logs(
+                &crate::services::usage_stats::LogFilters {
+                    device: Some("all".into()),
+                    start_date: start,
+                    end_date: end,
+                    ..Default::default()
+                },
+                0,
+                20,
+            )
+            .unwrap();
+        }),
+        time("summary(local, 30d)", &|| {
+            a.db.get_usage_summary(start, end, None, None, None)
+                .unwrap();
+        }),
+    ] {
+        worst = worst.max(elapsed);
+    }
+    println!("upload 3×50k: {upload:?}; download 150k: {download:?}");
+    let summary = a.summary(UsageDeviceScope::All);
+    // 4 devices × 45k own records + 5k shared session records counted once.
+    assert_eq!(summary.total_requests, 4 * 45_000 + 5_000);
+    let objects: usize = cloud.objects.lock().unwrap().values().map(Vec::len).sum();
+    println!("remote bytes for 3 devices: {objects}");
+    assert!(
+        worst < std::time::Duration::from_secs(10),
+        "worst query {worst:?}"
+    );
+}
