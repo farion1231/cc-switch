@@ -1494,6 +1494,14 @@ fn load_parent_timeline(
     Ok(timeline)
 }
 
+/// 父线程的一个分段（首页或某个续写页），可能有多份内容一致的副本。
+struct ParentSegment {
+    rollout_id: Option<String>,
+    timeline: Arc<ParentTokenTimeline>,
+    /// 各副本中最早的末尾时间。
+    max_timestamp: Option<DateTime<Utc>>,
+}
+
 fn resolve_parent_signatures(
     parent_id: &str,
     cutoff: DateTime<Utc>,
@@ -1517,29 +1525,42 @@ fn resolve_parent_signatures(
         max_timestamp: None,
         has_token_without_timestamp: false,
     };
-    let mut segments: Vec<(Option<String>, Arc<ParentTokenTimeline>)> = Vec::new();
+    let mut segments: Vec<ParentSegment> = Vec::new();
     let mut latest_path: Option<&Path> = None;
     for candidate in ordered {
         let timeline = load_parent_timeline(candidate)?;
         // 无论是否为重复副本，只要任一候选存在无时间戳错误标志，必须合入以保留防御校验
         merged.has_token_without_timestamp |= timeline.has_token_without_timestamp;
         let rollout_id = thread_id_from_filename(candidate);
-        if let Some((_, first)) = segments.iter().find(|(id, _)| *id == rollout_id) {
-            if first.signatures_at(cutoff) != timeline.signatures_at(cutoff) {
+        if let Some(segment) = segments
+            .iter_mut()
+            .find(|segment| segment.rollout_id == rollout_id)
+        {
+            if segment.timeline.signatures_at(cutoff) != timeline.signatures_at(cutoff) {
                 return Err(ParentSignatureError::content(format!(
                     "父 rollout UUID {parent_id} 对应多个内容不一致的文件"
                 )));
             }
+            // 同一 rollout 的每份副本都必须写到 fork 时刻：该段取各副本中最早的
+            // 末尾时间，结果不随副本顺序变化。
+            segment.max_timestamp = match (segment.max_timestamp, timeline.max_timestamp) {
+                (Some(current), Some(other)) => Some(current.min(other)),
+                _ => None,
+            };
             continue;
         }
         merged.events.extend(timeline.events.iter().cloned());
-        merged.max_timestamp = match (merged.max_timestamp, timeline.max_timestamp) {
-            (Some(current), Some(other)) => Some(current.max(other)),
-            (current, other) => current.or(other),
-        };
-        segments.push((rollout_id, timeline));
+        segments.push(ParentSegment {
+            rollout_id,
+            max_timestamp: timeline.max_timestamp,
+            timeline,
+        });
         latest_path = Some(candidate.as_path());
     }
+    merged.max_timestamp = segments
+        .iter()
+        .filter_map(|segment| segment.max_timestamp)
+        .max();
     let Some(latest_path) = latest_path else {
         return Err(ParentSignatureError::transient(format!(
             "找不到父 rollout: {parent_id}"
@@ -3722,9 +3743,6 @@ mod tests {
         Ok(())
     }
 
-    /// paginated 线程翻页后，续写页是 `<threadId>_<rolloutId>` 双段文件名，
-    /// 首页从此不再增长。之后 spawn 的子代理 fork 时刻晚于首页最后事件，
-    /// 父时间线必须把首页与续写页拼起来看，否则子代理会被永久 deferred。
     #[test]
     #[serial_test::serial]
     fn test_duplicate_parent_replica_with_missing_timestamp_rejects_both_orders(
@@ -3786,6 +3804,9 @@ mod tests {
         Ok(())
     }
 
+    /// paginated 线程翻页后，续写页是 `<threadId>_<rolloutId>` 双段文件名，
+    /// 首页从此不再增长。之后 spawn 的子代理 fork 时刻晚于首页最后事件，
+    /// 父时间线必须把首页与续写页拼起来看，否则子代理会被永久 deferred。
     #[test]
     #[serial_test::serial]
     fn test_paginated_parent_pages_are_merged_before_fork_cutoff() -> Result<(), AppError> {
