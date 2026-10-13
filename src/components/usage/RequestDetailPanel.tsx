@@ -227,7 +227,7 @@ function useDetailSections(request: RequestLog) {
 
   let performance: DetailRow[];
   if (!isProxy) {
-    // 会话日志没有首字计时；耗时是导入时按日志时间戳估的（0 = 没估出来）
+    // 会话日志的耗时和首字是导入时按日志时间戳估的（耗时 0 = 没估出来）
     if (latency == null || latency <= 0) {
       performance = [
         {
@@ -261,6 +261,14 @@ function useDetailSections(request: RequestLog) {
           title: `${fmtInt(latency, locale)} ms`,
         },
       ];
+      // 首字也是按时间戳推出来的；第一块不是思考、或 Codex 一开头就调工具时推不出来
+      if (firstToken != null) {
+        performance.splice(1, 0, {
+          key: "ttft",
+          label: t("usage.detail.firstTokenEstimated"),
+          value: `${(firstToken / 1000).toFixed(1)}s`,
+        });
+      }
     }
   } else {
     const speedRow: DetailRow =

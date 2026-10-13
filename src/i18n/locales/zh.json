@@ -581,7 +581,7 @@
         },
         "codexHistoryProviderMigration": {
           "name": "Codex 会话分组迁移备份",
-          "hint": "第三方会话分组迁移前留的副本，CC Switch 不会再读取。"
+          "hint": "会话分组迁移前留的副本，CC Switch 不会再读取。"
         },
         "liveFirstWrite": {
           "name": "配置文件首次写入备份",
@@ -1590,7 +1590,8 @@
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI",
-      "tuzi": "兔子API"
+      "tuzi": "兔子API",
+      "yylx": "鱼鱼连线"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -2379,11 +2380,17 @@
     "speedValue": "{{value}} tok/s",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "速度怎么算",
-    "speedHelp": "每秒输出多少 token，从首字算到结束。只算经路由服务、输出不少于 100 token 的请求；思考过程不外露的模型是近似值。带 ≈ 的是没开路由时按会话日志的时间戳估算的：没有首字计时，等首字的时间也算在内，所以偏低；只估输出不少于 200 token 的请求。",
+    "speedHelp": "每秒输出多少 token，从首字算到结束。只算经路由服务、输出不少于 100 token 的请求；思考过程不外露的模型是近似值。带 ≈ 的是没开路由时按会话日志的时间戳估算的：等首字的时间也算在内，所以偏低；只估输出不少于 200 token 的请求。",
     "speedSumHelpTitle": "汇总速度怎么算",
     "speedSumHelp": "输出 token 总数除以生成时间总和，不是逐条平均，免得短请求把数字带歪。只算经路由服务、输出不少于 100 token 的请求。带 ≈ 的是按会话日志估算的（含首字等待，只估输出不少于 200 token 的请求），这一行没有路由数据时才显示。",
+    "firstToken": "首字",
+    "firstTokenHelpTitle": "首字时间",
+    "firstTokenHelp": "从路由服务收到请求，到上游开始输出的时间。带 ≈ 的是没开路由时按会话日志的时间戳推出来的：起点是上一条日志写盘的时刻，含客户端组装请求的时间，所以偏高；Claude Code 只有回复以思考开头时推得出，Codex 只有新版日志、而且回复不是一开头就调工具时推得出。",
+    "firstTokenSumHelpTitle": "首字时间怎么算",
+    "firstTokenSumHelp": "从路由服务收到请求，到上游开始输出的时间。取这一行所有请求的中位数，不会被个别排队、冷启动的慢请求拉高。只算经路由服务、成功的流式请求；超过 30 天、已并入日汇总的请求不计。带 ≈ 的是按会话日志推出来的（偏高，只有部分请求推得出），这一行没有路由数据时才显示。",
     "timingTip": "耗时 {{duration}}s · 首字 {{ttft}}s",
     "estimatedTimingTip": "耗时约 {{duration}}s（按会话日志的时间戳估算，含首字等待）",
+    "estimatedTimingTipWithFirstToken": "耗时约 {{duration}}s · 首字约 {{ttft}}s（按会话日志的时间戳估算）",
     "cacheTip": "缓存命中 {{read}} · 缓存写入 {{write}}",
     "openRequestDetail": "查看请求详情：{{time}} {{provider}}",
     "prevPage": "上一页",
@@ -2400,6 +2407,7 @@
       "sourceSession": "会话日志",
       "total": "合计",
       "firstToken": "首字",
+      "firstTokenEstimated": "首字（估算）",
       "duration": "耗时",
       "durationEstimated": "耗时（估算）",
       "speedTooFew": "输出不到 100 token，不算速度",
@@ -2462,6 +2470,7 @@
     "templateCustom": "自定义",
     "templateGeneral": "通用模板",
     "templateNewAPI": "NewAPI",
+    "templateSub2API": "Sub2API",
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
     "templateBalance": "官方",
@@ -3384,11 +3393,18 @@
     "import": "导入",
     "importing": "导入中...",
     "warning": "请确认以上信息准确无误后再导入。导入后可在供应商列表中编辑或删除。",
+    "providerEnabledWarning": "导入后将立即切换到此供应商，客户端请求会改发到上面的地址",
+    "apiFormat": "接口格式",
+    "switchAfterImport": "导入后立即切换到这个供应商",
+    "addToAppAfterImport": "导入后立即添加到 {{app}} 配置",
+    "enableInPiAfterImport": "导入后立即在 Pi 中启用",
     "parseError": "深链接解析失败",
     "importSuccess": "导入成功",
     "importSuccessDescription": "供应商 \"{{name}}\" 已成功导入",
     "importError": "导入失败",
     "configSource": "配置来源",
+    "codexConfigScopeHint": "只导入其中属于这个供应商的设置（地址、鉴权、模型、推理强度等）；[features]、MCP、权限这类全局设置不会导入。",
+    "grokConfigScopeHint": "只导入 [models] default 指向的那张模型表（显示名、说明、接口类型、窗口等）；地址和 Key 用链接参数，其他模型表不导入。",
     "configEmbedded": "内嵌配置",
     "configRemote": "远程配置",
     "configDetails": "配置详情",
@@ -3411,7 +3427,8 @@
       "name": "名称",
       "description": "描述",
       "contentPreview": "内容预览",
-      "enabledWarning": "导入后将立即启用此提示词，其他提示词将被禁用"
+      "enabledWarning": "导入后将立即启用此提示词，其他提示词将被禁用",
+      "enableAfterImport": "导入后立即启用"
     },
     "skill": {
       "title": "添加 Claude Skill 仓库",
@@ -3443,6 +3460,32 @@
     "search": "搜索图标",
     "searchPlaceholder": "输入图标名称...",
     "noResults": "未找到匹配的图标",
+    "clear": "清除图标",
+    "myIcons": "我的图标",
+    "builtinIcons": "内置图标",
+    "myIconsEmpty": "上传的图片起好名字后存在这里，其他供应商也能直接选用。",
+    "currentIcon": "当前图标",
+    "saveToLibrary": "存入我的图标",
+    "saveCurrentTitle": "把当前图标存入「我的图标」",
+    "uploadTitle": "给图标起个名字",
+    "uploadDescription": "存进「我的图标」后，其他供应商也能直接选用。",
+    "saveAndUse": "保存并使用",
+    "renameTitle": "重命名图标",
+    "rename": "重命名",
+    "delete": "删除",
+    "deleteTitle": "删除图标",
+    "deleteMessage": "从「我的图标」中删除「{{name}}」？已经在用它的供应商不受影响。",
+    "alreadySaved": "这张图片已经在「我的图标」里了，名为「{{name}}」",
+    "nameLabel": "名称",
+    "namePlaceholder": "例如：我的中转站",
+    "upload": "上传",
+    "uploadHint": "支持 PNG、JPG、WebP、SVG，不超过 2 MB。图片会缩成小尺寸 PNG 存进「我的图标」，随云同步一起带走。",
+    "uploadError": {
+      "unsupported": "不支持这种图片格式，请选择 PNG、JPG、WebP 或 SVG",
+      "tooLarge": "图片超过 2 MB",
+      "decodeFailed": "无法读取这张图片，请换一张试试",
+      "dimensions": "图片尺寸太大（宽高不能超过 4096 像素）"
+    },
     "category": {
       "aiProvider": "AI 服务商",
       "cloud": "云平台",
@@ -4136,9 +4179,9 @@
     },
     "help": {
       "title": "连接模式的区别",
-      "direct": "直连：客户端直接连所选那家，切换即改写配置。",
-      "route": "路由：请求先过本机的 CC Switch，可开故障转移。",
-      "stack": "聚合：多家模型同列在 /model，不做故障转移。"
+      "direct": "直连：CC Switch 不经手任何请求，客户端直接连所选供应商，体验最原生。",
+      "route": "路由：请求经本机 CC Switch 转发，可热切换供应商，并支持故障转移、格式转换等高级功能。",
+      "stack": "聚合：多家供应商的模型同列在 /model，在客户端内即可无感切换。"
     }
   },
   "providerCard": {

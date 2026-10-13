@@ -54,6 +54,8 @@ export function BasicFormFields({
     const meta = getIconMetadata(icon);
     form.setValue("icon", icon);
     form.setValue("iconColor", meta?.defaultColor ?? "");
+    // 单选：点了就是选好了，不用再找「完成」
+    setIconDialogOpen(false);
   };
 
   const iconButton = (
@@ -116,14 +118,8 @@ export function BasicFormFields({
                 value={currentIcon}
                 onValueChange={handleIconSelect}
                 color={effectiveIconColor}
+                defaultName={form.watch("name") ?? ""}
               />
-              <div className="flex justify-end gap-2">
-                <DialogClose asChild>
-                  <Button type="button" variant="outline">
-                    {t("common.done", { defaultValue: "完成" })}
-                  </Button>
-                </DialogClose>
-              </div>
             </div>
           </div>
         </div>

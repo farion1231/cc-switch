@@ -581,7 +581,7 @@
         },
         "codexHistoryProviderMigration": {
           "name": "Codex セッショングループ移行バックアップ",
-          "hint": "サードパーティのセッショングループを移行する前のコピー。CC Switch が再び読み込むことはありません。"
+          "hint": "セッショングループを移行する前のコピー。CC Switch が再び読み込むことはありません。"
         },
         "liveFirstWrite": {
           "name": "設定ファイル初回書き込みバックアップ",
@@ -1590,7 +1590,8 @@
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI",
-      "tuzi": "Tu-zi"
+      "tuzi": "Tu-zi",
+      "yylx": "YYLX"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -2379,11 +2380,17 @@
     "speedValue": "{{value}} tok/s",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "速度の計算方法",
-    "speedHelp": "最初のトークンから終了までの 1 秒あたりの出力トークン数です。ルーティングサービス経由で出力が 100 トークン以上のリクエストのみ対象です。推論過程を出さないモデルでは近似値です。≈ 付きの値は、ルーティングを使っていないときにセッションログのタイムスタンプから推定したものです。最初のトークンの計測がなく、その待ち時間も含むため低めに出ます。出力が 200 トークン以上のリクエストのみ推定します。",
+    "speedHelp": "最初のトークンから終了までの 1 秒あたりの出力トークン数です。ルーティングサービス経由で出力が 100 トークン以上のリクエストのみ対象です。推論過程を出さないモデルでは近似値です。≈ 付きの値は、ルーティングを使っていないときにセッションログのタイムスタンプから推定したものです。最初のトークンまでの待ち時間も含むため低めに出ます。出力が 200 トークン以上のリクエストのみ推定します。",
     "speedSumHelpTitle": "集計速度の計算方法",
     "speedSumHelp": "出力トークンの合計を生成時間の合計で割った値です。短いリクエストに引きずられないよう、リクエストごとの平均にはしていません。ルーティングサービス経由で出力が 100 トークン以上のリクエストのみ対象です。≈ 付きの値はセッションログからの推定値（最初のトークンまでの待ち時間を含み、出力が 200 トークン以上のリクエストのみ対象）で、その行にルーティング経由のデータがないときだけ表示されます。",
+    "firstToken": "最初のトークン",
+    "firstTokenHelpTitle": "最初のトークンまでの時間",
+    "firstTokenHelp": "ルーティングサービスがリクエストを受けてから、上流が出力を始めるまでの時間です。≈ 付きの値は、ルーティングを使っていないときにセッションログのタイムスタンプから推定したものです。起点は直前のログ行が書き込まれた時刻なので、クライアント側でリクエストを組み立てる時間も含まれ、高めに出ます。Claude Code は返信が思考から始まる場合のみ、Codex は新しい形式のログで、返信が最初からツール呼び出しでない場合のみ推定できます。",
+    "firstTokenSumHelpTitle": "最初のトークンまでの時間の計算方法",
+    "firstTokenSumHelp": "ルーティングサービスがリクエストを受けてから、上流が出力を始めるまでの時間です。その行のリクエストの中央値を表示するので、キュー待ちやコールドスタートでたまに遅くなったリクエストに引きずられません。ルーティングサービス経由で成功したストリーミングリクエストのみ対象で、30 日を超えて日次集計に統合されたリクエストは含みません。≈ 付きの値はセッションログからの推定値（高めに出ます。推定できるのは一部のリクエストのみ）で、その行にルーティング経由のデータがないときだけ表示されます。",
     "timingTip": "所要 {{duration}}s · 最初のトークン {{ttft}}s",
     "estimatedTimingTip": "所要 約 {{duration}}s（セッションログのタイムスタンプから推定、最初のトークンまでの待ち時間を含む）",
+    "estimatedTimingTipWithFirstToken": "所要 約 {{duration}}s · 最初のトークン 約 {{ttft}}s（セッションログのタイムスタンプから推定）",
     "cacheTip": "キャッシュヒット {{read}} · キャッシュ書き込み {{write}}",
     "openRequestDetail": "リクエストの詳細を表示：{{time}} {{provider}}",
     "prevPage": "前のページ",
@@ -2400,6 +2407,7 @@
       "sourceSession": "セッションログ",
       "total": "合計",
       "firstToken": "最初のトークン",
+      "firstTokenEstimated": "最初のトークン（推定）",
       "duration": "所要時間",
       "durationEstimated": "所要時間（推定）",
       "speedTooFew": "出力が 100 トークン未満のため速度は出しません",
@@ -2462,6 +2470,7 @@
     "templateCustom": "カスタム",
     "templateGeneral": "General",
     "templateNewAPI": "NewAPI",
+    "templateSub2API": "Sub2API",
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
     "templateBalance": "公式",
@@ -3384,11 +3393,18 @@
     "import": "インポート",
     "importing": "インポート中...",
     "warning": "インポート前に内容を確認してください。後から一覧で編集・削除できます。",
+    "providerEnabledWarning": "インポート後すぐにこのプロバイダーへ切り替わり、クライアントのリクエストは上記のエンドポイントに送られます",
+    "apiFormat": "API 形式",
+    "switchAfterImport": "インポート後にこのプロバイダーへ切り替える",
+    "addToAppAfterImport": "インポート後に {{app}} の設定へ追加する",
+    "enableInPiAfterImport": "インポート後に Pi で有効にする",
     "parseError": "ディープリンクの解析に失敗しました",
     "importSuccess": "インポート成功",
     "importSuccessDescription": "プロバイダー「{{name}}」をインポートしました",
     "importError": "インポートに失敗しました",
     "configSource": "設定ソース",
+    "codexConfigScopeHint": "このプロバイダーに属する設定（エンドポイント、認証、モデル、推論レベルなど）のみをインポートします。[features]、MCP、権限などのグローバル設定はインポートされません。",
+    "grokConfigScopeHint": "[models] default が指すモデルテーブル（表示名、説明、API バックエンド、コンテキストウィンドウなど）のみをインポートします。エンドポイントとキーはリンクのパラメーターを使用し、他のモデルテーブルはインポートされません。",
     "configEmbedded": "埋め込み設定",
     "configRemote": "リモート設定",
     "configDetails": "設定の詳細",
@@ -3411,7 +3427,8 @@
       "name": "名前",
       "description": "説明",
       "contentPreview": "内容プレビュー",
-      "enabledWarning": "インポート後すぐにこのプロンプトが有効になり、他は無効になります"
+      "enabledWarning": "インポート後すぐにこのプロンプトが有効になり、他は無効になります",
+      "enableAfterImport": "インポート後に有効にする"
     },
     "skill": {
       "title": "Claude スキルリポジトリを追加",
@@ -3443,6 +3460,32 @@
     "search": "アイコンを検索",
     "searchPlaceholder": "アイコン名を入力...",
     "noResults": "一致するアイコンが見つかりません",
+    "clear": "アイコンをクリア",
+    "myIcons": "マイアイコン",
+    "builtinIcons": "内蔵アイコン",
+    "myIconsEmpty": "アップロードして名前を付けた画像はここに保存され、ほかのプロバイダーでも選べます。",
+    "currentIcon": "現在のアイコン",
+    "saveToLibrary": "マイアイコンに保存",
+    "saveCurrentTitle": "現在のアイコンを「マイアイコン」に保存",
+    "uploadTitle": "アイコンに名前を付ける",
+    "uploadDescription": "「マイアイコン」に保存すると、ほかのプロバイダーでも選べます。",
+    "saveAndUse": "保存して使用",
+    "renameTitle": "アイコン名を変更",
+    "rename": "名前を変更",
+    "delete": "削除",
+    "deleteTitle": "アイコンを削除",
+    "deleteMessage": "「マイアイコン」から「{{name}}」を削除しますか？すでに使用中のプロバイダーには影響しません。",
+    "alreadySaved": "この画像はすでに「マイアイコン」に「{{name}}」として保存されています",
+    "nameLabel": "名前",
+    "namePlaceholder": "例：自分の中継サービス",
+    "upload": "アップロード",
+    "uploadHint": "PNG、JPG、WebP、SVG（2 MB まで）に対応。画像は小さな PNG に縮小して「マイアイコン」に保存され、クラウド同期でも引き継がれます。",
+    "uploadError": {
+      "unsupported": "この画像形式には対応していません。PNG・JPG・WebP・SVG を選んでください",
+      "tooLarge": "画像が 2 MB を超えています",
+      "decodeFailed": "この画像を読み込めませんでした。別の画像をお試しください",
+      "dimensions": "画像が大きすぎます（幅・高さは 4096 ピクセル以下）"
+    },
     "category": {
       "aiProvider": "AI プロバイダー",
       "cloud": "クラウドプラットフォーム",
@@ -4136,9 +4179,9 @@
     },
     "help": {
       "title": "接続モードの違い",
-      "direct": "直接接続：クライアントが選んだプロバイダーに直接つながります。切り替えると設定を書き換えます。",
-      "route": "ルーティング：リクエストはまずこのマシンの CC Switch を通ります。フェイルオーバーを使えます。",
-      "stack": "集約：複数のプロバイダーのモデルを /model に並べます。フェイルオーバーはしません。"
+      "direct": "直接接続：CC Switch はリクエストに一切関与せず、クライアントが選んだプロバイダーに直接つながる、最もネイティブな使い方です。",
+      "route": "ルーティング：リクエストはこのマシンの CC Switch を経由し、プロバイダーのホットスイッチ、フェイルオーバー、フォーマット変換などの高度な機能が使えます。",
+      "stack": "集約：複数のプロバイダーのモデルが /model に並び、クライアント内でシームレスに切り替えられます。"
     }
   },
   "providerCard": {

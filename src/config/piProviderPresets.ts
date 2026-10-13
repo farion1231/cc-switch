@@ -379,7 +379,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     name: "OpenModel",
     providerKey: "cc-switch-open-model",
     websiteUrl: "https://www.openmodel.ai",
-    apiKeyUrl: "https://www.openmodel.ai/campaigns/client-benefits",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
     settingsConfig: {
       name: "OpenModel",
       baseUrl: "https://api.openmodel.ai",
@@ -2633,6 +2633,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
     providerKey: "cc-switch-yylx",
     websiteUrl: "https://yylx.io",
     apiKeyUrl: "https://app.yylx.io/keys",

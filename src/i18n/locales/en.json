@@ -581,7 +581,7 @@
         },
         "codexHistoryProviderMigration": {
           "name": "Codex session group migration backups",
-          "hint": "Copies kept before third-party session groups were migrated. CC Switch never reads them again."
+          "hint": "Copies kept before session groups were migrated. CC Switch never reads them again."
         },
         "liveFirstWrite": {
           "name": "Config first-write backups",
@@ -1590,7 +1590,8 @@
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI",
-      "tuzi": "Tu-zi"
+      "tuzi": "Tu-zi",
+      "yylx": "YYLX"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
@@ -2379,11 +2380,17 @@
     "speedValue": "{{value}} tok/s",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "How speed is calculated",
-    "speedHelp": "Output tokens per second, from the first token to the end. Only requests through the routing service with at least 100 output tokens count; for models that hide their reasoning it's an approximation. A value with ≈ is estimated from session-log timestamps when routing is off: there is no first-token timing, so the wait for the first token is included and the number reads low. Only requests with at least 200 output tokens are estimated.",
+    "speedHelp": "Output tokens per second, from the first token to the end. Only requests through the routing service with at least 100 output tokens count; for models that hide their reasoning it's an approximation. A value with ≈ is estimated from session-log timestamps when routing is off: the wait for the first token is included, so the number reads low. Only requests with at least 200 output tokens are estimated.",
     "speedSumHelpTitle": "How overall speed is calculated",
     "speedSumHelp": "Total output tokens divided by total generation time, not an average of per-request speeds, so short requests don't skew it. Only requests through the routing service with at least 100 output tokens count. A value with ≈ is estimated from session logs (it includes the wait for the first token, and only requests with at least 200 output tokens count) and is shown only when the row has no routed data.",
+    "firstToken": "First token",
+    "firstTokenHelpTitle": "First-token time",
+    "firstTokenHelp": "Time from the routing service receiving the request to the upstream starting its output. A value with ≈ is derived from session-log timestamps when routing is off: it starts from when the previous log line was written, so it includes the client's own request preparation and reads high. Claude Code only yields one when the reply starts with thinking; Codex only with newer logs, and not when the reply opens with a tool call.",
+    "firstTokenSumHelpTitle": "How first-token time is calculated",
+    "firstTokenSumHelp": "Time from the routing service receiving a request to the upstream starting its output. The row shows the median across its requests, so an occasional slow request (queueing, cold start) doesn't pull it up. Only successful streaming requests through the routing service count; requests older than 30 days, already folded into daily rollups, don't. A value with ≈ is derived from session logs (it reads high, and only some requests yield one) and is shown only when the row has no routed data.",
     "timingTip": "Duration {{duration}}s · first token {{ttft}}s",
     "estimatedTimingTip": "About {{duration}}s (estimated from session-log timestamps, including the wait for the first token)",
+    "estimatedTimingTipWithFirstToken": "About {{duration}}s · first token about {{ttft}}s (estimated from session-log timestamps)",
     "cacheTip": "Cache hits {{read}} · cache writes {{write}}",
     "openRequestDetail": "View request details: {{time}} {{provider}}",
     "prevPage": "Previous page",
@@ -2400,6 +2407,7 @@
       "sourceSession": "Session log",
       "total": "Total",
       "firstToken": "First token",
+      "firstTokenEstimated": "First token (estimated)",
       "duration": "Duration",
       "durationEstimated": "Duration (estimated)",
       "speedTooFew": "Under 100 output tokens, so no speed",
@@ -2462,6 +2470,7 @@
     "templateCustom": "Custom",
     "templateGeneral": "General",
     "templateNewAPI": "NewAPI",
+    "templateSub2API": "Sub2API",
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
     "templateBalance": "Official",
@@ -3384,11 +3393,18 @@
     "import": "Import",
     "importing": "Importing...",
     "warning": "Please confirm the information above is correct before importing. You can edit or delete it later in the provider list.",
+    "providerEnabledWarning": "After import, CC Switch will switch to this provider immediately, and client requests will go to the endpoint above",
+    "apiFormat": "API format",
+    "switchAfterImport": "Switch to this provider after import",
+    "addToAppAfterImport": "Add to the {{app}} config after import",
+    "enableInPiAfterImport": "Enable in Pi after import",
     "parseError": "Failed to parse deep link",
     "importSuccess": "Import successful",
     "importSuccessDescription": "Provider \"{{name}}\" has been successfully imported",
     "importError": "Failed to import",
     "configSource": "Config Source",
+    "codexConfigScopeHint": "Only the settings that belong to this provider (endpoint, auth, model, reasoning effort, etc.) are imported; global settings such as [features], MCP and permissions are skipped.",
+    "grokConfigScopeHint": "Only the model table named by [models] default is imported (display name, description, API backend, context window, etc.); the endpoint and key come from the link parameters, and other model tables are skipped.",
     "configEmbedded": "Embedded Config",
     "configRemote": "Remote Config",
     "configDetails": "Config Details",
@@ -3411,7 +3427,8 @@
       "name": "Name",
       "description": "Description",
       "contentPreview": "Content Preview",
-      "enabledWarning": "After import, this prompt will be enabled immediately and other prompts will be disabled"
+      "enabledWarning": "After import, this prompt will be enabled immediately and other prompts will be disabled",
+      "enableAfterImport": "Enable after import"
     },
     "skill": {
       "title": "Add Claude Skill Repository",
@@ -3443,6 +3460,32 @@
     "search": "Search Icons",
     "searchPlaceholder": "Enter icon name...",
     "noResults": "No matching icons found",
+    "clear": "Clear icon",
+    "myIcons": "My Icons",
+    "builtinIcons": "Built-in Icons",
+    "myIconsEmpty": "Images you upload and name are kept here, so other providers can use them too.",
+    "currentIcon": "Current icon",
+    "saveToLibrary": "Save to My Icons",
+    "saveCurrentTitle": "Save the current icon to My Icons",
+    "uploadTitle": "Name this icon",
+    "uploadDescription": "Once it is in My Icons, other providers can use it too.",
+    "saveAndUse": "Save and Use",
+    "renameTitle": "Rename Icon",
+    "rename": "Rename",
+    "delete": "Delete",
+    "deleteTitle": "Delete Icon",
+    "deleteMessage": "Delete \"{{name}}\" from My Icons? Providers already using it are not affected.",
+    "alreadySaved": "This image is already in My Icons as \"{{name}}\"",
+    "nameLabel": "Name",
+    "namePlaceholder": "e.g. My relay",
+    "upload": "Upload",
+    "uploadHint": "PNG, JPG, WebP or SVG, up to 2 MB. The image is shrunk to a small PNG, saved to My Icons and carried along by cloud sync.",
+    "uploadError": {
+      "unsupported": "Unsupported image format. Choose a PNG, JPG, WebP or SVG file",
+      "tooLarge": "The image is larger than 2 MB",
+      "decodeFailed": "Couldn't read this image, please try another one",
+      "dimensions": "The image is too large (width and height must not exceed 4096 px)"
+    },
     "category": {
       "aiProvider": "AI Providers",
       "cloud": "Cloud Platforms",
@@ -4136,9 +4179,9 @@
     },
     "help": {
       "title": "How the connection modes differ",
-      "direct": "Direct: the client connects straight to the chosen provider; switching rewrites its config.",
-      "route": "Routing: requests go through CC Switch on this machine first; failover is available.",
-      "stack": "Aggregation: models from several providers are listed together in /model; no failover."
+      "direct": "Direct: CC Switch never touches your requests; the client talks to the chosen provider itself for the most native experience.",
+      "route": "Routing: requests go through CC Switch on this machine, unlocking hot-switching providers, failover, format conversion, and other advanced features.",
+      "stack": "Aggregation: models from several providers sit together in /model, so you can switch between them seamlessly inside the client."
     }
   },
   "providerCard": {
