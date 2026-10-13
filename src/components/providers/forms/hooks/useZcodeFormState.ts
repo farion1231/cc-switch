@@ -36,6 +36,8 @@ export interface ZcodeFormState {
   handleZcodeModelsChange: (models: Record<string, ZCodeModel>) => void;
   handleZcodeExtraOptionsChange: (options: Record<string, string>) => void;
   resetZcodeState: (config?: ZCodeProviderConfig) => void;
+  /** 外部改写 settingsConfig（JSON 编辑器/粘贴）后，把结构化字段重新对齐 */
+  hydrateFromJson: (json: string) => void;
 }
 
 interface ZcodeFieldState {
@@ -79,7 +81,6 @@ export function useZcodeFormState({
     appId === "zcode"
       ? extractZcodeConfigExtras(initialData?.settingsConfig)
       : {};
-  const extrasRef = useRef(initialExtras);
 
   const initialFields: ZcodeFieldState = {
     kind: initialZcodeConfig?.kind || ZCODE_DEFAULT_KIND,
@@ -131,6 +132,11 @@ export function useZcodeFormState({
   const fieldsRef = useRef(fields);
   fieldsRef.current = fields;
 
+  // 最近一次 emit 出去的配置串：用于识别 settingsConfig 的变化是「外部改动」
+  // （用户在 JSON 编辑器里粘贴/修改）还是自己 emit 的回声，避免循环互相覆盖。
+  const lastEmittedRef = useRef<string | null>(null);
+  const extrasRef = useRef(initialExtras);
+
   /**
    * Rebuild the full ZCodeProviderConfig from the given (next) field state and
    * emit it. Caller passes the post-update fields so we never read stale state.
@@ -168,10 +174,38 @@ export function useZcodeFormState({
       config.enabled = next.enabled === null ? true : next.enabled;
       config.source = next.source ?? "custom";
 
-      onSettingsConfigChange(JSON.stringify(config, null, 2));
+      const emitted = JSON.stringify(config, null, 2);
+      lastEmittedRef.current = emitted;
+      onSettingsConfigChange(emitted);
     },
     [onSettingsConfigChange],
   );
+
+  /** 外部（JSON 编辑器/预设）改写了 settingsConfig：把结构化字段重新对齐，
+   *  不触发 emit，避免和 JSON 视图互相覆盖。extras 保留原样。 */
+  const hydrateFromJson = useCallback((json: string) => {
+    if (lastEmittedRef.current === json) return; // 自己 emit 的回声
+    lastEmittedRef.current = json;
+    try {
+      const parsed = JSON.parse(json) as ZCodeProviderConfig;
+      const options = parsed.options || {};
+      setFields((prev) => ({
+        ...prev,
+        kind: parsed.kind || ZCODE_DEFAULT_KIND,
+        name: parsed.name || "",
+        baseUrl:
+          typeof options.baseURL === "string" ? options.baseURL : prev.baseUrl,
+        apiKey: typeof options.apiKey === "string" ? options.apiKey : "",
+        models: parsed.models || {},
+        extraOptions: toZcodeExtraOptions(options),
+        enabled: parsed.enabled === undefined ? null : parsed.enabled,
+        source: parsed.source,
+      }));
+      extrasRef.current = extractZcodeConfigExtras(parsed);
+    } catch {
+      // JSON 还没写完整（用户输入中），保持现有字段不动
+    }
+  }, []);
 
   /** Apply a partial field update, emit, and return the merged state. */
   const updateFields = useCallback(
@@ -245,6 +279,7 @@ export function useZcodeFormState({
     handleZcodeModelsChange,
     handleZcodeExtraOptionsChange,
     resetZcodeState,
+    hydrateFromJson,
   };
 }
 

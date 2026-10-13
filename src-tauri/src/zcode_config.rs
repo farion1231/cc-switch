@@ -9,13 +9,21 @@
 //! ZCode 的 MCP 使用标准 `type: "stdio"` 格式，与 Claude Code 一致，
 //! 因此 MCP 配置直接透传，不做任何格式转换。
 
-use crate::config::write_json_file;
+use crate::config::atomic_write_private;
 use crate::error::AppError;
 use crate::provider::ZCodeProviderConfig;
 use crate::settings::get_zcode_override_dir;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+
+/// 进程级写锁：provider 写入与 MCP 同步都是"读-改-写"整个文件，
+/// 并发交错会互相覆盖（OpenCode 用同样的锁模式）。
+fn zcode_config_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 /// 获取 ZCode 配置根目录（`~/.zcode`），支持 settings 覆盖
 pub fn get_zcode_dir() -> PathBuf {
@@ -65,9 +73,18 @@ pub fn read_zcode_config() -> Result<Value, AppError> {
 }
 
 /// 写入 ZCode provider 配置文件
+///
+/// 用 `atomic_write_private`（0600）：v2/config.json 里是 API key，不能写成
+/// 全局可读；并保留用户现有键序（write_json_file 会对键重排序）。
 pub fn write_zcode_config(config: &Value) -> Result<(), AppError> {
+    let _guard = zcode_config_lock();
     let path = get_zcode_config_path();
-    write_json_file(&path, config)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    let json =
+        serde_json::to_string_pretty(config).map_err(|e| AppError::JsonSerialize { source: e })?;
+    atomic_write_private(&path, json.as_bytes())?;
 
     log::debug!("ZCode config written to {path:?}");
     Ok(())
@@ -161,9 +178,18 @@ pub fn read_zcode_cli_config() -> Result<Value, AppError> {
 }
 
 /// 写入 ZCode CLI 配置
+///
+/// 同样 0600 + 保持键序：cli/config.json 里还有 hooks 和插件状态，
+/// 重排序键会在每次 MCP 同步时制造无意义的大 diff。
 pub fn write_zcode_cli_config(config: &Value) -> Result<(), AppError> {
+    let _guard = zcode_config_lock();
     let path = get_zcode_cli_config_path();
-    write_json_file(&path, config)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    let json =
+        serde_json::to_string_pretty(config).map_err(|e| AppError::JsonSerialize { source: e })?;
+    atomic_write_private(&path, json.as_bytes())?;
 
     log::debug!("ZCode CLI config written to {path:?}");
     Ok(())

@@ -192,7 +192,7 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
       enabled: true,
       source: "custom",
       options: {
-        baseURL: "https://dashscope.aliyuncs.com/anthropic",
+        baseURL: "https://dashscope.aliyuncs.com/apps/anthropic",
         apiKey: "",
       },
       models: {

@@ -1546,7 +1546,7 @@ pub fn remove_zcode_provider_from_live(provider_id: &str) -> Result<(), AppError
     use crate::zcode_config;
 
     // ZCode 自管的内置节点（builtin: 前缀）不归 CC Switch 管，拒绝删除
-    if provider_id.starts_with("builtin:") {
+    if provider_id.starts_with("builtin:") || provider_id.starts_with("account:") {
         return Err(AppError::InvalidInput(format!(
             "ZCode built-in provider '{provider_id}' is managed by ZCode itself"
         )));
@@ -1584,7 +1584,7 @@ pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppEr
     for (id, config) in providers {
         // ZCode 自管的内置节点（builtin: 前缀，由桌面版的供应商家族设置管理）
         // 不归 CC Switch 管：不导入，也不允许从 CC Switch 删除。
-        if id.starts_with("builtin:") {
+        if id.starts_with("builtin:") || id.starts_with("account:") {
             log::debug!("Skipping ZCode built-in provider '{id}'");
             continue;
         }

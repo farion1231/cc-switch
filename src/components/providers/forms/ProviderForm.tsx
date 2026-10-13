@@ -145,6 +145,7 @@ import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { useZcodeLiveProviderIds } from "@/hooks/useZcode";
+import { useProvidersQuery } from "@/lib/query/queries";
 
 type PresetEntry = {
   id: string;
@@ -1182,10 +1183,28 @@ function ProviderFormFull({
     providerId,
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
   });
+  // JSON 编辑器是 settingsConfig 的另一个写入方：外部改动（粘贴/手改）时把
+  // 结构化字段重新对齐，避免之后任一侧的保存覆盖掉另一侧的编辑。
+  const zcodeSettingsValue = form.watch("settingsConfig");
+  useEffect(() => {
+    if (appId === "zcode" && zcodeSettingsValue) {
+      zcodeForm.hydrateFromJson(zcodeSettingsValue);
+    }
+  }, [appId, zcodeSettingsValue, zcodeForm]);
   const {
     data: zcodeLiveProviderIds = [],
     isLoading: isZcodeLiveProviderIdsLoading,
   } = useZcodeLiveProviderIds(appId === "zcode");
+
+  // ZCode 的查重要同时覆盖数据库已存的 id：从 live 移除过的供应商仍留在
+  // 数据库里，只查 live 会漏掉它们，新增同 id 会静默覆盖整行。
+  const { data: zcodeProvidersData } = useProvidersQuery("zcode");
+  const existingZcodeKeys = useMemo(() => {
+    if (appId !== "zcode" || !zcodeProvidersData?.providers) return [];
+    return Object.keys(zcodeProvidersData.providers).filter(
+      (key) => key !== providerId,
+    );
+  }, [appId, zcodeProvidersData?.providers, providerId]);
 
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
@@ -1221,7 +1240,11 @@ function ProviderFormFull({
 
     if (appId === "zcode") {
       return Array.from(
-        new Set([...zcodeLiveProviderIds].filter((key) => key !== providerId)),
+        new Set(
+          [...zcodeLiveProviderIds, ...existingZcodeKeys].filter(
+            (key) => key !== providerId,
+          ),
+        ),
       );
     }
 
@@ -1229,6 +1252,7 @@ function ProviderFormFull({
   }, [
     appId,
     existingOpencodeKeys,
+    existingZcodeKeys,
     hermesForm.existingHermesKeys,
     hermesLiveProviderIds,
     isAnyOmoCategory,
