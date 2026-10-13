@@ -283,17 +283,30 @@ export const settingsApi = {
 
   async runToolLifecycleAction(
     tools: string[],
-    action: "install" | "update",
+    action: "install" | "update" | "uninstall",
     wslShellByTool?: Record<
       string,
       { wslShell?: string | null; wslShellFlag?: string | null }
     >,
+    uninstallPlan?: ToolUninstallPlan,
   ): Promise<void> {
     await invoke("run_tool_lifecycle_action", {
       tools,
       action,
       wslShellByTool,
+      uninstallPlan,
     });
+  },
+
+  /** Generate a read-only uninstall preview; execution checks that it is still current. */
+  async prepareToolUninstall(
+    tool: string,
+    wslShellByTool?: Record<
+      string,
+      { wslShell?: string | null; wslShellFlag?: string | null }
+    >,
+  ): Promise<ToolUninstallPlan> {
+    return await invoke("prepare_tool_uninstall", { tool, wslShellByTool });
   },
 
   /** 探测各工具安装分布：枚举所有安装、标记冲突、生成锚定升级命令。
@@ -335,6 +348,15 @@ export const settingsApi = {
     return await invoke("set_log_config", { config });
   },
 };
+
+export interface ToolUninstallPlan {
+  tool: string;
+  path: string;
+  real_path: string;
+  command: string;
+  native: boolean;
+  wsl_distro: string | null;
+}
 
 /** 单处工具安装的诊断信息（多处安装冲突检测）。字段对应后端 ToolInstallation。 */
 export interface ToolInstallation {

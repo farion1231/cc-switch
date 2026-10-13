@@ -420,16 +420,24 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
               void (async () => {
                 if (!beginWrite()) return;
                 try {
-                  await writeMany(succeeded, !enabled);
-                  toast.success(t("appMatrix.toast.undone"), {
-                    closeButton: true,
-                  });
+                  const result = await writeMany(succeeded, !enabled);
+                  if (result.failed) {
+                    toast[result.succeeded.length ? "warning" : "error"](
+                      t("common.bulkToggleFailed", { count: result.failed }),
+                      { closeButton: true },
+                    );
+                  } else {
+                    toast.success(t("appMatrix.toast.undone"), {
+                      closeButton: true,
+                    });
+                  }
                 } finally {
                   endWrite();
                 }
               })();
             }
           : undefined,
+        failed ? (succeeded.length ? "warning" : "error") : "success",
       );
     } finally {
       endWrite();

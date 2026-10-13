@@ -397,10 +397,19 @@ async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
         Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
-    // Novita 金额单位为 0.0001 USD，需除以 10000 转为 USD
-    let available = parse_f64_field(&body, "availableBalance").unwrap_or(0.0) / 10000.0;
+    Ok(parse_novita_balance(&body))
+}
 
-    Ok(UsageResult {
+fn parse_novita_balance(body: &serde_json::Value) -> UsageResult {
+    // Novita 金额单位为 0.0001 USD，需除以 10000 转为 USD
+    let Some(available) = parse_f64_field(body, "availableBalance")
+        .map(|v| v / 10000.0)
+        .filter(|v| v.is_finite())
+    else {
+        return make_error("Missing or invalid Novita AI balance".to_string());
+    };
+
+    UsageResult {
         success: true,
         data: Some(vec![UsageData {
             plan_name: Some("Novita AI".to_string()),
@@ -408,16 +417,14 @@ async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
             total: None,
             used: None,
             unit: Some("USD".to_string()),
-            is_valid: Some(available > 0.0),
-            invalid_message: if available <= 0.0 {
-                Some("No balance remaining".to_string())
-            } else {
-                None
-            },
+            // 余额为 0 或负数不代表 key 失效：交给 UI 显示「余额已用完」，
+            // 而不是标成套餐已过期（同 OpenRouter，#8175）
+            is_valid: Some(true),
+            invalid_message: None,
             extra: None,
         }]),
         error: None,
-    })
+    }
 }
 
 // ── 工具函数 ────────────────────────────────────────────────
@@ -524,6 +531,38 @@ mod tests {
             json!({ "data": { "total_credits": 1e308, "total_usage": -1e308 } }),
         ] {
             let result = parse_openrouter_balance(&body);
+            assert!(!result.success, "unexpected success for {body}");
+            assert!(result.data.is_none());
+            assert!(result.error.is_some());
+        }
+    }
+
+    #[test]
+    fn novita_balance_does_not_determine_key_validity() {
+        for (raw, available) in [(0.0, 0.0), (-50000.0, -5.0), (255000.0, 25.5)] {
+            let result = parse_novita_balance(&json!({ "availableBalance": raw }));
+            assert!(result.success);
+            let balance = result.data.unwrap().remove(0);
+            assert_eq!(balance.remaining, Some(available));
+            assert_eq!(balance.unit.as_deref(), Some("USD"));
+            assert_eq!(balance.is_valid, Some(true));
+            assert!(balance.invalid_message.is_none());
+        }
+
+        let result = parse_novita_balance(&json!({ "availableBalance": "10000" }));
+        assert_eq!(result.data.unwrap()[0].remaining, Some(1.0));
+    }
+
+    #[test]
+    fn novita_balance_rejects_missing_or_invalid_amount() {
+        for body in [
+            json!({}),
+            json!({ "availableBalance": null }),
+            json!({ "availableBalance": "invalid" }),
+            json!({ "availableBalance": "inf" }),
+            json!({ "cashBalance": 10000 }),
+        ] {
+            let result = parse_novita_balance(&body);
             assert!(!result.success, "unexpected success for {body}");
             assert!(result.data.is_none());
             assert!(result.error.is_some());
