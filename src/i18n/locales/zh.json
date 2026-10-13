@@ -4780,5 +4780,97 @@
       "refresh": "刷新额度",
       "refreshAria": "刷新 {{login}} 的额度"
     }
+  },
+  "usageSync": {
+    "thisDevice": "本机",
+    "allDevices": "全部设备",
+    "device": "设备",
+    "never": "从未",
+    "syncNow": "立即同步用量",
+    "openSettings": "打开设置",
+    "syncCompleted": "用量已同步 · 其它设备 {{devices}} 台",
+    "syncPartial": "用量同步完成，但有问题：{{error}}",
+    "syncFailed": "用量同步失败：{{error}}",
+    "deviceFilter": {
+      "title": "设备"
+    },
+    "status": {
+      "ok": "已同步",
+      "stale": "已过期",
+      "error": "出错",
+      "incompatible": "版本更新",
+      "missing": "未找到",
+      "hidden": "已隐藏"
+    },
+    "devices": {
+      "button": "设备",
+      "title": "设备",
+      "description": "通过跨设备用量同步共享的用量",
+      "disabledTitle": "用量同步未开启",
+      "disabledBody": "在 设置 → 数据 中开启用量同步，即可共享本机用量并查看其它设备。",
+      "lastUpload": "最近上传：{{time}}",
+      "notSharing": "未共享用量",
+      "empty": "还没有其它设备共享用量。",
+      "listLabel": "已同步的设备",
+      "coverage": "历史 {{from}} → {{to}}",
+      "dailyOnly": "仅按天汇总",
+      "detailFrom": "{{date}} 起有请求明细",
+      "show": "计入统计",
+      "hide": "不计入统计",
+      "costNote": "费用是各设备按自己的模型价格估算的，并非订阅的实际扣款。"
+    },
+    "conflict": {
+      "title": "设备身份冲突",
+      "body": "另一个 CC Switch 安装正在用本机的设备身份上传（可能复制了 CC Switch 数据目录）。上传已暂停，其它设备的用量仍会下载。",
+      "newIdentity": "使用新身份",
+      "takeOver": "接管",
+      "takeOverTitle": "接管这个设备身份？",
+      "takeOverMessage": "仅当另一个安装已不再运行时这样做（例如本机从备份恢复后）。两边都在运行会互相覆盖用量。",
+      "resolved": "设备身份已更新"
+    },
+    "insecure": {
+      "title": "未加密的连接",
+      "body": "存储地址使用明文 HTTP，凭据和用量数据会以未加密形式传输；除非是可信的局域网，请改用 HTTPS。"
+    },
+    "notice": {
+      "dailyOnly": "{{devices}} 仅共享按天汇总：不完整的一天不计入，也不显示其请求明细。",
+      "outdated": "来自 {{devices}} 的数据可能已过期或不完整。"
+    },
+    "detail": {
+      "remoteTitle": "记录于其它设备",
+      "remoteBody": "这条请求记录于 {{device}}。错误信息和会话详情不会在设备间共享。"
+    },
+    "settings": {
+      "title": "跨设备用量同步",
+      "help": "通过上方配置的 WebDAV 或 S3 存储在设备之间共享用量统计。用量与配置快照分开存放，不会覆盖配置快照。",
+      "intro": "每台设备把自己的用量上传到上方的云存储，并下载其它设备的用量，用量页即可查看全部设备或单台设备。",
+      "privacyShared": "会共享：时间、应用、供应商名称、模型、Token 数、估算费用、状态码，以及（按请求模式下）耗时和请求 ID。",
+      "privacyNotShared": "绝不共享：API Key、Token、提示词与回复、会话文件、错误信息、文件路径或 CC Switch 数据库。",
+      "privacyCost": "费用是按各设备模型价格得出的估算值。",
+      "noBackendTitle": "尚未配置云存储",
+      "noBackendBody": "请先在上方「云同步」中配置 WebDAV 或 S3，用量同步复用该连接。",
+      "enable": "跨设备同步用量",
+      "enableHint": "默认关闭",
+      "chooseBackendFirst": "请先选择承载用量数据的存储。",
+      "backend": "用量使用的存储",
+      "backendHint": "只选一个，避免设备的数据分散在不同位置",
+      "chooseBackend": "选择存储",
+      "notConfigured": "未配置",
+      "detailLevel": "共享粒度",
+      "detailLevelHint": "按天汇总共享更少，但无法跨设备去重",
+      "detailRecords": "按请求（推荐）",
+      "detailDaily": "仅按天汇总",
+      "autoSync": "自动同步",
+      "autoSyncHint": "在后台上传和下载",
+      "interval": "同步间隔",
+      "everyMinutes": "每 {{count}} 分钟",
+      "deviceName": "设备名称",
+      "deviceNameHint": "显示在你的其它设备上",
+      "location": "远端位置：{{location}}",
+      "lastSync": "最近同步：{{time}}",
+      "neverSynced": "尚未同步",
+      "saveFailed": "保存用量同步设置失败：{{error}}",
+      "saveName": "保存名称"
+    }
   }
 }

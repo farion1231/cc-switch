@@ -8,12 +8,15 @@ interface UsagePageProps {
   initialAppType?: AppTypeFilter;
   /** 打开设置 → 本地路由（「记录请求用量」开关在那里） */
   onOpenRoutingSettings?: () => void;
+  /** 打开设置 → 数据（云同步与跨设备用量同步） */
+  onOpenSyncSettings?: () => void;
 }
 
 /** 侧栏「用量统计」全局页（v7 S6）：不开路由也有数据（读会话日志）。 */
 export function UsagePage({
   initialAppType,
   onOpenRoutingSettings,
+  onOpenSyncSettings,
 }: UsagePageProps = {}) {
   const { settings, updateSettings, autoSaveSettings } = useSettings();
 
@@ -34,6 +37,7 @@ export function UsagePage({
       }
       initialAppType={initialAppType}
       onOpenRoutingSettings={onOpenRoutingSettings}
+      onOpenSyncSettings={onOpenSyncSettings}
     />
   );
 }

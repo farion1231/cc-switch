@@ -36,9 +36,13 @@ interface RequestLogTableProps {
   model?: string;
   /** 状态码筛选（页签行右侧的下拉） */
   statusCode?: number;
+  /** 设备范围：缺省 = 本机，"all" = 全部设备，其它 = 远端设备 ID */
+  device?: string;
+  /** 远端设备 ID → 显示名，非本机范围时用来填「设备」列 */
+  deviceNames?: Record<string, string>;
   refreshIntervalMs: number;
-  /** 点一行打开请求详情 */
-  onOpenDetail?: (requestId: string) => void;
+  /** 点一行打开请求详情；远端记录带上设备 ID */
+  onOpenDetail?: (requestId: string, deviceId?: string) => void;
 }
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -108,6 +112,8 @@ export function RequestLogTable({
   providerName,
   model,
   statusCode,
+  device,
+  deviceNames,
   refreshIntervalMs,
   onOpenDetail,
 }: RequestLogTableProps) {
@@ -123,7 +129,9 @@ export function RequestLogTable({
     providerName,
     model,
     statusCode,
+    device,
   };
+  const showDevice = !!device && device !== "local";
 
   const { data: result, isLoading } = useRequestLogs({
     filters: effectiveFilters,
@@ -146,6 +154,7 @@ export function RequestLogTable({
     providerName,
     model,
     statusCode,
+    device,
     range.customEndDate,
     range.customStartDate,
     range.preset,
@@ -159,6 +168,17 @@ export function RequestLogTable({
   if (isLoading) {
     return <div className={usageTable.skeleton} />;
   }
+
+  // 本机记录只带 requestId（与原有回调一致）；远端记录额外带上设备 ID
+  const openDetail = (log: RequestLog) => {
+    if (log.deviceId) onOpenDetail?.(log.requestId, log.deviceId);
+    else onOpenDetail?.(log.requestId);
+  };
+
+  const deviceLabel = (deviceId?: string) =>
+    deviceId
+      ? (deviceNames?.[deviceId] ?? deviceId.slice(0, 8))
+      : t("usageSync.thisDevice");
 
   const renderRow = (log: RequestLog) => {
     const unpriced = isUnpricedUsage(log);
@@ -206,9 +226,9 @@ export function RequestLogTable({
 
     return (
       <tr
-        key={log.requestId}
+        key={`${log.deviceId ?? "local"}:${log.requestId}`}
         className={onOpenDetail ? usageTable.rowInteractive : usageTable.row}
-        onClick={() => onOpenDetail?.(log.requestId)}
+        onClick={() => openDetail(log)}
       >
         {/* 时间、应用两列收紧到内容宽度（w-px），多出来的宽度留给后面的数值列 */}
         <td className={cn(usageTable.td, "w-px")}>
@@ -222,7 +242,7 @@ export function RequestLogTable({
             })}
             onClick={(event) => {
               event.stopPropagation();
-              onOpenDetail?.(log.requestId);
+              openDetail(log);
             }}
           >
             {time}
@@ -254,6 +274,13 @@ export function RequestLogTable({
             <span className="sr-only">{appDisplayName(log.appType)}</span>
           </span>
         </td>
+        {showDevice && (
+          <td className={cn(usageTable.td, "w-[12%] max-w-0")}>
+            <span className="block truncate" title={deviceLabel(log.deviceId)}>
+              {deviceLabel(log.deviceId)}
+            </span>
+          </td>
+        )}
         {/* 供应商、模型两列按比例取宽（max-w-0 让百分比宽度生效、内容截断）；
             比例合计 32%：40% 时常见窗口下数值列就只剩内容宽度，左松右挤。模型名通常比供应商名长，
             放不下的截断、悬停看全名 */}
@@ -348,6 +375,9 @@ export function RequestLogTable({
             <tr className={usageTable.headRow}>
               <th className={usageTable.th}>{t("usage.time")}</th>
               <th className={usageTable.th}>{t("usage.app")}</th>
+              {showDevice && (
+                <th className={usageTable.th}>{t("usageSync.device")}</th>
+              )}
               <th className={usageTable.th}>{t("usage.provider")}</th>
               <th className={usageTable.th}>{t("usage.model")}</th>
               <th className={usageTable.th}>{t("usage.freshInput")}</th>
@@ -375,7 +405,7 @@ export function RequestLogTable({
           <tbody>
             {logs.length === 0 ? (
               <tr>
-                <td colSpan={10} className={usageTable.empty}>
+                <td colSpan={showDevice ? 11 : 10} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>

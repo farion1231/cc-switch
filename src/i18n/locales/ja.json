@@ -4780,5 +4780,97 @@
       "refresh": "残量を更新",
       "refreshAria": "{{login}} の残量を更新"
     }
+  },
+  "usageSync": {
+    "thisDevice": "このデバイス",
+    "allDevices": "すべてのデバイス",
+    "device": "デバイス",
+    "never": "なし",
+    "syncNow": "使用量を今すぐ同期",
+    "openSettings": "設定を開く",
+    "syncCompleted": "使用量を同期しました · 他のデバイス {{devices}} 台",
+    "syncPartial": "使用量の同期は完了しましたが問題があります：{{error}}",
+    "syncFailed": "使用量の同期に失敗しました：{{error}}",
+    "deviceFilter": {
+      "title": "デバイス"
+    },
+    "status": {
+      "ok": "最新",
+      "stale": "古い",
+      "error": "エラー",
+      "incompatible": "新しいバージョン",
+      "missing": "見つかりません",
+      "hidden": "非表示"
+    },
+    "devices": {
+      "button": "デバイス",
+      "title": "デバイス",
+      "description": "デバイス間使用量同期で共有された使用量",
+      "disabledTitle": "使用量同期はオフです",
+      "disabledBody": "設定 → データ で使用量同期をオンにすると、このデバイスの使用量を共有し、他のデバイスを確認できます。",
+      "lastUpload": "最終アップロード：{{time}}",
+      "notSharing": "使用量を共有していません",
+      "empty": "まだ使用量を共有している他のデバイスはありません。",
+      "listLabel": "同期済みのデバイス",
+      "coverage": "履歴 {{from}} → {{to}}",
+      "dailyOnly": "日別合計のみ",
+      "detailFrom": "{{date}} 以降はリクエスト明細あり",
+      "show": "統計に含める",
+      "hide": "統計から除外",
+      "costNote": "費用は各デバイスが自身のモデル価格で計算した推定値であり、サブスクリプションの実際の請求額ではありません。"
+    },
+    "conflict": {
+      "title": "デバイス ID の競合",
+      "body": "別の CC Switch がこのデバイスの ID でアップロードしています（CC Switch のデータフォルダーがコピーされた可能性があります）。アップロードは一時停止中です。他のデバイスの使用量のダウンロードは続きます。",
+      "newIdentity": "新しい ID を使う",
+      "takeOver": "引き継ぐ",
+      "takeOverTitle": "この ID を引き継ぎますか？",
+      "takeOverMessage": "もう一方のインストールが動作していない場合のみ実行してください（例：このコンピューターをバックアップから復元した後）。両方が動作すると互いの使用量を上書きします。",
+      "resolved": "デバイス ID を更新しました"
+    },
+    "insecure": {
+      "title": "暗号化されていない接続",
+      "body": "ストレージのアドレスは平文の HTTP です。認証情報と使用量データは暗号化されずに送信されます。信頼できるローカルネットワーク以外では HTTPS を使用してください。"
+    },
+    "notice": {
+      "dailyOnly": "{{devices}} は日別合計のみを共有しています：途中の日は集計されず、リクエストも一覧に表示されません。",
+      "outdated": "{{devices}} のデータは古いか不完全な可能性があります。"
+    },
+    "detail": {
+      "remoteTitle": "他のデバイスで記録",
+      "remoteBody": "このリクエストは {{device}} で記録されました。エラーメッセージとセッションの詳細はデバイス間で共有されません。"
+    },
+    "settings": {
+      "title": "デバイス間の使用量同期",
+      "help": "上で設定した WebDAV または S3 ストレージを通じて、デバイス間で使用量統計を共有します。使用量は設定スナップショットとは別に保存され、上書きしません。",
+      "intro": "各デバイスは自分の使用量を上記のクラウドストレージにアップロードし、他のデバイスの使用量をダウンロードします。使用量ページですべてのデバイスまたは個別のデバイスを表示できます。",
+      "privacyShared": "共有される項目：時刻、アプリ、プロバイダー名、モデル、トークン数、推定費用、ステータスコード、（リクエスト単位モードでは）所要時間とリクエスト ID。",
+      "privacyNotShared": "共有されない項目：API キー、トークン、プロンプトと応答、セッションファイル、エラーメッセージ、ファイルパス、CC Switch データベース。",
+      "privacyCost": "費用は各デバイスのモデル価格に基づく推定値です。",
+      "noBackendTitle": "クラウドストレージが未設定です",
+      "noBackendBody": "先に上の「クラウド同期」で WebDAV または S3 を設定してください。使用量同期はその接続を再利用します。",
+      "enable": "デバイス間で使用量を同期",
+      "enableHint": "既定ではオフ",
+      "chooseBackendFirst": "使用量データを保存するストレージを先に選択してください。",
+      "backend": "使用量のストレージ",
+      "backendHint": "デバイスのデータが分散しないよう 1 つを選択",
+      "chooseBackend": "ストレージを選択",
+      "notConfigured": "未設定",
+      "detailLevel": "共有する粒度",
+      "detailLevelHint": "日別合計は共有量が少ない一方、デバイス間の重複を除去できません",
+      "detailRecords": "リクエスト単位（推奨）",
+      "detailDaily": "日別合計のみ",
+      "autoSync": "自動同期",
+      "autoSyncHint": "バックグラウンドでアップロードとダウンロード",
+      "interval": "同期間隔",
+      "everyMinutes": "{{count}} 分ごと",
+      "deviceName": "デバイス名",
+      "deviceNameHint": "他のデバイスに表示されます",
+      "location": "リモートの場所：{{location}}",
+      "lastSync": "最終同期：{{time}}",
+      "neverSynced": "未同期",
+      "saveFailed": "使用量同期の設定を保存できませんでした：{{error}}",
+      "saveName": "名前を保存"
+    }
   }
 }

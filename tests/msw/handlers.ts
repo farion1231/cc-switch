@@ -499,6 +499,29 @@ export const handlers = [
       cacheHitRate: 0,
     }),
   ),
+  // 跨设备用量同步：默认未开启、没有远端设备
+  http.post(`${TAURI_ENDPOINT}/usage_sync_get_overview`, () =>
+    success({
+      settings: {
+        enabled: false,
+        autoSync: true,
+        detailLevel: "records",
+        intervalMinutes: 15,
+        status: { identityConflict: false },
+      },
+      availableBackends: { webdav: false, s3: false },
+      remoteLocation: null,
+      transportSecure: null,
+      thisDevice: {
+        deviceId: "00000000-0000-4000-8000-000000000001",
+        deviceName: "Test Device",
+        customName: null,
+      },
+      devices: [],
+      syncing: false,
+      staleAfterSecs: 86400,
+    }),
+  ),
   // 会话阅读页头部：没有导入过用量时不显示
   http.post(`${TAURI_ENDPOINT}/get_session_usage_summary`, () =>
     success({
