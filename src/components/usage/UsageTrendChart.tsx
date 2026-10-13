@@ -28,6 +28,7 @@ interface UsageTrendChartProps {
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
+  snapshot?: { data: UsageTrendStatLike[]; isLoading: boolean };
 }
 
 export interface UsageTrendStatLike {
@@ -69,11 +70,16 @@ export function buildUsageTrendChartData(
     /** Inclusive range endpoints (unix seconds). Used to decide year labels. */
     startDate: number;
     endDate: number;
+    timeZone?: "UTC";
   },
 ): UsageTrendChartPoint[] {
-  const { isHourly, dateLocale, startDate, endDate } = options;
-  const startYear = new Date(startDate * 1000).getFullYear();
-  const endYear = new Date(endDate * 1000).getFullYear();
+  const { isHourly, dateLocale, startDate, endDate, timeZone } = options;
+  const startYear = timeZone
+    ? new Date(startDate * 1000).getUTCFullYear()
+    : new Date(startDate * 1000).getFullYear();
+  const endYear = timeZone
+    ? new Date(endDate * 1000).getUTCFullYear()
+    : new Date(endDate * 1000).getFullYear();
   const spansMultipleYears = startYear !== endYear;
 
   return (
@@ -87,6 +93,7 @@ export function buildUsageTrendChartData(
       const tooltipLabel = isHourly
         ? pointDate.toLocaleString(dateLocale, {
             year: "numeric",
+            timeZone,
             month: "2-digit",
             day: "2-digit",
             hour: "2-digit",
@@ -94,11 +101,13 @@ export function buildUsageTrendChartData(
           })
         : pointDate.toLocaleDateString(dateLocale, {
             year: "numeric",
+            timeZone,
             month: "2-digit",
             day: "2-digit",
           });
       const label = isHourly
         ? pointDate.toLocaleString(dateLocale, {
+            timeZone,
             month: "2-digit",
             day: "2-digit",
             hour: "2-digit",
@@ -107,10 +116,12 @@ export function buildUsageTrendChartData(
         : spansMultipleYears
           ? pointDate.toLocaleDateString(dateLocale, {
               year: "2-digit",
+              timeZone,
               month: "2-digit",
               day: "2-digit",
             })
           : pointDate.toLocaleDateString(dateLocale, {
+              timeZone,
               month: "2-digit",
               day: "2-digit",
             });
@@ -177,38 +188,68 @@ export function UsageTrendChart({
   providerName,
   model,
   refreshIntervalMs,
+  snapshot,
 }: UsageTrendChartProps) {
-  const { t, i18n } = useTranslation();
-  const [metric, setMetric] = useState<TrendMetric>("tokens");
-  const { startDate, endDate } = resolveUsageRange(range);
+  const { i18n } = useTranslation();
+  const { startDate, endDate } = resolveUsageRange(
+    range,
+    Date.now(),
+    snapshot ? "UTC" : "local",
+  );
   const { data: trends, isLoading } = useUsageTrends(
     range,
     { appType, providerName, model },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+      enabled: !snapshot,
     },
   );
 
   const durationSeconds = Math.max(endDate - startDate, 0);
-  const isHourly = durationSeconds <= 24 * 60 * 60;
+  const isHourly = !snapshot && durationSeconds <= 24 * 60 * 60;
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const dateLocale = getLocaleFromLanguage(language);
-  const tokenTickFormatter = useMemo(
-    () => createUsageTrendTokenTickFormatter(dateLocale),
-    [dateLocale],
-  );
 
   const chartData = useMemo(
     () =>
-      buildUsageTrendChartData(trends, {
+      buildUsageTrendChartData(snapshot?.data ?? trends, {
         isHourly,
         dateLocale,
         startDate,
         endDate,
+        timeZone: snapshot ? "UTC" : undefined,
       }),
-    [trends, isHourly, dateLocale, startDate, endDate],
+    [trends, snapshot, isHourly, dateLocale, startDate, endDate],
   );
 
+  return (
+    <UsageTrendChartView
+      chartData={chartData}
+      isLoading={snapshot ? snapshot.isLoading : isLoading}
+      rangeLabel={rangeLabel}
+    />
+  );
+}
+
+/** Shared presentation for local queries and cross-device daily snapshots. */
+function UsageTrendChartView({
+  chartData,
+  isLoading = false,
+  rangeLabel,
+}: {
+  chartData: UsageTrendChartPoint[];
+  isLoading?: boolean;
+  rangeLabel: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const [metric, setMetric] = useState<TrendMetric>("tokens");
+  const dateLocale = getLocaleFromLanguage(
+    i18n.resolvedLanguage || i18n.language || "en",
+  );
+  const tokenTickFormatter = useMemo(
+    () => createUsageTrendTokenTickFormatter(dateLocale),
+    [dateLocale],
+  );
   // 单指标：图只画切换选中的那一个指标，单 Y 轴，图例和 tooltip 跟着走。
   const metricLabel =
     metric === "requests"

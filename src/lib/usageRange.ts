@@ -26,9 +26,29 @@ function getPresetLookbackStart(
 export function resolveUsageRange(
   selection: UsageRangeSelection,
   nowMs: number = Date.now(),
+  timeZone: "local" | "UTC" = "local",
 ): ResolvedUsageRange {
   const endDate = Math.floor(nowMs / 1000);
 
+  if (
+    timeZone === "UTC" &&
+    selection.preset !== "all" &&
+    selection.preset !== "custom"
+  ) {
+    const now = new Date(nowMs);
+    const today =
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) /
+      1000;
+    const days =
+      selection.preset === "7d"
+        ? 7
+        : selection.preset === "14d"
+          ? 14
+          : selection.preset === "30d"
+            ? 30
+            : 1;
+    return { startDate: today - (days - 1) * DAY_SECONDS, endDate };
+  }
   switch (selection.preset) {
     case "today":
       return {

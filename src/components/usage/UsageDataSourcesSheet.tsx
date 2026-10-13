@@ -32,9 +32,10 @@ interface UsageDataSourcesSheetProps {
   rebuildingCodex: boolean;
   /** 只负责打开确认框；确认框里写清后果 */
   onRebuildCodex: () => void;
+  deviceSync?: ReactNode;
 }
 
-function SourceCard({
+export function SourceCard({
   title,
   help,
   trailing,
@@ -92,6 +93,7 @@ export function UsageDataSourcesSheet({
   onOpenRoutingSettings,
   rebuildingCodex,
   onRebuildCodex,
+  deviceSync,
 }: UsageDataSourcesSheetProps) {
   const { t, i18n } = useTranslation();
   const coveredApps = joinNames(
@@ -174,6 +176,7 @@ export function UsageDataSourcesSheet({
             )}
           </SourceCard>
 
+          {deviceSync}
           <SourceCard
             title={t("usage.rebuildCodex.title")}
             help={{

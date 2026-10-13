@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
 import { useUsageSummaryByApp } from "@/lib/query/usage";
@@ -28,6 +28,12 @@ interface UsageHeroProps {
   refreshIntervalMs: number;
   /** 窄容器下指标卡排成两列 */
   compact?: boolean;
+  snapshot?: {
+    data: UsageSummaryByApp[];
+    isLoading: boolean;
+    estimated?: boolean;
+    note?: ReactNode;
+  };
 }
 
 /**
@@ -155,23 +161,50 @@ export function UsageHero({
   providerName,
   model,
   refreshIntervalMs,
-  compact = false,
+  compact,
+  snapshot,
 }: UsageHeroProps) {
+  const local = useUsageSummaryByApp(
+    range,
+    { providerName, model },
+    {
+      enabled: !snapshot,
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  );
+  return (
+    <UsageHeroView
+      data={snapshot?.data ?? local.data}
+      isLoading={snapshot ? snapshot.isLoading : local.isLoading}
+      appType={appType}
+      compact={compact}
+      estimated={snapshot?.estimated}
+      note={snapshot?.note}
+    />
+  );
+}
+
+function UsageHeroView({
+  data,
+  isLoading,
+  appType,
+  compact = false,
+  estimated = false,
+  note,
+}: {
+  data?: UsageSummaryByApp[];
+  isLoading: boolean;
+  appType?: string;
+  compact?: boolean;
+  estimated?: boolean;
+  note?: ReactNode;
+}) {
   const { t, i18n } = useTranslation();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const [moreOpen, setMoreOpen] = useState(false);
 
-  const { data, isLoading } = useUsageSummaryByApp(
-    range,
-    { providerName, model },
-    {
-      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-    },
-  );
-
-  // No client-side filtering: totals must match the Trend/Logs/Stats below,
-  // which all go through the backend's full set of app_types. The
-  // KNOWN_APP_TYPES list only governs which filter chips appear.
+  // Local queries and snapshot adapters cover the full set of app types.
+  // KNOWN_APP_TYPES only governs which filter chips appear.
   const allApps = data ?? [];
   const summary = pickSummary(allApps, appType);
 
@@ -213,7 +246,9 @@ export function UsageHero({
             )}
           >
             <MetricCard
-              label={t("usage.totalCost")}
+              label={t(
+                estimated ? "usage.devices.estimatedCost" : "usage.totalCost",
+              )}
               value={
                 placeholder ?? (totalCost == null ? "--" : fmtUsd(totalCost, 2))
               }
@@ -300,6 +335,7 @@ export function UsageHero({
           />
         </Button>
       </div>
+      {note}
     </section>
   );
 }

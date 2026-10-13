@@ -27,6 +27,7 @@ interface UsageHeatmapProps {
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
+  snapshot?: { data: UsageTrendStatLike[]; isLoading: boolean };
 }
 
 interface DayCell {
@@ -150,9 +151,13 @@ function cellStyle(level: number) {
 function useAllSpansDailyTrends(
   filters: { appType?: string; providerName?: string; model?: string },
   refreshIntervalMs: number,
+  enabled = true,
 ) {
   const refetchInterval = refreshIntervalMs > 0 ? refreshIntervalMs : false;
-  const firstDateQuery = useUsageFirstDate(filters, { refetchInterval });
+  const firstDateQuery = useUsageFirstDate(filters, {
+    refetchInterval,
+    enabled,
+  });
   const today = startOfDay(new Date());
   const spanCount = firstDateQuery.isSuccess
     ? spanCountFor(firstDateQuery.data, today)
@@ -171,7 +176,7 @@ function useAllSpansDailyTrends(
     [startKey],
   );
   const trendsQuery = useUsageTrends(selection, filters, {
-    enabled: spanCount != null,
+    enabled: enabled && spanCount != null,
     refetchInterval,
   });
   return {
@@ -229,7 +234,40 @@ export function UsageHeatmap({
   providerName,
   model,
   refreshIntervalMs,
+  snapshot,
 }: UsageHeatmapProps) {
+  const local = useAllSpansDailyTrends(
+    { appType, providerName, model },
+    refreshIntervalMs,
+    !snapshot,
+  );
+  const now = new Date();
+  const today = new Date(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  const first = snapshot?.data[0]?.date;
+  return (
+    <UsageHeatmapView
+      trends={snapshot?.data ?? local.trends}
+      isLoading={snapshot ? snapshot.isLoading : local.isLoading}
+      spanCount={snapshot ? spanCountFor(first, today) : local.spanCount}
+      utc={!!snapshot}
+    />
+  );
+}
+function UsageHeatmapView({
+  spanCount,
+  trends,
+  isLoading,
+  utc = false,
+}: {
+  spanCount: number;
+  trends?: UsageTrendStatLike[];
+  isLoading: boolean;
+  utc?: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const [metric, setMetric] = useState<HeatMetric>("tokens");
   const sectionRef = useRef<HTMLElement>(null);
@@ -251,17 +289,19 @@ export function UsageHeatmap({
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
 
-  const { spanCount, trends, isLoading } = useAllSpansDailyTrends(
-    { appType, providerName, model },
-    refreshIntervalMs,
-  );
-
   const heat = useMemo(() => {
     const byDay = new Map<string, UsageTrendStatLike>();
     for (const stat of trends ?? []) {
-      byDay.set(dayKey(new Date(stat.date)), stat);
+      const d = new Date(stat.date);
+      const date = utc
+        ? new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+        : d;
+      byDay.set(dayKey(date), stat);
     }
-    const today = startOfDay(new Date());
+    const now = new Date();
+    const today = utc
+      ? new Date(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+      : startOfDay(now);
     // 最新的一段在上
     const spans = Array.from({ length: spanCount }, (_, index) =>
       buildSpan(index, byDay, metric, today),
@@ -273,7 +313,7 @@ export function UsageHeatmap({
     const thresholds = buildThresholds(days.map((cell) => cell.value));
 
     return { spans, thresholds };
-  }, [trends, metric, spanCount]);
+  }, [trends, metric, spanCount, utc]);
 
   const earlierCount = heat.spans.length - 1;
   const visibleSpans = showEarlier ? heat.spans : heat.spans.slice(0, 1);

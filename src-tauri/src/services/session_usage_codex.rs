@@ -555,6 +555,12 @@ pub(crate) fn reset_codex_usage_on_conn(
     conn: &rusqlite::Connection,
     codex_dir: &Path,
 ) -> Result<(), AppError> {
+    if sqlite_table_exists(conn, "usage_sync_events")? {
+        conn.execute(
+            "DELETE FROM usage_sync_events WHERE data_source = 'codex_session'",
+            [],
+        )?;
+    }
     if sqlite_table_exists(conn, "proxy_request_logs")?
         && sqlite_column_exists(conn, "proxy_request_logs", "data_source")?
     {

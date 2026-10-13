@@ -42,6 +42,13 @@ import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import { usageApi } from "@/lib/api/usage";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { cn } from "@/lib/utils";
+import { DeviceUsageScope, DeviceUsageSource } from "./DeviceUsageControls";
+import { useDeviceUsage, deviceUsageKeys } from "@/lib/query/deviceUsage";
+import {
+  selectDeviceUsageRows,
+  deviceUsagePresentation,
+  type UsageQuality,
+} from "@/lib/deviceUsage";
 import { UsageHero } from "./UsageHero";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
@@ -157,6 +164,9 @@ export function UsageDashboard({
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
+  const [deviceScope, setDeviceScope] = useState("local");
+  const remote = deviceScope !== "local";
+  const [quality, setQuality] = useState<UsageQuality>("all");
   const [range, setRange] = useState<UsageRangeSelection>({
     preset: "today",
   });
@@ -184,6 +194,44 @@ export function UsageDashboard({
   const lastSyncAt = Math.max(lastManualSyncAt ?? 0, lastScanAt ?? 0) || null;
   const [containerRef, measuredWidth] = useContainerWidth<HTMLDivElement>();
   const now = useMinuteTicker();
+  const deviceUsage = useDeviceUsage(deviceScope, refreshIntervalMs);
+  const deviceReport = deviceUsage.query.data;
+  const deviceRows = useMemo(
+    () => selectDeviceUsageRows(deviceReport, range, appType, model, quality),
+    [deviceReport, range, appType, model, quality, now],
+  );
+  const devicePresentation = useMemo(
+    () => deviceUsagePresentation(deviceRows),
+    [deviceRows],
+  );
+  const deviceModelOptions = useMemo(
+    () =>
+      deviceUsagePresentation(
+        selectDeviceUsageRows(deviceReport, range, appType, undefined, quality),
+      ).models,
+    [deviceReport, range, appType, quality, now],
+  );
+  const syncDeviceUsage = async () => {
+    try {
+      await deviceUsage.sync.mutateAsync();
+    } catch (error) {
+      toast.error(t("usage.sessionSync.syncFailed", { error: String(error) }));
+    }
+  };
+  const configureDeviceUsage = (enabled: boolean, name: string) => {
+    deviceUsage.configure.mutate({ enabled, name });
+  };
+  const changeDeviceScope = (scope: string) => {
+    if (scope === deviceScope) return;
+    setDeviceScope(scope);
+    setProviderName(undefined);
+    setModel(undefined);
+    setDetailRequestId(null);
+    if (scope !== "local") {
+      if (tab === "providers" || tab === "pricing") setTab("logs");
+      if (range.preset === "1d") setRange({ preset: "today" });
+    }
+  };
 
   // 测量不到（测试环境）按宽窗口排
   const width = measuredWidth || 1000;
@@ -224,6 +272,7 @@ export function UsageDashboard({
     const previous = refreshIntervalMs;
     setRefreshIntervalMs(normalized);
     queryClient.invalidateQueries({ queryKey: usageKeys.all });
+    queryClient.invalidateQueries({ queryKey: deviceUsageKeys.all });
     try {
       const saved = await onRefreshIntervalChange?.(normalized);
       if (saved === false) {
@@ -243,7 +292,10 @@ export function UsageDashboard({
     setRebuildingCodex(true);
     try {
       const result = await usageApi.rebuildCodexUsage();
-      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: usageKeys.all }),
+        queryClient.invalidateQueries({ queryKey: deviceUsageKeys.all }),
+      ]);
       const message = t("usage.rebuildCodex.completed", {
         imported: result.imported,
         errors: result.errors.length,
@@ -266,7 +318,10 @@ export function UsageDashboard({
     setSyncingSession(true);
     try {
       const result = await usageApi.syncSessionUsage();
-      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: usageKeys.all }),
+        queryClient.invalidateQueries({ queryKey: deviceUsageKeys.all }),
+      ]);
       lastManualSessionSyncAt = Date.now();
       setLastManualSyncAt(lastManualSessionSyncAt);
       const message = t("usage.sessionSync.syncCompleted", {
@@ -288,10 +343,18 @@ export function UsageDashboard({
 
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
-  const resolvedRange = useMemo(() => resolveUsageRange(range), [range]);
+  const resolvedRange = useMemo(
+    () => resolveUsageRange(range, Date.now(), remote ? "UTC" : "local"),
+    [range, remote],
+  );
   const rangeLabel = useMemo(() => {
     if (range.preset !== "custom") {
-      return getUsageRangePresetLabel(range.preset, t);
+      return `${getUsageRangePresetLabel(range.preset, t)}${remote ? " · UTC" : ""}`;
+    }
+    if (remote) {
+      const format = (ts: number) =>
+        new Date(ts * 1000).toLocaleDateString(locale, { timeZone: "UTC" });
+      return `${format(resolvedRange.startDate)} → ${format(resolvedRange.endDate)} · UTC`;
     }
     const startStr = new Date(resolvedRange.startDate * 1000).toLocaleString(
       locale,
@@ -303,7 +366,14 @@ export function UsageDashboard({
       locale,
     );
     return `${startStr} - ${endStr}`;
-  }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
+  }, [
+    locale,
+    range,
+    resolvedRange.endDate,
+    resolvedRange.startDate,
+    t,
+    remote,
+  ]);
 
   // 筛选下拉的选项池：供应商列表只跟应用/时间范围走（不受自身选中值影响），
   // 模型列表随所选供应商级联。refetchInterval 跟随面板的刷新设置——未筛选时
@@ -315,20 +385,23 @@ export function UsageDashboard({
   const { data: providerOptionsData } = useProviderStats(
     range,
     { appType },
-    refetch,
+    { ...refetch, enabled: !remote },
   );
   const { data: modelOptionsData } = useModelStats(
     range,
     { appType, providerName },
-    refetch,
+    { ...refetch, enabled: !remote },
   );
   // 有没有任何用量（不分时间范围）：一条都没有时显示空状态
   const { data: allTimeSummary } = useQuery({
     queryKey: [...usageKeys.all, "all-time-summary"],
     queryFn: () => usageApi.getUsageSummary(),
     refetchInterval: refetch.refetchInterval,
+    enabled: !remote,
   });
-  const isEmpty = allTimeSummary != null && allTimeSummary.totalRequests === 0;
+  const isEmpty = remote
+    ? deviceReport != null && deviceReport.rows.length === 0
+    : allTimeSummary != null && allTimeSummary.totalRequests === 0;
 
   const providerOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -347,14 +420,14 @@ export function UsageDashboard({
 
   const modelOptions = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const stat of modelOptionsData ?? []) {
+    for (const stat of (remote ? deviceModelOptions : modelOptionsData) ?? []) {
       counts.set(stat.model, (counts.get(stat.model) ?? 0) + stat.requestCount);
     }
     if (model && !counts.has(model)) counts.set(model, 0);
     return Array.from(counts, ([name, count]) => ({ name, count })).sort(
       (a, b) => b.count - a.count,
     );
-  }, [modelOptionsData, model]);
+  }, [modelOptionsData, model, remote, deviceModelOptions]);
 
   const providerTotal = providerOptions.reduce((sum, p) => sum + p.count, 0);
   const modelTotal = modelOptions.reduce((sum, m) => sum + m.count, 0);
@@ -367,12 +440,23 @@ export function UsageDashboard({
       ? t("usage.syncStatus.justNow")
       : t("usage.syncStatus.minutesAgo", { count: minutes });
   }, [lastSyncAt, now, t]);
-  const syncText = !sessionAutoSyncEnabled
-    ? t("usage.syncStatus.off")
-    : (syncedLabel ?? t("usage.syncStatus.auto"));
-  const syncTip = sessionAutoSyncEnabled
-    ? t("usage.syncStatus.tipAuto")
-    : t("usage.syncStatus.tipOff");
+  const deviceSyncText = deviceReport?.settings.lastSyncAt
+    ? formatRelativeTime(deviceReport.settings.lastSyncAt * 1000, t, now)
+    : t(
+        deviceReport?.settings.enabled
+          ? "usage.devices.awaitingSync"
+          : "usage.devices.syncOff",
+      );
+  const syncText = remote
+    ? deviceSyncText
+    : !sessionAutoSyncEnabled
+      ? t("usage.syncStatus.off")
+      : (syncedLabel ?? t("usage.syncStatus.auto"));
+  const syncTip = remote
+    ? t("usage.devices.transport")
+    : sessionAutoSyncEnabled
+      ? t("usage.syncStatus.tipAuto")
+      : t("usage.syncStatus.tipOff");
   const drawerSyncedLabel =
     lastSyncAt == null
       ? undefined
@@ -402,10 +486,16 @@ export function UsageDashboard({
           variant="neutral"
           size="regular"
           className="shrink-0 gap-1.5 ps-2.5"
-          disabled={syncingSession}
-          onClick={() => void runManualSessionSync()}
+          disabled={
+            remote
+              ? !deviceReport?.settings.enabled || deviceUsage.sync.isPending
+              : syncingSession
+          }
+          onClick={() =>
+            void (remote ? syncDeviceUsage() : runManualSessionSync())
+          }
         >
-          {syncingSession ? (
+          {(remote ? deviceUsage.sync.isPending : syncingSession) ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <RefreshCw className="h-3.5 w-3.5" />
@@ -516,57 +606,65 @@ export function UsageDashboard({
         ))}
       </div>
       <div className="min-w-2 flex-1" />
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="neutral"
-            size="regular"
-            className="min-w-[78px] max-w-[156px] shrink gap-1 pe-2 ps-3"
-            title={
-              providerName
-                ? usageProviderTitle(getUsageProviderLabel(providerName, t))
-                : t("usage.providerFilter.title")
-            }
+      <DeviceUsageScope
+        scope={deviceScope}
+        devices={deviceReport?.devices ?? []}
+        onChange={changeDeviceScope}
+      />
+      {!remote && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="neutral"
+              size="regular"
+              className="min-w-[78px] max-w-[156px] shrink gap-1 pe-2 ps-3"
+              title={
+                providerName
+                  ? usageProviderTitle(getUsageProviderLabel(providerName, t))
+                  : t("usage.providerFilter.title")
+              }
+            >
+              <span className="min-w-0 truncate">
+                {providerName
+                  ? getUsageProviderLabel(providerName, t).label
+                  : t("usage.providerFilter.label")}
+              </span>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-2" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            aria-label={t("usage.providerFilter.title")}
+            className={cn(menuContentClass, "max-h-[360px] overflow-y-auto")}
           >
-            <span className="min-w-0 truncate">
-              {providerName
-                ? getUsageProviderLabel(providerName, t).label
-                : t("usage.providerFilter.label")}
-            </span>
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-2" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          aria-label={t("usage.providerFilter.title")}
-          className={cn(menuContentClass, "max-h-[360px] overflow-y-auto")}
-        >
-          <DropdownMenuItem
-            className={menuItemClass}
-            onSelect={() => changeProviderName(undefined)}
-          >
-            <MenuCheck checked={providerName == null} />
-            {t("usage.providerFilter.all")}
-            <MenuMeta>{fmtInt(providerTotal, locale)}</MenuMeta>
-          </DropdownMenuItem>
-          {providerOptions.map((option) => {
-            const label = getUsageProviderLabel(option.name, t);
-            return (
-              <DropdownMenuItem
-                key={option.name}
-                className={menuItemClass}
-                title={usageProviderTitle(label)}
-                onSelect={() => changeProviderName(option.name)}
-              >
-                <MenuCheck checked={providerName === option.name} />
-                <span className="min-w-0 truncate">{label.label}</span>
-                <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
-              </DropdownMenuItem>
-            );
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <DropdownMenuItem
+              className={menuItemClass}
+              onSelect={() => changeProviderName(undefined)}
+            >
+              <MenuCheck checked={providerName == null} />
+              {t("usage.providerFilter.all")}
+              <MenuMeta>{fmtInt(providerTotal, locale)}</MenuMeta>
+            </DropdownMenuItem>
+            {providerOptions.map((option) => {
+              const label = getUsageProviderLabel(option.name, t);
+              return (
+                <DropdownMenuItem
+                  key={option.name}
+                  className={menuItemClass}
+                  title={usageProviderTitle(label)}
+                  onSelect={() => changeProviderName(option.name)}
+                >
+                  <MenuCheck checked={providerName === option.name} />
+                  <span className="min-w-0 truncate">{label.label}</span>
+                  <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -615,13 +713,14 @@ export function UsageDashboard({
         selection={range}
         triggerLabel={rangeLabel}
         onApply={(nextRange) => setRange(nextRange)}
+        granularity={remote ? "utc-day" : "time"}
       />
     </div>
   );
 
   // ── 子页签 ───────────────────────────────────────────────────────────
   const tabLabel: Record<UsageTab, string> = {
-    logs: t("usage.requestLogs"),
+    logs: t(remote ? "usage.devices.breakdown" : "usage.requestLogs"),
     providers: t("usage.tabs.providers"),
     models: t("usage.tabs.models"),
     pricing: t("usage.tabs.pricing"),
@@ -631,49 +730,83 @@ export function UsageDashboard({
       ? t("usage.statusFilter.all")
       : `${t("usage.statusCode")} ${statusCode}`;
 
-  const tabTrailing =
-    tab === "logs" ? (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="quiet"
-            size="compact"
-            className="gap-1 pe-1.5 ps-2 text-caption text-fg-2"
-            aria-label={`${t("usage.statusCode")}: ${statusLabel}`}
-          >
-            {statusLabel}
-            <ChevronDown className="h-3.5 w-3.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          className={cn(menuContentClass, "min-w-[160px]")}
+  const tabTrailing = remote ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="quiet"
+          size="compact"
+          className="gap-1 pe-1.5 ps-2 text-caption text-fg-2"
+          aria-label={t("usage.devices.quality")}
         >
+          {t(
+            quality === "all"
+              ? "usage.devices.allRecords"
+              : `usage.devices.${quality}`,
+          )}
+          <ChevronDown className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className={menuContentClass}>
+        {(["all", "verified", "unverified"] as const).map((value) => (
           <DropdownMenuItem
+            key={value}
             className={menuItemClass}
-            onSelect={() => setStatusCode(undefined)}
+            onSelect={() => setQuality(value)}
           >
-            <MenuCheck checked={statusCode == null} />
-            {t("usage.statusFilter.all")}
+            <MenuCheck checked={quality === value} />
+            {t(
+              value === "all"
+                ? "usage.devices.allRecords"
+                : `usage.devices.${value}`,
+            )}
           </DropdownMenuItem>
-          {STATUS_CODE_OPTIONS.map((code) => (
-            <DropdownMenuItem
-              key={code}
-              className={menuItemClass}
-              onSelect={() => setStatusCode(code)}
-            >
-              <MenuCheck checked={statusCode === code} />
-              <span className="tabular-nums">{code}</span>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    ) : tab === "providers" || tab === "models" ? (
-      <span className="text-caption text-fg-3">
-        {t("usage.sortedByRequests")}
-      </span>
-    ) : null;
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : tab === "logs" ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="quiet"
+          size="compact"
+          className="gap-1 pe-1.5 ps-2 text-caption text-fg-2"
+          aria-label={`${t("usage.statusCode")}: ${statusLabel}`}
+        >
+          {statusLabel}
+          <ChevronDown className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className={cn(menuContentClass, "min-w-[160px]")}
+      >
+        <DropdownMenuItem
+          className={menuItemClass}
+          onSelect={() => setStatusCode(undefined)}
+        >
+          <MenuCheck checked={statusCode == null} />
+          {t("usage.statusFilter.all")}
+        </DropdownMenuItem>
+        {STATUS_CODE_OPTIONS.map((code) => (
+          <DropdownMenuItem
+            key={code}
+            className={menuItemClass}
+            onSelect={() => setStatusCode(code)}
+          >
+            <MenuCheck checked={statusCode === code} />
+            <span className="tabular-nums">{code}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : tab === "providers" || tab === "models" ? (
+    <span className="text-caption text-fg-3">
+      {t("usage.sortedByRequests")}
+    </span>
+  ) : null;
 
   const scopedAppType = appType === "all" ? undefined : appType;
 
@@ -681,7 +814,18 @@ export function UsageDashboard({
     <section aria-label={t("usage.tabs.label")} className="flex flex-col">
       <PageTabs<UsageTab>
         aria-label={t("usage.tabs.label")}
-        items={TABS.map((id) => ({ value: id, label: tabLabel[id] }))}
+        items={TABS.map((id) => ({
+          value: id,
+          label:
+            remote && (id === "providers" || id === "pricing") ? (
+              <HoverTip content={t("usage.devices.localDetailsOnly")}>
+                <span>{tabLabel[id]}</span>
+              </HoverTip>
+            ) : (
+              tabLabel[id]
+            ),
+          disabled: remote && (id === "providers" || id === "pricing"),
+        }))}
         value={tab}
         onValueChange={setTab}
         idPrefix="usage-tab"
@@ -694,7 +838,25 @@ export function UsageDashboard({
         id="usage-tabpanel"
         aria-labelledby={`usage-tab-${tab}`}
       >
-        {tab === "logs" && (
+        {tab === "logs" && remote && (
+          <ModelStatsTable
+            range={range}
+            refreshIntervalMs={refreshIntervalMs}
+            snapshot={{
+              data: devicePresentation.daily,
+              isLoading: deviceUsage.query.isPending,
+              resetKey: JSON.stringify([
+                deviceScope,
+                range,
+                appType,
+                model,
+                quality,
+              ]),
+              grouping: "day",
+            }}
+          />
+        )}
+        {tab === "logs" && !remote && (
           <RequestLogTable
             range={range}
             appType={appType}
@@ -705,7 +867,7 @@ export function UsageDashboard({
             onOpenDetail={setDetailRequestId}
           />
         )}
-        {tab === "providers" && (
+        {tab === "providers" && !remote && (
           <ProviderStatsTable
             range={range}
             appType={appType}
@@ -721,15 +883,30 @@ export function UsageDashboard({
             providerName={providerName}
             model={model}
             refreshIntervalMs={refreshIntervalMs}
+            snapshot={
+              remote
+                ? {
+                    data: devicePresentation.models,
+                    isLoading: deviceUsage.query.isPending,
+                    resetKey: JSON.stringify([
+                      deviceScope,
+                      range,
+                      appType,
+                      model,
+                      quality,
+                    ]),
+                  }
+                : undefined
+            }
           />
         )}
-        {tab === "pricing" && <PricingConfigPanel />}
+        {tab === "pricing" && !remote && <PricingConfigPanel />}
       </div>
     </section>
   );
 
   const body =
-    isEmpty && pricingWhileEmpty ? (
+    !remote && isEmpty && pricingWhileEmpty ? (
       // 空库里只有定价可配：不画全是 0 的概览和趋势，直接给页签
       <div
         id="main-content"
@@ -750,29 +927,41 @@ export function UsageDashboard({
             <p className="m-0 text-section text-fg-1">
               {t("usage.empty.title")}
             </p>
-            <p className="m-0 text-body text-fg-2">{t("usage.empty.body")}</p>
+            <p className="m-0 text-body text-fg-2">
+              {t(remote ? "usage.devices.empty" : "usage.empty.body")}
+            </p>
           </div>
           <Button
             type="button"
             variant="neutral"
             size="regular"
-            disabled={syncingSession}
-            onClick={() => void runManualSessionSync()}
+            disabled={
+              remote
+                ? !deviceReport?.settings.enabled || deviceUsage.sync.isPending
+                : syncingSession
+            }
+            onClick={() =>
+              void (remote ? syncDeviceUsage() : runManualSessionSync())
+            }
           >
-            {syncingSession && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {(remote ? deviceUsage.sync.isPending : syncingSession) && (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            )}
             {t("usage.sessionSync.syncNow")}
           </Button>
-          <Button
-            type="button"
-            variant="quiet"
-            size="regular"
-            onClick={() => {
-              setTab("pricing");
-              setPricingWhileEmpty(true);
-            }}
-          >
-            {t("usage.empty.configurePricing")}
-          </Button>
+          {!remote && (
+            <Button
+              type="button"
+              variant="quiet"
+              size="regular"
+              onClick={() => {
+                setTab("pricing");
+                setPricingWhileEmpty(true);
+              }}
+            >
+              {t("usage.empty.configurePricing")}
+            </Button>
+          )}
         </div>
       </div>
     ) : (
@@ -787,6 +976,30 @@ export function UsageDashboard({
           model={model}
           refreshIntervalMs={refreshIntervalMs}
           compact={compact}
+          snapshot={
+            remote
+              ? {
+                  data: devicePresentation.apps,
+                  isLoading: deviceUsage.query.isPending,
+                  estimated: devicePresentation.estimated,
+                  note: (
+                    <div className="flex flex-wrap items-center gap-1 text-caption text-fg-3">
+                      <span>
+                        {t(
+                          devicePresentation.estimated
+                            ? "usage.devices.estimateSummary"
+                            : "usage.devices.proxySummary",
+                        )}
+                      </span>
+                      <HelpTip title={t("usage.devices.quality")}>
+                        {t("usage.devices.qualityHelp")}
+                        <p className="mt-2">{t("usage.devices.provenance")}</p>
+                      </HelpTip>
+                    </div>
+                  ),
+                }
+              : undefined
+          }
         />
 
         {/* 「全部」看长期分布用热力图；24 小时到 30 天这类短范围用柱状图 */}
@@ -796,6 +1009,14 @@ export function UsageDashboard({
             providerName={providerName}
             model={model}
             refreshIntervalMs={refreshIntervalMs}
+            snapshot={
+              remote
+                ? {
+                    data: devicePresentation.trends,
+                    isLoading: deviceUsage.query.isPending,
+                  }
+                : undefined
+            }
           />
         ) : (
           <UsageTrendChart
@@ -805,6 +1026,14 @@ export function UsageDashboard({
             providerName={providerName}
             model={model}
             refreshIntervalMs={refreshIntervalMs}
+            snapshot={
+              remote
+                ? {
+                    data: devicePresentation.trends,
+                    isLoading: deviceUsage.query.isPending,
+                  }
+                : undefined
+            }
           />
         )}
 
@@ -823,6 +1052,22 @@ export function UsageDashboard({
         actions={headerActions}
       />
       {filterRow}
+      {remote &&
+        (deviceUsage.query.error != null ||
+          deviceReport?.settings.lastError) && (
+          <p role="alert" className="mx-6 mb-2 text-caption text-danger-text">
+            {String(
+              deviceUsage.query.error ?? deviceReport?.settings.lastError,
+            )}
+          </p>
+        )}
+      {remote && !!deviceReport?.conflictingEvents && (
+        <p role="alert" className="mx-6 mb-2 text-caption text-danger-text">
+          {t("usage.devices.conflicts", {
+            count: deviceReport.conflictingEvents,
+          })}
+        </p>
+      )}
       {body}
 
       <RequestDetailPanel
@@ -842,6 +1087,23 @@ export function UsageDashboard({
         onOpenRoutingSettings={onOpenRoutingSettings}
         rebuildingCodex={rebuildingCodex}
         onRebuildCodex={() => setShowRebuildConfirm(true)}
+        deviceSync={
+          sourcesOpen ? (
+            <DeviceUsageSource
+              settings={deviceReport?.settings}
+              devices={deviceReport?.devices ?? []}
+              saving={deviceUsage.configure.isPending}
+              syncing={deviceUsage.sync.isPending}
+              error={
+                deviceUsage.configure.error ??
+                deviceUsage.sync.error ??
+                deviceReport?.settings.lastError
+              }
+              onConfigure={configureDeviceUsage}
+              onSync={() => void syncDeviceUsage()}
+            />
+          ) : undefined
+        }
       />
       <ConfirmDialog
         isOpen={showRebuildConfirm}

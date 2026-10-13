@@ -397,3 +397,44 @@ mod tests {
         assert_eq!(crate::usage_events::take_test_notify_count(), 1);
     }
 }
+
+#[tauri::command]
+pub async fn get_usage_sync_status(
+    state: State<'_, AppState>,
+) -> Result<crate::services::usage_sync::UsageSyncStatus, AppError> {
+    run_db_query(&state, crate::services::usage_sync::status).await
+}
+
+#[tauri::command]
+pub async fn get_device_usage(
+    state: State<'_, AppState>,
+    scope: String,
+    start: Option<String>,
+    end: Option<String>,
+    app: Option<String>,
+    model: Option<String>,
+) -> Result<crate::services::usage_sync::UsageReport, AppError> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::services::usage_sync::report(&db, &scope, start, end, app, model)
+    })
+    .await
+    .map_err(|e| AppError::InvalidInput(format!("Usage query failed: {e}")))?
+}
+
+#[tauri::command]
+pub async fn configure_usage_sync(
+    state: State<'_, AppState>,
+    enabled: bool,
+    name: String,
+) -> Result<crate::services::usage_sync::UsageSyncSettings, AppError> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || crate::services::usage_sync::configure(&db, enabled, &name))
+        .await
+        .map_err(|e| AppError::InvalidInput(format!("Usage settings failed: {e}")))?
+}
+
+#[tauri::command]
+pub async fn sync_device_usage(state: State<'_, AppState>) -> Result<(), AppError> {
+    crate::services::usage_sync::sync(state.db.clone()).await
+}

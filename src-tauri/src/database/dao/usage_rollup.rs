@@ -114,6 +114,9 @@ impl Database {
     }
 
     fn do_rollup_and_prune(conn: &rusqlite::Connection, cutoff: i64) -> Result<u64, AppError> {
+        // Capture identities in the same savepoint before details lose their IDs.
+        crate::services::usage_sync::capture_before_prune(conn, cutoff)?;
+
         // Aggregate old logs, merging with any pre-existing rollup rows via LEFT JOIN.
         let effective_filter = effective_usage_log_filter("l");
         let fresh_detail_input = fresh_input_sql("l");
@@ -169,6 +172,8 @@ impl Database {
 
         conn.execute(&aggregation_sql, [cutoff])
             .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
+
+        crate::services::usage_sync::mark_archived(conn, cutoff)?;
 
         // INSERT uses the effective-log filter to exclude duplicate session rows.
         // DELETE intentionally prunes all old details so those duplicates are discarded.

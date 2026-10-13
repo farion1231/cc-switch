@@ -68,7 +68,7 @@ export function PerformanceHeaders() {
 export function PerformanceCells({
   stat,
 }: {
-  stat: SpeedTotals & { successRate: number };
+  stat: SpeedTotals & { successRate?: number };
 }) {
   const exactSpeed = getStatsSpeed(stat);
   const estimatedSpeed =
@@ -83,7 +83,9 @@ export function PerformanceCells({
   return (
     <>
       <td className={usageTable.td}>
-        {stat.successRate.toFixed(stat.successRate >= 99.95 ? 0 : 1)}%
+        {stat.successRate == null
+          ? "—"
+          : `${stat.successRate.toFixed(stat.successRate >= 99.95 ? 0 : 1)}%`}
       </td>
       <td className={cn(usageTable.td, speed == null && usageTable.muted)}>
         {speed == null ? (

@@ -154,6 +154,15 @@ export interface ModelStats {
   estFirstTokenMedianMs?: number | null;
 }
 
+/** Presentation rows may come from snapshots that do not record response metrics. */
+export type UsageModelStat = Omit<ModelStats, "successRate"> & {
+  successRate?: number;
+  estimated?: boolean;
+  date?: string;
+  appType?: string;
+  verified?: boolean;
+};
+
 export interface LogFilters {
   appType?: string;
   providerName?: string;

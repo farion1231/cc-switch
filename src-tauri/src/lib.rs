@@ -1185,6 +1185,7 @@ pub fn run() {
             }
 
             let _tray = tray_builder.build(app)?;
+            crate::services::usage_sync::start_worker(app_state.db.clone());
             crate::services::webdav_auto_sync::start_worker(
                 app_state.db.clone(),
                 app.handle().clone(),
@@ -1674,6 +1675,10 @@ pub fn run() {
             commands::get_auto_failover_enabled,
             commands::set_auto_failover_enabled,
             // Usage statistics
+            commands::get_usage_sync_status,
+            commands::get_device_usage,
+            commands::configure_usage_sync,
+            commands::sync_device_usage,
             commands::get_usage_summary,
             commands::get_session_usage_summary,
             commands::get_usage_summary_by_app,

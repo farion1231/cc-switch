@@ -28,6 +28,8 @@ interface UsageDateRangePickerProps {
   selection: UsageRangeSelection;
   onApply: (selection: UsageRangeSelection) => void;
   triggerLabel: string;
+  /** Snapshots can only select complete UTC calendar days. */
+  granularity?: "time" | "utc-day";
 }
 
 /* ── helpers ── */
@@ -105,31 +107,45 @@ function getCalendarDays(month: Date): Date[] {
 
 /* ── component ── */
 
-function resolveCalendarRange(selection: UsageRangeSelection) {
-  const r = resolveUsageRange(selection);
-  if (selection.preset !== "all") return r;
-  return { startDate: r.endDate - 30 * 24 * 60 * 60, endDate: r.endDate };
+function resolveCalendarRange(selection: UsageRangeSelection, utc = false) {
+  const r = resolveUsageRange(selection, Date.now(), utc ? "UTC" : "local");
+  if (selection.preset === "all") r.startDate = r.endDate - 30 * 24 * 60 * 60;
+  if (!utc) return r;
+  // Reuse the local calendar grid with UTC wall dates, then convert at submission.
+  const calendarTs = (ts: number) => {
+    const d = fromTs(ts);
+    return toTs(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  };
+  return { startDate: calendarTs(r.startDate), endDate: calendarTs(r.endDate) };
+}
+function utcTsFromCalendar(ts: number) {
+  const d = fromTs(ts);
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 1000;
 }
 
 export function UsageDateRangePicker({
   selection,
   onApply,
   triggerLabel,
+  granularity = "time",
 }: UsageDateRangePickerProps) {
   const { t, i18n } = useTranslation();
+  const utc = granularity === "utc-day";
   const [open, setOpen] = useState(false);
   const prevMonthLabel = t("usage.prevMonth", { defaultValue: "上个月" });
   const nextMonthLabel = t("usage.nextMonth", { defaultValue: "下个月" });
   const [activeField, setActiveField] = useState<DraftField>("start");
   // 「全部」的起点是 0，日历草稿改从结束日往前 30 天开始，避免跳到 1970 年
   const resolvedRange = useMemo(
-    () => resolveCalendarRange(selection),
-    [selection],
+    () => resolveCalendarRange(selection, utc),
+    [selection, utc],
   );
   const [draftStart, setDraftStart] = useState(resolvedRange.startDate);
   const [draftEnd, setDraftEnd] = useState(resolvedRange.endDate);
   const [draftLiveEnd, setDraftLiveEnd] = useState(
-    selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
+    !utc && selection.preset === "custom"
+      ? (selection.liveEndTime ?? false)
+      : false,
   );
   const [displayMonth, setDisplayMonth] = useState(
     () =>
@@ -147,11 +163,13 @@ export function UsageDateRangePicker({
   // Reset draft when popover opens
   useEffect(() => {
     if (!open) return;
-    const r = resolveCalendarRange(selection);
+    const r = resolveCalendarRange(selection, utc);
     setDraftStart(r.startDate);
     setDraftEnd(r.endDate);
     setDraftLiveEnd(
-      selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
+      !utc && selection.preset === "custom"
+        ? (selection.liveEndTime ?? false)
+        : false,
     );
     setDisplayMonth(
       new Date(
@@ -162,7 +180,7 @@ export function UsageDateRangePicker({
     );
     setActiveField("start");
     setError(null);
-  }, [open, selection]);
+  }, [open, selection, utc]);
 
   // Keep draftEnd ticking when live mode is active and popover is open
   useEffect(() => {
@@ -190,7 +208,10 @@ export function UsageDateRangePicker({
 
   const startDay = fromTs(draftStart);
   const endDay = fromTs(draftEnd);
-  const today = new Date();
+  const now = new Date();
+  const today = utc
+    ? new Date(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+    : now;
 
   /* Pick a date from the calendar */
   const handleDatePick = (day: Date) => {
@@ -243,9 +264,9 @@ export function UsageDateRangePicker({
     }
     onApply({
       preset: "custom",
-      customStartDate: draftStart,
-      customEndDate: draftEnd,
-      liveEndTime: draftLiveEnd,
+      customStartDate: utc ? utcTsFromCalendar(draftStart) : draftStart,
+      customEndDate: utc ? utcTsFromCalendar(draftEnd) + 86400 - 1 : draftEnd,
+      liveEndTime: !utc && draftLiveEnd,
     });
     setOpen(false);
   };
@@ -260,8 +281,9 @@ export function UsageDateRangePicker({
     const isEndLive = field === "end" && draftLiveEnd;
     const ts = field === "start" ? draftStart : draftEnd;
     const setTs = field === "start" ? setDraftStart : setDraftEnd;
-    const label =
-      field === "start"
+    const label = utc
+      ? t(field === "start" ? "usage.devices.from" : "usage.devices.to")
+      : field === "start"
         ? t("usage.startTime", "开始时间")
         : t("usage.endTime", "结束时间");
 
@@ -303,24 +325,26 @@ export function UsageDateRangePicker({
             }}
             readOnly={isEndLive}
           />
-          <Input
-            type="time"
-            step={60}
-            className={cn(
-              "h-7 w-[90px] flex-none border-0 bg-transparent p-0 text-body shadow-none focus:ring-0 focus-visible:ring-0",
-              isEndLive && "pointer-events-none",
-            )}
-            value={fmtTime(ts)}
-            onChange={(e) => {
-              if (isEndLive) return;
-              setTs(parseTimeInput(ts, e.target.value));
-              setError(null);
-            }}
-            onFocus={() => {
-              if (!isEndLive) setActiveField(field);
-            }}
-            readOnly={isEndLive}
-          />
+          {!utc && (
+            <Input
+              type="time"
+              step={60}
+              className={cn(
+                "h-7 w-[90px] flex-none border-0 bg-transparent p-0 text-body shadow-none focus:ring-0 focus-visible:ring-0",
+                isEndLive && "pointer-events-none",
+              )}
+              value={fmtTime(ts)}
+              onChange={(e) => {
+                if (isEndLive) return;
+                setTs(parseTimeInput(ts, e.target.value));
+                setError(null);
+              }}
+              onFocus={() => {
+                if (!isEndLive) setActiveField(field);
+              }}
+              readOnly={isEndLive}
+            />
+          )}
         </div>
       </div>
     );
@@ -349,7 +373,7 @@ export function UsageDateRangePicker({
       >
         {/* Preset shortcuts */}
         <div className="flex flex-wrap gap-1.5 pb-2 border-b border-border">
-          {PRESETS.map((preset) => (
+          {PRESETS.filter((preset) => !utc || preset !== "1d").map((preset) => (
             <Button
               key={preset}
               type="button"
@@ -375,27 +399,31 @@ export function UsageDateRangePicker({
           {/* Left: date fields */}
           <div className="usage-range-fields space-y-2">
             <p className="text-caption text-fg-2">
-              {t("usage.customRangeHint", "支持日期与时间，最长 30 天")}
+              {utc
+                ? t("usage.devices.dateHint")
+                : t("usage.customRangeHint", "支持日期与时间，最长 30 天")}
             </p>
             {renderField("start")}
             {renderField("end")}
 
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <Checkbox
-                checked={draftLiveEnd}
-                onCheckedChange={(checked) => {
-                  const live = checked === true;
-                  setDraftLiveEnd(live);
-                  if (live) {
-                    setDraftEnd(Math.floor(Date.now() / 1000));
-                    setActiveField("start");
-                  }
-                }}
-              />
-              <span className="text-caption text-fg-2">
-                {t("usage.liveEndTime", "结束时间跟随当前时刻")}
-              </span>
-            </label>
+            {!utc && (
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <Checkbox
+                  checked={draftLiveEnd}
+                  onCheckedChange={(checked) => {
+                    const live = checked === true;
+                    setDraftLiveEnd(live);
+                    if (live) {
+                      setDraftEnd(Math.floor(Date.now() / 1000));
+                      setActiveField("start");
+                    }
+                  }}
+                />
+                <span className="text-caption text-fg-2">
+                  {t("usage.liveEndTime", "结束时间跟随当前时刻")}
+                </span>
+              </label>
+            )}
 
             {error && <p className="text-caption text-danger-text">{error}</p>}
 

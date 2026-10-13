@@ -433,6 +433,8 @@ impl Database {
             [],
         );
 
+        crate::services::usage_sync::create_tables(conn)?;
+
         Ok(())
     }
 

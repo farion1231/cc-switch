@@ -91,6 +91,9 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "usage_sync_meta",
+    "usage_sync_events",
+    "usage_sync_remote",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -102,6 +105,9 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "usage_sync_meta",
+    "usage_sync_events",
+    "usage_sync_remote",
 ];
 
 /// A database backup entry for the UI

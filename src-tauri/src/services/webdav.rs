@@ -528,3 +528,163 @@ mod tests {
         );
     }
 }
+
+/// Discover direct device collections without a shared, overwrite-prone device index.
+/// The response is bounded and hrefs must remain inside the requested directory.
+pub(crate) async fn list_usage_devices(
+    root: &str,
+    auth: &WebDavAuth,
+    limit: usize,
+) -> Result<Vec<String>, AppError> {
+    let root = format!("{}/", root.trim_end_matches('/'));
+    let response = apply_auth(
+        http_client::get().request(method_propfind(), &root)
+            .header("Depth", "1")
+            .header("Content-Type", "application/xml")
+            .body("<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>")
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+        auth,
+    ).send().await.map_err(|e| webdav_transport_error("webdav.list_failed", "列举设备", "list devices", &root, &e))?;
+    if !response.status().is_success() {
+        return Err(webdav_status_error("PROPFIND", response.status(), &root));
+    }
+    const MAX_LIST_BYTES: usize = 1024 * 1024;
+    ensure_content_length_within_limit(response.headers(), MAX_LIST_BYTES, &root)?;
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|_| AppError::InvalidInput("Failed to read device listing".into()))?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_LIST_BYTES {
+            return Err(response_too_large_error(&root, MAX_LIST_BYTES));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    parse_usage_device_listing(&root, &bytes, limit)
+}
+
+fn parse_usage_device_listing(
+    root: &str,
+    bytes: &[u8],
+    limit: usize,
+) -> Result<Vec<String>, AppError> {
+    use quick_xml::{events::Event, Reader};
+    let base = Url::parse(root)
+        .map_err(|_| AppError::InvalidInput("Invalid device listing URL".into()))?;
+    let mut reader = Reader::from_reader(bytes);
+    let mut href = None::<String>;
+    let mut devices = std::collections::BTreeSet::new();
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|_| AppError::InvalidInput("Invalid WebDAV XML listing".into()))?;
+        match event {
+            Event::DocType(_) => {
+                return Err(AppError::InvalidInput(
+                    "DTD is not allowed in device listings".into(),
+                ))
+            }
+            Event::Start(e) if e.local_name().as_ref() == b"href" => href = Some(String::new()),
+            Event::Text(text) => {
+                if let Some(value) = &mut href {
+                    let decoded = text
+                        .decode()
+                        .map_err(|_| AppError::InvalidInput("Invalid WebDAV href".into()))?;
+                    let decoded = quick_xml::escape::unescape(&decoded)
+                        .map_err(|_| AppError::InvalidInput("Invalid WebDAV href escape".into()))?;
+                    value.push_str(&decoded);
+                }
+            }
+            Event::End(e) if e.local_name().as_ref() == b"href" => {
+                if let Some(href) = href.take() {
+                    if let Ok(url) = base.join(href.trim()) {
+                        if url.origin() == base.origin()
+                            && url.query().is_none()
+                            && url.fragment().is_none()
+                        {
+                            if let Some(child) = url.path().strip_prefix(base.path()) {
+                                let child = child.trim_end_matches('/');
+                                if uuid::Uuid::parse_str(child)
+                                    .is_ok_and(|id| id.to_string() == child)
+                                {
+                                    devices.insert(child.to_string());
+                                    if devices.len() > limit {
+                                        return Err(AppError::InvalidInput(
+                                            "Too many usage devices".into(),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(devices.into_iter().collect())
+}
+
+#[cfg(test)]
+mod usage_listing_tests {
+    use super::parse_usage_device_listing;
+    #[test]
+    fn only_lists_direct_devices_on_the_same_server() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        let xml=format!("<d:multistatus xmlns:d='DAV:'><d:href>/usage/devices/{id}/</d:href><d:href>https://evil.test/usage/devices/{id}/</d:href><d:href>/other/{id}/</d:href><d:href>/usage/devices/nested/{id}/</d:href></d:multistatus>");
+        assert_eq!(
+            parse_usage_device_listing("https://example.test/usage/devices/", xml.as_bytes(), 100)
+                .unwrap(),
+            vec![id]
+        );
+        assert!(parse_usage_device_listing(
+            "https://example.test/usage/devices/",
+            xml.as_bytes(),
+            0
+        )
+        .is_err());
+        assert!(parse_usage_device_listing(
+            "https://example.test/usage/devices/",
+            b"<!DOCTYPE x><x/>",
+            100
+        )
+        .is_err());
+    }
+}
+
+/// Publish a usage head only if its previous revision is still current.
+/// An absent ETag on an existing head is rejected rather than silently racing.
+pub(crate) async fn put_usage_head(
+    url: &str,
+    auth: &WebDavAuth,
+    bytes: Vec<u8>,
+    previous_etag: Option<&str>,
+) -> Result<(), AppError> {
+    let request = http_client::get()
+        .put(url)
+        .header("Content-Type", "application/json")
+        .body(bytes)
+        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
+    let request = match previous_etag {
+        Some(etag) => request.header("If-Match", etag),
+        None => request.header("If-None-Match", "*"),
+    };
+    let response = apply_auth(request, auth).send().await.map_err(|e| {
+        webdav_transport_error(
+            "webdav.usage_head_failed",
+            "发布用量快照",
+            "publish usage snapshot",
+            url,
+            &e,
+        )
+    })?;
+    if !response.status().is_success() {
+        return Err(webdav_status_error(
+            "PUT usage head",
+            response.status(),
+            url,
+        ));
+    }
+    Ok(())
+}

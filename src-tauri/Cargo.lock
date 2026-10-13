@@ -790,6 +790,7 @@ dependencies = [
  "objc2-app-kit 0.2.2",
  "once_cell",
  "png 0.18.1",
+ "quick-xml",
  "regex",
  "reqwest 0.12.28",
  "rquickjs",
