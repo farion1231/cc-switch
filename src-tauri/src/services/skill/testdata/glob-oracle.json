@@ -147,6 +147,71 @@
       "matches": false
     },
     {
+      "pattern": "*",
+      "target": "q",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "r",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "s",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "x",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "z",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "b",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "d",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "0",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "-",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "!",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "[]",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "[!]",
+      "matches": true
+    },
+    {
+      "pattern": "*",
+      "target": "[z-a]",
+      "matches": true
+    },
+    {
       "pattern": "**",
       "target": "",
       "matches": true
@@ -292,6 +357,71 @@
       "matches": false
     },
     {
+      "pattern": "**",
+      "target": "q",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "r",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "s",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "x",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "z",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "b",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "d",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "0",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "-",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "!",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "[]",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "[!]",
+      "matches": true
+    },
+    {
+      "pattern": "**",
+      "target": "[z-a]",
+      "matches": true
+    },
+    {
       "pattern": "pdf",
       "target": "",
       "matches": false
@@ -434,6 +564,71 @@
     {
       "pattern": "pdf",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "pdf",
+      "target": "[z-a]",
       "matches": false
     },
     {
@@ -582,6 +777,71 @@
       "matches": false
     },
     {
+      "pattern": "SKILL.md",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "SKILL.md",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "*.md",
       "target": "",
       "matches": false
@@ -724,6 +984,71 @@
     {
       "pattern": "*.md",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "*.md",
+      "target": "[z-a]",
       "matches": false
     },
     {
@@ -872,6 +1197,71 @@
       "matches": false
     },
     {
+      "pattern": "?.md",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "?.md",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "*df",
       "target": "",
       "matches": false
@@ -1014,6 +1404,71 @@
     {
       "pattern": "*df",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "*df",
+      "target": "[z-a]",
       "matches": false
     },
     {
@@ -1162,6 +1617,71 @@
       "matches": false
     },
     {
+      "pattern": "pdf*",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "pdf*",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "skills/*",
       "target": "",
       "matches": false
@@ -1304,6 +1824,71 @@
     {
       "pattern": "skills/*",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/*",
+      "target": "[z-a]",
       "matches": false
     },
     {
@@ -1452,6 +2037,71 @@
       "matches": false
     },
     {
+      "pattern": "skills/**",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "skills/**/SKILL.md",
       "target": "",
       "matches": false
@@ -1594,6 +2244,71 @@
     {
       "pattern": "skills/**/SKILL.md",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/**/SKILL.md",
+      "target": "[z-a]",
       "matches": false
     },
     {
@@ -1742,6 +2457,71 @@
       "matches": false
     },
     {
+      "pattern": "**/pdf",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "**/pdf",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "**/SKILL.md",
       "target": "",
       "matches": false
@@ -1884,6 +2664,71 @@
     {
       "pattern": "**/SKILL.md",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "**/SKILL.md",
+      "target": "[z-a]",
       "matches": false
     },
     {
@@ -2032,6 +2877,71 @@
       "matches": false
     },
     {
+      "pattern": "**/*.md",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.md",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "**/skills/**",
       "target": "",
       "matches": false
@@ -2177,6 +3087,71 @@
       "matches": false
     },
     {
+      "pattern": "**/skills/**",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "**/skills/**",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "pdf/SKILL.md",
       "target": "",
       "matches": false
@@ -2322,6 +3297,71 @@
       "matches": false
     },
     {
+      "pattern": "pdf/SKILL.md",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "pdf/SKILL.md",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "skills/pdf/SKILL.md",
       "target": "",
       "matches": false
@@ -2467,6 +3507,71 @@
       "matches": false
     },
     {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf/SKILL.md",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "a/**",
       "target": "",
       "matches": false
@@ -2612,6 +3717,71 @@
       "matches": false
     },
     {
+      "pattern": "a/**",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "a/**",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "foo/**/bar",
       "target": "",
       "matches": false
@@ -2757,6 +3927,71 @@
       "matches": false
     },
     {
+      "pattern": "foo/**/bar",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/bar",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "foo/**/**/bar",
       "target": "",
       "matches": false
@@ -2902,6 +4137,71 @@
       "matches": false
     },
     {
+      "pattern": "foo/**/**/bar",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "foo/**/**/bar",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "[ps]df",
       "target": "",
       "matches": false
@@ -3047,6 +4347,71 @@
       "matches": false
     },
     {
+      "pattern": "[ps]df",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[ps]df",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "[!p]df",
       "target": "",
       "matches": false
@@ -3189,6 +4554,71 @@
     {
       "pattern": "[!p]df",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[!p]df",
+      "target": "[z-a]",
       "matches": false
     },
     {
@@ -3337,6 +4767,71 @@
       "matches": false
     },
     {
+      "pattern": "[a-z]*",
+      "target": "q",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "r",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "s",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "x",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "z",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "b",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "d",
+      "matches": true
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]*",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "[a-z]?.md",
       "target": "",
       "matches": false
@@ -3479,6 +4974,71 @@
     {
       "pattern": "[a-z]?.md",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-z]?.md",
+      "target": "[z-a]",
       "matches": false
     },
     {
@@ -3627,6 +5187,71 @@
       "matches": false
     },
     {
+      "pattern": "[]]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[]]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": ".*",
       "target": "",
       "matches": false
@@ -3772,6 +5397,71 @@
       "matches": false
     },
     {
+      "pattern": ".*",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": ".*",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": ".h*",
       "target": "",
       "matches": false
@@ -3917,6 +5607,71 @@
       "matches": false
     },
     {
+      "pattern": ".h*",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": ".h*",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "*.",
       "target": "",
       "matches": false
@@ -4062,6 +5817,71 @@
       "matches": false
     },
     {
+      "pattern": "*.",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "*.",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "a.b",
       "target": "",
       "matches": false
@@ -4204,6 +6024,71 @@
     {
       "pattern": "a.b",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "a.b",
+      "target": "[z-a]",
       "matches": false
     },
     {
@@ -4352,6 +6237,71 @@
       "matches": false
     },
     {
+      "pattern": "[.]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[.]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "[.x]x",
       "target": "",
       "matches": false
@@ -4497,6 +6447,71 @@
       "matches": false
     },
     {
+      "pattern": "[.x]x",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[.x]x",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": ".[x]",
       "target": "",
       "matches": false
@@ -4628,155 +6643,220 @@
     },
     {
       "pattern": ".[x]",
-      "target": ".x",
-      "matches": true
-    },
-    {
-      "pattern": ".[x]",
-      "target": ".x/SKILL.md",
-      "matches": false
-    },
-    {
-      "pattern": ".[x]",
-      "target": "skills/.hidden",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "pdf",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "SKILL.md",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "skills",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "skills/pdf",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "skills/pdf/SKILL.md",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "a",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "a/b",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "a/b/c",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "foo/x/y/bar",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "foo/bar",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "foo//bar",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": ".hidden",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": ".hidden.md",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "pdf-tools",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "pdf.md",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "pdf/SKILL.md",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "~/.claude/skills",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "~/.claude/skills/pdf",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "agents/skills/pdf/SKILL.md",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "x/y/z/SKILL.md",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "*literal",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "a?b",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "]",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": ".",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
-      "target": "..",
-      "matches": false
-    },
-    {
-      "pattern": ".?",
       "target": ".x",
       "matches": true
     },
     {
+      "pattern": ".[x]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": ".[x]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": ".x",
+      "matches": true
+    },
+    {
       "pattern": ".?",
       "target": ".x/SKILL.md",
       "matches": false
@@ -4787,6 +6867,71 @@
       "matches": false
     },
     {
+      "pattern": ".?",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": ".?",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "[!.]x",
       "target": "",
       "matches": false
@@ -4932,6 +7077,71 @@
       "matches": false
     },
     {
+      "pattern": "[!.]x",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[!.]x",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "[.-0]x",
       "target": "",
       "matches": false
@@ -5077,6 +7287,71 @@
       "matches": false
     },
     {
+      "pattern": "[.-0]x",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[.-0]x",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "[]",
       "target": "",
       "matches": false
@@ -5219,6 +7494,71 @@
     {
       "pattern": "[]",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "[]",
+      "matches": true
+    },
+    {
+      "pattern": "[]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[]",
+      "target": "[z-a]",
       "matches": false
     },
     {
@@ -5367,6 +7707,71 @@
       "matches": false
     },
     {
+      "pattern": "~/.claude/*",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/*",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "~/.claude/skills",
       "target": "",
       "matches": false
@@ -5512,6 +7917,71 @@
       "matches": false
     },
     {
+      "pattern": "~/.claude/skills",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "~/.claude/skills",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "skills/pdf*",
       "target": "",
       "matches": false
@@ -5657,6 +8127,71 @@
       "matches": false
     },
     {
+      "pattern": "skills/pdf*",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "skills/pdf*",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "\\*literal",
       "target": "",
       "matches": false
@@ -5802,6 +8337,71 @@
       "matches": false
     },
     {
+      "pattern": "\\*literal",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "\\*literal",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
       "pattern": "a\\?b",
       "target": "",
       "matches": false
@@ -5944,6 +8544,3431 @@
     {
       "pattern": "a\\?b",
       "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "a\\?b",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[!z-a]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "x",
+      "matches": true
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[xz-a]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "a",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "]",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "q",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "r",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "s",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "z",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "b",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "d",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "0",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "-",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "!",
+      "matches": true
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[!xz-a]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[b-a]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "a",
+      "matches": true
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-a]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "a",
+      "matches": true
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "b",
+      "matches": true
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "-",
+      "matches": true
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-e]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "q",
+      "matches": true
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "-",
+      "matches": true
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[z-a-q]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "a",
+      "matches": true
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "z",
+      "matches": true
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "b",
+      "matches": true
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "-",
+      "matches": true
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[a-c-z]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "q",
+      "matches": true
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q]b",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "a[\\q]b",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "q",
+      "matches": true
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "r",
+      "matches": true
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "s",
+      "matches": true
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\q-\\s]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[!]",
+      "target": "[!]",
+      "matches": true
+    },
+    {
+      "pattern": "[!]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "a",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "b",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "d",
+      "matches": true
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "-",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[\\d]",
+      "target": "[z-a]",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "a",
+      "matches": true
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "a/b",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "a/b/c",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "foo/x/y/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "foo/bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "foo//bar",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": ".hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": ".hidden.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "pdf-tools",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "pdf.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "~/.claude/skills",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "~/.claude/skills/pdf",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "agents/skills/pdf/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "x/y/z/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "*literal",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "a?b",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "]",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": ".",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "..",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": ".x",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": ".x/SKILL.md",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "skills/.hidden",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "q",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "r",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "s",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "x",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "z",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "b",
+      "matches": true
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "d",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "0",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "-",
+      "matches": true
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "!",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "[]",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "[!]",
+      "matches": false
+    },
+    {
+      "pattern": "[a\\-b]",
+      "target": "[z-a]",
       "matches": false
     }
   ],

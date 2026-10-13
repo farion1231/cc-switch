@@ -514,7 +514,7 @@ fn nonempty_string(value: Option<&Value>) -> Option<&str> {
 /// 会话乐观锁）+ 复选候选源（各应用技能目录实际路径，不含 Pi 自身与
 /// ~/.agents/skills——后者 pi 无条件自动发现，加入冗余）。
 pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig, AppError> {
-    use crate::app_config::{PiSkillsConfig, PiSkillsEntryInfo, PiSkillsSourceInfo};
+    use crate::app_config::PiSkillsConfig;
 
     let path = get_pi_settings_path()?;
     let mut config = PiSkillsConfig {
@@ -526,58 +526,25 @@ pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig
         sources: Vec::new(),
     };
 
-    if !path.exists() {
-        return Ok(config); // 文件不存在：空态，保存时创建骨架
-    }
-    let bytes = read_file_limited(&path, "Pi settings")?;
-    config.revision = revision(&bytes);
-    let source = std::str::from_utf8(&bytes)
-        .map_err(|e| AppError::Config(format!("Pi settings 不是 UTF-8: {e}")))?;
-
-    let parsed: serde_json::Value = match json5::from_str(source) {
-        Ok(v) => v,
-        Err(e) => {
-            config.parse_error = Some(format!("settings.json 解析失败：{e}"));
-            return Ok(config);
+    // 读取与解析（失败降级为 parse_error / 空态，**不提前返回**：候选源
+    // 在下方统一构建——首次配置（无文件 / 无 skills 键）也要能"从应用目录
+    // 添加"，否则复选源为空，最常见的首次配置流程被破坏）
+    if path.exists() {
+        let bytes = read_file_limited(&path, "Pi settings")?;
+        config.revision = revision(&bytes);
+        let source = std::str::from_utf8(&bytes)
+            .map_err(|e| AppError::Config(format!("Pi settings 不是 UTF-8: {e}")))?;
+        match parse_pi_skills_entries(source) {
+            Ok(Some(entries)) => config.entries = Some(entries),
+            Ok(None) => {} // 无 skills 键：空态
+            Err(e) => config.parse_error = Some(e),
         }
-    };
-    let Some(root) = parsed.as_object() else {
-        config.parse_error = Some("settings.json 根节点必须是对象".to_string());
-        return Ok(config);
-    };
-    let Some(skills) = root.get("skills") else {
-        return Ok(config); // 无 skills 键：空态
-    };
-    let Some(array) = skills.as_array() else {
-        config.parse_error = Some("settings.json 的 skills 必须是字符串数组".to_string());
-        return Ok(config);
-    };
-    // 严格读取：非字符串元素 → parse_error（编辑禁用 + 手动修复出口），
-    // 防止 get 时过滤、set 时全量替换把非字符串元素静默销毁
-    let mut entries = Vec::with_capacity(array.len());
-    for item in array {
-        match item.as_str() {
-            Some(raw) => entries.push(PiSkillsEntryInfo {
-                raw: raw.to_string(),
-                kind: crate::services::skill::pi_shared::classify_entry_kind(raw)
-                    .kind_str()
-                    .to_string(),
-                warnings: crate::services::skill::pi_shared::entry_warnings(raw),
-            }),
-            None => {
-                config.parse_error = Some(format!(
-                    "skills 数组含非字符串元素（{item}），请手动修复后再编辑"
-                ));
-                config.entries = None;
-                return Ok(config);
-            }
-        }
-    }
-    config.entries = Some(entries);
+    } // 文件不存在：空态，保存时创建骨架
 
     // 复选候选源：cc-switch 支持技能管理的全部客户端（对齐前端 SKILLS_APP_IDS
     // 去掉 Pi 自身）；目录不存在的也列出（pi 容忍不存在的扫描根，装技能后
-    // 即生效），由 exists 标记供前端提示
+    // 即生效），由 exists 标记供前端提示；listed_entry 按已解析条目匹配
+    // （空态 / 解析失败时全为 None）
     for app in [
         crate::app_config::AppType::Claude,
         crate::app_config::AppType::Codex,
@@ -598,7 +565,7 @@ pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig
             .map(|e| e.raw.as_str())
             .find(|raw| entry_resolves_to(raw, &dir))
             .map(str::to_string);
-        config.sources.push(PiSkillsSourceInfo {
+        config.sources.push(crate::app_config::PiSkillsSourceInfo {
             app: app.as_str().to_string(),
             path: dir.display().to_string(),
             listed_entry,
@@ -606,6 +573,43 @@ pub(crate) fn get_pi_skills_config() -> Result<crate::app_config::PiSkillsConfig
         });
     }
     Ok(config)
+}
+
+/// 解析 settings.json 文本中的 skills 数组条目。
+/// Ok(None) = 无 skills 键（空态）；Err(msg) = 结构性错误（parse_error，
+/// 编辑禁用 + 手动修复出口）。
+/// 严格读取：非字符串元素 → Err（防止 get 时过滤、set 时全量替换把
+/// 非字符串元素静默销毁）。
+fn parse_pi_skills_entries(
+    source: &str,
+) -> Result<Option<Vec<crate::app_config::PiSkillsEntryInfo>>, String> {
+    use crate::app_config::PiSkillsEntryInfo;
+
+    let parsed: serde_json::Value =
+        json5::from_str(source).map_err(|e| format!("settings.json 解析失败：{e}"))?;
+    let root = parsed
+        .as_object()
+        .ok_or_else(|| "settings.json 根节点必须是对象".to_string())?;
+    let Some(skills) = root.get("skills") else {
+        return Ok(None); // 无 skills 键：空态
+    };
+    let array = skills
+        .as_array()
+        .ok_or_else(|| "settings.json 的 skills 必须是字符串数组".to_string())?;
+    let mut entries = Vec::with_capacity(array.len());
+    for item in array {
+        let raw = item.as_str().ok_or_else(|| {
+            format!("skills 数组含非字符串元素（{item}），请手动修复后再编辑")
+        })?;
+        entries.push(PiSkillsEntryInfo {
+            raw: raw.to_string(),
+            kind: crate::services::skill::pi_shared::classify_entry_kind(raw)
+                .kind_str()
+                .to_string(),
+            warnings: crate::services::skill::pi_shared::entry_warnings(raw),
+        });
+    }
+    Ok(Some(entries))
 }
 
 /// 写入 skills 数组（全量替换；文件中 skills 内容 = 编辑器所见）。
@@ -904,6 +908,38 @@ mod tests {
             .expect("claude source");
         assert_eq!(claude.listed_entry.as_deref(), Some("~/.claude/skills"));
         assert!(!config.revision.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn first_config_states_still_list_candidate_sources() {
+        // 上游 review：无文件 / 无 skills 键 / 解析失败的首次配置状态也要
+        // 填充候选源，否则"从应用目录添加"复选框为空，首次添加流程被破坏
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = crate::services::skill::tests::TestHomeGuard::set(temp.path());
+        let _agent = TestAgentDir::new();
+        let settings = crate::pi_config::get_pi_settings_path().unwrap();
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+
+        // 无文件：空态 + 候选源非空
+        let config = get_pi_skills_config().unwrap();
+        assert!(config.entries.is_none());
+        assert!(config.parse_error.is_none());
+        assert!(!config.sources.is_empty(), "首次配置也应列出候选应用来源");
+
+        // 有文件但无 skills 键
+        fs::write(&settings, r#"{ "defaultProvider": "anthropic" }"#).unwrap();
+        let config = get_pi_skills_config().unwrap();
+        assert!(config.entries.is_none());
+        assert!(config.parse_error.is_none());
+        assert!(!config.sources.is_empty());
+        assert!(config.sources.iter().all(|s| s.listed_entry.is_none()));
+
+        // 解析失败（编辑禁用）时候选源仍可用
+        fs::write(&settings, "{ broken").unwrap();
+        let config = get_pi_skills_config().unwrap();
+        assert!(config.parse_error.is_some());
+        assert!(!config.sources.is_empty());
     }
 
     #[test]

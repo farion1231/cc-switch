@@ -1615,14 +1615,36 @@ impl SkillService {
         let dest = ssot_dir.join(&skill.directory);
         let mut deployments = Vec::new();
         for app in [AppType::Pi, AppType::Mcode] {
-            if skill.apps.is_enabled_for(&app) {
-                let destination =
-                    Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&skill.directory);
-                if let Some(deployment) =
-                    Self::inspect_pi_skill_destination(&dest, &destination, &skill.directory)?
-                {
-                    deployments.push((destination, deployment));
+            let destination = match app {
+                // Pi 部署按磁盘存在性收集：apps.pi 是可见性现算的展示状态
+                // （可能因 `!` 排除规则暂为 false），已存在的托管原生副本仍须
+                // 随更新维护——否则排除期间更新会把副本留在旧版本，取消排除
+                // 后 pi 加载旧内容，后续更新还会因副本与 SSOT 哈希不一致被
+                // 误判为外部修改而拒绝（上游 review）。目录错误不阻断更新：
+                // 排除态下无须因 Pi 目录问题失败（启用态的失败路径已由
+                // update_skill 开头的探测先行报错）。
+                AppType::Pi => match Self::get_distinct_app_skills_dir(&ssot_dir, &app) {
+                    Ok(d) => d.join(&skill.directory),
+                    Err(err) => {
+                        log::warn!(
+                            "Skill {} 更新跳过 Pi 部署收集: {err}",
+                            skill.directory
+                        );
+                        continue;
+                    }
+                },
+                // Mcode 是持久化的期望状态标志，维持 is_enabled_for 门槛
+                _ => {
+                    if !skill.apps.is_enabled_for(&app) {
+                        continue;
+                    }
+                    Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&skill.directory)
                 }
+            };
+            if let Some(deployment) =
+                Self::inspect_pi_skill_destination(&dest, &destination, &skill.directory)?
+            {
+                deployments.push((destination, deployment));
             }
         }
 
@@ -2138,13 +2160,22 @@ impl SkillService {
         Ok(())
     }
 
-    /// 追加 pi 共享根扫描源（label "pi-shared"）。同一目录兼具多重身份
+    /// 追加 pi 共享扫描源（label "pi-shared"）。同一目录兼具多重身份
     /// （如 ~/.agents/skills = agents 规范目录 + pi 共享根）时标签并存属预期；
     /// 追加在各应用目录之后，不改变现有首匹配 path 行为。
-    fn push_pi_shared_sources(scan_sources: &mut Vec<(PathBuf, String)>) {
+    /// 单技能根（根自身含 SKILL.md，pi `collectSkillEntries` 优先命中即不扫
+    /// 子目录）不是父目录，不参与子项扫描；单独返回供未管理扫描与导入按
+    /// "根即技能目录"处理。
+    fn push_pi_shared_sources(scan_sources: &mut Vec<(PathBuf, String)>) -> Vec<PathBuf> {
+        let mut single_skill_dirs = Vec::new();
         for root in pi_shared::resolve_pi_skill_sources().roots {
-            scan_sources.push((root.path, "pi-shared".to_string()));
+            if root.single {
+                single_skill_dirs.push(root.path);
+            } else {
+                scan_sources.push((root.path, "pi-shared".to_string()));
+            }
         }
+        single_skill_dirs
     }
 
     /// 扫描未管理的 Skills
@@ -2171,7 +2202,7 @@ impl SkillService {
         if let Ok(ssot_dir) = Self::get_ssot_dir() {
             scan_sources.push((ssot_dir, "cc-switch".to_string()));
         }
-        Self::push_pi_shared_sources(&mut scan_sources);
+        let pi_single_skill_dirs = Self::push_pi_shared_sources(&mut scan_sources);
 
         let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
 
@@ -2209,6 +2240,32 @@ impl SkillService {
             }
         }
 
+        // pi 单技能根：根目录自身即一个技能（父目录假设不适用）
+        for single in &pi_single_skill_dirs {
+            let dir_name = single
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if dir_name.is_empty()
+                || dir_name.starts_with('.')
+                || managed_dirs.contains(&dir_name)
+            {
+                continue;
+            }
+            let skill_md = single.join("SKILL.md");
+            let (name, description) = Self::read_skill_name_desc(&skill_md, &dir_name);
+            unmanaged
+                .entry(dir_name.clone())
+                .and_modify(|s| s.found_in.push("pi-shared".to_string()))
+                .or_insert(UnmanagedSkill {
+                    directory: dir_name,
+                    name,
+                    description,
+                    found_in: vec!["pi-shared".to_string()],
+                    path: single.display().to_string(),
+                });
+        }
+
         Ok(unmanaged.into_values().collect())
     }
 
@@ -2244,7 +2301,7 @@ impl SkillService {
             search_sources.push((agents_dir, "agents".to_string()));
         }
         search_sources.push((ssot_dir.clone(), "cc-switch".to_string()));
-        Self::push_pi_shared_sources(&mut search_sources);
+        let pi_single_skill_dirs = Self::push_pi_shared_sources(&mut search_sources);
 
         for selection in imports {
             // selection.directory 由前端 IPC 直接传入、此前全程无校验，而它既被
@@ -2267,6 +2324,17 @@ impl SkillService {
                         source_path = Some(skill_path);
                     }
                     log::debug!("Skill '{dir_name}' found in source '{label}'");
+                }
+            }
+            // pi 单技能根：根即技能目录（目录名匹配）
+            for single in &pi_single_skill_dirs {
+                if single.file_name().and_then(|n| n.to_str()) == Some(dir_name.as_str())
+                    && single.exists()
+                {
+                    if source_path.is_none() {
+                        source_path = Some(single.clone());
+                    }
+                    log::debug!("Skill '{dir_name}' found in pi single-skill root");
                 }
             }
 
@@ -5436,6 +5504,78 @@ pub(crate) mod tests {
         assert!(!SkillService::get_all_installed(&db).unwrap()[0].apps.pi);
     }
 
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn update_maintains_pi_copy_excluded_by_rule() {
+        // 上游 review：Copy 模式下 Pi 原生副本被 `!` 规则排除时（apps.pi 由
+        // 可见性现算为 false），更新曾跳过副本维护但仍替换 SSOT——副本停留
+        // 旧版，取消排除后 pi 加载旧内容，后续更新还会因副本与 SSOT 哈希不
+        // 一致被误判为外部修改而拒绝。部署收集应按磁盘存在性而非展示状态。
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).expect("isolated config directory");
+        // Keep Windows' legacy-HOME fallback out of this destructive test.
+        fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+        let _home = TestHomeGuard::set(home.path());
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let remote = tempdir().expect("remote repo");
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+
+        let mut installed = poisoned_skill("owner/repo:pdf", "pdf");
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+        db.save_skill(&installed).expect("seed installed skill");
+
+        // v1：SSOT 与远端一致；Pi 原生目录放一份内容一致的 Copy 副本
+        let ssot = SkillService::get_ssot_dir().unwrap().join("pdf");
+        write_skill(&ssot, "pdf-v1");
+        write_skill(&remote.path().join("pdf"), "pdf-v1");
+        let pi_native = crate::pi_config::get_pi_agent_dir()
+            .expect("pi agent dir")
+            .join("skills")
+            .join("pdf");
+        fs::create_dir_all(&pi_native).expect("mkdir pi native");
+        fs::copy(ssot.join("SKILL.md"), pi_native.join("SKILL.md"))
+            .expect("seed pi native copy");
+
+        // 排除规则使 apps.pi 现算为 false，但托管副本存在
+        _pi_dir.write_settings(r#"{ "skills": ["!pdf"] }"#);
+        let all = SkillService::get_all_installed(&db).expect("read skills");
+        assert!(!all[0].apps.pi, "被排除时 apps.pi 现算为 false");
+
+        // 远端发新版本 → 更新：被排除的托管副本也须随更新刷新
+        write_skill(&remote.path().join("pdf"), "pdf-v2");
+        let updated = service
+            .update_skill(&db, &installed.id)
+            .await
+            .expect("update while excluded");
+        assert_eq!(updated.name, "pdf-v2");
+        let native_md = fs::read_to_string(pi_native.join("SKILL.md")).expect("read native");
+        assert!(
+            native_md.contains("pdf-v2"),
+            "被排除的托管副本也须随更新刷新: {native_md}"
+        );
+
+        // 取消排除 → pi 立即加载新内容（原生启用）
+        _pi_dir.write_settings(r#"{ "skills": [] }"#);
+        let ctx = crate::services::skill::pi_shared::build_context();
+        let vis = crate::services::skill::pi_shared::pi_skill_visibility("pdf", &ctx);
+        assert!(vis.is_active(), "取消排除后应加载新版副本");
+
+        // 再次更新不被"外部修改"拒绝（副本与 SSOT 哈希保持一致）
+        write_skill(&remote.path().join("pdf"), "pdf-v3");
+        service
+            .update_skill(&db, &installed.id)
+            .await
+            .expect("second update must not be rejected");
+        let native_md = fs::read_to_string(pi_native.join("SKILL.md")).expect("read native");
+        assert!(native_md.contains("pdf-v3"));
+    }
+
     #[test]
     #[serial_test::serial]
     fn pi_state_extends_to_shared_roots_with_visibility_info() {
@@ -5513,6 +5653,52 @@ pub(crate) mod tests {
         let claude_skill = find("claude-skill");
         assert!(claude_skill.found_in.contains(&"claude".to_string()));
         assert!(claude_skill.found_in.contains(&"pi-shared".to_string()));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unmanaged_scan_and_import_cover_pi_single_skill_root() {
+        // 上游 review：settings 条目直接指向含 SKILL.md 的目录时，根即技能
+        // 目录——未管理扫描曾沿用父目录假设扫描不到，导入搜索同样找不到源。
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let single = temp.path().join("external").join("pdf");
+        write_skill(&single, "pdf-skill");
+        // 根下的其他子目录不是 pi 技能（单技能根命中即不扫子目录）
+        write_skill(&single.join("notes"), "not-a-skill");
+        _pi_dir.write_settings(&format!(
+            r#"{{ "skills": ["{}"] }}"#,
+            single.display()
+        ));
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+
+        // 未管理扫描：单技能根自身被发现，子目录不调仓
+        let unmanaged = SkillService::scan_unmanaged(&db).expect("scan");
+        let hit = unmanaged
+            .iter()
+            .find(|s| s.directory == "pdf")
+            .unwrap_or_else(|| panic!("单技能根应被未管理扫描发现: {unmanaged:?}"));
+        assert!(hit.found_in.contains(&"pi-shared".to_string()));
+        assert_eq!(hit.path, single.canonicalize().unwrap().display().to_string());
+        assert!(
+            !unmanaged.iter().any(|s| s.directory == "notes"),
+            "单技能根的子目录不应被当作 pi 技能: {unmanaged:?}"
+        );
+
+        // 导入：搜索命中单技能根（根即技能目录），复制进 SSOT
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "pdf".into(),
+                apps: SkillApps::only(&AppType::Claude),
+            }],
+        )
+        .expect("import from single root");
+        assert_eq!(imported.len(), 1);
+        let ssot_copy = SkillService::get_ssot_dir().unwrap().join("pdf");
+        assert!(ssot_copy.join("SKILL.md").exists());
+        assert_eq!(imported[0].name, "pdf-skill");
     }
 
     #[test]

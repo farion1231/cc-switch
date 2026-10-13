@@ -75,6 +75,10 @@ pub(crate) struct PiSharedRoot {
     pub path: PathBuf,
     /// 来源
     pub origin: PiSharedRootOrigin,
+    /// 单技能根：根目录自身含 SKILL.md（pi `collectSkillEntries` 优先检查
+    /// 根下的 SKILL.md，命中即返回该文件、不再扫描子目录）。此时根即技能
+    /// 目录，技能名 = 根目录名
+    pub single: bool,
 }
 
 /// 技能对 pi 的五态可见性（控制层二值 = 是否被 pi 实际加载；
@@ -155,10 +159,13 @@ pub(crate) fn pi_skill_visibility(directory: &str, ctx: &PiVisibilityContext) ->
     };
     let n_active = n_exists && !n_excluded;
 
-    // 共享副本（仅收生效根）
+    // 共享副本（仅收生效根）；单技能根时根即技能目录
     let mut shared_roots = Vec::new();
+    let mut shared_skill_dirs = Vec::new();
     for root in &ctx.sources.roots {
-        let s_dir = root.path.join(directory);
+        let Some(s_dir) = root_skill_dir(root, directory) else {
+            continue;
+        };
         if !skill_dir_exists(&s_dir) {
             continue;
         }
@@ -178,9 +185,10 @@ pub(crate) fn pi_skill_visibility(directory: &str, ctx: &PiVisibilityContext) ->
         };
         if !excluded {
             shared_roots.push(root.path.clone());
+            shared_skill_dirs.push(s_dir);
         }
     }
-    let s_active = !shared_roots.is_empty();
+    let s_active = !shared_skill_dirs.is_empty();
 
     let state = match (n_active, s_active) {
         (true, true) => PiVisState::NativeShared,
@@ -191,12 +199,14 @@ pub(crate) fn pi_skill_visibility(directory: &str, ctx: &PiVisibilityContext) ->
     };
 
     let same_content = if s_active {
-        same_content_as_ssot(&shared_roots, directory, ctx)
+        same_content_as_ssot(&shared_skill_dirs, directory, ctx)
     } else {
         None
     };
     let dual_consistent = if state == PiVisState::NativeShared {
-        native_dir.and_then(|native| dual_copies_consistent(native, &shared_roots, directory))
+        native_dir.and_then(|native| {
+            dual_copies_consistent(&native.join(directory), &shared_skill_dirs)
+        })
     } else {
         None
     };
@@ -243,10 +253,11 @@ fn skill_dir_exists(dir: &Path) -> bool {
 }
 
 /// 任一生效共享副本与 SSOT 内容一致：
-/// 共享根 == SSOT 目录（Unified 存储模式，两者同一目录）时短路为 true
-/// 跳过哈希；否则树哈希比对（带缓存）。仅作展示信息，不影响开关语义。
+/// 共享副本目录 == SSOT 技能目录（Unified 存储模式，两者同一目录）时短路
+/// 为 true 跳过哈希；否则树哈希比对（带缓存）。仅作展示信息，不影响开关语义。
+/// `skill_dirs` 为各生效副本的**技能目录本身**（调用方已解析根→目录）。
 fn same_content_as_ssot(
-    shared_roots: &[PathBuf],
+    skill_dirs: &[PathBuf],
     directory: &str,
     ctx: &PiVisibilityContext,
 ) -> Option<bool> {
@@ -255,31 +266,28 @@ fn same_content_as_ssot(
     if !skill_dir_exists(&ssot_skill) {
         return None; // SSOT 无该技能，未比对
     }
-    let ssot_canonical = ssot_dir.canonicalize().ok()?;
+    let ssot_skill_canonical = ssot_skill.canonicalize().ok()?;
     let ssot_hash = cached_deployment_hash(&ssot_skill).ok()?;
-    for root in shared_roots {
-        if *root == ssot_canonical {
+    for dir in skill_dirs {
+        if *dir == ssot_skill_canonical {
             return Some(true); // 短路：同一目录
         }
-        if cached_deployment_hash(&root.join(directory)).ok()? == ssot_hash {
+        if cached_deployment_hash(dir).ok()? == ssot_hash {
             return Some(true);
         }
     }
     Some(false)
 }
 
-/// #5 双来源时：全部生效副本（原生 + 各生效共享根）内容是否一致。
+/// #5 双来源时：全部生效副本（原生 + 各生效共享副本）内容是否一致。
 /// 与 same_content_as_ssot（共享 vs SSOT）不同，这里比较的是用户关心的
 /// "实际生效的几份副本互相之间"是否一致（典型场景：手动改过原生副本）。
-fn dual_copies_consistent(
-    native_dir: &Path,
-    shared_roots: &[PathBuf],
-    directory: &str,
-) -> Option<bool> {
-    let native_hash = cached_deployment_hash(&native_dir.join(directory)).ok()?;
+/// 参数为各副本的**技能目录本身**。
+fn dual_copies_consistent(native_skill: &Path, shared_skill_dirs: &[PathBuf]) -> Option<bool> {
+    let native_hash = cached_deployment_hash(native_skill).ok()?;
     let mut consistent = true;
-    for root in shared_roots {
-        match cached_deployment_hash(&root.join(directory)) {
+    for dir in shared_skill_dirs {
+        match cached_deployment_hash(dir) {
             Ok(hash) if hash != native_hash => consistent = false,
             Ok(_) => {}
             Err(_) => continue, // 读不了的副本跳过比较，不误报
@@ -382,9 +390,11 @@ pub(crate) fn resolve_pi_skill_sources() -> PiSkillSources {
     let home = crate::config::get_home_dir();
     let agents = home.join(".agents").join("skills");
     let agents = agents.canonicalize().unwrap_or(agents);
+    let single = skill_dir_exists(&agents);
     sources.roots.push(PiSharedRoot {
         path: agents,
         origin: PiSharedRootOrigin::AgentsDir,
+        single,
     });
 
     // 2. settings.json skills 数组
@@ -829,7 +839,21 @@ fn file_url_to_path_win(url: &str) -> Result<String, ()> {
     Ok(path.replace('/', "\\"))
 }
 
-/// 追加扫描根（仅存在目录：canonicalize 后按路径去重，失败则跳过）
+/// 该根下技能 `directory` 的实际目录：
+/// - 父目录根（默认）：root/<directory>
+/// - 单技能根（根自身含 SKILL.md）：仅当根目录名与 directory 一致时
+///   根即技能目录，否则该根不含此技能
+fn root_skill_dir(root: &PiSharedRoot, directory: &str) -> Option<PathBuf> {
+    if root.single {
+        let name = root.path.file_name()?.to_str()?;
+        (name == directory).then(|| root.path.clone())
+    } else {
+        Some(root.path.join(directory))
+    }
+}
+
+/// 追加扫描根（仅存在目录：canonicalize 后按路径去重，失败则跳过；
+/// 根自身含 SKILL.md 时标记为单技能根）
 fn push_root(roots: &mut Vec<PiSharedRoot>, path: PathBuf, origin: PiSharedRootOrigin) {
     let Ok(canonical) = path.canonicalize() else {
         return;
@@ -837,9 +861,11 @@ fn push_root(roots: &mut Vec<PiSharedRoot>, path: PathBuf, origin: PiSharedRootO
     if roots.iter().any(|r| r.path == canonical) {
         return;
     }
+    let single = skill_dir_exists(&canonical);
     roots.push(PiSharedRoot {
         path: canonical,
         origin,
+        single,
     });
 }
 
@@ -1068,47 +1094,100 @@ fn compile_seg(seg: &str) -> (Regex, bool, bool) {
             }
         }
     }
-    (
-        Regex::new(&format!("^{re}$")).expect("段正则必然合法"),
-        guard_dot,
-        explicit_dot,
-    )
+    let re = Regex::new(&format!("^{re}$")).unwrap_or_else(|_| {
+        // 兜底：任何残余的非法段正则降级为永不匹配，绝不让外部配置触发 panic
+        // （已知非法形态已由 parse_class 按 minimatch 语义处理，此处纯防御）
+        Regex::new("^[^\\s\\S]$").expect("静态永不匹配正则必然合法")
+    });
+    (re, guard_dot, explicit_dot)
 }
 
 /// 解析 `[...]` 字符类 → 正则类。`[!` 取反；`]` 紧跟 `[` 时为字面成员；
 /// 支持范围 `a-z`。返回 (正则片段, 结束下标)；未闭合返回 None。
+/// 类成员转义：在 regex_escape 基础上补 `-`（类内避免与邻接成员形成意外范围）
+fn class_member_escape(c: char) -> String {
+    if c == '-' {
+        "\\-".to_string()
+    } else {
+        regex_escape(c)
+    }
+}
+
+/// 读取一个类成员：返回（字面值，转义形态，下一位置）；
+/// 尾部孤立 `\\`（无转义对象）→ None（未闭合，整体不是类）。
+/// minimatch 把类内所有 `\\c` 转义字面化（`[\\d]` → `^d$`，无简写保留）
+fn read_class_member(chars: &[char], i: usize) -> Option<(char, String, usize)> {
+    if chars[i] == '\\' {
+        let c = *chars.get(i + 1)?;
+        Some((c, class_member_escape(c), i + 2))
+    } else {
+        let c = chars[i];
+        Some((c, class_member_escape(c), i + 1))
+    }
+}
+
+/// 字符类解析（对齐 minimatch makeRe 的生成语义）：
+/// - `!` 开头取反；零内容（`[]`、`[!]`）不是类 → None，调用方按字面 `[` 处理
+///   （minimatch 生成 `^\[\]$` / `^\[!\]$`）
+/// - POSIX 首成员 `]`（仅当其后仍有内容：`[]]` 是含 `]` 的类，`[]` 不是类）
+/// - 范围端点取字符字面值（含转义形态：`[\q-\s]` → `q-s`，`[\d-\x]` → `d-x`）；
+///   起点大于终点的坏范围贡献为空且不算成员（对齐 minimatch：
+///   `[z-a]` → `^$.$` 永不匹配，`[xz-a]` → `^x$` 仅保留有效成员）
+/// - 全部成员为坏范围 → 永不匹配的类；未闭合 → None
 fn parse_class(chars: &[char], start: usize) -> Option<(String, usize)> {
-    let mut body = String::new();
     let mut i = start + 1;
+    let mut negated = false;
     if i < chars.len() && chars[i] == '!' {
-        body.push('^');
+        negated = true;
         i += 1;
     }
-    // POSIX：']' 作为首个成员是字面量
-    if i < chars.len() && chars[i] == ']' {
+    let mut body = String::new();
+    let mut has_member = false;
+    let mut consumed_content = false;
+    // POSIX：']' 作为首个成员是字面量（仅当其后仍有内容）
+    if i + 1 < chars.len() && chars[i] == ']' {
         body.push_str("\\]");
+        has_member = true;
+        consumed_content = true;
         i += 1;
     }
     while i < chars.len() && chars[i] != ']' {
-        let c = chars[i];
-        if c == '\\' && i + 1 < chars.len() {
-            body.push('\\');
-            body.push(chars[i + 1]);
-            i += 2;
+        consumed_content = true;
+        let (raw, esc, next) = read_class_member(chars, i)?;
+        // 范围：成员 + '-' + 另一成员（'-' 后不是 ']' 且未到结尾）；
+        // 端点一律取字面值（minimatch 把转义端点字面化：`[\d-\s]` → `[d-s]`）
+        if next < chars.len()
+            && chars[next] == '-'
+            && next + 1 < chars.len()
+            && chars[next + 1] != ']'
+        {
+            let (raw2, _esc2, after) = read_class_member(chars, next + 1)?;
+            if raw <= raw2 {
+                body.push_str(&class_member_escape(raw));
+                body.push('-');
+                body.push_str(&class_member_escape(raw2));
+                has_member = true;
+            }
+            // 坏范围：贡献为空，也不算成员
+            i = after;
             continue;
         }
-        // 保留范围连字符；正则元字符转义
-        body.push_str(&if c == '-' {
-            "-".to_string()
-        } else {
-            regex_escape(c)
-        });
-        i += 1;
+        body.push_str(&esc);
+        has_member = true;
+        i = next;
     }
     if i >= chars.len() {
         return None; // 未闭合
     }
-    Some((format!("[{body}]"), i + 1))
+    if !consumed_content {
+        return None; // `[]` / `[!]`：零内容，不是类，按字面处理
+    }
+    if !has_member {
+        // 全部成员为坏范围 → 永不匹配（对齐 minimatch ^$.$）
+        return Some(("[^\\s\\S]".to_string(), i + 1));
+    }
+    let prefix = if negated { "^" } else { "" };
+    Some((format!("[{prefix}{body}]"), i + 1))
 }
 
 fn regex_escape(c: char) -> String {
@@ -1833,6 +1912,68 @@ mod tests {
         assert_eq!(v.shared_roots.len(), 1);
     }
 
+    #[test]
+    #[serial]
+    fn settings_entry_pointing_at_single_skill_dir() {
+        // 上游 review：settings 条目直接指向含 SKILL.md 的目录时，pi
+        // collectSkillEntries 优先检查根下的 SKILL.md，命中即返回该文件、
+        // 不再扫描子目录——根即技能目录（技能名 = 根目录名），而非父目录。
+        let env = VisEnv::new(None);
+        let single = env.home().join("external").join("pdf");
+        make_skill(&single, SKILL_MD);
+        env.write_settings(&format!(
+            r#"{{ "skills": ["{}/external/pdf"] }}"#,
+            env.home().display()
+        ));
+
+        // 单技能根：directory = 根目录名 → Shared
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Shared);
+        assert!(v.is_active());
+        assert_eq!(v.shared_roots.len(), 1);
+        assert!(v.shared_roots[0].ends_with("external/pdf"));
+
+        // 无关技能名：该根不含此技能（不再向下拼一层目录名）
+        let v = env.vis("doc");
+        assert_eq!(v.state, PiVisState::Inactive);
+
+        // 原生副本存在 → 双来源；关闭原生副本 → Shared（单技能根副本不受影响）
+        make_skill(&env.native("pdf"), SKILL_MD);
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::NativeShared);
+        fs::remove_dir_all(env.native("pdf")).expect("remove native copy");
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Shared);
+
+        // 排除模式按父目录名命中单技能根的 SKILL.md
+        // （原生假设路径同样被 !pdf 命中 → 预判"启用也无效"）
+        env.write_settings(&format!(
+            r#"{{ "skills": ["{}/external/pdf", "!pdf"] }}"#,
+            env.home().display()
+        ));
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::InactiveExcluded);
+    }
+
+    #[test]
+    #[serial]
+    fn single_skill_root_shadows_child_skills() {
+        // 根自身含 SKILL.md 时子目录不再扫描（pi 首遇 SKILL.md 即返回）
+        let env = VisEnv::new(None);
+        let root = env.home().join("bundle");
+        make_skill(&root, SKILL_MD);
+        make_skill(&root.join("doc"), SKILL_MD);
+        env.write_settings(&format!(
+            r#"{{ "skills": ["{}/bundle"] }}"#,
+            env.home().display()
+        ));
+
+        let v = env.vis("bundle");
+        assert_eq!(v.state, PiVisState::Shared);
+        let v = env.vis("doc");
+        assert_eq!(v.state, PiVisState::Inactive);
+    }
+
     // ===== 条目解析差分用例（Linux/macOS POSIX 分支 + Windows 函数）=====
 
     use super::{
@@ -2053,6 +2194,56 @@ mod tests {
         assert_eq!(posix_separated(r"a\b", false), r"a\b");
         // Windows：`\\` 是分隔符，转换为 /
         assert_eq!(posix_separated(r"a\b", true), "a/b");
+    }
+
+    #[test]
+    fn pathological_classes_match_minimatch_without_panic() {
+        // 上游 review：`![z-a]` / POSIX `![\q]` 曾使段正则编译 expect 触发
+        // panic，一条规则即破坏整个技能列表查询。现按 minimatch 语义处理：
+        // 坏范围贡献为空（[z-a] 永不匹配，含取反形态）；identity escape
+        // 字面化（[\q] 是字面 q）；零内容类（[]/[!]）是字面量。
+        // 语义由 glob-oracle 新增的 16 个病理模式锁定（2394 用例）。
+        assert!(!glob_match("[z-a]", "a"));
+        assert!(!glob_match("[z-a]", "z"));
+        assert!(!glob_match("[!z-a]", "x"));
+        assert!(glob_match("[xz-a]", "x"));
+        assert!(!glob_match("[xz-a]", "z"));
+        assert!(glob_match(r"[\q]", "q"));
+        assert!(!glob_match(r"[\q]", "x"));
+        assert!(!glob_match("[b-a]", "b"));
+        assert!(glob_match("[a-a]", "a"));
+        assert!(!glob_match("[!]", "!"));
+        assert!(glob_match("[!]", "[!]")); // 字面量
+        assert!(!glob_match("[]", "]"));
+        assert!(glob_match("[]", "[]")); // 字面量
+    }
+
+    #[test]
+    #[serial]
+    fn pathological_settings_rules_do_not_break_visibility() {
+        // 全链路（settings 解析 → 分类 → 可见性）：review 的精确复现输入
+        let env = VisEnv::new(Some(r#"{ "skills": ["![z-a]", "![\\q]"] }"#));
+        make_skill(&env.native("pdf"), SKILL_MD);
+        make_skill(
+            &env.home().join(".agents").join("skills").join("pdf"),
+            SKILL_MD,
+        );
+        // 两个模式均不命中 → 双来源；语义精确对齐，无需 approximate
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::NativeShared);
+        assert!(!v.approximate);
+
+        // [\q] 匹配字面 q：排除名为 q 的技能
+        let env = VisEnv::new(Some(r#"{ "skills": ["![\\q]"] }"#));
+        make_skill(&env.native("q"), SKILL_MD);
+        let v = env.vis("q");
+        assert_eq!(v.state, PiVisState::InactiveExcluded);
+
+        // [!z-a]（取反坏范围）同样永不匹配
+        let env = VisEnv::new(Some(r#"{ "skills": ["![!z-a]"] }"#));
+        make_skill(&env.native("pdf"), SKILL_MD);
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Native);
     }
 
     #[test]

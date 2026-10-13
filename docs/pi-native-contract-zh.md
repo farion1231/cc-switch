@@ -52,6 +52,8 @@ Pi 在全局设置中保存的当前供应商和模型不进入供应商列表�
 2. `~/.agents/skills`（Pi 无条件自动发现）；
 3. 全局 `settings.json` 的 `skills` 数组所配置的额外扫描目录。
 
+扫描目录的语义对齐 Pi 的 `collectSkillEntries`：目录自身含 `SKILL.md` 时是**单技能根**（根即技能目录，技能名 = 根目录名，子目录不再扫描），否则作为父目录扫描其下的 `<目录>/SKILL.md`。未管理扫描与导入搜索复用同一解析结果。
+
 `skills` 数组的条目解析（`~` 展开、`file://`、相对 agent 目录、trim、Windows 盘符与 Git Bash 形态）与模式语义（`!` glob 排除、`+` 精确强制启用、`-` 精确强制排除，`-` 优先于 `+`；排除模式同样作用于自动发现目录）逐字节对齐 Pi 的 `resolvePath` / `applyPatterns` / `isEnabledByOverrides`。Pi 1.2.0 起（上游 #10765）模式条目内容同样先过 `normalizePath` 再匹配（`~` / `file://` / Windows shell 路径归一化，但无 trim、不 join agent 目录、不折叠 `.`/`..`；`+`/`-` 精确条目另先剥 `./`/`.\` 前缀），`!~/x` 这类写法合法生效。glob 匹配为 minimatch 常用子集（不含花括号展开与 extglob），行为由 `src-tauri/src/services/skill/testdata/glob-oracle.json` 用与 Pi 相同版本的 minimatch 生成锁定。
 
 技能对 Pi 的可见性为五态：未启用 / 未启用（被排除）/ 原生启用 / 共享启用 / 双来源。共享态与被排除态的单元格锁定不可点击（开关无法改变 Pi 的加载状态）；双来源关闭时仅移除原生副本，共享副本不受影响。存在性判定要求目录含 `SKILL.md`；SSOT 内容比对复用整树哈希（带元数据指纹缓存）。

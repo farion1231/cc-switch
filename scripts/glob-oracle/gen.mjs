@@ -18,6 +18,11 @@ const patterns = [
   ".*", ".h*", "*.", "a.b", "[.]", "[.x]x", ".[x]", ".?", "[!.]x", "[.-0]x", "[]",
   "~/.claude/*", "~/.claude/skills", "skills/pdf*",
   "\\*literal", "a\\?b",
+  // 坏范围 / identity escape / 零内容类（上游 review：不得 panic，
+  // 语义对齐 minimatch makeRe：坏范围贡献为空、[\q] 是字面 q、[]/[!] 是字面量）
+  "[z-a]", "[!z-a]", "[xz-a]", "[!xz-a]", "[b-a]", "[a-a]",
+  "[a-c-e]", "[z-a-q]", "[a-c-z]", "[\\q]", "[\\q]b", "a[\\q]b",
+  "[\\q-\\s]", "[!]", "[\\d]", "[a\\-b]",
 ];
 
 const targets = [
@@ -27,6 +32,7 @@ const targets = [
   "~/.claude/skills", "~/.claude/skills/pdf",
   "agents/skills/pdf/SKILL.md", "x/y/z/SKILL.md", "*literal", "a?b", "]",
   ".", "..", ".x", ".x/SKILL.md", "skills/.hidden",
+  "q", "r", "s", "x", "z", "b", "d", "0", "-", "!", "[]", "[!]", "[z-a]",
 ];
 
 const cases = [];

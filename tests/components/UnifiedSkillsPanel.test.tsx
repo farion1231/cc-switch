@@ -501,6 +501,52 @@ describe("UnifiedSkillsPanel", () => {
     setEntries.mockRestore();
   });
 
+  it("lists candidate app sources on first-time Pi config (no skills key yet)", async () => {
+    // 上游 review：无文件 / 无 skills 键的首次配置空态也要能从应用目录
+    // 添加（后端始终返回候选源），不能显示"没有发现其他应用的技能目录"
+    m.installed = [makeSkill({ apps: { pi: true } })];
+    const getConfig = vi.spyOn(skillsApi, "getPiSkillsConfig").mockResolvedValue({
+      path: "/home/u/.pi/agent/settings.json",
+      homeDir: "/home/u",
+      revision: "rev-1",
+      sources: [
+        { app: "claude", path: "/home/u/.claude/skills", exists: true },
+        { app: "codex", path: "/home/u/.codex/skills", exists: true },
+      ],
+      // 首次配置：无 skills 键（entries 为空）
+    });
+    const setEntries = vi
+      .spyOn(skillsApi, "setPiSkillsEntries")
+      .mockResolvedValue(undefined);
+
+    renderPanel();
+    await userEvent.click(columns()[2]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.piConfig.manageEntry" }),
+    );
+    // 空态提示可见，但候选源仍可勾选
+    expect(
+      screen.getByText("skillsPage.piConfig.emptyHint"),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.piConfig.addFromApps" }),
+    );
+    const claudeBox = screen.getByRole("checkbox", {
+      name: "Claude Code: /home/u/.claude/skills",
+    });
+    expect(claudeBox).not.toBeChecked();
+    await userEvent.click(claudeBox); // 勾选 → 添加扫描根条目
+    await waitFor(() => expect(claudeBox).toBeChecked());
+    // 条目列表与复选源弹层中均出现该目录
+    expect(screen.getAllByText("/home/u/.claude/skills").length).toBeGreaterThanOrEqual(2);
+
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(setEntries).toHaveBeenCalled());
+    expect(setEntries.mock.calls[0][0]).toEqual(["/home/u/.claude/skills"]);
+    getConfig.mockRestore();
+    setEntries.mockRestore();
+  });
+
   it("prompts before leaving the Pi config panel with unsaved changes", async () => {
     m.installed = [makeSkill({ apps: { pi: true } })];
     const getConfig = vi.spyOn(skillsApi, "getPiSkillsConfig").mockResolvedValue({
