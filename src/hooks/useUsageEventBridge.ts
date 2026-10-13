@@ -18,12 +18,44 @@ export function useUsageEventBridge() {
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     let disposed = false;
+    let refreshing = false;
+    let dirty = false;
+
+    const refresh = async () => {
+      refreshing = true;
+      try {
+        while (dirty && !disposed) {
+          dirty = false;
+          // An initial fetch or poll may have captured its snapshot before this
+          // event. Joining that work saves a duplicate backend call, but still
+          // needs one trailing refresh to include the newly written logs.
+          if (
+            queryClient.isFetching({
+              queryKey: usageKeys.all,
+              type: "active",
+            }) > 0
+          ) {
+            dirty = true;
+          }
+          // Cancelling React Query cannot cancel an already-running Tauri DB
+          // query. Keep one refresh running and coalesce events into a dirty bit.
+          await queryClient.invalidateQueries(
+            { queryKey: usageKeys.all },
+            { cancelRefetch: false },
+          );
+        }
+      } finally {
+        refreshing = false;
+      }
+    };
 
     (async () => {
       const off = await listen("usage-log-recorded", () => {
+        if (disposed) return;
         // invalidate 整个 usage 命名空间：summary / trends / providerStats /
         // modelStats / logs 全部跟着重拉
-        queryClient.invalidateQueries({ queryKey: usageKeys.all });
+        dirty = true;
+        if (!refreshing) void refresh();
       });
 
       if (disposed) {
@@ -35,6 +67,7 @@ export function useUsageEventBridge() {
 
     return () => {
       disposed = true;
+      dirty = false;
       unlisten?.();
     };
   }, [queryClient]);
