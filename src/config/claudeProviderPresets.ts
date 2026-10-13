@@ -72,6 +72,9 @@ export interface ProviderPreset extends PresetFamilyFields {
   // 获取模型列表使用的完整 URL（覆写自动候选逻辑）
   // 缺省时后端基于 baseURL 自动尝试 /v1/models、/models 以及剥离已知兼容子路径后的变体。
   modelsUrl?: string;
+
+  // 选择预设时预填：转换路径上剥离 Claude Code 客户端指纹（缺省关闭）。
+  stripClaudeCodeFingerprint?: boolean;
 }
 
 export const providerPresets: ProviderPreset[] = [
