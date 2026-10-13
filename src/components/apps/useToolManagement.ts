@@ -49,6 +49,10 @@ export const TOOL_NAMES = [
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
 
+export function hermesUninstallMayLeaveFiles(plan: ToolUninstallPlan) {
+  return isWindows() && plan.tool === "hermes" && !plan.wsl_distro;
+}
+
 interface PendingUpgrade {
   toolNames: ToolName[];
   plans: ToolInstallationReport[];
@@ -610,7 +614,7 @@ export function useToolManagement() {
       const isBatch = toolNames.length > 1;
 
       // 每个工具独立调用后端，一个失败不会中断其它工具。
-      // soft=true 表示"命令成功执行但结果仍需用户介入"（版本没变/装上却跑不起来），
+      // soft=true 表示"命令成功执行但结果仍需用户介入"（版本没变/无法运行/卸载待核实），
       // 与命令本身报错（soft=false）区别对待：前者不算硬失败，toast 降级为 warning。
       const failures: {
         toolName: ToolName;
@@ -659,14 +663,29 @@ export function useToolManagement() {
             const tool = refreshed.find((t) => t.name === toolName);
             if (action === "uninstall") {
               await diagnoseToolSilently(toolName);
+              const warnings: string[] = [];
               if (!tool) {
-                throw new Error(t("settings.toolUninstallCheckFailed"));
+                warnings.push(t("settings.toolUninstallCheckFailed"));
               }
-              if (tool.version || tool.installed_but_broken) {
+              if (
+                uninstallPlan &&
+                hermesUninstallMayLeaveFiles(uninstallPlan)
+              ) {
+                warnings.push(t("settings.toolUninstallHermesWindowsHint"));
+              }
+              if (tool?.version || tool?.installed_but_broken) {
                 toast.info(t("settings.toolUninstallRemaining"), {
                   description: TOOL_DISPLAY_NAMES[toolName],
                   closeButton: true,
                 });
+              }
+              if (warnings.length > 0) {
+                failures.push({
+                  toolName,
+                  detail: warnings.join("\n"),
+                  soft: true,
+                });
+                return;
               }
               succeeded += 1;
               return;
@@ -777,12 +796,14 @@ export function useToolManagement() {
         failures.every((f) => f.soft && f.kind === "versionUnchanged");
 
       if (succeeded === 0 && hardFailures.length === 0) {
-        // 命令均成功执行、但结果需要用户介入（版本没变 / 装上却跑不起来）
+        // 命令均成功执行、但结果需要用户介入（版本没变 / 无法运行 / 卸载待核实）
         // → 降级为 warning 并解释原因。
         toast.warning(
-          allSoftVersionUnchanged
-            ? t("settings.toolActionVersionUnchangedTitle")
-            : t("settings.toolActionInstalledNotRunnable"),
+          action === "uninstall"
+            ? t("settings.toolUninstallWarningTitle")
+            : allSoftVersionUnchanged
+              ? t("settings.toolActionVersionUnchangedTitle")
+              : t("settings.toolActionInstalledNotRunnable"),
           {
             description: failureDescription || undefined,
             closeButton: true,
