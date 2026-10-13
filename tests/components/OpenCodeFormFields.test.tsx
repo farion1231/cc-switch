@@ -802,4 +802,31 @@ describe("OpenCodeFormFields", () => {
       },
     });
   });
+
+  it("keeps the fetched list when an equal-but-new headers object arrives", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "vendor/model-a", ownedBy: "vendor" },
+    ]);
+    const { props, rerender } = renderOpenCodeForm({ models: {}, headers: {} });
+
+    fireEvent.click(screen.getByRole("button", { name: FETCH }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByRole("checkbox", { name: "vendor/model-a" }),
+    ).toBeInTheDocument();
+
+    // 调用方写的是 `headers={config.options?.headers ?? {}}`：内容没变，但父组件
+    // 每渲染一次就是新对象。这不能清空已经拉到的列表——弹窗还开着，列表却空了。
+    rerender(
+      <FormShell>
+        <OpenCodeFormFields {...props} headers={{}} />
+      </FormShell>,
+    );
+
+    expect(
+      within(screen.getByRole("dialog")).getByRole("checkbox", {
+        name: "vendor/model-a",
+      }),
+    ).toBeInTheDocument();
+  });
 });

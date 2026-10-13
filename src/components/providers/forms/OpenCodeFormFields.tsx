@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -31,6 +31,7 @@ import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import {
   findRequestHeaderValue,
   normalizeRequestHeaders,
+  requestHeadersKey,
 } from "./helpers/requestHeaders";
 import {
   FetchedModelPicker,
@@ -230,6 +231,14 @@ export function OpenCodeFormFields({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const modelFetchGeneration = useRef(0);
 
+  // 「端点 / 凭据变了」要按值判断，不能按对象身份：调用方常传
+  // `headers={config.options?.headers ?? {}}`，父组件每渲染一次就是新对象，
+  // 内容没变也会触发下面的 effect，把已拉到的模型列表在弹窗里清空。
+  const endpointKey = useMemo(
+    () => `${baseUrl}\u0000${apiKey}\u0000${requestHeadersKey(headers)}`,
+    [baseUrl, apiKey, headers],
+  );
+
   useEffect(() => {
     setFetchedModels((prev) => (prev.length === 0 ? prev : []));
     setIsFetchingModels(false);
@@ -237,7 +246,7 @@ export function OpenCodeFormFields({
       // Ignore responses for a previous endpoint/key or an unmounted form.
       modelFetchGeneration.current += 1;
     };
-  }, [baseUrl, apiKey, headers]);
+  }, [endpointKey]);
 
   const handleFetchModels = useCallback(() => {
     const requestHeaders = normalizeRequestHeaders(headers);
