@@ -958,6 +958,162 @@ mod tests {
             .collect()
     }
 
+    // Native-filesystem reference for #8205; this does not exercise Windows
+    // access to WSL's UNC share or its locking/shared-memory implementation.
+    #[test]
+    fn readonly_reader_sees_committed_wal_without_immutable() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempdir().expect("tempdir");
+        let (path, writer) = hermes_db(dir.path());
+        writer
+            .execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+            .expect("enable WAL");
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .expect("checkpoint schema");
+        insert_message(&writer, "s1", "user", "committed in WAL", 1.0);
+
+        let reader = Connection::open_with_flags(
+            &path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .expect("open readonly reader");
+        assert_eq!(contents(&reader, "s1"), vec!["committed in WAL"]);
+        assert!(reader.execute("DELETE FROM messages", []).is_err());
+
+        writer.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        insert_message(&writer, "s1", "assistant", "not yet committed", 2.0);
+        assert_eq!(contents(&reader, "s1"), vec!["committed in WAL"]);
+        writer.execute_batch("COMMIT;").unwrap();
+        assert_eq!(
+            contents(&reader, "s1"),
+            vec!["committed in WAL", "not yet committed"]
+        );
+
+        // immutable disables change detection and assumes the database is
+        // stable. It must not be a fallback for a live Hermes database.
+        let immutable = Connection::open_with_flags(
+            format!("file:{}?mode=ro&immutable=1", path.display()),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )
+        .expect("open immutable reader");
+        assert!(contents(&immutable, "s1").is_empty());
+        assert_eq!(
+            load_messages_sqlite(&format!("sqlite:{}#s1", path.display()))
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    // Diagnostic reference only: requires a real Windows host and WSL2 distro.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn wsl2_live_wal_readonly_reference() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+
+        let distro = std::env::var("CC_SWITCH_WSL_DISTRO").expect("WSL distro");
+        let native_path = format!("/tmp/ccswitch8205-{}.db", std::process::id());
+        let mut writer = Command::new("wsl.exe")
+            .args(["--distribution", &distro, "--exec", "python3", "-u", "-c"])
+            .arg(
+                r#"import sqlite3,sys,os
+p=sys.argv[1]
+c=sqlite3.connect(p,isolation_level=None)
+c.execute('CREATE TABLE messages(id INTEGER PRIMARY KEY,session_id TEXT,role TEXT,content TEXT,timestamp REAL)')
+c.execute('PRAGMA journal_mode=WAL')
+c.execute('PRAGMA wal_autocheckpoint=0')
+c.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+c.execute("INSERT INTO messages VALUES(1,'s1','user','first',1)")
+print('ready',flush=True)
+for action in sys.stdin:
+    action=action.strip()
+    if action=='begin':
+        c.execute('BEGIN IMMEDIATE')
+        c.execute("INSERT INTO messages VALUES(2,'s1','assistant','second',2)")
+    elif action=='commit': c.execute('COMMIT')
+    elif action=='exit': break
+    print(action,flush=True)
+c.close()
+for suffix in ('','-wal','-shm'):
+    try: os.unlink(p+suffix)
+    except FileNotFoundError: pass
+"#,
+            )
+            .arg(&native_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("WSL Python writer");
+        let mut output = BufReader::new(writer.stdout.take().unwrap());
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "ready");
+
+        let read_native = || {
+            let result = Command::new("wsl.exe")
+                .args(["--distribution", &distro, "--exec", "python3", "-c"])
+                .arg(
+                    r#"import sqlite3,sys,json,pathlib
+c=sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+'?mode=ro',uri=True,isolation_level=None)
+rows=c.execute('SELECT content FROM messages ORDER BY id').fetchall()
+try: c.execute('DELETE FROM messages'); raise AssertionError('write succeeded')
+except sqlite3.OperationalError as e: assert 'readonly' in str(e),str(e)
+print(json.dumps([row[0] for row in rows]))
+"#,
+                )
+                .arg(&native_path)
+                .output()
+                .expect("WSL native readonly query");
+            assert!(result.status.success(), "{:?}", result);
+            serde_json::from_slice::<Vec<String>>(&result.stdout).expect("reader JSON")
+        };
+        assert_eq!(read_native(), vec!["first"]);
+
+        let unc = PathBuf::from(format!(
+            r"\\wsl.localhost\{}{}",
+            distro,
+            native_path.replace('/', "\\")
+        ));
+        let direct = Connection::open_with_flags(
+            &unc,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        );
+        match direct {
+            Ok(conn) => println!(
+                "Windows rusqlite {} UNC query: {:?}",
+                rusqlite::version(),
+                conn.query_row("SELECT COUNT(*) FROM messages", [], |row| row
+                    .get::<_, i64>(0))
+            ),
+            Err(error) => println!(
+                "Windows rusqlite {} UNC open: {error:?}",
+                rusqlite::version()
+            ),
+        }
+        println!(
+            "Hermes UNC load: {:?}",
+            load_messages_sqlite(&format!("sqlite:{}#s1", unc.display()))
+        );
+        for (action, expected) in [
+            ("begin", vec!["first"]),
+            ("commit", vec!["first", "second"]),
+        ] {
+            writeln!(writer.stdin.as_mut().unwrap(), "{action}").unwrap();
+            line.clear();
+            output.read_line(&mut line).unwrap();
+            assert_eq!(line.trim(), action);
+            assert_eq!(read_native(), expected);
+        }
+        writeln!(writer.stdin.as_mut().unwrap(), "exit").unwrap();
+        assert!(writer.wait().unwrap().success());
+    }
+
     #[test]
     fn load_messages_sqlite_reads_timestamp_in_insertion_order() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
