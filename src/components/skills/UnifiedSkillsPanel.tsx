@@ -146,6 +146,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     new Set(),
   );
+  // 搜索会临时展开先前收起的分组，方便看见命中的 Skill；用户仍可手动收起它们。
+  const [searchRevealedGroups, setSearchRevealedGroups] = useState<Set<string>>(
+    new Set(),
+  );
+  const collapsedGroupsRef = useRef(collapsedGroups);
+  const previousSearchQueryRef = useRef("");
   const [view, setView] = useState<SkillsView>(initialView);
   // 「发现」段第一次打开后就一直挂着（隐藏而不卸载），来回切不再重新加载仓库列表
   const [discoverMounted, setDiscoverMounted] = useState(
@@ -335,6 +341,20 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     SKILLS_APP_IDS.filter((app) => skill.apps[app]).length;
 
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+  useEffect(() => {
+    collapsedGroupsRef.current = collapsedGroups;
+  }, [collapsedGroups]);
+
+  useEffect(() => {
+    const wasSearching = Boolean(previousSearchQueryRef.current);
+    if (normalizedQuery && !wasSearching) {
+      setSearchRevealedGroups(new Set(collapsedGroupsRef.current));
+    } else if (!normalizedQuery) {
+      setSearchRevealedGroups(new Set());
+    }
+    previousSearchQueryRef.current = normalizedQuery;
+  }, [normalizedQuery]);
+
   const filteredSkills = useMemo(() => {
     return installedSkills.filter((skill) => {
       if (statusFilter === "updates" && !updatesMap[skill.id]) return false;
@@ -1446,7 +1466,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     visibleSkillIds.has(skill.id),
                   );
                   const expanded =
-                    Boolean(normalizedQuery) || !collapsedGroups.has(group.key);
+                    !collapsedGroups.has(group.key) ||
+                    (Boolean(normalizedQuery) &&
+                      searchRevealedGroups.has(group.key));
                   return (
                     <SkillGroupSection
                       key={group.key}
@@ -1454,15 +1476,25 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       appIds={appIds}
                       expanded={Boolean(expanded)}
                       disabled={controlsDisabled}
-                      collapseDisabled={Boolean(normalizedQuery)}
-                      onCollapse={() =>
+                      onCollapse={() => {
+                        if (
+                          normalizedQuery &&
+                          searchRevealedGroups.has(group.key)
+                        ) {
+                          setSearchRevealedGroups((prev) => {
+                            const next = new Set(prev);
+                            next.delete(group.key);
+                            return next;
+                          });
+                          return;
+                        }
                         setCollapsedGroups((prev) => {
                           const next = new Set(prev);
                           if (next.has(group.key)) next.delete(group.key);
                           else next.add(group.key);
                           return next;
-                        })
-                      }
+                        });
+                      }}
                       onEdit={() => {
                         if (group.project)
                           setGroupDialog({

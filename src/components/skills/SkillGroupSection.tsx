@@ -13,7 +13,6 @@ export function SkillGroupSection({
   appIds,
   expanded,
   disabled,
-  collapseDisabled,
   onCollapse,
   onToggle,
   onEdit,
@@ -23,7 +22,6 @@ export function SkillGroupSection({
   appIds: AppId[];
   expanded: boolean;
   disabled: boolean;
-  collapseDisabled: boolean;
   onCollapse: () => void;
   onToggle: (app: AppId, enabled: boolean) => void;
   onEdit: () => void;
@@ -37,7 +35,6 @@ export function SkillGroupSection({
           <button
             type="button"
             aria-expanded={expanded}
-            disabled={collapseDisabled}
             aria-label={t("skillsPage.groups.expand", { name: group.label })}
             className="flex min-w-0 flex-1 items-center gap-2 px-1 text-left text-body font-medium"
             onClick={onCollapse}
