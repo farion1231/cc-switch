@@ -398,6 +398,25 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "GrooRoute Pro",
+    providerKey: "cc-switch-grooroute-pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    settingsConfig: {
+      name: "GrooRoute Pro",
+      baseUrl: "https://grooroute.pro",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    icon: "grooroute",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     providerKey: "cc-switch-shengsuanyun",

@@ -512,6 +512,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  grooroute: {
+    name: "grooroute",
+    displayName: "GrooRoute Pro",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["grooroute", "aggregator", "relay", "gateway"],
+    defaultColor: "currentColor",
+  },
   huawei: {
     name: "huawei",
     displayName: "Huawei",

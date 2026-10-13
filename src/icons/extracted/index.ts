@@ -19,6 +19,7 @@ import _eflowcode from "./eflowcode.png";
 import _etok from "./etok.png";
 import _fenno from "./fenno-icon.png";
 import _fluxa from "./fluxa.png";
+import _grooroute from "./grooroute.jpg";
 import _hermes from "./hermes.png";
 import _huoshan from "./huoshan.png";
 import _ikuncode from "./ikuncode.jpg";
@@ -152,6 +153,7 @@ export const iconUrls: Record<string, string> = {
   etok: _etok,
   fenno: _fenno,
   fluxa: _fluxa,
+  grooroute: _grooroute,
   hermes: _hermes,
   huoshan: _huoshan,
   ikuncode: _ikuncode,

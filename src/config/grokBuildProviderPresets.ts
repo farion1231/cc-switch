@@ -188,6 +188,20 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "GrooRoute Pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    auth: grokAuth(),
+    config: grokPresetConfig(
+      "GrooRoute Pro",
+      "https://grooroute.pro/v1",
+      "grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    icon: "grooroute",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
