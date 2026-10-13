@@ -1,3 +1,11 @@
+/// Sniff an SSE body after JSON parsing fails, including gateway comments and BOMs.
+pub(crate) fn body_looks_like_sse(body: &str) -> bool {
+    let trimmed = body.trim_start_matches('\u{feff}').trim_start();
+    ["data:", "event:", "id:", "retry:", ":"]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+}
+
 #[inline]
 pub(crate) fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
     line.strip_prefix(&format!("{field}: "))
