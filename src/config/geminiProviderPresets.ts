@@ -118,6 +118,23 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "OpenModel",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.openmodel.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.openmodel.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "OpenModel",
+    category: "aggregator",
+    isPartner: true,
+    icon: "openmodel",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -579,6 +596,101 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://api.aicodewith.ai/gemini_cli"],
     icon: "aicodewith",
     iconColor: "#3A3B40",
+  },
+  {
+    name: "SoruxGPT",
+    websiteUrl: "https://ai.soruxgpt.com",
+    apiKeyUrl: "https://ai.soruxgpt.com/console/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://ai.soruxgpt.com",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://ai.soruxgpt.com",
+    model: "gemini-3.1-pro-preview",
+    description: "SoruxGPT",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://ai.soruxgpt.com",
+      "https://api-cf.soruxgpt.com",
+      "https://api-host.soruxgpt.com",
+      "https://api-node6.soruxgpt.com",
+      "https://api-node3.soruxgpt.com",
+    ],
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.ikuncode.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.ikuncode.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "IKunCode",
+    category: "aggregator",
+    endpointCandidates: ["https://api.ikuncode.ai", "https://api.ikuncode.cc"],
+    icon: "ikuncode",
+  },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.runtoken.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://www.runtoken.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "RunToken",
+    category: "aggregator",
+    endpointCandidates: ["https://www.runtoken.ai", "https://fast.runtoken.ai"],
+    icon: "runtoken",
+  },
+  {
+    name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://app.yylx.io",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://app.yylx.io",
+    model: "gemini-3.1-pro-preview",
+    description: "YYLX",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://app.yylx.io",
+      "https://global.yylx.io",
+      "https://cn.yylx.io",
+    ],
+    icon: "yylx",
+  },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://tokenflux.dev",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://tokenflux.dev",
+    model: "gemini-3.1-pro",
+    description: "TokenFlux",
+    category: "aggregator",
+    icon: "tokenflux",
   },
 ];
 

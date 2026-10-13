@@ -58,7 +58,12 @@ pub fn allocate_key(stack: &mut StackState, provider: &Provider) -> String {
     if let Some(key) = stack.key_of(&provider.id) {
         return key.to_string();
     }
-    let base = [provider.icon.as_deref(), Some(provider.name.as_str())]
+    // 自定义图标是一长串 base64，拿来生成 key 没有意义，只用内置图标名
+    let icon = provider
+        .icon
+        .as_deref()
+        .filter(|icon| !crate::services::provider::icon::is_custom_icon(icon));
+    let base = [icon, Some(provider.name.as_str())]
         .into_iter()
         .flatten()
         .map(slug)
@@ -621,9 +626,19 @@ pub struct StackView {
     /// 暂不可用；`officialModelsOutdated` 本机 Codex 太旧，拉到的官方列表里没有能选的模型。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notice: Option<&'static str>,
+    /// `notice` 是 `officialModelsBundled` / `officialModelsUnavailable` 时，没取到列表的原因
+    /// 码：先是官方列表的（`noLogin`、`loginStale`、`loginIncomplete`、`noVersion`、
+    /// `fetchFailed`、`invalidList`），不可用时再跟自带列表的（`noCli`、`cliFailed`、
+    /// `nothingUsable`）。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notice_reasons: Vec<&'static str>,
     /// Codex 客户端还在用旧的模型列表（启动时读的目录），Stack 模型看不到，要重启才行。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale_clients: Option<StaleClients>,
+    /// `stale_clients` 对应的目录和登录（见 `codex_client_catalog::revision`）：用户关掉提示后，
+    /// 同一个供应商上目录又改了，这个值变了，前端重新显示。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale_revision: Option<String>,
 }
 
 pub fn member_views(members: &[Member]) -> Vec<StackMemberView> {
@@ -660,11 +675,18 @@ mod tests {
         let named = provider("b", "My Relay 2.0!", None, json!({}));
         let chinese = provider("c1b2c3d4-e5f6", "智谱", None, json!({}));
         let blank_icon = provider("d", "DeepSeek", Some("  "), json!({}));
+        let custom_icon = provider(
+            "e",
+            "Acme",
+            Some("data:image/png;base64,iVBORw0KGgo="),
+            json!({}),
+        );
 
         assert_eq!(allocate_key(&mut stack, &kimi), "kimi");
         assert_eq!(allocate_key(&mut stack, &named), "my-relay-2-0");
         assert_eq!(allocate_key(&mut stack, &chinese), "pc1b2c3");
         assert_eq!(allocate_key(&mut stack, &blank_icon), "deepseek");
+        assert_eq!(allocate_key(&mut stack, &custom_icon), "acme");
     }
 
     #[test]

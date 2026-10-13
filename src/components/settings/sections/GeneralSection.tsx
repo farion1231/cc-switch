@@ -100,6 +100,33 @@ export function GeneralSection({
               />
             }
           />
+          <SettingsRow
+            label={t("settings.general.quotaDisplay")}
+            help={{
+              title: t("settings.general.quotaDisplay"),
+              body: t("settings.general.quotaDisplayHelp"),
+            }}
+            control={
+              <SegmentedControl
+                size="sm"
+                aria-label={t("settings.general.quotaDisplay")}
+                value={settings.quotaDisplay ?? "left"}
+                onValueChange={(value) =>
+                  void onAutoSave({ quotaDisplay: value })
+                }
+                items={[
+                  {
+                    value: "left",
+                    label: t("settings.general.quotaDisplayLeft"),
+                  },
+                  {
+                    value: "used",
+                    label: t("settings.general.quotaDisplayUsed"),
+                  },
+                ]}
+              />
+            }
+          />
         </SettingsCard>
       </SettingsBlock>
 

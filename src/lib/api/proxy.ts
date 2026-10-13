@@ -114,6 +114,12 @@ export const proxyApi = {
     return invoke("restart_codex_app_server_daemon");
   },
 
+  // 关掉看不到进程时出的「Codex 可能还在用旧的」提示：后端记下现在的模型目录和登录，同一份
+  // 不再提示
+  async acknowledgeCodexStaleClients(): Promise<void> {
+    return invoke("acknowledge_codex_stale_clients");
+  },
+
   // ========== v3+ 全局/应用级配置 API ==========
 
   // 获取全局代理配置
@@ -124,6 +130,16 @@ export const proxyApi = {
   // 更新全局代理配置
   async updateGlobalProxyConfig(config: GlobalProxyConfig): Promise<void> {
     return invoke("update_global_proxy_config", { config });
+  },
+
+  // 获取客户端地址（写给客户端的代理主机，空表示按监听地址推）
+  async getProxyClientHost(): Promise<string> {
+    return invoke("get_proxy_client_host");
+  },
+
+  // 保存客户端地址，并按新地址重写接上路由的客户端
+  async setProxyClientHost(host: string): Promise<void> {
+    return invoke("set_proxy_client_host", { host });
   },
 
   // 获取指定应用的代理配置

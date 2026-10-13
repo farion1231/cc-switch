@@ -399,6 +399,40 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "OpenModel",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
+    settingsConfig: {
+      name: "openmodel",
+      base_url: "https://api.openmodel.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "openmodel" },
+    },
+    isPartner: true,
+    icon: "openmodel",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -2493,5 +2527,240 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     suggestedDefaults: {
       model: { default: "gpt-5.6-sol", provider: "aicodewith" },
     },
+  },
+  {
+    name: "SoruxGPT",
+    websiteUrl: "https://ai.soruxgpt.com",
+    apiKeyUrl: "https://ai.soruxgpt.com/console/token",
+    settingsConfig: {
+      name: "soruxgpt",
+      base_url: "https://ai.soruxgpt.com",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "soruxgpt" },
+    },
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      name: "ikuncode",
+      base_url: "https://api.ikuncode.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "ikuncode" },
+    },
+    icon: "ikuncode",
+  },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    settingsConfig: {
+      name: "runtoken",
+      base_url: "https://www.runtoken.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "runtoken" },
+    },
+    icon: "runtoken",
+  },
+  {
+    name: "BotCF",
+    websiteUrl: "https://botcf.com",
+    apiKeyUrl: "https://botcf.com/console/token",
+    settingsConfig: {
+      name: "botcf",
+      base_url: "https://botcf.com",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "botcf" },
+    },
+    icon: "botcf",
+  },
+  {
+    name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      name: "yylx",
+      base_url: "https://app.yylx.io",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "yylx" },
+    },
+    icon: "yylx",
+  },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    settingsConfig: {
+      name: "tokenflux",
+      base_url: "https://tokenflux.dev",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "tokenflux" },
+    },
+    icon: "tokenflux",
+  },
+  {
+    name: "NekoCode",
+    websiteUrl: "https://nekoapi.ai",
+    apiKeyUrl: "https://nekoapi.ai/token",
+    settingsConfig: {
+      name: "nekocode",
+      base_url: "https://nekoapi.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      extra_headers: {
+        "User-Agent": "claude-cli/2.1.161 (external, cli)",
+      },
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "nekocode" },
+    },
+    icon: "nekocode",
   },
 ];
