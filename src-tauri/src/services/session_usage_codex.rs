@@ -10,7 +10,7 @@
 //!
 //! ## 解析的事件类型
 //! - `session_meta` → 提取唯一 thread_id（子代理的 session_id 指向父线程）
-//! - `turn_context` → 提取当前 model
+//! - `turn_context` / `event_msg` (type=thread_settings_applied) → 提取当前 model
 //! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
 
 use crate::codex_config::get_codex_config_dir;
@@ -20,8 +20,9 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    estimated_latency_ms, metadata_modified_nanos, parse_timestamp_millis, update_sync_state,
-    update_sync_state_on_conn, SessionSyncResult,
+    estimated_first_token_ms, estimated_latency_ms, metadata_modified_nanos,
+    parse_timestamp_millis, update_sync_state, update_sync_state_on_conn, EstimatedTiming,
+    SessionSyncResult,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
 use crate::services::usage_stats::{
@@ -202,8 +203,8 @@ struct ParsedTokenEvent {
     event_index: Option<u32>,
     model: String,
     timestamp: Option<String>,
-    /// 按事件时间戳估出来的请求耗时（含首字等待）；估不出来为 None。
-    latency_ms: Option<i64>,
+    /// 按事件时间戳估出来的请求耗时（含首字等待）和首字时间；估不出来为 None。
+    timing: Option<EstimatedTiming>,
 }
 
 /// 只看每行开头这么多字节来判断行的种类：时间戳、类型、角色都在行头，
@@ -237,6 +238,9 @@ enum TimingLine {
     /// 一轮开始（`task_started`）或被中断（`turn_aborted`）：没等到 `token_count`
     /// 的那次请求到此作废
     TurnReset,
+    /// 新版 Codex 的 `item_completed`，而且是模型输出的思考或回复：带这一项开始
+    /// 生成的时刻（`started_at_ms`，即上游开始输出这一项），一次响应里最早的那项就是首字
+    OutputItemStarted(i64),
 }
 
 fn classify_timing_line(line: &str) -> Option<(i64, TimingLine)> {
@@ -261,12 +265,27 @@ fn classify_timing_line(line: &str) -> Option<(i64, TimingLine)> {
         },
         "event_msg" => match head_str(payload, "type")? {
             "task_started" | "turn_aborted" => TimingLine::TurnReset,
+            "item_completed" => output_item_started_ms(line, payload)?,
             _ => return None,
         },
         _ => return None,
     };
     let timestamp_ms = head_str(envelope, "timestamp").and_then(parse_timestamp_millis)?;
     Some((timestamp_ms, kind))
+}
+
+/// `item_completed` 行里模型输出项（思考、回复）的开始时刻。工具执行、用户消息
+/// 这类项不是模型输出，不看。`started_at_ms` 写在 `item` 之后、可能超出行头，
+/// 要解析整行；这类行很短（实测中位数约 400 字节）。
+fn output_item_started_ms(line: &str, payload_head: &[u8]) -> Option<TimingLine> {
+    let item_at = find_bytes(payload_head, b"\"item\":{")?;
+    match head_str(&payload_head[item_at..], "type")? {
+        "Reasoning" | "AgentMessage" => {}
+        _ => return None,
+    }
+    let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    let started_at_ms = value.get("payload")?.get("started_at_ms")?.as_i64()?;
+    Some(TimingLine::OutputItemStarted(started_at_ms))
 }
 
 /// 按事件顺序估每次请求的耗时。Codex 日志没有请求级计时，而且各版本的
@@ -285,6 +304,10 @@ fn classify_timing_line(line: &str) -> Option<(i64, TimingLine)> {
 /// 下一次请求的起点会被钉在上一次响应结束的时刻，用户隔很久才发下一条消息时
 /// 算出来的耗时就长得离谱。
 ///
+/// 首字时间：新版 Codex 给每个模型输出项记了开始生成的时刻（`item_completed` 的
+/// `started_at_ms`），取这次请求里最早的一项减去起点。响应一开头就是工具调用、
+/// 没有思考和回复项时推不出来。
+///
 /// 请求被中断或出错时等不到 `token_count`，它留下的起点要在下一轮开始时清掉，
 /// 否则会被下一次请求沿用。只在 `task_started` / `turn_aborted` 上清，不在用户
 /// 消息上清：Codex 会在响应中途插入 developer 消息，在那里清会把起点挪晚。
@@ -297,6 +320,8 @@ struct RequestTimer {
     /// 最后一个输出项之后出现的工具结果里最晚的一个；之后再有输出项就清空。
     tool_output_after_model_output_ms: Option<i64>,
     usage_record: Option<(i64, CumulativeTokens)>,
+    /// 这次请求里最早开始生成的输出项的时刻，即首字。
+    first_output_ms: Option<i64>,
 }
 
 /// 两行的时间戳相差不超过这个毫秒数，就算是同一批写出的（实测相差 0–1 毫秒，
@@ -344,6 +369,12 @@ impl RequestTimer {
                     });
                 self.usage_record = usage.map(|usage| (timestamp_ms, usage));
             }
+            TimingLine::OutputItemStarted(started_at_ms) => {
+                self.first_output_ms = Some(
+                    self.first_output_ms
+                        .map_or(started_at_ms, |at| at.min(started_at_ms)),
+                );
+            }
             TimingLine::TurnReset => {
                 *self = RequestTimer {
                     last_boundary_ms: self.last_boundary_ms.max(Some(timestamp_ms)),
@@ -354,15 +385,16 @@ impl RequestTimer {
         }
     }
 
-    /// 遇到一次有用量的 `token_count`：结算这次请求的耗时，并把它记成下一次
+    /// 遇到一次有用量的 `token_count`：结算这次请求的耗时和首字，并把它记成下一次
     /// 请求的起点。`last` 是这次请求自己的用量，用来确认 `token_usage_record`
     /// 说的是同一次请求。
     fn finish_request(
         &mut self,
         token_count_ms: Option<i64>,
         last: Option<&CumulativeTokens>,
-    ) -> Option<i64> {
+    ) -> Option<EstimatedTiming> {
         let start_ms = self.request_start_ms.or(self.last_boundary_ms);
+        let first_output_ms = self.first_output_ms;
         let record_end_ms = self
             .usage_record
             .take()
@@ -393,7 +425,14 @@ impl RequestTimer {
             last_token_count_ms: token_count_ms,
             ..RequestTimer::default()
         };
-        estimated_latency_ms(start_ms?, end_ms?)
+        let start_ms = start_ms?;
+        let latency_ms = estimated_latency_ms(start_ms, end_ms?)?;
+        Some(EstimatedTiming {
+            latency_ms,
+            first_token_ms: first_output_ms.and_then(|first_output_ms| {
+                estimated_first_token_ms(start_ms, first_output_ms, latency_ms)
+            }),
+        })
     }
 }
 
@@ -1086,7 +1125,10 @@ fn parse_codex_file(
         if !is_event_msg && !is_turn_context && !is_session_meta {
             continue;
         }
-        if is_event_msg && !line.contains("\"token_count\"") {
+        if is_event_msg
+            && !line.contains("\"token_count\"")
+            && !line.contains("\"thread_settings_applied\"")
+        {
             continue;
         }
 
@@ -1161,6 +1203,23 @@ fn parse_codex_file(
                 let Some(payload) = value.get("payload") else {
                     continue;
                 };
+                if payload.get("type").and_then(serde_json::Value::as_str)
+                    == Some("thread_settings_applied")
+                {
+                    // Resumed/Desktop threads may change models without another
+                    // turn_context. Only update attribution: the cumulative token
+                    // baseline and duplicate snapshots still belong to the session.
+                    if let Some(model) = payload
+                        .get("thread_settings")
+                        .and_then(|settings| settings.get("model"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|model| !model.is_empty())
+                    {
+                        current_model = normalize_codex_model(model);
+                    }
+                    continue;
+                }
                 if payload.get("type").and_then(serde_json::Value::as_str) != Some("token_count") {
                     continue;
                 }
@@ -1249,7 +1308,7 @@ fn parse_codex_file(
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned);
                 // 重复快照（限额刷新时重发的）不是一次请求，不参与计时
-                let latency_ms = nonzero_index.and_then(|_| {
+                let timing = nonzero_index.and_then(|_| {
                     timer.finish_request(
                         timestamp.as_deref().and_then(parse_timestamp_millis),
                         request_usage.as_ref(),
@@ -1263,7 +1322,7 @@ fn parse_codex_file(
                     event_index: nonzero_index,
                     model: current_model.clone(),
                     timestamp,
-                    latency_ms,
+                    timing,
                 });
             }
             _ => {}
@@ -1678,7 +1737,7 @@ fn sync_single_codex_file(
                 &event.model,
                 Some(session_thread_id),
                 event.timestamp.as_deref(),
-                event.latency_ms,
+                event.timing,
                 &mut batch_suspected,
                 &mut pass.pricing,
             ) {
@@ -1739,8 +1798,8 @@ fn insert_codex_session_entry(
 ///
 /// 调用方负责持锁/事务；`pricing_cache` 按原始 model 字符串键控（
 /// `find_codex_pricing` 是纯函数式查找，同串必同结果），全量重导时把
-/// 每事件一次的定价 SELECT 降为每模型一次。`latency_ms` 是按事件时间戳估出来的
-/// 请求耗时（见 [`RequestTimer`]），估不出来传 None。
+/// 每事件一次的定价 SELECT 降为每模型一次。`timing` 是按事件时间戳估出来的
+/// 请求耗时和首字时间（见 [`RequestTimer`]），估不出来传 None。
 #[allow(clippy::too_many_arguments)]
 fn insert_codex_session_entry_on_conn(
     conn: &rusqlite::Connection,
@@ -1749,7 +1808,7 @@ fn insert_codex_session_entry_on_conn(
     model: &str,
     session_id: Option<&str>,
     timestamp: Option<&str>,
-    latency_ms: Option<i64>,
+    timing: Option<EstimatedTiming>,
     suspected_duplicates: &mut u32,
     pricing_cache: &mut HashMap<String, Option<ModelPricing>>,
 ) -> Result<bool, AppError> {
@@ -1850,8 +1909,8 @@ fn insert_codex_session_entry_on_conn(
                 cache_read_cost,
                 cache_creation_cost,
                 total_cost,
-                latency_ms.unwrap_or(0), // latency_ms: 按时间戳估算，0 = 没有计时
-                Option::<i64>::None, // first_token_ms: 会话日志无此数据
+                timing.map_or(0, |t| t.latency_ms), // latency_ms: 按时间戳估算，0 = 没有计时
+                timing.and_then(|t| t.first_token_ms), // first_token_ms: 按时间戳估算，推不出来为 NULL
                 200i64,              // status_code
                 Option::<String>::None, // error_message
                 session_id.map(|s| s.to_string()),
@@ -1942,6 +2001,17 @@ mod tests {
 
     fn turn_context() -> serde_json::Value {
         turn_context_at("2026-07-10T03:00:01Z")
+    }
+
+    fn thread_settings_at(model: serde_json::Value, timestamp: &str) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "event_msg",
+            "payload": {
+                "type": "thread_settings_applied",
+                "thread_settings": { "model": model }
+            }
+        })
     }
 
     fn token_count_at(input: u64, cached: u64, output: u64, timestamp: &str) -> serde_json::Value {
@@ -2859,6 +2929,148 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(deltas, vec![100, 50]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_thread_settings_model_switch_imports_correct_usage_and_cost() -> Result<(), AppError> {
+        use std::io::Write;
+
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let first_usage = token_count_at(100, 50, 10, "2026-07-10T03:00:02Z");
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context_for_model_at("gpt-6-astra", "2026-07-10T03:00:01Z"),
+                first_usage.clone(),
+            ],
+        );
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+
+        {
+            let mut writer = fs::OpenOptions::new().append(true).open(&file).unwrap();
+            for event in [
+                thread_settings_at(
+                    serde_json::json!("OpenAI/GPT-6.1-SOL-2026-10-01"),
+                    "2026-07-10T03:00:03Z",
+                ),
+                // A model change must not turn a repeated snapshot into usage.
+                first_usage,
+                token_count_at(150, 75, 15, "2026-07-10T03:00:04Z"),
+            ] {
+                writeln!(writer, "{event}").unwrap();
+            }
+        }
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+        assert_unchanged_codex_file_is_skipped(&db, &file)?;
+
+        let conn = lock_conn!(db.conn);
+        let mut statement = conn.prepare(
+            "SELECT model, request_model, input_tokens, cache_read_tokens, output_tokens,
+                    total_cost_usd, request_id
+             FROM proxy_request_logs ORDER BY created_at",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, u32>(3)?,
+                    row.get::<_, u32>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(rows.len(), 2);
+        for (row, (model, input, cached, output, cost, index)) in rows.iter().zip([
+            ("gpt-6-astra", 100, 50, 10, "0.00105", 1),
+            ("gpt-6.1-sol", 50, 25, 5, "0.0001025", 2),
+        ]) {
+            assert_eq!(
+                (&*row.0, &*row.1, row.2, row.3, row.4),
+                (model, model, input, cached, output)
+            );
+            assert_eq!(
+                row.5.parse::<Decimal>().unwrap(),
+                cost.parse::<Decimal>().unwrap()
+            );
+            assert_eq!(
+                row.6,
+                format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:{index}")
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_thread_settings_model_without_turn_context() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                thread_settings_at(serde_json::json!("gpt-6.1-sol"), "2026-07-10T03:00:01Z"),
+                token_count(100, 50, 10),
+            ],
+        );
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        assert_eq!(parsed.token_events.len(), 1);
+        assert_eq!(parsed.token_events[0].model, "gpt-6.1-sol");
+        Ok(())
+    }
+
+    #[test]
+    fn test_thread_settings_model_ignores_invalid_metadata_and_allows_overrides(
+    ) -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut events = vec![
+            session_meta(PARENT_ID),
+            thread_settings_at(serde_json::json!("gpt-6.1-sol"), "2026-07-10T03:00:01Z"),
+        ];
+        for model in [
+            serde_json::Value::Null,
+            serde_json::json!(42),
+            serde_json::json!(""),
+            serde_json::json!(" \t "),
+        ] {
+            events.push(thread_settings_at(model, "2026-07-10T03:00:02Z"));
+        }
+        events.push(serde_json::json!({
+            "type": "event_msg",
+            "payload": { "type": "thread_settings_applied", "thread_settings": { "service_tier": "priority" } }
+        }));
+        // The fast text filter is not sufficient evidence of an applied setting.
+        let mut unrelated =
+            thread_settings_at(serde_json::json!("wrong-model"), "2026-07-10T03:00:02Z");
+        unrelated["type"] = serde_json::json!("response_item");
+        events.push(unrelated);
+        events.push(token_count(100, 50, 10));
+        events.push(turn_context_for_model_at(
+            "gpt-6-astra",
+            "2026-07-10T03:00:03Z",
+        ));
+        events.push(token_count_at(150, 75, 15, "2026-07-10T03:00:04Z"));
+        let mut explicit_model = token_count_at(200, 100, 20, "2026-07-10T03:00:05Z");
+        explicit_model["payload"]["info"]["model"] = serde_json::json!("custom-model");
+        events.push(explicit_model);
+        write_jsonl(&file, &events);
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        assert_eq!(
+            parsed
+                .token_events
+                .iter()
+                .map(|event| event.model.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gpt-6.1-sol", "gpt-6-astra", "custom-model"]
+        );
         Ok(())
     }
 
@@ -4071,7 +4283,7 @@ mod tests {
         )
     }
 
-    fn parsed_latencies(lines: &[String]) -> Vec<Option<i64>> {
+    fn parsed_timings(lines: &[String]) -> Vec<Option<EstimatedTiming>> {
         let dir = tempdir().unwrap();
         let file = rollout_path(dir.path(), PARENT_ID);
         fs::write(&file, lines.join("\n") + "\n").unwrap();
@@ -4080,8 +4292,33 @@ mod tests {
             .token_events
             .iter()
             .filter(|event| event.event_index.is_some())
-            .map(|event| event.latency_ms)
+            .map(|event| event.timing)
             .collect()
+    }
+
+    fn parsed_latencies(lines: &[String]) -> Vec<Option<i64>> {
+        parsed_timings(lines)
+            .into_iter()
+            .map(|timing| timing.map(|t| t.latency_ms))
+            .collect()
+    }
+
+    fn parsed_first_tokens(lines: &[String]) -> Vec<Option<i64>> {
+        parsed_timings(lines)
+            .into_iter()
+            .map(|timing| timing.and_then(|t| t.first_token_ms))
+            .collect()
+    }
+
+    /// 新版 Codex 的 `item_completed`，键顺序照实际日志
+    fn raw_item_completed(timestamp: &str, item_type: &str, started_at_ms: i64) -> String {
+        raw_line(
+            timestamp,
+            "event_msg",
+            &format!(
+                r#"{{"type":"item_completed","thread_id":"t","turn_id":"u","item":{{"type":"{item_type}","id":"i1","content":[]}},"started_at_ms":{started_at_ms},"completed_at_ms":{started_at_ms}}}"#
+            ),
+        )
     }
 
     const USER_MESSAGE: &str = r#"{"type":"message","role":"user","content":[]}"#;
@@ -4141,6 +4378,76 @@ mod tests {
             .map(|row| row.unwrap())
             .collect();
         assert_eq!(stored, vec![8_500, 10_299]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_first_token_is_the_earliest_model_output_item_start() -> Result<(), AppError> {
+        // 2026-10-02T03:00:00Z 的毫秒时间戳
+        let base = 1_790_910_000_000;
+        let lines = vec![
+            raw_line(
+                "2026-10-02T03:00:00.000Z",
+                "turn_context",
+                r#"{"model":"gpt-5"}"#,
+            ),
+            raw_item("2026-10-02T03:00:01.000Z", USER_MESSAGE),
+            // 第一次请求：思考从 3.2 秒开始，回复晚一些；工具执行项不算模型输出
+            raw_item_completed("2026-10-02T03:00:05.000Z", "Reasoning", base + 3_200),
+            raw_item("2026-10-02T03:00:05.001Z", REASONING),
+            raw_item_completed("2026-10-02T03:00:06.000Z", "AgentMessage", base + 5_500),
+            raw_item("2026-10-02T03:00:06.001Z", ASSISTANT_MESSAGE),
+            raw_line(
+                "2026-10-02T03:00:06.100Z",
+                "token_usage_record",
+                &format!(r#"{{"turn_id":"t1","usage":{}}}"#, raw_usage(100, 600)),
+            ),
+            raw_token_count("2026-10-02T03:00:06.101Z", (100, 600), (100, 600)),
+            // 第二次请求一开头就是工具调用，没有思考和回复项，推不出首字
+            raw_item_completed("2026-10-02T03:00:07.000Z", "CommandExecution", base + 6_500),
+            raw_item("2026-10-02T03:00:09.000Z", TOOL_CALL),
+            raw_line(
+                "2026-10-02T03:00:09.100Z",
+                "token_usage_record",
+                &format!(r#"{{"turn_id":"t1","usage":{}}}"#, raw_usage(200, 700)),
+            ),
+            raw_token_count("2026-10-02T03:00:09.101Z", (300, 1300), (200, 700)),
+            // 第三次请求：开始时刻比起点还早，说明对不上，不要
+            raw_item_completed("2026-10-02T03:00:11.000Z", "AgentMessage", base + 9_000),
+            raw_item("2026-10-02T03:00:11.001Z", ASSISTANT_MESSAGE),
+            raw_line(
+                "2026-10-02T03:00:11.100Z",
+                "token_usage_record",
+                &format!(r#"{{"turn_id":"t1","usage":{}}}"#, raw_usage(300, 800)),
+            ),
+            raw_token_count("2026-10-02T03:00:11.101Z", (600, 2100), (300, 800)),
+        ];
+
+        assert_eq!(
+            parsed_latencies(&lines),
+            vec![Some(5_100), Some(2_999), Some(1_999)]
+        );
+        assert_eq!(parsed_first_tokens(&lines), vec![Some(2_200), None, None]);
+
+        // 推出来的首字要落进库里
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let mut contents = session_meta(PARENT_ID).to_string();
+        contents.push('\n');
+        contents.push_str(&(lines.join("\n") + "\n"));
+        fs::write(&file, contents).unwrap();
+        let db = Database::memory()?;
+        sync_test_file(&db, &file, &[&file])?;
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn
+            .prepare("SELECT first_token_ms FROM proxy_request_logs ORDER BY request_id")
+            .unwrap();
+        let stored: Vec<Option<i64>> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+        assert_eq!(stored, vec![Some(2_200), None, None]);
         Ok(())
     }
 

@@ -1394,6 +1394,112 @@ export const setCodexModelName = (
   return finalizeTomlText(lines);
 };
 
+// ========== Codex [agents] subagent defaults ==========
+
+// 子代理的默认模型和推理强度（Codex 的 `[agents]` 表）。后端把这两个键当关键字段，随供应商
+// 切换；聚合模式下不写（子代理跟随主模型）。
+export type CodexAgentsStringKey =
+  | "default_subagent_model"
+  | "default_subagent_reasoning_effort";
+
+const CODEX_AGENTS_SECTION = "agents";
+
+const tomlStringAssignmentPatterns = (key: string) => ({
+  doubleQuoted: new RegExp(
+    `^\\s*${key}\\s*=\\s*"((?:[^"\\\\\\r\\n]|\\\\.)*)"\\s*(?:#.*)?$`,
+  ),
+  singleQuoted: new RegExp(`^\\s*${key}\\s*=\\s*'([^'\\r\\n]*)'\\s*(?:#.*)?$`),
+  anyValue: new RegExp(`^\\s*${key}\\s*=`),
+});
+
+export const extractCodexAgentsString = (
+  configText: string | undefined | null,
+  key: CodexAgentsStringKey,
+): string | undefined => {
+  const text = normalizeTomlText(
+    typeof configText === "string" ? configText : "",
+  );
+  if (!text) return undefined;
+  try {
+    const value = (parseToml(text) as Record<string, any>)[
+      CODEX_AGENTS_SECTION
+    ]?.[key];
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    // 编辑中的 TOML 解析不了时按行在 [agents] 里找。
+  }
+  const lines = text.split("\n");
+  const range = getTomlSectionRange(lines, CODEX_AGENTS_SECTION);
+  if (!range) return undefined;
+  const patterns = tomlStringAssignmentPatterns(key);
+  for (let i = range.bodyStartIndex; i < range.bodyEndIndex; i += 1) {
+    const doubleQuoted = lines[i].match(patterns.doubleQuoted);
+    if (doubleQuoted) return unescapeTomlBasicString(doubleQuoted[1]);
+    const singleQuoted = lines[i].match(patterns.singleQuoted);
+    if (singleQuoted) return singleQuoted[1];
+  }
+  return undefined;
+};
+
+// 写入或删除 `[agents]` 里的一个字符串键；空值删除，删完表里没别的就连表头一起删。
+// 用户把 agents 写成行内表或点号键时按行改不了：改完解析失败就原样返回。
+export const setCodexAgentsString = (
+  configText: string,
+  key: CodexAgentsStringKey,
+  value: string,
+): string => {
+  const trimmed = value.trim();
+  const normalizedText = normalizeTomlText(configText);
+  const lines = normalizedText ? normalizedText.split("\n") : [];
+  const range = getTomlSectionRange(lines, CODEX_AGENTS_SECTION);
+  const replacementLine = `${key} = ${tomlBasicString(trimmed)}`;
+
+  if (range) {
+    const lineIndex = findTomlLineInRange(
+      lines,
+      tomlStringAssignmentPatterns(key).anyValue,
+      range.bodyStartIndex,
+      range.bodyEndIndex,
+    );
+    if (!trimmed) {
+      if (lineIndex === -1) return normalizedText;
+      lines.splice(lineIndex, 1);
+      const bodyEmpty = lines
+        .slice(range.bodyStartIndex, range.bodyEndIndex - 1)
+        .every((line) => line.trim() === "");
+      if (bodyEmpty) {
+        lines.splice(
+          range.headerLineIndex,
+          range.bodyEndIndex - 1 - range.headerLineIndex,
+        );
+      }
+    } else if (lineIndex !== -1) {
+      lines[lineIndex] = replacementLine;
+    } else {
+      lines.splice(getTomlSectionInsertIndex(lines, range), 0, replacementLine);
+    }
+  } else {
+    if (!trimmed) return normalizedText;
+    if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
+      lines.push("");
+    }
+    lines.push(`[${CODEX_AGENTS_SECTION}]`, replacementLine, "");
+  }
+
+  const candidate = finalizeTomlText(lines);
+  try {
+    parseToml(normalizedText);
+  } catch {
+    return candidate;
+  }
+  try {
+    parseToml(candidate);
+    return candidate;
+  } catch {
+    return normalizedText;
+  }
+};
+
 // ========== Codex top-level integer field utils ==========
 
 const tomlTopLevelIntPattern = (field: string) =>
