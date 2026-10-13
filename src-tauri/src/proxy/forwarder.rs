@@ -2816,12 +2816,18 @@ impl RequestForwarder {
                 && !codex_responses_to_anthropic
                 && request_is_streaming
                 && !response.is_json()
-                && self.rectifier_config.enabled
-                && carries_encrypted_agent_task(&filtered_body)
             {
-                response = self
-                    .hold_encrypted_agent_task_stream(response, &filtered_body)
-                    .await?;
+                if self.rectifier_config.enabled && carries_encrypted_agent_task(&filtered_body) {
+                    // Preserve the encrypted-task-specific rejection/rectification path,
+                    // but keep the stream buffered until it has real semantic output.
+                    response = self
+                        .hold_encrypted_agent_task_stream(response, &filtered_body)
+                        .await?;
+                } else {
+                    // Native Responses providers can emit a syntactically complete but
+                    // semantically empty stream. Do not commit that as a successful Codex turn.
+                    response = self.validate_responses_stream_start(response).await?;
+                }
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -3668,40 +3674,162 @@ fn encrypted_task_stream_start(block: &str, request: &Value) -> StreamStart {
         .filter(|event| !event.is_empty())
         .or_else(|| value.get("type").and_then(Value::as_str))
         .unwrap_or("");
+    let response = value.get("response").unwrap_or(&value);
+
     match event {
-        "response.created" | "response.in_progress" | "response.queued" => StreamStart::Pending,
+        "response.created" | "response.in_progress" | "response.queued" | "" => {
+            StreamStart::Pending
+        }
         "response.failed" | "error" => {
-            let response = value.get("response").unwrap_or(&value);
             let error = response.get("error").unwrap_or(response);
             match super::opaque_state_rectifier::in_stream_rejection(error, request) {
                 Some(rejection) => StreamStart::Rejected(rejection),
                 None => StreamStart::Commit,
             }
         }
+        "response.completed" => {
+            if responses_response_has_semantic_output(response) {
+                StreamStart::Commit
+            } else {
+                StreamStart::Rejected(empty_responses_completion_error())
+            }
+        }
+        event if responses_event_value_has_semantic_output(event, &value) => StreamStart::Commit,
+        "response.output_item.added"
+        | "response.output_item.done"
+        | "response.content_part.added"
+        | "response.content_part.done"
+        | "response.output_text.delta"
+        | "response.output_text.done"
+        | "response.reasoning_summary_part.added"
+        | "response.reasoning_summary_part.done"
+        | "response.reasoning_summary_text.delta"
+        | "response.reasoning_summary_text.done" => StreamStart::Pending,
         _ => StreamStart::Commit,
     }
 }
-
 /// A streaming request may receive a whole JSON document even when the gateway
 /// omits `application/json`. `None` means either "not JSON" or "not complete yet";
-/// a parsed document is safe to commit unless it is a semantic failure envelope.
+/// a parsed document is safe to commit unless it is a semantic failure or an empty
+/// successful completion.
 fn inspect_responses_json_document(buffer: &str) -> Option<Result<(), ProxyError>> {
     let trimmed = buffer.trim();
     if !matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'[')) {
         return None;
     }
-    let _: Value = serde_json::from_str(trimmed).ok()?;
+    let value: Value = serde_json::from_str(trimmed).ok()?;
     if let Some(message) = responses_error_envelope_message(trimmed.as_bytes()) {
         return Some(Err(ProxyError::TransformError(format!(
             "Responses upstream returned a 2xx failure: {message}"
         ))));
     }
+    if value.get("status").and_then(Value::as_str) == Some("completed")
+        && !responses_response_has_semantic_output(&value)
+    {
+        return Some(Err(empty_responses_completion_error()));
+    }
     Some(Ok(()))
 }
 
+fn empty_responses_completion_error() -> ProxyError {
+    ProxyError::TransformError(
+        "Responses upstream completed without producing semantic output".to_string(),
+    )
+}
+
+fn responses_response_has_semantic_output(response: &Value) -> bool {
+    response
+        .get("output")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(responses_output_item_has_semantic_output))
+}
+
+fn responses_output_item_has_semantic_output(item: &Value) -> bool {
+    match item.get("type").and_then(Value::as_str) {
+        Some("message") => item
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|parts| parts.iter().any(responses_content_part_has_semantic_output)),
+        Some("reasoning") => {
+            item.get("encrypted_content")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+                || item
+                    .get("summary")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        parts.iter().any(|part| {
+                            part.get("text")
+                                .and_then(Value::as_str)
+                                .is_some_and(|text| !text.trim().is_empty())
+                        })
+                    })
+        }
+        // A tool invocation is meaningful output even when it takes no arguments.
+        Some("function_call" | "custom_tool_call" | "web_search_call") => true,
+        // Preserve compatibility with output item types unknown to this CC Switch build.
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn responses_content_part_has_semantic_output(part: &Value) -> bool {
+    match part.get("type").and_then(Value::as_str) {
+        Some("output_text") => part
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        Some("refusal") => part
+            .get("refusal")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn responses_event_value_has_semantic_output(event: &str, value: &Value) -> bool {
+    match event {
+        "response.output_item.added" | "response.output_item.done" => value
+            .get("item")
+            .is_some_and(responses_output_item_has_semantic_output),
+        "response.content_part.added" | "response.content_part.done" => value
+            .get("part")
+            .is_some_and(responses_content_part_has_semantic_output),
+        "response.output_text.delta" => value
+            .get("delta")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty()),
+        "response.output_text.done" => value
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty()),
+        "response.reasoning_summary_text.delta" => value
+            .get("delta")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty()),
+        "response.reasoning_summary_text.done" => value
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty()),
+        "response.reasoning_summary_part.added" | "response.reasoning_summary_part.done" => value
+            .get("part")
+            .and_then(|part| part.get("text"))
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty()),
+        // A function/custom-tool event itself proves a tool invocation exists, even
+        // when the invocation takes an empty argument object/input.
+        "response.function_call_arguments.delta"
+        | "response.function_call_arguments.done"
+        | "response.custom_tool_call_input.delta"
+        | "response.custom_tool_call_input.done" => true,
+        _ => false,
+    }
+}
+
 /// Inspect one complete Responses SSE block while the response is still inside
-/// the retry loop. `None` means the event is lifecycle-only and priming should
-/// continue; `Some(Ok(()))` means it is safe to commit/replay the stream.
+/// the retry loop. `None` means the event is lifecycle-only or empty scaffolding and
+/// priming should continue; `Some(Ok(()))` means it is safe to commit/replay the stream.
 fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> {
     let mut named_event = None;
     let mut data_lines = Vec::new();
@@ -3765,15 +3893,31 @@ fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> 
                 "Responses upstream {error_type}: {message}"
             ))))
         }
-        "response.created" | "response.in_progress" | "response.queued" => None,
-        "" => None,
-        // Productive output, incomplete, and completed terminals are all safe to
-        // expose. Mid-stream failures after this point are surfaced by the converter
-        // but intentionally do not switch providers.
+        "response.created" | "response.in_progress" | "response.queued" | "" => None,
+        "response.completed" => {
+            if responses_response_has_semantic_output(response) {
+                Some(Ok(()))
+            } else {
+                Some(Err(empty_responses_completion_error()))
+            }
+        }
+        event if responses_event_value_has_semantic_output(event, &value) => Some(Ok(())),
+        // Known output lifecycle events may be empty scaffolding. Keep priming until
+        // actual semantic output or a terminal event arrives.
+        "response.output_item.added"
+        | "response.output_item.done"
+        | "response.content_part.added"
+        | "response.content_part.done"
+        | "response.output_text.delta"
+        | "response.output_text.done"
+        | "response.reasoning_summary_part.added"
+        | "response.reasoning_summary_part.done"
+        | "response.reasoning_summary_text.delta"
+        | "response.reasoning_summary_text.done" => None,
+        // Incomplete and unknown non-lifecycle events preserve the previous behavior.
         _ => Some(Ok(())),
     }
 }
-
 /// Rewrite Codex's `/responses` (and variants) to Anthropic's `/v1/messages`, preserving the query.
 fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Option<String>) {
     let (_path, query) = split_endpoint_and_query(endpoint);
@@ -5453,22 +5597,48 @@ mod tests {
             Some(Err(ProxyError::TransformError(message))) if message.contains("boom")
         ));
 
+        let empty_message = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}"
+        );
+        assert!(inspect_responses_start_event(empty_message).is_none());
+
+        let empty_completed = concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}"
+        );
+        assert!(matches!(
+            inspect_responses_start_event(empty_completed),
+            Some(Err(ProxyError::TransformError(message)))
+                if message.contains("without producing semantic output")
+        ));
+
         let delta = concat!(
             "event: response.output_text.delta\n",
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}"
         );
         assert!(matches!(inspect_responses_start_event(delta), Some(Ok(()))));
+
+        let tool_call = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"name\":\"lookup\",\"arguments\":\"\"}}"
+        );
+        assert!(matches!(
+            inspect_responses_start_event(tool_call),
+            Some(Ok(()))
+        ));
     }
 
     #[test]
-    fn responses_stream_start_accepts_unlabelled_whole_json() {
+    fn responses_stream_start_validates_unlabelled_whole_json() {
+        assert!(matches!(
+            inspect_responses_json_document(r#"{"status":"completed","output":[]}"#),
+            Some(Err(ProxyError::TransformError(message)))
+                if message.contains("without producing semantic output")
+        ));
         assert!(matches!(
             inspect_responses_json_document(
-                r#"{
-                    "status": "completed",
-
-                    "output": []
-                }"#
+                r#"{"status":"completed","output":[{"type":"function_call","name":"lookup","arguments":""}]}"#
             ),
             Some(Ok(()))
         ));
@@ -5481,7 +5651,6 @@ mod tests {
             matches!(failed, Some(Err(ProxyError::TransformError(message))) if message.contains("backend unavailable"))
         );
     }
-
     #[test]
     fn codex_anthropic_cache_is_default_on_but_honors_sub_switch() {
         let default = codex_anthropic_cache_config(&OptimizerConfig::default());
@@ -7588,10 +7757,24 @@ mod tests {
                 json!({ "type": "response.created", "response": { "id": "r1", "status": "in_progress" } }),
                 json!({ "type": "response.output_item.added", "output_index": 0,
                          "item": { "type": "message", "id": "msg_1", "role": "assistant", "content": [] } }),
-                json!({ "type": "response.completed", "response": { "id": "r1", "status": "completed", "output": [] } }),
+                json!({ "type": "response.content_part.added", "item_id": "msg_1", "output_index": 0,
+                         "content_index": 0, "part": { "type": "output_text", "text": "", "annotations": [] } }),
+                json!({ "type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0,
+                         "content_index": 0, "delta": "ok" }),
+                json!({ "type": "response.completed", "response": { "id": "r1", "status": "completed",
+                         "output": [{ "type": "message", "id": "msg_1", "role": "assistant",
+                                      "content": [{ "type": "output_text", "text": "ok", "annotations": [] }] }] } }),
             ])
         }
 
+        fn empty_completed_stream() -> (u16, &'static str, String) {
+            sse(&[
+                json!({ "type": "response.created", "response": { "id": "r1", "status": "in_progress" } }),
+                json!({ "type": "response.output_item.added", "output_index": 0,
+                         "item": { "type": "message", "id": "msg_1", "role": "assistant", "content": [] } }),
+                json!({ "type": "response.completed", "response": { "id": "r1", "status": "completed", "output": [] } }),
+            ])
+        }
         /// 子 agent 的第一个请求：末尾是主 agent 那家签发的任务密文。`history` 放在它前面。
         fn sub_agent_request(history: Vec<Value>) -> Value {
             let mut input = history;
@@ -7661,6 +7844,57 @@ mod tests {
                 .expect("rejected");
             assert!(is_unreadable_task_error(&error.error), "{:?}", error.error);
             // 请求里没有别家的历史状态可去：只发一次。
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn sub_agent_empty_completed_stream_is_rejected_before_commit() {
+            let upstream = raw_upstream(vec![empty_completed_stream()]).await;
+            let error = forward_sub_agent(&upstream, sub_agent_request(Vec::new()))
+                .await
+                .err()
+                .expect("empty completion must not be committed");
+            assert!(
+                matches!(
+                    error.error,
+                    ProxyError::TransformError(ref message)
+                        if message.contains("without producing semantic output")
+                ),
+                "{:?}",
+                error.error
+            );
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn native_empty_completed_stream_is_rejected_before_commit() {
+            let upstream = raw_upstream(vec![empty_completed_stream()]).await;
+            let error = forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    json!({
+                        "model": "listed",
+                        "input": [{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }],
+                        "stream": true
+                    }),
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .err()
+                .expect("empty native completion must not be committed");
+            assert!(
+                matches!(
+                    &error.error,
+                    ProxyError::TransformError(message)
+                        if message.contains("without producing semantic output")
+                ),
+                "{:?}",
+                error.error
+            );
             assert_eq!(upstream.seen.lock().await.len(), 1);
         }
 
