@@ -3819,4 +3819,17 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ),
     icon: "nekocode",
   },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "aicoming",
+      "https://api.aicoming.top/v1",
+      "gpt-5.6-sol",
+    ),
+    icon: "aicoming",
+  },
 ];

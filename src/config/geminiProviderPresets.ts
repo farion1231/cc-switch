@@ -692,6 +692,22 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     category: "aggregator",
     icon: "tokenflux",
   },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.aicoming.top",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.aicoming.top",
+    model: "gemini-3.1-pro-preview",
+    description: "AIComing",
+    category: "aggregator",
+    icon: "aicoming",
+  },
 ];
 
 export function getGeminiPresetByName(

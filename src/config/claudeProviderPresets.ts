@@ -2274,4 +2274,17 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "nekocode",
   },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.aicoming.top",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    icon: "aicoming",
+  },
 ];

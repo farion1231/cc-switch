@@ -722,4 +722,13 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     category: "aggregator",
     icon: "tokenflux",
   },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    auth: grokAuth(),
+    config: grokPresetConfig("AIComing", "https://api.aicoming.top/v1"),
+    category: "aggregator",
+    icon: "aicoming",
+  },
 ];

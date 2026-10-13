@@ -40,6 +40,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "#3A3B40",
   },
+  aicoming: {
+    name: "aicoming",
+    displayName: "AIComing",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["aicoming", "aggregator", "relay", "gateway"],
+    defaultColor: "currentColor",
+  },
   aigocode: {
     name: "aigocode",
     displayName: "AIGoCode",
