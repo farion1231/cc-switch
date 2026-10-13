@@ -1136,6 +1136,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "currentColor",
   },
+  cursor: {
+    name: "cursor",
+    displayName: "Cursor",
+    category: "ai-provider",
+    keywords: ["cursor", "ide", "ai-editor", "cursor.sh"],
+    defaultColor: "#A855F7",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

@@ -47,7 +47,7 @@ use super::{
     ProxyError,
 };
 use crate::app_config::AppType;
-use crate::database::PRICING_SOURCE_REQUEST;
+use crate::database::{Database, PRICING_SOURCE_REQUEST};
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use futures::StreamExt;
@@ -123,6 +123,136 @@ pub async fn handle_models(
         json!({"models": []})
     };
     Ok(Json(catalog))
+}
+
+/// 当前 Cursor 供应商 + Codex Chat 供应商合并后的模型列表（OpenAI list 形状）。
+///
+/// 仅在存在模型时返回 `Some({object: "list", data: [...]})`；无模型返回 `None`，
+/// 由调用方决定兜底形状。仅被 `/cursor/v1/models` 使用。
+async fn cursor_models_payload(db: &Database) -> Option<Value> {
+    // Try Cursor first: return modelCatalog from the current provider
+    let mut cursor_models: Vec<Value> = Vec::new();
+    if let Ok(providers) = db.get_all_providers("cursor") {
+        if let Ok(Some(current_id)) = crate::mode::current::provider_for(
+            db,
+            &AppType::Cursor,
+            crate::mode::current::Purpose::InUse,
+        ) {
+            if let Some(provider) = providers.get(&current_id) {
+                if let Some(catalog) = provider.settings_config.get("modelCatalog") {
+                    if let Some(models) = catalog.get("models").and_then(|v| v.as_array()) {
+                        cursor_models = models.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    // When Cursor proxy is active, also include models from the Codex Chat
+    // provider so Cursor knows about third-party model names (e.g. Kimi k3,
+    // Kimi For Coding, etc.). Without this, Cursor validates the user-typed
+    // model name against its own modelCatalog and rejects unknown names with
+    // "Model name is not valid" before the request ever reaches the proxy.
+    let codex_chat_models = codex_chat_provider_models(db).await;
+    let merged_models = merge_model_lists(&cursor_models, &codex_chat_models);
+    if merged_models.is_empty() {
+        return None;
+    }
+    // 模型名保持 catalog 里的客户端名（用户在 Cursor 里填的名字），转发时由
+    // translate_cursor_catalog_model 翻译成上游名。这里补 OpenAI `id` 字段。
+    let data = normalize_openai_model_ids(merged_models);
+    Some(json!({ "object": "list", "data": data }))
+}
+
+/// Collect model-catalog entries from the active Codex Chat Completions
+/// provider.  These are the upstream model ids that Cursor / OpenCode / Hermes /
+/// OpenClaw clients should be able to select.
+async fn codex_chat_provider_models(db: &Database) -> Vec<Value> {
+    let app_types = [
+        AppType::Codex,
+        AppType::OpenCode,
+        AppType::OpenClaw,
+        AppType::Hermes,
+    ];
+    for app_type in &app_types {
+        let Ok(providers) = db.get_all_providers(app_type.as_str()) else {
+            continue;
+        };
+        let Ok(Some(current_id)) =
+            crate::mode::current::provider_for(db, app_type, crate::mode::current::Purpose::InUse)
+        else {
+            continue;
+        };
+        let Some(provider) = providers.get(&current_id) else {
+            continue;
+        };
+        if !super::providers::codex_provider_uses_chat_completions(provider) {
+            continue;
+        }
+        let Some(catalog) = provider.settings_config.get("modelCatalog") else {
+            continue;
+        };
+        let Some(models) = catalog.get("models").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        if !models.is_empty() {
+            return models.clone();
+        }
+    }
+    Vec::new()
+}
+
+/// Merge two model lists, deduplicating by the `model` (id) field.  The left
+/// list wins on collision.
+fn merge_model_lists(left: &[Value], right: &[Value]) -> Vec<Value> {
+    if right.is_empty() {
+        return left.to_vec();
+    }
+    let mut merged: Vec<Value> = left.to_vec();
+    let seen: std::collections::HashSet<String> = left
+        .iter()
+        .filter_map(|v| {
+            v.get("model")
+                .and_then(|m| m.as_str())
+                .map(str::to_lowercase)
+        })
+        .collect();
+
+    for entry in right {
+        let is_new = entry
+            .get("model")
+            .and_then(|m| m.as_str())
+            .map(|id| !seen.contains(&id.to_lowercase()))
+            .unwrap_or(true);
+        if is_new {
+            merged.push(entry.clone());
+        }
+    }
+    merged
+}
+
+/// 规范化模型列表：补 OpenAI 标准的 `id` 字段（Cursor 按 `id` 解析模型列表）。
+/// 模型名保持 catalog 里的客户端名不变——用户在 Cursor 里填的就是这个名字，
+/// 转发时由 translate_cursor_catalog_model 映射为上游模型名（displayName）。
+fn normalize_openai_model_ids(models: Vec<Value>) -> Vec<Value> {
+    models
+        .into_iter()
+        .map(|mut entry| {
+            // 取现有 id（OpenAI 风格）或 model（cc-switch catalog 风格）
+            let base_id = entry
+                .get("id")
+                .or_else(|| entry.get("model"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+
+            if let Some(id) = base_id {
+                entry["id"] = json!(id);
+                // 保持 model 字段同步，便于内部一致
+                entry["model"] = entry["id"].clone();
+            }
+            entry
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -917,6 +1047,56 @@ pub async fn handle_chat_completions(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    handle_chat_completions_for_app(state, request, AppType::Codex, "Codex", "codex").await
+}
+
+/// 处理 /cursor/v1/chat/completions 请求（公网路由（Cursor 经公网隧道接入）：经公网隧道进入的
+/// Cursor 请求固定路由到 Cursor 的当前供应商，而不是 Codex 的）。
+pub async fn handle_cursor_chat_completions(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    // 鉴权由 server.rs 的全局来源中间件统一处理（覆盖所有公网入口）
+    handle_chat_completions_for_app(state, request, AppType::Cursor, "Cursor", "cursor").await
+}
+
+/// 纯函数形式的 公网路由鉴权（便于单测）：仅在启用且配置了密钥时，
+/// 要求 Authorization: Bearer 与配置完全匹配；其余一律拒绝。
+/// 由 server.rs 的全局来源中间件调用（见 public_route_auth_decision）。
+pub(crate) fn validate_public_route_auth(
+    enabled: bool,
+    expected_key: Option<&str>,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), ProxyError> {
+    let unauthorized = |reason: &str| ProxyError::AuthError(format!("公网路由 鉴权失败: {reason}"));
+    if !enabled {
+        return Err(unauthorized("公网路由未启用"));
+    }
+    let Some(expected) = expected_key.filter(|k| !k.is_empty()) else {
+        return Err(unauthorized("服务端未配置密钥"));
+    };
+    let presented = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .unwrap_or("");
+    if presented.is_empty() {
+        return Err(unauthorized("缺少 Authorization: Bearer"));
+    }
+    if presented != expected {
+        return Err(unauthorized("密钥不匹配"));
+    }
+    Ok(())
+}
+
+async fn handle_chat_completions_for_app(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
     let uri = parts.uri;
@@ -939,9 +1119,9 @@ pub async fn handle_chat_completions(
         &state,
         &body,
         &headers,
-        AppType::Codex,
-        "Codex",
-        "codex",
+        app_type.clone(),
+        tag,
+        app_type_str,
         stack,
     )
     .await?;
@@ -955,7 +1135,7 @@ pub async fn handle_chat_completions(
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
-            &AppType::Codex,
+            &app_type,
             method,
             &endpoint,
             body,
@@ -1013,6 +1193,28 @@ pub async fn handle_responses(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     handle_responses_for_app(state, request, AppType::Codex, "Codex", "codex").await
+}
+
+/// 处理 /cursor/v1/responses 请求（公网路由（Cursor 经公网隧道接入）：固定路由到 Cursor 供应商）
+pub async fn handle_cursor_responses(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    // 鉴权由 server.rs 的全局来源中间件统一处理（覆盖所有公网入口）
+    handle_responses_for_app(state, request, AppType::Cursor, "Cursor", "cursor").await
+}
+
+/// 处理 /cursor/v1/models 请求（公网路由：Verify/模型列表）
+pub async fn handle_cursor_models(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, ProxyError> {
+    // 鉴权由 server.rs 的全局来源中间件统一处理（覆盖所有公网入口）
+    match cursor_models_payload(&state.db).await {
+        Some(payload) => Ok(Json(payload)),
+        // 无模型时返回空 OpenAI list 形状（Cursor Verify 认 `{object,data}`，
+        // 不能回落 Codex 的 `{models}` catalog，见 handle_models 注释 / #6124）。
+        None => Ok(Json(json!({ "object": "list", "data": [] }))),
+    }
 }
 
 pub async fn handle_grokbuild_responses(
@@ -1118,7 +1320,13 @@ async fn handle_responses_for_app(
         .await;
     }
 
-    if codex_upstream_format == Some(CodexUpstreamFormat::ChatCompletions) {
+    if codex_upstream_format == Some(CodexUpstreamFormat::ChatCompletions)
+        || super::providers::should_convert_responses_to_chat_for_app(
+            &app_type,
+            &ctx.provider,
+            &endpoint,
+        )
+    {
         return handle_codex_chat_to_responses_transform(
             response,
             &ctx,
@@ -1447,7 +1655,13 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    if codex_upstream_format == Some(CodexUpstreamFormat::ChatCompletions) {
+    if codex_upstream_format == Some(CodexUpstreamFormat::ChatCompletions)
+        || super::providers::should_convert_responses_to_chat_for_app(
+            &app_type,
+            &ctx.provider,
+            &endpoint,
+        )
+    {
         return handle_codex_chat_to_responses_transform(
             response,
             &ctx,
@@ -2492,6 +2706,187 @@ fn compact_error_message(message: &str, max_chars: usize) -> String {
 // Gemini API 处理器
 // ============================================================================
 
+// ============================================================================
+// Codex / Cursor 透传处理器
+// ============================================================================
+
+/// 处理 Codex / Cursor 代理未显式路由的请求（如用量查询、账户检查等）。
+///
+/// 这些请求不在标准 chat/models/responses 路由中，但客户端（Cursor）会通过
+/// OPENAI_BASE_URL 发送。如果不处理会返回 404，客户端可能误报为额度/授权错误。
+/// 此 handler 透传请求到上游 API。
+/// 透传请求/响应体最大字节数（防无界缓冲 DoS）。
+const PASSTHROUGH_MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+/// 上游请求超时（覆盖连接 + 请求 + 响应体读取）。
+const PASSTHROUGH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 以字节上限读取 axum Body 流，超限报错而非无界缓冲（#2 DoS 加固）。
+async fn read_body_with_limit(body: axum::body::Body, max: usize) -> Result<Vec<u8>, ProxyError> {
+    use futures::StreamExt;
+    let mut total = 0usize;
+    let mut out = Vec::new();
+    let mut stream = body.into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| ProxyError::Internal(format!("Failed to read body: {e}")))?;
+        total += chunk.len();
+        if total > max {
+            return Err(ProxyError::InvalidRequest(format!(
+                "请求体超过上限 {max} 字节"
+            )));
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
+/// 组装上游透传 URL：baseUrl 尾部 `/v1` 与路径前缀 `/v1`（含 `/v1?查询`、裸 `/v1`）去重，
+/// 避免 `/v1/v1/...`。
+fn build_passthrough_url(base_url: &str, path_and_query: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let path = path_and_query.trim_start_matches('/');
+    if base.ends_with("/v1") {
+        if let Some(rest) = path.strip_prefix("v1") {
+            if rest.is_empty() || rest.starts_with('/') || rest.starts_with('?') {
+                return format!("{base}{rest}");
+            }
+        }
+    }
+    format!("{base}/{path}")
+}
+
+/// 以字节上限读取 reqwest 响应体流，超限报错（防上游巨型响应撑爆内存）。
+async fn read_reqwest_body_with_limit(
+    resp: reqwest::Response,
+    max: usize,
+) -> Result<Vec<u8>, ProxyError> {
+    use futures::StreamExt;
+    let mut total = 0usize;
+    let mut out = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk
+            .map_err(|e| ProxyError::Internal(format!("Failed to read upstream response: {e}")))?;
+        total += chunk.len();
+        if total > max {
+            return Err(ProxyError::Internal(format!("上游响应超过上限 {max} 字节")));
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
+pub async fn handle_codex_passthrough(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    use axum::http::Method;
+
+    let (parts, body) = request.into_parts();
+    let method = parts.method;
+    let uri = parts.uri;
+    let headers = parts.headers;
+
+    let body_bytes = read_body_with_limit(body, PASSTHROUGH_MAX_BODY_BYTES).await?;
+
+    // 本 handler 只挂在 `/v1/*path`（见 server.rs 的注册），而 `app_for_public_path`
+    // 把该前缀归给 **Codex**（公网鉴权中间件也按同一口径要求「Codex 已接管」）。所以上游
+    // 必须是 Codex 当前供应商，并且用**它自己的**凭据：入口请求带的 Authorization（本机
+    // 客户端指向代理时的占位凭据，或公网路由的 `ccsk-*`）既不是上游的 key，也绝不能透传
+    // 出去——那会把可复用的公网路由密钥泄露给供应商，同时因上游不认这个 key 而鉴权失败。
+    let upstream_provider = crate::mode::current::provider_for(
+        &state.db,
+        &AppType::Codex,
+        crate::mode::current::Purpose::InUse,
+    )
+    .ok()
+    .flatten()
+    .and_then(|id| state.db.get_all_providers("codex").ok()?.get(&id).cloned());
+
+    let (resolved_base_url, upstream_api_key) = upstream_provider
+        .as_ref()
+        .map(|provider| provider.resolve_usage_credentials(&AppType::Codex))
+        .unwrap_or_default();
+    let base_url = if resolved_base_url.is_empty() {
+        "https://api.openai.com".to_string()
+    } else {
+        resolved_base_url
+    };
+
+    let upstream_url = build_passthrough_url(
+        &base_url,
+        uri.path_and_query().map(|pq| pq.as_str()).unwrap_or(""),
+    );
+
+    // Forward request to upstream（client 级超时覆盖连接+请求+响应体读取）
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(PASSTHROUGH_TIMEOUT)
+        .build()
+        .map_err(|e| ProxyError::Internal(format!("Failed to build HTTP client: {e}")))?;
+
+    let mut upstream_req = match method {
+        Method::GET => client.get(&upstream_url),
+        Method::POST => client.post(&upstream_url),
+        Method::PUT => client.put(&upstream_url),
+        Method::DELETE => client.delete(&upstream_url),
+        _ => client.get(&upstream_url),
+    };
+
+    // 只转发与鉴权无关的请求头。**入口侧凭据一律不转发**：`authorization` 是本地客户端指向
+    // 代理时的占位凭据，或经公网隧道进来时中间件校验过的 `ccsk-*`；透传出去既泄露可复用的
+    // 公网路由密钥，又让上游鉴权失败。供应商凭据由下面显式注入（见 `upstream_api_key`）。
+    for (key, value) in headers.iter() {
+        let key_str = key.as_str().to_lowercase();
+        if matches!(
+            key_str.as_str(),
+            "host"
+                | "connection"
+                | "transfer-encoding"
+                | "authorization"
+                | "x-api-key"
+                | "api-key"
+                | "cookie"
+        ) {
+            continue;
+        }
+        upstream_req = upstream_req.header(key, value);
+    }
+
+    if !upstream_api_key.is_empty() {
+        upstream_req = upstream_req.header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {upstream_api_key}"),
+        );
+    }
+
+    if !body_bytes.is_empty() {
+        upstream_req = upstream_req.body(body_bytes.to_vec());
+    }
+
+    let upstream_resp = upstream_req
+        .send()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Upstream passthrough failed: {e}")))?;
+
+    let status = upstream_resp.status();
+    let resp_headers = upstream_resp.headers().clone();
+    // 响应体同样带字节上限读取，超限中断（防上游返回巨型响应撑爆内存）
+    let resp_body = read_reqwest_body_with_limit(upstream_resp, PASSTHROUGH_MAX_BODY_BYTES).await?;
+
+    let mut response = axum::response::Response::builder().status(status);
+    for (key, value) in resp_headers.iter() {
+        let key_str = key.as_str().to_lowercase();
+        if key_str == "transfer-encoding" || key_str == "connection" {
+            continue;
+        }
+        response = response.header(key, value);
+    }
+
+    response
+        .body(axum::body::Body::from(resp_body))
+        .map_err(|e| ProxyError::Internal(format!("Failed to build response: {e}")))
+}
+
 /// 处理 Gemini API 请求（透传，包括查询参数）
 pub async fn handle_gemini(
     State(state): State<ProxyState>,
@@ -3313,13 +3708,20 @@ async fn log_usage(
 #[cfg(test)]
 mod tests {
     use super::{
-        body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_proxy_error_json, responses_sse_stream_to_anthropic_message,
+        body_looks_like_sse, build_passthrough_url, chat_sse_to_response_value,
+        classify_body_for_diagnostics, codex_proxy_error_json, cursor_models_payload,
+        handle_models, read_body_with_limit, responses_sse_stream_to_anthropic_message,
         responses_sse_to_response_value, rewritten_sse_response_builder,
         should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+        validate_public_route_auth,
     };
+    use crate::app_config::AppType;
+    use crate::database::Database;
     use crate::proxy::ProxyError;
+    use axum::body::Body;
+    use axum::http::{HeaderMap, HeaderValue};
     use bytes::Bytes;
+    use serde_json::json;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -3348,6 +3750,104 @@ mod tests {
         assert!(headers.get(header::CONNECTION).is_none());
         assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
         assert_eq!(headers["x-request-id"], "req_1");
+    }
+    // ===== 公网路由 隧道鉴权 =====
+
+    fn auth_headers(value: Option<&str>) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        if let Some(v) = value {
+            h.insert(
+                axum::http::header::AUTHORIZATION,
+                HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        h
+    }
+
+    // ===== Codex/Cursor 透传加固 =====
+
+    #[tokio::test]
+    async fn read_body_with_limit_passes_small_bodies() {
+        let body = Body::from(vec![0u8; 100]);
+        let out = read_body_with_limit(body, 1024).await.expect("should pass");
+        assert_eq!(out.len(), 100);
+    }
+
+    #[tokio::test]
+    async fn read_body_with_limit_rejects_oversized_bodies() {
+        let body = Body::from(vec![0u8; 5000]);
+        assert!(
+            read_body_with_limit(body, 1024).await.is_err(),
+            "body exceeding the cap must be rejected, not buffered unboundedly"
+        );
+    }
+
+    #[test]
+    fn build_passthrough_url_joins_base_and_path() {
+        assert_eq!(
+            build_passthrough_url("https://api.openai.com", "/v1/models"),
+            "https://api.openai.com/v1/models"
+        );
+        assert_eq!(
+            build_passthrough_url("https://x.com", "/v1/models?key=abc"),
+            "https://x.com/v1/models?key=abc"
+        );
+    }
+
+    #[test]
+    fn build_passthrough_url_dedupes_trailing_v1() {
+        // baseUrl 以 /v1 结尾且路径也以 /v1 开头时去重，避免 /v1/v1/...
+        assert_eq!(
+            build_passthrough_url("https://api.openai.com/v1", "/v1/chat/completions"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            build_passthrough_url("https://api.kimi.com/v1/", "/chat/completions"),
+            "https://api.kimi.com/v1/chat/completions"
+        );
+        // 纯 /v1 查询路径也去重：/v1?key=... → base/v1?key=...（review LOW）
+        assert_eq!(
+            build_passthrough_url("https://api.openai.com/v1", "/v1?key=abc"),
+            "https://api.openai.com/v1?key=abc"
+        );
+        assert_eq!(
+            build_passthrough_url("https://api.openai.com/v1", "/v1"),
+            "https://api.openai.com/v1"
+        );
+        // 非 /v1 前缀路径不去重：/v1beta 保持原样
+        assert_eq!(
+            build_passthrough_url("https://api.openai.com/v1", "/v1beta/models"),
+            "https://api.openai.com/v1/v1beta/models"
+        );
+    }
+
+    #[test]
+    fn public_route_auth_rejects_when_feature_disabled() {
+        let h = auth_headers(Some("Bearer ccsk-x"));
+        assert!(validate_public_route_auth(false, Some("ccsk-x"), &h).is_err());
+    }
+
+    #[test]
+    fn public_route_auth_accepts_matching_bearer() {
+        let h = auth_headers(Some("Bearer ccsk-abc"));
+        assert!(validate_public_route_auth(true, Some("ccsk-abc"), &h).is_ok());
+    }
+
+    #[test]
+    fn public_route_auth_rejects_wrong_or_missing_key() {
+        assert!(validate_public_route_auth(
+            true,
+            Some("ccsk-abc"),
+            &auth_headers(Some("Bearer ccsk-other"))
+        )
+        .is_err());
+        assert!(validate_public_route_auth(true, Some("ccsk-abc"), &auth_headers(None)).is_err());
+    }
+
+    #[test]
+    fn public_route_auth_rejects_when_key_not_configured() {
+        let h = auth_headers(Some("Bearer ccsk-abc"));
+        assert!(validate_public_route_auth(true, None, &h).is_err());
     }
 
     #[test]
@@ -4084,6 +4584,150 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["provider"], "HCAI");
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
+    }
+
+    // ===== Cursor / Codex models 响应形状（#6124 review P1）=====
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: tempfile::TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = tempfile::TempDir::new().expect("failed to create temp home");
+            let original_home = std::env::var("HOME").ok();
+            let original_userprofile = std::env::var("USERPROFILE").ok();
+            let original_test_home = std::env::var("CC_SWITCH_TEST_HOME").ok();
+            std::env::set_var("HOME", dir.path());
+            std::env::set_var("USERPROFILE", dir.path());
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.original_userprofile {
+                Some(value) => std::env::set_var("USERPROFILE", value),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn seed_cursor_provider_with_catalog(db: &crate::database::Database) {
+        let provider = crate::provider::Provider::with_id(
+            "cur1".to_string(),
+            "Cursor Provider".to_string(),
+            json!({
+                "baseUrl": "https://api.kimi.com/v1",
+                "apiKey": "sk-kimi",
+                "model": "default-upstream",
+                "modelCatalog": {
+                    "models": [
+                        { "model": "composer-2.5", "displayName": "deepseek-v4-pro" },
+                        { "model": "kimi-k2", "displayName": "" }
+                    ]
+                }
+            }),
+            None,
+        );
+        db.save_provider("cursor", &provider)
+            .expect("save cursor provider");
+        crate::settings::set_current_provider(&AppType::Cursor, Some("cur1"))
+            .expect("set current cursor provider");
+    }
+
+    #[tokio::test]
+    // serial：TempHome 会改写进程级 HOME/USERPROFILE/CC_SWITCH_TEST_HOME，
+    // 与 hermes_config 等同样读写这些 env 的测试互斥，避免并行竞争（#6124 修复的回归测试）。
+    #[serial_test::serial]
+    async fn handle_models_keeps_codex_shape_when_cursor_catalog_configured() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        seed_cursor_provider_with_catalog(&db);
+
+        let state = crate::proxy::server::ProxyState::for_test(db.clone());
+        let response = handle_models(
+            axum::extract::State(state),
+            axum::http::Uri::from_static("/v1/models"),
+            axum::http::HeaderMap::new(),
+        )
+        .await
+        .expect("handle_models");
+        let value = response.0;
+        assert!(
+            value.get("models").is_some(),
+            "Codex /v1/models must keep the {{models}} catalog shape, got: {value}"
+        );
+        assert!(
+            value.get("object").is_none(),
+            "Codex probe must not receive the OpenAI list shape, got: {value}"
+        );
+    }
+
+    #[tokio::test]
+    // serial：同上，改写了进程级 HOME/CC_SWITCH_TEST_HOME，须与其他 env 测试互斥。
+    #[serial_test::serial]
+    async fn cursor_models_payload_returns_none_when_no_catalog() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        crate::settings::set_current_provider(&AppType::Cursor, None)
+            .expect("clear current cursor provider");
+
+        let payload = cursor_models_payload(&db).await;
+        assert!(
+            payload.is_none(),
+            "empty cursor catalog must yield None so /cursor/v1/models can return an empty OpenAI list"
+        );
+    }
+
+    #[tokio::test]
+    // serial：同上，改写了进程级 HOME/CC_SWITCH_TEST_HOME，须与其他 env 测试互斥。
+    #[serial_test::serial]
+    async fn cursor_models_payload_returns_openai_shape_with_client_names() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        seed_cursor_provider_with_catalog(&db);
+
+        let payload = cursor_models_payload(&db)
+            .await
+            .expect("cursor /cursor/v1/models must return Some payload when models exist");
+        assert_eq!(payload.get("object").and_then(|v| v.as_str()), Some("list"));
+        let data = payload
+            .get("data")
+            .and_then(|v| v.as_array())
+            .expect("data array");
+        assert!(!data.is_empty(), "merged catalog must not be empty");
+        for entry in data {
+            let id = entry.get("id").and_then(|v| v.as_str()).expect("id field");
+            // id 保持 catalog 里的客户端名（用户在 Cursor 里填的名字），
+            // 转发时由 translate_cursor_catalog_model 映射到上游模型名
+            assert_eq!(
+                entry.get("model").and_then(|v| v.as_str()),
+                Some(id),
+                "model field must stay in sync with id"
+            );
+        }
     }
 }
 

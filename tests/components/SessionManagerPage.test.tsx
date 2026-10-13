@@ -286,6 +286,7 @@ describe("SessionManagerPage", () => {
         opencode: false,
         openclaw: false,
         hermes: false,
+        cursor: false,
         pi: false,
         mcode: false,
       },
@@ -373,6 +374,73 @@ describe("SessionManagerPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "返回会话列表" }));
     expect(await screen.findByText("Alpha Session")).toBeInTheDocument();
+  });
+
+  it("renders Cursor sessions from conversation-search.db source", async () => {
+    setSessionFixtures(
+      [
+        {
+          providerId: "cursor",
+          sessionId: "f531dd2f-e7dd-4090-a36e-2a534618bd7f",
+          title: "Cursor Session",
+          summary: "Cursor summary",
+          projectDir: null,
+          createdAt: 0,
+          lastActiveAt: 50,
+          sourcePath:
+            "sqlite:/mock/conversation-search.db:f531dd2f-e7dd-4090-a36e-2a534618bd7f",
+        },
+      ],
+      {
+        "cursor:sqlite:/mock/conversation-search.db:f531dd2f-e7dd-4090-a36e-2a534618bd7f":
+          [{ role: "user", content: "cursor transcript", ts: 50 }],
+      },
+    );
+    renderPage("cursor");
+
+    await waitFor(() =>
+      expect(screen.getByText("Cursor Session")).toBeInTheDocument(),
+    );
+  });
+
+  it("copies a Cursor session transcript as Markdown from the reader", async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText: writeTextMock } });
+    setSessionFixtures(
+      [
+        {
+          providerId: "cursor",
+          sessionId: "f531dd2f-e7dd-4090-a36e-2a534618bd7f",
+          title: "Cursor Session",
+          summary: "Cursor summary",
+          projectDir: null,
+          createdAt: 0,
+          lastActiveAt: 50,
+          sourcePath:
+            "sqlite:/mock/conversation-search.db:f531dd2f-e7dd-4090-a36e-2a534618bd7f",
+        },
+      ],
+      {
+        "cursor:sqlite:/mock/conversation-search.db:f531dd2f-e7dd-4090-a36e-2a534618bd7f":
+          [
+            { role: "user", content: "帮我查一下权限" },
+            { role: "assistant", content: "已查出如下结果" },
+          ],
+      },
+    );
+    renderPage("cursor");
+    await screen.findByText("Cursor Session");
+    openRow("Cursor Session");
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Cursor Session 的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /复制整段为 Markdown/ }),
+    );
+
+    await waitFor(() => expect(writeTextMock).toHaveBeenCalled());
+    expect(String(writeTextMock.mock.calls[0][0])).toContain("帮我查一下权限");
   });
 
   it("explains why a Hermes session cannot be resumed", async () => {

@@ -19,6 +19,7 @@ import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
+import { providerNeedsPublicRoute } from "@/utils/providerCapabilities";
 import type { OpenClawProviderConfig, Provider } from "@/types";
 import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { AppId } from "@/lib/api";
@@ -78,6 +79,7 @@ interface ProviderListProps {
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
+  onOpenPublicRouteSettings?: () => void;
   onOpenTerminal?: (provider: Provider) => void;
   onCreate?: () => void;
   /** OpenClaw 的默认模型、Hermes 的当前供应商 */
@@ -108,6 +110,7 @@ export function ProviderList({
   onDuplicate,
   onConfigureUsage,
   onOpenWebsite,
+  onOpenPublicRouteSettings,
   onOpenTerminal,
   onCreate,
   onSetAsDefault,
@@ -456,12 +459,29 @@ export function ProviderList({
     return provider.id === currentProviderId;
   };
 
+  // Cursor 接管中且是第三方供应商时，卡上给一个直达「公网路由」设置的入口
+  // （Cursor 的 Base URL 走云端同步，第三方供应商必须经公网隧道才可用）。
+  const withPublicRoute = (
+    provider: Provider,
+    presentation: CardPresentation,
+  ): CardPresentation =>
+    appId === "cursor" &&
+    onOpenPublicRouteSettings &&
+    switchMode?.active !== undefined &&
+    switchMode.active !== "direct" &&
+    providerNeedsPublicRoute(appId, provider)
+      ? {
+          ...presentation,
+          publicRoute: { onOpenPublicRouteSettings },
+        }
+      : presentation;
+
   const renderCard = (provider: Provider, presentation: CardPresentation) => (
     <SortableProviderCard
       key={provider.id}
       provider={provider}
       appId={appId}
-      presentation={presentation}
+      presentation={withPublicRoute(provider, presentation)}
       isCurrent={isCurrentFor(provider)}
       isInConfig={isInConfig(provider)}
       onEdit={onEdit}
@@ -626,6 +646,7 @@ interface SortableProviderCardProps {
   onDuplicate: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
+  onOpenPublicRouteSettings?: () => void;
   onOpenTerminal?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   isTesting: boolean;

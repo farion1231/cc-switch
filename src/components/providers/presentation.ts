@@ -72,6 +72,8 @@ export interface CardPresentation {
   move?: { onUp?: () => void; onDown?: () => void };
   /** 在队列里且路由服务在跑时显示健康状态 */
   showHealth?: boolean;
+  /** Cursor 卡上的「需要公网路由」入口：接管中且是第三方供应商时才给 */
+  publicRoute?: { onOpenPublicRouteSettings: () => void };
   /** 编辑 / 删除不可用的原因（当前那家不能删、Hermes 托管只能在 Web UI 改…） */
   editDisabledReason?: string;
   deleteDisabledReason?: string;
