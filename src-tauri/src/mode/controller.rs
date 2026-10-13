@@ -489,8 +489,14 @@ async fn write_proxy(
             unchanged
         }
         AppType::ClaudeDesktop => {
-            let profile =
-                claude_desktop_config::route_profile(&state.db, route, &proxy_url).map_err(err)?;
+            let members = published_members(state, app, &stack, route)?;
+            let profile = claude_desktop_config::route_profile(
+                &state.db,
+                route,
+                &proxy_url,
+                &stack::desktop_published(&members),
+            )
+            .map_err(err)?;
             let contract = contract::claude_desktop(&profile);
             let unchanged = !force && live_now.has_contract(&contract.key);
             target.contract = Some(contract);
@@ -1192,8 +1198,13 @@ fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> 
             "官方账号不能加入聚合 (An official account cannot join the aggregation)".to_string(),
         );
     }
-    if matches!(app, AppType::Codex) {
-        codex_direct::check_stack_member(provider).map_err(err)?;
+    match app {
+        AppType::Codex => codex_direct::check_stack_member(provider).map_err(err)?,
+        // 映射表不完整的卡发布不出模型，做默认时写入也会失败
+        AppType::ClaudeDesktop => {
+            claude_desktop_config::validate_proxy_provider(provider).map_err(err)?
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -5904,6 +5915,93 @@ model_provider = "c"
             Some("map"),
             "the route is kept for next time"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_desktop_stack_mode_lists_the_members_after_the_default() {
+        let home = Home::new();
+        let _dirs = DesktopDirs::under(&home);
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        let desktop = AppType::ClaudeDesktop;
+        let mut other = desktop_card("other", true);
+        if let Some(meta) = other.meta.as_mut() {
+            for route in meta.claude_desktop_model_routes.values_mut() {
+                route.model = "glm-5.2".to_string();
+            }
+        }
+        for card in [
+            desktop_card("direct", false),
+            desktop_card("map", true),
+            other,
+        ] {
+            state
+                .db
+                .save_provider(desktop.as_str(), &card)
+                .expect("save desktop card");
+        }
+        crate::settings::set_current_provider(&desktop, Some("direct")).expect("desktop current");
+
+        // 聚合模式：默认那家的映射表在前（第一项是默认模型），别家的模型用数字 id 跟在后面，
+        // 关掉模型发现。
+        enter_with_route(&state, &desktop, true, Some("map"))
+            .await
+            .expect("enter desktop stack");
+        assert_eq!(app_mode_view(&state, &desktop).unwrap().mode, "stack");
+        set_stack_member(&state, &desktop, "other", true)
+            .await
+            .expect("add other");
+        let profile = desktop_profile();
+        let models = profile["inferenceModels"].as_array().expect("models");
+        assert_eq!(models[0], json!("claude-sonnet-5"));
+        assert_eq!(models.len(), 2, "{models:?}");
+        let stacked = &models[1];
+        assert!(stacked["name"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("claude-fable-ccs-")));
+        assert_eq!(stacked["labelOverride"], json!("OTHER / glm-5.2"));
+        assert_eq!(profile["modelDiscoveryEnabled"], json!(false));
+
+        // 选中聚合模型的请求直达那一家。
+        let resolved = stack::resolve(
+            &state.db,
+            &DeviceStore::for_device(),
+            &desktop,
+            stacked["name"].as_str().unwrap(),
+        )
+        .unwrap();
+        match resolved {
+            stack::Resolved::Hit(target) => {
+                assert_eq!(target.provider.id, "other");
+                assert_eq!(target.upstream_model, "glm-5.2");
+            }
+            other => panic!("expected a hit, got {other:?}"),
+        }
+
+        // 映射表不完整的卡（官方卡）不能加入聚合。
+        assert!(set_stack_member(
+            &state,
+            &desktop,
+            crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+            true
+        )
+        .await
+        .is_err());
+
+        // 换回路由模式：名单留着，模型列表只剩路由那家的，模型发现交还给 Desktop。
+        enter_with_route(&state, &desktop, false, Some("map"))
+            .await
+            .expect("back to route");
+        let profile = desktop_profile();
+        assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-5"]));
+        assert!(profile.get("modelDiscoveryEnabled").is_none());
+        assert!(settled_stack(&desktop).unwrap().is_member("other"));
     }
 
     #[tokio::test]

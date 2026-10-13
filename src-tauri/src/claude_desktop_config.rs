@@ -14,6 +14,7 @@ use crate::live::floor;
 use crate::live::patch::json::{self as patch_json, ClearScope, JsonPatch};
 use crate::live::patch::{KeyPath, LivePatch, LiveWriteError};
 use crate::mode::operation::{self, FileChange};
+use crate::mode::stack::DesktopStackModel;
 use crate::mode::state::{self, PendingTarget};
 use crate::provider::{ClaudeDesktopMode, Provider};
 
@@ -26,7 +27,9 @@ const CONFIG_FILE: &str = "claude_desktop_config.json";
 const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
-const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
+pub const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
+/// `inferenceModels` 的上限（Desktop 的 schema 写着 `maxItems: 200`）。
+const MAX_INFERENCE_MODELS: usize = 200;
 const MIMO_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 const MIMO_TOOL_CALL_THINKING_PLACEHOLDER: &str = "tool call";
 
@@ -854,10 +857,21 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         })?;
 
     body["model"] = json!(upstream_model);
+    Ok(normalize_upstream_request(body, provider))
+}
+
+/// 请求体的 `model` 已经是上游名（路由映射过，或聚合模型直接解出了上游名）之后，按上游的
+/// 怪癖做的整理：目前只有 MiMo 的 Anthropic 接口要补 thinking 历史。
+pub fn normalize_upstream_request(mut body: Value, provider: &Provider) -> Value {
+    let upstream_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     if should_normalize_mimo_anthropic_thinking_history(provider, &upstream_model) {
         normalize_mimo_anthropic_thinking_history(&mut body);
     }
-    Ok(body)
+    body
 }
 
 fn strip_one_m_suffix_for_route_lookup(model: &str) -> &str {
@@ -1062,7 +1076,15 @@ pub fn gateway_base_url(proxy_url: &str) -> String {
 /// 路由模式的网关 profile：指向本地路由、带 gateway token，模型列表是路由那家的模型表
 /// （模型映射卡的映射表，直连卡的模型列表）。换路由那家，模型列表跟着变，要重写文件、
 /// 重启 Desktop。
-pub fn route_profile(db: &Database, route: &Provider, proxy_url: &str) -> Result<Value, AppError> {
+///
+/// 聚合模式下 `stack` 是其他几家发布的模型，排在路由那家后面（第一项是默认模型，仍是路由
+/// 那家的），并关掉模型发现：列表完全由这里决定。Desktop 最多收 200 条，多出的不写。
+pub fn route_profile(
+    db: &Database,
+    route: &Provider,
+    proxy_url: &str,
+    stack: &[DesktopStackModel],
+) -> Result<Value, AppError> {
     if is_official_provider(route) {
         return Err(AppError::localized(
             "claude_desktop.provider.official_not_routable",
@@ -1071,19 +1093,35 @@ pub fn route_profile(db: &Database, route: &Provider, proxy_url: &str) -> Result
         ));
     }
     validate_proxy_provider(route)?;
-    let model_specs = proxy_model_routes(route)?
+    let mut model_specs = proxy_model_routes(route)?
         .into_iter()
         .map(|route| InferenceModelSpec {
             name: route.route_id,
             label_override: route.label_override,
             supports_1m: route.supports_1m,
         })
+        .chain(stack.iter().map(|model| InferenceModelSpec {
+            name: model.id.clone(),
+            label_override: Some(model.label.clone()),
+            supports_1m: model.supports_1m,
+        }))
         .collect::<Vec<_>>();
-    Ok(build_gateway_profile(
+    if model_specs.len() > MAX_INFERENCE_MODELS {
+        log::warn!(
+            "Claude Desktop 最多 {MAX_INFERENCE_MODELS} 个模型，聚合的模型共 {} 个，多出的不写入",
+            model_specs.len()
+        );
+        model_specs.truncate(MAX_INFERENCE_MODELS);
+    }
+    let mut profile = build_gateway_profile(
         &gateway_base_url(proxy_url),
         &get_or_create_gateway_token(db)?,
         Some(model_specs.as_slice()),
-    ))
+    );
+    if !stack.is_empty() {
+        profile["modelDiscoveryEnabled"] = json!(false);
+    }
+    Ok(profile)
 }
 
 fn write_profile_at_paths(
@@ -1545,7 +1583,7 @@ mod tests {
             let origin = gateway
                 .strip_suffix(CLAUDE_DESKTOP_PROXY_PREFIX)
                 .unwrap_or(&gateway);
-            Some(route_profile(db, provider, origin)?)
+            Some(route_profile(db, provider, origin, &[])?)
         } else {
             Some(direct_profile(provider)?)
         };

@@ -1439,11 +1439,11 @@ struct FeedbackRecord {
 static FEEDBACK: Lazy<Mutex<Option<FeedbackRecord>>> = Lazy::new(|| Mutex::new(None));
 
 /// 切换成功后要不要说一句：客户端只在启动时读配置的才说；Claude Code 直连、路由 / 故障转移
-/// 换一家立即生效，不说。Claude Desktop 直连、路由换一家都要重启 Desktop（路由那家的模型
-/// 列表写在配置里）。
+/// 换一家立即生效，不说。Claude Desktop 换一家都要重启 Desktop（路由那家的模型列表写在配置
+/// 里，聚合换默认也一样）。
 fn switch_feedback(app: &AppType, mode: TrayMode, name: String) -> Option<TrayFeedback> {
     match mode {
-        TrayMode::Direct | TrayMode::Route if *app == AppType::ClaudeDesktop => {
+        TrayMode::Direct | TrayMode::Route | TrayMode::Stack if *app == AppType::ClaudeDesktop => {
             Some(TrayFeedback::Switched {
                 app: app.clone(),
                 name,
