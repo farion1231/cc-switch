@@ -4648,7 +4648,6 @@
       "saved": "已保存，技能列表已刷新",
       "tabForm": "表单",
       "title": "Pi 共享配置",
-      "warnDeadPattern": "模式中的 ~ 不会被 pi 展开，该规则永远不会生效",
       "warnLiteralWildcard": "路径含通配符，pi 会将其当作 include 白名单模式而非字面路径"
     }
   },

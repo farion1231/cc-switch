@@ -119,13 +119,8 @@ export function PiSharedConfigPanel({
   };
   const warningsOf = (raw: string): string[] => {
     const kind = kindOf(raw);
-    const stripped =
-      kind === "scanPath" || kind === "packageScheme" ? raw : raw.slice(1);
     const isPattern = kind !== "scanPath" && kind !== "packageScheme";
     const w: string[] = [];
-    if (isPattern && stripped.startsWith("~")) {
-      w.push(t("skillsPage.piConfig.warnDeadPattern"));
-    }
     if (!isPattern && (raw.includes("*") || raw.includes("?"))) {
       w.push(t("skillsPage.piConfig.warnLiteralWildcard"));
     }

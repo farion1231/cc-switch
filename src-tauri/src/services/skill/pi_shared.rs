@@ -10,9 +10,13 @@
 //!
 //! 条目解析（trim/`~`/`file://`/相对 agentDir/Windows 盘符与 Git Bash 形态）
 //! 经双平台全量差分验证（Linux/macOS 共享 POSIX 分支，113 形态零不一致，
-//! 含 node path.win32 复刻 oracle 的 Windows 36 形态）。与 pi 的唯一行为
-//! 分歧：非法 `file://`（坏百分号 / `%2F` / 非 localhost 权威）pi 抛错中断
-//! 整个资源加载，本模块降级为跳过该条目（防御性更强）。
+//! 含 node path.win32 复刻 oracle 的 Windows 36 形态）。pi 1.2.0 起
+//! （上游 issue #10765）模式条目（`!`/`+`/`-` 与通配符白名单）的内容同样
+//! 先过 `normalizePath`（默认参数：不 trim、不 join agentDir、不折叠
+//! `.`/`..`，仅 Windows shell 路径 → `~` 展开 → `file://` 转换）再匹配。
+//! 与 pi 的唯一行为分歧：非法 `file://`（坏百分号 / `%2F` / 非 localhost
+//! 权威）pi 抛错中断整个资源加载（1.2.0 起纯路径与模式条目均如此），
+//! 本模块降级为跳过该条目（防御性更强）。
 
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -50,7 +54,8 @@ pub(crate) fn is_supported_pattern(pattern: &str) -> bool {
         .all(|(a, b)| !(matches!(a, '+' | '?' | '*' | '@' | '!') && b == '('))
 }
 
-/// settings `skills` 数组的模式集合（前缀已剥离，均 posix 化）。
+/// settings `skills` 数组的模式集合（前缀已剥离；内容经 `normalizePath`
+/// 归一化后 posix 化，精确模式另先剥 `./`/`.\` 前缀——见各 push 函数）。
 /// 语义依据 pi `applyPatterns` / `isEnabledByOverrides`。
 #[derive(Default)]
 pub(crate) struct PiPatternSet {
@@ -454,21 +459,15 @@ pub(crate) fn classify_entry_kind(raw: &str) -> PiEntryKind {
 }
 
 /// 编辑器警告（不阻断，对齐 pi 容错语义）：
-/// - 死模式：模式条目剥前缀后以 `~` 开头——pi 不展开模式中的 `~`，永不匹配
-///   （上游 issue #10765；`foo~bar` 这类含 ~ 的合法备份文件模式不误报）；
 /// - 字面路径陷阱：纯路径条目含通配符会被 pi 当 include 模式，
 ///   无法按字面路径引用（如目录名恰含 ? 或 *）。
+///
+/// 注：pi 1.2.0 起（上游 issue #10765）模式条目同样展开 `~`，`!~/x` 是
+/// 有效写法，不再有"模式中的 ~ 永不匹配"的死模式问题。
 pub(crate) fn entry_warnings(raw: &str) -> Vec<String> {
     let mut warnings = Vec::new();
     let kind = classify_entry_kind(raw);
-    let stripped = match kind {
-        PiEntryKind::Exclude | PiEntryKind::ForceInclude | PiEntryKind::ForceExclude => &raw[1..],
-        _ => raw,
-    };
     let is_pattern = !matches!(kind, PiEntryKind::ScanPath | PiEntryKind::PackageScheme);
-    if is_pattern && (stripped.starts_with('~')) {
-        warnings.push("模式中的 ~ 不会被 pi 展开，该规则永远不会生效".to_string());
-    }
     if !is_pattern && (raw.contains('*') || raw.contains('?')) {
         warnings.push("路径含通配符，pi 会将其当作 include 白名单模式而非字面路径".to_string());
     }
@@ -482,28 +481,28 @@ fn classify_entry(raw: &str, agent_dir: &Option<PathBuf>, sources: &mut PiSkillS
     // 分流核心与编辑器共用的 classify_entry_kind 一致，防双份逻辑漂移
     match classify_entry_kind(raw) {
         PiEntryKind::Exclude => {
-            if let Some(w) = push_pattern(&mut sources.patterns.excludes, &raw[1..]) {
+            if let Some(w) = push_glob_pattern(&mut sources.patterns.excludes, &raw[1..]) {
                 sources.approximate = true;
                 sources.warnings.push(w);
             }
             return;
         }
         PiEntryKind::ForceInclude => {
-            if let Some(w) = push_pattern(&mut sources.patterns.force_includes, &raw[1..]) {
+            if let Some(w) = push_exact_pattern(&mut sources.patterns.force_includes, &raw[1..]) {
                 sources.approximate = true;
                 sources.warnings.push(w);
             }
             return;
         }
         PiEntryKind::ForceExclude => {
-            if let Some(w) = push_pattern(&mut sources.patterns.force_excludes, &raw[1..]) {
+            if let Some(w) = push_exact_pattern(&mut sources.patterns.force_excludes, &raw[1..]) {
                 sources.approximate = true;
                 sources.warnings.push(w);
             }
             return;
         }
         PiEntryKind::IncludeWhitelist => {
-            if let Some(w) = push_pattern(&mut sources.patterns.includes, raw) {
+            if let Some(w) = push_glob_pattern(&mut sources.patterns.includes, raw) {
                 sources.approximate = true;
                 sources.warnings.push(w);
             }
@@ -527,11 +526,64 @@ fn classify_entry(raw: &str, agent_dir: &Option<PathBuf>, sources: &mut PiSkillS
     }
 }
 
-/// 收集模式（posix 化）；不支持语法时返回 warning 文案
-fn push_pattern(bucket: &mut Vec<String>, pattern: &str) -> Option<String> {
+/// 模式条目内容归一化（对齐 pi 1.2.0 `matchesAnyPattern` /
+/// `normalizeExactPattern` 引入的 `normalizePath` 默认参数调用，上游
+/// issue #10765）：Windows shell 路径 → `~` 展开（`~`、`~/`，win 另认
+/// `~\`）→ `file://` 转换。与纯路径条目的 `resolvePath{trim:true}` 不同：
+/// **不 trim、不 join agentDir、不折叠 `.`/`..`**。
+/// 非法 `file://` 返回 None（pi 在匹配期抛错中断加载；此处降级跳过）。
+fn normalize_pattern(pattern: &str, home: &Path, win: bool) -> Option<String> {
+    let s = if win {
+        normalize_windows_shell_path(pattern)
+    } else {
+        pattern.to_string()
+    };
+    if s == "~" {
+        return Some(home.to_string_lossy().into_owned());
+    }
+    let tilde_rest = s.strip_prefix("~/").or_else(|| win.then(|| s.strip_prefix("~\\")).flatten());
+    if let Some(rest) = tilde_rest {
+        return Some(home.join(rest).to_string_lossy().into_owned());
+    }
+    if let Some(rest) = s.strip_prefix("file://") {
+        return if win {
+            file_url_to_path_win(&s).ok()
+        } else {
+            file_url_path_posix(rest)
+        };
+    }
+    Some(s)
+}
+
+/// 收集 glob 模式（`!` 排除 / 无前缀白名单）：normalizePath 归一化 +
+/// posix 化；不支持语法或非法 file:// 时返回 warning 文案
+fn push_glob_pattern(bucket: &mut Vec<String>, pattern: &str) -> Option<String> {
     let warning = (!is_supported_pattern(pattern))
         .then(|| format!("不支持的 glob 语法（近似处理）：{pattern:?}"));
-    bucket.push(to_posix_str(pattern));
+    match normalize_pattern(pattern, &crate::config::get_home_dir(), cfg!(windows)) {
+        Some(normalized) => bucket.push(to_posix_str(&normalized)),
+        None => {
+            return Some(format!("非法 file:// 模式条目（已跳过）：{pattern:?}"));
+        }
+    }
+    warning
+}
+
+/// 收集精确模式（`+`/`-`）：对齐 pi `normalizeExactPattern`——先剥 `./`
+/// 或 `.\` 前缀（pi 在所有平台都剥），再 normalizePath 归一化 + posix 化
+fn push_exact_pattern(bucket: &mut Vec<String>, pattern: &str) -> Option<String> {
+    let stripped = pattern
+        .strip_prefix("./")
+        .or_else(|| pattern.strip_prefix(".\\"))
+        .unwrap_or(pattern);
+    let warning = (!is_supported_pattern(stripped))
+        .then(|| format!("不支持的 glob 语法（近似处理）：{pattern:?}"));
+    match normalize_pattern(stripped, &crate::config::get_home_dir(), cfg!(windows)) {
+        Some(normalized) => bucket.push(to_posix_str(&normalized)),
+        None => {
+            return Some(format!("非法 file:// 模式条目（已跳过）：{pattern:?}"));
+        }
+    }
     warning
 }
 
@@ -864,7 +916,8 @@ fn matches_any_pattern(md_path: &Path, base_dir: &Path, patterns: &[String]) -> 
     })
 }
 
-/// pi `matchesAnyExactPattern`：精确匹配（去开头 `./` 后全等），4 种目标：
+/// pi `matchesAnyExactPattern`：精确匹配（模式在入桶时已剥 `./`/`.\` 前缀
+/// 并经 normalizePath 归一化 + posix 化），4 种目标：
 /// rel(P,B)、P posix、rel(D,B)、D posix（不含 basename 与父目录名）。
 fn matches_any_exact(md_path: &Path, base_dir: &Path, patterns: &[String]) -> bool {
     let is_skill_file = md_path.file_name().is_some_and(|n| n == "SKILL.md");
@@ -876,10 +929,10 @@ fn matches_any_exact(md_path: &Path, base_dir: &Path, patterns: &[String]) -> bo
         .unwrap_or_default();
     let parent_posix = md_path.parent().map(to_posix).unwrap_or_default();
     patterns.iter().any(|pattern| {
-        let normalized = pattern.strip_prefix("./").unwrap_or(pattern);
-        normalized == rel
-            || normalized == path_posix
-            || (is_skill_file && (normalized == parent_rel || normalized == parent_posix))
+        let p = pattern.as_str();
+        p == rel
+            || p == path_posix
+            || (is_skill_file && (p == parent_rel || p == parent_posix))
     })
 }
 
@@ -1815,20 +1868,106 @@ mod tests {
     }
 
     #[test]
-    fn entry_warnings_dead_pattern_and_literal_wildcard() {
-        // 死模式：剥前缀后以 ~ 开头（明确的主目录展开意图）
-        assert!(!entry_warnings("!pdf").is_empty() == false);
-        assert_eq!(entry_warnings("!~/backup").len(), 1);
-        assert_eq!(entry_warnings("+~/x").len(), 1);
-        assert_eq!(entry_warnings("-~/x").len(), 1);
+    fn entry_warnings_literal_wildcard_only() {
+        // pi 1.2.0 起 ~ 模式合法生效，不再有死模式警告（上游 #10765）
+        assert!(entry_warnings("!~/backup").is_empty());
+        assert!(entry_warnings("+~/x").is_empty());
+        assert!(entry_warnings("-~/x").is_empty());
         // foo~bar 是合法的备份文件匹配模式，不误报
         assert!(entry_warnings("!foo~bar").is_empty());
         assert!(entry_warnings("!**/~tmp").is_empty());
-        // 纯路径含通配符 → include 白名单提示
-        assert_eq!(entry_warnings("~/a?b").len(), 1);
+        // ~/a?b 按分类是 include 白名单模式（通配符判定在前），
+        // pi 1.2.0 下 ~ 展开后合法生效，无警告
+        assert!(entry_warnings("~/a?b").is_empty());
         // 正常条目无警告
         assert!(entry_warnings("!pdf").is_empty());
         assert!(entry_warnings("~/.claude/skills").is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn pattern_entries_normalized_like_pi_1_2() {
+        // pi 1.2.0（#10765）：模式内容同样过 normalizePath（默认参数：
+        // 不 trim、不 join agentDir、不折叠 ./..，仅 ~ / file:// / win shell）
+        let env = VisEnv::new(None);
+        let agent: Option<PathBuf> = Some(env.agent());
+        let home = env.home();
+        let mut sources = resolve_pi_skill_sources();
+
+        // !~/x：~ 展开 → home/x
+        classify_entry("!~/backup", &agent, &mut sources);
+        let expected = format!("{}/backup", home.display());
+        assert_eq!(sources.patterns.excludes, vec![expected]);
+
+        // + 与 - 的精确条目同样展开
+        sources.patterns.force_includes.clear();
+        classify_entry("+~/skills/pdf", &agent, &mut sources);
+        assert_eq!(
+            sources.patterns.force_includes,
+            vec![format!("{}/skills/pdf", home.display())]
+        );
+        sources.patterns.force_excludes.clear();
+        classify_entry("-~/skills/doc", &agent, &mut sources);
+        assert_eq!(
+            sources.patterns.force_excludes,
+            vec![format!("{}/skills/doc", home.display())]
+        );
+
+        // 精确条目先剥 ./ 再展开（pi normalizeExactPattern 顺序）
+        sources.patterns.force_includes.clear();
+        classify_entry("+./~/x", &agent, &mut sources);
+        assert_eq!(
+            sources.patterns.force_includes,
+            vec![format!("{}/x", home.display())]
+        );
+        // .\ 前缀同样剥离（pi 在所有平台都剥）
+        sources.patterns.force_includes.clear();
+        classify_entry(r"+.\x", &agent, &mut sources);
+        assert_eq!(sources.patterns.force_includes, vec!["x".to_string()]);
+
+        // file:// 模式条目转换
+        sources.patterns.excludes.clear();
+        classify_entry("file:///tmp/x*", &agent, &mut sources);
+        assert_eq!(sources.patterns.includes, vec!["/tmp/x*".to_string()]);
+
+        // 非法 file:// 模式：降级跳过 + approximate（pi 抛错中断加载）
+        sources.approximate = false;
+        sources.warnings.clear();
+        sources.patterns.excludes.clear();
+        classify_entry("!file://other/x", &agent, &mut sources);
+        assert!(sources.patterns.excludes.is_empty());
+        assert!(sources.approximate);
+        assert!(!sources.warnings.is_empty());
+
+        // 不 trim：前导空格破坏 ~ 展开意图（对齐 pi 默认参数无 trim）
+        sources.patterns.excludes.clear();
+        classify_entry("! ~/x", &agent, &mut sources);
+        assert_eq!(sources.patterns.excludes, vec![" ~/x".to_string()]);
+
+        // 相对模式不 join agentDir（normalizePath 与 resolvePath 的差异）
+        sources.patterns.excludes.clear();
+        classify_entry("!skills/pdf", &agent, &mut sources);
+        assert_eq!(sources.patterns.excludes, vec!["skills/pdf".to_string()]);
+    }
+
+    #[test]
+    #[serial]
+    fn tilde_pattern_now_excludes_shared_skill() {
+        // 上游 #10765 原始场景：!~/claude-backup/skills/pdf 在 pi 1.1.0 是
+        // 死模式（~ 不展开），1.2.0 起真实生效
+        let env = VisEnv::new(Some(
+            r#"{ "skills": ["~/claude-backup/skills", "!~/claude-backup/skills/pdf"] }"#,
+        ));
+        make_skill(
+            &env.home().join("claude-backup").join("skills").join("pdf"),
+            SKILL_MD,
+        );
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Inactive);
+        // 移除排除规则 → 恢复 Shared
+        env.write_settings(r#"{ "skills": ["~/claude-backup/skills"] }"#);
+        let v = env.vis("pdf");
+        assert_eq!(v.state, PiVisState::Shared);
     }
 
     #[test]

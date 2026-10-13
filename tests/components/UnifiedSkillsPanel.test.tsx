@@ -421,7 +421,7 @@ describe("UnifiedSkillsPanel", () => {
         { raw: "~/.claude/skills", kind: "scanPath", warnings: [] },
         { raw: "~/.codex/skills", kind: "scanPath", warnings: [] },
         { raw: "!pdf", kind: "exclude", warnings: [] },
-        { raw: "!~/backup", kind: "exclude", warnings: ["dead"] },
+        { raw: "!~/backup", kind: "exclude", warnings: [] },
       ],
     });
     const setEntries = vi
@@ -435,16 +435,16 @@ describe("UnifiedSkillsPanel", () => {
       screen.getByRole("button", { name: "skillsPage.piConfig.manageEntry" }),
     );
 
-    // 装填：徽章 + 死模式警告 + 复选源（codex 已添加置灰）
+    // 装填：徽章 + 复选源（codex 已添加置灰）
     expect(
       await screen.findAllByText("skillsPage.piConfig.kind.scanPath"),
     ).toHaveLength(2); // ~/.claude/skills + ~/.codex/skills
     expect(
       screen.getAllByText("skillsPage.piConfig.kind.exclude"),
-    ).toHaveLength(2); // !pdf + !~/backup
-    // 死模式警告：条目行 title 含警告（测试环境为 key）
-    const deadRow = screen.getByText("!~/backup");
-    expect(deadRow).toHaveAttribute("title", "skillsPage.piConfig.warnDeadPattern");
+    ).toHaveLength(2); // !pdf + !~/backup（pi 1.2.0 起 ~ 模式合法生效，无死模式警告）
+    // 无警告条目：title 回退为原始字符串（测试环境为 key）
+    const tildeRow = screen.getByText("!~/backup");
+    expect(tildeRow).toHaveAttribute("title", "!~/backup");
 
     // 顶部提示：~/.agents/skills 无须添加
     expect(
@@ -482,7 +482,7 @@ describe("UnifiedSkillsPanel", () => {
       screen.getByText("skillsPage.piConfig.dirNotExists"),
     ).toBeInTheDocument();
 
-    // 删除死模式条目后保存
+    // 删除多余排除条目后保存
     const removeButtons = screen.getAllByRole("button", {
       name: /skillsPage.piConfig.removeEntry/,
     });
