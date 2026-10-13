@@ -45,6 +45,7 @@ function clickRestartAndConfirm() {
 describe("CodexStaleClientsNotice", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
   });
 
   it("explains a potentially cached account without claiming models are missing", () => {
@@ -93,7 +94,7 @@ describe("CodexStaleClientsNotice", () => {
     });
   });
 
-  it("does not record a dismissal for a notice backed by the process table", () => {
+  it("does not acknowledge a notice backed by the process table", () => {
     let acknowledged = 0;
     server.use(
       http.post(ACKNOWLEDGE, () => {
@@ -102,11 +103,42 @@ describe("CodexStaleClientsNotice", () => {
       }),
     );
     renderNotice({ daemon: false, others: true });
-    // 没有 onDismiss 也不是「可能」：不给关闭按钮，也不记确认。
-    expect(
-      screen.queryByRole("button", { name: "common.close" }),
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "common.close" }));
     expect(acknowledged).toBe(0);
+    expect(window.localStorage.length).toBe(0);
+  });
+
+  it("persists only an explicitly selected permanent dismissal across remounts", () => {
+    const { unmount } = render(
+      <QueryClientProvider client={new QueryClient()}>
+        <CodexStaleClientsNotice
+          staleClients={{ daemon: false, others: true }}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "proxy.stackMode.codexStale.dontShowAgain",
+      }),
+    );
+    // Checking alone does not close the reminder.
+    expect(
+      screen.getByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "common.close" }));
+    expect(
+      screen.queryByText("proxy.stackMode.codexStale.title"),
+    ).not.toBeInTheDocument();
+    unmount();
+    renderNotice({ daemon: true, others: false, auth: true });
+    expect(
+      screen.queryByText("proxy.stackMode.codexStale.authTitle"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "proxy.stackMode.codexStale.restart",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("restarts the daemon only after the user confirms", async () => {
