@@ -80,16 +80,18 @@ pub(super) fn uninstall(
 ) -> Result<(), String> {
     // Never execute a command supplied by the frontend or silently switch installations
     // while the dialog is open / this task is queued behind another lifecycle operation.
-    let current = plan(tool, pref)?;
-    validate_confirmed_plan(&current, confirmed)?;
     #[cfg(target_os = "windows")]
-    if let Some(distro) = &current.wsl_distro {
-        let script = wsl_uninstall_command(tool, &current.path, &current.real_path)?;
-        let output = wsl_process(distro, &script, pref)?
+    if let Some(distro) = wsl_distro_for_tool(tool) {
+        // Run the very process the re-derived plan describes (same shell and flag).
+        let (current, mut process) = wsl_plan_and_process(tool, &distro, pref)?;
+        validate_confirmed_plan(&current, confirmed)?;
+        let output = process
             .output()
             .map_err(|e| format!("Cannot start WSL uninstall: {e}"))?;
         return finish_lifecycle_output(&output);
     }
+    let current = plan(tool, pref)?;
+    validate_confirmed_plan(&current, confirmed)?;
     if current.native {
         remove_native_executable(&ToolInstallation {
             path: current.path.clone(),
@@ -394,13 +396,20 @@ fn wsl_plan(
     distro: &str,
     pref: Option<&WslShellPreferenceInput>,
 ) -> Result<ToolUninstallPlan, String> {
-    let probe = format!(
-        "sh -c {}",
-        shell_single_quote(&format!(
-            "entry=$(command -v {tool}) && real=$(readlink -f -- \"$entry\") && [ -f \"$real\" ] && printf '__CC_SWITCH_UNINSTALL__\\n%s\\n%s\\n' \"$entry\" \"$real\""
-        ))
-    );
-    let child = wsl_process(distro, &probe, pref)?
+    wsl_plan_and_process(tool, distro, pref).map(|(plan, _)| plan)
+}
+
+/// The plan plus the exact process it describes. Without an explicit shell, the probe
+/// tries the version check's flags in order and the removal reuses the winning flag.
+#[cfg(target_os = "windows")]
+fn wsl_plan_and_process(
+    tool: &str,
+    distro: &str,
+    pref: Option<&WslShellPreferenceInput>,
+) -> Result<(ToolUninstallPlan, std::process::Command), String> {
+    let shell = WslShell::from_pref(pref)?;
+    let probe = wsl_probe_script(tool);
+    let child = wsl_process(distro, &shell.probe_args(&probe))?
         .spawn()
         .map_err(|e| format!("Cannot inspect WSL installation: {e}"))?;
     let output = wait_child_output(
@@ -410,8 +419,12 @@ fn wsl_plan(
     finish_lifecycle_output(&output)?;
     let stdout = decode_command_output(&output.stdout);
     let (path, real_path) = parse_wsl_installation(&stdout)?;
-    let command = wsl_uninstall_command(tool, &path, &real_path)?;
-    let process = wsl_process(distro, &command, pref)?;
+    let auto_flag = match shell {
+        WslShell::Explicit { .. } => None,
+        WslShell::Auto { .. } => Some(parse_wsl_shell_flag(&stdout)?),
+    };
+    let script = wsl_uninstall_command(tool, &path, &real_path)?;
+    let process = wsl_process(distro, &shell.run_args(&script, auto_flag))?;
     let command = format!(
         "wsl.exe {}",
         process
@@ -420,43 +433,128 @@ fn wsl_plan(
             .collect::<Vec<_>>()
             .join(" ")
     );
-    Ok(ToolUninstallPlan {
+    let plan = ToolUninstallPlan {
         tool: tool.into(),
         path,
         real_path,
         command,
         native: false,
         wsl_distro: Some(distro.into()),
-    })
+    };
+    Ok((plan, process))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn wsl_probe_script(tool: &str) -> String {
+    format!(
+        "sh -c {}",
+        shell_single_quote(&format!(
+            "entry=$(command -v {tool}) && real=$(readlink -f -- \"$entry\") && [ -f \"$real\" ] && printf '__CC_SWITCH_UNINSTALL__\\n%s\\n%s\\n' \"$entry\" \"$real\""
+        ))
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+const WSL_SHELL_FLAG_MARKER: &str = "__CC_SWITCH_SHELL_FLAG__ ";
+
+/// Auto mode probe, run by an outer `sh -c`: `$1` is the probe, the remaining
+/// arguments are flags. Like the version check, try each flag in `$SHELL` until
+/// one succeeds (stderr kept only for the last), then report which flag won.
+#[cfg(any(target_os = "windows", test))]
+const WSL_SHELL_PROBE_LAUNCHER: &str = r#"s=${SHELL:-sh}; script=$1; shift; while [ $# -gt 1 ]; do out=$("$s" "$1" "$script" 2>/dev/null) && { printf '__CC_SWITCH_SHELL_FLAG__ %s\n%s\n' "$1" "$out"; exit 0; }; shift; done; out=$("$s" "$1" "$script") && printf '__CC_SWITCH_SHELL_FLAG__ %s\n%s\n' "$1" "$out""#;
+
+/// Auto mode removal: run `$1` in `$SHELL` with exactly the probe's flag `$2`.
+/// Never retry with another flag; a different environment could reach another copy.
+#[cfg(any(target_os = "windows", test))]
+const WSL_SHELL_RUN_LAUNCHER: &str = r#"s=${SHELL:-sh}; exec "$s" "$2" "$1""#;
+
+#[cfg(any(target_os = "windows", test))]
+fn parse_wsl_shell_flag(stdout: &str) -> Result<&'static str, String> {
+    let flag = stdout
+        .rsplit_once(WSL_SHELL_FLAG_MARKER)
+        .and_then(|(_, rest)| rest.lines().next())
+        .map(str::trim);
+    WSL_AUTO_SHELL_FLAGS
+        .into_iter()
+        .find(|known| Some(*known) == flag)
+        .ok_or_else(|| {
+            "Cannot identify the WSL shell. Use the original installer to uninstall it.".into()
+        })
+}
+
+/// The shell WSL commands run in: the user's preference, or the version check's
+/// auto mode (`$SHELL` with `WSL_AUTO_SHELL_FLAGS`, or one preferred flag).
+#[cfg(target_os = "windows")]
+enum WslShell<'a> {
+    Explicit { shell: &'a str, flag: &'a str },
+    Auto { flag: Option<&'a str> },
 }
 
 #[cfg(target_os = "windows")]
-fn wsl_process(
-    distro: &str,
-    script: &str,
-    pref: Option<&WslShellPreferenceInput>,
-) -> Result<std::process::Command, String> {
+impl<'a> WslShell<'a> {
+    fn from_pref(pref: Option<&'a WslShellPreferenceInput>) -> Result<Self, String> {
+        let flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
+        let shell = match pref.and_then(|p| p.wsl_shell.as_deref()) {
+            Some(shell) => {
+                let shell = shell.rsplit('/').next().unwrap_or(shell);
+                if !is_valid_shell(shell) {
+                    return Err(format!("Invalid WSL shell: {shell}"));
+                }
+                WslShell::Explicit {
+                    shell,
+                    flag: flag.unwrap_or_else(|| default_flag_for_shell(shell)),
+                }
+            }
+            None => WslShell::Auto { flag },
+        };
+        if let WslShell::Explicit { flag, .. } | WslShell::Auto { flag: Some(flag) } = &shell {
+            if !is_valid_shell_flag(flag) {
+                return Err(format!("Invalid WSL shell flag: {flag}"));
+            }
+        }
+        Ok(shell)
+    }
+
+    fn probe_args<'s>(&'s self, script: &'s str) -> Vec<&'s str> {
+        match self {
+            WslShell::Explicit { shell, flag } => vec![*shell, *flag, script],
+            WslShell::Auto { flag } => {
+                let mut args = vec!["sh", "-c", WSL_SHELL_PROBE_LAUNCHER, "cc-switch", script];
+                match flag {
+                    Some(flag) => args.push(*flag),
+                    None => args.extend(WSL_AUTO_SHELL_FLAGS),
+                }
+                args
+            }
+        }
+    }
+
+    fn run_args<'s>(&'s self, script: &'s str, auto_flag: Option<&'static str>) -> Vec<&'s str> {
+        match self {
+            WslShell::Explicit { shell, flag } => vec![*shell, *flag, script],
+            WslShell::Auto { .. } => vec![
+                "sh",
+                "-c",
+                WSL_SHELL_RUN_LAUNCHER,
+                "cc-switch",
+                script,
+                auto_flag.unwrap_or("-c"),
+            ],
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_process(distro: &str, shell_args: &[&str]) -> Result<std::process::Command, String> {
     if !is_valid_wsl_distro_name(distro) {
         return Err(format!("Invalid WSL distro name: {distro}"));
-    }
-    let shell = pref
-        .and_then(|p| p.wsl_shell.as_deref())
-        .map(|s| s.rsplit('/').next().unwrap_or(s))
-        .unwrap_or("sh");
-    if !is_valid_shell(shell) {
-        return Err(format!("Invalid WSL shell: {shell}"));
-    }
-    let flag = pref
-        .and_then(|p| p.wsl_shell_flag.as_deref())
-        .unwrap_or_else(|| default_flag_for_shell(shell));
-    if !is_valid_shell_flag(flag) {
-        return Err(format!("Invalid WSL shell flag: {flag}"));
     }
     // Pass an argv directly and use --exec: cmd.exe / WSL's implicit shell must
     // not expand $entry or command substitutions before the chosen shell runs.
     let mut process = std::process::Command::new("wsl.exe");
     process
-        .args(["-d", distro, "--exec", shell, flag, script])
+        .args(["-d", distro, "--exec"])
+        .args(shell_args)
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -947,31 +1045,165 @@ mod tests {
         assert!(openclaw.contains("uninstall --service --yes --non-interactive && npm uninstall"));
     }
 
+    /// The auto-mode probe must land on the same installation as the version check
+    /// (`wsl_auto_shell_command`), including a PATH set only by interactive init
+    /// (bash's guarded ~/.bashrc, dash's $ENV), and the removal must run there too.
+    #[cfg(unix)]
+    #[test]
+    fn wsl_auto_probe_and_removal_match_the_version_check_shell() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        for shell in ["/bin/bash", "/bin/dash"] {
+            if !Path::new(shell).exists() {
+                continue;
+            }
+            let home = tempfile::tempdir().unwrap();
+            let rc_bin = home.path().join("interactive");
+            let base_bin = home.path().join("base");
+            for dir in [&rc_bin, &base_bin] {
+                fs::create_dir_all(dir).unwrap();
+                let tool = dir.join("codex");
+                fs::write(&tool, "#!/bin/sh\necho 1.0.0\n").unwrap();
+                fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            let export = format!("export PATH='{}':\"$PATH\"\n", rc_bin.display());
+            // Ubuntu's ~/.profile sources ~/.bashrc, which returns unless interactive.
+            fs::write(
+                home.path().join(".bashrc"),
+                format!("case $- in *i*) ;; *) return ;; esac\n{export}"),
+            )
+            .unwrap();
+            fs::write(home.path().join(".profile"), ". \"$HOME/.bashrc\"\n").unwrap();
+            fs::write(home.path().join(".shrc"), &export).unwrap();
+            let run = |args: &[&str]| {
+                let mut command = std::process::Command::new("sh");
+                command
+                    .args(args)
+                    .env_clear()
+                    .env("HOME", home.path())
+                    .env("SHELL", shell)
+                    .env("PATH", format!("{}:/usr/bin:/bin", base_bin.display()))
+                    .stdin(std::process::Stdio::null());
+                if shell.ends_with("dash") {
+                    command.env("ENV", home.path().join(".shrc"));
+                }
+                let output = command.output().unwrap();
+                assert!(output.status.success(), "{shell}: {output:?}");
+                String::from_utf8_lossy(&output.stdout).into_owned()
+            };
+            let last = |out: String| out.lines().last().unwrap_or_default().to_string();
+            let rc_tool = rc_bin.join("codex").display().to_string();
+            let base_tool = base_bin.join("codex").display().to_string();
+
+            let detected = last(run(&[
+                "-c",
+                &wsl_auto_shell_command("command -v codex", None),
+            ]));
+            assert_eq!(detected, rc_tool, "{shell}: version check");
+            // A bare `sh -c` reaches the other copy.
+            assert_eq!(last(run(&["-c", "command -v codex"])), base_tool);
+
+            let probe = wsl_probe_script("codex");
+            let mut args = vec!["-c", WSL_SHELL_PROBE_LAUNCHER, "cc-switch", &probe];
+            args.extend(WSL_AUTO_SHELL_FLAGS);
+            let stdout = run(&args);
+            let (path, _) = parse_wsl_installation(&stdout).unwrap();
+            assert_eq!(path, detected, "{shell}: uninstall probe");
+            let flag = parse_wsl_shell_flag(&stdout).unwrap();
+            assert_eq!(flag, "-lic", "{shell}");
+            let removal = run(&[
+                "-c",
+                WSL_SHELL_RUN_LAUNCHER,
+                "cc-switch",
+                "command -v codex",
+                flag,
+            ]);
+            assert_eq!(last(removal), detected, "{shell}: removal");
+        }
+    }
+
+    #[test]
+    fn wsl_version_check_command_is_unchanged() {
+        let p = "echo s; codex --version";
+        assert_eq!(
+            wsl_auto_shell_command(p, None),
+            format!("\"${{SHELL:-sh}}\" -lic '{p}' 2>/dev/null || \"${{SHELL:-sh}}\" -lc '{p}' 2>/dev/null || \"${{SHELL:-sh}}\" -c '{p}'")
+        );
+        assert_eq!(
+            wsl_auto_shell_command(p, Some("-lc")),
+            format!("\"${{SHELL:-sh}}\" -lc '{p}'")
+        );
+    }
+
+    #[test]
+    fn wsl_shell_flag_must_be_reported_and_known() {
+        assert_eq!(
+            parse_wsl_shell_flag(
+                "noise\n__CC_SWITCH_SHELL_FLAG__ -lc\n__CC_SWITCH_UNINSTALL__\n/a\n/b\n"
+            ),
+            Ok("-lc")
+        );
+        assert!(parse_wsl_shell_flag("__CC_SWITCH_UNINSTALL__\n/a\n/b\n").is_err());
+        assert!(parse_wsl_shell_flag("__CC_SWITCH_SHELL_FLAG__ -x\n").is_err());
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn wsl_uninstall_passes_the_script_verbatim_to_the_selected_shell() {
-        let pref = WslShellPreferenceInput {
-            wsl_shell: Some("/usr/bin/fish".into()),
-            wsl_shell_flag: Some("-lc".into()),
-        };
         let script = wsl_uninstall_command(
             "codex",
             "/home/me/npm prefix's/bin/codex",
             "/home/me/npm prefix's/lib/node_modules/@openai/codex/bin/codex.js",
         )
         .unwrap();
-        let process = wsl_process("Ubuntu", &script, Some(&pref)).unwrap();
+        let fish = WslShellPreferenceInput {
+            wsl_shell: Some("/usr/bin/fish".into()),
+            wsl_shell_flag: Some("-lc".into()),
+        };
+        let explicit = WslShell::from_pref(Some(&fish)).unwrap();
+        assert_eq!(explicit.probe_args(&script), ["fish", "-lc", &script]);
+        assert_eq!(explicit.run_args(&script, None), ["fish", "-lc", &script]);
+        let process = wsl_process("Ubuntu", &explicit.run_args(&script, None)).unwrap();
         let args: Vec<_> = process
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
         assert_eq!(args, ["-d", "Ubuntu", "--exec", "fish", "-lc", &script]);
-        assert!(wsl_process("invalid distro", &script, Some(&pref)).is_err());
-        let invalid = WslShellPreferenceInput {
-            wsl_shell: Some("other".into()),
-            wsl_shell_flag: None,
+        assert!(wsl_process("invalid distro", &[&script]).is_err());
+
+        let launcher = |s: &'static str| ["sh", "-c", s, "cc-switch", script.as_str()];
+        let auto = WslShell::from_pref(None).unwrap();
+        let mut probe = launcher(WSL_SHELL_PROBE_LAUNCHER).to_vec();
+        probe.extend(WSL_AUTO_SHELL_FLAGS);
+        assert_eq!(auto.probe_args(&script), probe);
+        let mut run = launcher(WSL_SHELL_RUN_LAUNCHER).to_vec();
+        run.push("-lic");
+        assert_eq!(auto.run_args(&script, Some("-lic")), run);
+
+        let one_flag = WslShellPreferenceInput {
+            wsl_shell: None,
+            wsl_shell_flag: Some("-lc".into()),
         };
-        assert!(wsl_process("Ubuntu", &script, Some(&invalid)).is_err());
+        let mut probe = launcher(WSL_SHELL_PROBE_LAUNCHER).to_vec();
+        probe.push("-lc");
+        assert_eq!(
+            WslShell::from_pref(Some(&one_flag))
+                .unwrap()
+                .probe_args(&script),
+            probe
+        );
+
+        for invalid in [
+            WslShellPreferenceInput {
+                wsl_shell: Some("other".into()),
+                wsl_shell_flag: None,
+            },
+            WslShellPreferenceInput {
+                wsl_shell: None,
+                wsl_shell_flag: Some("-x".into()),
+            },
+        ] {
+            assert!(WslShell::from_pref(Some(&invalid)).is_err());
+        }
     }
 
     #[test]
