@@ -112,13 +112,15 @@ source device.
 
 ## Write protocol (per device)
 
-1. Export the local partitions from the authoritative tables under the DB lock.
-   Detail rows pass through the same session/proxy de-duplication filter the
-   dashboard uses, so a remote viewer sees what the device reports for itself.
-2. Read the device's own manifest. If its `writerNonce` is neither the last
+1. Read the device's own manifest. If its `writerNonce` is neither the last
    committed nor the pending nonce of this database, another installation is
    writing with the same identity → **identity conflict**, uploads pause
    (downloads continue).
+2. Export the local partitions from the authoritative tables under the DB lock.
+   Detail rows pass through the same session/proxy de-duplication filter the
+   dashboard uses, so a remote viewer sees what the device reports for itself.
+   Month partitions that are provably unchanged are not read at all (see
+   _Incremental export_); encoding and compression run outside the lock.
 3. Upload only partitions whose `contentSha256` changed, as new immutable
    objects named by content hash.
 4. Persist a fresh nonce as _pending_, PUT the manifest, then commit the nonce
@@ -129,6 +131,34 @@ source device.
    A failed delete keeps the object listed and is retried.
 6. Unchanged data does not rewrite the manifest, except for an hourly
    heartbeat so other devices can tell idle from offline.
+
+### Incremental export
+
+Every write to the month-partitioned sources (`usage_daily_rollups`,
+`usage_rollup_ledger`, `usage_sync_inherited`) bumps a per-month change
+version in `usage_sync_partition_versions` through `AFTER INSERT/UPDATE/DELETE`
+triggers; changes to provider ids or names bump a `*names` version (provider
+names are embedded in every partition). The triggers fire for every write
+path — rollup, cost back-fill, Codex rebuild, retention, manual SQL — so
+same-row-count price corrections, deletes and identical rebuilds all
+invalidate, without relying on timestamps or row counts.
+
+After an export, `usage_sync_export_cache` records each month partition's
+content hash with the versions it was read at (under the same lock as the
+rows). A month is skipped on the next sync only if all of these hold:
+
+- the cache entry is for this device id and detail level;
+- its month version and the `*names` version equal the current ones;
+- the own remote manifest still references the same `contentSha256`;
+- all 12 version triggers exist (otherwise the cache is disabled).
+
+Skipped months are neither read nor encoded; their manifest entries are kept
+and they still bound `coverage`. Months are discovered by one index seek per
+month and read by date range, so the lock time scales with the changed months.
+Day partitions (records, daily totals, aliases) are always exported; they span
+only the detail-retention window. The cache is not preserved across a
+configuration-snapshot import (provider names may change), so the next sync
+re-encodes once.
 
 Request cost per steady-state sync: 1 GET (own manifest), 1 LIST, one GET per
 other device's manifest, plus PUTs/GETs only for changed partitions (typically
@@ -156,7 +186,8 @@ Devices whose directory vanished stay cached and are flagged _Not found_.
 
 - `usage_sync_identity` (single row in the local database): random UUIDv4
   `device_id`, optional user-chosen name, committed/pending writer nonce, `seq`,
-  and — after a split — `parent_device_id` / `forked_at`.
+  and — after a split — `parent_device_id` / `forked_at` and the full
+  `ancestors` chain (nearest first).
 - Stored in the database, not `settings.json`: a lost or fresh database always
   starts a **new** identity and can never overwrite the history a previous
   database published. No hardware identifiers are used.
@@ -171,16 +202,29 @@ writer nonce detects it and uploads pause (downloads continue). The user
 chooses:
 
 - **Use a new identity** (a second computer that keeps running): a new id is
-  created with `lineage.parentDeviceId` = the previous id. The copied history
-  is then counted once:
+  created with `lineage.parentDeviceId` = the previous id and
+  `lineage.ancestors` = the previous id followed by its own ancestors (at most
+  16, no repeats, no self; readers reject other shapes). An identity that never
+  published anything (for example a second reset while offline) is not an
+  ancestor: the chain keeps the previous published one. The copied history is
+  then counted once:
   - request-level rows and ledger-covered rollups carry request ids and are
     de-duplicated by the identity rule below;
   - the id-less remainder of the rollups at the moment of the split
     (`usage_daily_rollups` minus ledger-covered contributions, per rollup
     group) is snapshotted into `usage_sync_inherited`, published as
-    `inherited[]`, and subtracted from this installation **while the parent's
-    data is present** on the viewer. If the parent is hidden (retired or
-    replaced), the copy carries that history instead.
+    `inherited[]`, and subtracted on each viewer in favour of the **nearest
+    present ancestor** in the chain (this installation or a cached device that
+    is not hidden). The subtraction is materialized per rollup group in
+    `usage_sync_inherited_effective` and is bounded per metric by the snapshot,
+    by what the copy still holds id-less in that group, and by what that
+    ancestor actually holds in that group. Presence in the device list is not
+    taken as proof that the ancestor still has the history: after a Codex
+    rebuild, a deletion or a retention expiry only the part that remains is
+    subtracted, so nothing is undercounted or negative. If every ancestor is
+    hidden (retired or replaced), the copy carries that history itself. The
+    same rule applies at every level, so hiding, restoring, deleting or
+    retiring a middle device moves the history to the next present holder.
   - requests made after the split have new ids and count for whichever
     installation made them. The parent continues normally; an offline parent
     keeps its cached history.
@@ -191,31 +235,44 @@ chooses:
 
 ## Local storage (schema v21)
 
-| Table                          | Purpose                                                                                   |
-| ------------------------------ | ----------------------------------------------------------------------------------------- |
-| `usage_sync_identity`          | This installation's identity, writer nonces, lineage                                      |
-| `usage_sync_devices`           | Remote device status, coverage, UTC offset, lineage, last upload/fetch, last error        |
-| `usage_sync_remote_partitions` | Import cursor: object SHA-256 per (device, partition)                                     |
-| `usage_sync_remote_logs`       | Read-only cache shaped like `proxy_request_logs`                                          |
-| `usage_sync_remote_rollups`    | Read-only cache shaped like `usage_daily_rollups`                                         |
-| `usage_sync_remote_claims`     | Remote ledger entries and aliases                                                         |
-| `usage_sync_remote_inherited`  | Remote inherited (id-less) history with its parent id                                     |
-| `usage_sync_remote_multi`      | Ids held by more than one remote device (query gate)                                      |
-| `usage_sync_ledger_suppressed` | Materialized losing ledger copies (rebuilt on sync, rollup, hide/unhide, identity change) |
-| `usage_sync_inherited`         | This installation's inherited history after a split                                       |
-| `usage_rollup_ledger`          | Identity ledger of this device's rolled-up requests                                       |
+| Table                            | Purpose                                                                                   |
+| -------------------------------- | ----------------------------------------------------------------------------------------- |
+| `usage_sync_identity`            | This installation's identity, writer nonces, lineage                                      |
+| `usage_sync_devices`             | Remote device status, coverage, UTC offset, lineage, last upload/fetch, last error        |
+| `usage_sync_remote_partitions`   | Import cursor: object SHA-256 per (device, partition)                                     |
+| `usage_sync_remote_logs`         | Read-only cache shaped like `proxy_request_logs`                                          |
+| `usage_sync_remote_rollups`      | Read-only cache shaped like `usage_daily_rollups`                                         |
+| `usage_sync_remote_claims`       | Remote ledger entries and aliases                                                         |
+| `usage_sync_remote_inherited`    | Remote inherited (id-less) history with its parent id                                     |
+| `usage_sync_remote_multi`        | Ids held by more than one remote device (query gate)                                      |
+| `usage_sync_ledger_suppressed`   | Materialized losing ledger copies (rebuilt on sync, rollup, hide/unhide, identity change) |
+| `usage_sync_inherited`           | This installation's inherited history after a split                                       |
+| `usage_sync_inherited_effective` | Per-group inherited subtraction actually applied (rebuilt with the suppression)           |
+| `usage_sync_partition_versions`  | Trigger-maintained change versions of month partitions and provider names                 |
+| `usage_sync_export_cache`        | Content hash and versions of the last exported month partitions                           |
+| `usage_rollup_ledger`            | Identity ledger of this device's rolled-up requests                                       |
 
 - `usage_rollup_ledger` is written by `rollup_and_prune` in the same savepoint
   as the rollup itself, for every pruned row (counted or alias), whether or
   not usage sync is enabled, so enabling sync later does not lose the ability
-  to de-duplicate history. Entries older than **365 days** are deleted at each
-  rollup; the Codex usage rebuild deletes the ledger entries of the rollups it
-  deletes.
+  to de-duplicate history. Entries older than **365 days** are deleted at every
+  rollup run, also when there is nothing to roll up (a device that was offline
+  for a long time expires its entries on the first run); expiring entries
+  refreshes the suppression. The Codex usage rebuild deletes the ledger
+  entries and the inherited rows of the rollups it deletes and then refreshes
+  the suppression and the inherited attribution.
+- Ledger kinds: `0` counted, `1` alias (a detail row dropped as the duplicate
+  of an **unambiguous** proxy/session pair: exactly one partner on each side),
+  `2` local-only (an ambiguous pairing, e.g. two proxy rows matching one
+  session row). Kind 2 is never published, because a heuristic guess must not
+  become a fleet-wide alias that drops another device's copy; locally it
+  behaves like before.
 - Migration v20 → v21 only creates these tables (idempotent DDL shared with
   fresh databases); existing data is untouched, and the usual pre-migration
   backup runs. History rolled up before the upgrade has no ledger entries.
-- All eleven tables are in `SYNC_SKIP_TABLES` (rows never enter `db.sql`) and
-  `SYNC_PRESERVE_TABLES` (a snapshot download keeps the local rows).
+- All fourteen tables are in `SYNC_SKIP_TABLES` (rows never enter `db.sql`);
+  all but `usage_sync_export_cache` are in `SYNC_PRESERVE_TABLES` (a snapshot
+  download keeps the local rows).
 - Restoring an older full backup recreates empty tables; the next sync
   re-imports remote devices and, because the identity row is gone, publishes
   under a new device id (no lineage: hide the old entry).
@@ -225,6 +282,13 @@ chooses:
   the dedicated commands so a stale full-settings save cannot roll it back.
 
 ### Storage and transfer cost (measured, 50k rolled-up requests per device)
+
+Extrapolated for heavy users: 100k rolled-up requests per year ≈ 16 MB of
+local ledger, 1M ≈ 160 MB (bounded by the 365-day retention), plus one
+`usage_sync_remote_claims` row per remote ledger entry on every viewer.
+Incremental export (`perf_incremental_export`, 12 month partitions, see
+CORRECTIVE_REPORT_R2 for the numbers): an unchanged history costs a few
+milliseconds of lock time; one corrected month costs only that month.
 
 - Local ledger: ~162 bytes per rolled-up request (≈ 8 MB per 50k), bounded by
   the 365-day retention.
@@ -273,7 +337,8 @@ logs and request detail. The old method names remain as local-scope wrappers.
   **negative rollup rows of exactly their contribution in their own rollup
   group**, so tokens, cost, success counts and dimensions stay exact and no
   day, provider or device is excluded wholesale. Inherited history is
-  subtracted the same way while the parent's data is present.
+  subtracted the same way in favour of the nearest present ancestor, bounded
+  by what that ancestor still holds (see _Copied installations_).
 
 - Freshness: request-level copies are decided at query time; ledger copies are
   re-evaluated after every sync, rollup, hide/unhide and identity change. A
@@ -387,3 +452,12 @@ cargo test --lib usage_sync::tests_http::live -- --ignored --test-threads=1
   are found by a listing of the device's own `parts/` at most once per 24 h per
   process and deleted after the normal 24 h grace period.
 - Provider limit checks remain per device.
+- Lineage keeps at most 16 ancestors; history inherited from an identity more
+  than 16 resets back is attributed as if that ancestor were absent (counted by
+  the copy).
+- Inherited history is attributed per rollup group (source date, app,
+  provider, models) with per-metric bounds: the ancestor's current amounts in
+  that group are taken as the copied history it still holds. Snapshot groups
+  are past days, so this only differs from the truth if the ancestor later
+  re-imported _different_ requests into those same past days; the copy then
+  defers up to what the ancestor holds there.

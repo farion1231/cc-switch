@@ -88,6 +88,7 @@ export interface UsageSyncOverview {
 
 export interface UsageSyncReport {
   uploadedPartitions: number;
+  cachedPartitions?: number;
   manifestWritten: boolean;
   uploadError?: string | null;
   identityConflict: boolean;

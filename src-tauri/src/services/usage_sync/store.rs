@@ -4,7 +4,7 @@
 //! All functions take a `&Connection` so they compose with the caller's lock
 //! and are testable against in-memory databases.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -31,23 +31,46 @@ pub(crate) struct DeviceIdentity {
     /// Identity this installation was split from ("Use a new identity").
     pub parent_device_id: Option<String>,
     pub forked_at: Option<i64>,
+    /// Full ancestry, nearest first (starts with `parent_device_id`).
+    pub ancestors: Vec<String>,
+}
+
+impl DeviceIdentity {
+    /// An identity counts as published once a manifest was (or may have
+    /// been) written under it.
+    fn was_published(&self) -> bool {
+        self.committed_nonce.is_some() || self.pending_nonce.is_some() || self.manifest_seq > 0
+    }
+}
+
+fn parse_ancestors(raw: Option<String>, parent: Option<&str>) -> Vec<String> {
+    let mut list: Vec<String> = raw
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    if list.is_empty() {
+        list.extend(parent.map(str::to_string));
+    }
+    list
 }
 
 fn read_identity(conn: &Connection) -> Result<Option<DeviceIdentity>, AppError> {
     conn.query_row(
         "SELECT device_id, device_name, committed_nonce, pending_nonce, manifest_seq,
-                parent_device_id, forked_at
+                parent_device_id, forked_at, ancestors
          FROM usage_sync_identity WHERE id = 1",
         [],
         |row| {
+            let parent: Option<String> = row.get(5)?;
+            let ancestors = parse_ancestors(row.get(7)?, parent.as_deref());
             Ok(DeviceIdentity {
                 device_id: row.get(0)?,
                 custom_name: row.get(1)?,
                 committed_nonce: row.get(2)?,
                 pending_nonce: row.get(3)?,
                 manifest_seq: row.get::<_, i64>(4)?.max(0) as u64,
-                parent_device_id: row.get(5)?,
+                parent_device_id: parent,
                 forked_at: row.get(6)?,
+                ancestors,
             })
         },
     )
@@ -117,9 +140,25 @@ pub(crate) fn commit_nonce(conn: &Connection, nonce: &str, seq: u64) -> Result<(
 /// count for whichever installation made them.
 pub(crate) fn reset_identity(conn: &Connection) -> Result<DeviceIdentity, AppError> {
     let previous = read_identity(conn)?;
+    // The new identity descends from the previous one only if that one ever
+    // published; an identity that never uploaded anything (e.g. a reset done
+    // twice while offline) is skipped so the real, published ancestor stays.
+    let ancestors: Vec<String> = match &previous {
+        Some(prev) if prev.was_published() => std::iter::once(prev.device_id.clone())
+            .chain(prev.ancestors.iter().cloned())
+            .collect(),
+        Some(prev) => prev.ancestors.clone(),
+        None => Vec::new(),
+    };
+    let mut seen = std::collections::HashSet::new();
+    let ancestors: Vec<String> = ancestors
+        .into_iter()
+        .filter(|id| super::protocol::is_valid_device_id(id) && seen.insert(id.clone()))
+        .take(super::protocol::MAX_LINEAGE_DEPTH)
+        .collect();
     let tx = conn.unchecked_transaction()?;
     tx.execute("DELETE FROM usage_sync_inherited", [])?;
-    if previous.is_some() {
+    if !ancestors.is_empty() {
         let fresh = fresh_input_sql("r");
         // Rollup totals minus the ledger-covered part, per rollup group.
         tx.execute(
@@ -160,13 +199,16 @@ pub(crate) fn reset_identity(conn: &Connection) -> Result<DeviceIdentity, AppErr
     tx.execute("DELETE FROM usage_sync_identity", [])?;
     tx.execute(
         "INSERT INTO usage_sync_identity (
-            id, device_id, device_name, created_at, manifest_seq, parent_device_id, forked_at
-         ) VALUES (1, ?1, ?2, ?3, 0, ?4, ?3)",
+            id, device_id, device_name, created_at, manifest_seq, parent_device_id, forked_at,
+            ancestors
+         ) VALUES (1, ?1, ?2, ?3, 0, ?4, ?3, ?5)",
         params![
             new_device_id(),
             previous.as_ref().and_then(|p| p.custom_name.clone()),
             chrono::Utc::now().timestamp(),
-            previous.as_ref().map(|p| p.device_id.clone()),
+            ancestors.first().cloned(),
+            serde_json::to_string(&ancestors)
+                .map_err(|source| AppError::JsonSerialize { source })?,
         ],
     )?;
     tx.commit()?;
@@ -189,6 +231,151 @@ pub(crate) fn adopt_remote_writer(
 pub(crate) struct LocalExport {
     pub partitions: BTreeMap<String, Segment>,
     pub coverage: Coverage,
+    /// Month partitions left out because the export cache proved them
+    /// unchanged since they were last encoded and published.
+    pub skipped: BTreeSet<String>,
+    /// Change versions of every exported month partition, read under the
+    /// same connection lock as the rows (see `record_export_cache`).
+    pub versions: BTreeMap<String, i64>,
+    pub names_version: i64,
+}
+
+/// Triggers that maintain `usage_sync_partition_versions` (see schema.rs).
+const VERSION_TRIGGER_COUNT: i64 = 12;
+
+fn names_version(conn: &Connection) -> Result<i64, AppError> {
+    Ok(conn
+        .query_row(
+            "SELECT version FROM usage_sync_partition_versions WHERE partition_key = '*names'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(0))
+}
+
+/// Month partitions whose content is provably what the remote manifest
+/// already references: the cached encoding was made at the current change
+/// version of the month (and of provider names), for this device and detail
+/// level, and the remote content hash still equals it. Every write path to
+/// the source tables bumps the version through triggers, so price
+/// corrections, deletes, rebuilds and same-count changes all invalidate.
+/// When a trigger is missing (e.g. a table was rebuilt by a future
+/// migration) nothing is skipped.
+pub(crate) fn plan_export_skip(
+    conn: &Connection,
+    device_id: &str,
+    detail_level: UsageSyncDetailLevel,
+    remote: &BTreeMap<String, PartitionMeta>,
+) -> Result<BTreeSet<String>, AppError> {
+    let triggers: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'trigger' AND name LIKE 'usage_sync_version_%'",
+        [],
+        |row| row.get(0),
+    )?;
+    if triggers != VERSION_TRIGGER_COUNT {
+        log::warn!("[UsageSync] export cache disabled: {triggers} version triggers present");
+        return Ok(BTreeSet::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT c.partition_key, c.content_sha256
+         FROM usage_sync_export_cache c
+         LEFT JOIN usage_sync_partition_versions v ON v.partition_key = c.partition_key
+         WHERE c.device_id = ?1 AND c.detail_level = ?2
+           AND c.version = COALESCE(v.version, 0) AND c.names_version = ?3",
+    )?;
+    let rows = stmt.query_map(
+        params![
+            device_id,
+            detail_level_key(detail_level),
+            names_version(conn)?
+        ],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )?;
+    let mut skip = BTreeSet::new();
+    for row in rows {
+        let (key, sha) = row?;
+        if remote
+            .get(&key)
+            .is_some_and(|meta| meta.content_sha256 == sha)
+        {
+            skip.insert(key);
+        }
+    }
+    Ok(skip)
+}
+
+/// Distinct month prefixes (`YYYY-MM`, the first seven characters of
+/// `date`) of the month-partitioned tables, found by one index seek per month
+/// rather than a scan. Values without a valid month prefix are stepped over
+/// (their rows were never partitioned).
+fn present_months(conn: &Connection) -> Result<BTreeSet<String>, AppError> {
+    let mut months = BTreeSet::new();
+    for table in [
+        "usage_daily_rollups",
+        "usage_rollup_ledger",
+        "usage_sync_inherited",
+    ] {
+        let mut stmt = conn.prepare(&format!("SELECT MIN(date) FROM {table} WHERE date >= ?1"))?;
+        let mut low = String::new();
+        while let Some(date) = stmt.query_row([&low], |row| row.get::<_, Option<String>>(0))? {
+            let month: String = date.chars().take(7).collect();
+            if chrono::NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d").is_ok() {
+                low = month_range(&month).1;
+                months.insert(month);
+            } else {
+                // Not a month prefix: step past this exact value only, so
+                // ranges never overlap (its rows are never partitioned).
+                low = format!("{date}\0");
+            }
+        }
+    }
+    Ok(months)
+}
+
+/// Half-open text range holding every `date` that starts with `month`.
+fn month_range(month: &str) -> (String, String) {
+    (month.to_string(), format!("{month}\u{10FFFF}"))
+}
+
+fn detail_level_key(detail_level: UsageSyncDetailLevel) -> &'static str {
+    match detail_level {
+        UsageSyncDetailLevel::Records => "records",
+        UsageSyncDetailLevel::Daily => "daily",
+    }
+}
+
+/// Remember the encoding of exported month partitions at the versions they
+/// were read at. A write that happened after the export already bumped the
+/// version, so such an entry can never match.
+pub(crate) fn record_export_cache(
+    conn: &Connection,
+    device_id: &str,
+    detail_level: UsageSyncDetailLevel,
+    names_version: i64,
+    entries: &[(String, i64, String)],
+) -> Result<(), AppError> {
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT OR REPLACE INTO usage_sync_export_cache
+                (partition_key, device_id, detail_level, version, names_version, content_sha256)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for (key, version, sha) in entries {
+            stmt.execute(params![
+                key,
+                device_id,
+                detail_level_key(detail_level),
+                version,
+                names_version,
+                sha
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 fn non_negative(value: i64) -> i64 {
@@ -202,16 +389,37 @@ fn cost_text(value: Option<String>) -> String {
     }
 }
 
-/// Build this device's partitions from its authoritative local usage tables.
-///
-/// Detail rows pass through the same session/proxy de-duplication filter the
-/// dashboard uses, so a remote viewer sees exactly what this device reports
-/// for itself. Rollups are exported as-is (they were de-duplicated at rollup time).
+/// Full export without the cache (tests compare published manifests with it).
+#[cfg(test)]
 pub(crate) fn export_local(
     conn: &Connection,
     device_id: &str,
     detail_level: UsageSyncDetailLevel,
 ) -> Result<LocalExport, AppError> {
+    export_local_except(conn, device_id, detail_level, &BTreeSet::new())
+}
+
+/// Build this device's partitions from its authoritative local usage tables,
+/// except the month partitions in `skip` (from `plan_export_skip`), whose
+/// rows are not read at all.
+///
+/// Detail rows pass through the same session/proxy de-duplication filter the
+/// dashboard uses, so a remote viewer sees exactly what this device reports
+/// for itself. Rollups are exported as-is (they were de-duplicated at rollup time).
+pub(crate) fn export_local_except(
+    conn: &Connection,
+    device_id: &str,
+    detail_level: UsageSyncDetailLevel,
+    skip: &BTreeSet<String>,
+) -> Result<LocalExport, AppError> {
+    // Month partitions are read month by month through the date-leading
+    // indexes, so skipped months cost neither a scan nor lock time.
+    let months = present_months(conn)?;
+    let ranges: Vec<(String, String)> = months
+        .iter()
+        .filter(|month| !skip.contains(&format!("m-{month}")))
+        .map(|month| month_range(month))
+        .collect();
     let mut partitions: BTreeMap<String, Segment> = BTreeMap::new();
     fn segment_for<'a>(
         partitions: &'a mut BTreeMap<String, Segment>,
@@ -338,47 +546,52 @@ pub(crate) fn export_local(
                 r.input_token_semantics, CAST(r.total_cost_usd AS TEXT), r.avg_latency_ms
          FROM usage_daily_rollups r
          LEFT JOIN providers p ON r.provider_id = p.id AND r.app_type = p.app_type
+         WHERE r.date >= ?1 AND r.date < ?2
          ORDER BY r.date, r.app_type, r.provider_id, r.model, r.request_model, r.pricing_model"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let date: String = row.get(0)?;
-        // Malformed historic dates cannot be partitioned; skip rather than fail the sync.
-        if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
-            log::warn!("[UsageSync] skip rollup with malformed date {date:?}");
-            continue;
+    for (low, high) in &ranges {
+        let mut rows = stmt.query([low, high])?;
+        while let Some(row) = rows.next()? {
+            let date: String = row.get(0)?;
+            // Malformed historic dates cannot be partitioned; skip rather than fail the sync.
+            if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
+                log::warn!("[UsageSync] skip rollup with malformed date {date:?}");
+                continue;
+            }
+            let rollup = RollupRecord {
+                date: date.clone(),
+                app_type: row.get(1)?,
+                provider_id: row.get(2)?,
+                provider_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                model: row.get(4)?,
+                request_model: row.get(5)?,
+                pricing_model: row.get(6)?,
+                request_count: non_negative(row.get(7)?),
+                success_count: non_negative(row.get(8)?),
+                input_tokens: non_negative(row.get(9)?),
+                output_tokens: non_negative(row.get(10)?),
+                cache_read_tokens: non_negative(row.get(11)?),
+                cache_creation_tokens: non_negative(row.get(12)?),
+                input_token_semantics: row.get(13)?,
+                total_cost_usd: cost_text(row.get(14)?),
+                avg_latency_ms: non_negative(row.get(15)?),
+            };
+            segment_for(&mut partitions, device_id, month_partition_key(&date))
+                .rollups
+                .push(rollup);
         }
-        let rollup = RollupRecord {
-            date: date.clone(),
-            app_type: row.get(1)?,
-            provider_id: row.get(2)?,
-            provider_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            model: row.get(4)?,
-            request_model: row.get(5)?,
-            pricing_model: row.get(6)?,
-            request_count: non_negative(row.get(7)?),
-            success_count: non_negative(row.get(8)?),
-            input_tokens: non_negative(row.get(9)?),
-            output_tokens: non_negative(row.get(10)?),
-            cache_read_tokens: non_negative(row.get(11)?),
-            cache_creation_tokens: non_negative(row.get(12)?),
-            input_token_semantics: row.get(13)?,
-            total_cost_usd: cost_text(row.get(14)?),
-            avg_latency_ms: non_negative(row.get(15)?),
-        };
-        segment_for(&mut partitions, device_id, month_partition_key(&date))
-            .rollups
-            .push(rollup);
     }
 
     if detail_level == UsageSyncDetailLevel::Records {
-        // Detail rows this device drops as duplicates of its own rows.
+        // Detail rows this device drops as duplicates of its own rows, when
+        // the pairing is unambiguous (only those become fleet-wide aliases).
+        let unambiguous = crate::services::usage_stats::unambiguous_alias_sql("l");
         let sql = format!(
             "SELECT date(l.created_at, 'unixepoch', 'localtime'), l.request_id,
                     COALESCE(l.data_source, 'proxy')
              FROM proxy_request_logs l
-             WHERE NOT ({filter})
+             WHERE NOT ({filter}) AND {unambiguous}
              ORDER BY 1, l.request_id"
         );
         let mut stmt = conn.prepare(&sql)?;
@@ -402,36 +615,39 @@ pub(crate) fn export_local(
                     g.cache_creation_tokens, CAST(g.total_cost_usd AS TEXT)
              FROM usage_rollup_ledger g
              LEFT JOIN providers p ON g.provider_id = p.id AND g.app_type = p.app_type
+             WHERE g.kind IN (0, 1) AND g.date >= ?1 AND g.date < ?2
              ORDER BY g.date, g.request_id"
         );
         let mut stmt = conn.prepare(&sql)?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let date: String = row.get(3)?;
-            if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
-                continue;
+        for (low, high) in &ranges {
+            let mut rows = stmt.query([low, high])?;
+            while let Some(row) = rows.next()? {
+                let date: String = row.get(3)?;
+                if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
+                    continue;
+                }
+                let entry = LedgerRecord {
+                    request_id: row.get(0)?,
+                    data_source: row.get(1)?,
+                    kind: row.get(2)?,
+                    date: date.clone(),
+                    app_type: row.get(4)?,
+                    provider_id: row.get(5)?,
+                    provider_name: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                    model: row.get(7)?,
+                    request_model: row.get(8)?,
+                    pricing_model: row.get(9)?,
+                    success: non_negative(row.get(10)?).min(1),
+                    input_tokens: non_negative(row.get(11)?),
+                    output_tokens: non_negative(row.get(12)?),
+                    cache_read_tokens: non_negative(row.get(13)?),
+                    cache_creation_tokens: non_negative(row.get(14)?),
+                    total_cost_usd: cost_text(row.get(15)?),
+                };
+                segment_for(&mut partitions, device_id, month_partition_key(&date))
+                    .ledger
+                    .push(entry);
             }
-            let entry = LedgerRecord {
-                request_id: row.get(0)?,
-                data_source: row.get(1)?,
-                kind: row.get(2)?,
-                date: date.clone(),
-                app_type: row.get(4)?,
-                provider_id: row.get(5)?,
-                provider_name: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
-                model: row.get(7)?,
-                request_model: row.get(8)?,
-                pricing_model: row.get(9)?,
-                success: non_negative(row.get(10)?).min(1),
-                input_tokens: non_negative(row.get(11)?),
-                output_tokens: non_negative(row.get(12)?),
-                cache_read_tokens: non_negative(row.get(13)?),
-                cache_creation_tokens: non_negative(row.get(14)?),
-                total_cost_usd: cost_text(row.get(15)?),
-            };
-            segment_for(&mut partitions, device_id, month_partition_key(&date))
-                .ledger
-                .push(entry);
         }
     }
 
@@ -444,39 +660,66 @@ pub(crate) fn export_local(
                 CAST(i.total_cost_usd AS TEXT)
          FROM usage_sync_inherited i
          LEFT JOIN providers p ON i.provider_id = p.id AND i.app_type = p.app_type
+         WHERE i.date >= ?1 AND i.date < ?2
          ORDER BY i.date, i.app_type, i.provider_id, i.model, i.request_model, i.pricing_model"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let date: String = row.get(0)?;
-        if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
-            continue;
+    for (low, high) in &ranges {
+        let mut rows = stmt.query([low, high])?;
+        while let Some(row) = rows.next()? {
+            let date: String = row.get(0)?;
+            if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
+                continue;
+            }
+            let inherited = RollupRecord {
+                date: date.clone(),
+                app_type: row.get(1)?,
+                provider_id: row.get(2)?,
+                provider_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                model: row.get(4)?,
+                request_model: row.get(5)?,
+                pricing_model: row.get(6)?,
+                request_count: non_negative(row.get(7)?),
+                success_count: non_negative(row.get(8)?),
+                input_tokens: non_negative(row.get(9)?),
+                output_tokens: non_negative(row.get(10)?),
+                cache_read_tokens: non_negative(row.get(11)?),
+                cache_creation_tokens: non_negative(row.get(12)?),
+                input_token_semantics: INPUT_TOKEN_SEMANTICS_FRESH,
+                total_cost_usd: cost_text(row.get(13)?),
+                avg_latency_ms: 0,
+            };
+            segment_for(&mut partitions, device_id, month_partition_key(&date))
+                .inherited
+                .push(inherited);
         }
-        let inherited = RollupRecord {
-            date: date.clone(),
-            app_type: row.get(1)?,
-            provider_id: row.get(2)?,
-            provider_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            model: row.get(4)?,
-            request_model: row.get(5)?,
-            pricing_model: row.get(6)?,
-            request_count: non_negative(row.get(7)?),
-            success_count: non_negative(row.get(8)?),
-            input_tokens: non_negative(row.get(9)?),
-            output_tokens: non_negative(row.get(10)?),
-            cache_read_tokens: non_negative(row.get(11)?),
-            cache_creation_tokens: non_negative(row.get(12)?),
-            input_token_semantics: INPUT_TOKEN_SEMANTICS_FRESH,
-            total_cost_usd: cost_text(row.get(13)?),
-            avg_latency_ms: 0,
-        };
-        segment_for(&mut partitions, device_id, month_partition_key(&date))
-            .inherited
-            .push(inherited);
     }
 
     let mut coverage = Coverage::default();
+    // Skipped months still bound the coverage (same validity rule as the
+    // rows that are exported: only real calendar dates are partitioned).
+    {
+        let mut stmt = conn.prepare(
+            "SELECT MIN(date), MAX(date) FROM usage_daily_rollups
+             WHERE date >= ?1 AND date < ?2 AND date(date) IS date",
+        )?;
+        for month in months
+            .iter()
+            .filter(|month| skip.contains(&format!("m-{month}")))
+        {
+            let (low, high) = month_range(month);
+            let (first, last): (Option<String>, Option<String>) =
+                stmt.query_row([low, high], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            for date in first.into_iter().chain(last) {
+                if coverage.first_date.as_ref().is_none_or(|d| &date < d) {
+                    coverage.first_date = Some(date.clone());
+                }
+                if coverage.last_date.as_ref().is_none_or(|d| &date > d) {
+                    coverage.last_date = Some(date);
+                }
+            }
+        }
+    }
     for (key, segment) in &partitions {
         let dates = segment
             .rollups
@@ -499,9 +742,23 @@ pub(crate) fn export_local(
         }
     }
 
+    let mut versions = BTreeMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT version FROM usage_sync_partition_versions WHERE partition_key = ?1",
+        )?;
+        for key in partitions.keys().filter(|key| key.starts_with("m-")) {
+            let version: Option<i64> = stmt.query_row([key], |row| row.get(0)).optional()?;
+            versions.insert(key.clone(), version.unwrap_or(0));
+        }
+    }
+
     Ok(LocalExport {
         partitions,
         coverage,
+        skipped: skip.clone(),
+        versions,
+        names_version: names_version(conn)?,
     })
 }
 
@@ -548,7 +805,358 @@ pub(crate) fn refresh_ledger_suppression(conn: &Connection) -> Result<(), AppErr
         ),
         [],
     )?;
+    rebuild_inherited_effective(&tx)?;
     tx.commit()?;
+    Ok(())
+}
+
+// ─── Inherited (id-less) history across lineages ─────────────
+
+/// One rollup group (date + dimensions).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct GroupKey {
+    date: String,
+    app_type: String,
+    provider_id: String,
+    model: String,
+    request_model: String,
+    pricing_model: String,
+}
+
+/// Additive usage of one group.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct GroupAmounts {
+    requests: i64,
+    success: i64,
+    input: i64,
+    output: i64,
+    cache_read: i64,
+    cache_creation: i64,
+    cost: f64,
+}
+
+impl GroupAmounts {
+    fn min(self, other: Self) -> Self {
+        Self {
+            requests: self.requests.min(other.requests),
+            success: self.success.min(other.success),
+            input: self.input.min(other.input),
+            output: self.output.min(other.output),
+            cache_read: self.cache_read.min(other.cache_read),
+            cache_creation: self.cache_creation.min(other.cache_creation),
+            cost: self.cost.min(other.cost),
+        }
+    }
+
+    fn non_negative(self) -> Self {
+        Self {
+            requests: self.requests.max(0),
+            success: self.success.max(0),
+            input: self.input.max(0),
+            output: self.output.max(0),
+            cache_read: self.cache_read.max(0),
+            cache_creation: self.cache_creation.max(0),
+            cost: self.cost.max(0.0),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.requests == 0
+            && self.input == 0
+            && self.output == 0
+            && self.cache_read == 0
+            && self.cache_creation == 0
+            && self.cost == 0.0
+    }
+}
+
+const GROUP_MATCH_R: &str = "r.date = ?1 AND r.app_type = ?2 AND r.provider_id = ?3 \
+    AND r.model = ?4 AND r.request_model = ?5 AND r.pricing_model = ?6";
+const GROUP_MATCH_G: &str = "g.date = ?1 AND g.app_type = ?2 AND g.provider_id = ?3 \
+    AND g.model = ?4 AND g.request_model = ?5 AND g.pricing_model = ?6";
+
+fn read_amounts(
+    conn: &Connection,
+    sql: &str,
+    key: &GroupKey,
+    device: Option<&str>,
+) -> Result<GroupAmounts, AppError> {
+    let mut values: Vec<&dyn rusqlite::ToSql> = vec![
+        &key.date,
+        &key.app_type,
+        &key.provider_id,
+        &key.model,
+        &key.request_model,
+        &key.pricing_model,
+    ];
+    if let Some(device) = device.as_ref() {
+        values.push(device);
+    }
+    conn.query_row(sql, values.as_slice(), |row| {
+        Ok(GroupAmounts {
+            requests: row.get::<_, Option<i64>>(0)?.unwrap_or(0),
+            success: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            input: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            output: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+            cache_read: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            cache_creation: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+            cost: row.get::<_, Option<f64>>(6)?.unwrap_or(0.0),
+        })
+    })
+    .map_err(Into::into)
+}
+
+/// Id-less usage a device holds in one group: its rollups minus the part its
+/// identity ledger covers (`None` = this device, otherwise a cached remote).
+fn idless_residual(
+    conn: &Connection,
+    device: Option<&str>,
+    key: &GroupKey,
+) -> Result<GroupAmounts, AppError> {
+    let fresh = fresh_input_sql("r");
+    let (rollups, ledger) = match device {
+        None => (
+            format!(
+                "SELECT SUM(r.request_count), SUM(r.success_count), SUM({fresh}),
+                        SUM(r.output_tokens), SUM(r.cache_read_tokens),
+                        SUM(r.cache_creation_tokens), SUM(CAST(r.total_cost_usd AS REAL))
+                 FROM usage_daily_rollups r WHERE {GROUP_MATCH_R}"
+            ),
+            format!(
+                "SELECT COUNT(*), SUM(g.success), SUM(g.input_tokens), SUM(g.output_tokens),
+                        SUM(g.cache_read_tokens), SUM(g.cache_creation_tokens),
+                        SUM(CAST(g.total_cost_usd AS REAL))
+                 FROM usage_rollup_ledger g WHERE g.kind = 0 AND {GROUP_MATCH_G}"
+            ),
+        ),
+        Some(_) => (
+            format!(
+                "SELECT SUM(r.request_count), SUM(r.success_count), SUM({fresh}),
+                        SUM(r.output_tokens), SUM(r.cache_read_tokens),
+                        SUM(r.cache_creation_tokens), SUM(CAST(r.total_cost_usd AS REAL))
+                 FROM usage_sync_remote_rollups r WHERE {GROUP_MATCH_R} AND r.device_id = ?7"
+            ),
+            format!(
+                "SELECT COUNT(*), SUM(g.success), SUM(g.input_tokens), SUM(g.output_tokens),
+                        SUM(g.cache_read_tokens), SUM(g.cache_creation_tokens),
+                        SUM(CAST(g.total_cost_usd AS REAL))
+                 FROM usage_sync_remote_claims g
+                 WHERE g.kind = 0 AND {GROUP_MATCH_G} AND g.device_id = ?7"
+            ),
+        ),
+    };
+    let total = read_amounts(conn, &rollups, key, device)?;
+    let covered = read_amounts(conn, &ledger, key, device)?;
+    Ok(GroupAmounts {
+        requests: total.requests - covered.requests,
+        success: total.success - covered.success,
+        input: total.input - covered.input,
+        output: total.output - covered.output,
+        cache_read: total.cache_read - covered.cache_read,
+        cache_creation: total.cache_creation - covered.cache_creation,
+        cost: total.cost - covered.cost,
+    }
+    .non_negative())
+}
+
+/// Everything a device holds in one group (id-bearing or not): its rollup
+/// totals. An ancestor holds a copied request either id-less or, if it rolled
+/// it up after the ledger existed, with its id; both count as "held".
+fn held_in_group(
+    conn: &Connection,
+    device: Option<&str>,
+    key: &GroupKey,
+) -> Result<GroupAmounts, AppError> {
+    let fresh = fresh_input_sql("r");
+    let table = match device {
+        None => "usage_daily_rollups r",
+        Some(_) => "usage_sync_remote_rollups r",
+    };
+    let device_filter = if device.is_some() {
+        " AND r.device_id = ?7"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "SELECT SUM(r.request_count), SUM(r.success_count), SUM({fresh}),
+                SUM(r.output_tokens), SUM(r.cache_read_tokens), SUM(r.cache_creation_tokens),
+                SUM(CAST(r.total_cost_usd AS REAL))
+         FROM {table} WHERE {GROUP_MATCH_R}{device_filter}"
+    );
+    Ok(read_amounts(conn, &sql, key, device)?.non_negative())
+}
+
+fn group_latency(conn: &Connection, device: Option<&str>, key: &GroupKey) -> Result<i64, AppError> {
+    let sql = match device {
+        None => {
+            format!("SELECT MAX(r.avg_latency_ms) FROM usage_daily_rollups r WHERE {GROUP_MATCH_R}")
+        }
+        Some(_) => format!(
+            "SELECT MAX(r.avg_latency_ms) FROM usage_sync_remote_rollups r
+             WHERE {GROUP_MATCH_R} AND r.device_id = ?7"
+        ),
+    };
+    let mut values: Vec<&dyn rusqlite::ToSql> = vec![
+        &key.date,
+        &key.app_type,
+        &key.provider_id,
+        &key.model,
+        &key.request_model,
+        &key.pricing_model,
+    ];
+    if let Some(device) = device.as_ref() {
+        values.push(device);
+    }
+    Ok(conn
+        .query_row(&sql, values.as_slice(), |row| row.get::<_, Option<i64>>(0))?
+        .unwrap_or(0))
+}
+
+/// Rebuild `usage_sync_inherited_effective`.
+///
+/// A device that split off a copied installation published its id-less
+/// rollup remainder as inherited history. That history also lives on its
+/// ancestors. For each inherited group the subtraction goes to the **nearest
+/// present ancestor** in the published ancestry (this device, or a cached
+/// device that is not hidden), and it is bounded per metric by
+/// - the inherited snapshot itself,
+/// - what the device still holds id-less in that group (a rebuild or cleanup
+///   after the split may have removed it), and
+/// - what that ancestor actually holds in that group, id-less or with ids
+///   (presence alone does not prove the ancestor still has the history; a
+///   rebuilt or deleted group bounds the subtraction to what remains).
+///
+/// The ancestor applies the same rule against its own ancestors, so along a
+/// chain the history is counted by exactly one present holder.
+fn rebuild_inherited_effective(conn: &Connection) -> Result<(), AppError> {
+    conn.execute("DELETE FROM usage_sync_inherited_effective", [])?;
+    let local = read_identity(conn)?;
+    let local_id = local
+        .as_ref()
+        .map(|i| i.device_id.clone())
+        .unwrap_or_default();
+
+    // Devices whose usage this viewer counts (hidden devices have no cache).
+    let mut present: std::collections::HashSet<String> = conn
+        .prepare("SELECT DISTINCT device_id FROM usage_sync_remote_partitions")?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<_, _>>()?;
+    if !local_id.is_empty() {
+        present.insert(local_id.clone());
+    }
+
+    // (device: None = local, ancestry) of every device with inherited rows.
+    let mut sources: Vec<(Option<String>, Vec<String>)> = Vec::new();
+    if let Some(identity) = &local {
+        sources.push((None, identity.ancestors.clone()));
+    }
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT ri.device_id, d.ancestors, d.parent_device_id
+         FROM usage_sync_remote_inherited ri
+         LEFT JOIN usage_sync_devices d ON d.device_id = ri.device_id",
+    )?;
+    let remote: Vec<(String, Option<String>, Option<String>)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    for (device, ancestors, parent) in remote {
+        let chain = parse_ancestors(ancestors, parent.as_deref());
+        sources.push((Some(device), chain));
+    }
+
+    for (device, chain) in sources {
+        let self_id = device.clone().unwrap_or_else(|| local_id.clone());
+        let parent = chain.first().cloned().unwrap_or_default();
+        if !super::protocol::is_valid_ancestry(&self_id, &parent, &chain) {
+            continue;
+        }
+        let Some(holder) = chain.iter().find(|id| present.contains(*id)) else {
+            continue;
+        };
+        let holder_device = (holder != &local_id).then_some(holder.as_str());
+
+        let rows: Vec<(GroupKey, Option<String>, GroupAmounts)> = {
+            let sql = match &device {
+                None => "SELECT date, app_type, provider_id, model, request_model, pricing_model,
+                                NULL, request_count, success_count, input_tokens, output_tokens,
+                                cache_read_tokens, cache_creation_tokens,
+                                CAST(total_cost_usd AS REAL)
+                         FROM usage_sync_inherited"
+                    .to_string(),
+                Some(_) => "SELECT date, app_type, provider_id, model, request_model,
+                                pricing_model, MAX(provider_name), SUM(request_count),
+                                SUM(success_count), SUM(input_tokens), SUM(output_tokens),
+                                SUM(cache_read_tokens), SUM(cache_creation_tokens),
+                                SUM(CAST(total_cost_usd AS REAL))
+                         FROM usage_sync_remote_inherited WHERE device_id = ?1
+                         GROUP BY date, app_type, provider_id, model, request_model,
+                                  pricing_model"
+                    .to_string(),
+            };
+            let mut stmt = conn.prepare(&sql)?;
+            let map = |row: &rusqlite::Row<'_>| {
+                Ok((
+                    GroupKey {
+                        date: row.get(0)?,
+                        app_type: row.get(1)?,
+                        provider_id: row.get(2)?,
+                        model: row.get(3)?,
+                        request_model: row.get(4)?,
+                        pricing_model: row.get(5)?,
+                    },
+                    row.get::<_, Option<String>>(6)?,
+                    GroupAmounts {
+                        requests: row.get(7)?,
+                        success: row.get(8)?,
+                        input: row.get(9)?,
+                        output: row.get(10)?,
+                        cache_read: row.get(11)?,
+                        cache_creation: row.get(12)?,
+                        cost: row.get::<_, Option<f64>>(13)?.unwrap_or(0.0),
+                    },
+                ))
+            };
+            match &device {
+                None => stmt.query_map([], map)?.collect::<Result<_, _>>()?,
+                Some(id) => stmt.query_map([id], map)?.collect::<Result<_, _>>()?,
+            }
+        };
+
+        for (key, provider_name, inherited) in rows {
+            let own = idless_residual(conn, device.as_deref(), &key)?;
+            let held_by_ancestor = held_in_group(conn, holder_device, &key)?;
+            let amount = inherited.non_negative().min(own).min(held_by_ancestor);
+            if amount.is_empty() {
+                continue;
+            }
+            let latency = group_latency(conn, device.as_deref(), &key)?;
+            conn.execute(
+                "INSERT OR REPLACE INTO usage_sync_inherited_effective (
+                    device_id, date, app_type, provider_id, provider_name, model,
+                    request_model, pricing_model, request_count, success_count, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd,
+                    avg_latency_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                params![
+                    device.clone().unwrap_or_default(),
+                    key.date,
+                    key.app_type,
+                    key.provider_id,
+                    provider_name,
+                    key.model,
+                    key.request_model,
+                    key.pricing_model,
+                    amount.requests,
+                    amount.success,
+                    amount.input,
+                    amount.output,
+                    amount.cache_read,
+                    amount.cache_creation,
+                    amount.cost,
+                    latency,
+                ],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -853,8 +1461,9 @@ pub(crate) fn apply_remote_device(
             device_id, device_name, platform, app_version, detail_level, manifest_seq,
             manifest_sha256, remote_updated_at, first_date, last_date, detail_from,
             last_fetched_at, last_checked_at, last_error, status, utc_offset_minutes,
-            parent_device_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, NULL, ?13, ?14, ?15)
+            parent_device_id, ancestors
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, NULL, ?13, ?14, ?15,
+                   ?16)
          ON CONFLICT(device_id) DO UPDATE SET
             device_name = excluded.device_name,
             platform = excluded.platform,
@@ -871,7 +1480,8 @@ pub(crate) fn apply_remote_device(
             last_error = NULL,
             status = excluded.status,
             utc_offset_minutes = excluded.utc_offset_minutes,
-            parent_device_id = excluded.parent_device_id",
+            parent_device_id = excluded.parent_device_id,
+            ancestors = excluded.ancestors",
         params![
             device_id,
             manifest.device_name,
@@ -891,6 +1501,14 @@ pub(crate) fn apply_remote_device(
                 .lineage
                 .as_ref()
                 .map(|l| l.parent_device_id.clone()),
+            manifest.lineage.as_ref().map(|l| {
+                let chain = if l.ancestors.is_empty() {
+                    vec![l.parent_device_id.clone()]
+                } else {
+                    l.ancestors.clone()
+                };
+                serde_json::to_string(&chain).unwrap_or_default()
+            }),
         ],
     )?;
 
@@ -1058,7 +1676,7 @@ pub(crate) fn local_unverified(conn: &Connection) -> Result<UnverifiedHistory, A
     let sql = unverified_sql(
         "usage_daily_rollups",
         "usage_rollup_ledger",
-        "usage_sync_inherited",
+        "(SELECT * FROM usage_sync_inherited_effective WHERE device_id = '')",
         "''",
     );
     let found = conn
@@ -1077,7 +1695,7 @@ fn remote_unverified(conn: &Connection) -> Result<HashMap<String, UnverifiedHist
     let sql = unverified_sql(
         "usage_sync_remote_rollups",
         "usage_sync_remote_claims",
-        "usage_sync_remote_inherited",
+        "(SELECT * FROM usage_sync_inherited_effective WHERE device_id <> '')",
         "device_id",
     );
     let mut stmt = conn.prepare(&sql)?;

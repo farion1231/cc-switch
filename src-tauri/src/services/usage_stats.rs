@@ -524,6 +524,57 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     )
 }
 
+/// Pairing condition of the local session/proxy heuristic between session row
+/// `s` and proxy row `p` (the same conditions as [`effective_usage_log_filter`]).
+fn session_proxy_pair_sql(s: &str, p: &str) -> String {
+    let s_source = data_source_expr(s);
+    let p_source = data_source_expr(p);
+    let app_type_match =
+        dedup_app_type_match_sql(&format!("{p}.app_type"), &format!("{s}.app_type"));
+    format!(
+        "({s_source} IN ({DEDUP_SESSION_SOURCES_SQL})
+          AND {p_source} = 'proxy'
+          AND {app_type_match}
+          AND {p}.status_code >= 200 AND {p}.status_code < 300
+          AND {p}.input_tokens = {s}.input_tokens
+          AND {p}.output_tokens = {s}.output_tokens
+          AND {p}.cache_read_tokens = {s}.cache_read_tokens
+          AND (
+              {p}.cache_creation_tokens = {s}.cache_creation_tokens
+              OR ({s}.cache_creation_tokens = 0
+                  AND {s_source} IN ('codex_session', 'gemini_session', 'opencode_session'))
+              OR ({p}.cache_creation_tokens = 0
+                  AND {p}.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}
+                  AND {s_source} = 'codex_session')
+          )
+          AND {p}.created_at BETWEEN {s}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+              AND {s}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+          AND (LOWER({p}.model) = LOWER({s}.model) OR LOWER({p}.model) = 'unknown'
+               OR LOWER({s}.model) = 'unknown'))"
+    )
+}
+
+/// Session row `s` (one the local heuristic drops) pairs with exactly one
+/// proxy row, and that proxy row pairs with no other session row.
+///
+/// Only such unambiguous pairings are published to other devices as aliases
+/// (a fleet-wide "already counted through another row" claim). An ambiguous
+/// pairing — several similar requests inside the time window — stays a local
+/// decision: this device keeps dropping the session row, but other devices'
+/// copies of it are not suppressed (see docs, "not detectable").
+pub(crate) fn unambiguous_alias_sql(s: &str) -> String {
+    let pair_u = session_proxy_pair_sql(s, "pu");
+    let pair_v = session_proxy_pair_sql(s, "pv");
+    let pair_other = session_proxy_pair_sql("sv", "pu");
+    format!(
+        "EXISTS (SELECT 1 FROM proxy_request_logs pu WHERE {pair_u}
+            AND NOT EXISTS (SELECT 1 FROM proxy_request_logs pv
+                WHERE {pair_v} AND pv.request_id <> pu.request_id)
+            AND NOT EXISTS (SELECT 1 FROM proxy_request_logs sv
+                WHERE sv.request_id <> {s}.request_id AND {pair_other}))"
+    )
+}
+
 /// 参与跨源去重的会话日志来源（和 [`effective_usage_log_filter`] 同口径）。
 const DEDUP_SESSION_SOURCES_SQL: &str =
     "'session_log', 'codex_session', 'gemini_session', 'opencode_session'";
@@ -1058,13 +1109,14 @@ impl IdentityRules {
     /// the legacy Pi ledger (contribution unknown, so it cannot lose).
     pub(crate) fn alias_claimed(&self, req: &str, source: &str) -> String {
         let local_dup = effective_usage_log_filter("la");
+        let unambiguous = unambiguous_alias_sql("la");
         format!(
             "(EXISTS (SELECT 1 FROM usage_sync_remote_claims ca \
                  WHERE ca.request_id = {req} AND ca.kind = 1) \
               OR EXISTS (SELECT 1 FROM usage_rollup_ledger ga \
                  WHERE ga.request_id = {req} AND ga.kind = 1) \
               OR EXISTS (SELECT 1 FROM proxy_request_logs la \
-                 WHERE la.request_id = {req} AND NOT ({local_dup})) \
+                 WHERE la.request_id = {req} AND NOT ({local_dup}) AND {unambiguous}) \
               OR (EXISTS (SELECT 1 FROM session_usage_dedup sx \
                      WHERE sx.data_source = {source} AND sx.request_id = {req}) \
                   AND NOT EXISTS (SELECT 1 FROM usage_rollup_ledger gp \
@@ -1126,8 +1178,6 @@ enum ScopeKind {
     Local,
     All {
         rules: IdentityRules,
-        /// Parent identity this installation was split from, if any.
-        parent: Option<String>,
     },
     /// Validated remote device id (safe to inline: `[0-9a-z-]` only).
     Device(String),
@@ -1143,23 +1193,9 @@ impl ScopeSql {
     pub(crate) fn resolve(conn: &Connection, scope: &UsageDeviceScope) -> Result<Self, AppError> {
         let kind = match scope {
             UsageDeviceScope::Local => ScopeKind::Local,
-            UsageDeviceScope::All => {
-                let parent: Option<String> = conn
-                    .query_row(
-                        "SELECT parent_device_id FROM usage_sync_identity WHERE id = 1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .optional()?
-                    .flatten()
-                    .filter(|id: &String| {
-                        crate::services::usage_sync::protocol::is_valid_device_id(id)
-                    });
-                ScopeKind::All {
-                    rules: IdentityRules::load(conn)?,
-                    parent,
-                }
-            }
+            UsageDeviceScope::All => ScopeKind::All {
+                rules: IdentityRules::load(conn)?,
+            },
             UsageDeviceScope::Device(id) => {
                 if !crate::services::usage_sync::protocol::is_valid_device_id(id) {
                     return Err(AppError::InvalidInput(format!("invalid device id: {id}")));
@@ -1214,27 +1250,12 @@ impl ScopeSql {
     pub(crate) fn rollup_table(&self) -> String {
         match &self.kind {
             ScopeKind::Local => "usage_daily_rollups".to_string(),
-            ScopeKind::All { rules, parent } => {
-                let local = &rules.local_id;
+            ScopeKind::All { .. } => {
                 // Negative rows carry their group's average latency, so removing
                 // a duplicate leaves the latency average of the group unchanged.
-                // Inherited (id-less) history belongs to the parent while the
-                // parent's data is present on this viewer.
-                let local_inherited = match parent {
-                    Some(parent) => format!(
-                        " UNION ALL \
-                         SELECT i.date, i.app_type, i.provider_id, i.model, i.request_model, \
-                            i.pricing_model, -i.request_count, -i.success_count, -i.input_tokens, \
-                            -i.output_tokens, -i.cache_read_tokens, -i.cache_creation_tokens, \
-                            {INPUT_TOKEN_SEMANTICS_FRESH}, \
-                            CAST(-CAST(i.total_cost_usd AS REAL) AS TEXT), \
-                            COALESCE((SELECT lr.avg_latency_ms FROM usage_daily_rollups lr WHERE lr.date = i.date AND lr.app_type = i.app_type AND lr.provider_id = i.provider_id AND lr.model = i.model AND lr.request_model = i.request_model AND lr.pricing_model = i.pricing_model), 0), NULL, NULL \
-                         FROM usage_sync_inherited i \
-                         WHERE EXISTS (SELECT 1 FROM usage_sync_remote_partitions pp \
-                            WHERE pp.device_id = '{parent}')"
-                    ),
-                    None => String::new(),
-                };
+                // Inherited (id-less) history of copied installations is
+                // subtracted as materialized and bounded by
+                // `refresh_ledger_suppression` (nearest present ancestor).
                 format!(
                     "(SELECT {ROLLUP_UNION_COLUMNS}, NULL AS remote_device_id, \
                         NULL AS remote_provider_name FROM usage_daily_rollups \
@@ -1265,17 +1286,12 @@ impl ScopeSql {
                         ON sc.device_id = c.device_id AND sc.request_id = c.request_id \
                       WHERE c.kind = 0 \
                       UNION ALL \
-                      SELECT ri.date, ri.app_type, ri.provider_id, ri.model, ri.request_model, \
-                        ri.pricing_model, -ri.request_count, -ri.success_count, \
-                        -ri.input_tokens, -ri.output_tokens, -ri.cache_read_tokens, \
-                        -ri.cache_creation_tokens, {INPUT_TOKEN_SEMANTICS_FRESH}, \
-                        CAST(-CAST(ri.total_cost_usd AS REAL) AS TEXT), \
-                        COALESCE((SELECT MAX(rr.avg_latency_ms) FROM usage_sync_remote_rollups rr WHERE rr.device_id = ri.device_id AND rr.date = ri.date AND rr.app_type = ri.app_type AND rr.provider_id = ri.provider_id AND rr.model = ri.model AND rr.request_model = ri.request_model AND rr.pricing_model = ri.pricing_model), 0), ri.device_id, \
-                        ri.provider_name \
-                      FROM usage_sync_remote_inherited ri \
-                      WHERE ri.parent_device_id = '{local}' \
-                         OR EXISTS (SELECT 1 FROM usage_sync_remote_partitions pp \
-                            WHERE pp.device_id = ri.parent_device_id){local_inherited})"
+                      SELECT e.date, e.app_type, e.provider_id, e.model, e.request_model, \
+                        e.pricing_model, -e.request_count, -e.success_count, -e.input_tokens, \
+                        -e.output_tokens, -e.cache_read_tokens, -e.cache_creation_tokens, \
+                        {INPUT_TOKEN_SEMANTICS_FRESH}, CAST(-e.total_cost_usd AS TEXT), \
+                        e.avg_latency_ms, NULLIF(e.device_id, ''), e.provider_name \
+                      FROM usage_sync_inherited_effective e)"
                 )
             }
             ScopeKind::Device(id) => format!(

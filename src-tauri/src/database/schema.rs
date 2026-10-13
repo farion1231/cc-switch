@@ -1712,7 +1712,9 @@ impl Database {
                 ON usage_sync_remote_rollups(date);
              -- Identity ledger of rolled-up requests: what each pruned detail row
              -- contributed to which usage_daily_rollups group. kind 0 = counted,
-             -- kind 1 = alias (suppressed locally as a duplicate of another row).
+             -- kind 1 = alias (dropped locally as the unambiguous 1:1 duplicate of
+             -- one proxy row; published), kind 2 = dropped locally by an ambiguous
+             -- heuristic pairing (never published, never used across devices).
              -- Lets cross-device statistics de-duplicate history by request id.
              CREATE TABLE IF NOT EXISTS usage_rollup_ledger (
                 request_id TEXT PRIMARY KEY,
@@ -1809,6 +1811,31 @@ impl Database {
              CREATE TABLE IF NOT EXISTS usage_sync_remote_multi (
                 request_id TEXT PRIMARY KEY
              ) WITHOUT ROWID;
+             -- Materialized inherited subtraction: for each device ('' = this one)
+             -- and rollup group, how much of its inherited (id-less) history is
+             -- counted by its nearest present ancestor instead. Bounded per
+             -- metric by what the device and that ancestor actually hold in the
+             -- group. Rebuilt with the suppression table.
+             CREATE TABLE IF NOT EXISTS usage_sync_inherited_effective (
+                device_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                provider_name TEXT,
+                model TEXT NOT NULL,
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                request_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd REAL NOT NULL DEFAULT 0,
+                avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (device_id, date, app_type, provider_id, model, request_model,
+                             pricing_model)
+             );
              CREATE TABLE IF NOT EXISTS usage_sync_ledger_suppressed (
                 device_id TEXT NOT NULL,
                 request_id TEXT NOT NULL,
@@ -1816,6 +1843,88 @@ impl Database {
              ) WITHOUT ROWID;",
         )
         .map_err(|error| AppError::Database(format!("创建跨设备用量同步表失败: {error}")))?;
+        // Change versions of month partitions (`m-YYYY-MM`) and of provider
+        // names, maintained by triggers so every write path (rollup, ledger,
+        // cost back-fill, rebuilds, deletes, same-size corrections) invalidates
+        // the export cache without relying on timestamps or row counts.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS usage_sync_partition_versions (
+                partition_key TEXT PRIMARY KEY,
+                version INTEGER NOT NULL DEFAULT 0
+             ) WITHOUT ROWID;
+             CREATE TABLE IF NOT EXISTS usage_sync_export_cache (
+                partition_key TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                detail_level TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                names_version INTEGER NOT NULL,
+                content_sha256 TEXT NOT NULL
+             ) WITHOUT ROWID;",
+        )
+        .map_err(|error| AppError::Database(format!("创建用量导出缓存表失败: {error}")))?;
+        let bump = |key: &str| {
+            format!(
+                "INSERT OR IGNORE INTO usage_sync_partition_versions (partition_key, version)
+                    VALUES ({key}, 0);
+                 UPDATE usage_sync_partition_versions SET version = version + 1
+                    WHERE partition_key = {key};"
+            )
+        };
+        // Old-schema databases being migrated may not have every table yet;
+        // the triggers of a missing table are created by a later
+        // `create_tables` run, and the export cache stays disabled until all
+        // of them exist (see `usage_sync::store::plan_export_skip`).
+        let exists = |table: &str| -> Result<bool, AppError> {
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+                [table],
+                |row| row.get(0),
+            )
+            .map_err(|error| AppError::Database(error.to_string()))
+        };
+        let mut triggers = String::new();
+        for table in [
+            "usage_daily_rollups",
+            "usage_rollup_ledger",
+            "usage_sync_inherited",
+        ] {
+            if !exists(table)? {
+                continue;
+            }
+            let new_key = "'m-' || substr(NEW.date, 1, 7)";
+            let old_key = "'m-' || substr(OLD.date, 1, 7)";
+            triggers.push_str(&format!(
+                "CREATE TRIGGER IF NOT EXISTS usage_sync_version_{table}_ins
+                    AFTER INSERT ON {table} BEGIN {} END;
+                 CREATE TRIGGER IF NOT EXISTS usage_sync_version_{table}_upd
+                    AFTER UPDATE ON {table} BEGIN {} {} END;
+                 CREATE TRIGGER IF NOT EXISTS usage_sync_version_{table}_del
+                    AFTER DELETE ON {table} BEGIN {} END;",
+                bump(new_key),
+                bump(new_key),
+                bump(old_key),
+                bump(old_key),
+            ));
+        }
+        // Provider names are exported in every partition; only changes that
+        // can alter a name (not sort order or settings) invalidate the cache.
+        let providers = exists("providers")?;
+        for (suffix, event) in [
+            ("ins", "INSERT"),
+            ("upd", "UPDATE OF id, app_type, name"),
+            ("del", "DELETE"),
+        ]
+        .into_iter()
+        .filter(|_| providers)
+        {
+            triggers.push_str(&format!(
+                "CREATE TRIGGER IF NOT EXISTS usage_sync_version_providers_{suffix}
+                    AFTER {event} ON providers BEGIN {} END;",
+                bump("'*names'"),
+            ));
+        }
+        conn.execute_batch(&triggers)
+            .map_err(|error| AppError::Database(format!("创建用量版本触发器失败: {error}")))?;
         // Columns added after the first v21 candidate (never released); keep
         // databases created by that candidate compatible.
         for (table, column, ty) in [
@@ -1823,6 +1932,8 @@ impl Database {
             ("usage_sync_identity", "forked_at", "INTEGER"),
             ("usage_sync_devices", "utc_offset_minutes", "INTEGER"),
             ("usage_sync_devices", "parent_device_id", "TEXT"),
+            ("usage_sync_identity", "ancestors", "TEXT"),
+            ("usage_sync_devices", "ancestors", "TEXT"),
         ] {
             Self::add_column_if_missing(conn, table, column, ty)?;
         }

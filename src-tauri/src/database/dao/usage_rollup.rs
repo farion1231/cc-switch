@@ -67,6 +67,20 @@ impl Database {
         let cutoff = compute_local_midnight_cutoff(Local::now(), retain_days)?;
         let conn = lock_conn!(self.conn);
 
+        // Identity-ledger retention runs on every call, also on an idle device
+        // with nothing to roll up, so the 365-day bound holds everywhere.
+        let expired = conn
+            .execute(
+                "DELETE FROM usage_rollup_ledger WHERE date < date('now', 'localtime', ?1)",
+                [format!("-{ROLLUP_LEDGER_RETENTION_DAYS} days")],
+            )
+            .map_err(|e| AppError::Database(format!("Rollup ledger retention failed: {e}")))?;
+        if expired > 0 {
+            if let Err(e) = crate::services::usage_sync::store::refresh_ledger_suppression(&conn) {
+                log::warn!("Refreshing cross-device ledger suppression failed: {e}");
+            }
+        }
+
         // Check if there are any rows to process
         let count: i64 = conn
             .query_row(
@@ -182,8 +196,11 @@ impl Database {
         // Keep the identity of every rolled-up row (what it added to which rollup
         // group), so cross-device statistics can still de-duplicate it after its
         // detail row is gone. Rows the effective filter drops are recorded as
-        // aliases (kind 1): they are counted through another row of this device.
+        // aliases: they are counted through another row of this device.
         let fresh_ledger_input = fresh_input_sql("l");
+        // kind 1 (published alias) only for unambiguous 1:1 pairings; other
+        // heuristic duplicates are kind 2 (dropped here, never published).
+        let unambiguous = crate::services::usage_stats::unambiguous_alias_sql("l");
         let ledger_sql = format!(
             "INSERT OR IGNORE INTO usage_rollup_ledger (
                 request_id, data_source, kind, date, app_type, provider_id, model,
@@ -191,7 +208,7 @@ impl Database {
                 cache_read_tokens, cache_creation_tokens, total_cost_usd, rolled_up_at
              )
              SELECT request_id, data_source,
-                    CASE WHEN eff THEN 0 ELSE 1 END,
+                    CASE WHEN eff THEN 0 WHEN unambiguous THEN 1 ELSE 2 END,
                     d, app_type, provider_id, model, rm, pm,
                     CASE WHEN eff AND status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END,
                     CASE WHEN eff THEN fresh_in ELSE 0 END,
@@ -203,6 +220,7 @@ impl Database {
              FROM (
                 SELECT l.request_id, COALESCE(l.data_source, 'proxy') AS data_source,
                        ({effective_filter}) AS eff,
+                       ({unambiguous}) AS unambiguous,
                        date(l.created_at, 'unixepoch', 'localtime') AS d,
                        l.app_type, l.provider_id, l.model,
                        COALESCE(l.request_model, '') AS rm, COALESCE(l.pricing_model, '') AS pm,

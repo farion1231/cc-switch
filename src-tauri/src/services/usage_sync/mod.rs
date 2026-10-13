@@ -14,6 +14,11 @@ pub(crate) mod worker;
 
 #[cfg(test)]
 mod audit_tests;
+// Independent R2 audit probes, kept verbatim (an unused constant in them is
+// allowed here rather than edited in the file).
+#[cfg(test)]
+#[allow(dead_code)]
+mod audit_tests_r2;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -182,6 +187,8 @@ pub struct DeviceSyncError {
 pub struct UsageSyncReport {
     /// Segments uploaded in this run (unchanged partitions are skipped).
     pub uploaded_partitions: usize,
+    /// Month partitions proven unchanged by the export cache (not re-read).
+    pub cached_partitions: usize,
     pub manifest_written: bool,
     pub upload_error: Option<String>,
     pub identity_conflict: bool,
@@ -209,6 +216,8 @@ impl UsageSyncReport {
 #[derive(Debug, Default)]
 struct UploadOutcome {
     uploaded_partitions: usize,
+    /// Month partitions reused from the export cache without reading them.
+    skipped_partitions: usize,
     manifest_written: bool,
 }
 
@@ -260,14 +269,9 @@ async fn upload_phase(
 ) -> Result<UploadOutcome, AppError> {
     let device_id = identity.device_id.clone();
     let detail_level = options.detail_level;
-    let export = {
-        let device_id = device_id.clone();
-        blocking(db, move |conn| {
-            store::export_local(conn, &device_id, detail_level)
-        })
-        .await?
-    };
 
+    // The own manifest is read first so unchanged month partitions (export
+    // cache + matching remote content hash) are neither read nor re-encoded.
     let remote = read_own_manifest(transport, &device_id).await?;
     if let Some(remote) = &remote {
         let known = [
@@ -278,13 +282,32 @@ async fn upload_phase(
             return Err(identity_conflict_error());
         }
     }
-
     let remote_partitions = remote
         .as_ref()
         .map(|m| m.partitions.clone())
         .unwrap_or_default();
+
+    // Only the row reads hold the database lock; encoding runs on the CPU pool.
+    let export = {
+        let device_id = device_id.clone();
+        let remote_partitions = remote_partitions.clone();
+        blocking(db, move |conn| {
+            let skip = store::plan_export_skip(conn, &device_id, detail_level, &remote_partitions)?;
+            store::export_local_except(conn, &device_id, detail_level, &skip)
+        })
+        .await?
+    };
+
     let mut outcome = UploadOutcome::default();
     let mut partitions: BTreeMap<String, PartitionMeta> = BTreeMap::new();
+    for key in &export.skipped {
+        if let Some(meta) = remote_partitions.get(key) {
+            partitions.insert(key.clone(), meta.clone());
+        }
+    }
+    outcome.skipped_partitions = export.skipped.len();
+    let versions = export.versions.clone();
+    let names_version = export.names_version;
 
     let coverage = export.coverage.clone();
     let encoded_parts = cpu(move || {
@@ -304,6 +327,14 @@ async fn upload_phase(
     })
     .await?;
 
+    let cache_entries: Vec<(String, i64, String)> = encoded_parts
+        .iter()
+        .filter_map(|(key, _, _, encoded)| {
+            versions
+                .get(key)
+                .map(|version| (key.clone(), *version, encoded.content_sha256.clone()))
+        })
+        .collect();
     for (key, log_count, rollup_count, encoded) in encoded_parts {
         let key = &key;
         if let Some(existing) = remote_partitions
@@ -431,6 +462,11 @@ async fn upload_phase(
         .map(|parent| protocol::Lineage {
             parent_device_id: parent.clone(),
             forked_at: identity.forked_at.unwrap_or_default(),
+            ancestors: if protocol::is_valid_ancestry(&device_id, parent, &identity.ancestors) {
+                identity.ancestors.clone()
+            } else {
+                vec![parent.clone()]
+            },
         });
     let needs_write = match &remote {
         None => true,
@@ -446,6 +482,16 @@ async fn upload_phase(
                 || options.now - remote.updated_at >= HEARTBEAT_SECS
         }
     };
+    // Safe before the manifest write: a cache entry is only used while the
+    // remote manifest references the same content hash.
+    {
+        let device_id = device_id.clone();
+        let level = options.detail_level;
+        blocking(db, move |conn| {
+            store::record_export_cache(conn, &device_id, level, names_version, &cache_entries)
+        })
+        .await?;
+    }
     if !needs_write {
         return Ok(outcome);
     }
@@ -682,6 +728,7 @@ pub(crate) async fn sync_with(
     match upload_phase(db, transport, options, &identity).await {
         Ok(outcome) => {
             report.uploaded_partitions = outcome.uploaded_partitions;
+            report.cached_partitions = outcome.skipped_partitions;
             report.manifest_written = outcome.manifest_written;
         }
         Err(error) => {

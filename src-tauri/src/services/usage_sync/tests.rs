@@ -104,6 +104,10 @@ impl Device {
         self.summary(scope).total_requests
     }
 
+    fn id_unlocked(&self, conn: &rusqlite::Connection) -> String {
+        store::load_or_create_identity(conn).unwrap().device_id
+    }
+
     fn remote_device(&self, device_id: &str) -> Option<store::RemoteDeviceInfo> {
         let conn = self.db.conn.lock().unwrap();
         store::list_remote_devices(&conn)
@@ -1176,6 +1180,9 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
         "usage_sync_remote_inherited",
         "usage_sync_ledger_suppressed",
         "usage_sync_remote_multi",
+        "usage_sync_inherited_effective",
+        "usage_sync_partition_versions",
+        "usage_sync_export_cache",
         "usage_sync_inherited",
         "usage_rollup_ledger",
     ] {
@@ -1203,6 +1210,9 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
         "usage_sync_remote_inherited",
         "usage_sync_ledger_suppressed",
         "usage_sync_remote_multi",
+        "usage_sync_inherited_effective",
+        "usage_sync_partition_versions",
+        "usage_sync_export_cache",
         "usage_sync_inherited",
         "usage_rollup_ledger",
     ] {
@@ -1214,6 +1224,15 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
         |row| row.get(0),
     )?;
     assert_eq!(kept, 1, "local usage untouched by the migration");
+    // All export-cache version triggers exist after the migration (the
+    // cache is disabled otherwise).
+    let triggers: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'trigger' AND name LIKE 'usage_sync_version_%'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(triggers, 12);
     // Idempotent re-run.
     Database::create_usage_sync_tables(&conn)?;
     Ok(())
@@ -2235,4 +2254,905 @@ async fn shared_request_rolled_up_after_it_was_already_synced_counts_once() {
     a.db.rollup_and_prune(30).unwrap();
     sync_all(&cloud, &[&a, &b, &c]).await;
     assert_all_viewers(&[&a, &b, &c], 3, "0.350000");
+}
+
+// ─── R2 corrective regressions ───────────────────────────────
+
+#[tokio::test]
+async fn expired_shared_history_is_symmetric_and_reported() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    let old = (chrono::Local::now() - chrono::Duration::days(370))
+        .format("%Y-%m-%d")
+        .to_string();
+    for device in [&a, &b] {
+        device
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute_batch(&format!(
+                "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_model,
+                    pricing_model, request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, input_token_semantics,
+                    total_cost_usd, avg_latency_ms)
+                 VALUES ('{old}', 'claude', 'prov', 'm', '', '', 1, 1, 100, 10, 0, 0, 2, '0.05', 100);
+                 INSERT INTO usage_rollup_ledger (request_id, data_source, kind, date, app_type,
+                    provider_id, model, request_model, pricing_model, success, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd,
+                    rolled_up_at)
+                 VALUES ('session:ancient', 'session_log', 0, '{old}', 'claude', 'prov', 'm', '',
+                    '', 1, 100, 10, 0, 0, '0.05', 0);"
+            ))
+            .unwrap();
+    }
+    // A has new rows to roll up, B is idle: retention must run on both.
+    a.log("a-new", "proxy", days_ago(40), "m", 100, 10, "0.01", 200);
+    assert_eq!(a.db.rollup_and_prune(30).unwrap(), 1);
+    assert_eq!(b.db.rollup_and_prune(30).unwrap(), 0);
+    for device in [&a, &b] {
+        let conn = device.db.conn.lock().unwrap();
+        let left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM usage_rollup_ledger WHERE request_id = 'session:ancient'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0, "{} kept an expired ledger entry", device.name);
+    }
+    sync_all(&cloud, &[&a, &b]).await;
+    // Same answer on both viewers; the expired copy is reported on both sides.
+    assert_all_viewers(&[&a, &b], 3, "0.110000");
+    let local_a = {
+        let conn = a.db.conn.lock().unwrap();
+        store::local_unverified(&conn).unwrap()
+    };
+    assert_eq!(local_a.requests, 1);
+    assert_eq!(a.remote_device(&b.id()).unwrap().unverified.requests, 1);
+}
+
+#[tokio::test]
+async fn retention_boundary_keeps_day_365_and_drops_day_366() {
+    let a = Device::new("A");
+    let day = |n: i64| {
+        (chrono::Local::now() - chrono::Duration::days(n))
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+    {
+        let conn = a.db.conn.lock().unwrap();
+        for (id, date) in [("keep", day(365)), ("drop", day(366))] {
+            conn.execute(
+                "INSERT INTO usage_rollup_ledger (request_id, data_source, kind, date, app_type,
+                    provider_id, model, success, total_cost_usd, rolled_up_at)
+                 VALUES (?1, 'proxy', 0, ?2, 'claude', 'p', 'm', 1, '0.01', 0)",
+                params![id, date],
+            )
+            .unwrap();
+        }
+    }
+    // Nothing to roll up: retention still applies.
+    assert_eq!(a.db.rollup_and_prune(30).unwrap(), 0);
+    let conn = a.db.conn.lock().unwrap();
+    let ids: Vec<String> = conn
+        .prepare("SELECT request_id FROM usage_rollup_ledger")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(ids, vec!["keep".to_string()]);
+}
+
+/// Seeds history like the R2 probes: 5 ledger-covered + 1 recent + 4 legacy (id-less).
+fn seed_with_legacy(device: &Device) {
+    seed_history(device);
+    let date = (chrono::Local::now() - chrono::Duration::days(60))
+        .format("%Y-%m-%d")
+        .to_string();
+    device
+        .db
+        .conn
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_model,
+                pricing_model, request_count, success_count, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, input_token_semantics, total_cost_usd,
+                avg_latency_ms)
+             VALUES (?1, 'claude', 'prov-1', 'legacy', '', '', 4, 4, 400, 40, 0, 0, 2, '0.04', 100)",
+            [date],
+        )
+        .unwrap();
+}
+
+fn legacy_group(device: &Device) -> Option<(u64, String)> {
+    device
+        .db
+        .get_model_stats_scoped(None, None, None, None, None, &UsageDeviceScope::All)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.model == "legacy")
+        .map(|m| (m.request_count, m.total_cost))
+}
+
+#[tokio::test]
+async fn codex_rebuild_on_a_copy_never_cancels_the_parents_history() {
+    let cloud = remote();
+    let a = Device::new("Original");
+    let viewer = Device::new("Viewer");
+    seed_with_legacy(&a);
+    // Legacy Codex session history (id-less) on the original as well.
+    {
+        let conn = a.db.conn.lock().unwrap();
+        let date = (chrono::Local::now() - chrono::Duration::days(70))
+            .format("%Y-%m-%d")
+            .to_string();
+        conn.execute(
+            "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_model,
+                pricing_model, request_count, success_count, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, input_token_semantics, total_cost_usd,
+                avg_latency_ms)
+             VALUES (?1, 'codex', '_codex_session', 'gpt', '', '', 3, 3, 30, 3, 0, 0, 2, '0.03', 50)",
+            [date],
+        )
+        .unwrap();
+    }
+    a.sync(&cloud).await;
+    let clone = Device::new("Clone");
+    copy_installation(&a, &clone);
+    a.log(
+        "a-after",
+        "proxy",
+        days_ago(0) - 600,
+        "m",
+        10,
+        1,
+        "0.01",
+        200,
+    );
+    fork_after_conflict(&cloud, &a, &clone).await;
+    sync_all(&cloud, &[&a, &clone, &viewer]).await;
+    // 5 + recent + 4 legacy + 3 codex legacy + a-after.
+    assert_all_viewers(&[&a, &clone, &viewer], 14, "0.140000");
+
+    // The copy rebuilds its Codex usage (deletes its Codex rollups).
+    clone.db.reset_codex_usage().unwrap();
+    {
+        let conn = clone.db.conn.lock().unwrap();
+        let left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM usage_sync_inherited WHERE provider_id = '_codex_session'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0, "inherited Codex rows dropped with the rollups");
+        let other: i64 = conn
+            .query_row("SELECT COUNT(*) FROM usage_sync_inherited", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(other > 0, "unrelated inherited sources are kept");
+    }
+    // Before and after the copy republishes: never below the parent's history.
+    assert_all_viewers(&[&a, &clone], 14, "0.140000");
+    sync_all(&cloud, &[&a, &clone, &viewer]).await;
+    assert_all_viewers(&[&a, &clone, &viewer], 14, "0.140000");
+    for viewer in [&a, &clone, &viewer] {
+        assert_eq!(legacy_group(viewer), Some((4, "0.040000".to_string())));
+    }
+}
+
+#[tokio::test]
+async fn inherited_subtraction_is_bounded_by_what_the_ancestor_still_holds() {
+    let cloud = remote();
+    let a = Device::new("Original");
+    let viewer = Device::new("Viewer");
+    seed_with_legacy(&a);
+    a.sync(&cloud).await;
+    let clone = Device::new("Clone");
+    copy_installation(&a, &clone);
+    a.log(
+        "a-after",
+        "proxy",
+        days_ago(0) - 600,
+        "m",
+        10,
+        1,
+        "0.01",
+        200,
+    );
+    fork_after_conflict(&cloud, &a, &clone).await;
+    sync_all(&cloud, &[&a, &clone, &viewer]).await;
+    assert_all_viewers(&[&a, &clone, &viewer], 11, "0.110000");
+    // The parent loses its legacy rows (cleanup); the copy still has them.
+    a.db.conn
+        .lock()
+        .unwrap()
+        .execute("DELETE FROM usage_daily_rollups WHERE model = 'legacy'", [])
+        .unwrap();
+    sync_all(&cloud, &[&a, &clone, &viewer]).await;
+    // The copy now carries the 4 legacy requests: still 11, never 7.
+    assert_all_viewers(&[&a, &clone, &viewer], 11, "0.110000");
+    for device in [&a, &clone, &viewer] {
+        assert_eq!(legacy_group(device), Some((4, "0.040000".to_string())));
+    }
+}
+
+/// A → B → C, each a copied installation that took a new identity; hide,
+/// restore and retire the middle device; the root keeps working.
+#[tokio::test]
+async fn lineage_chain_survives_hidden_restored_and_retired_middle_devices() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let v1 = Device::new("V1");
+    let v2 = Device::new("V2");
+    seed_with_legacy(&a);
+    a.sync(&cloud).await;
+    let b = Device::new("B");
+    copy_installation(&a, &b);
+    a.log("a-1", "proxy", days_ago(0) - 900, "m", 10, 1, "0.01", 200);
+    fork_after_conflict(&cloud, &a, &b).await;
+    let c = Device::new("C");
+    copy_installation(&b, &c);
+    b.log("b-1", "proxy", days_ago(0) - 800, "m", 10, 1, "0.01", 200);
+    fork_after_conflict(&cloud, &b, &c).await;
+    c.log("c-1", "proxy", days_ago(0) - 700, "m", 10, 1, "0.01", 200);
+    let all = [&a, &b, &c, &v1, &v2];
+    sync_all(&cloud, &all).await;
+    // 10 seeded + a-1 + b-1 + c-1.
+    assert_all_viewers(&all, 13, "0.130000");
+    {
+        let conn = c.db.conn.lock().unwrap();
+        let identity = store::load_or_create_identity(&conn).unwrap();
+        assert_eq!(identity.ancestors, vec![b.id(), a.id()]);
+    }
+
+    // Hide the middle device on two viewers: its own b-1 leaves, history stays once.
+    for viewer in [&v1, &v2] {
+        let conn = viewer.db.conn.lock().unwrap();
+        store::set_device_hidden(&conn, &b.id(), true).unwrap();
+    }
+    assert_all_viewers(&[&v1, &v2], 12, "0.120000");
+    for viewer in [&v1, &v2] {
+        assert_eq!(legacy_group(viewer), Some((4, "0.040000".to_string())));
+    }
+    // Restore it.
+    for viewer in [&v1, &v2] {
+        let conn = viewer.db.conn.lock().unwrap();
+        store::set_device_hidden(&conn, &b.id(), false).unwrap();
+    }
+    sync_all(&cloud, &all).await;
+    assert_all_viewers(&all, 13, "0.130000");
+
+    // The root keeps producing requests.
+    a.log("a-2", "proxy", days_ago(0) - 600, "m", 10, 1, "0.01", 200);
+    sync_all(&cloud, &all).await;
+    assert_all_viewers(&all, 14, "0.140000");
+
+    // Retire the root on every viewer: the chain's next holder carries history.
+    for viewer in [&b, &c, &v1, &v2] {
+        let conn = viewer.db.conn.lock().unwrap();
+        store::set_device_hidden(&conn, &a.id(), true).unwrap();
+    }
+    // a-1 and a-2 lived only on A.
+    assert_all_viewers(&[&b, &c, &v1, &v2], 12, "0.120000");
+
+    // The middle device's directory disappears (deleted remotely): C carries it.
+    for key in cloud.keys() {
+        if key.contains(&b.id()) {
+            cloud.delete(&key).unwrap();
+        }
+    }
+    for viewer in [&v1, &v2] {
+        let conn = viewer.db.conn.lock().unwrap();
+        store::set_device_hidden(&conn, &b.id(), true).unwrap();
+    }
+    sync_all(&cloud, &[&c, &v1, &v2]).await;
+    // b-1 leaves with B; seeded history (10) and c-1 remain once.
+    assert_all_viewers(&[&v1, &v2], 11, "0.110000");
+}
+
+#[test]
+fn malformed_or_cyclic_ancestry_is_rejected() {
+    use protocol::is_valid_ancestry;
+    let me = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    let p = "1f8fad5b-d9cb-469f-a165-70867728950e";
+    let q = "2f8fad5b-d9cb-469f-a165-70867728950e";
+    assert!(is_valid_ancestry(me, p, &[p.into(), q.into()]));
+    assert!(is_valid_ancestry(me, p, &[]));
+    assert!(
+        !is_valid_ancestry(me, p, &[q.into(), p.into()]),
+        "must start with parent"
+    );
+    assert!(
+        !is_valid_ancestry(me, p, &[p.into(), me.into()]),
+        "cycle through self"
+    );
+    assert!(
+        !is_valid_ancestry(me, p, &[p.into(), q.into(), q.into()]),
+        "repeat"
+    );
+    assert!(
+        !is_valid_ancestry(me, p, &[p.into(), "../x".into()]),
+        "bad id"
+    );
+    let long: Vec<String> = (0..=protocol::MAX_LINEAGE_DEPTH)
+        .map(|i| format!("{i:08x}-d9cb-469f-a165-70867728950e"))
+        .collect();
+    assert!(!is_valid_ancestry(me, &long[0], &long), "too deep");
+}
+
+#[tokio::test]
+async fn consecutive_resets_keep_the_published_ancestor_and_mid_publish_extends_it() {
+    let cloud = remote();
+    let a = Device::new("A");
+    seed_with_legacy(&a);
+    a.sync(&cloud).await;
+    let b = Device::new("B");
+    copy_installation(&a, &b);
+    a.log(
+        "a-after",
+        "proxy",
+        days_ago(0) - 600,
+        "m",
+        10,
+        1,
+        "0.01",
+        200,
+    );
+    a.sync(&cloud).await;
+    assert!(b.sync(&cloud).await.identity_conflict);
+    let reset = |device: &Device| {
+        let conn = device.db.conn.lock().unwrap();
+        store::reset_identity(&conn).unwrap()
+    };
+    let first = reset(&b);
+    let second = reset(&b); // `first` never published
+    assert_eq!(second.ancestors, vec![a.id()]);
+    assert_ne!(first.device_id, second.device_id);
+    // Publish, then reset again: now the published identity is the parent.
+    b.sync(&cloud).await;
+    let third = reset(&b);
+    assert_eq!(third.ancestors, vec![second.device_id.clone(), a.id()]);
+    let viewer = Device::new("Viewer");
+    sync_all(&cloud, &[&a, &b, &viewer]).await;
+    // second's directory still holds the copied history too: counted once.
+    assert_all_viewers(&[&a, &b, &viewer], 11, "0.110000");
+}
+
+// ─── R2: heuristic aliases (P3-R2-4) ─────────────────────────
+
+fn published_aliases(cloud: &MemoryStore, device: &Device) -> Vec<String> {
+    let manifest = read_manifest(cloud, &device.id());
+    let mut ids = Vec::new();
+    for meta in manifest.partitions.values() {
+        let bytes = cloud
+            .get(
+                &protocol::object_path(&device.id(), &meta.object),
+                usize::MAX,
+            )
+            .unwrap()
+            .unwrap();
+        let segment = protocol::decode_segment(&bytes, meta).unwrap();
+        ids.extend(segment.aliases.into_iter().map(|a| a.request_id));
+        ids.extend(
+            segment
+                .ledger
+                .into_iter()
+                .filter(|l| l.kind == protocol::LEDGER_KIND_ALIAS)
+                .map(|l| l.request_id),
+        );
+    }
+    ids.sort();
+    ids
+}
+
+#[tokio::test]
+async fn ambiguous_heuristic_pairings_stay_local_and_never_hide_other_devices_requests() {
+    for rolled_up in [false, true] {
+        let cloud = remote();
+        let a = Device::new("A");
+        let b = Device::new("B");
+        let c = Device::new("C");
+        let at = days_ago(40);
+        // On A two proxy calls look exactly like the session line (same tokens,
+        // model, inside the window): the local heuristic drops the session row,
+        // but it cannot know which call it was, or whether it was either.
+        a.log("proxy-1", "proxy", at, "m", 100, 10, "0.05", 200);
+        a.log("proxy-2", "proxy", at + 30, "m", 100, 10, "0.05", 200);
+        a.log(
+            "session:s",
+            "session_log",
+            at + 10,
+            "m",
+            100,
+            10,
+            "0.05",
+            200,
+        );
+        b.log(
+            "session:s",
+            "session_log",
+            at + 10,
+            "m",
+            100,
+            10,
+            "0.05",
+            200,
+        );
+        assert_eq!(a.total_requests(UsageDeviceScope::Local), 2);
+        if rolled_up {
+            a.db.rollup_and_prune(30).unwrap();
+            let kind: i64 =
+                a.db.conn
+                    .lock()
+                    .unwrap()
+                    .query_row(
+                        "SELECT kind FROM usage_rollup_ledger WHERE request_id = 'session:s'",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+            assert_eq!(kind, 2, "ambiguous duplicate is local-only");
+        }
+        sync_all(&cloud, &[&a, &b, &c]).await;
+        assert!(
+            published_aliases(&cloud, &a).is_empty(),
+            "no alias published"
+        );
+        // B's session row is not suppressed by A's guess: the pair is counted
+        // as "not detectable" (both A's calls and B's session line).
+        assert_all_viewers(&[&a, &b, &c], 3, "0.150000");
+    }
+}
+
+#[tokio::test]
+async fn one_session_matching_two_proxy_or_two_sessions_matching_one_proxy_are_ambiguous() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let at = days_ago(5);
+    // One proxy call, two indistinguishable session lines.
+    a.log("proxy-x", "proxy", at, "m", 100, 10, "0.05", 200);
+    a.log(
+        "session:x1",
+        "session_log",
+        at + 5,
+        "m",
+        100,
+        10,
+        "0.05",
+        200,
+    );
+    a.log(
+        "session:x2",
+        "session_log",
+        at + 6,
+        "m",
+        100,
+        10,
+        "0.05",
+        200,
+    );
+    a.sync(&cloud).await;
+    assert!(published_aliases(&cloud, &a).is_empty());
+}
+
+#[tokio::test]
+async fn unambiguous_pairing_is_published_and_counted_once_fleet_wide() {
+    for rolled_up in [false, true] {
+        let cloud = remote();
+        let a = Device::new("A");
+        let b = Device::new("B");
+        let c = Device::new("C");
+        let at = days_ago(40);
+        a.log("proxy-1", "proxy", at, "m", 100, 10, "0.05", 200);
+        a.log(
+            "session:s",
+            "session_log",
+            at + 5,
+            "m",
+            100,
+            10,
+            "0.05",
+            200,
+        );
+        b.log(
+            "session:s",
+            "session_log",
+            at + 5,
+            "m",
+            100,
+            10,
+            "0.05",
+            200,
+        );
+        if rolled_up {
+            a.db.rollup_and_prune(30).unwrap();
+        }
+        sync_all(&cloud, &[&a, &b, &c]).await;
+        assert_eq!(published_aliases(&cloud, &a), vec!["session:s".to_string()]);
+        assert_all_viewers(&[&a, &b, &c], 1, "0.050000");
+    }
+}
+
+// ─── R2: incremental export (P3-R2-2) ────────────────────────
+
+/// The published manifest must always equal what a full, uncached export
+/// would publish (same partitions, same content hashes).
+fn assert_manifest_is_full_export(device: &Device, cloud: &MemoryStore) {
+    let device_id = device.id();
+    let manifest = read_manifest(cloud, &device_id);
+    let full = {
+        let conn = device.db.conn.lock().unwrap();
+        store::export_local(&conn, &device_id, device.detail_level).unwrap()
+    };
+    let expected: std::collections::BTreeMap<String, String> = full
+        .partitions
+        .iter()
+        .map(|(key, segment)| {
+            (
+                key.clone(),
+                protocol::encode_segment(segment).unwrap().content_sha256,
+            )
+        })
+        .collect();
+    let published: std::collections::BTreeMap<String, String> = manifest
+        .partitions
+        .iter()
+        .map(|(key, meta)| (key.clone(), meta.content_sha256.clone()))
+        .collect();
+    assert_eq!(published, expected);
+    assert_eq!(manifest.coverage, full.coverage);
+}
+
+fn seed_three_months(device: &Device) {
+    for (i, days) in [100i64, 70, 40].into_iter().enumerate() {
+        for j in 0..3 {
+            device.log(
+                &format!("m{i}-{j}"),
+                "proxy",
+                days_ago(days) + j * 60,
+                "model-x",
+                100,
+                10,
+                "0.10",
+                200,
+            );
+        }
+    }
+    device.db.rollup_and_prune(30).unwrap();
+}
+
+fn month_count(device: &Device) -> usize {
+    let conn = device.db.conn.lock().unwrap();
+    conn.query_row(
+        "SELECT COUNT(DISTINCT substr(date, 1, 7)) FROM usage_daily_rollups",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .unwrap() as usize
+}
+
+fn exec(device: &Device, sql: &str) {
+    device.db.conn.lock().unwrap().execute_batch(sql).unwrap();
+}
+
+#[tokio::test]
+async fn export_cache_skips_unchanged_months_and_catches_every_change() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    seed_three_months(&a);
+    let months = month_count(&a);
+    assert!(months >= 2, "history spans several months");
+
+    let first = a.sync(&cloud).await;
+    assert_eq!(first.cached_partitions, 0, "nothing cached on first sync");
+    assert_manifest_is_full_export(&a, &cloud);
+    let again = a.sync(&cloud).await;
+    assert_eq!(again.cached_partitions, months);
+    assert_eq!(again.uploaded_partitions, 0);
+    assert_manifest_is_full_export(&a, &cloud);
+    b.sync(&cloud).await;
+    assert_eq!(b.total_requests(UsageDeviceScope::All), 9);
+
+    let oldest: String =
+        a.db.conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT MIN(date) FROM usage_daily_rollups", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+    let oldest_month = &oldest[..7];
+
+    // 1. Same-row-count price correction with no timestamp change.
+    exec(
+        &a,
+        &format!(
+            "UPDATE usage_daily_rollups SET total_cost_usd = '0.90'
+             WHERE substr(date, 1, 7) = '{oldest_month}'"
+        ),
+    );
+    let report = a.sync(&cloud).await;
+    assert_eq!(report.cached_partitions, months - 1);
+    assert_eq!(report.uploaded_partitions, 1);
+    assert_manifest_is_full_export(&a, &cloud);
+    b.sync(&cloud).await;
+    assert_eq!(
+        b.summary(UsageDeviceScope::All).total_cost,
+        "1.500000",
+        "0.90 + 2 × 0.30"
+    );
+
+    // 2. Ledger-only correction (the rollup row itself is untouched).
+    exec(
+        &a,
+        &format!(
+            "UPDATE usage_rollup_ledger SET total_cost_usd = '0.11'
+             WHERE substr(date, 1, 7) = '{oldest_month}'"
+        ),
+    );
+    let report = a.sync(&cloud).await;
+    assert_eq!(report.cached_partitions, months - 1);
+    assert_manifest_is_full_export(&a, &cloud);
+
+    // 3. Delete + identical rebuild (Codex-style): re-read, nothing uploaded.
+    exec(
+        &a,
+        &format!(
+            "CREATE TEMP TABLE keep AS SELECT * FROM usage_daily_rollups
+                WHERE substr(date, 1, 7) = '{oldest_month}';
+             DELETE FROM usage_daily_rollups WHERE substr(date, 1, 7) = '{oldest_month}';
+             INSERT INTO usage_daily_rollups SELECT * FROM keep;
+             DROP TABLE keep;"
+        ),
+    );
+    let report = a.sync(&cloud).await;
+    assert_eq!(report.cached_partitions, months - 1);
+    assert_eq!(report.uploaded_partitions, 0, "identical content");
+    assert_manifest_is_full_export(&a, &cloud);
+
+    // 4. Deleting a whole month removes its partition everywhere.
+    exec(
+        &a,
+        &format!(
+            "DELETE FROM usage_daily_rollups WHERE substr(date, 1, 7) = '{oldest_month}';
+             DELETE FROM usage_rollup_ledger WHERE substr(date, 1, 7) = '{oldest_month}';"
+        ),
+    );
+    a.sync(&cloud).await;
+    assert_manifest_is_full_export(&a, &cloud);
+    b.sync(&cloud).await;
+    assert_eq!(b.total_requests(UsageDeviceScope::All), 6);
+
+    // 5. A provider rename changes every partition's provider name.
+    exec(
+        &a,
+        "INSERT INTO providers (id, app_type, name, settings_config, meta)
+         VALUES ('prov-1', 'claude', 'Renamed', '{}', '{}')",
+    );
+    let report = a.sync(&cloud).await;
+    assert_eq!(report.cached_partitions, 0);
+    assert_manifest_is_full_export(&a, &cloud);
+    // Unrelated provider updates (sort order) keep the cache.
+    exec(
+        &a,
+        "UPDATE providers SET sort_index = 3 WHERE id = 'prov-1'",
+    );
+    let report = a.sync(&cloud).await;
+    assert_eq!(report.cached_partitions, months - 1);
+    b.sync(&cloud).await;
+    let providers =
+        b.db.get_provider_stats_scoped(None, None, None, None, None, &UsageDeviceScope::All)
+            .unwrap();
+    assert!(providers.iter().all(|p| p.provider_name == "Renamed"));
+
+    // 6. A remote manifest that no longer references the cached content
+    //    (lost objects, restored remote) forces a full re-export.
+    {
+        let manifest = read_manifest(&cloud, &a.id());
+        let mut objects = cloud.objects.lock().unwrap();
+        for meta in manifest.partitions.values() {
+            objects.retain(|path, _| !path.ends_with(&meta.object));
+        }
+    }
+    exec(
+        &a,
+        "UPDATE usage_sync_export_cache SET content_sha256 = 'stale'",
+    );
+    let report = a.sync(&cloud).await;
+    assert_eq!(report.cached_partitions, 0);
+    assert_manifest_is_full_export(&a, &cloud);
+
+    // 7. Switching the detail level never reuses entries of the other level.
+    let mut daily = Device::new("A");
+    daily.db = a.db.clone();
+    daily.detail_level = UsageSyncDetailLevel::Daily;
+    let report = daily.sync(&cloud).await;
+    assert_eq!(report.cached_partitions, 0);
+    assert_manifest_is_full_export(&daily, &cloud);
+
+    // 8. A missing version trigger disables the cache entirely.
+    daily.sync(&cloud).await;
+    exec(
+        &a,
+        "DROP TRIGGER usage_sync_version_usage_daily_rollups_upd",
+    );
+    exec(&a, "UPDATE usage_daily_rollups SET total_cost_usd = '0.77'");
+    let report = daily.sync(&cloud).await;
+    assert_eq!(report.cached_partitions, 0);
+    assert_manifest_is_full_export(&daily, &cloud);
+}
+
+#[tokio::test]
+async fn export_cache_follows_inherited_history_and_late_rollups() {
+    let cloud = remote();
+    let a = Device::new("A");
+    seed_three_months(&a);
+    a.sync(&cloud).await;
+    // Inherited rows (identity reset snapshot) belong to month partitions too.
+    exec(
+        &a,
+        "INSERT INTO usage_sync_inherited (date, app_type, provider_id, model,
+                request_model, pricing_model, request_count, success_count, input_tokens,
+                output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd)
+             SELECT date, app_type, provider_id, model, request_model, pricing_model, 1, 1,
+                    1, 1, 0, 0, '0.01'
+             FROM usage_daily_rollups WHERE date = (SELECT MAX(date) FROM usage_daily_rollups)",
+    );
+    let report = a.sync(&cloud).await;
+    assert_eq!(report.cached_partitions, month_count(&a) - 1);
+    assert_manifest_is_full_export(&a, &cloud);
+    // A late rollup into an existing month (offline device catching up).
+    a.log("late", "proxy", days_ago(41), "model-x", 1, 1, "0.01", 200);
+    a.db.rollup_and_prune(30).unwrap();
+    a.sync(&cloud).await;
+    assert_manifest_is_full_export(&a, &cloud);
+    let again = a.sync(&cloud).await;
+    assert_eq!(again.cached_partitions, month_count(&a));
+}
+
+/// Bulk history: `rows` rolled-up requests spread over the last 360 days
+/// (ledger + matching rollup groups), written through the version triggers.
+fn seed_bulk_history(device: &Device, rows: i64) {
+    let conn = device.db.conn.lock().unwrap();
+    conn.execute(
+        "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i + 1 < ?1)
+         INSERT INTO usage_rollup_ledger (request_id, data_source, kind, date, app_type,
+            provider_id, model, success, input_tokens, output_tokens, total_cost_usd,
+            rolled_up_at)
+         SELECT printf('req-%08d-0123456789abcdef', i), 'proxy', 0,
+                date('now', 'localtime', '-' || (31 + i % 330) || ' days'), 'claude',
+                'prov-' || (i % 7), 'model-' || (i % 11), 1, 1000, 200, '0.0123', 0
+         FROM n",
+        [rows],
+    )
+    .unwrap();
+    conn.execute_batch(
+        "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count,
+            success_count, input_tokens, output_tokens, input_token_semantics,
+            total_cost_usd, avg_latency_ms)
+         SELECT date, app_type, provider_id, model, COUNT(*), COUNT(*), SUM(input_tokens),
+                SUM(output_tokens), 2, CAST(COUNT(*) * 0.0123 AS TEXT), 900
+         FROM usage_rollup_ledger GROUP BY date, app_type, provider_id, model;",
+    )
+    .unwrap();
+}
+
+/// Database-lock time of the export step exactly as `upload_phase` runs it.
+fn timed_export_lock(device: &Device, cloud: &MemoryStore) -> (std::time::Duration, usize) {
+    let device_id = device.id();
+    let remote = protocol::parse_manifest(
+        &cloud
+            .get(&manifest_path(&device_id), usize::MAX)
+            .unwrap()
+            .unwrap_or_default(),
+    )
+    .map(|m| m.partitions)
+    .unwrap_or_default();
+    let conn = device.db.conn.lock().unwrap();
+    let started = std::time::Instant::now();
+    let skip = store::plan_export_skip(&conn, &device_id, device.detail_level, &remote).unwrap();
+    let export = store::export_local_except(&conn, &device_id, device.detail_level, &skip).unwrap();
+    (started.elapsed(), export.partitions.len())
+}
+
+/// `USAGE_SYNC_PERF_ROWS` (default 300000) rolled-up requests on one device:
+/// trigger overhead on bulk writes, cold vs. cached export lock time and
+/// sync time, and the cost of a single historic price correction.
+#[tokio::test]
+#[ignore]
+async fn perf_incremental_export() {
+    let rows: i64 = std::env::var("USAGE_SYNC_PERF_ROWS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300_000);
+    let cloud = remote();
+    let a = Device::new("A");
+    let t = std::time::Instant::now();
+    seed_bulk_history(&a, rows);
+    let seed_with = t.elapsed();
+    let plain = Device::new("Plain");
+    exec(
+        &plain,
+        "DROP TRIGGER usage_sync_version_usage_rollup_ledger_ins;
+         DROP TRIGGER usage_sync_version_usage_daily_rollups_ins;",
+    );
+    let t = std::time::Instant::now();
+    seed_bulk_history(&plain, rows);
+    let seed_without = t.elapsed();
+
+    let (cold_lock, parts) = timed_export_lock(&a, &cloud);
+    let t = std::time::Instant::now();
+    let first = a.sync(&cloud).await;
+    let cold_sync = t.elapsed();
+    let (warm_lock, warm_parts) = timed_export_lock(&a, &cloud);
+    let t = std::time::Instant::now();
+    let warm = a.sync(&cloud).await;
+    let warm_sync = t.elapsed();
+    assert_eq!(warm.cached_partitions, parts);
+    assert_eq!(warm_parts, 0);
+
+    exec(
+        &a,
+        "UPDATE usage_rollup_ledger SET total_cost_usd = '0.0200'
+         WHERE date = (SELECT MIN(date) FROM usage_rollup_ledger)",
+    );
+    let (one_lock, one_parts) = timed_export_lock(&a, &cloud);
+    let t = std::time::Instant::now();
+    let one = a.sync(&cloud).await;
+    let one_sync = t.elapsed();
+    assert_eq!(one_parts, 1);
+    assert_eq!(one.uploaded_partitions, 1);
+    assert_manifest_is_full_export(&a, &cloud);
+    let remote_bytes: usize = cloud.objects.lock().unwrap().values().map(Vec::len).sum();
+    println!(
+        "rows={rows} month partitions={parts} remote bytes={remote_bytes}\n\
+         bulk insert with version triggers={seed_with:?} without={seed_without:?}\n\
+         cold: export lock={cold_lock:?} sync={cold_sync:?} uploaded={}\n\
+         unchanged: export lock={warm_lock:?} sync={warm_sync:?} cached={}\n\
+         one-month price correction: export lock={one_lock:?} sync={one_sync:?} cached={}",
+        first.uploaded_partitions, warm.cached_partitions, one.cached_partitions
+    );
+}
+
+#[tokio::test]
+async fn export_by_month_ranges_ignores_malformed_dates_without_overlap() {
+    let cloud = remote();
+    let a = Device::new("A");
+    seed_three_months(&a);
+    let before = {
+        let conn = a.db.conn.lock().unwrap();
+        store::export_local(&conn, &a.id_unlocked(&conn), a.detail_level).unwrap()
+    };
+    exec(
+        &a,
+        "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count)
+         VALUES ('', 'claude', 'p', 'm', 1), ('2026', 'claude', 'p', 'm', 1),
+                ('20xx-01-01', 'claude', 'p', 'm', 1), ('garbage', 'claude', 'p', 'm', 1);",
+    );
+    let after = {
+        let conn = a.db.conn.lock().unwrap();
+        store::export_local(&conn, &a.id_unlocked(&conn), a.detail_level).unwrap()
+    };
+    let shas = |export: &store::LocalExport| -> Vec<(String, String)> {
+        export
+            .partitions
+            .iter()
+            .map(|(k, seg)| {
+                (
+                    k.clone(),
+                    protocol::encode_segment(seg).unwrap().content_sha256,
+                )
+            })
+            .collect()
+    };
+    assert_eq!(shas(&before), shas(&after));
+    a.sync(&cloud).await;
+    assert_manifest_is_full_export(&a, &cloud);
 }

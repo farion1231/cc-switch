@@ -129,6 +129,31 @@ pub(crate) struct DeviceManifest {
 pub(crate) struct Lineage {
     pub parent_device_id: String,
     pub forked_at: i64,
+    /// Full ancestry, nearest first (starts with `parent_device_id`). Lets
+    /// viewers attribute inherited history to the nearest ancestor whose data
+    /// they hold, even when intermediate devices are hidden or gone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ancestors: Vec<String>,
+}
+
+/// Lineage chains longer than this are rejected (and never produced).
+pub(crate) const MAX_LINEAGE_DEPTH: usize = 16;
+
+/// A well-formed ancestry: valid ids, no repeats, not containing `self_id`,
+/// bounded depth, starting with `parent` when non-empty.
+pub(crate) fn is_valid_ancestry(self_id: &str, parent: &str, ancestors: &[String]) -> bool {
+    if ancestors.len() > MAX_LINEAGE_DEPTH {
+        return false;
+    }
+    if let Some(first) = ancestors.first() {
+        if first != parent {
+            return false;
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    ancestors
+        .iter()
+        .all(|id| is_valid_device_id(id) && id != self_id && seen.insert(id.as_str()))
 }
 
 // ─── Segment ─────────────────────────────────────────────────
@@ -469,8 +494,13 @@ pub(crate) fn validate_manifest(
     if let Some(lineage) = &manifest.lineage {
         if !is_valid_device_id(&lineage.parent_device_id)
             || lineage.parent_device_id == manifest.device_id
+            || !is_valid_ancestry(
+                &manifest.device_id,
+                &lineage.parent_device_id,
+                &lineage.ancestors,
+            )
         {
-            return Err(invalid("bad lineage parent"));
+            return Err(invalid("bad lineage"));
         }
     }
     if manifest.partitions.len() > MAX_PARTITIONS {
