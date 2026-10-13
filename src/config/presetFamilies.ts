@@ -35,6 +35,7 @@ export const PRESET_FAMILIES = {
   qwencloud: { name: "QwenCloud" },
   siliconflow: { name: "SiliconFlow" },
   stepfun: { name: "StepFun" },
+  streamlake: { name: "StreamLake" },
   sudocode: { name: "SudoCode" },
   tencent: {
     name: "Tencent Cloud",

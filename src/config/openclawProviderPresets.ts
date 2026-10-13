@@ -3839,17 +3839,46 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "KAT-Coder",
-    websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
     settingsConfig: {
-      baseUrl:
-        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
+      baseUrl: "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
       apiKey: "",
       api: "openai-completions",
       models: [
         {
-          id: "KAT-Coder-Pro",
+          id: "ep-xxx-xxx",
+          name: "KAT-Coder Pro V2.5",
+          contextWindow: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "catcoder",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
+    websiteUrl: "https://console.streamlake.ai",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    settingsConfig: {
+      baseUrl: "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ep-xxx-xxx",
           name: "KAT-Coder Pro",
           contextWindow: 128000,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06 },
@@ -3859,28 +3888,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     category: "cn_official",
     icon: "catcoder",
     templateValues: {
-      baseUrl: {
-        label: "Base URL",
-        placeholder:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
-        defaultValue:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
-        editorValue: "",
-      },
-      ENDPOINT_ID: {
-        label: "Endpoint ID",
-        placeholder: "",
-        editorValue: "",
-      },
       apiKey: {
         label: "API Key",
         placeholder: "",
         editorValue: "",
       },
-    },
-    suggestedDefaults: {
-      model: { primary: "katcoder/KAT-Coder-Pro" },
-      modelCatalog: { "katcoder/KAT-Coder-Pro": { alias: "KAT-Coder" } },
     },
   },
   {

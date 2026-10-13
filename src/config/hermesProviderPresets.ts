@@ -2119,11 +2119,44 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "KAT-Coder",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    settingsConfig: {
+      name: "streamlake",
+      base_url:
+        "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "KAT-Coder-Pro-V2.5", name: "KAT-Coder Pro V2.5" },
+        { id: "KAT-Coder-Air-V2.5", name: "KAT-Coder Air V2.5" },
+      ],
+    },
+    category: "cn_official",
+    templateValues: {
+      ENDPOINT_ID: {
+        label: "Vanchin Endpoint ID",
+        placeholder: "ep-xxx-xxx",
+        defaultValue: "",
+        editorValue: "",
+      },
+    },
+    icon: "catcoder",
+    suggestedDefaults: {
+      model: { default: "KAT-Coder-Pro-V2.5", provider: "streamlake" },
+    },
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
     websiteUrl: "https://console.streamlake.ai",
     apiKeyUrl: "https://console.streamlake.ai/console/api-key",
     settingsConfig: {
-      name: "kat_coder",
+      name: "streamlake_en",
       base_url:
         "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
       api_key: "",
@@ -2144,7 +2177,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
     icon: "catcoder",
     suggestedDefaults: {
-      model: { default: "KAT-Coder-Pro V1", provider: "kat_coder" },
+      model: { default: "KAT-Coder-Pro V1", provider: "streamlake_en" },
     },
   },
   {

@@ -1494,19 +1494,43 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#624AFF",
   },
   {
-    name: "KAT-Coder",
-    providerKey: "cc-switch-kat-coder",
-    websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    providerKey: "cc-switch-streamlake",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
     settingsConfig: {
-      name: "KAT-Coder",
-      baseUrl:
-        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
+      name: "StreamLake",
+      baseUrl: "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
       api: "openai-completions",
       apiKey: "",
       models: [
         piModel("streamlake/kat-coder-pro", {
-          id: "KAT-Coder-Pro",
+          id: "ep-xxx-xxx",
+          name: "KAT-Coder Pro V2.5",
+          maxTokens: 80_000,
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "catcoder",
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
+    providerKey: "cc-switch-kat-coder",
+    websiteUrl: "https://console.streamlake.ai",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    settingsConfig: {
+      name: "StreamLake en",
+      baseUrl: "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("streamlake/kat-coder-pro", {
+          id: "ep-xxx-xxx",
         }),
       ],
     },

@@ -1606,7 +1606,37 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#624AFF",
   },
   {
-    name: "KAT-Coder",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "KAT-Coder-Pro-V2.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "KAT-Coder-Air-V2.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "KAT-Coder-Pro-V2.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "KAT-Coder-Pro-V2.5",
+      },
+    },
+    category: "cn_official",
+    templateValues: {
+      ENDPOINT_ID: {
+        label: "Vanchin Endpoint ID",
+        placeholder: "ep-xxx-xxx",
+        defaultValue: "",
+        editorValue: "",
+      },
+    },
+    icon: "catcoder",
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
     websiteUrl: "https://console.streamlake.ai",
     apiKeyUrl: "https://console.streamlake.ai/console/api-key",
     settingsConfig: {
