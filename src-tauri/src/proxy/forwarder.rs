@@ -2089,9 +2089,12 @@ impl RequestForwarder {
         }
 
         if is_copilot && require_copilot_chat_endpoint(&effective_endpoint).is_ok() {
+            // A valid schema can exceed this provider's projection limits.
+            // Let another provider handle the original request in that case.
             super::providers::copilot_tool_schema::normalize_copilot_chat_tool_schemas(
                 &mut request_body,
-            );
+            )
+            .map_err(|err| ProxyError::TransformError(err.to_string()))?;
         }
 
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
@@ -8776,6 +8779,88 @@ mod tests {
             );
             assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
             assert_eq!(breaker(&fwd, "p2").await, Some((1, 0)));
+        }
+
+        #[tokio::test]
+        async fn copilot_schema_limits_fail_over_with_original_tools() {
+            use super::super::super::providers::copilot_tool_schema::{
+                object_projection, CopilotToolSchemaError,
+            };
+            for (levels, sibling_constraints) in [(40, false), (16, true)] {
+                let mut defs = serde_json::Map::new();
+                defs.insert(
+                    "d0".into(),
+                    json!({"type": "object", "properties": {"id": {"type": "string"}}}),
+                );
+                for i in 1..=levels {
+                    let prev = format!("#/$defs/d{}", i - 1);
+                    let branches = if sibling_constraints {
+                        json!([{"$ref": prev}, {"$ref": prev, "properties": {"id": {"minLength": i}}}])
+                    } else {
+                        json!([{"$ref": prev}])
+                    };
+                    defs.insert(format!("d{i}"), json!({"allOf": branches}));
+                }
+                let schema =
+                    json!({"$defs": defs, "allOf": [{"$ref": format!("#/$defs/d{levels}")}]});
+                let error = object_projection(&schema).unwrap_err();
+                if sibling_constraints {
+                    assert!(matches!(
+                        error,
+                        CopilotToolSchemaError::ValueBudgetExceeded { .. }
+                    ));
+                } else {
+                    assert!(matches!(
+                        error,
+                        CopilotToolSchemaError::DepthLimitExceeded { .. }
+                    ));
+                }
+                let rejected = upstream(vec![]).await;
+                let healthy = upstream(vec![ok()]).await;
+                let fwd = forwarder(2, "healthy");
+                let mut copilot = provider("copilot", &rejected);
+                copilot.meta = test_provider_with_type(Some("github_copilot")).meta;
+                let mut body = plain_body();
+                body["model"] = json!("auto");
+                body["tools"] = json!([
+                    {"name": "small", "input_schema": {"oneOf": [
+                        {"type": "object", "properties": {"name": {"type": "string"}}}
+                    ]}},
+                    {"name": "lookup", "input_schema": schema}
+                ]);
+                let failed = expect_err(
+                    send(
+                        &forwarder(1, "copilot"),
+                        vec![copilot.clone()],
+                        body.clone(),
+                    )
+                    .await,
+                );
+                assert!(
+                    matches!(&failed.error, ProxyError::TransformError(message) if message == &error.to_string()),
+                    "unexpected Copilot failure: {}",
+                    failed.error
+                );
+                let result = send(
+                    &fwd,
+                    vec![copilot, provider("healthy", &healthy)],
+                    body.clone(),
+                )
+                .await;
+                assert_eq!(
+                    result.map_err(|err| err.error).unwrap().provider.id,
+                    "healthy"
+                );
+                assert!(rejected.requests.lock().await.is_empty());
+                let requests = healthy.requests.lock().await;
+                assert_eq!(requests.len(), 1);
+                assert_eq!(requests[0]["tools"], body["tools"]);
+                assert_eq!(requests[0]["model"], body["model"]);
+                let stats = books(&fwd).await;
+                assert_eq!(stats.success, 1);
+                assert_eq!(stats.failed, 0);
+                assert_eq!(stats.attempting.as_deref(), Some("healthy"));
+            }
         }
 
         #[tokio::test]
