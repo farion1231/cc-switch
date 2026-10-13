@@ -489,7 +489,7 @@ describe("UnifiedSkillsPanel", () => {
     expect(m.toggle).not.toHaveBeenCalled();
   });
 
-  it("search reveals a collapsed group without overwriting the collapse preference", async () => {
+  it("search reveals a collapsed group and still lets the user collapse it", async () => {
     m.installed = [makeSkill({ name: "Alpha" })];
     renderPanel();
     const group = screen.getByRole("region", { name: "owner/repo" });
@@ -502,9 +502,10 @@ describe("UnifiedSkillsPanel", () => {
     });
     await userEvent.type(search, "Alpha");
     expect(within(group).getByText("Alpha")).toBeInTheDocument();
-    expect(
+    await userEvent.click(
       within(group).getByRole("button", { name: "skillsPage.groups.expand" }),
-    ).toBeDisabled();
+    );
+    expect(within(group).queryByText("Alpha")).not.toBeInTheDocument();
     await userEvent.clear(search);
     expect(within(group).queryByText("Alpha")).not.toBeInTheDocument();
   });
