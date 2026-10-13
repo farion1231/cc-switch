@@ -346,7 +346,7 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
             &db_path,
             serde_json::json!({"operation":"messages","session_id":session_id}),
         )?;
-        let rows = data
+        let rows: Vec<MessageRow> = data
             .as_array()
             .ok_or("Invalid Hermes message response")?
             .iter()
@@ -489,10 +489,12 @@ fn load_messages_from_conn(
         })
         .map_err(|e| format!("Failed to query messages: {e}"))?;
 
-    messages_from_rows(rows.flatten().collect())
+    messages_from_rows(rows.flatten())
 }
 
-fn messages_from_rows(rows: Vec<MessageRow>) -> Result<Vec<SessionMessage>, String> {
+fn messages_from_rows(
+    rows: impl IntoIterator<Item = MessageRow>,
+) -> Result<Vec<SessionMessage>, String> {
     // Collapse duplicates the way Hermes' display projection does: keep the
     // first position, show the most live copy.
     let mut order: Vec<MessageRow> = Vec::new();
