@@ -1888,7 +1888,7 @@ fn chat_message_to_response_output_item(message: &Value, response_id: &str) -> O
     }
 
     Some(json!({
-        "id": format!("{response_id}_msg"),
+        "id": message_item_id_from_response_id(response_id),
         "type": "message",
         "status": "completed",
         "role": "assistant",
@@ -2030,11 +2030,40 @@ fn chat_legacy_function_call_to_response_item(
     ))
 }
 
+/// Chat 上游签发的 id 可能包含 Responses API 不接受的字符（实测出现过
+/// `exec_command:0` 这类 `tool:index` 形式，冒号会被严格校验的端点以
+/// `invalid_value` 拒绝，见 #5730）。统一把非法字符替换成 `_`；
+/// item_id 与 call_id 都从这里取值，保证两条出处始终一致。
+/// 注意：不同上游 id 消毒后可能撞车（如 `a:1` 与 `a_1`），概率极低，可接受。
+pub(crate) fn sanitize_upstream_id(id: &str) -> String {
+    if id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
+        return id.to_string();
+    }
+    id.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// 转换器自产 message 条目的 id：官方端点按前缀校验（message 必须以
+/// `msg_` 开头），历史版本产出的 `resp_…_msg` 会被 `invalid_id_prefix`
+/// 拒绝（#5730），这里统一改用 `msg_` 前缀。
+pub(crate) fn message_item_id_from_response_id(response_id: &str) -> String {
+    let raw = response_id.strip_prefix("resp_").unwrap_or(response_id);
+    format!("msg_{}", sanitize_upstream_id(raw))
+}
+
 pub(crate) fn response_tool_call_item_id_from_chat_name(
     call_id: &str,
     chat_name: &str,
     tool_context: &CodexToolContext,
 ) -> String {
+    let call_id = sanitize_upstream_id(call_id);
     if tool_context.is_custom_tool_chat_name(chat_name) {
         format!("ctc_{call_id}")
     } else {
@@ -2051,6 +2080,7 @@ pub(crate) fn response_tool_call_item_from_chat_name(
     reasoning: Option<&str>,
     tool_context: &CodexToolContext,
 ) -> Value {
+    let call_id: &str = &sanitize_upstream_id(call_id);
     match tool_context.lookup_chat_name(chat_name) {
         Some(spec) if spec.kind == CodexToolKind::ToolSearch => {
             response_tool_search_call_item(call_id, status, arguments, reasoning)
@@ -5952,5 +5982,77 @@ mod tests {
         let rendered = serde_json::to_string(&result["messages"]).unwrap();
         assert!(rendered.contains(codex_compaction::OPAQUE_COMPACTION_NOTE));
         assert!(!rendered.contains("gAAAAB-openai-blob"));
+    }
+
+    /// Chat 上游的 tool_call id 含冒号等非法字符时，item_id 与 call_id
+    /// 必须消毒成 Responses API 接受的形式（#5730 变体）。
+    #[test]
+    fn tool_call_items_sanitize_upstream_ids() {
+        let chat = json!({
+            "id": "chatcmpl_colon",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "exec_command:0",
+                        "type": "function",
+                        "function": {"name": "exec_command", "arguments": "{\"cmd\":\"ls\"}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+        let output = result["output"].as_array().unwrap();
+
+        assert_eq!(output[0]["type"], "function_call");
+        assert_eq!(output[0]["id"], "fc_exec_command_0");
+        assert_eq!(output[0]["call_id"], "exec_command_0");
+    }
+
+    /// 自产 message 条目 id 必须以 msg_ 开头（官方端点按前缀校验，#5730）。
+    #[test]
+    fn message_item_id_uses_msg_prefix() {
+        let chat = json!({
+            "id": "chatcmpl-abc123",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+        let output = result["output"].as_array().unwrap();
+
+        assert_eq!(output[0]["type"], "message");
+        assert_eq!(output[0]["id"], "msg_chatcmpl-abc123");
+    }
+
+    #[test]
+    fn sanitize_upstream_id_replaces_invalid_chars() {
+        assert_eq!(sanitize_upstream_id("call_abc-123"), "call_abc-123");
+        assert_eq!(sanitize_upstream_id("exec_command:0"), "exec_command_0");
+        assert_eq!(sanitize_upstream_id("toolu:1:abc"), "toolu_1_abc");
+    }
+
+    #[test]
+    fn message_item_id_from_response_id_strips_resp_prefix() {
+        assert_eq!(
+            message_item_id_from_response_id("resp_chatcmpl-123"),
+            "msg_chatcmpl-123"
+        );
+        assert_eq!(
+            message_item_id_from_response_id("chatcmpl:1"),
+            "msg_chatcmpl_1"
+        );
     }
 }
