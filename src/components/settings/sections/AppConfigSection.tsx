@@ -28,6 +28,7 @@ const DIRECTORY_FIELD: Record<DirectoryAppId, keyof Settings> = {
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
+  cursor: "cursorConfigDir",
 };
 
 const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
@@ -39,6 +40,7 @@ const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
   openclaw: "settings.browsePlaceholderOpenclaw",
   hermes: "settings.browsePlaceholderHermes",
   pi: "settings.browsePlaceholderPi",
+  cursor: "settings.browsePlaceholderCursor",
 };
 
 const DIRECTORY_APPS: DirectoryAppId[] = [

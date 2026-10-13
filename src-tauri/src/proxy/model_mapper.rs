@@ -171,6 +171,51 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
     body
 }
 
+/// Cursor 的 modelCatalog 行是「客户端模型名 → 上游模型名」映射：前端 Cursor 表单把
+/// 左侧「Cursor Model Name」存进 `model`、右侧「Upstream Model Name」存进
+/// `displayName`（Codex/GrokBuild 的 `displayName` 只是显示名，语义不同，不能在此
+/// 翻译）。转发前把请求体里的客户端模型名翻译成 `displayName`，否则上游会做模型名校验
+/// 而失败（#6124 review P2）。
+///
+/// 匹配不上 catalog、或命中的行没有非空 `displayName` 时原样返回。调用方需按
+/// `AppType::Cursor` 门控，避免影响 Codex/GrokBuild。
+pub fn translate_cursor_catalog_model(mut body: Value, provider: &Provider) -> Value {
+    let Some(client_model) = body.get("model").and_then(Value::as_str).map(str::trim) else {
+        return body;
+    };
+    let Some(models) = provider
+        .settings_config
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(Value::as_array)
+    else {
+        return body;
+    };
+    for entry in models {
+        let is_match = entry
+            .get("model")
+            .and_then(Value::as_str)
+            .map(|m| m.trim() == client_model)
+            .unwrap_or(false);
+        if !is_match {
+            continue;
+        }
+        let upstream = entry
+            .get("displayName")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|d| !d.is_empty());
+        if let Some(upstream) = upstream {
+            if upstream != client_model {
+                log::debug!("[ModelMapper] Cursor catalog 翻译: {client_model} → {upstream}");
+                body["model"] = serde_json::json!(upstream);
+            }
+        }
+        break;
+    }
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,5 +469,72 @@ mod tests {
         let body = json!({"model": "deepseek-v4-pro"});
         let result = strip_one_m_suffix_for_upstream_from_body(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+
+    fn cursor_provider_with_catalog() -> Provider {
+        Provider::with_id(
+            "cur1".to_string(),
+            "Cursor".to_string(),
+            json!({
+                "baseUrl": "https://api.kimi.com/v1",
+                "apiKey": "sk-kimi",
+                "model": "default-upstream",
+                "modelCatalog": {
+                    "models": [
+                        { "model": "composer-2.5", "displayName": "deepseek-v4-pro" },
+                        { "model": "kimi-k2", "displayName": "" }
+                    ]
+                }
+            }),
+            None,
+        )
+    }
+
+    #[test]
+    fn cursor_catalog_translates_model_to_upstream_display_name() {
+        let provider = cursor_provider_with_catalog();
+        let body = json!({"model": "composer-2.5"});
+        let out = translate_cursor_catalog_model(body, &provider);
+        assert_eq!(
+            out["model"], "deepseek-v4-pro",
+            "catalog 命中时必须把客户端模型名翻译成上游 displayName"
+        );
+    }
+
+    #[test]
+    fn cursor_catalog_keeps_model_when_display_name_empty() {
+        let provider = cursor_provider_with_catalog();
+        let body = json!({"model": "kimi-k2"});
+        let out = translate_cursor_catalog_model(body, &provider);
+        assert_eq!(out["model"], "kimi-k2");
+    }
+
+    #[test]
+    fn cursor_catalog_keeps_unknown_model() {
+        let provider = cursor_provider_with_catalog();
+        let body = json!({"model": "gpt-5.4"});
+        let out = translate_cursor_catalog_model(body, &provider);
+        assert_eq!(out["model"], "gpt-5.4");
+    }
+
+    #[test]
+    fn cursor_catalog_keeps_model_without_catalog() {
+        let provider = Provider::with_id(
+            "cur1".to_string(),
+            "Cursor".to_string(),
+            json!({ "model": "default-upstream" }),
+            None,
+        );
+        let body = json!({"model": "composer-2.5"});
+        let out = translate_cursor_catalog_model(body, &provider);
+        assert_eq!(out["model"], "composer-2.5");
+    }
+
+    #[test]
+    fn cursor_catalog_ignores_body_without_model() {
+        let provider = cursor_provider_with_catalog();
+        let body = json!({ "stream": true });
+        let out = translate_cursor_catalog_model(body, &provider);
+        assert!(out.get("model").is_none());
     }
 }

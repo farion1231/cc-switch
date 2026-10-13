@@ -321,7 +321,9 @@ pub(crate) fn build_provider_from_request(
     let api_format = link_api_format(app_type, request)?;
     check_link_values(app_type, request)?;
     let settings_config = match app_type {
-        AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
+        AppType::Claude | AppType::ClaudeDesktop | AppType::Cursor => {
+            build_claude_settings(request)
+        }
         AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),
         AppType::GrokBuild => build_grokbuild_settings(request)?,

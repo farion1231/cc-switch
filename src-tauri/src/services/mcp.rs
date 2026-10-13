@@ -76,6 +76,9 @@ impl McpService {
         if prev_apps.hermes && !server.apps.hermes {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
         }
+        if prev_apps.cursor && !server.apps.cursor {
+            Self::remove_server_from_app(state, &server.id, &AppType::Cursor)?;
+        }
 
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
@@ -218,6 +221,9 @@ impl McpService {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
+            AppType::Cursor => {
+                mcp::sync_single_server_to_cursor(&Default::default(), &server.id, &server.server)?;
+            }
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
         }
         Ok(())
@@ -259,6 +265,9 @@ impl McpService {
                 mcp::remove_server_from_hermes(id)?;
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
+            AppType::Cursor => {
+                mcp::remove_server_from_cursor(id)?;
+            }
             AppType::Pi => mcp::pi::sync(id, None)?,
         }
         Ok(())
@@ -659,6 +668,35 @@ impl McpService {
         Ok(new_count)
     }
 
+    /// 从 Cursor 导入 MCP
+    pub fn import_from_cursor(state: &AppState) -> Result<usize, AppError> {
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let count = crate::mcp::import_from_cursor(&mut temp_config)?;
+
+        let mut new_count = 0;
+
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
+                for server in servers.values() {
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.cursor = true;
+                        merged
+                    } else {
+                        new_count += 1;
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+                }
+            }
+        }
+
+        Ok(new_count)
+    }
+
     /// 从所有支持 MCP 的应用导入服务器，返回新导入的数量。
     ///
     /// Best-effort：单个应用导入失败（如坏 config.toml）不阻断其余应用；
@@ -669,7 +707,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 8] = [
+        let results: [(&str, Result<usize, AppError>); 9] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -678,6 +716,7 @@ impl McpService {
             ("hermes", Self::import_from_hermes(state)),
             ("mcode", mcp::mcode::import(state)),
             ("pi", mcp::pi::import(state)),
+            ("cursor", Self::import_from_cursor(state)),
         ];
         for (app, result) in results {
             match result {

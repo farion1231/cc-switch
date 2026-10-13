@@ -50,6 +50,7 @@ export interface ProxyTakeoverStatus {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  cursor: boolean;
 }
 
 /** 应用当前的连接方式。 */
@@ -230,6 +231,53 @@ export interface GlobalProxyConfig {
   listenAddress: string;
   listenPort: number;
   enableLogging: boolean;
+}
+
+// 公网路由状态（隧道 + 配置，后端 serde camelCase）
+// 隧道是共享基础设施：把本地路由暴露到公网，Cursor 等支持自定义
+// Base URL 的应用都可以接入（当前以 Cursor 为主要消费者）。
+export interface PublicRouteStatus {
+  enabled: boolean;
+  /** 公网路由隧道鉴权密钥（ccsk-*），需填到 Cursor 的 OpenAI API Key 输入框 */
+  apiKey: string | null;
+  tunnelRunning: boolean;
+  publicUrl: string | null;
+  localUrl: string | null;
+  tunnelError: string | null;
+  currentProviderName: string | null;
+  /** 隧道模式："quick"（免账号，URL 每次变化）| "named"（固定域名） */
+  tunnelMode: string;
+  /** 命名隧道名（tunnelMode = named 时） */
+  namedTunnel: string | null;
+  /** 命名隧道域名（tunnelMode = named 时） */
+  namedHostname: string | null;
+}
+
+/** Cursor 本地 BYOK 三字段现状（`cursor_byok_status`）：Cursor 关掉后读，运行中读到的是过期快照。 */
+export interface CursorByokStatus {
+  baseUrl: string | null;
+  useOpenAIKey: boolean;
+  modelCount: number;
+}
+
+/** 写 Cursor BYOK 的结果（`cursor_write_byok`）：`backupPath` 是回滚点。 */
+export interface CursorWriteByokResult {
+  ok: boolean;
+  backupPath: string | null;
+  writtenBaseUrl: string | null;
+}
+
+/** 分层测公网路由连通性（`test_public_route_connectivity`）：`status` 为上游返回码。 */
+export interface PublicRouteConnectivityResult {
+  ok: boolean;
+  status: number | null;
+  detail: string;
+}
+
+// 命名隧道信息（cloudflared tunnel list）
+export interface NamedTunnel {
+  id: string;
+  name: string;
 }
 
 // 应用级代理配置（每个 app 独立）

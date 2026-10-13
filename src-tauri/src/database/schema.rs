@@ -69,7 +69,8 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_cursor BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -100,6 +101,7 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_cursor BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -127,7 +129,7 @@ impl Database {
 
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -577,6 +579,49 @@ impl Database {
                         }
                         Self::set_user_version(conn, 20)?;
                     }
+                    20 => {
+                        log::info!("迁移数据库从 v20 到 v21（添加 Cursor IDE 支持）");
+                        Self::migrate_v20_to_v21(conn)?;
+                        Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        log::info!("迁移数据库从 v21 到 v22（proxy_config 添加 Cursor 支持）");
+                        Self::migrate_v21_to_v22(conn)?;
+                        Self::set_user_version(conn, 22)?;
+                    }
+                    22 => {
+                        // 旧 cursor 线的库（该线 SCHEMA_VERSION=20，cursor 迁移占了 18→19 / 19→20）
+                        // 升上来时 18/19 两臂已被跨过，enabled_mcode 从未补列 —— 这里在**链尾**补一次。
+                        // add_column_if_missing 幂等：全新库（建表已含该列）与上游线的库都是 no-op。
+                        // 已发布的迁移号不可重排，故只能追加，勿把这两臂合并回 18/19。
+                        log::info!(
+                            "迁移数据库从 v22 到 v23（补 mcp_servers/skills 的 enabled_mcode 列）"
+                        );
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_mcode",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        // 同上，补 enabled_pi（旧 cursor 线同样没有这一列）。
+                        log::info!("迁移数据库从 v23 到 v24（补 mcp_servers 的 enabled_pi 列）");
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_pi",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 24)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -908,7 +953,7 @@ impl Database {
         // 创建新表
         conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
         conn.execute("CREATE TABLE proxy_config_new (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1470,7 +1515,7 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
             "CREATE TABLE proxy_config_v14 (
-                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
                 proxy_enabled INTEGER NOT NULL DEFAULT 0,
                 listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
                 listen_port INTEGER NOT NULL DEFAULT 15721,
@@ -1624,6 +1669,101 @@ impl Database {
                 "INTEGER",
             )?;
         }
+        Ok(())
+    }
+
+    /// v20 -> v21: 添加 Cursor IDE 支持（新增 enabled_cursor 列）
+    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+        // ALTER TABLE … ADD COLUMN 在 SQLite 中不能 IF NOT EXISTS，
+        // 手动检查 sqlite_master 中的列列表以避免重复运行报错。
+        fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, AppError> {
+            let result: String = conn
+                .query_row(
+                    &format!("SELECT sql FROM sqlite_master WHERE type='table' AND name='{table}'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| AppError::Database(format!("查询 {table} 表结构失败: {e}")))?;
+            Ok(result.contains(column))
+        }
+
+        // 为 mcp_servers 表添加 enabled_cursor 列（表不存在时跳过：
+        // 旧版本最小化测试夹具不建该表；真实库中表自 v1 起存在）
+        if Self::table_exists(conn, "mcp_servers")?
+            && !column_exists(conn, "mcp_servers", "enabled_cursor")?
+        {
+            conn.execute(
+                "ALTER TABLE mcp_servers ADD COLUMN enabled_cursor BOOLEAN NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| {
+                AppError::Database(format!("添加 mcp_servers.enabled_cursor 列失败: {e}"))
+            })?;
+            log::info!("Migration v21: Added enabled_cursor column to mcp_servers table");
+        }
+
+        // 为 skills 表添加 enabled_cursor 列
+        if Self::table_exists(conn, "skills")? && !column_exists(conn, "skills", "enabled_cursor")?
+        {
+            conn.execute(
+                "ALTER TABLE skills ADD COLUMN enabled_cursor BOOLEAN NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("添加 skills.enabled_cursor 列失败: {e}")))?;
+            log::info!("Migration v21: Added enabled_cursor column to skills table");
+        }
+
+        Ok(())
+    }
+
+    /// v21 -> v22: proxy_config 表添加 Cursor 支持
+    fn migrate_v21_to_v22(conn: &Connection) -> Result<(), AppError> {
+        // proxy_config 表不存在时跳过（旧版本最小化测试夹具不建该表）
+        if !Self::table_exists(conn, "proxy_config")? {
+            return Ok(());
+        }
+        // proxy_config 表的 CHECK 约束不包含 'cursor'，需要重建表来更新约束
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS proxy_config_v22 (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            INSERT OR IGNORE INTO proxy_config_v22 SELECT * FROM proxy_config;
+
+            -- Insert Cursor default row
+            INSERT OR IGNORE INTO proxy_config_v22 (
+                app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests
+            ) VALUES ('cursor', 3, 60, 120, 600, 4, 2, 60, 0.6, 10);
+
+            DROP TABLE proxy_config;
+            ALTER TABLE proxy_config_v22 RENAME TO proxy_config;"
+        )
+        .map_err(|e| AppError::Database(format!("迁移 proxy_config 支持 Cursor 失败: {e}")))?;
+
+        log::info!("Migration v22: Added Cursor support to proxy_config table");
         Ok(())
     }
 
@@ -3835,6 +3975,48 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(values, (1, 1, 0));
+        Ok(())
+    }
+
+    /// 回归（2026-10-09）：旧 **cursor 线**的库（该线 `SCHEMA_VERSION=20`，cursor 的迁移占了
+    /// 18→19 / 19→20）升到新链时，上游的 enabled_mcode / enabled_pi 补列排在 18/19 两臂 ——
+    /// 低于该库已到达的水位 20，于是被整段跳过，而版本号照样推进到 SCHEMA_VERSION。
+    /// 结果：mcp_servers 缺 enabled_mcode/enabled_pi、skills 缺 enabled_mcode，
+    /// MCP 列表查询直接 `no such column: enabled_mcode`（用户实测报错）。
+    /// 补列必须排在链尾才能覆盖这类库。
+    #[test]
+    fn migrating_a_cursor_line_db_backfills_mcode_and_pi_columns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        // 旧 cursor 线的形态：有 enabled_cursor，但没有 mcode / pi。
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0
+            );
+            INSERT INTO mcp_servers (id, enabled_codex, enabled_cursor) VALUES ('mcp-1', 1, 1);",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let values: (i64, i64, i64) = conn.query_row(
+            "SELECT enabled_cursor, enabled_mcode, enabled_pi FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(values, (1, 0, 0), "既有开关要保留，新列要有默认值");
+        let skills_mcode: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('skills') WHERE name = 'enabled_mcode'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(skills_mcode, 1, "skills 也必须有 enabled_mcode");
         Ok(())
     }
 
