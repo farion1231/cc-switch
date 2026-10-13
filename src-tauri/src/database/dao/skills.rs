@@ -22,7 +22,7 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
+                        readme_url, source_type, source_id, source_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
                         enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
                  FROM skills ORDER BY name ASC",
             )
@@ -39,19 +39,22 @@ impl Database {
                     repo_name: row.get(5)?,
                     repo_branch: row.get(6)?,
                     readme_url: row.get(7)?,
+                    source_type: row.get(8)?,
+                    source_id: row.get(9)?,
+                    source_url: row.get(10)?,
                     apps: SkillApps {
-                        claude: row.get(8)?,
-                        codex: row.get(9)?,
-                        gemini: row.get(10)?,
-                        grokbuild: row.get(11)?,
-                        opencode: row.get(12)?,
-                        hermes: row.get(13)?,
+                        claude: row.get(11)?,
+                        codex: row.get(12)?,
+                        gemini: row.get(13)?,
+                        grokbuild: row.get(14)?,
+                        opencode: row.get(15)?,
+                        hermes: row.get(16)?,
                         pi: false,
-                        mcode: row.get(17)?,
+                        mcode: row.get(20)?,
                     },
-                    installed_at: row.get(14)?,
-                    content_hash: row.get(15)?,
-                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                    installed_at: row.get(17)?,
+                    content_hash: row.get(18)?,
+                    updated_at: row.get::<_, i64>(19).unwrap_or(0),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -70,7 +73,7 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
+                        readme_url, source_type, source_id, source_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
                         enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
                  FROM skills WHERE id = ?1",
             )
@@ -86,19 +89,22 @@ impl Database {
                 repo_name: row.get(5)?,
                 repo_branch: row.get(6)?,
                 readme_url: row.get(7)?,
+                source_type: row.get(8)?,
+                source_id: row.get(9)?,
+                source_url: row.get(10)?,
                 apps: SkillApps {
-                    claude: row.get(8)?,
-                    codex: row.get(9)?,
-                    gemini: row.get(10)?,
-                    grokbuild: row.get(11)?,
-                    opencode: row.get(12)?,
-                    hermes: row.get(13)?,
+                    claude: row.get(11)?,
+                    codex: row.get(12)?,
+                    gemini: row.get(13)?,
+                    grokbuild: row.get(14)?,
+                    opencode: row.get(15)?,
+                    hermes: row.get(16)?,
                     pi: false,
-                    mcode: row.get(17)?,
+                    mcode: row.get(20)?,
                 },
-                installed_at: row.get(14)?,
-                content_hash: row.get(15)?,
-                updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                installed_at: row.get(17)?,
+                content_hash: row.get(18)?,
+                updated_at: row.get::<_, i64>(19).unwrap_or(0),
             })
         });
 
@@ -113,11 +119,32 @@ impl Database {
     pub fn save_skill(&self, skill: &InstalledSkill) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "INSERT OR REPLACE INTO skills
+            "INSERT INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
-              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
+              readme_url, source_type, source_id, source_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
               installed_at, content_hash, updated_at, enabled_mcode)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+             ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             description = excluded.description,
+             directory = excluded.directory,
+             repo_owner = excluded.repo_owner,
+             repo_name = excluded.repo_name,
+             repo_branch = excluded.repo_branch,
+             readme_url = excluded.readme_url,
+             source_type = excluded.source_type,
+             source_id = excluded.source_id,
+             source_url = excluded.source_url,
+             enabled_claude = excluded.enabled_claude,
+             enabled_codex = excluded.enabled_codex,
+             enabled_gemini = excluded.enabled_gemini,
+             enabled_grokbuild = excluded.enabled_grokbuild,
+             enabled_opencode = excluded.enabled_opencode,
+             enabled_hermes = excluded.enabled_hermes,
+             installed_at = excluded.installed_at,
+             content_hash = excluded.content_hash,
+             updated_at = excluded.updated_at,
+             enabled_mcode = excluded.enabled_mcode",
             params![
                 skill.id,
                 skill.name,
@@ -127,6 +154,9 @@ impl Database {
                 skill.repo_name,
                 skill.repo_branch,
                 skill.readme_url,
+                skill.source_type,
+                skill.source_id,
+                skill.source_url,
                 skill.apps.claude,
                 skill.apps.codex,
                 skill.apps.gemini,
@@ -160,10 +190,13 @@ impl Database {
                      repo_name = ?5,
                      repo_branch = ?6,
                      readme_url = ?7,
-                     installed_at = ?8,
-                     content_hash = ?9,
-                     updated_at = ?10
-                 WHERE id = ?11 AND installed_at = ?12",
+                     source_type = ?8,
+                     source_id = ?9,
+                     source_url = ?10,
+                     installed_at = ?11,
+                     content_hash = ?12,
+                     updated_at = ?13
+                 WHERE id = ?14 AND installed_at = ?15",
                 params![
                     skill.name,
                     skill.description,
@@ -172,6 +205,9 @@ impl Database {
                     skill.repo_name,
                     skill.repo_branch,
                     skill.readme_url,
+                    skill.source_type,
+                    skill.source_id,
+                    skill.source_url,
                     skill.installed_at,
                     skill.content_hash,
                     skill.updated_at,
@@ -323,6 +359,9 @@ mod tests {
             repo_name: Some("repo".to_string()),
             repo_branch: Some("main".to_string()),
             readme_url: Some(format!("https://example.com/{name}")),
+            source_type: Some("github".to_string()),
+            source_id: Some("owner/repo".to_string()),
+            source_url: Some("https://github.com/owner/repo".to_string()),
             apps,
             installed_at: 1,
             content_hash: Some(format!("{name}-hash")),
@@ -354,6 +393,9 @@ mod tests {
         assert_eq!(stored.directory, candidate.directory);
         assert_eq!(stored.repo_branch, candidate.repo_branch);
         assert_eq!(stored.readme_url, candidate.readme_url);
+        assert_eq!(stored.source_type, candidate.source_type);
+        assert_eq!(stored.source_id, candidate.source_id);
+        assert_eq!(stored.source_url, candidate.source_url);
         assert_eq!(stored.content_hash, candidate.content_hash);
         assert_eq!(stored.updated_at, candidate.updated_at);
         assert_eq!(stored.apps, installed_apps);

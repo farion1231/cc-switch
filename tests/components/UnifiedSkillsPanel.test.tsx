@@ -32,7 +32,37 @@ const m = vi.hoisted(() => ({
   updates: [] as SkillUpdateInfo[],
   repoFailures: [] as SkillRepoFailure[],
   checking: false,
+  projects: [] as import("@/lib/api/skills").SkillProjectGroup[],
+  discoverable: [] as import("@/lib/api/skills").DiscoverableSkill[],
+  repos: [] as import("@/lib/api/skills").SkillRepo[],
+  saveGroup: vi.fn(),
+  deleteGroup: vi.fn(),
   visibleApps: ["claude", "codex", "pi"] as string[],
+}));
+
+vi.mock("@/hooks/useSkillProjectGroups", () => ({
+  useSkillProjectGroups: () => ({ data: m.projects, isError: false }),
+  useSaveSkillProjectGroup: () => ({
+    mutateAsync: m.saveGroup,
+    isPending: false,
+  }),
+  useDeleteSkillProjectGroup: () => ({
+    mutateAsync: m.deleteGroup,
+    isPending: false,
+  }),
+}));
+
+// jsdom has no layout; expose all Discover rows for the navigation regression.
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 56,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({
+        index,
+        key: index,
+        start: index * 56,
+      })),
+  }),
 }));
 
 vi.mock("sonner", () => ({
@@ -109,9 +139,9 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: m.updateSkill,
     isPending: false,
   }),
-  useDiscoverableSkills: () => ({ data: [], refetch: vi.fn() }),
+  useDiscoverableSkills: () => ({ data: m.discoverable, refetch: vi.fn() }),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
-  useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
+  useSkillRepos: () => ({ data: m.repos, refetch: vi.fn() }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),
@@ -162,8 +192,363 @@ async function openMenu(trigger: string, item: string) {
 }
 
 describe("UnifiedSkillsPanel", () => {
+  it("groups repositories case-insensitively without combining unrelated local projects", async () => {
+    m.installed = [
+      makeSkill({ id: "repo-a", name: "Repo A" }),
+      makeSkill({
+        id: "repo-b",
+        name: "Repo B",
+        repoOwner: "OWNER",
+        repoName: "REPO",
+      }),
+      makeSkill({
+        id: "local-a",
+        name: "Local A",
+        repoOwner: undefined,
+        repoName: undefined,
+      }),
+      makeSkill({
+        id: "local-b",
+        name: "Local B",
+        repoOwner: undefined,
+        repoName: undefined,
+      }),
+      makeSkill({
+        id: "local-c",
+        name: "Local C",
+        repoOwner: undefined,
+        repoName: undefined,
+      }),
+    ];
+    m.projects = [
+      { id: "a", name: "Project A", skillIds: ["local-a"] },
+      { id: "b", name: "Project B", skillIds: ["local-b"] },
+    ];
+    renderPanel();
+    expect(
+      within(screen.getByRole("region", { name: "owner/repo" })).getAllByRole(
+        "listitem",
+      ),
+    ).toHaveLength(2);
+    expect(
+      within(screen.getByRole("region", { name: "Project A" })).getByText(
+        "Local A",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Project A" })).queryByText(
+        "Local B",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", { name: "skillsPage.groups.ungrouped" }),
+      ).queryByRole("checkbox", { name: "skillsPage.groups.toggle" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "Project A" })).getAllByRole(
+        "checkbox",
+      )[0],
+    );
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["local-a"],
+        app: "claude",
+        enabled: true,
+      }),
+    );
+  });
+
+  it("keeps group scope complete when search hides a sibling", async () => {
+    m.installed = [
+      makeSkill({ id: "a", name: "Alpha" }),
+      makeSkill({
+        id: "b",
+        name: "Beta",
+        directory: "beta",
+        description: "Beta",
+      }),
+    ];
+    renderPanel();
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "skills.installedSearchAriaLabel" }),
+      "Alpha",
+    );
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    const group = screen.getByRole("region", { name: "owner/repo" });
+    await userEvent.click(within(group).getAllByRole("checkbox")[0]);
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["a", "b"],
+        app: "claude",
+        enabled: true,
+      }),
+    );
+  });
+
+  it("keeps a filtered group's mixed state and allows re-enabling after disabling its last visible member", async () => {
+    m.installed = [
+      makeSkill({ id: "a", name: "A", apps: { claude: true } }),
+      makeSkill({ id: "b", name: "B" }),
+    ];
+    const { rerender } = renderPanel();
+    await userEvent.click(columns()[0]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.pop.onlyApp" }),
+    );
+    let group = screen.getByRole("region", { name: "owner/repo" });
+    expect(within(group).getAllByRole("checkbox")[0]).toHaveAttribute(
+      "aria-checked",
+      "mixed",
+    );
+    await userEvent.click(within(group).getAllByRole("checkbox")[0]);
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["b"],
+        app: "claude",
+        enabled: true,
+      }),
+    );
+    m.installed = m.installed.map((skill) => ({
+      ...skill,
+      apps: { ...skill.apps, claude: true },
+    }));
+    rerender(<UnifiedSkillsPanel />);
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "owner/repo" })).getAllByRole(
+        "checkbox",
+      )[0],
+    );
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenLastCalledWith({
+        ids: ["a", "b"],
+        app: "claude",
+        enabled: false,
+      }),
+    );
+    m.installed = m.installed.map((skill) => ({
+      ...skill,
+      apps: { ...skill.apps, claude: false },
+    }));
+    rerender(<UnifiedSkillsPanel />);
+    group = screen.getByRole("region", { name: "owner/repo" });
+    expect(within(group).queryByText("A")).not.toBeInTheDocument();
+    const toggle = within(group).getAllByRole("checkbox")[0];
+    expect(toggle).not.toBeDisabled();
+    await userEvent.click(toggle);
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenLastCalledWith({
+        ids: ["a", "b"],
+        app: "claude",
+        enabled: true,
+      }),
+    );
+  });
+
+  it("groups Skills with the same recorded installer source and toggles the full source group", async () => {
+    m.installed = [
+      makeSkill({
+        id: "local:lark-a",
+        name: "Lark A",
+        repoOwner: undefined,
+        repoName: undefined,
+        sourceType: "well-known",
+        sourceId: "open.feishu.cn",
+      }),
+      makeSkill({
+        id: "local:lark-b",
+        name: "Lark B",
+        repoOwner: undefined,
+        repoName: undefined,
+        sourceType: "well-known",
+        sourceId: "open.feishu.cn",
+      }),
+      makeSkill({
+        id: "local:unknown",
+        name: "Unknown",
+        repoOwner: undefined,
+        repoName: undefined,
+      }),
+    ];
+    renderPanel();
+
+    const group = screen.getByRole("region", { name: "open.feishu.cn" });
+    expect(within(group).getByText("Lark A")).toBeInTheDocument();
+    expect(within(group).getByText("Lark B")).toBeInTheDocument();
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
+
+    await userEvent.click(within(group).getAllByRole("checkbox")[0]);
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["local:lark-a", "local:lark-b"],
+        app: "claude",
+        enabled: true,
+      }),
+    );
+  });
+
+  it("gives a manual project group priority over an automatic source group", () => {
+    m.installed = [
+      makeSkill({
+        id: "local:lark-a",
+        name: "Lark A",
+        repoOwner: undefined,
+        repoName: undefined,
+        sourceType: "well-known",
+        sourceId: "open.feishu.cn",
+      }),
+      makeSkill({
+        id: "local:lark-b",
+        name: "Lark B",
+        repoOwner: undefined,
+        repoName: undefined,
+        sourceType: "well-known",
+        sourceId: "open.feishu.cn",
+      }),
+    ];
+    m.projects = [{ id: "project", name: "My Lark", skillIds: ["local:lark-a"] }];
+    renderPanel();
+
+    expect(
+      within(screen.getByRole("region", { name: "My Lark" })).getByText("Lark A"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "open.feishu.cn" })).not.toBeInTheDocument();
+    expect(screen.getByText("Lark B")).toBeInTheDocument();
+  });
+
+  it("creates and edits a named local project without losing hidden member selections", async () => {
+    m.installed = [
+      makeSkill({
+        id: "a",
+        name: "Local A",
+        repoOwner: undefined,
+        repoName: undefined,
+      }),
+      makeSkill({
+        id: "b",
+        name: "Local B",
+        repoOwner: undefined,
+        repoName: undefined,
+      }),
+      makeSkill({ id: "repo", name: "Repository Skill" }),
+    ];
+    renderPanel();
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.groups.create" }),
+    );
+    let dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).queryByText("Repository Skill"),
+    ).not.toBeInTheDocument();
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: "skillsPage.groups.name" }),
+      "Tools",
+    );
+    await userEvent.click(within(dialog).getAllByRole("checkbox")[0]);
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: "skillsPage.groups.search" }),
+      "Local B",
+    );
+    await userEvent.click(within(dialog).getAllByRole("checkbox")[0]);
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "common.save" }),
+    );
+    await waitFor(() =>
+      expect(m.saveGroup).toHaveBeenCalledWith({
+        id: undefined,
+        name: "Tools",
+        skillIds: ["a", "b"],
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("dissolves a project without uninstalling Skills", async () => {
+    m.installed = [
+      makeSkill({ id: "a", repoOwner: undefined, repoName: undefined }),
+    ];
+    m.projects = [{ id: "p", name: "Tools", skillIds: ["a"] }];
+    renderPanel();
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "Tools" })).getByRole(
+        "button",
+        { name: "skillsPage.groups.editNamed" },
+      ),
+    );
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "skillsPage.groups.dissolve",
+      }),
+    );
+    await waitFor(() => expect(m.deleteGroup).toHaveBeenCalledWith("p"));
+    expect(m.uninstall).not.toHaveBeenCalled();
+    expect(m.toggle).not.toHaveBeenCalled();
+  });
+
+  it("search reveals a collapsed group without overwriting the collapse preference", async () => {
+    m.installed = [makeSkill({ name: "Alpha" })];
+    renderPanel();
+    const group = screen.getByRole("region", { name: "owner/repo" });
+    await userEvent.click(
+      within(group).getByRole("button", { name: "skillsPage.groups.expand" }),
+    );
+    expect(within(group).queryByText("Alpha")).not.toBeInTheDocument();
+    const search = screen.getByRole("textbox", {
+      name: "skills.installedSearchAriaLabel",
+    });
+    await userEvent.type(search, "Alpha");
+    expect(within(group).getByText("Alpha")).toBeInTheDocument();
+    expect(
+      within(group).getByRole("button", { name: "skillsPage.groups.expand" }),
+    ).toBeDisabled();
+    await userEvent.clear(search);
+    expect(within(group).queryByText("Alpha")).not.toBeInTheDocument();
+  });
+
+  it("reveals a collapsed group from Discover and still lets the user collapse it again", async () => {
+    m.installed = [makeSkill({ name: "Alpha" })];
+    m.repos = [{ owner: "owner", name: "repo", branch: "main", enabled: true }];
+    m.discoverable = [
+      {
+        key: "owner/repo:alpha-skill",
+        name: "Alpha",
+        directory: "alpha-skill",
+        description: "Test",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+      },
+    ];
+    renderPanel();
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "owner/repo" })).getByRole(
+        "button",
+        { name: "skillsPage.groups.expand" },
+      ),
+    );
+    await userEvent.click(
+      screen.getByRole("tab", { name: "skillsPage.viewDiscover" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.discover.installedAria" }),
+    );
+    const group = screen.getByRole("region", { name: "owner/repo" });
+    expect(within(group).getByText("Alpha")).toBeInTheDocument();
+    await userEvent.click(
+      within(group).getByRole("button", { name: "skillsPage.groups.expand" }),
+    );
+    expect(within(group).queryByText("Alpha")).not.toBeInTheDocument();
+  });
+
   beforeEach(() => {
     m.installed = [];
+    m.discoverable = [];
+    m.repos = [];
+    m.projects = [];
+    m.saveGroup.mockReset().mockResolvedValue({});
+    m.deleteGroup.mockReset().mockResolvedValue(true);
     m.backups = [];
     m.updates = [];
     m.repoFailures = [];

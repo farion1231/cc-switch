@@ -244,6 +244,15 @@ pub struct InstalledSkill {
     /// README URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readme_url: Option<String>,
+    /// 安装器记录的来源类型（如 github、well-known）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
+    /// 安装器记录的来源标识（如 owner/repo、open.feishu.cn）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    /// 安装器记录的来源 URL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
     /// 应用启用状态
     pub apps: SkillApps,
     /// 安装时间（Unix 时间戳）

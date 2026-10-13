@@ -14,6 +14,12 @@ export type AppType =
   | "pi"
   | "mcode";
 
+export interface SkillProjectGroup {
+  id: string;
+  name: string;
+  skillIds: string[];
+}
+
 /** Skill 应用启用状态 */
 export interface SkillApps {
   claude: boolean;
@@ -38,6 +44,9 @@ export interface InstalledSkill {
   repoName?: string;
   repoBranch?: string;
   readmeUrl?: string;
+  sourceType?: string;
+  sourceId?: string;
+  sourceUrl?: string;
   apps: SkillApps;
   installedAt: number;
   contentHash?: string;
@@ -186,6 +195,22 @@ export interface SkillRepo {
 // ========== API ==========
 
 export const skillsApi = {
+  getProjectGroups(): Promise<SkillProjectGroup[]> {
+    return invoke("get_skill_project_groups");
+  },
+  saveProjectGroup(
+    group: Omit<SkillProjectGroup, "id"> & { id?: string },
+  ): Promise<SkillProjectGroup> {
+    return invoke("save_skill_project_group", {
+      id: group.id ?? null,
+      name: group.name,
+      skillIds: group.skillIds,
+    });
+  },
+  deleteProjectGroup(id: string): Promise<boolean> {
+    return invoke("delete_skill_project_group", { id });
+  },
+
   // ========== 统一管理 API (v3.10.0+) ==========
 
   /** 获取所有已安装的 Skills */

@@ -202,6 +202,36 @@ fn schema_migration_sets_user_version_when_missing() {
 }
 
 #[test]
+fn schema_migration_from_v21_adds_skill_provenance_columns() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        "CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            directory TEXT NOT NULL
+        );",
+    )
+    .expect("create v21 skills table");
+    Database::set_user_version(&conn, 21).expect("set v21");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("migrate v21");
+
+    assert_eq!(
+        get_column_info(&conn, "skills", "source_type").r#type,
+        "TEXT"
+    );
+    assert_eq!(get_column_info(&conn, "skills", "source_id").r#type, "TEXT");
+    assert_eq!(
+        get_column_info(&conn, "skills", "source_url").r#type,
+        "TEXT"
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("read version"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
 fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
@@ -653,6 +683,27 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         .query_row("SELECT COUNT(*) FROM skills", [], |r| r.get(0))
         .expect("count skills");
     assert_eq!(skills_count, 0, "skills table should be rebuilt empty");
+
+    // New child tables must reference the rebuilt `skills`, not the removed legacy table.
+    conn.execute(
+        "INSERT INTO skills (id, name, directory) VALUES ('local:test', 'Test', 'test')",
+        [],
+    )
+    .expect("insert a Skill after legacy migration");
+    conn.execute(
+        "INSERT INTO skill_project_groups (id, name) VALUES ('project', 'Project')",
+        [],
+    )
+    .expect("create a project after legacy migration");
+    conn.execute("INSERT INTO skill_project_group_members (skill_id, group_id) VALUES ('local:test', 'project')", [])
+        .expect("assign a member after legacy migration");
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        0
+    );
 
     let pending: Option<String> = conn
         .query_row(

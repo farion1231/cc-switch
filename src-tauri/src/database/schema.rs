@@ -14,6 +14,21 @@ struct LegacySkillMigrationRow {
 }
 
 impl Database {
+    fn create_skill_project_group_tables(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS skill_project_groups (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS skill_project_group_members (
+                skill_id TEXT PRIMARY KEY REFERENCES skills(id) ON DELETE CASCADE,
+                group_id TEXT NOT NULL REFERENCES skill_project_groups(id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_skill_project_group_members_group
+             ON skill_project_group_members(group_id);",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     /// 创建所有数据库表
     pub(crate) fn create_tables(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -93,6 +108,9 @@ impl Database {
             repo_name TEXT,
             repo_branch TEXT DEFAULT 'main',
             readme_url TEXT,
+            source_type TEXT,
+            source_id TEXT,
+            source_url TEXT,
             enabled_claude BOOLEAN NOT NULL DEFAULT 0,
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
@@ -117,6 +135,12 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // Legacy migrations rename/rebuild `skills`; creating a child table before that
+        // would rewrite its foreign key to the subsequently deleted legacy table.
+        if Self::has_column(conn, "skills", "id")? {
+            Self::create_skill_project_group_tables(conn)?;
+        }
 
         // 7. Settings 表
         conn.execute(
@@ -576,6 +600,18 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        Self::create_skill_project_group_tables(conn)?;
+                        Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        if Self::table_exists(conn, "skills")? {
+                            Self::add_column_if_missing(conn, "skills", "source_type", "TEXT")?;
+                            Self::add_column_if_missing(conn, "skills", "source_id", "TEXT")?;
+                            Self::add_column_if_missing(conn, "skills", "source_url", "TEXT")?;
+                        }
+                        Self::set_user_version(conn, 22)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(

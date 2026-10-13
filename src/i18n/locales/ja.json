@@ -4687,7 +4687,23 @@
     "headerUpdatesShow": "更新がある Skill だけを表示",
     "headerUpdatesClear": "すべての Skill を表示",
     "updateAllCount": "すべて更新（{{count}} 件）",
-    "updatingProgress": "更新中 {{done}}/{{total}}…"
+    "updatingProgress": "更新中 {{done}}/{{total}}…",
+    "groups": {
+      "create": "プロジェクトグループを作成",
+      "edit": "プロジェクトグループを編集",
+      "editNamed": "{{name}} を編集",
+      "description": "ローカル Skills を配布元プロジェクトごとに整理します。各 Skill は1つのプロジェクトに所属します。移動やグループ解除で Skill とアプリ設定は削除されません。",
+      "name": "プロジェクト名",
+      "search": "ローカル Skills を検索",
+      "noLocal": "一致するローカル Skills がありません",
+      "moveFrom": "{{name}} から移動",
+      "dissolve": "プロジェクトグループを解除",
+      "ungrouped": "未分類のローカル Skills",
+      "scope": "グループの切り替えは、非表示や折りたたまれた Skills を含む全メンバーに適用されます。",
+      "toggle": "{{name}} · {{app}}：全メンバーを切り替え",
+      "expand": "{{name}} を展開または折りたたむ",
+      "loadFailed": "プロジェクトグループを読み込めません。ページを開き直してください。"
+    }
   },
   "newLayoutNotice": {
     "title": "画面が新しくなりました",

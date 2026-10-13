@@ -376,3 +376,34 @@ pub fn install_skills_from_zip(
 
     SkillService::install_from_zip(&app_state.db, path, &app_type).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn get_skill_project_groups(
+    app_state: State<'_, AppState>,
+) -> Result<Vec<crate::database::SkillProjectGroup>, String> {
+    app_state
+        .db
+        .get_skill_project_groups()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_skill_project_group(
+    id: Option<String>,
+    name: String,
+    skill_ids: Vec<String>,
+    app_state: State<'_, AppState>,
+) -> Result<crate::database::SkillProjectGroup, String> {
+    SkillService::save_project_group(&app_state.db, id, name, skill_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_skill_project_group(
+    id: String,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    app_state
+        .db
+        .delete_skill_project_group(&id)
+        .map_err(|e| e.to_string())
+}
