@@ -1,5 +1,7 @@
 pub mod cache;
 pub mod content;
+#[cfg(windows)]
+pub(crate) mod hermes_wsl;
 pub mod model;
 pub mod providers;
 pub mod terminal;

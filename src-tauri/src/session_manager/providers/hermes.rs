@@ -67,6 +67,13 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
 }
 
 fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
+    #[cfg(windows)]
+    if crate::session_manager::hermes_wsl::is_wsl(db_path) {
+        return scan_sessions_wsl(db_path).unwrap_or_else(|error| {
+            log::warn!("Failed to scan Hermes WSL database: {error}");
+            Vec::new()
+        });
+    }
     if !db_path.exists() {
         return Vec::new();
     }
@@ -128,6 +135,49 @@ fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
     }
 
     sessions
+}
+
+#[cfg(windows)]
+fn scan_sessions_wsl(db_path: &Path) -> Result<Vec<SessionMeta>, String> {
+    let data =
+        crate::session_manager::hermes_wsl::read(db_path, serde_json::json!({"operation":"scan"}))?;
+    let edges = |name: &str| -> HashMap<String, String> {
+        data[name]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| {
+                let text = decode_content(row["content"].as_str()?);
+                (!text.trim().is_empty()).then(|| {
+                    (
+                        row["session_id"].as_str().unwrap_or_default().to_string(),
+                        text,
+                    )
+                })
+            })
+            .collect()
+    };
+    let first = edges("first");
+    let last = edges("last");
+    let source = format!("sqlite:{}", db_path.display());
+    Ok(data["sessions"]
+        .as_array()
+        .ok_or("Invalid Hermes session response")?
+        .iter()
+        .filter_map(|row| {
+            let mut meta = sqlite_row_to_session_meta(row, &source)?;
+            if meta.title.is_none() {
+                meta.title = first
+                    .get(&meta.session_id)
+                    .map(|text| truncate_summary(text, TITLE_MAX_CHARS));
+            }
+            meta.summary = last
+                .get(&meta.session_id)
+                .or_else(|| first.get(&meta.session_id))
+                .map(|text| truncate_summary(text, 160));
+            Some(meta)
+        })
+        .collect())
 }
 
 /// First displayable user message of each listed session, decoded to text.
@@ -290,6 +340,34 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
     let (db_path, session_id) = parse_sqlite_source(source)
         .ok_or_else(|| format!("Invalid SQLite source reference: {source}"))?;
 
+    #[cfg(windows)]
+    if crate::session_manager::hermes_wsl::is_wsl(&db_path) {
+        let data = crate::session_manager::hermes_wsl::read(
+            &db_path,
+            serde_json::json!({"operation":"messages","session_id":session_id}),
+        )?;
+        let rows = data
+            .as_array()
+            .ok_or("Invalid Hermes message response")?
+            .iter()
+            .filter_map(|row| {
+                let text = |name: &str| row[name].as_str().map(str::to_string);
+                Some(MessageRow {
+                    id: row["id"].as_i64()?,
+                    role: row["role"].as_str()?.to_string(),
+                    content: text("content"),
+                    timestamp: row["timestamp"].as_f64(),
+                    tool_call_id: text("tool_call_id"),
+                    tool_calls: text("tool_calls"),
+                    tool_name: text("tool_name"),
+                    active: row["active"].as_i64().unwrap_or(1),
+                    display_metadata: text("display_metadata"),
+                    reasoning: text("reasoning"),
+                })
+            })
+            .collect();
+        return messages_from_rows(rows);
+    }
     let conn = Connection::open_with_flags(
         &db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -411,11 +489,15 @@ fn load_messages_from_conn(
         })
         .map_err(|e| format!("Failed to query messages: {e}"))?;
 
+    messages_from_rows(rows.flatten().collect())
+}
+
+fn messages_from_rows(rows: Vec<MessageRow>) -> Result<Vec<SessionMessage>, String> {
     // Collapse duplicates the way Hermes' display projection does: keep the
     // first position, show the most live copy.
     let mut order: Vec<MessageRow> = Vec::new();
     let mut index: HashMap<DedupeKey, usize> = HashMap::new();
-    for row in rows.flatten() {
+    for row in rows {
         if row.is_model_only() {
             continue;
         }
@@ -1024,6 +1106,8 @@ mod tests {
                 r#"import sqlite3,sys,os
 p=sys.argv[1]
 c=sqlite3.connect(p,isolation_level=None)
+c.execute('CREATE TABLE sessions(id TEXT PRIMARY KEY,cwd TEXT,title TEXT,started_at REAL,last_activity_at REAL)')
+c.execute("INSERT INTO sessions VALUES('s1','/tmp',NULL,1,1)")
 c.execute('CREATE TABLE messages(id INTEGER PRIMARY KEY,session_id TEXT,role TEXT,content TEXT,timestamp REAL)')
 c.execute('PRAGMA journal_mode=WAL')
 c.execute('PRAGMA wal_autocheckpoint=0')
@@ -1096,10 +1180,63 @@ print(json.dumps([row[0] for row in rows]))
                 rusqlite::version()
             ),
         }
-        println!(
-            "Hermes UNC load: {:?}",
-            load_messages_sqlite(&format!("sqlite:{}#s1", unc.display()))
-        );
+        let source = format!("sqlite:{}#s1", unc.display());
+        let verify_production = |expected: &[&str]| {
+            let messages = load_messages_sqlite(&source).expect("production WSL message route");
+            assert_eq!(
+                messages
+                    .iter()
+                    .map(|m| m.content.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            let sessions = scan_sessions_sqlite_at(&unc);
+            assert_eq!(sessions.len(), 1);
+            assert_eq!(sessions[0].title.as_deref(), Some("first"));
+            assert_eq!(sessions[0].summary.as_deref(), expected.last().copied());
+            // Content validation canonicalizes paths to the extended UNC form.
+            let canonical = unc.canonicalize().expect("canonical WSL UNC path");
+            let value = crate::session_manager::hermes_wsl::read(&canonical, serde_json::json!({
+                "operation":"cell", "session_id":"s1", "id":"1", "column":"content", "max_bytes":1024,
+            })).expect("production canonical content route");
+            assert_eq!(value, "first");
+            let validated = crate::session_manager::content::ValidatedSource {
+                provider_id: "hermes".to_string(),
+                raw: source.clone(),
+                location: crate::session_manager::content::SourceLocation::Sqlite {
+                    db: canonical.clone(),
+                    session_id: "s1".to_string(),
+                },
+            };
+            let content_ref = ContentRef::Sqlite {
+                table: "messages".to_string(),
+                id: "1".to_string(),
+                column: "content".to_string(),
+                pointer: String::new(),
+            };
+            assert_eq!(
+                crate::session_manager::content::resolve_content_ref(&validated, &content_ref)
+                    .unwrap(),
+                "first"
+            );
+            let forbidden = ContentRef::Sqlite {
+                table: "sqlite_master".to_string(),
+                id: "1".to_string(),
+                column: "sql".to_string(),
+                pointer: String::new(),
+            };
+            assert!(
+                crate::session_manager::content::resolve_content_ref(&validated, &forbidden)
+                    .is_err()
+            );
+            assert!(crate::session_manager::hermes_wsl::read(&canonical, serde_json::json!({
+                "operation":"cell", "session_id":"wrong-session", "id":"1", "column":"content", "max_bytes":1024,
+            })).is_err());
+            assert!(crate::session_manager::hermes_wsl::read(&canonical, serde_json::json!({
+                "operation":"cell", "session_id":"s1", "id":"1", "column":"content", "max_bytes":1,
+            })).is_err());
+        };
+        verify_production(&["first"]);
         for (action, expected) in [
             ("begin", vec!["first"]),
             ("commit", vec!["first", "second"]),
@@ -1109,6 +1246,7 @@ print(json.dumps([row[0] for row in rows]))
             output.read_line(&mut line).unwrap();
             assert_eq!(line.trim(), action);
             assert_eq!(read_native(), expected);
+            verify_production(&expected);
         }
         writeln!(writer.stdin.as_mut().unwrap(), "exit").unwrap();
         assert!(writer.wait().unwrap().success());
