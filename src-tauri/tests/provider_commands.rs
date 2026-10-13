@@ -35,6 +35,15 @@ context_window = 500000
     )
 }
 
+/// 切换时 `models.session_summary` 跟着目标模型表走（#7003），live 比行多这一行。
+fn with_session_summary(config: &str) -> String {
+    config.replacen(
+        "default = \"grok-4.5\"\n",
+        "default = \"grok-4.5\"\nsession_summary = \"grok-4.5\"\n",
+        1,
+    )
+}
+
 #[test]
 fn grokbuild_import_and_switch_write_live_config() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
@@ -82,7 +91,7 @@ fn grokbuild_import_and_switch_write_live_config() {
 
     assert_eq!(
         std::fs::read_to_string(&live_path).expect("read switched Grok Build config"),
-        next_config
+        with_session_summary(&next_config)
     );
     assert_eq!(
         state
@@ -128,11 +137,12 @@ fn grokbuild_switch_back_after_client_changed_default_model() {
     switch_provider_test_hook(&state, AppType::GrokBuild, "a").expect("switch to provider a");
     assert_eq!(
         std::fs::read_to_string(&live_path).expect("read live after switching to a"),
-        relay_a
+        with_session_summary(&relay_a)
     );
 
     // Simulate Grok's `/settings` → Default model picking the built-in grok-4.6.
-    let client_edited = relay_a.replace("default = \"grok-4.5\"", "default = \"grok-4.6\"");
+    let client_edited =
+        with_session_summary(&relay_a).replace("default = \"grok-4.5\"", "default = \"grok-4.6\"");
     std::fs::write(&live_path, &client_edited).expect("simulate client edit");
 
     switch_provider_test_hook(&state, AppType::GrokBuild, "b").expect("switch to provider b");
