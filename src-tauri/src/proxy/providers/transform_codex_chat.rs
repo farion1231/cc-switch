@@ -295,6 +295,12 @@ pub fn responses_to_chat_completions_with_reasoning(
     if let Some(input) = body.get("input") {
         append_responses_input_as_chat_messages(input, &mut messages, &tool_context)?;
     }
+    let recovered =
+        super::codex_chat_tool_history::preserve_invalid_tool_calls_as_text(&mut messages);
+    if recovered > 0 {
+        // Counts only: historical arguments and tool results may contain secrets.
+        log::warn!("[Codex Chat] Preserved {recovered} malformed historical tool call(s) as text");
+    }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
 
@@ -4168,7 +4174,7 @@ mod tests {
                     "type": "function_call",
                     "call_id": "call_1",
                     "name": "read_file",
-                    "arguments": "not json"
+                    "arguments": "{}"
                 },
                 {
                     "type": "function_call_output",
@@ -4181,11 +4187,162 @@ mod tests {
         let result = responses_to_chat_completions(input).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
-        assert_eq!(
-            messages[0]["tool_calls"][0]["function"]["arguments"],
-            "not json"
-        );
+        assert_eq!(messages[0]["tool_calls"][0]["function"]["arguments"], "{}");
         assert_eq!(messages[1]["content"], "plain text result");
+    }
+
+    // Synthetic history: a model stopped in the middle of a JSON string and
+    // the client retained the failed call before asking the model to continue.
+    fn malformed_history_request(arguments: Value) -> Value {
+        json!({
+            "model": "test-model",
+            "input": [
+                {"role": "assistant", "content": "Looking up the result."},
+                {"type": "function_call", "call_id": "call_broken", "name": "lookup",
+                 "arguments": arguments, "reasoning_content": "Existing reasoning."},
+                {"type": "function_call_output", "call_id": "call_broken",
+                 "output": "failed to parse function arguments: unexpected end of input"},
+                {"role": "user", "content": "continue"}
+            ],
+            "tools": [{"type": "function", "name": "lookup", "parameters": {
+                "type": "object", "properties": {"query": {"type": "string"}}
+            }}]
+        })
+    }
+
+    #[test]
+    fn malformed_history_arguments_preserve_attempt_and_error_as_text() {
+        let raw = r#"{"query":"unfinished"#;
+        let result = responses_to_chat_completions(malformed_history_request(json!(raw))).unwrap();
+        let messages = result_messages(&result);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert!(messages[0].get("tool_calls").is_none());
+        let text = messages[0]["content"].as_str().unwrap();
+        for preserved in [
+            "Looking up the result.",
+            "lookup",
+            raw,
+            "failed to parse function arguments",
+        ] {
+            assert!(text.contains(preserved), "missing context: {preserved}");
+        }
+        assert!(messages[0]["reasoning_content"]
+            .as_str()
+            .unwrap()
+            .contains("Existing reasoning."));
+        assert_eq!(messages[1], json!({"role": "user", "content": "continue"}));
+        assert_eq!(result["tools"][0]["function"]["name"], "lookup");
+    }
+
+    #[test]
+    fn malformed_history_arguments_recover_non_object_json_without_guessing() {
+        for arguments in ["not json", "[]", "42", "true", "null", "\"text\""] {
+            let result =
+                responses_to_chat_completions(malformed_history_request(json!(arguments))).unwrap();
+            let messages = result_messages(&result);
+            assert!(messages
+                .iter()
+                .all(|message| message.get("tool_calls").is_none()));
+            assert!(messages.iter().all(|message| message["role"] != "tool"));
+            assert!(messages[0]["content"].as_str().unwrap().contains(arguments));
+        }
+    }
+
+    #[test]
+    fn malformed_history_arguments_keep_valid_parallel_calls_paired() {
+        for bad_result_first in [true, false] {
+            let mut body = malformed_history_request(json!("{broken"));
+            let input = body["input"].as_array_mut().unwrap();
+            input.insert(
+                2,
+                json!({"type": "function_call", "call_id": "call_ok", "name": "lookup",
+                "arguments": "{\"query\":\"weather\"}"}),
+            );
+            input.insert(
+                if bad_result_first { 4 } else { 3 },
+                json!({
+                    "type": "function_call_output", "call_id": "call_ok", "output": "sunny"
+                }),
+            );
+            let result = responses_to_chat_completions(body).unwrap();
+            let messages = result_messages(&result);
+            assert_eq!(messages.len(), 3);
+            assert_eq!(
+                messages[0]["tool_calls"],
+                json!([{
+                    "id": "call_ok", "type": "function", "function": {
+                        "name": "lookup", "arguments": "{\"query\":\"weather\"}"
+                    }
+                }])
+            );
+            assert!(messages[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("failed to parse function arguments"));
+            assert_eq!(
+                messages[1],
+                json!({"role": "tool", "tool_call_id": "call_ok", "content": "sunny"})
+            );
+            assert_eq!(messages[2]["role"], "user");
+        }
+    }
+
+    #[test]
+    fn malformed_history_arguments_do_not_affect_valid_objects_or_no_arg_calls() {
+        for arguments in [
+            json!("{\"query\":\"weather\"}"),
+            json!({"query": "weather"}),
+            json!("{}"),
+            json!(""),
+        ] {
+            let result =
+                responses_to_chat_completions(malformed_history_request(arguments)).unwrap();
+            let messages = result_messages(&result);
+            assert_eq!(messages.len(), 3);
+            assert_eq!(messages[0]["tool_calls"][0]["id"], "call_broken");
+            let args = messages[0]["tool_calls"][0]["function"]["arguments"]
+                .as_str()
+                .unwrap();
+            assert!(serde_json::from_str::<Value>(args).unwrap().is_object());
+            assert_eq!(messages[1]["role"], "tool");
+        }
+    }
+
+    #[test]
+    fn malformed_history_arguments_preserve_tool_result_media() {
+        let mut body = malformed_history_request(json!("{broken"));
+        let image_url = "data:image/png;base64,aGVsbG8=";
+        body["input"][2]["output"] = json!([
+            {"type": "input_text", "text": "failed to parse function arguments"},
+            {"type": "input_image", "image_url": image_url}
+        ]);
+        let result = responses_to_chat_completions(body).unwrap();
+        let messages = result_messages(&result);
+        assert!(messages
+            .iter()
+            .all(|message| message.get("tool_calls").is_none()));
+        assert!(messages.iter().all(|message| message["role"] != "tool"));
+        assert!(messages.iter().any(|message| message["role"] == "user"
+            && message["content"]
+                .as_array()
+                .is_some_and(|parts| parts.iter().any(|part| part
+                    .pointer("/image_url/url")
+                    .and_then(Value::as_str)
+                    == Some(image_url)))));
+    }
+
+    #[test]
+    fn malformed_history_arguments_without_a_result_remain_visible_as_context() {
+        let mut body = malformed_history_request(json!("{broken"));
+        body["input"].as_array_mut().unwrap().remove(2);
+        let result = responses_to_chat_completions(body).unwrap();
+        let messages = result_messages(&result);
+        assert!(messages
+            .iter()
+            .all(|message| message.get("tool_calls").is_none()));
+        assert!(messages[0]["content"].as_str().unwrap().contains("{broken"));
+        assert_eq!(messages.last().unwrap()["content"], "continue");
     }
 
     #[test]
