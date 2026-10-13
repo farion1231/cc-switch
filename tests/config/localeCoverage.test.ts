@@ -119,4 +119,35 @@ describe("Turkish locale", () => {
         .map(([key]) => key),
     ).toEqual([]);
   });
+
+  it("preserves protocol fields, configuration literals, and commands", () => {
+    const translations = flattenStrings(tr);
+    const exactLiterals = [
+      "opencode.extraOptionKeyPlaceholder",
+      "opencode.modelExtraFieldKeyPlaceholder",
+      "opencode.modelOptionKeyPlaceholder",
+      "opencode.modelOptionValuePlaceholder",
+    ];
+
+    for (const key of exactLiterals) {
+      expect(translations.get(key), key).toBe(reference.get(key));
+    }
+
+    expect(translations.get("usageScript.fieldRemaining")).toContain(
+      "• remaining:",
+    );
+    expect(translations.get("usageScript.fieldUnit")).toContain("• unit:");
+    expect(translations.get("usageScript.fieldTotal")).toContain("• total:");
+    expect(translations.get("usageScript.fieldUsed")).toContain("• used:");
+    expect(translations.get("usageScript.fieldExtra")).toContain("• extra:");
+    expect(translations.get("settings.s3Sync.presets.r2Hint")).toContain(
+      "'auto'",
+    );
+    expect(translations.get("settings.s3Sync.presets.cosHint")).toContain(
+      "ap-beijing",
+    );
+    expect(translations.get("hermes.webui.launchConfirmMessage")).toContain(
+      "pip install hermes-agent[web]",
+    );
+  });
 });
