@@ -289,7 +289,12 @@ fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option
         .ok()
         .flatten()
         .filter(|path| path.is_file())
-        .map(|path| path.to_string_lossy().into_owned())
+        .map(|path| {
+            // PATH lookup canonicalizes Windows paths; batch `call` rejects verbatim paths.
+            #[cfg(target_os = "windows")]
+            let path = windows_shell_compatible_path(&path);
+            path.to_string_lossy().into_owned()
+        })
     })?;
     let command = format!(
         "{} uninstall -g --prefix {} {package}",
@@ -599,6 +604,93 @@ mod tests {
         )
         .unwrap();
         assert!(package_uninstall_command("codex", &inst).unwrap().is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_npm_path_fallback_uses_batch_compatible_path() {
+        use std::os::windows::process::CommandExt;
+
+        const FIXTURE_ROOT: &str = "CC_SWITCH_TEST_NPM_UNINSTALL_ROOT";
+        if let Some(root) = std::env::var_os(FIXTURE_ROOT) {
+            let root = PathBuf::from(root);
+            let prefix = root.join("custom npm prefix");
+            let entry = prefix.join("codex.cmd");
+            let npm = root.join("Program Files").join("nodejs").join("npm.cmd");
+            let marker = npm.with_file_name("npm-args.txt");
+            let inst = installation(&entry);
+            assert!(manager_next_to(&inst.path, "npm").is_none());
+
+            let resolved = resolve_path_default(
+                "npm",
+                CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+            )
+            .unwrap()
+            .expect("npm should resolve from the separate PATH directory");
+            assert_eq!(resolved, std::fs::canonicalize(&npm).unwrap());
+            assert!(resolved.to_string_lossy().starts_with(r"\\?\"));
+
+            let plan = plan_for_install("codex", &inst).unwrap();
+            let arguments = format!(
+                "uninstall -g --prefix {} @openai/codex",
+                quote(&prefix.to_string_lossy())
+            );
+            assert_eq!(
+                plan.command,
+                format!("{} {arguments}", quote(&npm.to_string_lossy()))
+            );
+            assert!(!plan.native);
+            assert!(!plan.command.contains(r"\\?\"));
+            assert!(!marker.exists(), "planning must not execute npm");
+
+            run_package_uninstall(&plan.command)
+                .expect("PATH npm.cmd should execute via batch call");
+            assert_eq!(std::fs::read_to_string(marker).unwrap().trim(), arguments);
+            return;
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let prefix = temp.path().join("custom npm prefix");
+        let package = prefix.join("node_modules/@openai/codex");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("package.json"), r#"{"name":"@openai/codex"}"#).unwrap();
+        std::fs::write(
+            prefix.join("codex.cmd"),
+            "@echo off\r\nrem node_modules/@openai/codex/codex.js\r\n",
+        )
+        .unwrap();
+        let node_dir = temp.path().join("Program Files").join("nodejs");
+        std::fs::create_dir_all(&node_dir).unwrap();
+        std::fs::write(
+            node_dir.join("npm.cmd"),
+            "@echo off\r\n>\"%~dp0npm-args.txt\" echo %*\r\nexit /b 0\r\n",
+        )
+        .unwrap();
+
+        // Isolate PATH in a child test process so parallel tests keep their environment.
+        let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+        let path = std::env::join_paths(
+            std::iter::once(node_dir.clone()).chain(std::env::split_paths(&inherited_path)),
+        )
+        .unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::misc::tool_uninstall::tests::windows_npm_path_fallback_uses_batch_compatible_path",
+                "--nocapture",
+            ])
+            .env(FIXTURE_ROOT, temp.path())
+            .env("PATH", path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "PATH fallback regression failed:\n{}\n{}",
+            decode_command_output(&output.stdout),
+            decode_command_output(&output.stderr)
+        );
+        assert!(node_dir.join("npm-args.txt").is_file());
     }
 
     #[test]
