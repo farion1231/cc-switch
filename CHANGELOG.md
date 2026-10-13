@@ -5,6 +5,16 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Cross-device usage sync** (refs #8146, #1856): opt-in, off by default. Each device publishes its own usage to the WebDAV or S3 storage configured for Cloud Sync (`usage-v1/{profile}/devices/{device_id}/`, separate from the configuration snapshot) and imports the other devices' usage into read-only cache tables. The Usage page can show This device, All devices or one device, with a Devices sheet (status, outdated data, errors, coverage) and an explanation of how All devices totals are combined. Copies of the same request on several devices are counted once by request id, including after rollup (a per-request identity ledger of rolled-up history, kept for 365 days); day-level history without request ids is shown as not de-duplicable. See `docs/usage-sync.md`.
+
+### Compatibility
+
+- **Database schema v21**: the upgrade adds the usage sync and rollup identity ledger tables. As with every schema upgrade, CC Switch builds using schema v20 refuse a configuration snapshot uploaded by this version ("database version too new"), even when usage sync is never enabled. Update all devices that share a Cloud Sync profile together. Downgrading after the upgrade requires restoring the automatic pre-migration backup.
+
 ## [4.0.11] - 2026-10-13
 
 This release adds uninstall to the Apps page, so coding clients can now be installed, updated and uninstalled from CC Switch. The Apps page removes a detected client installation after showing the exact path and command, and lists manual uninstall commands for every install method. Coding-plan quota queries are enabled by default for every app, both when adding a provider and when importing a link. Codex usage import no longer rereads deferred fork rollouts every minute and now resolves fork parents across paginated Codex Desktop rollouts. Fixes cover install and update commands losing the user PATH after an MSI auto-restart on Windows, full-screen panels flickering, and bulk Skills and MCP toggles reporting success when writes failed. New presets: StreamLake China, AIComing, SoruxGPT Coding Plan and GrooRoute Pro.
