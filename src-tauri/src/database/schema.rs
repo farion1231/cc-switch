@@ -201,6 +201,7 @@ impl Database {
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
             pricing_model TEXT,
+            reasoning_effort TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
@@ -313,7 +314,9 @@ impl Database {
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL,
                 last_byte_offset INTEGER,
-                last_tail_fingerprint INTEGER
+                last_tail_fingerprint INTEGER,
+                pi_usage_context TEXT,
+                reasoning_effort_synced INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )
@@ -576,6 +579,44 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        if Self::table_exists(conn, "proxy_request_logs")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "proxy_request_logs",
+                                "reasoning_effort",
+                                "TEXT",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        if Self::table_exists(conn, "session_log_sync")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "session_log_sync",
+                                "pi_usage_context",
+                                "TEXT",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 22)?;
+                    }
+                    22 => {
+                        if Self::table_exists(conn, "session_log_sync")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "session_log_sync",
+                                "reasoning_effort_synced",
+                                "INTEGER NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        // v24 的 Grok 会话强度来源功能已撤回。保留版本号，
+                        // 兼容已升级的数据库；遗留可空列不再读取或写入。
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3827,6 +3868,105 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn retired_v24_migration_preserves_existing_database_compatibility() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE proxy_request_logs (request_id TEXT PRIMARY KEY, reasoning_effort TEXT, total_cost_usd TEXT);
+             INSERT INTO proxy_request_logs VALUES ('existing', 'xhigh', '0.25');",
+        )?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let row: (String, String) = conn.query_row(
+            "SELECT reasoning_effort, total_cost_usd FROM proxy_request_logs",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        assert_eq!(row, ("xhigh".to_string(), "0.25".to_string()));
+        let column_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('proxy_request_logs')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(column_count, 3, "撤回后的迁移不应新增列");
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v22_to_v23_preserves_reasoning_and_cursor_state() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY, last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL, last_synced_at INTEGER NOT NULL,
+                last_byte_offset INTEGER, last_tail_fingerprint INTEGER, pi_usage_context TEXT
+             );
+             INSERT INTO session_log_sync VALUES ('session.jsonl', 123, 7, 456, 789, 42, '{}');",
+        )?;
+        Database::set_user_version(&conn, 22)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let state: (i64, i64, i64, i64, i64, String, bool) = conn.query_row(
+            "SELECT last_modified, last_line_offset, last_synced_at, last_byte_offset,
+                    last_tail_fingerprint, pi_usage_context, reasoning_effort_synced FROM session_log_sync",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+        )?;
+        assert_eq!(state, (123, 7, 456, 789, 42, "{}".to_string(), false));
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v21_to_v22_preserves_cursors_for_pi_reasoning_backfill() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL,
+                last_synced_at INTEGER NOT NULL
+            );
+            INSERT INTO session_log_sync VALUES ('pi.jsonl', 123, 456, -789);",
+        )?;
+        Database::set_user_version(&conn, 21)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let cursor: (i64, i64, i64, Option<String>) = conn.query_row(
+            "SELECT last_modified, last_line_offset, last_synced_at, pi_usage_context FROM session_log_sync",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(cursor, (123, 456, -789, None));
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_adds_reasoning_effort_without_changing_existing_logs(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE proxy_request_logs (
+                request_id TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                total_cost_usd TEXT NOT NULL
+            );
+            INSERT INTO proxy_request_logs VALUES ('existing', 'gpt-5', '0.25');",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let row: (String, String, Option<String>) = conn.query_row(
+            "SELECT model, total_cost_usd, reasoning_effort FROM proxy_request_logs WHERE request_id = 'existing'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(row, ("gpt-5".to_string(), "0.25".to_string(), None));
         Ok(())
     }
 
