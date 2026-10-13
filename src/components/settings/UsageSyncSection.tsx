@@ -339,7 +339,11 @@ export function UsageSyncSection() {
             </div>
           }
         >
-          {t("usageSync.conflict.body")}
+          <p className="m-0">{t("usageSync.conflict.body")}</p>
+          <ul className="m-0 mt-1.5 flex list-disc flex-col gap-1 ps-5">
+            <li>{t("usageSync.conflict.newIdentityEffect")}</li>
+            <li>{t("usageSync.conflict.takeOverEffect")}</li>
+          </ul>
         </Notice>
       )}
 

@@ -4817,16 +4817,23 @@
       "detailFrom": "request details since {{date}}",
       "show": "Show in statistics",
       "hide": "Hide from statistics",
-      "costNote": "Costs are estimates computed by each device from its own model prices; they are not the amount actually billed by a subscription."
+      "costNote": "Costs are estimates computed by each device from its own model prices; they are not the amount actually billed by a subscription.",
+      "unverified": "Day-level history without request ids: {{count}} requests",
+      "unverifiedRange": "Day-level history without request ids: {{count}} requests ({{from}} → {{to}})",
+      "calendar": "Day totals use this device's calendar ({{offset}})",
+      "splitFrom": "Split from {{device}} (copied installation)"
     },
     "conflict": {
       "title": "Device identity conflict",
-      "body": "Another CC Switch installation is uploading with this device's identity (the CC Switch data folder was probably copied). Uploading is paused; other devices' usage still downloads.",
+      "body": "Another CC Switch installation is uploading with this device's identity (the CC Switch data folder was probably copied, or this computer was restored from a backup). Uploading is paused; other devices' usage still downloads.",
       "newIdentity": "Use a new identity",
       "takeOver": "Take over",
       "takeOverTitle": "Take over this identity?",
       "takeOverMessage": "Only do this if the other installation no longer runs (for example after restoring this computer from a backup). If both keep running, they will overwrite each other's usage.",
-      "resolved": "Device identity updated"
+      "resolved": "Device identity updated",
+      "newIdentityEffect": "Use a new identity — for a second computer that keeps running: this installation continues under a new id. History copied from the other installation is counted once (requests with ids are matched; older day totals stay with the other installation while it is present, and move to this one if you hide it). Requests made from now on count for this installation.",
+      "takeOverEffect": "Take over — only if the other installation no longer runs (for example this computer was restored from a backup): this installation continues the existing identity and republishes its data. If both keep running they overwrite each other.",
+      "resolveInSettings": "Choose how to resolve it in Settings → Data → Cross-device usage sync."
     },
     "insecure": {
       "title": "Unencrypted connection",
@@ -4844,7 +4851,7 @@
       "title": "Cross-device usage sync",
       "help": "Share usage statistics between your devices through the WebDAV or S3 storage configured above. Usage is stored separately from the configuration snapshot and never overwrites it.",
       "intro": "Each device uploads its own usage to the cloud storage above and downloads the usage of your other devices, so the Usage page can show every device or a single one.",
-      "privacyShared": "Shared: time, app, provider name, model, token counts, estimated cost, status code and (in request mode) timings and request IDs.",
+      "privacyShared": "Shared: time, app, provider name, model, token counts, estimated cost, status code and, in per-request mode, timings and request ids — including the ids of rolled-up history for up to one year, so copies on several devices are counted once.",
       "privacyNotShared": "Never shared: API keys, tokens, prompts and responses, session files, error messages, file paths or the CC Switch database.",
       "privacyCost": "Costs are estimates based on each device's model prices.",
       "noBackendTitle": "No cloud storage configured",
@@ -4871,6 +4878,20 @@
       "neverSynced": "Not synced yet",
       "saveFailed": "Failed to save usage sync settings: {{error}}",
       "saveName": "Save name"
+    },
+    "accuracy": {
+      "summary": "How these totals are combined",
+      "summaryWithIssues": "How these totals are combined · {{count}} limitation(s)",
+      "exact": "Exact: request records and history that keep request ids are de-duplicated across devices — a request copied to several devices is counted once.",
+      "unverified": "Not de-duplicable: {{count}} requests of day-level history carry no request id ({{devices}}). If another device holds the same requests they are counted once per device.",
+      "unknownOverlap": "Not detectable: a proxy record on one device and the session-log record of the same call on another device have different ids and are both counted.",
+      "calendar": "Day-level history of {{devices}} is labelled with that device's own calendar date, which can differ from yours near midnight.",
+      "neverSynced": "No data received yet from {{devices}}.",
+      "syncError": "Last usage sync failed: {{error}}",
+      "estimate": "Costs are estimates from each device's model prices, not the amount billed by a subscription.",
+      "howTitle": "How All devices totals are combined",
+      "howUnverified": "Day-level history without request ids (rolled up by older versions, older than one year, or shared as daily totals only) cannot be de-duplicated and is counted once per device that holds it.",
+      "howCalendar": "Day-level history uses the calendar of the device that recorded it; request records use your own calendar."
     }
   }
 }

@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { isDeviceStale } from "@/lib/query/usageSync";
 import type { RemoteDeviceInfo, UsageSyncOverview } from "@/types/usageSync";
 import { formatRelativeTime } from "./format";
+import { formatUtcOffset } from "./UsageScopeAccuracy";
 
 interface UsageDevicesSheetProps {
   open: boolean;
@@ -87,6 +88,47 @@ function coverageText(
     : range;
 }
 
+/** Accuracy facts about one device's data: id-less history, calendar, lineage. */
+export function deviceAccuracyLines(
+  device: Pick<
+    RemoteDeviceInfo,
+    "unverified" | "utcOffsetMinutes" | "parentDeviceId"
+  >,
+  names: Record<string, string>,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string[] {
+  const lines: string[] = [];
+  if (device.unverified.requests > 0) {
+    lines.push(
+      device.unverified.firstDate && device.unverified.lastDate
+        ? t("usageSync.devices.unverifiedRange", {
+            count: device.unverified.requests,
+            from: device.unverified.firstDate,
+            to: device.unverified.lastDate,
+          })
+        : t("usageSync.devices.unverified", {
+            count: device.unverified.requests,
+          }),
+    );
+  }
+  if (device.utcOffsetMinutes != null) {
+    lines.push(
+      t("usageSync.devices.calendar", {
+        offset: formatUtcOffset(device.utcOffsetMinutes),
+      }),
+    );
+  }
+  if (device.parentDeviceId) {
+    lines.push(
+      t("usageSync.devices.splitFrom", {
+        device:
+          names[device.parentDeviceId] ?? device.parentDeviceId.slice(0, 8),
+      }),
+    );
+  }
+  return lines;
+}
+
 /** 「设备」抽屉：本机与已同步设备的状态、覆盖范围和错误。 */
 export function UsageDevicesSheet({
   open,
@@ -103,6 +145,13 @@ export function UsageDevicesSheet({
   const status = settings?.status;
   const enabled = settings?.enabled ?? false;
   const staleAfter = overview?.staleAfterSecs ?? 86_400;
+
+  const names: Record<string, string> = Object.fromEntries(
+    (overview?.devices ?? []).map((d) => [d.deviceId, d.deviceName]),
+  );
+  if (overview) {
+    names[overview.thisDevice.deviceId] = overview.thisDevice.deviceName;
+  }
 
   const relative = (seconds?: number | null) =>
     seconds == null
@@ -148,7 +197,10 @@ export function UsageDevicesSheet({
           )}
           {status?.identityConflict && (
             <Notice tone="danger" title={t("usageSync.conflict.title")}>
-              {t("usageSync.conflict.body")}
+              <p className="m-0">{t("usageSync.conflict.body")}</p>
+              <p className="m-0 mt-1">
+                {t("usageSync.conflict.resolveInSettings")}
+              </p>
             </Notice>
           )}
           {overview?.transportSecure === false && (
@@ -176,6 +228,13 @@ export function UsageDevicesSheet({
                 <p className="m-0 break-words text-caption text-danger-text">
                   {status.lastError}
                 </p>
+              )}
+              {deviceAccuracyLines(overview.thisDevice, names, t).map(
+                (line) => (
+                  <p key={line} className="m-0 text-caption text-fg-3">
+                    {line}
+                  </p>
+                ),
               )}
             </section>
           )}
@@ -217,6 +276,11 @@ export function UsageDevicesSheet({
                     {coverage && (
                       <p className="m-0 text-caption text-fg-3">{coverage}</p>
                     )}
+                    {deviceAccuracyLines(device, names, t).map((line) => (
+                      <p key={line} className="m-0 text-caption text-fg-3">
+                        {line}
+                      </p>
+                    ))}
                     {device.lastError && device.status !== "ok" && (
                       <p className="m-0 break-words text-caption text-danger-text">
                         {device.lastError}
@@ -261,9 +325,18 @@ export function UsageDevicesSheet({
               </Button>
             </div>
           )}
-          <p className="m-0 text-caption text-fg-3">
-            {t("usageSync.devices.costNote")}
-          </p>
+          <section className="flex flex-col gap-1">
+            <h3 className="m-0 text-caption font-semibold text-fg-2">
+              {t("usageSync.accuracy.howTitle")}
+            </h3>
+            <ul className="m-0 flex list-disc flex-col gap-1 ps-5 text-caption text-fg-3">
+              <li>{t("usageSync.accuracy.exact")}</li>
+              <li>{t("usageSync.accuracy.howUnverified")}</li>
+              <li>{t("usageSync.accuracy.unknownOverlap")}</li>
+              <li>{t("usageSync.accuracy.howCalendar")}</li>
+              <li>{t("usageSync.devices.costNote")}</li>
+            </ul>
+          </section>
         </SheetBody>
       </SheetContent>
     </Sheet>

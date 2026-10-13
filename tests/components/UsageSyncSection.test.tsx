@@ -36,7 +36,13 @@ const base: UsageSyncOverview = {
   availableBackends: { webdav: true, s3: false },
   remoteLocation: null,
   transportSecure: null,
-  thisDevice: { deviceId: "id", deviceName: "My Mac", customName: null },
+  thisDevice: {
+    deviceId: "id",
+    deviceName: "My Mac",
+    customName: null,
+    utcOffsetMinutes: 0,
+    unverified: { requests: 0 },
+  },
   devices: [],
   syncing: false,
   staleAfterSecs: 86400,
@@ -139,6 +145,13 @@ describe("UsageSyncSection", () => {
     renderSection();
     expect(
       await screen.findByText("usageSync.insecure.title"),
+    ).toBeInTheDocument();
+    // Both options explain their effect on the data before the user picks one.
+    expect(
+      screen.getByText("usageSync.conflict.newIdentityEffect"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("usageSync.conflict.takeOverEffect"),
     ).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "usageSync.conflict.newIdentity" }),

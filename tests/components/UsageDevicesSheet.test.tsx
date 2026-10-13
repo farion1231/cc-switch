@@ -27,6 +27,7 @@ const device = (partial: Partial<RemoteDeviceInfo>): RemoteDeviceInfo => ({
   status: "ok",
   logRows: 1,
   rollupRows: 0,
+  unverified: { requests: 0 },
   ...partial,
 });
 
@@ -71,7 +72,12 @@ describe("UsageDevicesSheet", () => {
     availableBackends: { webdav: false, s3: true },
     remoteLocation: "S3: bucket/cc-switch-sync/usage-v1/default",
     transportSecure: false,
-    thisDevice: { deviceId: "me", deviceName: "My Mac" },
+    thisDevice: {
+      deviceId: "me",
+      deviceName: "My Mac",
+      utcOffsetMinutes: 0,
+      unverified: { requests: 0 },
+    },
     devices: [
       device({
         deviceId: "dev-err",
@@ -118,6 +124,10 @@ describe("UsageDevicesSheet", () => {
     expect(screen.getByText("usageSync.conflict.title")).toBeInTheDocument();
     expect(screen.getByText("usageSync.insecure.title")).toBeInTheDocument();
     expect(screen.getByText("checksum mismatch")).toBeInTheDocument();
+    expect(screen.getByText("usageSync.accuracy.howTitle")).toBeInTheDocument();
+    expect(
+      screen.getByText("usageSync.conflict.resolveInSettings"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(
         "usageSync.devices.coverage:2026-01-01,2026-10-13 · usageSync.devices.detailFrom:2026-09-13",

@@ -6,6 +6,7 @@ import { usageKeys } from "@/lib/query/usage";
 import type {
   RemoteDeviceInfo,
   UsageSyncConflictResolution,
+  UsageSyncOverview,
   UsageSyncPreferences,
 } from "@/types/usageSync";
 
@@ -13,6 +14,18 @@ export const usageSyncKeys = {
   all: ["usage-sync"] as const,
   overview: () => [...usageSyncKeys.all, "overview"] as const,
 };
+
+export const OVERVIEW_REFETCH_INTERVAL_MS = 60_000;
+
+/** Poll only while usage sync is on or remote device data exists. */
+export function overviewRefetchInterval(
+  overview: UsageSyncOverview | undefined,
+): number | false {
+  if (!overview) return false;
+  return overview.settings.enabled || overview.devices.length > 0
+    ? OVERVIEW_REFETCH_INTERVAL_MS
+    : false;
+}
 
 /** 后台同步完成或状态变化时后端发出的事件 */
 export const USAGE_SYNC_STATUS_EVENT = "usage-sync-status-updated";
@@ -22,8 +35,9 @@ export function useUsageSyncOverview(options?: { enabled?: boolean }) {
     queryKey: usageSyncKeys.overview(),
     queryFn: () => usageSyncApi.getOverview(),
     enabled: options?.enabled ?? true,
-    // 设备的「N 分钟前同步」靠这里刷新；真正的变化走事件
-    refetchInterval: 60_000,
+    // 设备的「N 分钟前同步」靠这里刷新；真正的变化走事件。
+    // 用量同步关闭且没有远端设备时不轮询（开启后由设置保存的失效与事件触发重取）
+    refetchInterval: (query) => overviewRefetchInterval(query.state.data),
     refetchIntervalInBackground: false,
   });
 }

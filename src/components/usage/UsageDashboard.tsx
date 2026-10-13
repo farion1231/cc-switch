@@ -62,6 +62,7 @@ import { UsageDataSourcesSheet } from "./UsageDataSourcesSheet";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
 import { UsageDevicesSheet } from "./UsageDevicesSheet";
+import { UsageScopeAccuracy, buildScopeAccuracy } from "./UsageScopeAccuracy";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 
@@ -265,19 +266,7 @@ export function UsageDashboard({
       setDevice("local");
     }
   }, [device, syncOverview, visibleDevices]);
-  const scopedDevices =
-    device === "local"
-      ? []
-      : device === "all"
-        ? visibleDevices
-        : visibleDevices.filter((d) => d.deviceId === device);
-  const dailyOnlyNames = scopedDevices
-    .filter((d) => d.detailLevel === "daily")
-    .map((d) => d.deviceName);
   const staleAfterSecs = syncOverview?.staleAfterSecs ?? 86_400;
-  const outdatedNames = scopedDevices
-    .filter((d) => d.status !== "ok" || isDeviceStale(d, staleAfterSecs))
-    .map((d) => d.deviceName);
   const deviceLabel =
     device === "local"
       ? t("usageSync.thisDevice")
@@ -803,25 +792,17 @@ export function UsageDashboard({
   );
 
   // 远端数据的覆盖说明：按天汇总的设备没有请求级明细；过期/出错的设备数据可能不全
-  const scopeNotice =
-    dailyOnlyNames.length > 0 || outdatedNames.length > 0 ? (
-      <div className="flex flex-col gap-1 px-6 pb-2">
-        {dailyOnlyNames.length > 0 && (
-          <p className="m-0 text-caption text-fg-3" role="note">
-            {t("usageSync.notice.dailyOnly", {
-              devices: dailyOnlyNames.join(", "),
-            })}
-          </p>
-        )}
-        {outdatedNames.length > 0 && (
-          <p className="m-0 text-caption text-warning-text" role="note">
-            {t("usageSync.notice.outdated", {
-              devices: outdatedNames.join(", "),
-            })}
-          </p>
-        )}
-      </div>
-    ) : null;
+  // 非本机范围的统计口径：精确去重、无法去重的历史、无法识别的重叠、日历、时效与估算
+  const scopeAccuracy = (
+    <UsageScopeAccuracy
+      items={buildScopeAccuracy(
+        syncOverview,
+        device,
+        t("usageSync.thisDevice"),
+        now,
+      )}
+    />
+  );
 
   // ── 子页签 ───────────────────────────────────────────────────────────
   const tabLabel: Record<UsageTab, string> = {
@@ -1037,7 +1018,7 @@ export function UsageDashboard({
         actions={headerActions}
       />
       {filterRow}
-      {scopeNotice}
+      {scopeAccuracy}
       {body}
 
       <RequestDetailPanel

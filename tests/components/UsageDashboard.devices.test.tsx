@@ -108,25 +108,34 @@ function overview(partial: Partial<UsageSyncOverview> = {}): UsageSyncOverview {
     availableBackends: { webdav: true, s3: false },
     remoteLocation: "WebDAV: /cc-switch-sync/usage-v1/default",
     transportSecure: true,
-    thisDevice: { deviceId: "local-id", deviceName: "MacBook" },
+    thisDevice: {
+      deviceId: "local-id",
+      deviceName: "MacBook",
+      utcOffsetMinutes: 0,
+      unverified: { requests: 0 },
+    },
     devices: [
       {
         deviceId: "11111111-aaaa",
         deviceName: "Windows PC",
         detailLevel: "records",
         lastUploadAt: NOW_SECS - 60,
+        lastFetchedAt: NOW_SECS - 30,
         status: "ok",
         logRows: 10,
         rollupRows: 0,
+        unverified: { requests: 0 },
       },
       {
         deviceId: "22222222-bbbb",
         deviceName: "NAS",
         detailLevel: "daily",
         lastUploadAt: NOW_SECS - 3 * 86_400,
+        lastFetchedAt: NOW_SECS - 30,
         status: "ok",
         logRows: 0,
         rollupRows: 4,
+        unverified: { requests: 4 },
       },
     ],
     syncing: false,
@@ -217,6 +226,15 @@ describe("UsageDashboard device scope", () => {
     expect(
       screen.getByText("usageSync.notice.outdated:NAS"),
     ).toBeInTheDocument();
+    // NAS holds 4 requests of id-less history: the All view says so.
+    expect(screen.getByText("usageSync.accuracy.exact")).toBeInTheDocument();
+    expect(
+      screen.getByText(/^usageSync\.accuracy\.unverified:4,NAS 4/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("usageSync.accuracy.unknownOverlap"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("usageSync.accuracy.estimate")).toBeInTheDocument();
   });
 
   it("filters to a single remote device", async () => {

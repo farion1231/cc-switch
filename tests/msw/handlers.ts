@@ -516,6 +516,8 @@ export const handlers = [
         deviceId: "00000000-0000-4000-8000-000000000001",
         deviceName: "Test Device",
         customName: null,
+        utcOffsetMinutes: 0,
+        unverified: { requests: 0 },
       },
       devices: [],
       syncing: false,

@@ -31,6 +31,17 @@ export type RemoteDeviceStatus =
   | "missing"
   | "hidden";
 
+/**
+ * Day-level history that carries no request identities (rollups made before
+ * the identity ledger existed or past its retention, daily-only sharing). It
+ * cannot be checked for duplicates and is counted once per device holding it.
+ */
+export interface UnverifiedHistory {
+  requests: number;
+  firstDate?: string | null;
+  lastDate?: string | null;
+}
+
 export interface RemoteDeviceInfo {
   deviceId: string;
   deviceName: string;
@@ -49,6 +60,11 @@ export interface RemoteDeviceInfo {
   detailFrom?: string | null;
   logRows: number;
   rollupRows: number;
+  /** UTC offset at the device's last upload; its day-level rows use that calendar */
+  utcOffsetMinutes?: number | null;
+  /** Identity this device was split from (copied installation) */
+  parentDeviceId?: string | null;
+  unverified: UnverifiedHistory;
 }
 
 export interface UsageSyncOverview {
@@ -61,6 +77,9 @@ export interface UsageSyncOverview {
     deviceId: string;
     deviceName: string;
     customName?: string | null;
+    parentDeviceId?: string | null;
+    utcOffsetMinutes: number;
+    unverified: UnverifiedHistory;
   };
   devices: RemoteDeviceInfo[];
   syncing: boolean;
