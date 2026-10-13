@@ -165,7 +165,7 @@ interface ClaudeFormFieldsProps {
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
-  // Strip Claude Code fingerprint headers on transform paths (default false)
+  // Strip client fingerprints on transform paths (default false).
   stripClaudeCodeFingerprint: boolean;
   onStripClaudeCodeFingerprintChange: (value: boolean) => void;
   localProxyHeadersOverride: string;
@@ -287,9 +287,12 @@ export function ClaudeFormFields({
     }
   }, [hasAnyAdvancedValue, isXaiOauthPreset]);
 
-  // Stack 布局的高级区只有完整 URL、User-Agent 和请求覆盖，开了或填了才展开。
+  // Stack 布局的高级值有配置时自动展开。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
-    isFullUrl || !!customUserAgent || hasRequestOverrides,
+    isFullUrl ||
+      !!customUserAgent ||
+      hasRequestOverrides ||
+      stripClaudeCodeFingerprint,
   );
 
   // Copilot 可用模型列表
@@ -966,6 +969,22 @@ export function ClaudeFormFields({
       />
     );
 
+  const fingerprintField = !isCopilotPreset && (
+    <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+      <div className="space-y-1">
+        <FormLabel>{t("providerForm.stripClaudeCodeFingerprint")}</FormLabel>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {t("providerForm.stripClaudeCodeFingerprintHint")}
+        </p>
+      </div>
+      <Switch
+        checked={stripClaudeCodeFingerprint}
+        onCheckedChange={onStripClaudeCodeFingerprintChange}
+        aria-label={t("providerForm.stripClaudeCodeFingerprint")}
+      />
+    </div>
+  );
+
   // 两项都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   const userAgentAndOverrides = (
     <>
@@ -1034,7 +1053,7 @@ export function ClaudeFormFields({
           />
         )}
 
-        {/* 高级区只有 UA 和请求覆盖；Copilot 的转发会跳过这两项，整块不显示 */}
+        {/* 高级区包含 指纹剥离、UA 和请求覆盖；Copilot 整块不显示 */}
         {!isCopilotPreset && (
           <Collapsible
             open={stackAdvancedExpanded}
@@ -1062,6 +1081,7 @@ export function ClaudeFormFields({
                   {fullUrlToggle}
                 </div>
               )}
+              {fingerprintField}
               {userAgentAndOverrides}
             </CollapsibleContent>
           </Collapsible>
@@ -1343,28 +1363,7 @@ export function ClaudeFormFields({
               )}
             </div>
 
-            <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
-              <div className="space-y-1">
-                <FormLabel>
-                  {t("providerForm.stripClaudeCodeFingerprint", {
-                    defaultValue: "剥离 Claude Code 指纹头",
-                  })}
-                </FormLabel>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  {t("providerForm.stripClaudeCodeFingerprintHint", {
-                    defaultValue:
-                      "默认关闭。开启后仅在 API 格式转换路径（OpenAI Chat / Responses / Gemini）生效：转发前移除 x-app、x-stainless-*、x-claude-code-* 等客户端指纹头。原生 Anthropic 透传不受影响。",
-                  })}
-                </p>
-              </div>
-              <Switch
-                checked={stripClaudeCodeFingerprint}
-                onCheckedChange={onStripClaudeCodeFingerprintChange}
-                aria-label={t("providerForm.stripClaudeCodeFingerprint", {
-                  defaultValue: "剥离 Claude Code 指纹头",
-                })}
-              />
-            </div>
+            {fingerprintField}
 
             {/* Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过 */}
             {!isCopilotPreset && (
