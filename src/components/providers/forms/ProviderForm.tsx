@@ -2322,6 +2322,7 @@ function ProviderFormFull({
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
+    setStripClaudeCodeFingerprint(preset.stripClaudeCodeFingerprint ?? false);
 
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,
