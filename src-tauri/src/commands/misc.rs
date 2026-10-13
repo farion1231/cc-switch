@@ -13,6 +13,9 @@ use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
+#[path = "tool_uninstall.rs"]
+mod tool_uninstall;
+
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -247,17 +250,65 @@ impl ToolLifecycleCoordinator {
 static TOOL_LIFECYCLE: Lazy<ToolLifecycleCoordinator> =
     Lazy::new(ToolLifecycleCoordinator::default);
 
+/// Display-only plan. Execution regenerates it under the lifecycle lock and rejects changes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToolUninstallPlan {
+    tool: String,
+    path: String,
+    real_path: String,
+    command: String,
+    native: bool,
+    wsl_distro: Option<String>,
+}
+
+#[tauri::command]
+pub async fn prepare_tool_uninstall(
+    tool: String,
+    wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
+) -> Result<ToolUninstallPlan, String> {
+    if !VALID_TOOLS.contains(&tool.as_str()) {
+        return Err(format!("Unsupported tool action target: {tool}"));
+    }
+    tokio::task::spawn_blocking(move || {
+        let pref = wsl_shell_by_tool
+            .as_ref()
+            .and_then(|prefs| prefs.get(&tool));
+        tool_uninstall::plan(&tool, pref)
+    })
+    .await
+    .map_err(|e| format!("uninstall plan task join error: {e}"))?
+}
+
 #[tauri::command]
 pub async fn run_tool_lifecycle_action(
     tools: Vec<String>,
     action: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
+    uninstall_plan: Option<ToolUninstallPlan>,
 ) -> Result<(), String> {
-    let action = ToolLifecycleAction::from_str(&action)?;
     let requested = normalize_requested_tools(&tools);
     if requested.is_empty() {
         return Err("No supported tools selected".to_string());
     }
+
+    if action == "uninstall" {
+        let plan = uninstall_plan.ok_or("Preview the uninstall plan before confirming.")?;
+        if requested.len() != 1 || requested[0] != plan.tool {
+            return Err("The uninstall plan does not match the selected tool.".into());
+        }
+        return TOOL_LIFECYCLE
+            .run(requested, move |tools| {
+                for tool in tools {
+                    let pref = wsl_shell_by_tool
+                        .as_ref()
+                        .and_then(|prefs| prefs.get(*tool));
+                    tool_uninstall::uninstall(tool, pref, &plan)?;
+                }
+                Ok(())
+            })
+            .await;
+    }
+    let action = ToolLifecycleAction::from_str(&action)?;
 
     let label = match action {
         ToolLifecycleAction::Install => "tool_install",
@@ -1377,6 +1428,29 @@ fn version_probe_payload(tool: &str) -> String {
     format!("echo {VERSION_PROBE_SENTINEL}; {tool} --version")
 }
 
+/// WSL 未指定 shell 时依次尝试的 flag：交互式初始化（nvm 等写在 rc 里）优先。
+/// 卸载探测（`tool_uninstall`）按同一顺序选 flag，否则两边可能命中不同的安装。
+#[cfg(any(target_os = "windows", test))]
+const WSL_AUTO_SHELL_FLAGS: [&str; 3] = ["-lic", "-lc", "-c"];
+
+/// WSL 未指定 shell 时的版本检测命令（由外层 `sh -c` 执行）：在 `$SHELL` 里按
+/// `WSL_AUTO_SHELL_FLAGS` 依次重试，或只用调用方已校验过的 `flag`。
+#[cfg(any(target_os = "windows", test))]
+fn wsl_auto_shell_command(payload: &str, flag: Option<&str>) -> String {
+    let flags = flag.map_or(WSL_AUTO_SHELL_FLAGS.to_vec(), |flag| vec![flag]);
+    let last = flags.len() - 1;
+    flags
+        .iter()
+        .enumerate()
+        .map(|(i, flag)| {
+            // 只有最后一次尝试保留 stderr，供报错展示
+            let quiet = if i < last { " 2>/dev/null" } else { "" };
+            format!("\"${{SHELL:-sh}}\" {flag} '{payload}'{quiet}")
+        })
+        .collect::<Vec<_>>()
+        .join(" || ")
+}
+
 /// 取哨兵**最后一次**出现之后的输出。
 ///
 /// 取最后一次：兜底链 `-lic || -lc || -c` 失败重试时会多次打印哨兵。
@@ -1647,18 +1721,12 @@ fn try_get_version_wsl(
 
         (shell.to_string(), flag, version_probe_payload(tool))
     } else {
-        let payload = version_probe_payload(tool);
-        let cmd = if let Some(flag) = force_shell_flag {
+        if let Some(flag) = force_shell_flag {
             if !is_valid_shell_flag(flag) {
                 return ShellProbe::NotFound(format!("[WSL:{distro}] invalid shell flag: {flag}"));
             }
-            format!("\"${{SHELL:-sh}}\" {flag} '{payload}'")
-        } else {
-            // 兜底：自动尝试 -lic, -lc, -c
-            format!(
-                "\"${{SHELL:-sh}}\" -lic '{payload}' 2>/dev/null || \"${{SHELL:-sh}}\" -lc '{payload}' 2>/dev/null || \"${{SHELL:-sh}}\" -c '{payload}'"
-            )
-        };
+        }
+        let cmd = wsl_auto_shell_command(&version_probe_payload(tool), force_shell_flag);
 
         ("sh".to_string(), "-c", cmd)
     };

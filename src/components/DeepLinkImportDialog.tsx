@@ -84,10 +84,6 @@ export function DeepLinkImportDialog() {
   const [isOpen, setIsOpen] = useState(false);
   const [activateAfterImport, setActivateAfterImport] = useState(false);
 
-  useEffect(() => {
-    if (request) setActivateAfterImport(initialActivation(request));
-  }, [request]);
-
   // 链接带 iconUrl 时，确认框一打开就下载图标并直接预览，不再单独询问；
   // 导入时等这次下载结束（最多几秒），拿到的图标随请求交给后端，后端保存时再完整校验
   const [linkIcon, setLinkIcon] = useState<string>();
@@ -168,6 +164,8 @@ export function DeepLinkImportDialog() {
         }
       }
       if (disposed) return false;
+      // 与请求一起初始化，避免弹窗先显示旧开关状态，再由 effect 更新。
+      setActivateAfterImport(initialActivation(next));
       setRequest(next);
       setIsOpen(true);
       return true;
