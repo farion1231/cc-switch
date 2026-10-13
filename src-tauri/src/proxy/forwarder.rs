@@ -2070,6 +2070,20 @@ impl RequestForwarder {
                 }
             }
         }
+        let tool_aliases = if adapter.name() == "Claude"
+            && needs_transform
+            && !is_copilot
+            && provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.strip_claude_code_fingerprint)
+                == Some(true)
+        {
+            Some(super::tool_aliases::adapt_request(&mut filtered_body))
+        } else {
+            None
+        };
+
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
         if let Some(m) = filtered_body
             .get("model")
@@ -2862,6 +2876,15 @@ impl RequestForwarder {
                 response = self
                     .hold_encrypted_agent_task_stream(response, &filtered_body)
                     .await?;
+            }
+            if let Some(aliases) = tool_aliases {
+                response = super::tool_aliases::restore_response(
+                    response,
+                    aliases,
+                    request_is_streaming,
+                    self.non_streaming_timeout,
+                )
+                .await?;
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -3658,12 +3681,15 @@ fn should_strip_codex_client_fingerprint_header(
 
 /// Claude Code CLI 发出的、能标识"来自 Claude Code"的头：应用标记（x-app）、
 /// Stainless SDK 遥测（x-stainless-*）、会话标识（x-claude-code-*）。
+/// 同时过滤所有 anthropic-* 协议头（并非 Claude Code 独有），
+/// 避免将 Anthropic 专用标记带入转换后的非 Anthropic 请求。
 /// 在 Claude→非 Anthropic 转换路径上剥离，避免转换后的请求向 OpenAI 兼容
 /// 网关泄露 CLI 指纹。与 Codex→Anthropic 路径的 `is_codex_client_fingerprint_header`
 /// 互为镜像。`key_str` 由 http crate 保证已小写。
 fn is_claude_code_fingerprint_header(key_str: &str) -> bool {
     key_str == "x-app"
         || key_str == "claude-code-session-id"
+        || key_str.starts_with("anthropic-")
         || key_str.starts_with("x-stainless-")
         || key_str.starts_with("x-claude-code-")
 }
@@ -5493,6 +5519,10 @@ mod tests {
         for header in [
             "x-app",
             "claude-code-session-id",
+            "anthropic-dangerous-direct-browser-access",
+            "anthropic-version",
+            "anthropic-beta",
+            "anthropic-custom-header",
             "x-claude-code-session-id",
             "x-claude-code-client",
             "x-stainless-lang",
@@ -5509,8 +5539,6 @@ mod tests {
         for header in [
             "user-agent",
             "authorization",
-            "anthropic-version",
-            "anthropic-beta",
             "accept",
             "content-type",
             "x-session-id",
@@ -7017,6 +7045,59 @@ mod tests {
             axum::serve(listener, app).await.expect("serve upstream");
         });
         format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn tool_aliases_roundtrip_is_opt_in() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        for enabled in [false, true] {
+            let seen = Arc::new(tokio::sync::Mutex::new(None::<Value>));
+            let captured = seen.clone();
+            let url = serve_upstream(axum::Router::new().route(
+                "/v1/chat/completions",
+                axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                    let captured = captured.clone();
+                    async move {
+                        let name = body["tools"][0]["function"]["name"].clone();
+                        *captured.lock().await = Some(body);
+                        axum::Json(json!({"id":"chat1","object":"chat.completion","model":"test-model","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call1","type":"function","function":{"name":name,"arguments":"{\"command\":\"pwd\"}"}}]},"finish_reason":"tool_calls"}]}))
+                    }
+                }),
+            )).await;
+            let mut provider = test_provider_with_type(None);
+            provider.settings_config =
+                json!({"env":{"ANTHROPIC_BASE_URL":url,"ANTHROPIC_AUTH_TOKEN":"sk-test"}});
+            provider.meta = Some(crate::provider::ProviderMeta {
+                api_format: Some("openai_chat".into()),
+                strip_claude_code_fingerprint: Some(enabled),
+                ..Default::default()
+            });
+            let result = test_forwarder(Duration::from_secs(5), Duration::from_secs(5))
+                .forward_with_retry(
+                    &AppType::Claude, http::Method::POST, "/v1/messages",
+                    json!({"model":"test-model","max_tokens":64,"stream":false,"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"Bash","input_schema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}]}),
+                    HeaderMap::new(), Extensions::new(), vec![provider],
+                ).await.map_err(|error| error.error).expect("forward request");
+            let outgoing = seen.lock().await.take().expect("captured request");
+            assert_eq!(
+                outgoing["tools"][0]["function"]["name"],
+                if enabled { "ccs_Bash" } else { "Bash" }
+            );
+            assert_eq!(
+                outgoing["tools"][0]["function"]["parameters"]["required"],
+                json!(["command"])
+            );
+            let bytes = result.response.bytes_with_limit(8192).await.unwrap();
+            let response: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                response["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
+                "Bash"
+            );
+            assert_eq!(
+                response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"],
+                "{\"command\":\"pwd\"}"
+            );
+        }
     }
 
     mod codex_stack {

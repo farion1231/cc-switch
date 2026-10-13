@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderForm } from "@/components/providers/forms/ProviderForm";
@@ -61,6 +61,7 @@ function renderClaude(
   meta?: ProviderMeta,
   baseUrl = "https://relay.example",
   extraEnv: Record<string, string> = {},
+  onSubmit = vi.fn(),
 ) {
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
@@ -68,7 +69,7 @@ function renderClaude(
         appId="claude"
         providerId="relay"
         submitLabel="save-provider"
-        onSubmit={vi.fn()}
+        onSubmit={onSubmit}
         onCancel={vi.fn()}
         initialData={{
           name: "Relay",
@@ -128,6 +129,50 @@ describe("完整表单按实际模式提示（Claude Code）", () => {
   beforeEach(() => {
     modeState.mode = "direct";
     modeState.directProviderId = null;
+  });
+
+  it("指纹剥离默认关闭，可保存到供应商配置", async () => {
+    modeState.mode = "route";
+    const submit = vi.fn();
+    renderClaude(
+      { apiFormat: "openai_chat" },
+      "https://relay.example",
+      {},
+      submit,
+    );
+    const toggle = screen.getByRole("switch", {
+      name: "providerForm.stripClaudeCodeFingerprint",
+    });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+    await waitFor(() => expect(submit).toHaveBeenCalled());
+    expect(submit.mock.calls[0][0].meta.stripClaudeCodeFingerprint).toBe(true);
+  });
+
+  it.each(["openai_responses", "gemini_native"] as const)(
+    "%s 使用同一个指纹剥离开关",
+    (apiFormat) => {
+      renderClaude({ apiFormat, stripClaudeCodeFingerprint: true });
+      expect(
+        screen.getByRole("switch", {
+          name: "providerForm.stripClaudeCodeFingerprint",
+        }),
+      ).toBeChecked();
+    },
+  );
+
+  it("聚合模式会显示已保存的 指纹剥离开关", () => {
+    modeState.mode = "stack";
+    renderClaude({
+      apiFormat: "openai_chat",
+      stripClaudeCodeFingerprint: true,
+    });
+    expect(
+      screen.getByRole("switch", {
+        name: "providerForm.stripClaudeCodeFingerprint",
+      }),
+    ).toBeChecked();
   });
 
   it("正在直连用的卡选了非原生格式：提示保存后请求会失败", () => {

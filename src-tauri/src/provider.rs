@@ -580,8 +580,8 @@ pub struct ProviderMeta {
     /// Custom User-Agent for local proxy routing.
     #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
     pub custom_user_agent: Option<String>,
-    /// Claude→非 Anthropic 转换路径是否剥离 Claude Code 客户端指纹头
-    /// （x-app / x-stainless-* / x-claude-code-*）。缺省（None）不剥离；
+    /// Claude→非 Anthropic 转换路径是否剥离 Claude Code 客户端指纹
+    /// （请求头与可逆工具别名）。缺省（None）不剥离；
     /// 显式 true 开启——用于向指纹敏感的网关隐藏 Claude Code 客户端特征。
     #[serde(
         rename = "stripClaudeCodeFingerprint",
