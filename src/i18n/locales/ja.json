@@ -50,7 +50,8 @@
     "collapse": "折りたたむ",
     "more": "その他",
     "retry": "再試行",
-    "required": "必須"
+    "required": "必須",
+    "copyFailed": "コピーに失敗しました。手動でコピーしてください"
   },
   "firstRunNotice": {
     "title": "CC Switch へようこそ",
@@ -552,6 +553,13 @@
           "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
           "trace": "すべてのログ、最も詳細"
         }
+      },
+      "publicRoute": {
+        "title": "パブリックルーティング",
+        "description": "パブリックトンネル経由でローカルルーティングを公開し、カスタム Base URL に対応するアプリ（例：Cursor）から接続",
+        "enabled": "有効",
+        "disabled": "無効",
+        "proxyRequired": "パブリックルーティングを設定するには先にローカルルーティングを起動してください"
       }
     },
     "language": "言語",
@@ -1112,6 +1120,7 @@
       "general": "一般",
       "appConfig": "アプリ設定",
       "routing": "ローカルルーティング",
+      "publicRoute": "パブリックルーティング",
       "network": "ネットワーク",
       "data": "データ",
       "about": "情報"
@@ -1137,6 +1146,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "cursor": "Cursor",
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
@@ -1344,6 +1354,12 @@
     "roleTool": "ツール",
     "noResumeCommand": "このセッションは再開できません",
     "messageCopied": "メッセージをコピーしました",
+    "exportMarkdown": "Markdown でエクスポート",
+    "exportMarkdownCopied": "Markdown をコピーしました",
+    "exportMarkdownTooltip": "このセッションを Markdown としてクリップボードにコピー",
+    "copyCommand": "コマンドをコピー",
+    "copyMessage": "メッセージをコピー",
+    "conversationHistory": "会話履歴",
     "expandContent": "全文を表示",
     "collapseContent": "折りたたむ",
     "helpTitle": "セッションの出どころ",
@@ -2760,7 +2776,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -3261,6 +3278,71 @@
       "overLimitBy": "上限を {{over}} 文字超えています。Hermes は次回読み込み時に切り詰めます",
       "toggledOn": "{{name}}を有効にしました。Hermes の再起動または新規セッション時に反映されます。",
       "toggledOff": "{{name}}を無効にしました。Hermes の再起動または新規セッション時に反映されます。"
+    }
+  },
+  "cursor": {
+    "needsRouting": "ルーティングが必要",
+    "form": {
+      "baseUrl": "API エンドポイント",
+      "baseUrlHint": "プロバイダーの API エンドポイント URL。",
+      "model": "モデル（任意）",
+      "modelPlaceholder": "gpt-4o, claude-sonnet-4-20250514, ...",
+      "modelHint": "任意。空欄の場合はプロバイダーのデフォルトモデルを使用します。"
+    },
+    "needsPublicRoute": "パブリックルーティングが必要",
+    "needsPublicRouteHint": "設定でパブリックルーティングを開く"
+  },
+  "cursorSetup": {
+    "title": "Cursor を接続（{{provider}}）",
+    "lead": "Cursor のクラウドからはお使いのマシンのアドレスに届きません。サードパーティのプロバイダーにはローカルルーティングとパブリックトンネルが必要で、そのうえで Cursor 側の Base URL を向ける必要があります。",
+    "steps": {
+      "localRoute": "ローカルルーティング",
+      "publicRoute": "パブリックルーティング",
+      "exitCursor": "Cursor を終了",
+      "pasteKey": "キーを貼り付け"
+    },
+    "checking": "接続条件を確認しています…",
+    "switching": "このプロバイダーに切り替えています…",
+    "writing": "Cursor の設定を書き込んでいます…",
+    "cardA": {
+      "title": "まずローカルルーティングを有効に",
+      "body": "サードパーティのプロバイダーへのリクエストは CC Switch のローカルプロキシを通ります。ローカルルーティングが切れていると、ここまで届きません。",
+      "action": "ルーティングを開く"
+    },
+    "cardB": {
+      "title": "次にパブリックルーティングを有効に",
+      "body": "Cursor のクラウドからはお使いのマシンのアドレスに届きません（プライベートとして拒否されます）。ローカルプロキシをパブリックトンネルで公開する必要があります。",
+      "action": "パブリックルーティング設定を開く"
+    },
+    "cardC": {
+      "title": "先に Cursor を完全に終了してください",
+      "body": "Cursor の実行中は設定が書き戻されて上書きされるため、自動書き込みが無効になります。終了するとこのダイアログは自動的に続行します。",
+      "waiting": "Cursor の終了を待っています…",
+      "action": "あとで行う"
+    },
+    "cardD": {
+      "title": "残りはキーだけです",
+      "body": "Base URL と「カスタム API キーを使用する」は自動で書き込み済みです。キーは Cursor 側で暗号化して保存されるため、読み出しも書き込みもできません。一度だけ手動で貼り付けてください。",
+      "pathLabel": "ここに貼り付け：",
+      "copy": "キーをコピー",
+      "copied": "キーをコピーしました",
+      "copyFailed": "コピーに失敗しました。手動でコピーしてください",
+      "done": "貼り付けました"
+    },
+    "writeFailed": {
+      "title": "Cursor の設定を書き込めませんでした",
+      "body": "Base URL と利用可能なモデル一覧を書き込めませんでした。Cursor が完全に終了していることを確認して再試行してください。",
+      "retry": "再試行"
+    },
+    "connectivity": {
+      "label": "接続確認",
+      "testing": "ローカルルーティング → パブリックトンネルの順にテストしています…",
+      "localFailed": "ローカルルーティングに到達できません。リクエストが CC Switch のローカルプロキシまで届いていません。",
+      "publicFailed": "ローカルルーティングは正常ですが、パブリックトンネルに到達できません。Cloudflare のエッジからトンネルへリクエストを戻せませんでした。",
+      "ok": "ローカルルーティングとパブリックトンネルの両方に到達できました。Cursor を利用できます。",
+      "keyReminder": "ただし、キーは Cursor 側に一度だけ手動で貼り付ける必要があります（上記参照）。",
+      "detailLabel": "詳細：",
+      "retest": "再テスト"
     }
   },
   "env": {
@@ -3882,7 +3964,45 @@
       "stopFailed": "ルーティングサービスの停止に失敗しました: {{detail}}"
     },
     "stoppedWithRestore": "ルーティングサービスを停止し、すべてのアプリを直接接続に戻しました",
-    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
+    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}",
+    "publicRoute": {
+      "title": "パブリックルーティング",
+      "statusOff": "パブリックトンネル経由でローカルルーティングを外部アプリに公開",
+      "statusStarting": "トンネル確立中…",
+      "statusRunning": "トンネル確立済み",
+      "enabled": "パブリックルーティングを有効化、トンネル確立中…",
+      "disabled": "パブリックルーティングを無効化しました",
+      "toggleFailed": "パブリックルーティングの切り替えに失敗",
+      "waitingTunnel": "パブリックトンネル（cloudflared）を確立しています。数秒かかります…",
+      "publicUrl": "パブリック URL",
+      "setupTitle": "例：Cursor で以下の設定を行います",
+      "stepBaseUrl": "Settings → Models → Override OpenAI Base URL に入力：",
+      "stepApiKey": "OpenAI API Key には CC Switch が自動生成したトンネルキーを入力します（必須・パブリックトンネルの認証用）：",
+      "stepModel": "モデルを追加して選択します：モデル名にはプロバイダーの modelCatalog に設定したクライアント名（Cursor Model Name）を入力します。プロキシが自動的にアップストリームのモデル名にマッピングします",
+      "ephemeralHint": "クイックトンネルの URL は再構築のたびに変わります。新しい URL はコピー済みです。Cursor に貼り直してください。固定アドレスが必要な場合は無効化してから「固定ドメイン」モードに切り替えてください。",
+      "keyCopied": "キーをコピーしました",
+      "takeoverHint": "ローカルルーティング経由で Cursor を接管する場合、パブリックルーティング（トンネル）の設定が必要です。設定 → ルーティング → パブリックルーティング を確認してください",
+      "switching": "切り替え中…",
+      "tunnelMode": "トンネルモード",
+      "modeQuick": "クイックトンネル",
+      "modeQuickHint": "アカウント不要、再構築のたびに URL が変化",
+      "modeNamed": "固定ドメイン",
+      "modeNamedHint": "Cloudflare アカウントが必要、URL は不変",
+      "namedTunnelName": "トンネル名",
+      "namedHostname": "公開ドメイン",
+      "namedSetupTitle": "初期設定（ターミナルで実行）",
+      "saveTunnelConfig": "トンネル設定を保存",
+      "configSaved": "トンネル設定を保存しました",
+      "configSaveFailed": "トンネル設定の保存に失敗",
+      "baseUrlCopied": "Base URL をコピーしました。Cursor → Settings → Models → Override OpenAI Base URL に貼り付けてください",
+      "routePathsTitle": "アプリ別ルートパス（必要に応じてコピー）",
+      "namedStableHint": "固定ドメインは変わらないため、Cursor に一度貼るだけで使えます。",
+      "regenerateKey": "再生成",
+      "keyRegenerated": "新しいキーを生成してコピーしました。Cursor → Settings → Models → OpenAI API Key に貼り付けてください",
+      "keyRegenerateFailed": "キーの再生成に失敗しました",
+      "keyRegeneratedNoCopy": "新しいキーを生成しました。上部のコピーボタンで Cursor に手動で貼り付けてください",
+      "routePathsGateHint": "「ローカルルーティング」の接管を有効にしたアプリのみ公網ルーティングからアクセスできます。無効なアプリへのリクエストは拒否されます"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} は接続可能 ({{responseTimeMs}}ms)",

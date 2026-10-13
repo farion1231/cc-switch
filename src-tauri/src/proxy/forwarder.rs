@@ -1400,8 +1400,11 @@ impl RequestForwarder {
         // Codex upstream conversion mode — computed early because the [1m]-suffix strip
         // below must be skipped on the Anthropic path (the marker has to survive to
         // catalog matching and to the transform's own strip+beta detection).
-        let mut codex_responses_to_chat = matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        // 公网路由 同样走这里：第三方 Cursor 供应商不支持 Responses API，需要降格式。
+        let mut codex_responses_to_chat =
+            super::providers::should_convert_responses_to_chat_for_app(
+                app_type, provider, endpoint,
+            );
         let mut codex_responses_to_anthropic =
             matches!(app_type, AppType::Codex | AppType::GrokBuild)
                 && super::providers::should_convert_codex_responses_to_anthropic(
@@ -1985,6 +1988,16 @@ impl RequestForwarder {
                     provider.id
                 );
             }
+        }
+
+        // Cursor 的 modelCatalog 行是「客户端模型名 → 上游模型名」（前端把
+        // Upstream Model Name 存进 displayName）。所有 Cursor 转发路径（Chat /
+        // Responses→Chat / 原生 Responses）都在请求体定稿后做最终翻译，放在此处
+        // 可避免被 apply_codex_upstream_model 的 catalog 命中逻辑抢先保留客户端名。
+        // （#6124 review P2；Codex/GrokBuild 的 displayName 只是显示名，不在此翻译）
+        if matches!(app_type, AppType::Cursor) {
+            request_body =
+                super::model_mapper::translate_cursor_catalog_model(request_body, provider);
         }
 
         // Native Responses passthrough to a strict third-party gateway (xAI).

@@ -30,6 +30,7 @@ import {
   useSetAutoFailoverEnabled,
 } from "@/lib/query/failover";
 import { useModeActions } from "@/hooks/useModeActions";
+import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { getRoutingReason } from "@/utils/routingReason";
 import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
@@ -43,6 +44,7 @@ import {
   blockedFromRouting,
   queueMoveSortUpdates,
 } from "@/components/providers/presentation";
+import { providerNeedsCursorSetup } from "@/utils/providerCapabilities";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { ModeTabs, MODE_TONE } from "./ModeTabs";
 import { ModeDialog, type ModeDialogState } from "./ModeDialog";
@@ -52,6 +54,7 @@ import {
   stackSubagentValue,
   type StackSubagentValue,
 } from "./StackSubagentFields";
+import { CursorSetupDialog } from "./CursorSetupDialog";
 import { RouteSettingsSheet } from "./RouteSettingsSheet";
 import { StackSettingsSheet } from "./StackSettingsSheet";
 import { useDesktopConfigMessages } from "./useDesktopConfigMessages";
@@ -81,6 +84,8 @@ interface SwitchModePanelProps extends ListCallbacks {
     options?: { acknowledgedRouting?: boolean },
   ) => unknown;
   onOpenRoutingSettings: () => void;
+  /** 打开设置里的**公网路由**那一栏（与本地路由 `routing` 是两栏，别混用） */
+  onOpenPublicRouteSettings: () => void;
   startupFailure?: StartupAttachFailure;
   onDismissStartupFailure?: () => void;
   /** 托盘里点了直连下需要路由的那家：到这页后弹同一个「需要路由」对话框 */
@@ -107,6 +112,7 @@ export function SwitchModePanel({
   scrollRef,
   onSwitch,
   onOpenRoutingSettings,
+  onOpenPublicRouteSettings,
   startupFailure,
   onDismissStartupFailure,
   needsRouteRequest,
@@ -150,8 +156,11 @@ export function SwitchModePanel({
   const adoptCatalog = useAdoptCodexStackCatalog();
   const modeActions = useModeActions(app);
   const desktopMessages = useDesktopConfigMessages(app === "claude-desktop");
+  const { setTakeoverForApp } = useProxyStatus();
 
   const [dialog, setDialog] = useState<ModeDialogState | null>(null);
+  // Cursor 非官方供应商的「点启用时按需引导」框：非空即打开（只引导，不常驻）
+  const [cursorSetup, setCursorSetup] = useState<Provider | null>(null);
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
   const [stackSettingsOpen, setStackSettingsOpen] = useState(false);
   const [confirmFailover, setConfirmFailover] = useState(false);
@@ -162,16 +171,39 @@ export function SwitchModePanel({
   }, [app, active, directId, routeId, stack?.staleClients?.auth]);
   const staleRevision = stack?.staleRevision ?? "";
 
+  /**
+   * 「让某家供应商在某应用下生效」的统一闸门。入口矩阵按**动作**列，不按**按钮位置**列：
+   * 切换（switchDirect）、路由到此（routeTo）、设为默认（stackSetDefault）、确认框里仍然直连
+   * （onSwitchDirect）、回到直连并使用（exitAndUse）、托盘深链（needsRouteRequest）——
+   * 每一个都从这里过。加新入口时先问「它做了什么」，别问「它挂在哪个页签」：上一轮就是按位置给
+   * 卡片按钮加闸，漏掉了路由视图，接着又漏掉了「回到直连并使用」这条并列入口（日志里走的就是它）。
+   *
+   * ⚠️ **`enterMode`（进路由/聚合）刻意不在这里**：卡 A 的按钮就是让用户「去开启路由」，用户真去
+   * 开启时走的正是那条动作——把它也拦下来会让用户被弹回同一张卡 A、点多少次都出不去
+   * （2026-10-13 用户实测报的死循环）。那条动作本身就是用户在显式做「前提 1」，放行后由引导框
+   * 接着报下一个缺口即可。
+   */
+  const guard = (provider: Provider | undefined, proceed: () => unknown) => {
+    if (provider && providerNeedsCursorSetup(app, provider)) {
+      setCursorSetup(provider);
+      return;
+    }
+    return proceed();
+  };
+
   // 供应商还没加载完时先等着，到了再弹
   useEffect(() => {
     if (!needsRouteRequest) return;
     const provider = providers[needsRouteRequest.providerId];
     if (!provider) return;
-    setDialog({
-      kind: "needsRoute",
-      providerId: provider.id,
-      reason: getRoutingReason(app, provider, t) ?? "",
-    });
+    // 托盘点了 Cursor 非官方那家：和界面上的入口走同一套接入引导（不是「需要路由」框）
+    guard(provider, () =>
+      setDialog({
+        kind: "needsRoute",
+        providerId: provider.id,
+        reason: getRoutingReason(app, provider, t) ?? "",
+      }),
+    );
     onNeedsRouteHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsRouteRequest?.nonce, providers]);
@@ -194,7 +226,9 @@ export function SwitchModePanel({
   );
 
   const exitAndUse = (provider: Provider) =>
-    setDialog({ kind: "exit", useProviderId: provider.id });
+    guard(provider, () =>
+      setDialog({ kind: "exit", useProviderId: provider.id }),
+    );
 
   const queueMove = async (provider: Provider, delta: -1 | 1) => {
     const updates = queueMoveSortUpdates(
@@ -247,7 +281,10 @@ export function SwitchModePanel({
     routingReason: (provider: Provider) =>
       getRoutingReason(app, provider, t) ?? "",
     actions: {
-      switchDirect: (provider: Provider) => void onSwitch(provider),
+      // 下面每个会「启用某家」的动作都过同一个 guard（见上面的入口矩阵注释）：
+      // 命中断言就开 CursorSetupDialog、不执行 proceed，别只给其中一个入口加闸
+      switchDirect: (provider: Provider) =>
+        guard(provider, () => void onSwitch(provider)),
       needsRouteDialog: (provider: Provider) =>
         setDialog({
           kind: "needsRoute",
@@ -255,7 +292,8 @@ export function SwitchModePanel({
           reason: getRoutingReason(app, provider, t) ?? "",
         }),
       exitAndUse,
-      routeTo: (provider: Provider) => void onSwitch(provider),
+      routeTo: (provider: Provider) =>
+        guard(provider, () => void onSwitch(provider)),
       queueAdd: (provider: Provider) =>
         addToQueue.mutate({ appType: app, providerId: provider.id }),
       queueRemove: (provider: Provider) =>
@@ -277,10 +315,13 @@ export function SwitchModePanel({
         });
       },
       // 聚合生效时换默认当场生效（同切换供应商）；没生效时只记下选择，切换时的确认框预选它
-      stackSetDefault: (provider: Provider) =>
-        active === "stack"
-          ? void onSwitch(provider)
-          : void rememberDefault(provider),
+      stackSetDefault: (provider: Provider) => {
+        if (active !== "stack") {
+          void rememberDefault(provider);
+          return;
+        }
+        guard(provider, () => void onSwitch(provider));
+      },
     },
   };
 
@@ -353,7 +394,14 @@ export function SwitchModePanel({
       });
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
     }
-    await modeActions.enter(target, pick, providers[pick]?.name);
+    const provider = providers[pick];
+    // 这条**不过 guard**：见上面闸门注释里那段「enterMode 刻意不在这里」——拦它会把用户卡在
+    // 卡 A 的死循环里。进路由本身就是用户在显式做「前提 1」，放行；进来之后再把剩下的缺口
+    // （公网路由 / 退出 Cursor / 写 BYOK）接着引导完，用户不会以为「点了没反应」。
+    await modeActions.enter(target, pick, provider?.name);
+    if (provider && providerNeedsCursorSetup(app, provider)) {
+      setCursorSetup(provider);
+    }
   };
 
   const eligibleIds = providerList
@@ -435,20 +483,26 @@ export function SwitchModePanel({
             variant="neutral"
             size="compact"
             onClick={() =>
-              void modeActions
-                .enter(
-                  startupFailure.stack ? "stack" : "route",
-                  routeId,
-                  nameOf(routeId),
-                )
-                .then(() => onDismissStartupFailure?.())
-                .catch((error) =>
-                  toast.error(
-                    t("mode.toast.failed", {
-                      detail: extractErrorMessage(error) || t("common.unknown"),
-                    }),
-                  ),
-                )
+              guard(
+                routeId ? providers[routeId] : undefined,
+                () =>
+                  // 重试 = 把已经配好的路由/聚合目标再 attach 一次：也是「让某家生效」，同样过闸
+                  void modeActions
+                    .enter(
+                      startupFailure.stack ? "stack" : "route",
+                      routeId,
+                      nameOf(routeId),
+                    )
+                    .then(() => onDismissStartupFailure?.())
+                    .catch((error) =>
+                      toast.error(
+                        t("mode.toast.failed", {
+                          detail:
+                            extractErrorMessage(error) || t("common.unknown"),
+                        }),
+                      ),
+                    ),
+              )
             }
           >
             {t("common.retry")}
@@ -659,7 +713,10 @@ export function SwitchModePanel({
         }
         onSwitchDirect={(providerId) => {
           const provider = providers[providerId];
-          if (provider) void onSwitch(provider, { acknowledgedRouting: true });
+          if (!provider) return;
+          guard(provider, () =>
+            onSwitch(provider, { acknowledgedRouting: true }),
+          );
         }}
       />
 
@@ -686,6 +743,18 @@ export function SwitchModePanel({
             (routeId === CODEX_OFFICIAL_PROVIDER_ID ||
               providers[routeId]?.category === "official")
           }
+        />
+      )}
+
+      {cursorSetup && (
+        <CursorSetupDialog
+          provider={cursorSetup}
+          onClose={() => setCursorSetup(null)}
+          onSwitch={(provider) => onSwitch(provider)}
+          onEnableLocalRoute={() =>
+            void setTakeoverForApp({ appType: app, enabled: true })
+          }
+          onOpenPublicRouteSettings={onOpenPublicRouteSettings}
         />
       )}
 

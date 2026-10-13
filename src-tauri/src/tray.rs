@@ -35,12 +35,13 @@ const COPILOT_UNIT_PREMIUM: &str = "requests";
 pub const TRAY_ID: &str = "cc-switch";
 
 /// 进托盘的应用，顺序和侧栏一致。累加式应用没有「当前供应商」，不进托盘。
-pub const TRAY_APPS: [AppType; 5] = [
+pub const TRAY_APPS: [AppType; 6] = [
     AppType::Claude,
     AppType::ClaudeDesktop,
     AppType::Codex,
     AppType::Gemini,
     AppType::GrokBuild,
+    AppType::Cursor,
 ];
 
 /// 应用全称（产品名，不翻译）。用全称是为了把 Claude Code 和 Claude Desktop 分开。
@@ -60,6 +61,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Dsh => "DeepSeek Harness",
         AppType::Agy => "Antigravity",
         AppType::Omp => "Oh My Pi",
+        AppType::Cursor => "Cursor",
     }
 }
 
@@ -1120,6 +1122,39 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
         }
         _ => false,
     }
+}
+
+/// 这家在直连下点了也**不能直接切**：Cursor 非官方供应商要能被 Cursor 云端用上，
+/// 本地路由 + 公网路由 + 写 BYOK 三件缺一不可，必须先走前端的「接入引导」框。
+///
+/// 与前端 `providerNeedsCursorSetup`（`src/utils/providerCapabilities.ts`）互为镜像，
+/// 改一边要改另一边。刻意**不并进** `provider_needs_routing`：那个还喂托盘的
+/// `needs_routing` 快照/徽标，语义是「这家在这个应用下必须经过路由服务」。
+fn cursor_needs_setup(app: &AppType, provider: &Provider) -> bool {
+    *app == AppType::Cursor && !is_official_account(app, provider)
+}
+
+/// 直连下点某家的落点：需要路由、或 Cursor 非官方需要接入引导 → 不切换，交回前端弹框；
+/// 否则执行 `switch`。`switch` 做成可注入只为了单测能断言「被拦下的那家没有真的切换」。
+fn deliver_provider_click<F>(
+    mode: TrayMode,
+    app: &AppType,
+    provider: &Provider,
+    switch: F,
+) -> Result<ClickOutcome, AppError>
+where
+    F: FnOnce() -> Result<(), AppError>,
+{
+    if mode == TrayMode::Direct
+        && (provider_needs_routing(app, provider) || cursor_needs_setup(app, provider))
+    {
+        return Ok(ClickOutcome::NeedsRoute);
+    }
+    switch()?;
+    Ok(ClickOutcome::Switched {
+        mode,
+        name: provider.name.clone(),
+    })
 }
 
 // ─── 快照 ────────────────────────────────────────────────────────────────────
@@ -3050,13 +3085,8 @@ fn handle_provider_click(
         .db
         .get_provider_by_id(provider_id, app_type.as_str())?
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
-    if mode == TrayMode::Direct && provider_needs_routing(app_type, &provider) {
-        return Ok(ClickOutcome::NeedsRoute);
-    }
-    crate::services::ProviderService::switch(state, app_type.clone(), provider_id)?;
-    Ok(ClickOutcome::Switched {
-        mode,
-        name: provider.name,
+    deliver_provider_click(mode, app_type, &provider, || {
+        crate::services::ProviderService::switch(state, app_type.clone(), provider_id).map(|_| ())
     })
 }
 
@@ -3407,7 +3437,8 @@ mod tests {
                 "Claude Desktop",
                 "Codex",
                 "Gemini CLI",
-                "Grok Build"
+                "Grok Build",
+                "Cursor"
             ]
         );
         for app in TRAY_APPS {
@@ -4220,6 +4251,58 @@ mod tests {
         let mut official = copilot.clone();
         official.category = Some("official".to_string());
         assert!(!provider_needs_routing(&AppType::Claude, &official));
+    }
+
+    // ─── 托盘点击的落点：Cursor 非官方必须先走接入引导，不能直接切 ───
+
+    #[test]
+    fn cursor_needs_setup_mirrors_the_frontend_predicate() {
+        let third_party = provider(serde_json::json!({}), serde_json::json!({}));
+        assert!(cursor_needs_setup(&AppType::Cursor, &third_party));
+
+        let mut official = third_party.clone();
+        official.category = Some("official".to_string());
+        assert!(!cursor_needs_setup(&AppType::Cursor, &official));
+
+        assert!(!cursor_needs_setup(&AppType::Claude, &third_party));
+    }
+
+    #[test]
+    fn direct_click_on_a_cursor_third_party_provider_asks_for_setup_without_switching() {
+        let third_party = provider(serde_json::json!({}), serde_json::json!({}));
+        let switched = std::cell::Cell::new(false);
+        let outcome =
+            deliver_provider_click(TrayMode::Direct, &AppType::Cursor, &third_party, || {
+                switched.set(true);
+                Ok(())
+            });
+        assert!(matches!(outcome, Ok(ClickOutcome::NeedsRoute)));
+        assert!(!switched.get(), "被拦下的 Cursor 非官方供应商不能真的切换");
+    }
+
+    #[test]
+    fn direct_click_on_a_cursor_official_provider_still_switches() {
+        let mut official = provider(serde_json::json!({}), serde_json::json!({}));
+        official.category = Some("official".to_string());
+        let switched = std::cell::Cell::new(false);
+        let outcome = deliver_provider_click(TrayMode::Direct, &AppType::Cursor, &official, || {
+            switched.set(true);
+            Ok(())
+        });
+        assert!(matches!(outcome, Ok(ClickOutcome::Switched { .. })));
+        assert!(switched.get(), "Cursor 官方仍然照旧一步切过去");
+    }
+
+    #[test]
+    fn direct_click_on_another_apps_plain_provider_still_switches() {
+        let plain = provider(serde_json::json!({}), serde_json::json!({}));
+        let switched = std::cell::Cell::new(false);
+        let outcome = deliver_provider_click(TrayMode::Direct, &AppType::Claude, &plain, || {
+            switched.set(true);
+            Ok(())
+        });
+        assert!(matches!(outcome, Ok(ClickOutcome::Switched { .. })));
+        assert!(switched.get());
     }
 
     #[test]

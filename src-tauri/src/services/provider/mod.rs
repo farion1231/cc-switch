@@ -2344,6 +2344,13 @@ requires_openai_auth = true
         crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
             .expect("set local current provider");
 
+        // ephemeral 端口：避免与本机正在运行的 App（默认 15721）冲突
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
         // 路由模式路由到这张映射卡：编辑它要按新行重写指向本地路由的 profile。
         crate::mode::controller::enter_with_route(
             &state,
@@ -2393,9 +2400,14 @@ requires_openai_auth = true
 
         let profile_path = claude_desktop_profile_path(home.dir.path());
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
+        let proxy_port = db
+            .get_global_proxy_config()
+            .await
+            .expect("read global proxy config")
+            .listen_port;
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!(gateway_url),
+            json!(format!("http://127.0.0.1:{proxy_port}/claude-desktop")),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
@@ -5342,6 +5354,149 @@ wire_api = "responses"
             );
         });
     }
+
+    fn cursor_third_party_provider(id: &str) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            "Cursor ThirdParty".to_string(),
+            json!({
+                "baseUrl": "https://api.kimi.com/v1",
+                "apiKey": "sk-kimi",
+                "modelCatalog": {
+                    "models": [
+                        { "model": "custom-k3", "displayName": "k3" }
+                    ]
+                }
+            }),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn switch_cursor_third_party_enables_takeover_without_public_route() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("in-memory database"));
+        let state = Arc::new(AppState::new(db.clone()));
+        // 端口置 0（临时端口），避免与本地/其他测试的 15721 冲突
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("set ephemeral proxy port");
+
+        let provider = cursor_third_party_provider("cursor-tp");
+        db.save_provider(AppType::Cursor.as_str(), &provider)
+            .expect("save cursor provider");
+
+        // 切换供应商只做「本地路由接管」（这是切换本身的语义，托盘/深链入口依赖它）；
+        // 公网路由必须由用户显式开启——不许替用户改设置、更不许静默起隧道。
+        // （与命令层一致走 spawn_blocking：switch 内部用 block_on 驱动异步操作）
+        let switch_state = state.clone();
+        tokio::task::spawn_blocking(move || {
+            ProviderService::switch(&switch_state, AppType::Cursor, "cursor-tp")
+        })
+        .await
+        .expect("join switch task")
+        .expect("cursor provider switch should succeed");
+
+        let settings = crate::settings::get_settings();
+        assert!(
+            !settings.public_route_enabled,
+            "切换 Cursor 第三方供应商不得静默开启公网路由（须用户显式引导）"
+        );
+        assert!(
+            settings.public_route_api_key.is_none(),
+            "切换 Cursor 第三方供应商不得静默生成公网路由鉴权密钥"
+        );
+
+        let taken_over = db
+            .get_live_backup(AppType::Cursor.as_str())
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+            || crate::mode::current::is_proxy(&AppType::Cursor);
+        assert!(taken_over, "切换 Cursor 第三方供应商仍须进入本地路由接管");
+
+        state.proxy_service.stop().await.expect("stop proxy server");
+    }
+
+    /// Cursor 的「路由」= 本地接管 + 用户显式开的公网路由。进入路由模式本身只落定
+    /// **本地接管**；公网路由（开关 / 密钥 / 隧道）改由对话框显式引导，不再在此静默开启。
+    #[tokio::test]
+    #[serial]
+    async fn entering_cursor_route_mode_does_not_enable_public_route() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("in-memory database"));
+        let state = Arc::new(AppState::new(db.clone()));
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("set ephemeral proxy port");
+
+        // 先把公网路由置为关闭，确保下面的断言来自「进入路由模式」本身
+        let mut settings = crate::settings::get_settings();
+        settings.public_route_enabled = false;
+        settings.public_route_api_key = None;
+        crate::settings::update_settings(settings).expect("reset public route settings");
+
+        let provider = cursor_third_party_provider("cursor-tp");
+        db.save_provider(AppType::Cursor.as_str(), &provider)
+            .expect("save cursor provider");
+
+        crate::mode::controller::enter_with_route(
+            &state,
+            &AppType::Cursor,
+            false,
+            Some("cursor-tp"),
+        )
+        .await
+        .expect("enter cursor route mode should succeed");
+
+        assert!(
+            crate::mode::current::is_proxy(&AppType::Cursor),
+            "进入 Cursor 路由模式必须落定本地接管"
+        );
+        let settings = crate::settings::get_settings();
+        assert!(
+            !settings.public_route_enabled,
+            "进入 Cursor 路由模式不得静默开启公网路由（须用户显式引导）"
+        );
+        assert!(
+            settings.public_route_api_key.is_none(),
+            "进入 Cursor 路由模式不得静默生成公网路由鉴权密钥"
+        );
+
+        state.proxy_service.stop().await.expect("stop proxy server");
+    }
+
+    #[test]
+    #[serial]
+    fn switch_cursor_official_provider_does_not_force_public_route() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            let mut provider = cursor_third_party_provider("cursor-official");
+            provider.category = Some("official".to_string());
+            state
+                .db
+                .save_provider(AppType::Cursor.as_str(), &provider)
+                .expect("save cursor official provider");
+
+            ProviderService::switch(state, AppType::Cursor, "cursor-official")
+                .expect("cursor official switch should succeed");
+
+            assert!(
+                !crate::settings::get_settings().public_route_enabled,
+                "官方供应商无需公网路由，不应强制开启"
+            );
+        });
+    }
 }
 
 impl ProviderService {
@@ -6929,7 +7084,43 @@ impl ProviderService {
         }
 
         // Normal mode: full switch with Live config write
-        Self::switch_normal(state, app_type, id, &providers)
+        let mut result = Self::switch_normal(state, app_type.clone(), id, &providers)?;
+
+        // Cursor 第三方供应商：强制进入**本地路由接管**。Cursor 的 Base URL / 模型设置走
+        // 云端账户同步，本地无法程序化写入，只有经「路由接管」才实际可用。
+        // 公网路由**不在此处开启**——它必须由用户显式引导（对话框 / 设置页）；替用户改设置会
+        // 静默把代理暴露到公网，属于越权（用户 2026-10-13 明确要求）。
+        // enter_with_route 会竞争同一把 per-app 切换锁，必须先释放守卫。
+        drop(_switch_guard);
+        Self::force_cursor_takeover(state, &app_type, _provider, &mut result.warnings);
+        Ok(result)
+    }
+
+    /// Cursor 第三方供应商：强制进入**本地路由接管**。
+    ///
+    /// 只落定本地接管；公网路由（开关 / 密钥 / 隧道）由用户显式开启，不再静默改设置。
+    /// 官方供应商（category = official）不强制——其不经过本地代理。
+    fn force_cursor_takeover(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+        warnings: &mut Vec<String>,
+    ) {
+        if !matches!(app_type, AppType::Cursor) || provider.category.as_deref() == Some("official")
+        {
+            return;
+        }
+        if let Err(e) = futures::executor::block_on(crate::mode::controller::enter_with_route(
+            state,
+            app_type,
+            false,
+            Some(provider.id.as_str()),
+        )) {
+            log::warn!("[Cursor] 切换供应商后强制进入路由模式失败: {e}");
+            warnings.push(format!(
+                "已切换供应商，但开启 Cursor 路由接管失败：{e}。请到「设置 → 路由」手动开启接管，否则 Cursor 无法使用该供应商。"
+            ));
+        }
     }
 
     /// Normal switch flow (non-proxy mode)
@@ -7307,12 +7498,13 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Cursor => Ok(String::new()), // Cursor doesn't use common config snippets
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
-            | AppType::Omp
-            | AppType::Agy => Ok(String::new()),
+            | AppType::Agy
+            | AppType::Omp => Ok(String::new()),
         }
     }
 
@@ -7330,12 +7522,13 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Cursor => Ok(String::new()), // Cursor doesn't use common config snippets
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
-            | AppType::Omp
-            | AppType::Agy => Ok(String::new()),
+            | AppType::Agy
+            | AppType::Omp => Ok(String::new()),
         }
     }
 
@@ -8105,6 +8298,16 @@ impl ProviderService {
             AppType::Kimi => {
                 crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::Cursor => {
+                // Cursor: accept any JSON object (env vars)
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.cursor.settings.not_object",
+                        "Cursor 配置必须是 JSON 对象",
+                        "Cursor configuration must be a JSON object",
+                    ));
+                }
+            }
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
@@ -8360,6 +8563,37 @@ impl ProviderService {
                     .get("baseUrl")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Cursor => {
+                // Cursor uses a flat canonical settingsConfig: { baseUrl, apiKey, model }
+                let settings = &provider.settings_config;
+                let api_key = settings
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.cursor.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = settings
+                    .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.cursor.base_url.missing",
+                            "缺少 Base URL 配置",
+                            "Missing Base URL configuration",
+                        )
+                    })?
                     .to_string();
 
                 Ok((api_key, base_url))
