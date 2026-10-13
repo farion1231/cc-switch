@@ -7,6 +7,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -453,6 +454,14 @@ struct LockRepoInfo {
     branch: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct LockSkillInfo {
+    source_type: String,
+    source_id: String,
+    source_url: Option<String>,
+    repo: Option<LockRepoInfo>,
+}
+
 fn normalize_optional_branch(branch: Option<String>) -> Option<String> {
     branch.and_then(|b| {
         let trimmed = b.trim();
@@ -515,8 +524,10 @@ fn get_agents_skills_dir() -> Option<PathBuf> {
     dir.exists().then_some(dir)
 }
 
-/// 解析 `~/.agents/.skill-lock.json`，返回 skill_name -> 仓库信息
-fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
+/// 解析 `~/.agents/.skill-lock.json`，返回 skill_name -> 安装来源信息。
+///
+/// GitHub 条目保留仓库坐标，其他安装器来源也保留为可分组的稳定来源标识。
+fn parse_agents_lock() -> HashMap<String, LockSkillInfo> {
     let path = crate::config::get_home_dir()
         .join(".agents")
         .join(".skill-lock.json");
@@ -531,41 +542,63 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
             return HashMap::new();
         }
     };
-    let lock: AgentsLockFile = match serde_json::from_str(&content) {
-        Ok(l) => l,
+    match parse_agents_lock_content(&content) {
+        Ok(parsed) => {
+            log::info!(
+                "agents lock 文件解析完成，共识别 {} 个有来源的 skill",
+                parsed.len()
+            );
+            parsed
+        }
         Err(e) => {
             log::warn!("解析 agents lock 文件失败 ({}): {}", path.display(), e);
-            return HashMap::new();
+            HashMap::new()
         }
-    };
-    let parsed: HashMap<String, LockRepoInfo> = lock
+    }
+}
+
+fn parse_agents_lock_content(
+    content: &str,
+) -> Result<HashMap<String, LockSkillInfo>, serde_json::Error> {
+    let lock: AgentsLockFile = serde_json::from_str(content)?;
+    let parsed: HashMap<String, LockSkillInfo> = lock
         .skills
         .into_iter()
         .filter_map(|(name, skill)| {
-            let source = skill.source?;
-            if skill.source_type.as_deref() != Some("github") {
+            let source_id = skill.source?.trim().to_string();
+            let source_type = skill.source_type?.trim().to_ascii_lowercase();
+            if source_id.is_empty() || source_type.is_empty() {
                 return None;
             }
-            let (owner, repo) = source.split_once('/')?;
             let branch = normalize_optional_branch(skill.branch)
                 .or_else(|| normalize_optional_branch(skill.source_branch))
                 .or_else(|| parse_branch_from_source_url(skill.source_url.as_deref()));
-            Some((
-                name,
-                LockRepoInfo {
+            let repo = if source_type == "github" {
+                let (owner, repo) = source_id.split_once('/')?;
+                if owner.trim().is_empty() || repo.trim().is_empty() {
+                    return None;
+                }
+                Some(LockRepoInfo {
                     owner: owner.to_string(),
                     repo: repo.to_string(),
                     skill_path: skill.skill_path,
                     branch,
+                })
+            } else {
+                None
+            };
+            Some((
+                name,
+                LockSkillInfo {
+                    source_type,
+                    source_id,
+                    source_url: skill.source_url,
+                    repo,
                 },
             ))
         })
         .collect();
-    log::info!(
-        "agents lock 文件解析完成，共识别 {} 个 github skill",
-        parsed.len()
-    );
-    parsed
+    Ok(parsed)
 }
 
 // ========== SkillService ==========
@@ -582,6 +615,36 @@ impl Default for SkillService {
 }
 
 impl SkillService {
+    pub fn save_project_group(
+        db: &Arc<Database>,
+        id: Option<String>,
+        name: String,
+        mut skill_ids: Vec<String>,
+    ) -> Result<crate::database::SkillProjectGroup> {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err(anyhow!("Project group name cannot be empty"));
+        }
+        if let Some(ref id) = id {
+            if !db
+                .get_skill_project_groups()?
+                .iter()
+                .any(|group| &group.id == id)
+            {
+                return Err(anyhow!("Project group not found: {id}"));
+            }
+        }
+        skill_ids.sort();
+        skill_ids.dedup();
+        let group = crate::database::SkillProjectGroup {
+            id: id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            name,
+            skill_ids,
+        };
+        db.save_skill_project_group(&group)?;
+        Ok(group)
+    }
+
     pub fn new() -> Self {
         Self {
             #[cfg(test)]
@@ -780,10 +843,44 @@ impl SkillService {
     /// 获取所有已安装的 Skills
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
         let mut skills = db.get_all_installed_skills()?;
+        Self::backfill_lock_provenance(db, &mut skills);
         for skill in skills.values_mut() {
             skill.apps.pi = Self::skill_exists_in_app(&skill.directory, &AppType::Pi);
         }
         Ok(skills.into_values().collect())
+    }
+
+    /// 为早于来源字段的本地导入记录补写安装器 lock 中的稳定来源。
+    ///
+    /// 只补非 GitHub Skill 缺失的来源字段，既不猜目录前缀，也不改既有 ID、仓库
+    /// 坐标或用户定义的项目分组。
+    fn backfill_lock_provenance(db: &Arc<Database>, skills: &mut IndexMap<String, InstalledSkill>) {
+        let lock = parse_agents_lock();
+        if lock.is_empty() {
+            return;
+        }
+
+        for skill in skills.values_mut() {
+            if skill.repo_owner.is_some()
+                || skill.repo_name.is_some()
+                || (skill.source_type.is_some() && skill.source_id.is_some())
+            {
+                continue;
+            }
+            let Some(info) = lock.get(&skill.directory) else {
+                continue;
+            };
+            if info.repo.is_some() {
+                continue;
+            }
+
+            skill.source_type = Some(info.source_type.clone());
+            skill.source_id = Some(info.source_id.clone());
+            skill.source_url = info.source_url.clone();
+            if let Err(error) = db.update_skill_metadata(skill) {
+                log::warn!("回填 Skill {} 的安装来源失败: {}", skill.directory, error);
+            }
+        }
     }
 
     /// Reuse an existing installation or reject a directory owned by another repo.
@@ -1014,6 +1111,12 @@ impl SkillService {
             repo_name: Some(skill.repo_name.clone()),
             repo_branch: Some(repo_branch),
             readme_url,
+            source_type: Some("github".to_string()),
+            source_id: Some(format!("{}/{}", skill.repo_owner, skill.repo_name)),
+            source_url: Some(format!(
+                "https://github.com/{}/{}",
+                skill.repo_owner, skill.repo_name
+            )),
             apps: SkillApps::only(current_app),
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
@@ -1649,6 +1752,9 @@ impl SkillService {
             repo_name: skill.repo_name.clone(),
             repo_branch: Some(used_branch),
             readme_url,
+            source_type: skill.source_type.clone(),
+            source_id: skill.source_id.clone(),
+            source_url: skill.source_url.clone(),
             apps: skill.apps.clone(),
             installed_at: skill.installed_at,
             content_hash: new_hash,
@@ -2332,8 +2438,7 @@ impl SkillService {
             }
 
             // 从 lock 文件提取仓库信息
-            let (id, repo_owner, repo_name, repo_branch, readme_url) =
-                build_repo_info_from_lock(&agents_lock, &dir_name);
+            let lock_info = build_skill_info_from_lock(&agents_lock, &dir_name);
 
             // 计算内容哈希
             let ssot_skill_dir = ssot_dir.join(&dir_name);
@@ -2341,14 +2446,17 @@ impl SkillService {
 
             // 创建记录
             let skill = InstalledSkill {
-                id,
+                id: lock_info.id,
                 name,
                 description,
                 directory: dir_name,
-                repo_owner,
-                repo_name,
-                repo_branch,
-                readme_url,
+                repo_owner: lock_info.repo_owner,
+                repo_name: lock_info.repo_name,
+                repo_branch: lock_info.repo_branch,
+                readme_url: lock_info.readme_url,
+                source_type: lock_info.source_type,
+                source_id: lock_info.source_id,
+                source_url: lock_info.source_url,
                 apps,
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
@@ -4307,6 +4415,9 @@ impl SkillService {
                 repo_name: None,
                 repo_branch: None,
                 readme_url: None,
+                source_type: None,
+                source_id: None,
+                source_url: None,
                 apps: SkillApps::only(current_app),
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
@@ -4553,44 +4664,70 @@ impl SkillService {
 
 // ========== 迁移支持 ==========
 
-/// 从 lock 文件信息构建 skill 的 ID、仓库字段和 readme URL
-///
-/// 返回 (id, repo_owner, repo_name, repo_branch, readme_url)
-fn build_repo_info_from_lock(
-    lock: &HashMap<String, LockRepoInfo>,
+/// 从 lock 文件信息构建 Skill 的来源与仓库字段。
+struct InstalledLockInfo {
+    id: String,
+    repo_owner: Option<String>,
+    repo_name: Option<String>,
+    repo_branch: Option<String>,
+    readme_url: Option<String>,
+    source_type: Option<String>,
+    source_id: Option<String>,
+    source_url: Option<String>,
+}
+
+fn build_skill_info_from_lock(
+    lock: &HashMap<String, LockSkillInfo>,
     dir_name: &str,
-) -> (
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-) {
+) -> InstalledLockInfo {
     match lock.get(dir_name) {
-        Some(info) => {
-            let branch = info.branch.clone();
+        Some(info) if info.repo.is_some() => {
+            let repo = info.repo.as_ref().expect("checked above");
+            let branch = repo.branch.clone();
             let url_branch = branch.clone().unwrap_or_else(|| "HEAD".to_string());
             // 优先使用 lock 文件中的 skillPath，否则回退到 dir_name/SKILL.md
             let fallback = format!("{dir_name}/SKILL.md");
-            let doc_path = info.skill_path.as_deref().unwrap_or(&fallback);
+            let doc_path = repo.skill_path.as_deref().unwrap_or(&fallback);
             let url =
-                SkillService::build_skill_doc_url(&info.owner, &info.repo, &url_branch, doc_path);
-            (
-                format!("{}/{}:{dir_name}", info.owner, info.repo),
-                Some(info.owner.clone()),
-                Some(info.repo.clone()),
-                branch,
-                url,
-            )
+                SkillService::build_skill_doc_url(&repo.owner, &repo.repo, &url_branch, doc_path);
+            InstalledLockInfo {
+                id: format!("{}/{}:{dir_name}", repo.owner, repo.repo),
+                repo_owner: Some(repo.owner.clone()),
+                repo_name: Some(repo.repo.clone()),
+                repo_branch: branch,
+                readme_url: url,
+                source_type: Some(info.source_type.clone()),
+                source_id: Some(info.source_id.clone()),
+                source_url: info.source_url.clone(),
+            }
         }
-        None => (format!("local:{dir_name}"), None, None, None, None),
+        Some(info) => InstalledLockInfo {
+            id: format!("local:{dir_name}"),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            source_type: Some(info.source_type.clone()),
+            source_id: Some(info.source_id.clone()),
+            source_url: info.source_url.clone(),
+        },
+        None => InstalledLockInfo {
+            id: format!("local:{dir_name}"),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            source_type: None,
+            source_id: None,
+            source_url: None,
+        },
     }
 }
 
 /// 将 lock 文件中发现的仓库保存到 skill_repos（去重）
 fn save_repos_from_lock(
     db: &Arc<Database>,
-    lock: &HashMap<String, LockRepoInfo>,
+    lock: &HashMap<String, LockSkillInfo>,
     directories: impl Iterator<Item = impl AsRef<str>>,
 ) {
     let existing_repos: HashSet<(String, String)> = db
@@ -4602,7 +4739,10 @@ fn save_repos_from_lock(
     let mut added = HashSet::new();
 
     for dir_name in directories {
-        if let Some(info) = lock.get(dir_name.as_ref()) {
+        if let Some(info) = lock
+            .get(dir_name.as_ref())
+            .and_then(|info| info.repo.as_ref())
+        {
             let key = (info.owner.clone(), info.repo.clone());
             if !existing_repos.contains(&key) && added.insert(key) {
                 let skill_repo = SkillRepo {
@@ -4739,20 +4879,22 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
         let (name, description) = SkillService::read_skill_name_desc(&skill_md, &directory);
 
-        let (id, repo_owner, repo_name, repo_branch, readme_url) =
-            build_repo_info_from_lock(&agents_lock, &directory);
+        let lock_info = build_skill_info_from_lock(&agents_lock, &directory);
 
         let content_hash = SkillService::compute_dir_hash(&ssot_path).ok();
 
         let skill = InstalledSkill {
-            id,
+            id: lock_info.id,
             name,
             description,
             directory,
-            repo_owner,
-            repo_name,
-            repo_branch,
-            readme_url,
+            repo_owner: lock_info.repo_owner,
+            repo_name: lock_info.repo_name,
+            repo_branch: lock_info.repo_branch,
+            readme_url: lock_info.readme_url,
+            source_type: lock_info.source_type,
+            source_id: lock_info.source_id,
+            source_url: lock_info.source_url,
             apps,
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
@@ -6529,6 +6671,9 @@ mod tests {
             repo_name: None,
             repo_branch: None,
             readme_url: None,
+            source_type: None,
+            source_id: None,
+            source_url: None,
             apps: SkillApps::default(),
             installed_at: 0,
             content_hash: None,
@@ -7687,5 +7832,67 @@ mod tests {
         // 切换供应商走的同一条同步也不能碰它
         SkillService::sync_to_app(&db, &AppType::OpenClaw).expect("no-op sync");
         assert!(own_skill.exists());
+    }
+
+    #[test]
+    fn agents_lock_keeps_well_known_source_for_grouping() {
+        let lock = parse_agents_lock_content(
+            r#"{
+                "skills": {
+                    "lark-shared": {
+                        "source": "open.feishu.cn",
+                        "sourceType": "well-known",
+                        "sourceUrl": "https://open.feishu.cn/.well-known/skills/lark-shared/SKILL.md"
+                    }
+                }
+            }"#,
+        )
+        .expect("parse lock");
+
+        let info = build_skill_info_from_lock(&lock, "lark-shared");
+        assert_eq!(info.id, "local:lark-shared");
+        assert_eq!(info.source_type.as_deref(), Some("well-known"));
+        assert_eq!(info.source_id.as_deref(), Some("open.feishu.cn"));
+        assert_eq!(
+            info.source_url.as_deref(),
+            Some("https://open.feishu.cn/.well-known/skills/lark-shared/SKILL.md")
+        );
+        assert!(info.repo_owner.is_none());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn installed_local_skill_backfills_well_known_provenance_from_agents_lock() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let agents = home.path().join(".agents");
+        fs::create_dir_all(&agents).expect("agents dir");
+        fs::write(
+            agents.join(".skill-lock.json"),
+            r#"{
+                "skills": {
+                    "lark-shared": {
+                        "source": "open.feishu.cn",
+                        "sourceType": "well-known",
+                        "sourceUrl": "https://open.feishu.cn/.well-known/skills/lark-shared/SKILL.md"
+                    }
+                }
+            }"#,
+        )
+        .expect("lock file");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let local = poisoned_skill("local:lark-shared", "lark-shared");
+        db.save_skill(&local).expect("seed local skill");
+
+        let installed = SkillService::get_all_installed(&db).expect("list skills");
+        assert_eq!(installed[0].source_type.as_deref(), Some("well-known"));
+        assert_eq!(installed[0].source_id.as_deref(), Some("open.feishu.cn"));
+
+        let persisted = db
+            .get_installed_skill("local:lark-shared")
+            .expect("query")
+            .expect("skill");
+        assert_eq!(persisted.source_id.as_deref(), Some("open.feishu.cn"));
     }
 }

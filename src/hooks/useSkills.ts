@@ -166,6 +166,9 @@ export function useUninstallSkill() {
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+        queryClient.invalidateQueries({
+          queryKey: ["skills", "projectGroups"],
+        }),
       ]),
   });
 }

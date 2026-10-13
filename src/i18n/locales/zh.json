@@ -4794,7 +4794,23 @@
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "显示全部 Skill",
     "updateAllCount": "全部更新（{{count}} 个）",
-    "updatingProgress": "正在更新 {{done}}/{{total}}…"
+    "updatingProgress": "正在更新 {{done}}/{{total}}…",
+    "groups": {
+      "create": "新建项目分组",
+      "edit": "编辑项目分组",
+      "editNamed": "编辑 {{name}}",
+      "description": "按来源项目整理本地 Skills。每个 Skill 归属一个项目；移动成员或解散分组会保留技能和应用开关。",
+      "name": "项目名称",
+      "search": "搜索本地 Skills",
+      "noLocal": "没有匹配的本地 Skills",
+      "moveFrom": "从 {{name}} 移入",
+      "dissolve": "解散项目分组",
+      "ungrouped": "未分组的本地 Skills",
+      "scope": "组开关作用于全部成员，包括被筛选隐藏或折叠的 Skills。",
+      "toggle": "{{name}} · {{app}}：切换组内全部技能",
+      "expand": "展开或折叠 {{name}}",
+      "loadFailed": "项目分组加载失败，请重新打开此页面重试。"
+    }
   },
   "newLayoutNotice": {
     "title": "界面改版了",

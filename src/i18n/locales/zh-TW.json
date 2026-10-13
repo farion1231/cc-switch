@@ -4795,7 +4795,23 @@
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "顯示全部 Skill",
     "updateAllCount": "全部更新（{{count}} 個）",
-    "updatingProgress": "正在更新 {{done}}/{{total}}…"
+    "updatingProgress": "正在更新 {{done}}/{{total}}…",
+    "groups": {
+      "create": "新增專案分組",
+      "edit": "編輯專案分組",
+      "editNamed": "編輯 {{name}}",
+      "description": "依來源專案整理本機 Skills。每個 Skill 歸屬一個專案；移動成員或解散分組會保留技能和應用程式開關。",
+      "name": "專案名稱",
+      "search": "搜尋本機 Skills",
+      "noLocal": "沒有符合的本機 Skills",
+      "moveFrom": "從 {{name}} 移入",
+      "dissolve": "解散專案分組",
+      "ungrouped": "未分組的本機 Skills",
+      "scope": "分組開關套用至全部成員，包括被篩選隱藏或摺疊的 Skills。",
+      "toggle": "{{name}} · {{app}}：切換組內全部技能",
+      "expand": "展開或摺疊 {{name}}",
+      "loadFailed": "專案分組載入失敗，請重新開啟此頁面重試。"
+    }
   },
   "newLayoutNotice": {
     "title": "介面改版了",

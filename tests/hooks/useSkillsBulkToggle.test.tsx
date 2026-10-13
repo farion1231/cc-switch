@@ -235,7 +235,7 @@ describe("Skills management mutation hooks", () => {
     });
   });
 
-  it("keeps a rejected uninstall pending until backups and unmanaged Skills refresh", async () => {
+  it("keeps a rejected uninstall pending until backups, unmanaged Skills and group memberships refresh", async () => {
     let releaseInvalidation: (() => void) | undefined;
     const invalidationPending = new Promise<void>((resolve) => {
       releaseInvalidation = resolve;
@@ -257,13 +257,16 @@ describe("Skills management mutation hooks", () => {
       void mutation.catch(() => undefined);
     });
 
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(3));
     expect(result.current.isPending).toBe(true);
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "backups"],
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "unmanaged"],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["skills", "projectGroups"],
     });
 
     releaseInvalidation?.();
