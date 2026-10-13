@@ -332,7 +332,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "OpenModel",
     websiteUrl: "https://www.openmodel.ai",
-    apiKeyUrl: "https://www.openmodel.ai/campaigns/client-benefits",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
     category: "aggregator",
     baseUrl: "https://api.openmodel.ai",
     mode: "direct",
@@ -1809,6 +1809,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
     websiteUrl: "https://yylx.io",
     apiKeyUrl: "https://app.yylx.io/keys",
     category: "aggregator",

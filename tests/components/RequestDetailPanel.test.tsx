@@ -89,6 +89,27 @@ describe("RequestDetailPanel", () => {
     expect(screen.queryByText("usage.detail.firstToken")).toBeNull();
   });
 
+  it("shows the estimated first token for session logs that have one", () => {
+    renderWith(
+      log({
+        dataSource: "codex_session",
+        firstTokenMs: 3_300,
+        outputTokens: 1_800,
+        latencyMs: 20_000,
+      }),
+    );
+
+    expect(
+      screen.getByText("usage.detail.firstTokenEstimated"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("3.3s")).toBeInTheDocument();
+    // 速度仍按整段耗时估
+    expect(
+      screen.getByText("usage.speedEstimatedValue:90"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("usage.detail.firstToken")).toBeNull();
+  });
+
   it("explains why short session-log outputs have no estimate", () => {
     renderWith(
       log({

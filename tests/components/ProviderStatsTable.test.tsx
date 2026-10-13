@@ -32,6 +32,10 @@ const stat = (overrides: Partial<ProviderStats>): ProviderStats => ({
   ...overrides,
 });
 
+// 列顺序：…成功率、速度、首字
+const speedCell = (row: HTMLElement) => row.children[row.children.length - 2];
+const firstTokenCell = (row: HTMLElement) => row.lastElementChild;
+
 describe("ProviderStatsTable", () => {
   it("computes speed as total output over total generation time", () => {
     expect(
@@ -82,9 +86,9 @@ describe("ProviderStatsTable", () => {
     );
 
     const rows = screen.getAllByRole("row").slice(1);
-    expect(rows[0].lastElementChild).toHaveTextContent("≈100tok/s");
-    expect(rows[1].lastElementChild).toHaveTextContent("92tok/s");
-    expect(rows[1].lastElementChild).not.toHaveTextContent("≈");
+    expect(speedCell(rows[0])).toHaveTextContent("≈100tok/s");
+    expect(speedCell(rows[1])).toHaveTextContent("92tok/s");
+    expect(speedCell(rows[1])).not.toHaveTextContent("≈");
   });
 
   it("sorts by requests and replaces average latency with speed", () => {
@@ -116,9 +120,50 @@ describe("ProviderStatsTable", () => {
     ).toBeInTheDocument();
     const rows = screen.getAllByRole("row").slice(1);
     expect(rows[0]).toHaveTextContent("DeepSeek");
-    expect(rows[0].lastElementChild).toHaveTextContent("92tok/s");
+    expect(speedCell(rows[0])).toHaveTextContent("92tok/s");
     expect(rows[1]).toHaveTextContent("Kimi For Coding");
-    expect(rows[1].lastElementChild).toHaveTextContent("—");
+    expect(speedCell(rows[1])).toHaveTextContent("—");
+  });
+
+  it("shows the first-token median in seconds, or — without routed streams", () => {
+    useProviderStatsMock.mockReturnValue({
+      isLoading: false,
+      data: [
+        stat({ providerId: "a", requestCount: 5, firstTokenMedianMs: 2_640 }),
+        stat({ providerId: "b", requestCount: 3, firstTokenMedianMs: null }),
+        // 老后端没有这个字段
+        stat({ providerId: "c", requestCount: 1 }),
+        // 只有会话日志推出来的首字：带 ≈
+        stat({
+          providerId: "d",
+          requestCount: 0,
+          firstTokenMedianMs: null,
+          estFirstTokenMedianMs: 3_300,
+        }),
+        // 两种都有时用精确的
+        stat({
+          providerId: "e",
+          requestCount: 0,
+          firstTokenMedianMs: 1_200,
+          estFirstTokenMedianMs: 3_300,
+        }),
+      ],
+    });
+
+    render(
+      <ProviderStatsTable range={{ preset: "7d" }} refreshIntervalMs={0} />,
+    );
+
+    expect(
+      screen.getByRole("columnheader", { name: /usage.firstToken/ }),
+    ).toBeInTheDocument();
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(firstTokenCell(rows[0])).toHaveTextContent("2.6s");
+    expect(firstTokenCell(rows[1])).toHaveTextContent("—");
+    expect(firstTokenCell(rows[2])).toHaveTextContent("—");
+    expect(firstTokenCell(rows[3])).toHaveTextContent("≈3.3s");
+    expect(firstTokenCell(rows[4])).toHaveTextContent("1.2s");
+    expect(firstTokenCell(rows[4])).not.toHaveTextContent("≈");
   });
 
   it.each([false, true])(
