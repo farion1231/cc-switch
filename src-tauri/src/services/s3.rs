@@ -518,12 +518,233 @@ pub(crate) async fn head_object(
         .map(|s| s.to_string()))
 }
 
+/// Delete an S3 object. A missing object counts as success (S3 itself
+/// returns 204 for absent keys; some compatible servers answer 404).
+pub(crate) async fn delete_object(creds: &S3Credentials, key: &str) -> Result<(), AppError> {
+    let url_str = build_object_url(creds, key);
+    let url = Url::parse(&url_str).map_err(|e| {
+        AppError::localized(
+            "s3.url.invalid",
+            format!("S3 URL 无效: {e}"),
+            format!("Invalid S3 URL: {e}"),
+        )
+    })?;
+
+    let client = http_client::get();
+    let body_hash = sha256_hex(b"");
+    let mut headers = reqwest::header::HeaderMap::new();
+    sign_request(
+        "DELETE",
+        &url,
+        &mut headers,
+        &body_hash,
+        creds,
+        chrono::Utc::now(),
+    );
+
+    let resp = client
+        .delete(url.as_str())
+        .headers(headers)
+        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|e| s3_transport_error("s3.delete_failed", "DELETE 请求", "DELETE request", &e))?;
+
+    if resp.status().is_success() || resp.status() == StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    Err(s3_status_error("DELETE", resp.status(), &url_str))
+}
+
+/// Upper bound for one ListObjectsV2 page body (1000 keys ≈ a few hundred KB).
+const MAX_LIST_PAGE_BYTES: usize = 8 * 1024 * 1024;
+/// Hard stop for pagination loops against misbehaving servers.
+const MAX_LIST_PAGES: usize = 200;
+
+/// One parsed ListObjectsV2 page.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct ListPage {
+    pub common_prefixes: Vec<String>,
+    pub keys: Vec<String>,
+    pub next_continuation_token: Option<String>,
+    pub is_truncated: bool,
+}
+
+/// Build the ListObjectsV2 query string. The exact same encoded string is sent
+/// on the wire and fed to the canonical request, so SigV4 never sees a `+`/`%20`
+/// mismatch between client and server.
+fn list_query_string(prefix: &str, delimiter: Option<&str>, token: Option<&str>) -> String {
+    let mut pairs: Vec<(&str, String)> = vec![("list-type", "2".to_string())];
+    pairs.push(("prefix", prefix.to_string()));
+    if let Some(delimiter) = delimiter {
+        pairs.push(("delimiter", delimiter.to_string()));
+    }
+    if let Some(token) = token {
+        pairs.push(("continuation-token", token.to_string()));
+    }
+    pairs.sort_by(|a, b| a.0.cmp(b.0));
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", uri_encode(k, true), uri_encode(v, true)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+pub(crate) fn parse_list_page(xml: &str) -> ListPage {
+    use super::xml_scan::{scan, XmlEvent};
+
+    let mut page = ListPage::default();
+    let mut stack: Vec<String> = Vec::new();
+    for event in scan(xml) {
+        match event {
+            XmlEvent::Start(name) => stack.push(name),
+            XmlEvent::End(_) => {
+                stack.pop();
+            }
+            XmlEvent::Text(text) => {
+                let current = stack.last().map(String::as_str);
+                let parent = stack
+                    .len()
+                    .checked_sub(2)
+                    .and_then(|idx| stack.get(idx))
+                    .map(String::as_str);
+                match (parent, current) {
+                    (Some("commonprefixes"), Some("prefix")) => page.common_prefixes.push(text),
+                    (Some("contents"), Some("key")) => page.keys.push(text),
+                    (_, Some("nextcontinuationtoken")) => page.next_continuation_token = Some(text),
+                    (_, Some("istruncated")) => {
+                        page.is_truncated = text.trim().eq_ignore_ascii_case("true")
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    page
+}
+
+/// List keys or common prefixes under `prefix` with ListObjectsV2, following
+/// continuation tokens until the listing is complete.
+///
+/// With `delimiter = Some("/")` the result holds the immediate "sub-directories"
+/// (common prefixes); otherwise it holds object keys.
+pub(crate) async fn list_objects(
+    creds: &S3Credentials,
+    prefix: &str,
+    delimiter: Option<&str>,
+) -> Result<ListPage, AppError> {
+    let client = http_client::get();
+    let bucket_url = build_bucket_url(creds);
+    let mut combined = ListPage::default();
+    let mut token: Option<String> = None;
+
+    for _ in 0..MAX_LIST_PAGES {
+        let query = list_query_string(prefix, delimiter, token.as_deref());
+        let url_str = format!("{bucket_url}?{query}");
+        let url = Url::parse(&url_str).map_err(|e| {
+            AppError::localized(
+                "s3.url.invalid",
+                format!("S3 URL 无效: {e}"),
+                format!("Invalid S3 URL: {e}"),
+            )
+        })?;
+        let body_hash = sha256_hex(b"");
+        let mut headers = reqwest::header::HeaderMap::new();
+        sign_request(
+            "GET",
+            &url,
+            &mut headers,
+            &body_hash,
+            creds,
+            chrono::Utc::now(),
+        );
+        let resp = client
+            .get(url_str.as_str())
+            .headers(headers)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|e| s3_transport_error("s3.list_failed", "LIST 请求", "LIST request", &e))?;
+        if !resp.status().is_success() {
+            return Err(s3_status_error("LIST", resp.status(), &bucket_url));
+        }
+        ensure_content_length_within_limit(resp.headers(), MAX_LIST_PAGE_BYTES, &bucket_url)?;
+        let mut bytes = Vec::new();
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| {
+                AppError::localized(
+                    "s3.response_read_failed",
+                    format!("读取 S3 响应失败: {e}"),
+                    format!("Failed to read S3 response: {e}"),
+                )
+            })?;
+            if bytes.len().saturating_add(chunk.len()) > MAX_LIST_PAGE_BYTES {
+                return Err(response_too_large_error(&bucket_url, MAX_LIST_PAGE_BYTES));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let page = parse_list_page(&String::from_utf8_lossy(&bytes));
+        combined.common_prefixes.extend(page.common_prefixes);
+        combined.keys.extend(page.keys);
+        match page.next_continuation_token {
+            Some(next) if page.is_truncated && Some(&next) != token.as_ref() => {
+                token = Some(next);
+            }
+            _ => return Ok(combined),
+        }
+    }
+    Err(AppError::localized(
+        "s3.list_too_many_pages",
+        "S3 列表分页过多，已停止",
+        "S3 listing returned too many pages; stopped.",
+    ))
+}
+
 // ─── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    // ── Listing ──
+
+    #[test]
+    fn list_query_string_is_sorted_and_sigv4_encoded() {
+        let q = list_query_string("root dir/usage-v1/", Some("/"), Some("a+b=="));
+        assert_eq!(
+            q,
+            "continuation-token=a%2Bb%3D%3D&delimiter=%2F&list-type=2&prefix=root%20dir%2Fusage-v1%2F"
+        );
+    }
+
+    #[test]
+    fn parse_list_page_reads_prefixes_keys_and_token() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>bucket</Name><Prefix>r/devices/</Prefix><KeyCount>3</KeyCount>
+  <IsTruncated>true</IsTruncated>
+  <NextContinuationToken>tok&amp;1</NextContinuationToken>
+  <Contents><Key>r/devices/manifest.json</Key><Size>1</Size></Contents>
+  <CommonPrefixes><Prefix>r/devices/a/</Prefix></CommonPrefixes>
+  <CommonPrefixes><Prefix>r/devices/b/</Prefix></CommonPrefixes>
+</ListBucketResult>"#;
+        let page = parse_list_page(xml);
+        assert_eq!(page.common_prefixes, vec!["r/devices/a/", "r/devices/b/"]);
+        assert_eq!(page.keys, vec!["r/devices/manifest.json"]);
+        assert_eq!(page.next_continuation_token.as_deref(), Some("tok&1"));
+        assert!(page.is_truncated);
+    }
+
+    #[test]
+    fn parse_list_page_ignores_top_level_prefix_element() {
+        let page = parse_list_page(
+            "<ListBucketResult><Prefix>x/</Prefix><IsTruncated>false</IsTruncated></ListBucketResult>",
+        );
+        assert!(page.common_prefixes.is_empty());
+        assert!(!page.is_truncated);
+    }
 
     // ── Crypto helpers ──
 

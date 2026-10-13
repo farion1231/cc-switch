@@ -1193,6 +1193,10 @@ pub fn run() {
                 app_state.db.clone(),
                 app.handle().clone(),
             );
+            crate::services::usage_sync::worker::start_worker(
+                app_state.db.clone(),
+                app.handle().clone(),
+            );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
@@ -1675,6 +1679,12 @@ pub fn run() {
             commands::set_auto_failover_enabled,
             // Usage statistics
             commands::get_usage_summary,
+            commands::usage_sync_get_overview,
+            commands::usage_sync_save_settings,
+            commands::usage_sync_run_now,
+            commands::usage_sync_set_device_name,
+            commands::usage_sync_set_device_hidden,
+            commands::usage_sync_resolve_conflict,
             commands::get_session_usage_summary,
             commands::get_usage_summary_by_app,
             commands::get_usage_trends,

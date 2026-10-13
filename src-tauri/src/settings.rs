@@ -287,6 +287,103 @@ impl S3SyncSettings {
     }
 }
 
+/// Which configured cloud backend carries cross-device usage data.
+///
+/// Stored explicitly once usage sync is enabled so that configuring the other
+/// backend later never silently forks the usage namespace.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UsageSyncBackend {
+    Webdav,
+    S3,
+}
+
+/// How much detail this device shares with its other devices.
+///
+/// - `records`: one usage fact per request (identity, time, app, provider,
+///   model, tokens, cost, status, timings). Enables exact cross-device
+///   de-duplication and the remote request log.
+/// - `daily`: only per-day aggregates; no request IDs, timestamps or timings
+///   leave the device. Cross-device de-duplication is not possible.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UsageSyncDetailLevel {
+    #[default]
+    Records,
+    Daily,
+}
+
+/// Persisted result of the last usage sync run (device-local).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSyncStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_upload_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_source: Option<String>,
+    /// Another installation is writing with this device ID; uploads pause
+    /// until the user resolves it.
+    #[serde(default)]
+    pub identity_conflict: bool,
+}
+
+pub(crate) const USAGE_SYNC_DEFAULT_INTERVAL_MINUTES: u32 = 15;
+pub(crate) const USAGE_SYNC_MIN_INTERVAL_MINUTES: u32 = 5;
+pub(crate) const USAGE_SYNC_MAX_INTERVAL_MINUTES: u32 = 24 * 60;
+
+fn default_usage_sync_interval_minutes() -> u32 {
+    USAGE_SYNC_DEFAULT_INTERVAL_MINUTES
+}
+
+/// Cross-device usage sync settings (opt-in, device-local, never cloud-synced).
+///
+/// Reuses the connection parameters of the existing WebDAV / S3 configuration;
+/// only the choice of backend and sharing options live here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub auto_sync: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<UsageSyncBackend>,
+    #[serde(default)]
+    pub detail_level: UsageSyncDetailLevel,
+    #[serde(default = "default_usage_sync_interval_minutes")]
+    pub interval_minutes: u32,
+    #[serde(default)]
+    pub status: UsageSyncStatus,
+}
+
+impl Default for UsageSyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_sync: true,
+            backend: None,
+            detail_level: UsageSyncDetailLevel::default(),
+            interval_minutes: USAGE_SYNC_DEFAULT_INTERVAL_MINUTES,
+            status: UsageSyncStatus::default(),
+        }
+    }
+}
+
+impl UsageSyncSettings {
+    pub fn normalized_interval_minutes(&self) -> u32 {
+        self.interval_minutes.clamp(
+            USAGE_SYNC_MIN_INTERVAL_MINUTES,
+            USAGE_SYNC_MAX_INTERVAL_MINUTES,
+        )
+    }
+}
+
 /// 本机自动迁移状态。
 ///
 /// 这里记录的是本机启动时执行过的一次性迁移；标记不随数据库同步。
@@ -531,6 +628,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3_sync: Option<S3SyncSettings>,
 
+    // ===== 跨设备用量同步（Usage Sync）=====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_sync: Option<UsageSyncSettings>,
+
     // ===== WebDAV 备份设置（旧版，保留向后兼容）=====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_backup: Option<serde_json::Value>,
@@ -621,6 +722,7 @@ impl Default for AppSettings {
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
             s3_sync: None,
+            usage_sync: None,
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
@@ -1298,6 +1400,32 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
         if let Some(s3) = current.s3_sync.as_mut() {
             s3.status = status;
         }
+    })
+}
+
+// ===== 跨设备用量同步设置管理函数 =====
+
+pub fn get_usage_sync_settings() -> UsageSyncSettings {
+    settings_store()
+        .read()
+        .ok()
+        .and_then(|guard| guard.usage_sync.clone())
+        .unwrap_or_default()
+}
+
+pub fn set_usage_sync_settings(settings: UsageSyncSettings) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current.usage_sync = Some(settings);
+    })
+}
+
+/// Update only the status block so concurrent preference edits are not lost.
+pub fn update_usage_sync_status(status: UsageSyncStatus) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current
+            .usage_sync
+            .get_or_insert_with(Default::default)
+            .status = status;
     })
 }
 

@@ -51,6 +51,9 @@ fn merge_settings_for_save(
     // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
     // 缓存里的旧值，透传会把刚保存的地址冲掉。
     incoming.proxy_client_host = existing.proxy_client_host.clone();
+    // 用量同步设置只经 usage_sync_* 命令修改（其中 status 由后台任务持续写入）；
+    // 全量保存带的是前端缓存里的旧值，透传会回滚同步状态或刚改的开关。
+    incoming.usage_sync = existing.usage_sync.clone();
     incoming
 }
 

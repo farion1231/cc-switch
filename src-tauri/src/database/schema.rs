@@ -354,6 +354,11 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 20. 跨设备用量同步（Usage Sync）：本机身份 + 远端设备只读缓存。
+        //     与本机权威用量表（proxy_request_logs / usage_daily_rollups）物理分离，
+        //     不参与配置快照同步，见 backup.rs 的 SYNC_SKIP_TABLES / SYNC_PRESERVE_TABLES。
+        Self::create_usage_sync_tables(conn)?;
+
         // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
         // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
         if conn
@@ -576,6 +581,11 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        log::info!("迁移数据库从 v20 到 v21（跨设备用量同步缓存表）");
+                        Self::create_usage_sync_tables(conn)?;
+                        Self::set_user_version(conn, 21)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1587,6 +1597,121 @@ impl Database {
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
+    /// Cross-device usage sync tables (v21).
+    ///
+    /// - `usage_sync_identity`: this installation's device identity (single row).
+    ///   Lives in the database rather than settings.json so that a lost or freshly
+    ///   created database always starts a new identity instead of overwriting the
+    ///   history a previous database already published.
+    /// - `usage_sync_devices` / `usage_sync_remote_partitions`: per remote device
+    ///   status and the import cursor (one row per imported partition object).
+    /// - `usage_sync_remote_logs` / `usage_sync_remote_rollups`: read-only cache of
+    ///   other devices' usage, shaped like `proxy_request_logs` /
+    ///   `usage_daily_rollups` so the same SQL helpers apply.
+    ///
+    /// Idempotent: used both for fresh databases and for the v20 -> v21 migration.
+    pub(crate) fn create_usage_sync_tables(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS usage_sync_identity (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                device_id TEXT NOT NULL,
+                device_name TEXT,
+                created_at INTEGER NOT NULL,
+                committed_nonce TEXT,
+                pending_nonce TEXT,
+                manifest_seq INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS usage_sync_devices (
+                device_id TEXT PRIMARY KEY,
+                device_name TEXT NOT NULL,
+                platform TEXT,
+                app_version TEXT,
+                detail_level TEXT NOT NULL DEFAULT 'records',
+                manifest_seq INTEGER NOT NULL DEFAULT 0,
+                manifest_sha256 TEXT,
+                remote_updated_at INTEGER,
+                first_date TEXT,
+                last_date TEXT,
+                detail_from TEXT,
+                last_fetched_at INTEGER,
+                last_checked_at INTEGER,
+                last_error TEXT,
+                status TEXT NOT NULL DEFAULT 'ok'
+             );
+             CREATE TABLE IF NOT EXISTS usage_sync_remote_partitions (
+                device_id TEXT NOT NULL,
+                partition_key TEXT NOT NULL,
+                object_sha256 TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                log_rows INTEGER NOT NULL DEFAULT 0,
+                rollup_rows INTEGER NOT NULL DEFAULT 0,
+                imported_at INTEGER NOT NULL,
+                PRIMARY KEY (device_id, partition_key)
+             );
+             CREATE TABLE IF NOT EXISTS usage_sync_remote_logs (
+                device_id TEXT NOT NULL,
+                partition_key TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                provider_name TEXT,
+                app_type TEXT NOT NULL,
+                model TEXT NOT NULL,
+                request_model TEXT,
+                pricing_model TEXT,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                input_cost_usd TEXT NOT NULL DEFAULT '0',
+                output_cost_usd TEXT NOT NULL DEFAULT '0',
+                cache_read_cost_usd TEXT NOT NULL DEFAULT '0',
+                cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                latency_ms INTEGER NOT NULL DEFAULT 0,
+                first_token_ms INTEGER,
+                duration_ms INTEGER,
+                status_code INTEGER NOT NULL,
+                is_streaming INTEGER NOT NULL DEFAULT 0,
+                cost_multiplier TEXT NOT NULL DEFAULT '1.0',
+                created_at INTEGER NOT NULL,
+                data_source TEXT NOT NULL DEFAULT 'proxy',
+                PRIMARY KEY (device_id, request_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_usage_sync_remote_logs_request
+                ON usage_sync_remote_logs(request_id, device_id);
+             CREATE INDEX IF NOT EXISTS idx_usage_sync_remote_logs_created
+                ON usage_sync_remote_logs(created_at);
+             CREATE INDEX IF NOT EXISTS idx_usage_sync_remote_logs_partition
+                ON usage_sync_remote_logs(device_id, partition_key);
+             CREATE TABLE IF NOT EXISTS usage_sync_remote_rollups (
+                device_id TEXT NOT NULL,
+                partition_key TEXT NOT NULL,
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                provider_name TEXT,
+                model TEXT NOT NULL,
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                request_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (device_id, partition_key, date, app_type, provider_id,
+                             model, request_model, pricing_model)
+             );
+             CREATE INDEX IF NOT EXISTS idx_usage_sync_remote_rollups_date
+                ON usage_sync_remote_rollups(date);",
+        )
+        .map_err(|error| AppError::Database(format!("创建跨设备用量同步表失败: {error}")))
     }
 
     /// v16 -> v17: preserve session request identities after detail rollup.

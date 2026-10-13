@@ -91,6 +91,14 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    // Cross-device usage sync: device identity and the remote-usage cache are
+    // device-local and travel through their own protocol (usage-v1), never
+    // through the configuration snapshot.
+    "usage_sync_identity",
+    "usage_sync_devices",
+    "usage_sync_remote_partitions",
+    "usage_sync_remote_logs",
+    "usage_sync_remote_rollups",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -102,6 +110,11 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "usage_sync_identity",
+    "usage_sync_devices",
+    "usage_sync_remote_partitions",
+    "usage_sync_remote_logs",
+    "usage_sync_remote_rollups",
 ];
 
 /// A database backup entry for the UI
