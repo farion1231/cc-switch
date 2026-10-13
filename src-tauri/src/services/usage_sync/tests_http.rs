@@ -545,3 +545,200 @@ async fn s3_rejected_credentials_do_not_leak_secret() {
     assert!(error.contains("403"), "{error}");
     assert!(!error.contains("s3-secret-value"));
 }
+
+// ─── Live servers (opt-in) ───────────────────────────────────
+//
+// Run against real, isolated servers with synthetic data, e.g.
+//   USAGE_SYNC_IT_WEBDAV_URL=http://127.0.0.1:28431/dav/ USAGE_SYNC_IT_WEBDAV_USER=alice \
+//   USAGE_SYNC_IT_WEBDAV_PASS=... USAGE_SYNC_IT_S3_ENDPOINT=http://127.0.0.1:19000 \
+//   USAGE_SYNC_IT_S3_BUCKET=usage-it USAGE_SYNC_IT_S3_AK=... USAGE_SYNC_IT_S3_SK=... \
+//   cargo test --lib usage_sync::tests_http::live -- --ignored --test-threads=1
+// Every run writes below a fresh random profile, so reruns never collide.
+
+mod live {
+    use super::*;
+    use crate::services::usage_sync::protocol::{self, manifest_path};
+    use crate::services::usage_sync::store;
+
+    fn env(name: &str) -> String {
+        std::env::var(name).unwrap_or_else(|_| panic!("{name} is required for live tests"))
+    }
+
+    fn device_id(db: &Database) -> String {
+        let conn = db.conn.lock().unwrap();
+        store::load_or_create_identity(&conn).unwrap().device_id
+    }
+
+    fn add_log(db: &Database, id: &str, source: &str, at: i64, cost: &str, input: i64) {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                input_token_semantics, total_cost_usd, latency_ms, status_code, created_at,
+                data_source
+             ) VALUES (?1, 'p', 'claude', 'claude-sonnet', ?5, 10, 2, ?2, 80, 200, ?3, ?4)",
+            rusqlite::params![id, cost, at, source, input],
+        )
+        .unwrap();
+    }
+
+    fn scoped(
+        db: &Database,
+        scope: UsageDeviceScope,
+    ) -> crate::services::usage_stats::UsageSummary {
+        db.get_usage_summary_scoped(None, None, None, None, None, &scope)
+            .unwrap()
+    }
+
+    async fn scenario(transport: UsageTransport) {
+        init_http();
+        let a = Arc::new(Database::memory().unwrap());
+        let b = Arc::new(Database::memory().unwrap());
+        let c = Arc::new(Database::memory().unwrap());
+        // Distinct token counts keep the local proxy/session heuristic out of the picture.
+        add_log(&a, "a-1", "proxy", NOW - 300, "0.10", 500);
+        add_log(
+            &a,
+            "session:msg_shared",
+            "session_log",
+            NOW - 200,
+            "0.05",
+            100,
+        );
+        add_log(
+            &b,
+            "session:msg_shared",
+            "session_log",
+            NOW - 200,
+            "0.05",
+            100,
+        );
+        add_log(&b, "b-1", "proxy", NOW - 100, "0.20", 700);
+        add_log(&c, "c-1", "proxy", NOW - 100, "0.40", 900);
+        let mut daily = options("C");
+        daily.detail_level = UsageSyncDetailLevel::Daily;
+
+        for _ in 0..2 {
+            for (db, opts) in [(&a, options("A")), (&b, options("B")), (&c, daily.clone())] {
+                let report = sync_with(db, &transport, &opts).await.unwrap();
+                assert!(report.upload_error.is_none(), "{report:?}");
+                assert!(report.download_error.is_none(), "{report:?}");
+                assert!(report.device_errors.is_empty(), "{report:?}");
+            }
+        }
+        let ids = transport.list_device_ids().await.unwrap();
+        assert_eq!(ids.len(), 3, "real listing discovers all devices: {ids:?}");
+
+        // A: local 2 + B's own record (shared session counted once) + C's daily total.
+        let all = scoped(&a, UsageDeviceScope::All);
+        assert_eq!(all.total_requests, 4);
+        assert_eq!(all.total_cost, "0.750000");
+        assert_eq!(
+            scoped(&a, UsageDeviceScope::Device(device_id(&c))).total_requests,
+            1
+        );
+        assert_eq!(
+            scoped(&a, UsageDeviceScope::Device(device_id(&b))).total_requests,
+            2
+        );
+
+        // Idempotent: an unchanged device does not rewrite its manifest.
+        let before = transport
+            .get(&manifest_path(&device_id(&b)), usize::MAX)
+            .await
+            .unwrap()
+            .unwrap();
+        let report = sync_with(&b, &transport, &options("B")).await.unwrap();
+        assert!(!report.manifest_written && report.uploaded_partitions == 0);
+        let after = transport
+            .get(&manifest_path(&device_id(&b)), usize::MAX)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(before, after);
+
+        // Correction on B is reconciled on A; the superseded object is retired then deleted.
+        let old_object = protocol::parse_manifest(&before)
+            .unwrap()
+            .partitions
+            .values()
+            .next()
+            .unwrap()
+            .object
+            .clone();
+        {
+            let conn = b.db_conn();
+            conn.execute(
+                "UPDATE proxy_request_logs SET total_cost_usd = '0.30' WHERE request_id = 'b-1'",
+                [],
+            )
+            .unwrap();
+        }
+        sync_with(&b, &transport, &options("B")).await.unwrap();
+        sync_with(&a, &transport, &options("A")).await.unwrap();
+        assert_eq!(scoped(&a, UsageDeviceScope::All).total_cost, "0.850000");
+        let mut later = options("B");
+        later.now += protocol::RETIRED_GRACE_SECS + 1;
+        sync_with(&b, &transport, &later).await.unwrap();
+        let gone = transport
+            .get(
+                &protocol::object_path(&device_id(&b), &old_object),
+                usize::MAX,
+            )
+            .await
+            .unwrap();
+        assert!(gone.is_none(), "retired object deleted on the real server");
+    }
+
+    trait DbConn {
+        fn db_conn(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection>;
+    }
+    impl DbConn for Arc<Database> {
+        fn db_conn(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
+            self.conn.lock().unwrap()
+        }
+    }
+
+    fn profile() -> String {
+        format!("it-{}", uuid::Uuid::new_v4())
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_webdav_multi_device_end_to_end() {
+        let mut settings = webdav_settings(
+            &env("USAGE_SYNC_IT_WEBDAV_URL"),
+            &env("USAGE_SYNC_IT_WEBDAV_PASS"),
+        );
+        settings.username = env("USAGE_SYNC_IT_WEBDAV_USER");
+        settings.profile = profile();
+        scenario(UsageTransport::from_webdav(&settings).unwrap()).await;
+
+        settings.password = "definitely-wrong".into();
+        let bad = UsageTransport::from_webdav(&settings).unwrap();
+        let db = device_with_logs("x", 1);
+        let report = sync_with(&db, &bad, &options("X")).await.unwrap();
+        let error = report.upload_error.expect("wrong password must fail");
+        assert!(error.contains("401"), "{error}");
+        assert!(!error.contains("definitely-wrong"));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_s3_multi_device_end_to_end() {
+        let mut settings = s3_settings(&env("USAGE_SYNC_IT_S3_ENDPOINT"));
+        settings.bucket = env("USAGE_SYNC_IT_S3_BUCKET");
+        settings.access_key_id = env("USAGE_SYNC_IT_S3_AK");
+        settings.secret_access_key = env("USAGE_SYNC_IT_S3_SK");
+        settings.profile = profile();
+        scenario(UsageTransport::from_s3(&settings).unwrap()).await;
+
+        settings.secret_access_key = "definitely-wrong".into();
+        let bad = UsageTransport::from_s3(&settings).unwrap();
+        let db = device_with_logs("x", 1);
+        let report = sync_with(&db, &bad, &options("X")).await.unwrap();
+        let error = report.upload_error.expect("bad signature must fail");
+        assert!(error.contains("403"), "{error}");
+        assert!(!error.contains("definitely-wrong"));
+    }
+}

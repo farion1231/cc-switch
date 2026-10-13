@@ -579,7 +579,8 @@ async fn same_session_record_on_two_devices_counts_once() {
         .iter()
         .find(|l| l.request_id == "session:msg_shared")
         .unwrap();
-    let expected_owner = std::cmp::min(b.id(), c.id());
+    // D sees three copies (A, B and C all published it): the smallest id wins.
+    let expected_owner = [a.id(), b.id(), c.id()].into_iter().min().unwrap();
     assert_eq!(shared.device_id.as_deref(), Some(expected_owner.as_str()));
 }
 
@@ -747,8 +748,26 @@ async fn daily_detail_level_shares_no_request_records() {
     let a = Device::new("A");
     let mut b = Device::new("B");
     b.detail_level = UsageSyncDetailLevel::Daily;
-    b.log("b1", "proxy", NOW - 60, "m", 100, 10, "0.10", 200);
-    b.log("b2", "proxy", NOW - 30, "m", 100, 10, "0.10", 500);
+    b.log(
+        "req-private-1",
+        "proxy",
+        NOW - 60,
+        "m",
+        100,
+        10,
+        "0.10",
+        200,
+    );
+    b.log(
+        "req-private-2",
+        "proxy",
+        NOW - 30,
+        "m",
+        100,
+        10,
+        "0.10",
+        500,
+    );
     b.sync(&cloud).await;
 
     let manifest = read_manifest(&cloud, &b.id());
@@ -765,7 +784,7 @@ async fn daily_detail_level_shares_no_request_records() {
         );
         let raw = String::from_utf8_lossy(&serde_json::to_vec(&segment).unwrap()).to_string();
         assert!(
-            !raw.contains("b1") && !raw.contains("b2"),
+            !raw.contains("req-private-1") && !raw.contains("req-private-2"),
             "no request ids leak"
         );
     }
@@ -1180,4 +1199,59 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
     // Idempotent re-run.
     Database::create_usage_sync_tables(&conn)?;
     Ok(())
+}
+
+#[tokio::test]
+async fn failed_garbage_collection_is_retried_not_forgotten() {
+    let cloud = remote();
+    let mut b = Device::new("B");
+    b.log("b1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    b.sync(&cloud).await;
+    let first = read_manifest(&cloud, &b.id())
+        .partitions
+        .values()
+        .next()
+        .unwrap()
+        .object
+        .clone();
+    b.log("b2", "proxy", NOW - 30, "m", 1, 1, "0.01", 200);
+    b.sync(&cloud).await;
+    let path = protocol::object_path(&b.id(), &first);
+
+    // The store refuses deletes of that object: it must stay listed as retired.
+    let fail_store = Arc::new(FailingDeletes {
+        inner: cloud.clone(),
+        needle: first.clone(),
+    });
+    b.now += protocol::RETIRED_GRACE_SECS + 1;
+    fail_store.sync(&b).await;
+    assert!(cloud.keys().contains(&path));
+    assert!(read_manifest(&cloud, &b.id())
+        .retired
+        .iter()
+        .any(|r| r.object == first));
+
+    // Once deletes work again the object is collected and leaves the list.
+    b.now += 60;
+    b.sync(&cloud).await;
+    assert!(!cloud.keys().contains(&path));
+    assert!(read_manifest(&cloud, &b.id()).retired.is_empty());
+}
+
+/// Wraps the memory store so deletes of one object fail.
+struct FailingDeletes {
+    inner: Arc<MemoryStore>,
+    needle: String,
+}
+
+impl FailingDeletes {
+    async fn sync(&self, device: &Device) {
+        // Make DELETE of this one object fail for the duration of the sync.
+        let path = protocol::object_path(&device.id(), &self.needle);
+        let bytes = self.inner.get(&path, usize::MAX).unwrap().unwrap();
+        *self.inner.fail_delete_containing.lock().unwrap() = Some(self.needle.clone());
+        device.sync(&self.inner).await;
+        *self.inner.fail_delete_containing.lock().unwrap() = None;
+        assert_eq!(self.inner.get(&path, usize::MAX).unwrap(), Some(bytes));
+    }
 }

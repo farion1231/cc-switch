@@ -296,6 +296,8 @@ pub(crate) mod memory {
         /// GETs whose path contains this substring fail with a transport error.
         pub fail_get_containing: Mutex<Option<String>>,
         pub fail_list: Mutex<bool>,
+        /// DELETEs whose path contains this substring fail.
+        pub fail_delete_containing: Mutex<Option<String>>,
         pub put_count: Mutex<usize>,
         pub get_count: Mutex<usize>,
     }
@@ -334,6 +336,11 @@ pub(crate) mod memory {
         }
 
         pub fn delete(&self, path: &str) -> Result<(), AppError> {
+            if let Some(needle) = self.fail_delete_containing.lock().unwrap().as_deref() {
+                if path.contains(needle) {
+                    return Err(transport_error("DELETE", path));
+                }
+            }
             self.objects.lock().unwrap().remove(path);
             Ok(())
         }

@@ -321,14 +321,29 @@ async fn upload_phase(
             }
         }
     }
+    // Expired objects are referenced by neither the current nor the next
+    // manifest, so they can go before the manifest write. Only objects that
+    // were actually deleted leave the list; failures are retried next sync.
+    for object in expired {
+        if let Err(error) = transport.delete(&object_path(&device_id, &object)).await {
+            log::debug!("[UsageSync] retired object cleanup failed, will retry: {error}");
+            retired.push(RetiredObject {
+                object,
+                retired_at: options.now - RETIRED_GRACE_SECS,
+            });
+        }
+    }
     retired.sort_by(|a, b| {
         a.retired_at
             .cmp(&b.retired_at)
             .then(a.object.cmp(&b.object))
     });
+    // Pathological growth guard: the oldest entries beyond the cap are
+    // deleted after the new manifest is published.
+    let mut overflow_objects: Vec<String> = Vec::new();
     if retired.len() > MAX_RETIRED_OBJECTS {
         let overflow = retired.len() - MAX_RETIRED_OBJECTS;
-        expired.extend(retired.drain(..overflow).map(|r| r.object));
+        overflow_objects.extend(retired.drain(..overflow).map(|r| r.object));
     }
 
     let device_name = effective_device_name(identity, options);
@@ -392,9 +407,9 @@ async fn upload_phase(
     blocking(db, move |conn| store::commit_nonce(conn, &nonce, seq)).await?;
     outcome.manifest_written = true;
 
-    for object in expired {
+    for object in overflow_objects {
         if let Err(error) = transport.delete(&object_path(&device_id, &object)).await {
-            log::debug!("[UsageSync] retire cleanup failed (will retry later): {error}");
+            log::debug!("[UsageSync] retired overflow cleanup failed: {error}");
         }
     }
     Ok(outcome)
