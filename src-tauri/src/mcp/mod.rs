@@ -10,6 +10,7 @@
 //! - `gemini` - Gemini MCP 同步和导入
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
+//! - `vscode` - VS Code 用户级 mcp.json 导入（只导入，不写回）
 
 mod claude;
 mod codex;
@@ -41,3 +42,4 @@ pub use opencode::{
 
 pub(crate) mod mcode;
 pub(crate) mod pi;
+pub(crate) mod vscode;

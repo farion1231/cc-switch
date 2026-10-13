@@ -669,7 +669,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 8] = [
+        let results: [(&str, Result<usize, AppError>); 9] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -678,6 +678,7 @@ impl McpService {
             ("hermes", Self::import_from_hermes(state)),
             ("mcode", mcp::mcode::import(state)),
             ("pi", mcp::pi::import(state)),
+            ("vscode", mcp::vscode::import(state)),
         ];
         for (app, result) in results {
             match result {
