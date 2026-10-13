@@ -111,6 +111,8 @@ export interface SkillUpdateInfo {
 
 /** 没有读到的仓库（发现、检查更新时逐仓库报告） */
 export interface SkillRepoFailure {
+  sourceType: string;
+  sourceHost: string;
   owner: string;
   name: string;
   branch: string;
@@ -187,6 +189,8 @@ export interface SkillRepo {
   name: string;
   branch: string;
   enabled: boolean;
+  /** GitLab Personal Access Token; write-only and omitted by the backend on reads. */
+  accessToken?: string;
 }
 
 // ========== API ==========
@@ -332,6 +336,11 @@ export const skillsApi = {
   /** 添加仓库 */
   async addRepo(repo: SkillRepo): Promise<boolean> {
     return await invoke("add_skill_repo", { repo });
+  },
+
+  /** 更新仓库启停状态；后端保留已保存的 GitLab Token */
+  async setRepoEnabled(repo: SkillRepo): Promise<boolean> {
+    return await invoke("set_skill_repo_enabled", { repo });
   },
 
   /** 删除仓库 */

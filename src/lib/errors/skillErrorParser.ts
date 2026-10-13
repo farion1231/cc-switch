@@ -34,6 +34,7 @@ function getErrorI18nKey(code: string): string {
     MISSING_REPO_INFO: "skills.error.missingRepoInfo",
     DOWNLOAD_TIMEOUT: "skills.error.downloadTimeout",
     DOWNLOAD_FAILED: "skills.error.downloadFailed",
+    GITLAB_AUTH_REQUIRED: "skills.error.gitlabAuthRequired",
     SKILL_DIR_NOT_FOUND: "skills.error.skillDirNotFound",
     SKILL_DIRECTORY_CONFLICT: "skills.error.directoryConflict",
     EMPTY_ARCHIVE: "skills.error.emptyArchive",
@@ -62,6 +63,7 @@ function getSuggestionI18nKey(suggestion: string): string {
     http403: "skills.error.http403",
     http404: "skills.error.http404",
     http429: "skills.error.http429",
+    configureGitlabToken: "skills.error.suggestion.configureGitlabToken",
   };
 
   return mapping[suggestion] || suggestion;

@@ -328,6 +328,20 @@ export function useAddSkillRepo() {
 }
 
 /**
+ * 更新仓库启停状态；后端保留 GitLab Token
+ */
+export function useSetSkillRepoEnabled() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: skillsApi.setRepoEnabled,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+    },
+  });
+}
+
+/**
  * 删除仓库
  */
 export function useRemoveSkillRepo() {

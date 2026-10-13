@@ -219,6 +219,37 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 
 </details>
 
+## About This Fork
+
+This fork is based on upstream [`cc-switch` v4.0.10](https://github.com/farion1231/cc-switch/releases/tag/v4.0.10) and includes the Skills GitLab source support from [upstream PR #4227](https://github.com/farion1231/cc-switch/pull/4227), adapted to the v4.0.10 architecture.
+
+### Differences from upstream v4.0.10
+
+- Skills repositories can use GitHub or GitLab, including self-hosted GitLab hosts and nested GitLab groups.
+- GitLab repository URLs support HTTPS, SSH, and host/path input such as `git.example.com/group/project`.
+- Private GitLab repositories support per-repository Personal Access Tokens with `read_repository` permission.
+- GitLab tokens are stored in the local database, sent only as `PRIVATE-TOKEN` request headers during archive downloads, and omitted from API responses returned to the frontend.
+- Skill discovery, install, update checking, and single-skill updates reuse the token associated with the repository.
+- Enabling or disabling a repository preserves its saved token.
+- The database schema is extended from v21 to v22; upgrading an existing v4.0.10 database is handled automatically.
+
+### Build and test
+
+```bash
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test:unit
+
+export RUSTUP_HOME="$HOME/.rustup"
+export CARGO_HOME="$HOME/.cargo"
+export PATH="$HOME/.rustup/toolchains/1.95-aarch64-apple-darwin/bin:$PATH"
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm tauri build
+```
+
+On macOS, `pnpm tauri build` produces the release executable and application bundle under `src-tauri/target/release/`. The updater archive requires `TAURI_SIGNING_PRIVATE_KEY`; without it, the executable and app bundle are still built normally.
+
 ## Why CC Switch?
 
 AI coding tools like Claude Code, Codex, and Gemini CLI each have their own configuration format. Switching API providers means hand-editing JSON, TOML, YAML, or `.env` files, and MCP, Skills, and prompts have to be maintained separately in every tool.

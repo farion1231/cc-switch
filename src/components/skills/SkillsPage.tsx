@@ -24,6 +24,7 @@ import {
   useInstalledSkills,
   useRemoveSkillRepo,
   useSearchSkillsSh,
+  useSetSkillRepoEnabled,
   useSkillRepos,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
@@ -66,6 +67,7 @@ export function useSkillRepoActions() {
   const { t } = useTranslation();
   const { refetch: refetchDiscoverable } = useDiscoverableSkills();
   const addRepoMutation = useAddSkillRepo();
+  const setRepoEnabledMutation = useSetSkillRepoEnabled();
   const removeRepoMutation = useRemoveSkillRepo();
 
   const addRepo = async (repo: SkillRepo) => {
@@ -81,12 +83,15 @@ export function useSkillRepoActions() {
     );
   };
 
-  const removeRepo = async (owner: string, name: string) => {
+  const removeRepo = async (repo: SkillRepo) => {
     try {
-      await removeRepoMutation.mutateAsync({ owner, name });
-      toast.success(t("skills.repo.removeSuccess", { owner, name }), {
-        closeButton: true,
-      });
+      await removeRepoMutation.mutateAsync(repo);
+      toast.success(
+        t("skills.repo.removeSuccess", { owner: repo.owner, name: repo.name }),
+        {
+          closeButton: true,
+        },
+      );
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
     }
@@ -95,7 +100,7 @@ export function useSkillRepoActions() {
   /** 勾掉 = 停用：add_skill_repo 是 INSERT OR REPLACE，带 enabled=false 写回即可 */
   const setRepoEnabled = async (repo: SkillRepo, enabled: boolean) => {
     try {
-      await addRepoMutation.mutateAsync({ ...repo, enabled });
+      await setRepoEnabledMutation.mutateAsync({ ...repo, enabled });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
     }
@@ -303,6 +308,8 @@ export function SkillsPage({
           repoOwner: item.repoOwner,
           repoName: item.repoName,
           repoBranch: item.repoBranch,
+          repoSourceType: "github",
+          repoSourceHost: "github.com",
           readmeUrl: item.readmeUrl,
         },
       })),

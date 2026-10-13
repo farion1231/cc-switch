@@ -3201,6 +3201,7 @@
       "archiveTooLarge": "壓縮檔解壓後超過 {{limit_mb}} MB 上限，已中止",
       "archiveTooManyEntries": "壓縮檔項目過多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下載失敗：HTTP {{status}}",
+      "gitlabAuthRequired": "GitLab 儲存庫需要存取權杖（read_repository 權限）",
       "allBranchesFailed": "所有分支下載失敗，嘗試了：{{branches}}",
       "httpError": "HTTP 錯誤 {{status}}",
       "http403": "GitHub 存取受限，可能是請求頻率過高",
@@ -3220,7 +3221,8 @@
         "checkDiskSpace": "請檢查磁碟空間",
         "checkPermission": "請檢查目錄權限",
         "uninstallFirst": "請先解除安裝已安裝的同名技能",
-        "checkZipContent": "請確認 ZIP 檔案包含有效的技能目錄（含 SKILL.md 檔案）"
+        "checkZipContent": "請確認 ZIP 檔案包含有效的技能目錄（含 SKILL.md 檔案）",
+        "configureGitlabToken": "請在技能儲存庫設定中填寫 GitLab Personal Access Token"
       }
     },
     "repo": {
@@ -3230,6 +3232,8 @@
       "urlPlaceholder": "owner/name、https://github.com/owner/name 或 https://gitlab.com/group/project",
       "branch": "分支",
       "branchPlaceholder": "main",
+      "gitlabToken": "GitLab 存取權杖（私有儲存庫）",
+      "gitlabTokenPlaceholder": "glpat-...（選填）",
       "path": "技能路徑",
       "pathPlaceholder": "skills (選填，留空掃描根目錄)",
       "add": "新增儲存庫",

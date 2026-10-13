@@ -89,6 +89,8 @@ impl Database {
             name TEXT NOT NULL,
             description TEXT,
             directory TEXT NOT NULL,
+            repo_source_type TEXT,
+            repo_source_host TEXT,
             repo_owner TEXT,
             repo_name TEXT,
             repo_branch TEXT DEFAULT 'main',
@@ -111,8 +113,10 @@ impl Database {
         // 6. Skill Repos 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
+            source_type TEXT NOT NULL DEFAULT 'github', source_host TEXT NOT NULL DEFAULT 'github.com',
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            enabled BOOLEAN NOT NULL DEFAULT 1, gitlab_token TEXT,
+            PRIMARY KEY (source_type, source_host, owner, name)
         )",
             [],
         )
@@ -576,6 +580,23 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        log::info!("迁移数据库从 v20 到 v21（Skill 仓库 GitLab 来源支持）");
+                        Self::migrate_v20_to_v21(conn)?;
+                        Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        log::info!("迁移数据库从 v21 到 v22（GitLab Skill 仓库访问令牌）");
+                        if Self::table_exists(conn, "skill_repos")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "skill_repos",
+                                "gitlab_token",
+                                "TEXT",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 22)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1623,6 +1644,46 @@ impl Database {
                 "last_tail_fingerprint",
                 "INTEGER",
             )?;
+        }
+        Ok(())
+    }
+
+    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "repo_source_type", "TEXT")?;
+            Self::add_column_if_missing(conn, "skills", "repo_source_host", "TEXT")?;
+            if Self::has_column(conn, "skills", "repo_owner")?
+                && Self::has_column(conn, "skills", "repo_name")?
+            {
+                conn.execute(
+                    "UPDATE skills SET repo_source_type = 'github', repo_source_host = 'github.com'
+                     WHERE repo_owner IS NOT NULL AND repo_name IS NOT NULL
+                       AND (repo_source_type IS NULL OR repo_source_type = '')",
+                    [],
+                )
+                .map_err(|e| AppError::Database(format!("回填 Skill 仓库来源失败: {e}")))?;
+            }
+        }
+        if Self::table_exists(conn, "skill_repos")?
+            && (!Self::has_column(conn, "skill_repos", "source_type")?
+                || !Self::has_column(conn, "skill_repos", "source_host")?)
+        {
+            conn.execute_batch(
+                "ALTER TABLE skill_repos RENAME TO skill_repos_v20;
+                 CREATE TABLE skill_repos (
+                   source_type TEXT NOT NULL DEFAULT 'github',
+                   source_host TEXT NOT NULL DEFAULT 'github.com',
+                   owner TEXT NOT NULL, name TEXT NOT NULL,
+                   branch TEXT NOT NULL DEFAULT 'main', enabled BOOLEAN NOT NULL DEFAULT 1,
+                   gitlab_token TEXT,
+                   PRIMARY KEY (source_type, source_host, owner, name)
+                 );
+                 INSERT INTO skill_repos (source_type, source_host, owner, name, branch, enabled)
+                   SELECT 'github', 'github.com', owner, name, COALESCE(NULLIF(branch, ''), 'main'), COALESCE(enabled, 1)
+                   FROM skill_repos_v20;
+                 DROP TABLE skill_repos_v20;",
+            )
+            .map_err(|e| AppError::Database(format!("重建 Skill 仓库表失败: {e}")))?;
         }
         Ok(())
     }

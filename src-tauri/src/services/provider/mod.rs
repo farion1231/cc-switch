@@ -2182,6 +2182,20 @@ command = "legacy-cmd"
         let db = Arc::new(Database::memory().expect("init db"));
         let state = AppState::new(db.clone());
 
+        {
+            let mut config = state
+                .db
+                .get_global_proxy_config()
+                .await
+                .expect("get proxy config");
+            config.listen_port = 0;
+            state
+                .db
+                .update_global_proxy_config(config)
+                .await
+                .expect("use an ephemeral proxy port");
+        }
+
         let mut original = Provider::with_id(
             "p1".into(),
             "Codex A".into(),
@@ -2287,6 +2301,20 @@ requires_openai_auth = true
         let db = Arc::new(Database::memory().expect("init db"));
         let state = AppState::new(db.clone());
 
+        {
+            let mut config = state
+                .db
+                .get_global_proxy_config()
+                .await
+                .expect("get proxy config");
+            config.listen_port = 0;
+            state
+                .db
+                .update_global_proxy_config(config)
+                .await
+                .expect("use an ephemeral proxy port");
+        }
+
         let mut original = Provider::with_id(
             "p1".into(),
             "Desktop A".into(),
@@ -2339,6 +2367,13 @@ requires_openai_auth = true
             .start()
             .await
             .expect("start proxy service");
+        let proxy_port = state
+            .proxy_service
+            .get_status()
+            .await
+            .expect("get proxy status")
+            .port;
+        let gateway_base_url = format!("http://127.0.0.1:{proxy_port}/claude-desktop");
 
         let mut updated = Provider::with_id(
             "p1".into(),
@@ -2382,7 +2417,7 @@ requires_openai_auth = true
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(gateway_base_url),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
@@ -2391,6 +2426,12 @@ requires_openai_auth = true
             json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true }]),
             "provider edits should propagate into the Claude Desktop 3P profile during takeover"
         );
+
+        state
+            .proxy_service
+            .stop()
+            .await
+            .expect("stop proxy service");
     }
 
     #[test]

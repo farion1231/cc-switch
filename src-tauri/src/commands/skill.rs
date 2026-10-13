@@ -7,9 +7,10 @@
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
-    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillAppSyncOutcome,
-    SkillBackupEntry, SkillDiscoveryResult, SkillRepo, SkillService, SkillStorageLocation,
-    SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult, ZipInstallResult,
+    DiscoverableSkill, ImportSkillSelection, MigrationResult, PublicSkillRepo, Skill,
+    SkillAppSyncOutcome, SkillBackupEntry, SkillDiscoveryResult, SkillRepo, SkillService,
+    SkillStorageLocation, SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult,
+    ZipInstallResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -332,8 +333,11 @@ pub fn uninstall_skill_for_app(
 
 /// 获取技能仓库列表
 #[tauri::command]
-pub fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>, String> {
-    app_state.db.get_skill_repos().map_err(|e| e.to_string())
+pub fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<PublicSkillRepo>, String> {
+    app_state
+        .db
+        .get_public_skill_repos()
+        .map_err(|e| e.to_string())
 }
 
 /// 添加技能仓库
@@ -341,11 +345,29 @@ pub fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>,
 pub fn add_skill_repo(repo: SkillRepo, app_state: State<'_, AppState>) -> Result<bool, String> {
     // 整个结构体由前端反序列化而来，owner/name/branch 会被拼进归档下载 URL。
     // 主防线在 download_repo，这里让非法值当场报错而不是沉淀进表。
-    SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)
-        .map_err(|e| e.to_string())?;
+    SkillService::validate_skill_repo(&repo, &repo.branch).map_err(|e| e.to_string())?;
     app_state
         .db
         .save_skill_repo(&repo)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// 更新仓库启停状态，保留已保存的 GitLab 访问令牌
+#[tauri::command]
+pub fn set_skill_repo_enabled(
+    repo: SkillRepo,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    SkillService::validate_skill_repo(&repo, &repo.branch).map_err(|e| e.to_string())?;
+    let mut stored = repo.clone();
+    stored.access_token = app_state
+        .db
+        .get_skill_repo_token(&stored)
+        .map_err(|e| e.to_string())?;
+    app_state
+        .db
+        .save_skill_repo(&stored)
         .map_err(|e| e.to_string())?;
     Ok(true)
 }
@@ -366,6 +388,7 @@ pub fn remove_skill_repo(
         name: name.clone(),
         branch: "main".to_string(),
         enabled: true,
+        access_token: None,
     };
     let normalized_source_type = repo_for_source.normalized_source_type();
     let normalized_source_host = repo_for_source.normalized_source_host();

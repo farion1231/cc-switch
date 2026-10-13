@@ -3200,6 +3200,7 @@
       "archiveTooLarge": "Archive exceeds the {{limit_mb}} MB extraction limit; aborted",
       "archiveTooManyEntries": "Archive has too many entries ({{count}}); the limit is {{limit}}",
       "downloadFailed": "Download failed: HTTP {{status}}",
+      "gitlabAuthRequired": "The GitLab repository requires an access token with read_repository scope",
       "allBranchesFailed": "All branches failed, tried: {{branches}}",
       "httpError": "HTTP error {{status}}",
       "http403": "GitHub access restricted, possibly rate limited",
@@ -3219,7 +3220,8 @@
         "checkDiskSpace": "Please check disk space",
         "checkPermission": "Please check directory permissions",
         "uninstallFirst": "Please uninstall the existing skill with the same name first",
-        "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)"
+        "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)",
+        "configureGitlabToken": "Add a GitLab Personal Access Token in skill repository settings"
       }
     },
     "repo": {
@@ -3229,6 +3231,8 @@
       "urlPlaceholder": "owner/name, https://github.com/owner/name, or https://gitlab.com/group/project",
       "branch": "Branch",
       "branchPlaceholder": "main",
+      "gitlabToken": "GitLab access token (private repository)",
+      "gitlabTokenPlaceholder": "glpat-... (optional)",
       "path": "Skills Path",
       "pathPlaceholder": "skills (optional, leave empty for root)",
       "add": "Add Repository",

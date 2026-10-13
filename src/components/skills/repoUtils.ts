@@ -71,6 +71,9 @@ export function parseRepoUrl(input: string): SkillRepo | null {
 
   const cleaned = trimmed.replace(/\.git$/, "").replace(/^\/+|\/+$/g, "");
   const parts = cleaned.split("/").filter(Boolean);
+  if (parts.length >= 3 && parts[0].includes(".")) {
+    return parsePathRepo(parts.slice(1).join("/"), parts[0]);
+  }
   if (parts.length === 2) {
     return {
       sourceType: "github",
@@ -79,6 +82,7 @@ export function parseRepoUrl(input: string): SkillRepo | null {
       name: parts[1],
       branch: "main",
       enabled: true,
+    accessToken: undefined,
     };
   }
 
@@ -112,5 +116,6 @@ function parsePathRepo(path: string, host: string): SkillRepo | null {
     name,
     branch: "main",
     enabled: true,
+    accessToken: undefined,
   };
 }

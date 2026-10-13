@@ -55,6 +55,7 @@ pub fn import_skill_from_deeplink(
         name: name.clone(),
         branch,
         enabled: request.enabled.unwrap_or(true),
+        access_token: None,
     };
 
     // Save using Database

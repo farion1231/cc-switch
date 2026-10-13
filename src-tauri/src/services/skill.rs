@@ -83,9 +83,13 @@ pub struct DiscoverableSkill {
     pub description: String,
     /// 目录名称 (安装路径的最后一段)
     pub directory: String,
-    /// GitHub README URL
+    /// README URL
     #[serde(rename = "readmeUrl")]
     pub readme_url: Option<String>,
+    #[serde(rename = "repoSourceType")]
+    pub repo_source_type: String,
+    #[serde(rename = "repoSourceHost")]
+    pub repo_source_host: String,
     /// 仓库所有者
     #[serde(rename = "repoOwner")]
     pub repo_owner: String,
@@ -127,14 +131,87 @@ pub struct Skill {
 /// 仓库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillRepo {
+    #[serde(rename = "sourceType", default = "default_repo_source_type")]
+    pub source_type: String,
+    #[serde(rename = "sourceHost", default = "default_repo_source_host")]
+    pub source_host: String,
     /// GitHub 用户/组织名
     pub owner: String,
     /// 仓库名称
     pub name: String,
     /// 分支 (默认 "main")
     pub branch: String,
+    /// GitLab Personal Access Token. Empty for GitHub and public GitLab repositories.
+    #[serde(
+        rename = "accessToken",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub access_token: Option<String>,
     /// 是否启用
     pub enabled: bool,
+}
+
+fn default_repo_source_type() -> String {
+    "github".to_string()
+}
+
+fn default_repo_source_host() -> String {
+    "github.com".to_string()
+}
+
+impl SkillRepo {
+    pub fn normalized_source_type(&self) -> String {
+        match self.source_type.trim().to_ascii_lowercase().as_str() {
+            "gitlab" => "gitlab".to_string(),
+            _ => "github".to_string(),
+        }
+    }
+
+    pub fn normalized_source_host(&self) -> String {
+        let host = self
+            .source_host
+            .trim()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
+        if host.is_empty() {
+            if self.normalized_source_type() == "gitlab" {
+                "gitlab.com".to_string()
+            } else {
+                "github.com".to_string()
+            }
+        } else {
+            host
+        }
+    }
+
+    /// GitLab PAT is stored with each repository, but must never be copied to GitHub rows.
+    pub fn gitlab_token(&self) -> Option<&str> {
+        if self.normalized_source_type() != "gitlab" {
+            return None;
+        }
+        self.access_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+    }
+
+    fn key_prefix(&self) -> String {
+        if self.normalized_source_type() == "github"
+            && self.normalized_source_host() == "github.com"
+        {
+            format!("{}/{}", self.owner, self.name)
+        } else {
+            format!(
+                "{}/{}/{}",
+                self.normalized_source_host(),
+                self.owner,
+                self.name
+            )
+        }
+    }
 }
 
 /// 技能安装状态（旧版兼容）
@@ -162,27 +239,39 @@ impl Default for SkillStore {
             skills: HashMap::new(),
             repos: vec![
                 SkillRepo {
+                    source_type: default_repo_source_type(),
+                    source_host: default_repo_source_host(),
                     owner: "anthropics".to_string(),
                     name: "skills".to_string(),
                     branch: "main".to_string(),
+                    access_token: None,
                     enabled: true,
                 },
                 SkillRepo {
+                    source_type: default_repo_source_type(),
+                    source_host: default_repo_source_host(),
                     owner: "ComposioHQ".to_string(),
                     name: "awesome-claude-skills".to_string(),
                     branch: "master".to_string(),
+                    access_token: None,
                     enabled: true,
                 },
                 SkillRepo {
+                    source_type: default_repo_source_type(),
+                    source_host: default_repo_source_host(),
                     owner: "cexll".to_string(),
                     name: "myclaude".to_string(),
                     branch: "master".to_string(),
+                    access_token: None,
                     enabled: true,
                 },
                 SkillRepo {
+                    source_type: default_repo_source_type(),
+                    source_host: default_repo_source_host(),
                     owner: "JimLiu".to_string(),
                     name: "baoyu-skills".to_string(),
                     branch: "main".to_string(),
+                    access_token: None,
                     enabled: true,
                 },
             ],
@@ -224,11 +313,39 @@ pub struct SkillUpdateInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillRepoFailure {
+    pub source_type: String,
+    pub source_host: String,
     pub owner: String,
     pub name: String,
     pub branch: String,
     /// 原始错误；下载类错误是 `format_skill_error` 的结构化 JSON
     pub error: String,
+}
+
+/// Frontend-facing repository configuration. Credentials stay in the database.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicSkillRepo {
+    #[serde(rename = "sourceType")]
+    pub source_type: String,
+    #[serde(rename = "sourceHost")]
+    pub source_host: String,
+    pub owner: String,
+    pub name: String,
+    pub branch: String,
+    pub enabled: bool,
+}
+
+impl From<SkillRepo> for PublicSkillRepo {
+    fn from(repo: SkillRepo) -> Self {
+        Self {
+            source_type: repo.normalized_source_type(),
+            source_host: repo.normalized_source_host(),
+            owner: repo.owner,
+            name: repo.name,
+            branch: repo.branch,
+            enabled: repo.enabled,
+        }
+    }
 }
 
 /// 发现结果：读到的 Skill + 没读到的仓库
@@ -587,23 +704,40 @@ impl SkillService {
         }
     }
 
+    /// Discoverable skills do not carry credentials. Re-attach a stored token before
+    /// install/update downloads using the repository source coordinates.
+    fn repo_with_stored_token(db: &Arc<Database>, mut repo: SkillRepo) -> Result<SkillRepo> {
+        repo.access_token = if repo.normalized_source_type() == "gitlab" {
+            db.get_skill_repo_token(&repo)?
+        } else {
+            None
+        };
+        Ok(repo)
+    }
+
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
     ///
     /// 坐标不合法时返回 None：这个值会存进 `readme_url`，前端「查看文档」用
     /// `openExternal` 直接打开，恶意 branch 能把它指到 github.com 上的任意路径。
-    fn build_skill_doc_url(
-        owner: &str,
-        repo: &str,
-        branch: &str,
-        doc_path: &str,
-    ) -> Option<String> {
-        if Self::validate_repo_ref(owner, repo, branch).is_err() {
-            log::warn!("跳过非法仓库坐标的文档链接: {owner}/{repo}@{branch}");
+    fn build_skill_doc_url(repo: &SkillRepo, branch: &str, doc_path: &str) -> Option<String> {
+        if Self::validate_skill_repo(repo, branch).is_err() {
+            log::warn!("跳过非法仓库坐标的文档链接: {}@{branch}", repo.key_prefix());
             return None;
         }
-        Some(format!(
-            "https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}"
-        ))
+        match repo.normalized_source_type().as_str() {
+            "gitlab" => Some(format!(
+                "https://{}/{}/{}/-/blob/{}/{}",
+                repo.normalized_source_host(),
+                repo.owner,
+                repo.name,
+                branch,
+                doc_path
+            )),
+            _ => Some(format!(
+                "https://github.com/{}/{}/blob/{}/{}",
+                repo.owner, repo.name, branch, doc_path
+            )),
+        }
     }
 
     /// 从旧 readme_url 中提取仓库内文档路径，兼容 `blob`/`tree` 两种格式
@@ -800,7 +934,17 @@ impl SkillService {
             }
 
             let same_repo = existing.repo_owner.as_deref() == Some(&skill.repo_owner)
-                && existing.repo_name.as_deref() == Some(&skill.repo_name);
+                && existing.repo_name.as_deref() == Some(&skill.repo_name)
+                && existing
+                    .repo_source_type
+                    .as_deref()
+                    .unwrap_or("github")
+                    .eq_ignore_ascii_case(&skill.repo_source_type)
+                && existing
+                    .repo_source_host
+                    .as_deref()
+                    .unwrap_or("github.com")
+                    .eq_ignore_ascii_case(&skill.repo_source_host);
             if same_repo {
                 let mut updated = existing.clone();
                 updated.apps.set_enabled_for(current_app, true);
@@ -893,11 +1037,15 @@ impl SkillService {
         // 如果已存在则跳过下载
         if !dest.exists() {
             let repo = SkillRepo {
+                source_type: skill.repo_source_type.clone(),
+                source_host: skill.repo_source_host.clone(),
                 owner: skill.repo_owner.clone(),
                 name: skill.repo_name.clone(),
                 branch: skill.repo_branch.clone(),
                 enabled: true,
+                access_token: None,
             };
+            let repo = Self::repo_with_stored_token(db, repo)?;
 
             // 下载仓库
             let (temp_guard, used_branch) = timeout(
@@ -972,8 +1120,16 @@ impl SkillService {
             &skill.directory,
         );
 
-        let readme_url =
-            Self::build_skill_doc_url(&skill.repo_owner, &skill.repo_name, &repo_branch, &doc_path);
+        let readme_repo = SkillRepo {
+            source_type: skill.repo_source_type.clone(),
+            source_host: skill.repo_source_host.clone(),
+            owner: skill.repo_owner.clone(),
+            name: skill.repo_name.clone(),
+            branch: repo_branch.clone(),
+            enabled: true,
+            access_token: None,
+        };
+        let readme_url = Self::build_skill_doc_url(&readme_repo, &repo_branch, &doc_path);
 
         // Re-check after the network download: another install/uninstall may have
         // completed while the lock was intentionally released around `.await`.
@@ -1008,6 +1164,8 @@ impl SkillService {
                 Some(skill.description.clone())
             },
             directory: install_name.clone(),
+            repo_source_type: Some(skill.repo_source_type.clone()),
+            repo_source_host: Some(skill.repo_source_host.clone()),
             repo_owner: Some(skill.repo_owner.clone()),
             repo_name: Some(skill.repo_name.clone()),
             repo_branch: Some(repo_branch),
@@ -1340,8 +1498,10 @@ impl SkillService {
         let mut failures = Vec::new();
 
         // 按 (owner, name, branch) 分组
-        let mut repo_groups: HashMap<(String, String, String), Vec<InstalledSkill>> =
-            HashMap::new();
+        let mut repo_groups: HashMap<
+            (String, String, String, String, String),
+            Vec<InstalledSkill>,
+        > = HashMap::new();
 
         for skill in skills.into_values() {
             let (owner, name, branch) =
@@ -1350,21 +1510,33 @@ impl SkillService {
                     (Some(o), Some(n), None) => (o.clone(), n.clone(), "main".to_string()),
                     _ => continue,
                 };
+            let source_type = skill
+                .repo_source_type
+                .clone()
+                .unwrap_or_else(default_repo_source_type);
+            let source_host = skill
+                .repo_source_host
+                .clone()
+                .unwrap_or_else(default_repo_source_host);
             repo_groups
-                .entry((owner, name, branch))
+                .entry((source_type, source_host, owner, name, branch))
                 .or_default()
                 .push(skill);
         }
 
         let ssot_dir = Self::get_ssot_dir()?;
 
-        for ((owner, name, branch), group_skills) in &repo_groups {
+        for ((source_type, source_host, owner, name, branch), group_skills) in &repo_groups {
             let repo = SkillRepo {
+                source_type: source_type.clone(),
+                source_host: source_host.clone(),
                 owner: owner.clone(),
                 name: name.clone(),
                 branch: branch.clone(),
                 enabled: true,
+                access_token: None,
             };
+            let repo = Self::repo_with_stored_token(db, repo)?;
 
             // 下载仓库 ZIP
             let (temp_guard, _used_branch) = match timeout(
@@ -1450,12 +1622,16 @@ impl SkillService {
         }
 
         // 分组用的是 HashMap，排一下让结果稳定
-        failures.sort_by(|a: &SkillRepoFailure, b| (&a.owner, &a.name).cmp(&(&b.owner, &b.name)));
+        failures.sort_by(|a: &SkillRepoFailure, b| {
+            (&a.source_host, &a.owner, &a.name).cmp(&(&b.source_host, &b.owner, &b.name))
+        });
         Ok(SkillUpdateCheckResult { updates, failures })
     }
 
     fn repo_failure(repo: &SkillRepo, error: String) -> SkillRepoFailure {
         SkillRepoFailure {
+            source_type: repo.normalized_source_type(),
+            source_host: repo.normalized_source_host(),
             owner: repo.owner.clone(),
             name: repo.name.clone(),
             branch: repo.branch.clone(),
@@ -1517,11 +1693,21 @@ impl SkillService {
         };
 
         let repo = SkillRepo {
+            source_type: skill
+                .repo_source_type
+                .clone()
+                .unwrap_or_else(default_repo_source_type),
+            source_host: skill
+                .repo_source_host
+                .clone()
+                .unwrap_or_else(default_repo_source_host),
             owner: owner.clone(),
             name: name.clone(),
             branch: branch.clone(),
             enabled: true,
+            access_token: None,
         };
+        let repo = Self::repo_with_stored_token(db, repo)?;
 
         let ssot_dir = Self::get_ssot_dir()?;
         if skill.apps.pi {
@@ -1589,6 +1775,8 @@ impl SkillService {
             .get_installed_skill(&skill.id)?
             .ok_or_else(|| anyhow!("Skill no longer installed: {}", skill.id))?;
         if current_skill.directory != skill.directory
+            || current_skill.repo_source_type != skill.repo_source_type
+            || current_skill.repo_source_host != skill.repo_source_host
             || current_skill.repo_owner != skill.repo_owner
             || current_skill.repo_name != skill.repo_name
             || current_skill.repo_branch != skill.repo_branch
@@ -1636,13 +1824,15 @@ impl SkillService {
             skill.readme_url.as_deref(),
             &skill.directory,
         );
-        let readme_url = Self::build_skill_doc_url(&owner, &name, &used_branch, &doc_path);
+        let readme_url = Self::build_skill_doc_url(&repo, &used_branch, &doc_path);
 
         let updated_metadata = InstalledSkill {
             id: skill.id.clone(),
             name: new_name,
             description: new_description,
             directory: skill.directory.clone(),
+            repo_source_type: skill.repo_source_type.clone(),
+            repo_source_host: skill.repo_source_host.clone(),
             repo_owner: skill.repo_owner.clone(),
             repo_name: skill.repo_name.clone(),
             repo_branch: Some(used_branch),
@@ -2343,6 +2533,8 @@ impl SkillService {
                 name,
                 description,
                 directory: dir_name,
+                repo_source_type: repo_owner.as_ref().map(|_| default_repo_source_type()),
+                repo_source_host: repo_owner.as_ref().map(|_| default_repo_source_host()),
                 repo_owner,
                 repo_name,
                 repo_branch,
@@ -3086,11 +3278,13 @@ impl SkillService {
         let meta = self.parse_skill_metadata(skill_md)?;
 
         Ok(DiscoverableSkill {
-            key: format!("{}/{}:{}", repo.owner, repo.name, directory),
+            key: format!("{}:{}", repo.key_prefix(), directory),
             name: meta.name.unwrap_or_else(|| directory.to_string()),
             description: meta.description.unwrap_or_default(),
             directory: directory.to_string(),
-            readme_url: Self::build_skill_doc_url(&repo.owner, &repo.name, &repo.branch, doc_path),
+            readme_url: Self::build_skill_doc_url(repo, &repo.branch, doc_path),
+            repo_source_type: repo.normalized_source_type(),
+            repo_source_host: repo.normalized_source_host(),
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
             repo_branch: repo.branch.clone(),
@@ -3310,10 +3504,47 @@ impl SkillService {
         Ok(())
     }
 
+    pub(crate) fn validate_skill_repo(repo: &SkillRepo, branch: &str) -> Result<()> {
+        let source_type = repo.normalized_source_type();
+        if source_type == "github" {
+            if repo.normalized_source_host() != "github.com" {
+                return Err(anyhow!("GitHub skill repositories must use github.com"));
+            }
+            return Self::validate_repo_ref(&repo.owner, &repo.name, branch);
+        }
+        let host = repo.normalized_source_host();
+        let valid_host = !host.is_empty()
+            && host.len() <= 253
+            && host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+            && !host.starts_with('.')
+            && !host.ends_with('.');
+        let valid_namespace =
+            !repo.owner.is_empty() && repo.owner.split('/').all(Self::is_valid_github_owner);
+        if !valid_host
+            || !valid_namespace
+            || !Self::is_valid_github_repo_name(&repo.name)
+            || !Self::is_valid_git_branch(branch)
+        {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_REPO_REF",
+                &[
+                    ("owner", &repo.owner),
+                    ("name", &repo.name),
+                    ("branch", branch)
+                ],
+                Some("checkRepoUrl"),
+            )));
+        }
+        Ok(())
+    }
+
     /// 出口断言：URL 拼好后再确认它确实指向预期的 github.com 路径。
     ///
     /// 这是纵深防御——即便上面的字符集校验将来漏了某种变形（百分号编码、新的
     /// 分隔符语义等），这里也能拦住落点被改写的请求。
+    #[cfg(test)]
     fn assert_github_archive_url(url: &str, owner: &str, name: &str) -> Result<()> {
         let parsed = url::Url::parse(url).map_err(|e| anyhow!("Invalid archive URL: {e}"))?;
         let expected_prefix = format!("/{owner}/{name}/archive/refs/heads/");
@@ -3328,6 +3559,40 @@ impl SkillService {
             )));
         }
         Ok(())
+    }
+
+    fn build_repo_archive_url(repo: &SkillRepo, branch: &str) -> Result<String> {
+        Self::validate_skill_repo(repo, branch)?;
+        let url = if repo.normalized_source_type() == "gitlab" {
+            format!(
+                "https://{}/{}/{}/-/archive/{}/{}-{}.zip",
+                repo.normalized_source_host(),
+                repo.owner,
+                repo.name,
+                branch,
+                repo.name,
+                branch
+            )
+        } else {
+            format!(
+                "https://github.com/{}/{}/archive/refs/heads/{}.zip",
+                repo.owner, repo.name, branch
+            )
+        };
+        let parsed = url::Url::parse(&url).map_err(|e| anyhow!("Invalid archive URL: {e}"))?;
+        let host = repo.normalized_source_host();
+        let expected_prefix = if repo.normalized_source_type() == "gitlab" {
+            format!("/{}/{}/-/archive/", repo.owner, repo.name)
+        } else {
+            format!("/{}/{}/archive/refs/heads/", repo.owner, repo.name)
+        };
+        if parsed.scheme() != "https"
+            || parsed.host_str() != Some(host.as_str())
+            || !parsed.path().starts_with(&expected_prefix)
+        {
+            return Err(anyhow!("Invalid skill repository archive URL"));
+        }
+        Ok(url)
     }
 
     /// 在目录树中查找名称匹配且包含 SKILL.md 的子目录
@@ -3527,7 +3792,7 @@ impl SkillService {
     /// `check_updates`、`update_skill` 四条路径都经过它，而 `skill_repos` / `skills`
     /// 两张表都会被同步导入的远端快照整表覆盖，入库校验管不住它们。所以主防线放这里。
     async fn download_repo(&self, repo: &SkillRepo) -> Result<(tempfile::TempDir, String)> {
-        Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+        Self::validate_skill_repo(repo, &repo.branch)?;
 
         // 守卫全程持有，成功后连同目录一起交给调用方（见 `extract_local_zip` 的说明）。
         // 原来这里立刻 keep()，任何一步失败——下载超时、ARCHIVE_TOO_LARGE、解压出错
@@ -3555,13 +3820,9 @@ impl SkillService {
 
         let mut last_error = None;
         for branch in branches {
-            let url = format!(
-                "https://github.com/{}/{}/archive/refs/heads/{}.zip",
-                repo.owner, repo.name, branch
-            );
-            Self::assert_github_archive_url(&url, &repo.owner, &repo.name)?;
+            let url = Self::build_repo_archive_url(repo, branch)?;
 
-            match self.download_and_extract(&url, &temp_path).await {
+            match self.download_and_extract(&url, &temp_path, repo).await {
                 Ok(_) => return Ok((temp_dir, branch.to_string())),
                 Err(e) => {
                     // 每个分支各自重算预算，所以失败后必须把上一轮的残留清掉——
@@ -3578,9 +3839,13 @@ impl SkillService {
     }
 
     /// 下载并解压 ZIP
-    async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
+    async fn download_and_extract(&self, url: &str, dest: &Path, repo: &SkillRepo) -> Result<()> {
         let client = crate::proxy::http_client::get();
-        let response = client.get(url).send().await?;
+        let mut request = client.get(url);
+        if let Some(token) = repo.gitlab_token() {
+            request = request.header("PRIVATE-TOKEN", token);
+        }
+        let response = request.send().await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(
@@ -3592,6 +3857,27 @@ impl SkillService {
                     "429" => Some("http429"),
                     _ => Some("checkNetwork"),
                 },
+            )));
+        }
+
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if repo.normalized_source_type() == "gitlab"
+            && content_type.contains("text/html")
+            && repo.gitlab_token().is_none()
+        {
+            return Err(anyhow::anyhow!(format_skill_error(
+                "GITLAB_AUTH_REQUIRED",
+                &[
+                    ("sourceHost", &repo.normalized_source_host()),
+                    ("owner", &repo.owner),
+                    ("name", &repo.name),
+                ],
+                Some("configureGitlabToken"),
             )));
         }
 
@@ -4238,6 +4524,8 @@ impl SkillService {
                 name,
                 description,
                 directory: install_name.clone(),
+                repo_source_type: None,
+                repo_source_host: None,
                 repo_owner: None,
                 repo_name: None,
                 repo_branch: None,
@@ -4508,8 +4796,16 @@ fn build_repo_info_from_lock(
             // 优先使用 lock 文件中的 skillPath，否则回退到 dir_name/SKILL.md
             let fallback = format!("{dir_name}/SKILL.md");
             let doc_path = info.skill_path.as_deref().unwrap_or(&fallback);
-            let url =
-                SkillService::build_skill_doc_url(&info.owner, &info.repo, &url_branch, doc_path);
+            let repo = SkillRepo {
+                source_type: default_repo_source_type(),
+                source_host: default_repo_source_host(),
+                owner: info.owner.clone(),
+                name: info.repo.clone(),
+                branch: url_branch.clone(),
+                enabled: true,
+                access_token: None,
+            };
+            let url = SkillService::build_skill_doc_url(&repo, &url_branch, doc_path);
             (
                 format!("{}/{}:{dir_name}", info.owner, info.repo),
                 Some(info.owner.clone()),
@@ -4541,11 +4837,14 @@ fn save_repos_from_lock(
             let key = (info.owner.clone(), info.repo.clone());
             if !existing_repos.contains(&key) && added.insert(key) {
                 let skill_repo = SkillRepo {
+                    source_type: default_repo_source_type(),
+                    source_host: default_repo_source_host(),
                     owner: info.owner.clone(),
                     name: info.repo.clone(),
                     // 未知分支时使用 HEAD 语义，后续下载会回退到 main/master。
                     branch: info.branch.clone().unwrap_or_else(|| "HEAD".to_string()),
                     enabled: true,
+                    access_token: None,
                 };
                 // lock 文件由外部 agents CLI 写入，owner/repo/branch 均未经校验，
                 // 且 branch 是从 `/tree/`、fragment、`?ref=` 里抠出来的裸串。
@@ -4684,6 +4983,8 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             name,
             description,
             directory,
+            repo_source_type: repo_owner.as_ref().map(|_| default_repo_source_type()),
+            repo_source_host: repo_owner.as_ref().map(|_| default_repo_source_host()),
             repo_owner,
             repo_name,
             repo_branch,
@@ -4854,13 +5155,44 @@ mod tests {
 
     #[test]
     fn build_skill_doc_url_drops_illegal_coordinates() {
+        let repo = SkillRepo {
+            source_type: default_repo_source_type(),
+            source_host: default_repo_source_host(),
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+            access_token: None,
+        };
         assert_eq!(
-            SkillService::build_skill_doc_url("owner", "repo", "main", "a/SKILL.md").as_deref(),
+            SkillService::build_skill_doc_url(&repo, "main", "a/SKILL.md").as_deref(),
             Some("https://github.com/owner/repo/blob/main/a/SKILL.md")
         );
         // readme_url 会被前端 openExternal 直接打开，非法坐标不得产出链接
-        assert!(
-            SkillService::build_skill_doc_url("owner", "repo", "../../../issues", "x").is_none()
+        assert!(SkillService::build_skill_doc_url(&repo, "../../../issues", "x").is_none());
+    }
+
+    #[test]
+    fn gitlab_urls_keep_source_host_and_namespace() {
+        let repo = SkillRepo {
+            source_type: "gitlab".to_string(),
+            source_host: "gitlab.example.com".to_string(),
+            owner: "group/subgroup".to_string(),
+            name: "skills".to_string(),
+            branch: "feature/env".to_string(),
+            enabled: true,
+            access_token: Some(" glpat-secret ".to_string()),
+        };
+        assert_eq!(
+            SkillService::build_repo_archive_url(&repo, &repo.branch).unwrap(),
+            "https://gitlab.example.com/group/subgroup/skills/-/archive/feature/env/skills-feature/env.zip"
+        );
+        assert_eq!(repo.gitlab_token(), Some("glpat-secret"));
+        assert_eq!(
+            SkillService::build_skill_doc_url(&repo, &repo.branch, "demo/SKILL.md").as_deref(),
+            Some(
+                "https://gitlab.example.com/group/subgroup/skills/-/blob/feature/env/demo/SKILL.md"
+            )
         );
     }
 
@@ -6321,6 +6653,8 @@ mod tests {
             name: "poisoned".to_string(),
             description: None,
             directory: directory.to_string(),
+            repo_source_type: None,
+            repo_source_host: None,
             repo_owner: None,
             repo_name: None,
             repo_branch: None,
@@ -6923,10 +7257,13 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         write_skill(&temp.path().join("skills"), "weread-skills");
         let repo = SkillRepo {
+            source_type: default_repo_source_type(),
+            source_host: default_repo_source_host(),
             owner: "owner".to_string(),
             name: "repo".to_string(),
             branch: "main".to_string(),
             enabled: true,
+            access_token: None,
         };
         let scan = || {
             let mut skills = Vec::new();
@@ -6976,10 +7313,13 @@ mod tests {
         write_skill(&temp.path().join("skills"), "renamed-skill");
         write_skill(&temp.path().join("weread-skills"), "weread-skills");
         let repo = SkillRepo {
+            source_type: default_repo_source_type(),
+            source_host: default_repo_source_host(),
             owner: "owner".to_string(),
             name: "repo".to_string(),
             branch: "main".to_string(),
             enabled: true,
+            access_token: None,
         };
         let mut skills = Vec::new();
         SkillService::new()
@@ -7031,9 +7371,17 @@ mod tests {
                 installed.repo_owner = Some("owner".to_string());
                 installed.repo_name = Some("repo".to_string());
                 installed.repo_branch = Some("main".to_string());
+                let source_repo = SkillRepo {
+                    source_type: default_repo_source_type(),
+                    source_host: default_repo_source_host(),
+                    owner: "owner".to_string(),
+                    name: "repo".to_string(),
+                    branch: "main".to_string(),
+                    enabled: true,
+                    access_token: None,
+                };
                 installed.readme_url = SkillService::build_skill_doc_url(
-                    "owner",
-                    "repo",
+                    &source_repo,
                     "main",
                     &format!("{old_path}/SKILL.md"),
                 );
@@ -7053,7 +7401,7 @@ mod tests {
                     format!("{new_path}/SKILL.md")
                 };
                 let expected_url =
-                    SkillService::build_skill_doc_url("owner", "repo", "main", &expected_path);
+                    SkillService::build_skill_doc_url(&source_repo, "main", &expected_path);
                 let saved = db.get_installed_skill(&installed.id).unwrap().unwrap();
                 assert_eq!(
                     updated.readme_url, expected_url,
@@ -7262,10 +7610,13 @@ mod tests {
 
     fn repo(owner: &str, name: &str, enabled: bool) -> SkillRepo {
         SkillRepo {
+            source_type: default_repo_source_type(),
+            source_host: default_repo_source_host(),
             owner: owner.to_string(),
             name: name.to_string(),
             branch: "main".to_string(),
             enabled,
+            access_token: None,
         }
     }
 

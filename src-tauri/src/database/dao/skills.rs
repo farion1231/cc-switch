@@ -9,7 +9,7 @@
 use crate::app_config::{InstalledSkill, SkillApps};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::services::skill::SkillRepo;
+use crate::services::skill::{PublicSkillRepo, SkillRepo};
 use indexmap::IndexMap;
 use rusqlite::params;
 
@@ -21,7 +21,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                "SELECT id, name, description, directory, repo_source_type, repo_source_host, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
                         enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
                  FROM skills ORDER BY name ASC",
@@ -35,23 +35,25 @@ impl Database {
                     name: row.get(1)?,
                     description: row.get(2)?,
                     directory: row.get(3)?,
-                    repo_owner: row.get(4)?,
-                    repo_name: row.get(5)?,
-                    repo_branch: row.get(6)?,
-                    readme_url: row.get(7)?,
+                    repo_source_type: row.get(4)?,
+                    repo_source_host: row.get(5)?,
+                    repo_owner: row.get(6)?,
+                    repo_name: row.get(7)?,
+                    repo_branch: row.get(8)?,
+                    readme_url: row.get(9)?,
                     apps: SkillApps {
-                        claude: row.get(8)?,
-                        codex: row.get(9)?,
-                        gemini: row.get(10)?,
-                        grokbuild: row.get(11)?,
-                        opencode: row.get(12)?,
-                        hermes: row.get(13)?,
+                        claude: row.get(10)?,
+                        codex: row.get(11)?,
+                        gemini: row.get(12)?,
+                        grokbuild: row.get(13)?,
+                        opencode: row.get(14)?,
+                        hermes: row.get(15)?,
                         pi: false,
-                        mcode: row.get(17)?,
+                        mcode: row.get(19)?,
                     },
-                    installed_at: row.get(14)?,
-                    content_hash: row.get(15)?,
-                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                    installed_at: row.get(16)?,
+                    content_hash: row.get(17)?,
+                    updated_at: row.get::<_, i64>(18).unwrap_or(0),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -69,7 +71,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                "SELECT id, name, description, directory, repo_source_type, repo_source_host, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
                         enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
                  FROM skills WHERE id = ?1",
@@ -82,23 +84,25 @@ impl Database {
                 name: row.get(1)?,
                 description: row.get(2)?,
                 directory: row.get(3)?,
-                repo_owner: row.get(4)?,
-                repo_name: row.get(5)?,
-                repo_branch: row.get(6)?,
-                readme_url: row.get(7)?,
+                repo_source_type: row.get(4)?,
+                repo_source_host: row.get(5)?,
+                repo_owner: row.get(6)?,
+                repo_name: row.get(7)?,
+                repo_branch: row.get(8)?,
+                readme_url: row.get(9)?,
                 apps: SkillApps {
-                    claude: row.get(8)?,
-                    codex: row.get(9)?,
-                    gemini: row.get(10)?,
-                    grokbuild: row.get(11)?,
-                    opencode: row.get(12)?,
-                    hermes: row.get(13)?,
+                    claude: row.get(10)?,
+                    codex: row.get(11)?,
+                    gemini: row.get(12)?,
+                    grokbuild: row.get(13)?,
+                    opencode: row.get(14)?,
+                    hermes: row.get(15)?,
                     pi: false,
-                    mcode: row.get(17)?,
+                    mcode: row.get(19)?,
                 },
-                installed_at: row.get(14)?,
-                content_hash: row.get(15)?,
-                updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                installed_at: row.get(16)?,
+                content_hash: row.get(17)?,
+                updated_at: row.get::<_, i64>(18).unwrap_or(0),
             })
         });
 
@@ -114,19 +118,16 @@ impl Database {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO skills
-             (id, name, description, directory, repo_owner, repo_name, repo_branch,
+             (id, name, description, directory, repo_source_type, repo_source_host, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
               installed_at, content_hash, updated_at, enabled_mcode)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 skill.id,
                 skill.name,
                 skill.description,
                 skill.directory,
-                skill.repo_owner,
-                skill.repo_name,
-                skill.repo_branch,
-                skill.readme_url,
+                skill.repo_source_type, skill.repo_source_host, skill.repo_owner, skill.repo_name, skill.repo_branch, skill.readme_url,
                 skill.apps.claude,
                 skill.apps.codex,
                 skill.apps.gemini,
@@ -156,27 +157,18 @@ impl Database {
                  SET name = ?1,
                      description = ?2,
                      directory = ?3,
-                     repo_owner = ?4,
-                     repo_name = ?5,
-                     repo_branch = ?6,
-                     readme_url = ?7,
-                     installed_at = ?8,
-                     content_hash = ?9,
-                     updated_at = ?10
-                 WHERE id = ?11 AND installed_at = ?12",
+                     repo_source_type = ?4, repo_source_host = ?5, repo_owner = ?6, repo_name = ?7,
+                     repo_branch = ?8, readme_url = ?9, installed_at = ?10, content_hash = ?11, updated_at = ?12
+                 WHERE id = ?13 AND installed_at = ?14",
                 params![
                     skill.name,
                     skill.description,
                     skill.directory,
-                    skill.repo_owner,
-                    skill.repo_name,
-                    skill.repo_branch,
-                    skill.readme_url,
+                    skill.repo_source_type, skill.repo_source_host, skill.repo_owner, skill.repo_name, skill.repo_branch, skill.readme_url,
                     skill.installed_at,
                     skill.content_hash,
                     skill.updated_at,
-                    skill.id,
-                    skill.installed_at,
+                    skill.id, skill.installed_at,
                 ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -236,17 +228,20 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT owner, name, branch, enabled FROM skill_repos ORDER BY owner ASC, name ASC",
+                "SELECT source_type, source_host, owner, name, branch, enabled, gitlab_token FROM skill_repos ORDER BY source_host ASC, owner ASC, name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let repo_iter = stmt
             .query_map([], |row| {
                 Ok(SkillRepo {
-                    owner: row.get(0)?,
-                    name: row.get(1)?,
-                    branch: row.get(2)?,
-                    enabled: row.get(3)?,
+                    source_type: row.get(0)?,
+                    source_host: row.get(1)?,
+                    owner: row.get(2)?,
+                    name: row.get(3)?,
+                    branch: row.get(4)?,
+                    enabled: row.get(5)?,
+                    access_token: row.get(6)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -258,23 +253,61 @@ impl Database {
         Ok(repos)
     }
 
+    /// Repository list for the UI, without stored GitLab credentials.
+    pub fn get_public_skill_repos(&self) -> Result<Vec<PublicSkillRepo>, AppError> {
+        Ok(self
+            .get_skill_repos()?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
     /// 保存 Skill 仓库
     pub fn save_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        let token = repo.gitlab_token().map(str::to_string);
         conn.execute(
-            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
-            params![repo.owner, repo.name, repo.branch, repo.enabled],
+            "INSERT OR REPLACE INTO skill_repos (source_type, source_host, owner, name, branch, enabled, gitlab_token) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![repo.normalized_source_type(), repo.normalized_source_host(), repo.owner, repo.name, repo.branch, repo.enabled, token],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
+    /// Return only the stored credential for an exact repository source.
+    pub fn get_skill_repo_token(&self, repo: &SkillRepo) -> Result<Option<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let token = conn
+            .query_row(
+                "SELECT gitlab_token FROM skill_repos
+                 WHERE source_type = ?1 AND source_host = ?2 AND owner = ?3 AND name = ?4",
+                [
+                    repo.normalized_source_type().as_str(),
+                    repo.normalized_source_host().as_str(),
+                    repo.owner.as_str(),
+                    repo.name.as_str(),
+                ],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(token.and_then(|token| {
+            let trimmed = token.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        }))
+    }
+
     /// 删除 Skill 仓库
-    pub fn delete_skill_repo(&self, owner: &str, name: &str) -> Result<(), AppError> {
+    pub fn delete_skill_repo(
+        &self,
+        source_type: &str,
+        source_host: &str,
+        owner: &str,
+        name: &str,
+    ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "DELETE FROM skill_repos WHERE owner = ?1 AND name = ?2",
-            params![owner, name],
+            "DELETE FROM skill_repos WHERE source_type = ?1 AND source_host = ?2 AND owner = ?3 AND name = ?4",
+            params![source_type, source_host, owner, name],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
@@ -313,12 +346,52 @@ mod tests {
     use super::*;
     use crate::app_config::AppType;
 
+    #[test]
+    fn skill_repo_token_stays_private_and_survives_enable_toggle() {
+        let db = Database::memory().expect("memory db");
+        let repo = SkillRepo {
+            source_type: "gitlab".to_string(),
+            source_host: " gitlab.example.com/ ".to_string(),
+            owner: "group/subgroup".to_string(),
+            name: "skills".to_string(),
+            branch: "main".to_string(),
+            access_token: Some(" glpat-secret ".to_string()),
+            enabled: true,
+        };
+        db.save_skill_repo(&repo).expect("save repo");
+
+        let public = db
+            .get_public_skill_repos()
+            .expect("public repos")
+            .pop()
+            .expect("repo");
+        assert_eq!(public.source_host, "gitlab.example.com");
+        assert!(public.enabled);
+        let serialized = serde_json::to_string(&public).expect("serialize public repo");
+        assert!(!serialized.contains("glpat-secret"));
+
+        let mut toggled = SkillRepo {
+            access_token: None,
+            enabled: false,
+            ..repo
+        };
+        toggled.source_host = "gitlab.example.com".to_string();
+        toggled.access_token = db.get_skill_repo_token(&toggled).expect("read token");
+        db.save_skill_repo(&toggled).expect("save toggled repo");
+
+        let stored = db.get_skill_repos().expect("repos").pop().expect("repo");
+        assert!(!stored.enabled);
+        assert_eq!(stored.gitlab_token(), Some("glpat-secret"));
+    }
+
     fn skill(id: &str, name: &str, apps: SkillApps) -> InstalledSkill {
         InstalledSkill {
             id: id.to_string(),
             name: name.to_string(),
             description: Some(format!("{name} description")),
             directory: format!("{name}-directory"),
+            repo_source_type: Some("github".to_string()),
+            repo_source_host: Some("github.com".to_string()),
             repo_owner: Some("owner".to_string()),
             repo_name: Some("repo".to_string()),
             repo_branch: Some("main".to_string()),

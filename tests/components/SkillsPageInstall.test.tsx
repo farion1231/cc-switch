@@ -85,6 +85,7 @@ vi.mock("@/hooks/useSkills", () => ({
   useInstallSkill: () => ({ mutateAsync: m.install }),
   useSkillRepos: () => ({ data: m.repos, isLoading: false, refetch: vi.fn() }),
   useAddSkillRepo: () => ({ mutateAsync: m.addRepo }),
+  useSetSkillRepoEnabled: () => ({ mutateAsync: m.addRepo }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useSearchSkillsSh: (query: string, _limit: number, offset: number) =>
     searchCache.get(`${query}:${offset}`) ?? {
@@ -115,6 +116,9 @@ const makeDiscoverable = (
   name: "repo-skill",
   description: "Skill from a configured repository",
   directory: "repo-skill",
+  readmeUrl: "https://example.com/repo-skill",
+  repoSourceType: "github",
+  repoSourceHost: "github.com",
   repoOwner: "owner-a",
   repoName: "repo-a",
   repoBranch: "main",
@@ -122,6 +126,8 @@ const makeDiscoverable = (
 });
 
 const makeRepo = (overrides: Partial<SkillRepo> = {}): SkillRepo => ({
+  sourceType: "github",
+  sourceHost: "github.com",
   owner: "owner-a",
   name: "repo-a",
   branch: "main",
@@ -261,6 +267,8 @@ describe("SkillsPage (Discover)", () => {
     m.discoverable = [makeDiscoverable()];
     m.failures = [
       {
+        sourceType: "github",
+        sourceHost: "github.com",
         owner: "composio",
         name: "awesome",
         branch: "main",
@@ -294,7 +302,14 @@ describe("SkillsPage (Discover)", () => {
   it("calls it a read failure, not an empty repository, when every repository failed", () => {
     m.repos = [makeRepo()];
     m.failures = [
-      { owner: "owner-a", name: "repo-a", branch: "main", error: "timeout" },
+      {
+        sourceType: "github",
+        sourceHost: "github.com",
+        owner: "owner-a",
+        name: "repo-a",
+        branch: "main",
+        error: "timeout",
+      },
     ];
     renderPage();
     expect(
@@ -377,7 +392,7 @@ describe("SkillsPage (Discover)", () => {
     ).toBeInTheDocument();
   });
 
-  it("turns a repository off through add_skill_repo with enabled=false", async () => {
+  it("turns a repository off without replacing its saved token", async () => {
     m.repos = [makeRepo(), makeRepo({ owner: "b", name: "c" })];
     m.discoverable = [makeDiscoverable()];
     renderPage();
@@ -390,6 +405,8 @@ describe("SkillsPage (Discover)", () => {
     await userEvent.click(boxes[1]);
     await waitFor(() =>
       expect(m.addRepo).toHaveBeenCalledWith({
+        sourceType: "github",
+        sourceHost: "github.com",
         owner: "b",
         name: "c",
         branch: "main",

@@ -243,6 +243,7 @@ fn schema_migration_adds_missing_columns_for_providers() {
         ("skill_repos", "source_type"),
         ("skill_repos", "source_host"),
         ("skill_repos", "enabled"),
+        ("skill_repos", "gitlab_token"),
     ] {
         assert!(
             Database::has_column(&conn, table, column).expect("check column"),
@@ -612,6 +613,69 @@ fn migration_v16_to_v17_adds_skill_repo_sources() {
         Database::get_user_version(&conn).expect("version after migration"),
         SCHEMA_VERSION
     );
+}
+
+#[test]
+fn migration_v20_to_v21_preserves_existing_skill_repos() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        "CREATE TABLE skills (id TEXT PRIMARY KEY, name TEXT NOT NULL, directory TEXT NOT NULL,
+           repo_owner TEXT, repo_name TEXT, repo_branch TEXT, readme_url TEXT,
+           enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+           enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
+           enabled_opencode BOOLEAN NOT NULL DEFAULT 0, enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+           enabled_hermes BOOLEAN NOT NULL DEFAULT 0, installed_at INTEGER NOT NULL DEFAULT 0,
+           content_hash TEXT, updated_at INTEGER NOT NULL DEFAULT 0);
+         CREATE TABLE skill_repos (owner TEXT NOT NULL, name TEXT NOT NULL,
+           branch TEXT NOT NULL DEFAULT 'main', enabled BOOLEAN NOT NULL DEFAULT 1,
+           PRIMARY KEY (owner, name));
+         INSERT INTO skill_repos VALUES ('owner', 'repo', 'develop', 1);",
+    )
+    .expect("seed v20 skill tables");
+    Database::set_user_version(&conn, 20).expect("set user_version=20");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    let row: (String, String, String) = conn
+        .query_row(
+            "SELECT source_type, source_host, branch FROM skill_repos",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read migrated repo");
+    assert_eq!(
+        row,
+        (
+            "github".to_string(),
+            "github.com".to_string(),
+            "develop".to_string()
+        )
+    );
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+}
+
+#[test]
+fn migration_v21_to_v22_preserves_gitlab_tokens() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        "CREATE TABLE skill_repos (
+           source_type TEXT NOT NULL DEFAULT 'github',
+           source_host TEXT NOT NULL DEFAULT 'github.com',
+           owner TEXT NOT NULL, name TEXT NOT NULL,
+           branch TEXT NOT NULL DEFAULT 'main',
+           enabled BOOLEAN NOT NULL DEFAULT 1,
+           PRIMARY KEY (source_type, source_host, owner, name)
+         );
+         INSERT INTO skill_repos
+           (source_type, source_host, owner, name, branch, enabled)
+         VALUES ('gitlab', 'gitlab.example.com', 'group', 'skills', 'main', 1);",
+    )
+    .expect("seed v21 skill repos");
+    Database::set_user_version(&conn, 21).expect("set user_version=21");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+    assert!(Database::has_column(&conn, "skill_repos", "gitlab_token").unwrap());
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
 }
 
 #[test]

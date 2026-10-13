@@ -210,7 +210,14 @@ describe("Skills management mutation hooks", () => {
       defaultOptions: { mutations: { retry: false } },
     });
     const failures = [
-      { owner: "o", name: "r", branch: "main", error: "network down" },
+      {
+        sourceType: "github",
+        sourceHost: "github.com",
+        owner: "o",
+        name: "r",
+        branch: "main",
+        error: "network down",
+      },
     ];
     queryClient.setQueryData<SkillUpdateCheckResult>(["skills", "updates"], {
       updates: [

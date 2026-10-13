@@ -12,6 +12,12 @@ import {
 import { HoverTip } from "@/components/ui/hover-tip";
 import { settingsApi } from "@/lib/api";
 import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
+import {
+  parseRepoUrl,
+  repoDisplayName,
+  repoExternalUrl,
+  skillMatchesRepo,
+} from "./repoUtils";
 import { cn } from "@/lib/utils";
 import {
   CHECKBOX_CLASS,
@@ -24,32 +30,14 @@ interface RepoManagerPanelProps {
   repos: SkillRepo[];
   skills: DiscoverableSkill[];
   onAdd: (repo: SkillRepo) => Promise<void>;
-  onRemove: (owner: string, name: string) => Promise<void>;
+  onRemove: (repo: SkillRepo) => Promise<void>;
   /** 勾掉 = 停用（不参与发现），不删除 */
   onToggle?: (repo: SkillRepo, enabled: boolean) => Promise<void>;
   onClose: () => void;
 }
 
-export function parseRepoUrl(
-  url: string,
-): { owner: string; name: string } | null {
-  let cleaned = url.trim();
-  cleaned = cleaned.replace(/^https?:\/\/github\.com\//, "");
-  cleaned = cleaned.replace(/\.git$/, "").replace(/\/+$/, "");
-  const parts = cleaned.split("/");
-  if (parts.length === 2 && parts[0] && parts[1]) {
-    return { owner: parts[0], name: parts[1] };
-  }
-  return null;
-}
-
 export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
-  return skills.filter(
-    (skill) =>
-      skill.repoOwner === repo.owner &&
-      skill.repoName === repo.name &&
-      (skill.repoBranch || "main") === (repo.branch || "main"),
-  ).length;
+  return skills.filter((skill) => skillMatchesRepo(skill, repo)).length;
 }
 
 /** 仓库管理（右侧抽屉，宽 420）：添加、停用、删除 Skill 仓库。 */
@@ -64,8 +52,10 @@ export function RepoManagerPanel({
   const { t } = useTranslation();
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
+  const [gitlabToken, setGitlabToken] = useState("");
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
+  const isGitLabRepo = parseRepoUrl(repoUrl)?.sourceType === "gitlab";
 
   const handleAdd = async () => {
     setError("");
@@ -77,13 +67,14 @@ export function RepoManagerPanel({
     setAdding(true);
     try {
       await onAdd({
-        owner: parsed.owner,
-        name: parsed.name,
+        ...parsed,
         branch: branch.trim() || "main",
         enabled: true,
+        accessToken: gitlabToken.trim() || undefined,
       });
       setRepoUrl("");
       setBranch("");
+      setGitlabToken("");
     } catch (e) {
       setError(e instanceof Error ? e.message : t("skills.repo.addFailed"));
     } finally {
@@ -91,9 +82,9 @@ export function RepoManagerPanel({
     }
   };
 
-  const handleOpenRepo = async (owner: string, name: string) => {
+  const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(`https://github.com/${owner}/${name}`);
+      await settingsApi.openExternal(repoExternalUrl(repo));
     } catch (err) {
       console.error("Failed to open URL:", err);
     }
@@ -139,6 +130,23 @@ export function RepoManagerPanel({
                 }}
               />
             </div>
+            {isGitLabRepo && (
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="sk-repo-token" className={LABEL_CLASS}>
+                  {t("skills.repo.gitlabToken")}
+                </label>
+                <input
+                  id="sk-repo-token"
+                  type="password"
+                  className={MONO_FIELD_CLASS}
+                  placeholder={t("skills.repo.gitlabTokenPlaceholder")}
+                  value={gitlabToken}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => setGitlabToken(event.target.value)}
+                />
+              </div>
+            )}
             <div className="flex flex-col gap-1.5">
               <label htmlFor="sk-repo-branch" className={LABEL_CLASS}>
                 {t("skills.repo.branch")}
@@ -184,7 +192,7 @@ export function RepoManagerPanel({
             ) : (
               <ul className="m-0 list-none rounded-panel border border-border p-0">
                 {repos.map((repo, index) => {
-                  const id = `${repo.owner}/${repo.name}`;
+                  const id = repoDisplayName(repo);
                   const checkboxId = `sk-repo-manage-${index}`;
                   return (
                     <li
@@ -230,9 +238,7 @@ export function RepoManagerPanel({
                           aria-label={t("skillsPage.repos.openAria", {
                             repo: id,
                           })}
-                          onClick={() =>
-                            void handleOpenRepo(repo.owner, repo.name)
-                          }
+                          onClick={() => void handleOpenRepo(repo)}
                         >
                           <ExternalLink className="h-4 w-4" strokeWidth={1.5} />
                         </Button>
@@ -246,7 +252,7 @@ export function RepoManagerPanel({
                             repo: id,
                           })}
                           className="hover:text-danger-text"
-                          onClick={() => void onRemove(repo.owner, repo.name)}
+                          onClick={() => void onRemove(repo)}
                         >
                           <Trash2 className="h-4 w-4" strokeWidth={1.5} />
                         </Button>

@@ -113,6 +113,7 @@ vi.mock("@/hooks/useSkills", () => ({
   useDiscoverableSkillsFailures: () => ({ data: [] }),
   useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
+  useSetSkillRepoEnabled: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),
   useInstallSkill: () => ({ mutateAsync: vi.fn() }),
@@ -605,6 +606,8 @@ describe("UnifiedSkillsPanel", () => {
   it("does not call everything up to date when a repository could not be read", async () => {
     m.installed = [makeSkill()];
     const failure = {
+      sourceType: "github",
+      sourceHost: "github.com",
       owner: "owner",
       name: "repo",
       branch: "main",
@@ -634,7 +637,14 @@ describe("UnifiedSkillsPanel", () => {
   it("shows which repositories the update check could not read", () => {
     m.installed = [makeSkill()];
     m.repoFailures = [
-      { owner: "owner", name: "repo", branch: "main", error: "network down" },
+      {
+        sourceType: "github",
+        sourceHost: "github.com",
+        owner: "owner",
+        name: "repo",
+        branch: "main",
+        error: "network down",
+      },
     ];
     renderPanel();
     expect(screen.getByText("skillsPage.repoFail.title")).toBeInTheDocument();

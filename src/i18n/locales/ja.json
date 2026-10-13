@@ -3200,6 +3200,7 @@
       "archiveTooLarge": "アーカイブが展開上限 {{limit_mb}} MB を超えたため中止しました",
       "archiveTooManyEntries": "アーカイブのエントリ数が多すぎます（{{count}}）。上限は {{limit}} です",
       "downloadFailed": "ダウンロードに失敗しました: HTTP {{status}}",
+      "gitlabAuthRequired": "GitLab リポジトリには read_repository 権限付きアクセストークンが必要です",
       "allBranchesFailed": "すべてのブランチで失敗しました。試行: {{branches}}",
       "httpError": "HTTP エラー {{status}}",
       "http403": "GitHub へのアクセスが制限されています（レート制限の可能性）",
@@ -3219,7 +3220,8 @@
         "checkDiskSpace": "ディスク容量を確認してください",
         "checkPermission": "ディレクトリの権限を確認してください",
         "uninstallFirst": "同名のスキルを先にアンインストールしてください",
-        "checkZipContent": "ZIP ファイルに有効なスキルディレクトリ（SKILL.md を含む）が含まれていることを確認してください"
+        "checkZipContent": "ZIP ファイルに有効なスキルディレクトリ（SKILL.md を含む）が含まれていることを確認してください",
+        "configureGitlabToken": "スキルリポジトリ設定で GitLab Personal Access Token を入力してください"
       }
     },
     "repo": {
@@ -3229,6 +3231,8 @@
       "urlPlaceholder": "owner/name、https://github.com/owner/name、または https://gitlab.com/group/project",
       "branch": "ブランチ",
       "branchPlaceholder": "main",
+      "gitlabToken": "GitLab アクセストークン（非公開リポジトリ）",
+      "gitlabTokenPlaceholder": "glpat-...（任意）",
       "path": "スキルパス",
       "pathPlaceholder": "skills（任意。空欄はルート）",
       "add": "リポジトリを追加",

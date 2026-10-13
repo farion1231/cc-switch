@@ -48,6 +48,8 @@ function makeDiscoverableSkill(): DiscoverableSkill {
     name: "Skill A",
     description: "Skill A description",
     directory: "skill-a",
+    repoSourceType: "github",
+    repoSourceHost: "github.com",
     repoOwner: "owner",
     repoName: "repo",
     repoBranch: "main",
