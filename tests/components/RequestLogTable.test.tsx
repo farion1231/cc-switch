@@ -220,6 +220,7 @@ describe("RequestLogTable", () => {
           {
             ...base,
             requestId: "fast",
+            requestModel: "requested-model",
             reasoningEffort: "xhigh",
             outputTokens: 1_100,
             latencyMs: 12_900,
@@ -290,11 +291,27 @@ describe("RequestLogTable", () => {
     expect(rows).toHaveLength(6);
     const headers = screen.getAllByRole("columnheader");
     expect(headers[3]).toHaveTextContent("usage.model");
-    expect(headers[4]).toHaveTextContent("usage.reasoningEffort");
-    expect(rows[0].children[4]).toHaveTextContent("xhigh");
-    expect(rows[1].children[4]).toHaveTextContent("none");
-    expect(rows[2].children[4]).toHaveTextContent("—");
-    expect(rows[3].children[4]).toHaveTextContent("high");
+    expect(headers).toHaveLength(10);
+    expect(
+      screen.queryByRole("columnheader", { name: "usage.reasoningEffort" }),
+    ).not.toBeInTheDocument();
+    const modelTip = (row: HTMLElement) => row.children[3].firstElementChild;
+    expect(modelTip(rows[0])).toHaveAttribute(
+      "title",
+      `requested-model → ${base.model}\nusage.reasoningEffort: xhigh`,
+    );
+    expect(modelTip(rows[1])).toHaveAttribute(
+      "title",
+      `${base.model}\nusage.reasoningEffort: none`,
+    );
+    expect(modelTip(rows[2])).toHaveAttribute(
+      "title",
+      `${base.model}\nusage.reasoningEffort: —`,
+    );
+    expect(modelTip(rows[3])).toHaveAttribute(
+      "title",
+      `${base.model}\nusage.reasoningEffort: high`,
+    );
     // 最后两列：速度、首字
     const speedCell = (row: HTMLElement) =>
       row.children[row.children.length - 2];
