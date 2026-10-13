@@ -8805,15 +8805,9 @@ mod tests {
                     json!({"$defs": defs, "allOf": [{"$ref": format!("#/$defs/d{levels}")}]});
                 let error = object_projection(&schema).unwrap_err();
                 if sibling_constraints {
-                    assert!(matches!(
-                        error,
-                        CopilotToolSchemaError::ValueBudgetExceeded { .. }
-                    ));
+                    assert!(matches!(error, CopilotToolSchemaError::ValueBudget { .. }));
                 } else {
-                    assert!(matches!(
-                        error,
-                        CopilotToolSchemaError::DepthLimitExceeded { .. }
-                    ));
+                    assert!(matches!(error, CopilotToolSchemaError::DepthLimit { .. }));
                 }
                 let rejected = upstream(vec![]).await;
                 let healthy = upstream(vec![ok()]).await;

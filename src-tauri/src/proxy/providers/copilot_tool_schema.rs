@@ -18,13 +18,13 @@ const DEFAULT_MAX_VALUE_UNITS: usize = 1_000_000;
 #[derive(Debug, Error, PartialEq, Eq, Clone)]
 pub enum CopilotToolSchemaError {
     #[error("Copilot tool schema projection exceeded maximum depth of {limit}")]
-    DepthLimitExceeded { limit: usize },
+    DepthLimit { limit: usize },
 
     #[error("Copilot tool schema projection exceeded maximum expansion budget of {limit} steps")]
-    WorkBudgetExceeded { limit: usize },
+    WorkBudget { limit: usize },
 
     #[error("Copilot tool schema projection exceeded tree-copy budget of {limit} value units")]
-    ValueBudgetExceeded { limit: usize },
+    ValueBudget { limit: usize },
 }
 
 struct ValueBudget {
@@ -46,7 +46,7 @@ impl ValueBudget {
         self.remaining = self
             .remaining
             .checked_sub(units)
-            .ok_or(CopilotToolSchemaError::ValueBudgetExceeded { limit: self.limit })?;
+            .ok_or(CopilotToolSchemaError::ValueBudget { limit: self.limit })?;
         Ok(())
     }
 
@@ -60,17 +60,13 @@ impl ValueBudget {
                 Value::String(text) => self.spend(text.len())?,
                 Value::Array(values) => {
                     if values.len() > self.remaining {
-                        return Err(CopilotToolSchemaError::ValueBudgetExceeded {
-                            limit: self.limit,
-                        });
+                        return Err(CopilotToolSchemaError::ValueBudget { limit: self.limit });
                     }
                     pending.extend(values);
                 }
                 Value::Object(fields) => {
                     if fields.len() > self.remaining {
-                        return Err(CopilotToolSchemaError::ValueBudgetExceeded {
-                            limit: self.limit,
-                        });
+                        return Err(CopilotToolSchemaError::ValueBudget { limit: self.limit });
                     }
                     for (key, value) in fields {
                         self.spend(key.len())?;
@@ -268,12 +264,12 @@ fn object_projection_inner(
     ctx: &mut ProjectionContext<'_, '_>,
 ) -> Result<Value, CopilotToolSchemaError> {
     if ctx.depth > ctx.max_depth {
-        return Err(CopilotToolSchemaError::DepthLimitExceeded {
+        return Err(CopilotToolSchemaError::DepthLimit {
             limit: ctx.max_depth,
         });
     }
     if ctx.steps >= ctx.max_steps {
-        return Err(CopilotToolSchemaError::WorkBudgetExceeded {
+        return Err(CopilotToolSchemaError::WorkBudget {
             limit: ctx.max_steps,
         });
     }
@@ -342,7 +338,7 @@ fn object_projection_inner(
                     let target = root.entry(key).or_insert_with(|| json!({}));
                     if let Some(target) = target.as_object_mut() {
                         for (name, definition) in definitions {
-                            merge_property(target, name, definition, true, &mut ctx.values)?;
+                            merge_property(target, name, definition, true, ctx.values)?;
                         }
                     }
                 }
@@ -354,7 +350,7 @@ fn object_projection_inner(
                         name,
                         field,
                         key != "allOf",
-                        &mut ctx.values,
+                        ctx.values,
                     )?;
                 }
             }
@@ -376,7 +372,7 @@ fn object_projection_inner(
             });
         }
         for (name, field) in branch_properties {
-            merge_property(&mut properties, &name, &field, false, &mut ctx.values)?;
+            merge_property(&mut properties, &name, &field, false, ctx.values)?;
         }
         for field in branch_required.unwrap_or_default() {
             if !required.contains(&field) {
@@ -651,7 +647,7 @@ mod tests {
         assert!(schema.to_string().len() < 2_000);
         assert_eq!(
             object_projection(&schema).unwrap_err(),
-            CopilotToolSchemaError::ValueBudgetExceeded {
+            CopilotToolSchemaError::ValueBudget {
                 limit: DEFAULT_MAX_VALUE_UNITS
             }
         );
@@ -667,7 +663,7 @@ mod tests {
         let mut body = json!({"tools": [tool.clone(), tool]});
         assert_eq!(
             normalize_copilot_chat_tool_schemas(&mut body).unwrap_err(),
-            CopilotToolSchemaError::ValueBudgetExceeded {
+            CopilotToolSchemaError::ValueBudget {
                 limit: DEFAULT_MAX_VALUE_UNITS
             }
         );
@@ -678,7 +674,7 @@ mod tests {
         let schema = json!({"allOf": [], "description": "x".repeat(DEFAULT_MAX_VALUE_UNITS)});
         assert_eq!(
             object_projection(&schema).unwrap_err(),
-            CopilotToolSchemaError::ValueBudgetExceeded {
+            CopilotToolSchemaError::ValueBudget {
                 limit: DEFAULT_MAX_VALUE_UNITS
             }
         );
@@ -706,16 +702,10 @@ mod tests {
         });
 
         let depth_err = object_projection_with_limits(&deep_schema, 5, 1000).unwrap_err();
-        assert_eq!(
-            depth_err,
-            CopilotToolSchemaError::DepthLimitExceeded { limit: 5 }
-        );
+        assert_eq!(depth_err, CopilotToolSchemaError::DepthLimit { limit: 5 });
 
         let budget_err = object_projection_with_limits(&deep_schema, 64, 3).unwrap_err();
-        assert_eq!(
-            budget_err,
-            CopilotToolSchemaError::WorkBudgetExceeded { limit: 3 }
-        );
+        assert_eq!(budget_err, CopilotToolSchemaError::WorkBudget { limit: 3 });
     }
 
     #[test]
@@ -750,7 +740,7 @@ mod tests {
         assert!(res.is_err());
         assert_eq!(
             res.unwrap_err(),
-            CopilotToolSchemaError::DepthLimitExceeded {
+            CopilotToolSchemaError::DepthLimit {
                 limit: DEFAULT_MAX_DEPTH
             }
         );
