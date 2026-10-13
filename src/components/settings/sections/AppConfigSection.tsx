@@ -29,6 +29,7 @@ const DIRECTORY_FIELD: Record<DirectoryAppId, keyof Settings> = {
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
   omp: "ompConfigDir",
+  cursor: "cursorConfigDir",
 };
 
 const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
@@ -41,6 +42,7 @@ const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
   hermes: "settings.browsePlaceholderHermes",
   pi: "settings.browsePlaceholderPi",
   omp: "settings.browsePlaceholderOmp",
+  cursor: "settings.browsePlaceholderCursor",
 };
 
 const DIRECTORY_APPS: DirectoryAppId[] = [

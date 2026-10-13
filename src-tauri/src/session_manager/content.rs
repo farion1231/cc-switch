@@ -19,7 +19,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::model::{ContentRef, ImageRef, ImageSource};
-use super::providers::{hermes, opencode};
+use super::providers::{cursor, hermes, opencode};
 use super::{canonicalize_existing_path, provider_roots};
 
 /// 单次读取的全文上限
@@ -100,6 +100,15 @@ pub fn validate_source(provider_id: &str, source_path: &str) -> Result<Validated
             source_path,
             hermes::parse_sqlite_source(source_path),
             &crate::hermes_config::get_hermes_dir().join("state.db"),
+        )?,
+        // Cursor 的会话是 `sqlite:<conversation-search.db>:<uuid>`，必须在这里显式放行：
+        // 漏掉它就会落进下面的文件路径分支，`provider_roots("cursor")` 直接报
+        // "Unsupported provider: cursor"，表现为**每条 Cursor 会话的详情都加载不了**
+        // （2026-10-12 实测；`load_messages` 里的 Cursor 分支本身是好的，只是够不着）。
+        "cursor" if source_path.starts_with("sqlite:") => validate_sqlite_source(
+            source_path,
+            cursor::parse_sqlite_source(source_path),
+            &cursor::get_conversation_db_path(),
         )?,
         _ => {
             let roots = provider_roots(provider_id)?;

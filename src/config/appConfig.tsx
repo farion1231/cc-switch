@@ -26,6 +26,7 @@ export const APP_IDS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "cursor",
   "pi",
   "mcode",
   "kimi",
@@ -43,6 +44,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   opencode: true,
   openclaw: true,
   hermes: true,
+  cursor: false,
   pi: true,
   mcode: true,
   kimi: true,
@@ -82,6 +84,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  "cursor",
   "pi",
   "mcode",
   "kimi",
@@ -90,30 +93,45 @@ export const SKILLS_APP_IDS: AppId[] = [
   "omp",
 ];
 
-export type ProxyAppId = Extract<
-  AppId,
-  "claude" | "codex" | "gemini" | "grokbuild"
->;
-
-/** Apps with a complete local gateway + failover data plane. */
-export const PROXY_APP_IDS: ProxyAppId[] = [
+export const PROXY_APP_IDS = [
   "claude",
   "codex",
   "gemini",
   "grokbuild",
+] as const;
+
+export type FailoverProxyAppId = (typeof PROXY_APP_IDS)[number];
+
+export type ProxyAppId = FailoverProxyAppId | "cursor";
+
+/** Apps exposed in proxy takeover toggles (includes Cursor local routing). */
+export const PROXY_TAKEOVER_APP_IDS: ProxyAppId[] = [
+  ...PROXY_APP_IDS,
+  "cursor",
 ];
 
 export function isProxyAppId(appId: string): appId is ProxyAppId {
-  return (PROXY_APP_IDS as string[]).includes(appId);
+  return (PROXY_TAKEOVER_APP_IDS as readonly string[]).includes(appId);
+}
+
+export function isFailoverProxyAppId(
+  appId: string,
+): appId is FailoverProxyAppId {
+  return (PROXY_APP_IDS as readonly string[]).includes(appId);
 }
 
 /**
- * 有直连 / 路由模式的应用（后端 `AppType::has_route_mode`）：上面四个，加上 Claude Desktop。
- * Desktop 经同一个路由服务转发，但没有故障转移和路由设置（不在 `PROXY_APP_IDS` 里）。
+ * 有直连 / 路由模式的应用（后端 `AppType::has_route_mode`）：上面四个，加上 Claude Desktop 与 Cursor。
+ * Desktop 经同一个路由服务转发，但没有故障转移和路由设置（不在 `PROXY_APP_IDS` 里）；
+ * Cursor 经公网路由接入（`ProxyAppId` 已并入 `"cursor"`）。
  */
 export type ModeAppId = ProxyAppId | "claude-desktop";
 
-export const MODE_APP_IDS: ModeAppId[] = [...PROXY_APP_IDS, "claude-desktop"];
+export const MODE_APP_IDS: ModeAppId[] = [
+  ...PROXY_APP_IDS,
+  "claude-desktop",
+  "cursor",
+];
 
 export function isModeAppId(appId: string): appId is ModeAppId {
   return (MODE_APP_IDS as string[]).includes(appId);
@@ -186,6 +204,10 @@ export const MCP_APP_IDS: McpAppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  // 顺序与后端 `AppType::all()`（`services/mcp.rs::live_sync_apps()`)保持一致：
+  // Cursor 受 CC Switch 管理 MCP（写 `~/.cursor/mcp.json`），此前漏在此清单里，
+  // 表现为「MCP 管理」看不到 Cursor 这一列，且它在可见列表里会被静默过滤。
+  "cursor",
   "pi",
   "mcode",
   "kimi",
@@ -308,6 +330,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     activeClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
     badgeClass:
       "bg-orange-500/10 text-orange-700 dark:text-orange-300 border-0 gap-1.5",
+  },
+  cursor: {
+    label: "Cursor",
+    icon: (
+      <ProviderIcon
+        icon="cursor"
+        name="Cursor"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-purple-500/10 ring-1 ring-purple-500/20 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400",
+    badgeClass:
+      "bg-purple-500/10 text-purple-700 dark:text-purple-300 hover:bg-purple-500/20 border-0 gap-1.5",
   },
   pi: {
     label: "Pi",

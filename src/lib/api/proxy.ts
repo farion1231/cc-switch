@@ -11,6 +11,11 @@ import type {
   CodexDaemonRestartOutcome,
   AppModeView,
   StartupAttachFailure,
+  PublicRouteStatus,
+  NamedTunnel,
+  CursorByokStatus,
+  CursorWriteByokResult,
+  PublicRouteConnectivityResult,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -154,6 +159,70 @@ export const proxyApi = {
   // 更新指定应用的代理配置
   async updateProxyConfigForApp(config: AppProxyConfig): Promise<void> {
     return invoke("update_proxy_config_for_app", { config });
+  },
+
+  // ========== 公网路由 API ==========
+
+  // 查询公网路由状态
+  async getPublicRouteStatus(): Promise<PublicRouteStatus> {
+    return invoke("get_public_route_status");
+  },
+
+  // 启用公网路由（启动 cloudflared 隧道）
+  async enablePublicRoute(): Promise<PublicRouteStatus> {
+    return invoke("enable_public_route");
+  },
+
+  // 禁用公网路由（停止隧道）
+  async disablePublicRoute(): Promise<PublicRouteStatus> {
+    return invoke("disable_public_route");
+  },
+
+  // 重新生成公网路由隧道鉴权密钥（ccsk-*）；Cursor 的 key 无法自动写入，需用户重新粘贴
+  async regeneratePublicRouteApiKey(): Promise<PublicRouteStatus> {
+    return invoke("regenerate_public_route_api_key");
+  },
+
+  // 保存公网路由隧道配置（模式 + 命名隧道参数）；开启中会立即重建隧道
+  async setPublicRouteTunnelConfig(config: {
+    mode: string;
+    namedTunnel?: string | null;
+    namedHostname?: string | null;
+  }): Promise<PublicRouteStatus> {
+    return invoke("set_public_route_tunnel_config", config);
+  },
+
+  // 列出 Cloudflare 账户下已有的命名隧道（需已 cloudflared login）
+  async listNamedTunnels(): Promise<NamedTunnel[]> {
+    return invoke("list_named_tunnels");
+  },
+
+  // ========== Cursor 接入引导 API ==========
+
+  // Cursor 是否正在运行：运行中会把设置回写覆盖，写 BYOK 前必须先完全退出
+  async cursorIsRunning(): Promise<boolean> {
+    return invoke("cursor_is_running");
+  },
+
+  // 读 Cursor 本地 BYOK 现状（Base URL / 是否用自定义 Key / 可用模型数）。Cursor 运行中读到的是
+  // 过期快照，判断「是否已写好」要在它退出后再读
+  async cursorByokStatus(): Promise<CursorByokStatus> {
+    return invoke("cursor_byok_status");
+  },
+
+  // 写 Cursor BYOK：Base URL + 可用模型列表。密钥是加密存储的，读不出也写不进（需手工粘）
+  async cursorWriteByok(params: {
+    baseUrl: string;
+    modelIds: string[];
+  }): Promise<CursorWriteByokResult> {
+    return invoke("cursor_write_byok", params);
+  },
+
+  // 分层测公网路由连通性：local 打本机代理，public 打隧道公网地址，用来定位坏在哪一层
+  async testPublicRouteConnectivity(
+    scope: "local" | "public",
+  ): Promise<PublicRouteConnectivityResult> {
+    return invoke("test_public_route_connectivity", { scope });
   },
 
   // ========== 计费默认配置 API ==========
