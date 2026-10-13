@@ -4,6 +4,7 @@ import { useRequestLogs } from "@/lib/query/usage";
 import { TablePagination } from "./TablePagination";
 import { HelpTip } from "@/components/ui/help-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import type { AppId } from "@/lib/api";
 import {
   getFreshInputTokens,
@@ -76,6 +77,7 @@ export function isKnownAppId(appType: string): appType is AppId {
 }
 
 export function appDisplayName(appType: string): string {
+  if (appType === "deepseek-harness") return "DeepSeek Harness";
   return isKnownAppId(appType) ? APP_DISPLAY_NAME[appType] : appType;
 }
 
@@ -97,6 +99,7 @@ const APP_SHORT_NAME: Record<AppId, string> = {
 };
 
 export function appShortName(appType: string): string {
+  if (appType === "deepseek-harness") return "Harness";
   return isKnownAppId(appType) ? APP_SHORT_NAME[appType] : appType;
 }
 
@@ -241,12 +244,21 @@ export function RequestLogTable({
             className="flex max-w-[88px] items-center gap-1.5"
             title={appDisplayName(log.appType)}
           >
-            {isKnownAppId(log.appType) && (
-              <AppGlyph
-                app={log.appType}
+            {log.appType === "deepseek-harness" ? (
+              <ProviderIcon
+                icon="deepseek"
+                name="DeepSeek Harness"
                 size={14}
-                badgeClassName="bg-surface"
+                showFallback={false}
               />
+            ) : (
+              isKnownAppId(log.appType) && (
+                <AppGlyph
+                  app={log.appType}
+                  size={14}
+                  badgeClassName="bg-surface"
+                />
+              )
             )}
             <span className="truncate" aria-hidden="true">
               {appShortName(log.appType)}

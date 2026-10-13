@@ -161,8 +161,11 @@ describe("UsageDashboard (smoke)", () => {
     expect(screen.getByText("usage.cacheWrite")).toBeInTheDocument();
 
     // 供应商：汇总速度 92000 / 1000 s = 92 tok/s
+    // （应用筛选 chip 里的 DeepSeek 图标也带 "DeepSeek" 文本，取落在表格行里的那个）
     await user.click(screen.getByRole("tab", { name: "usage.tabs.providers" }));
-    const providerRow = (await screen.findByText("DeepSeek")).closest("tr")!;
+    const providerRow = (await screen.findAllByText("DeepSeek"))
+      .map((el) => el.closest("tr"))
+      .find((tr): tr is HTMLTableRowElement => tr !== null)!;
     expect(within(providerRow).getByText("92")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "usage.tabs.models" }));

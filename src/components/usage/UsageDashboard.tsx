@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import { HelpTip } from "@/components/ui/help-tip";
 import { PageTabs } from "@/components/ui/page-tabs";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   KNOWN_APP_TYPES,
+  type AppType,
   type AppTypeFilter,
   type UsageRangeSelection,
 } from "@/types/usage";
@@ -68,6 +70,15 @@ const normalizeRefreshInterval = (value: number | undefined) =>
   isRefreshIntervalOption(value) ? value : DEFAULT_REFRESH_INTERVAL_MS;
 
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
+
+/**
+ * 用量面板的应用名：`deepseek-harness` 只有会话导入，没有被管应用
+ * （不在 `AppId` / 侧栏 / MCP / 技能体系里），这里单独补显示名。
+ */
+const USAGE_APP_DISPLAY_NAME: Record<AppType, string> = {
+  ...APP_DISPLAY_NAME,
+  "deepseek-harness": "DeepSeek Harness",
+};
 
 type UsageTab = "logs" | "providers" | "models" | "pricing";
 const TABS: UsageTab[] = ["logs", "providers", "models", "pricing"];
@@ -495,22 +506,31 @@ export function UsageDashboard({
         </button>
         {/* 应用只露图标，名字放悬停提示和 aria-label */}
         {KNOWN_APP_TYPES.map((app) => (
-          <HoverTip key={app} content={APP_DISPLAY_NAME[app]}>
+          <HoverTip key={app} content={USAGE_APP_DISPLAY_NAME[app]}>
             <button
               type="button"
               aria-pressed={appType === app}
-              aria-label={APP_DISPLAY_NAME[app]}
+              aria-label={USAGE_APP_DISPLAY_NAME[app]}
               className={cn(
                 chipClass(appType === app),
                 "w-[30px] justify-center px-0",
               )}
               onClick={() => changeAppType(app)}
             >
-              <AppGlyph
-                app={app}
-                size={16}
-                badgeClassName={appType === app ? "bg-surface" : "bg-subtle"}
-              />
+              {app === "deepseek-harness" ? (
+                <ProviderIcon
+                  icon="deepseek"
+                  name="DeepSeek Harness"
+                  size={16}
+                  showFallback={false}
+                />
+              ) : (
+                <AppGlyph
+                  app={app}
+                  size={16}
+                  badgeClassName={appType === app ? "bg-surface" : "bg-subtle"}
+                />
+              )}
             </button>
           </HoverTip>
         ))}

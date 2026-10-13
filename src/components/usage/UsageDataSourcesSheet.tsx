@@ -95,7 +95,9 @@ export function UsageDataSourcesSheet({
 }: UsageDataSourcesSheetProps) {
   const { t, i18n } = useTranslation();
   const coveredApps = joinNames(
-    KNOWN_APP_TYPES.map((app) => APP_DISPLAY_NAME[app]),
+    KNOWN_APP_TYPES.map((app) =>
+      app === "deepseek-harness" ? "DeepSeek Harness" : APP_DISPLAY_NAME[app],
+    ),
     getResolvedLang(i18n),
   );
   const cadence = sessionAutoSyncEnabled

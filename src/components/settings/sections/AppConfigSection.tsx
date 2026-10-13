@@ -12,6 +12,7 @@ import {
 } from "@/components/settings/DirectorySettings";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import {
   SettingsBlock,
   SettingsCard,
@@ -65,6 +66,10 @@ interface AppConfigSectionProps {
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
   onSaveDirectories: () => Promise<void>;
+  /** DeepSeek Harness 只有会话目录（非常驻被管应用），单独一节，不进 DIRECTORY_APPS。 */
+  onDeepseekHarnessSessionDirChange: (value?: string) => void;
+  onBrowseDeepseekHarnessSessionDir: () => Promise<void>;
+  onResetDeepseekHarnessSessionDir: () => Promise<void>;
 }
 
 /**
@@ -81,6 +86,9 @@ export function AppConfigSection({
   onBrowseDirectory,
   onResetDirectory,
   onSaveDirectories,
+  onDeepseekHarnessSessionDirChange,
+  onBrowseDeepseekHarnessSessionDir,
+  onResetDeepseekHarnessSessionDir,
 }: AppConfigSectionProps) {
   const { t } = useTranslation();
 
@@ -186,6 +194,57 @@ export function AppConfigSection({
           </SettingsCard>
         </SettingsBlock>
       ))}
+      {onDeepseekHarnessSessionDirChange && (
+        <SettingsBlock
+          id="app-config-deepseek-harness"
+          className="rounded-panel"
+          title={
+            <span className="flex items-center gap-2">
+              <ProviderIcon
+                icon="deepseek"
+                name="DeepSeek Harness"
+                size={16}
+                showFallback={false}
+              />
+              DeepSeek Harness
+            </span>
+          }
+          actions={
+            normalizeDir(settings.deepseekHarnessSessionDir) !==
+            normalizeDir(savedSettings?.deepseekHarnessSessionDir) ? (
+              <Button
+                variant="solid"
+                size="compact"
+                disabled={isSaving}
+                onClick={() => void onSaveDirectories()}
+              >
+                {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {t("common.save")}
+              </Button>
+            ) : null
+          }
+        >
+          <SettingsCard>
+            <SettingsRow
+              label={t("settings.deepseekHarnessSessionDir")}
+              help={{
+                title: t("settings.deepseekHarnessSessionDir"),
+                body: t("settings.deepseekHarnessSessionDirDescription"),
+              }}
+            >
+              <DirectoryInput
+                label=""
+                value={settings.deepseekHarnessSessionDir}
+                resolvedValue={resolvedDirs.deepseekHarnessSession}
+                placeholder={t("settings.browsePlaceholderDeepseekHarness")}
+                onChange={onDeepseekHarnessSessionDirChange}
+                onBrowse={onBrowseDeepseekHarnessSessionDir}
+                onReset={onResetDeepseekHarnessSessionDir}
+              />
+            </SettingsRow>
+          </SettingsCard>
+        </SettingsBlock>
+      )}
     </>
   );
 }
