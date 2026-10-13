@@ -2170,6 +2170,8 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "SoruxGPT",
+    family: "soruxgpt",
+    planKey: "payg",
     websiteUrl: "https://ai.soruxgpt.com",
     apiKeyUrl: "https://ai.soruxgpt.com/console/token",
     settingsConfig: {
@@ -2184,6 +2186,25 @@ export const providerPresets: ProviderPreset[] = [
       "https://api-host.soruxgpt.com",
       "https://api-node6.soruxgpt.com",
       "https://api-node3.soruxgpt.com",
+    ],
+    category: "aggregator",
+    icon: "soruxgpt",
+  },
+  {
+    name: "SoruxGPT Coding Plan",
+    family: "soruxgpt",
+    planKey: "codingPlan",
+    websiteUrl: "https://app.soruxgpt.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://app.soruxgpt.com/api/cc",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: [
+      "https://app.soruxgpt.com/api/cc",
+      "https://center.soruxgpt.com/api/cc",
+      "https://u.soruxgpt.com/api/cc",
     ],
     category: "aggregator",
     icon: "soruxgpt",
