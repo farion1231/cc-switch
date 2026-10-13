@@ -71,6 +71,18 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
   return (PROXY_APP_IDS as string[]).includes(appId);
 }
 
+/**
+ * 有直连 / 路由模式的应用（后端 `AppType::has_route_mode`）：上面四个，加上 Claude Desktop。
+ * Desktop 经同一个路由服务转发，但没有故障转移和路由设置（不在 `PROXY_APP_IDS` 里）。
+ */
+export type ModeAppId = ProxyAppId | "claude-desktop";
+
+export const MODE_APP_IDS: ModeAppId[] = [...PROXY_APP_IDS, "claude-desktop"];
+
+export function isModeAppId(appId: string): appId is ModeAppId {
+  return (MODE_APP_IDS as string[]).includes(appId);
+}
+
 /** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack` 的镜像）。 */
 export type StackAppId = Extract<ProxyAppId, "claude" | "codex">;
 

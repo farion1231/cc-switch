@@ -4,8 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import type { Provider } from "@/types";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
-import type { ProxyAppId } from "@/config/appConfig";
-import { isStackAppId } from "@/config/appConfig";
+import type { ModeAppId } from "@/config/appConfig";
+import { isProxyAppId, isStackAppId } from "@/config/appConfig";
 import { settingsApi } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
@@ -46,6 +46,7 @@ import {
 } from "./StackSubagentFields";
 import { RouteSettingsSheet } from "./RouteSettingsSheet";
 import { StackSettingsSheet } from "./StackSettingsSheet";
+import { useDesktopConfigMessages } from "./useDesktopConfigMessages";
 
 type ListCallbacks = Pick<
   React.ComponentProps<typeof ProviderList>,
@@ -61,7 +62,7 @@ type ListCallbacks = Pick<
 >;
 
 interface SwitchModePanelProps extends ListCallbacks {
-  app: ProxyAppId;
+  app: ModeAppId;
   providers: Record<string, Provider>;
   currentProviderId: string;
   isLoading: boolean;
@@ -77,11 +78,11 @@ interface SwitchModePanelProps extends ListCallbacks {
   needsRouteRequest?: { providerId: string; nonce: number };
   onNeedsRouteHandled?: () => void;
   /** 正在看的那格变了：新增 / 编辑供应商按它选表单布局。需要是稳定的回调 */
-  onViewChange?: (app: ProxyAppId, view: AppMode) => void;
+  onViewChange?: (app: ModeAppId, view: AppMode) => void;
 }
 
-/** Gemini CLI、Grok Build 没有聚合模式（Q6）：那一格隐藏，前两格位置不变。 */
-const modesFor = (app: ProxyAppId): AppMode[] =>
+/** Gemini CLI、Grok Build、Claude Desktop 没有聚合模式（Q6）：那一格隐藏，前两格位置不变。 */
+const modesFor = (app: ModeAppId): AppMode[] =>
   isStackAppId(app) ? ["direct", "route", "stack"] : ["direct", "route"];
 
 /**
@@ -127,8 +128,10 @@ export function SwitchModePanel({
   const { data: proxyStatus } = useProxyStatusQuery();
   const serviceRunning = proxyStatus?.running ?? false;
   const { data: settings } = useSettingsQuery();
-  const { data: failoverOn = false } = useAutoFailoverEnabled(app);
-  const { data: queue } = useFailoverQueue(app);
+  // Claude Desktop 没有故障转移和路由设置（没有 proxy_config 行）
+  const hasFailover = isProxyAppId(app);
+  const { data: failoverOn = false } = useAutoFailoverEnabled(app, hasFailover);
+  const { data: queue } = useFailoverQueue(app, hasFailover);
   const setFailover = useSetAutoFailoverEnabled();
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
@@ -136,6 +139,7 @@ export function SwitchModePanel({
   const setStackMember = useSetProxyStackMember();
   const adoptCatalog = useAdoptCodexStackCatalog();
   const modeActions = useModeActions(app);
+  const desktopMessages = useDesktopConfigMessages(app === "claude-desktop");
 
   const [dialog, setDialog] = useState<ModeDialogState | null>(null);
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
@@ -402,6 +406,21 @@ export function SwitchModePanel({
       />,
     );
   }
+  if (desktopMessages.length > 0) {
+    notices.push(
+      <Notice
+        key="desktopConfig"
+        tone="warning"
+        title={t("claudeDesktop.statusTitle")}
+      >
+        {desktopMessages.map((message) => (
+          <span key={message} className="block">
+            {message}
+          </span>
+        ))}
+      </Notice>,
+    );
+  }
   if (startupFailure) {
     notices.push(
       <Notice
@@ -530,7 +549,7 @@ export function SwitchModePanel({
         onView={setView}
         status={status}
         failover={
-          view === "route" && active === "route"
+          hasFailover && view === "route" && active === "route"
             ? {
                 enabled: failoverOn,
                 disabled: setFailover.isPending,
@@ -539,7 +558,7 @@ export function SwitchModePanel({
             : undefined
         }
         onOpenRouteSettings={
-          view === "route" && active === "route"
+          hasFailover && view === "route" && active === "route"
             ? () => setRouteSettingsOpen(true)
             : undefined
         }
@@ -608,12 +627,14 @@ export function SwitchModePanel({
         }}
       />
 
-      <RouteSettingsSheet
-        app={app}
-        open={routeSettingsOpen}
-        onOpenChange={setRouteSettingsOpen}
-        onOpenSettings={onOpenRoutingSettings}
-      />
+      {isProxyAppId(app) && (
+        <RouteSettingsSheet
+          app={app}
+          open={routeSettingsOpen}
+          onOpenChange={setRouteSettingsOpen}
+          onOpenSettings={onOpenRoutingSettings}
+        />
+      )}
 
       {app === "codex" && (
         <StackSettingsSheet

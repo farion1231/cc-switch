@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
-import type { ProxyAppId } from "@/config/appConfig";
+import type { ModeAppId } from "@/config/appConfig";
 import type { AppMode } from "@/types/proxy";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { server } from "../msw/server";
@@ -81,7 +81,7 @@ function mockMode(
 }
 
 function renderPanel(
-  app: ProxyAppId,
+  app: ModeAppId,
   providers: Record<string, Provider>,
   onSwitch = vi.fn(),
 ) {
@@ -333,6 +333,58 @@ describe("SwitchModePanel — Stack mode", () => {
     expect(
       screen.queryByRole("tab", { name: /mode\.stack/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("SwitchModePanel — Claude Desktop", () => {
+  it("offers direct and route only, without failover or route settings", async () => {
+    mockMode("route", "map", "direct");
+    let failoverReads = 0;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_auto_failover_enabled`, () => {
+        failoverReads += 1;
+        return HttpResponse.json(false);
+      }),
+      http.post(`${TAURI_ENDPOINT}/get_failover_queue`, () => {
+        failoverReads += 1;
+        return HttpResponse.json([]);
+      }),
+    );
+
+    renderPanel("claude-desktop", {
+      direct: provider("direct"),
+      map: provider("map"),
+    });
+
+    expect(await screen.findByText("→ map")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /mode\.stack/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(failoverReads).toBe(0);
+  });
+
+  it("shows the Desktop config check in the notice slot", async () => {
+    mockMode("route", "map", "direct");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_claude_desktop_status`, () =>
+        HttpResponse.json({
+          supported: true,
+          configured: true,
+          mode: "proxy",
+          missingRouteMappings: true,
+          staleRawModels: false,
+          gatewayTokenConfigured: true,
+          proxyRunning: true,
+        }),
+      ),
+    );
+
+    renderPanel("claude-desktop", { map: provider("map") });
+
+    expect(
+      await screen.findByText("claudeDesktop.statusMissingRouteMappings"),
+    ).toBeInTheDocument();
   });
 });
 

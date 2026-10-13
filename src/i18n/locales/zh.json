@@ -269,7 +269,7 @@
     "statusTitle": "Claude Desktop 配置需要检查",
     "statusUnsupported": "当前平台暂不支持 Claude Desktop 3P 配置写入。",
     "statusStaleRawModels": "Claude Desktop profile 中存在非 Sonnet / Opus / Haiku 角色模型名，新版 Claude Desktop 可能拒绝加载；重新切换当前供应商可修复。",
-    "statusMissingRouteMappings": "当前供应商启用了模型映射，但没有有效路由；请编辑供应商并补全至少一个模型映射。",
+    "statusMissingRouteMappings": "路由那家没有有效的模型映射；请编辑它，补全至少一个模型映射。",
     "statusGatewayTokenMissing": "当前本地路由 token 尚未生成；重新切换该供应商会写入新的本地 token。",
     "statusBaseUrlMismatch": "Claude Desktop profile 指向的地址与当前供应商不一致；当前为 {{actual}}，应为 {{expected}}。重新切换当前供应商可修复。",
     "route": {
@@ -289,7 +289,6 @@
     "geminiRestartRequired": "切换成功，请重启 Gemini CLI 以生效",
     "grokBuildRestartRequired": "切换成功，请重启 Grok Build 以生效",
     "claudeDesktopRestartRequired": "切换成功，重启 Claude Desktop 后生效",
-    "claudeDesktopProxyRestartRequired": "切换成功，请保持 CC Switch 运行，并重启 Claude Desktop 后生效",
     "addToConfigSuccess": "已添加到配置",
     "removeFromConfigSuccess": "已从配置移除",
     "removeFromConfigFailed": "无法移除供应商",
@@ -316,6 +315,7 @@
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses 接口格式",
     "proxyReasonAnthropicMessages": "使用 Anthropic Messages 接口格式",
     "proxyReasonFullUrl": "开启了完整 URL 连接模式",
+    "proxyReasonDesktopMapping": "使用模型映射（Claude Desktop 只认 Claude 模型名）",
     "proxyReasonManagedOAuth": "使用托管 OAuth 登录（令牌由本地路由注入）",
     "proxyReasonRoutingRequired": "需要本地路由处理请求",
     "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启路由服务才能正常使用",
@@ -4076,9 +4076,7 @@
     "settingsHasUpdate": "设置 · CC Switch 有新版本",
     "mode": {
       "route": "路由",
-      "stack": "聚合",
-      "mapping": "映射",
-      "mappingFull": "模型映射"
+      "stack": "聚合"
     },
     "needsAttention": "需要处理",
     "back": "返回"
@@ -4207,6 +4205,9 @@
       "routeNoteFile": "会改写 {{file}} 里的地址和密钥；真实密钥留在 CC Switch 里，其他设置不动。",
       "routeNoteSwitch": "之后在「路由」页签里换供应商，不再改写配置文件。",
       "routeNoteKeepRunning": "CC Switch 需要保持运行；退出时自动写回直连，下次启动再接上。",
+      "desktopRouteNoteModels": "Claude Desktop 的模型列表换成路由那家的模型；之后换路由那家会改写配置文件。",
+      "desktopRouteNoteRestart": "{{app}} 只在启动时读配置，确认后要重启 {{app}} 才生效。",
+      "desktopRouteNoteKeepRunning": "CC Switch 需要保持运行，{{app}} 的请求才能转出去。",
       "stackNoteMembers": "另有 {{names}} 共 {{count}} 个模型，会以 ccs- 前缀出现在 /model 里。",
       "stackNoteEmpty": "还没有添加其他供应商，切换后只有默认供应商；可以之后在「聚合」页签里添加。",
       "stackNoteNoFailover": "聚合模式不做故障转移；队列和设置会保留，回到路由模式后恢复。",
@@ -4264,7 +4265,6 @@
       "default": "默认",
       "models": "{{count}} 个模型",
       "noModels": "没有模型",
-      "mapping": "模型映射",
       "direct": "直连",
       "hermesManaged": "Hermes 托管",
       "defaultModel": "默认模型 {{model}}"
@@ -4298,21 +4298,10 @@
       "stackNoDefault": "还没有默认供应商；切换到聚合模式时选一家。"
     }
   },
-  "desktopAccess": {
-    "current": "当前：{{name}} · {{mode}}",
-    "noCurrent": "还没有选择供应商",
-    "helpTitle": "接入方式",
-    "help": "Claude Desktop 的接入方式按供应商设置：直连的供应商直接写进 Desktop 的配置；模型映射的供应商经路由服务转发，模型映射在用时路由服务自动保持运行。",
-    "service": "路由服务",
-    "running": "运行中",
-    "notRunning": "路由服务没能启动",
-    "changePort": "更改端口",
-    "notNeeded": "路由服务：当前供应商不需要"
-  },
   "routingSettings": {
     "service": "服务",
     "serviceName": "路由服务",
-    "serviceHelp": "路由模式和聚合模式下，请求先经过本机的路由服务再转给供应商。进入这两种模式、或 Claude Desktop 用模型映射时会自动启动。",
+    "serviceHelp": "路由模式和聚合模式下，请求先经过本机的路由服务再转给供应商。进入这两种模式时会自动启动。",
     "runningFor": "运行中 · 已运行 {{uptime}}",
     "uptimeHours": "{{hours}} 小时 {{minutes}} 分",
     "uptimeMinutes": "{{minutes}} 分钟",
@@ -4338,8 +4327,6 @@
     "noApps": "没有应用在用路由。在应用页的「路由」或「聚合」页签里进入。",
     "routeDetail": "路由到 {{name}}",
     "stackDetail": "默认 {{name}}",
-    "desktopMode": "模型映射 · 自动保持运行",
-    "desktopDetail": "当前供应商 {{name}}",
     "goTo": "前往",
     "exitAll": "全部回到直连",
     "exitAllTitle": "让所有应用回到直连？",

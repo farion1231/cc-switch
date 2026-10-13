@@ -269,7 +269,7 @@
     "statusTitle": "Claude Desktop 設定の確認が必要です",
     "statusUnsupported": "このプラットフォームでは Claude Desktop 3P 設定の書き込みはまだサポートされていません。",
     "statusStaleRawModels": "Claude Desktop profile に Sonnet / Opus / Haiku の役割ファミリー以外のモデル ID が含まれています。新しい Claude Desktop では拒否される可能性があります。現在のプロバイダーへ再度切り替えると修復できます。",
-    "statusMissingRouteMappings": "現在のプロバイダーはモデルマッピングを有効にしていますが、有効なルートがありません。プロバイダーを編集し、少なくとも 1 つのマッピングを追加してください。",
+    "statusMissingRouteMappings": "ルーティング先に有効なモデルマッピングがありません。編集して、少なくとも 1 つのマッピングを追加してください。",
     "statusGatewayTokenMissing": "ローカルルーティング token がまだ生成されていません。このプロバイダーへ再度切り替えると新しい token が書き込まれます。",
     "statusBaseUrlMismatch": "Claude Desktop profile の URL が現在のプロバイダーと一致しません。現在: {{actual}}、期待値: {{expected}}。現在のプロバイダーへ再度切り替えると修復できます。",
     "route": {
@@ -289,7 +289,6 @@
     "geminiRestartRequired": "切り替えました。反映するには Gemini CLI を再起動してください",
     "grokBuildRestartRequired": "切り替えました。反映するには Grok Build を再起動してください",
     "claudeDesktopRestartRequired": "切り替えました。反映するには Claude Desktop を再起動してください",
-    "claudeDesktopProxyRestartRequired": "切り替えました。CC Switch を起動したまま Claude Desktop を再起動してください",
     "addToConfigSuccess": "設定に追加しました",
     "removeFromConfigSuccess": "設定から削除しました",
     "removeFromConfigFailed": "プロバイダーを削除できません",
@@ -316,6 +315,7 @@
     "proxyReasonOpenAIResponses": "OpenAI Responses API フォーマットを使用しており",
     "proxyReasonAnthropicMessages": "Anthropic Messages API フォーマットを使用しており",
     "proxyReasonFullUrl": "完全 URL 接続モードが有効になっており",
+    "proxyReasonDesktopMapping": "モデルマッピングを使っており（Claude Desktop は Claude のモデル名しか受け付けません）",
     "proxyReasonManagedOAuth": "マネージド OAuth ログイン（トークンはローカルルーティングが注入）を使用しており",
     "proxyReasonRoutingRequired": "リクエスト処理にローカルルーティングが必要であり",
     "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、ルーティングサービスの有効化が必要です",
@@ -4076,9 +4076,7 @@
     "settingsHasUpdate": "設定 · CC Switch の新しいバージョンがあります",
     "mode": {
       "route": "ルーティング",
-      "stack": "集約",
-      "mapping": "マッピング",
-      "mappingFull": "モデルマッピング"
+      "stack": "集約"
     },
     "needsAttention": "対応が必要",
     "back": "戻る"
@@ -4207,6 +4205,9 @@
       "routeNoteFile": "{{file}} のアドレスとキーを書き換えます。本物のキーは CC Switch に残り、ほかの設定は変わりません。",
       "routeNoteSwitch": "以後「ルーティング」タブでプロバイダーを変えても設定ファイルは書き換えません。",
       "routeNoteKeepRunning": "CC Switch を起動したままにしてください。終了時に直接接続へ書き戻し、次回起動時に再接続します。",
+      "desktopRouteNoteModels": "Claude Desktop のモデル一覧がルーティング先のモデルに変わります。あとでルーティング先を変えると設定ファイルを書き換えます。",
+      "desktopRouteNoteRestart": "{{app}} は起動時にしか設定を読みません。確認後に {{app}} を再起動してください。",
+      "desktopRouteNoteKeepRunning": "{{app}} のリクエストを転送するため、CC Switch を起動したままにしてください。",
       "stackNoteMembers": "ほかに {{names}} の計 {{count}} モデルが、ccs- プレフィックス付きで /model に表示されます。",
       "stackNoteEmpty": "ほかのプロバイダーはまだ追加されていないため、切り替え後は既定のプロバイダーだけです。あとで「集約」タブで追加できます。",
       "stackNoteNoFailover": "集約ではフェイルオーバーしません。キューと設定は保持され、ルーティングに戻すと復元されます。",
@@ -4264,7 +4265,6 @@
       "default": "既定",
       "models": "{{count}} モデル",
       "noModels": "モデルなし",
-      "mapping": "モデルマッピング",
       "direct": "直接接続",
       "hermesManaged": "Hermes 管理",
       "defaultModel": "既定モデル {{model}}"
@@ -4298,21 +4298,10 @@
       "stackNoDefault": "既定のプロバイダーはまだありません。集約に切り替えるときに選びます。"
     }
   },
-  "desktopAccess": {
-    "current": "現在：{{name}} · {{mode}}",
-    "noCurrent": "プロバイダーが選ばれていません",
-    "helpTitle": "接続方法",
-    "help": "Claude Desktop の接続方法はプロバイダーごとに設定します。直接接続のプロバイダーは Desktop の設定に直接書き込み、モデルマッピングのプロバイダーはルーティングサービス経由で転送します（使用中はサービスが自動で動き続けます）。",
-    "service": "ルーティングサービス",
-    "running": "実行中",
-    "notRunning": "ルーティングサービスを起動できませんでした",
-    "changePort": "ポートを変更",
-    "notNeeded": "ルーティングサービス：現在のプロバイダーには不要"
-  },
   "routingSettings": {
     "service": "サービス",
     "serviceName": "ルーティングサービス",
-    "serviceHelp": "ルーティングモードと集約モードでは、リクエストはこのマシンのルーティングサービスを経由してプロバイダーに届きます。どちらかのモードに入ったとき、または Claude Desktop がモデルマッピングを使うときに自動で起動します。",
+    "serviceHelp": "ルーティングモードと集約モードでは、リクエストはこのマシンのルーティングサービスを経由してプロバイダーに届きます。どちらかのモードに入ったときに自動で起動します。",
     "runningFor": "実行中 · 稼働 {{uptime}}",
     "uptimeHours": "{{hours}} 時間 {{minutes}} 分",
     "uptimeMinutes": "{{minutes}} 分",
@@ -4338,8 +4327,6 @@
     "noApps": "ルーティングを使っているアプリはありません。アプリページの「ルーティング」か「集約」タブから開始します。",
     "routeDetail": "転送先 {{name}}",
     "stackDetail": "既定 {{name}}",
-    "desktopMode": "モデルマッピング · 自動で稼働を維持",
-    "desktopDetail": "現在のプロバイダー {{name}}",
     "goTo": "開く",
     "exitAll": "すべて直接接続に戻す",
     "exitAllTitle": "すべてのアプリを直接接続に戻しますか？",

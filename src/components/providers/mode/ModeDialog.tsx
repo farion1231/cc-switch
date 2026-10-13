@@ -183,27 +183,33 @@ function EnterBody({
   const otherMembers = stackMembers.filter((m) => m.id !== pick);
   const memberModels = otherMembers.reduce((sum, m) => sum + m.models, 0);
   const notes =
-    target === "route"
+    target === "route" && app === "claude-desktop"
       ? [
-          t("mode.dialog.routeNoteFile", {
-            file: CLIENT_FILE[app] ?? "",
-          }),
-          t("mode.dialog.routeNoteSwitch"),
-          t("mode.dialog.routeNoteKeepRunning"),
+          t("mode.dialog.desktopRouteNoteModels"),
+          t("mode.dialog.desktopRouteNoteRestart", { app: appName }),
+          t("mode.dialog.desktopRouteNoteKeepRunning"),
         ]
-      : [
-          otherMembers.length > 0
-            ? t("mode.dialog.stackNoteMembers", {
-                names: otherMembers.map((m) => m.name).join("、"),
-                count: memberModels,
-              })
-            : t("mode.dialog.stackNoteEmpty"),
-          t("mode.dialog.stackNoteNoFailover"),
-          // Claude Code 运行中就会读到改过的 settings.json，不用重启。
-          ...(app === "codex"
-            ? [t("mode.dialog.stackNoteRestartCodex", { app: appName })]
-            : []),
-        ];
+      : target === "route"
+        ? [
+            t("mode.dialog.routeNoteFile", {
+              file: CLIENT_FILE[app] ?? "",
+            }),
+            t("mode.dialog.routeNoteSwitch"),
+            t("mode.dialog.routeNoteKeepRunning"),
+          ]
+        : [
+            otherMembers.length > 0
+              ? t("mode.dialog.stackNoteMembers", {
+                  names: otherMembers.map((m) => m.name).join("、"),
+                  count: memberModels,
+                })
+              : t("mode.dialog.stackNoteEmpty"),
+            t("mode.dialog.stackNoteNoFailover"),
+            // Claude Code 运行中就会读到改过的 settings.json，不用重启。
+            ...(app === "codex"
+              ? [t("mode.dialog.stackNoteRestartCodex", { app: appName })]
+              : []),
+          ];
   if (active === "stack" && target === "route") {
     notes.push(t("mode.dialog.leaveStackNote"));
   }
@@ -503,18 +509,21 @@ function NeedsRouteBody({
         >
           {t("common.cancel")}
         </Button>
-        <Button
-          variant="neutral"
-          size="regular"
-          disabled={busy}
-          onClick={() => {
-            logDialog(app, state, "仍然直连切换");
-            onClose();
-            onSwitchDirect(state.providerId);
-          }}
-        >
-          {t("mode.dialog.switchAnyway")}
-        </Button>
+        {/* Claude Desktop 直连写不进要经路由的卡，后端会拒绝 */}
+        {app !== "claude-desktop" && (
+          <Button
+            variant="neutral"
+            size="regular"
+            disabled={busy}
+            onClick={() => {
+              logDialog(app, state, "仍然直连切换");
+              onClose();
+              onSwitchDirect(state.providerId);
+            }}
+          >
+            {t("mode.dialog.switchAnyway")}
+          </Button>
+        )}
         <Button
           variant="route"
           size="regular"
