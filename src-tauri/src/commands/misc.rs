@@ -13,6 +13,9 @@ use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
+#[path = "tool_uninstall.rs"]
+mod tool_uninstall;
+
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -247,17 +250,65 @@ impl ToolLifecycleCoordinator {
 static TOOL_LIFECYCLE: Lazy<ToolLifecycleCoordinator> =
     Lazy::new(ToolLifecycleCoordinator::default);
 
+/// Display-only plan. Execution regenerates it under the lifecycle lock and rejects changes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToolUninstallPlan {
+    tool: String,
+    path: String,
+    real_path: String,
+    command: String,
+    native: bool,
+    wsl_distro: Option<String>,
+}
+
+#[tauri::command]
+pub async fn prepare_tool_uninstall(
+    tool: String,
+    wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
+) -> Result<ToolUninstallPlan, String> {
+    if !VALID_TOOLS.contains(&tool.as_str()) {
+        return Err(format!("Unsupported tool action target: {tool}"));
+    }
+    tokio::task::spawn_blocking(move || {
+        let pref = wsl_shell_by_tool
+            .as_ref()
+            .and_then(|prefs| prefs.get(&tool));
+        tool_uninstall::plan(&tool, pref)
+    })
+    .await
+    .map_err(|e| format!("uninstall plan task join error: {e}"))?
+}
+
 #[tauri::command]
 pub async fn run_tool_lifecycle_action(
     tools: Vec<String>,
     action: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
+    uninstall_plan: Option<ToolUninstallPlan>,
 ) -> Result<(), String> {
-    let action = ToolLifecycleAction::from_str(&action)?;
     let requested = normalize_requested_tools(&tools);
     if requested.is_empty() {
         return Err("No supported tools selected".to_string());
     }
+
+    if action == "uninstall" {
+        let plan = uninstall_plan.ok_or("Preview the uninstall plan before confirming.")?;
+        if requested.len() != 1 || requested[0] != plan.tool {
+            return Err("The uninstall plan does not match the selected tool.".into());
+        }
+        return TOOL_LIFECYCLE
+            .run(requested, move |tools| {
+                for tool in tools {
+                    let pref = wsl_shell_by_tool
+                        .as_ref()
+                        .and_then(|prefs| prefs.get(*tool));
+                    tool_uninstall::uninstall(tool, pref, &plan)?;
+                }
+                Ok(())
+            })
+            .await;
+    }
+    let action = ToolLifecycleAction::from_str(&action)?;
 
     let label = match action {
         ToolLifecycleAction::Install => "tool_install",
@@ -300,9 +351,6 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
 /// 写临时 .bat 后用 `cmd /C` 执行，`CREATE_NO_WINDOW` 抑制 console 窗口。
 #[cfg(target_os = "windows")]
 fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-
     // 每次调用使用独立目录，避免同进程并发升级时覆盖或删除另一工具的脚本。
     let script_dir = tempfile::Builder::new()
         .prefix("cc_switch_lifecycle_")
@@ -311,13 +359,22 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
     let bat_file = script_dir.path().join(format!("{label}.bat"));
     std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
-    let output = Command::new("cmd")
-        .arg("/C")
-        .arg(&bat_file)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
+    let output = windows_lifecycle_command(&bat_file, &effective_path_string()).output();
 
     finish_lifecycle_output(&output.map_err(|e| format!("启动安装进程失败: {e}"))?)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_lifecycle_command(bat_file: &Path, effective_path: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("cmd");
+    command
+        .arg("/C")
+        .arg(bat_file)
+        // MSI 自动重启可能丢失用户 PATH（#8171）。执行与探测共用补全后的 PATH，
+        // 让裸 npm 兜底及工具内部启动的 node/npm 都能找到；仅设置子进程环境。
+        .env("PATH", effective_path)
+        .creation_flags(CREATE_NO_WINDOW);
+    command
 }
 
 /// 把子进程退出结果转成 `Result`：成功返回 `Ok`；失败提取 stderr（空则回退 stdout）
@@ -1398,6 +1455,29 @@ fn version_probe_payload(tool: &str) -> String {
     format!("echo {VERSION_PROBE_SENTINEL}; {tool} --version")
 }
 
+/// WSL 未指定 shell 时依次尝试的 flag：交互式初始化（nvm 等写在 rc 里）优先。
+/// 卸载探测（`tool_uninstall`）按同一顺序选 flag，否则两边可能命中不同的安装。
+#[cfg(any(target_os = "windows", test))]
+const WSL_AUTO_SHELL_FLAGS: [&str; 3] = ["-lic", "-lc", "-c"];
+
+/// WSL 未指定 shell 时的版本检测命令（由外层 `sh -c` 执行）：在 `$SHELL` 里按
+/// `WSL_AUTO_SHELL_FLAGS` 依次重试，或只用调用方已校验过的 `flag`。
+#[cfg(any(target_os = "windows", test))]
+fn wsl_auto_shell_command(payload: &str, flag: Option<&str>) -> String {
+    let flags = flag.map_or(WSL_AUTO_SHELL_FLAGS.to_vec(), |flag| vec![flag]);
+    let last = flags.len() - 1;
+    flags
+        .iter()
+        .enumerate()
+        .map(|(i, flag)| {
+            // 只有最后一次尝试保留 stderr，供报错展示
+            let quiet = if i < last { " 2>/dev/null" } else { "" };
+            format!("\"${{SHELL:-sh}}\" {flag} '{payload}'{quiet}")
+        })
+        .collect::<Vec<_>>()
+        .join(" || ")
+}
+
 /// 取哨兵**最后一次**出现之后的输出。
 ///
 /// 取最后一次：兜底链 `-lic || -lc || -c` 失败重试时会多次打印哨兵。
@@ -1695,18 +1775,12 @@ fn try_get_version_wsl(
 
         (shell.to_string(), flag, version_probe_payload(tool))
     } else {
-        let payload = version_probe_payload(tool);
-        let cmd = if let Some(flag) = force_shell_flag {
+        if let Some(flag) = force_shell_flag {
             if !is_valid_shell_flag(flag) {
                 return ShellProbe::NotFound(format!("[WSL:{distro}] invalid shell flag: {flag}"));
             }
-            format!("\"${{SHELL:-sh}}\" {flag} '{payload}'")
-        } else {
-            // 兜底：自动尝试 -lic, -lc, -c
-            format!(
-                "\"${{SHELL:-sh}}\" -lic '{payload}' 2>/dev/null || \"${{SHELL:-sh}}\" -lc '{payload}' 2>/dev/null || \"${{SHELL:-sh}}\" -c '{payload}'"
-            )
-        };
+        }
+        let cmd = wsl_auto_shell_command(&version_probe_payload(tool), force_shell_flag);
 
         ("sh".to_string(), "-c", cmd)
     };
@@ -2021,8 +2095,8 @@ fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Pat
     }
 }
 
-/// The "effective PATH" used during detection. On Windows the inherited
-/// process PATH can be incomplete — most notably after an in-app self-update,
+/// The "effective PATH" used for CLI detection and lifecycle commands. On Windows
+/// the inherited process PATH can be incomplete — most notably after an in-app self-update,
 /// where the MSI/WiX-auto-launched process inherits only the machine-level PATH
 /// and drops the user-level PATH (see #6061). Any CLI installed in a user-PATH
 /// location (winget Claude `%LOCALAPPDATA%\Programs\claude`, the standalone
@@ -4607,11 +4681,43 @@ fn write_claude_config(temp_dir: &Path, env_vars: &[(String, String)]) -> Result
     write_unique_temp_artifact(temp_dir, "claude_", ".json", config_json.as_bytes())
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+fn write_posix_provider_launcher_script(
+    config_file: &Path,
+    provider_command: &str,
+    final_cd_command: &str,
+    exec_line: &str,
+) -> Result<PathBuf, String> {
+    // The config is unique per launch; its companion script must be unique too.
+    let script_file = config_file.with_extension("sh");
+    let content = build_posix_provider_launcher_script(
+        &config_file.to_string_lossy(),
+        &script_file.to_string_lossy(),
+        provider_command,
+        final_cd_command,
+        exec_line,
+    );
+    if let Err(error) = std::fs::write(&script_file, content) {
+        let _ = std::fs::remove_file(&script_file);
+        return Err(format!("写入启动脚本失败: {error}"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if let Err(error) =
+            std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+        {
+            let _ = std::fs::remove_file(&script_file);
+            return Err(format!("设置脚本权限失败: {error}"));
+        }
+    }
+    Ok(script_file)
+}
+
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
 fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
@@ -4619,26 +4725,14 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let exec_line = build_exec_line(&shell, cwd);
     let final_cd_command = build_final_shell_cd_command(&shell, cwd);
 
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let provider_command = build_provider_command_line(&shell, &config_path, cwd);
-
-    // Write the shell script to a temp file. It removes the provider config before
-    // exec replaces the launcher, while the EXIT trap still handles early exits.
-    let script_content = build_posix_provider_launcher_script(
-        &config_path,
-        &script_file.to_string_lossy(),
+    let script_file = write_posix_provider_launcher_script(
+        config_file,
         &provider_command,
         &final_cd_command,
         &exec_line,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    // Make script executable
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    )?;
 
     // Try the preferred terminal first, fall back to Terminal.app if it fails
     // Note: Kitty doesn't need the -e flag, others do
@@ -4655,15 +4749,19 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     };
 
     // If preferred terminal fails and it's not the default, try Terminal.app as fallback
-    if result.is_err() && terminal != "terminal" {
+    let result = if result.is_err() && terminal != "terminal" {
         log::warn!(
             "首选终端 {} 启动失败，回退到 Terminal.app: {:?}",
             terminal,
             result.as_ref().err()
         );
-        return launch_macos_terminal_app(&script_file);
+        launch_macos_terminal_app(&script_file)
+    } else {
+        result
+    };
+    if result.is_err() {
+        let _ = std::fs::remove_file(&script_file);
     }
-
     result
 }
 
@@ -4994,7 +5092,6 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
 fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -5015,24 +5112,14 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
         ("ghostty", vec!["-e"]),
     ];
 
-    // Create temp script file
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let provider_command = build_provider_command_line(&shell, &config_path, cwd);
-
-    let script_content = build_posix_provider_launcher_script(
-        &config_path,
-        &script_file.to_string_lossy(),
+    let script_file = write_posix_provider_launcher_script(
+        config_file,
         &provider_command,
         &final_cd_command,
         &exec_line,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    )?;
 
     // Build terminal list: preferred terminal first (if specified), then defaults
     let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
@@ -5152,6 +5239,8 @@ pub(super) const WINDOWS_POWERSHELL_BATCH_COMMAND: &str =
 // Keep path data out of the BAT bytes. cmd.exe decodes a batch file using the
 // active console/OEM code page; embedding a UTF-8 Chinese path can corrupt the
 // rest of the command stream. Environment values stay Unicode inside Windows.
+// A child CMD returns even for claude.cmd shims. Doubled percent signs defer
+// config-path expansion to that child, without CALL's second expansion pass.
 #[cfg(any(target_os = "windows", test))]
 const WINDOWS_PROVIDER_BATCH: &str = "@echo off\r\n\
 setlocal DisableDelayedExpansion\r\n\
@@ -5167,7 +5256,7 @@ pushd \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\n\
 set \"CC_SWITCH_INTERNAL_CWD=\"\r\n\
 echo Using provider-specific claude config:\r\n\
 echo \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\"\r\n\
-claude --settings \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\"\r\n\
+\"%ComSpec%\" /D /V:OFF /C claude --settings \"%%CC_SWITCH_INTERNAL_CONFIG_PATH%%\"\r\n\
 del \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" >nul 2>&1\r\n\
 set \"CC_SWITCH_INTERNAL_CONFIG_PATH=\"\r\n\
 del \"%~f0\" >nul 2>&1\r\n";
@@ -5694,6 +5783,18 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_provider_batch_keeps_unicode_paths_out_of_batch_bytes() {
+        assert_windows_provider_batch_cleanup(false, 0);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_provider_batch_cleans_up_after_cmd_shim_exits() {
+        assert_windows_provider_batch_cleanup(true, 0);
+        assert_windows_provider_batch_cleanup(true, 7);
+    }
+
+    #[cfg(target_os = "windows")]
+    fn assert_windows_provider_batch_cleanup(cmd_shim: bool, exit_code: i32) {
         assert!(WINDOWS_PROVIDER_BATCH.is_ascii());
 
         let temp = tempfile::tempdir().expect("probe directory should be created");
@@ -5716,7 +5817,18 @@ mod tests {
         std::fs::write(&batch, WINDOWS_PROVIDER_BATCH.as_bytes())
             .expect("ASCII provider batch should be written");
         let probe_source = temp.path().join("claude_probe.rs");
-        let probe_executable = bin_dir.join("claude.exe");
+        let probe_executable = bin_dir.join(if cmd_shim {
+            "claude_probe.exe"
+        } else {
+            "claude.exe"
+        });
+        if cmd_shim {
+            std::fs::write(
+                bin_dir.join("claude.cmd"),
+                "@echo off\r\n\"%~dp0claude_probe.exe\" %*\r\n",
+            )
+            .expect("CMD shim should be written");
+        }
         std::fs::write(
             &probe_source,
             r#"fn main() {
@@ -5730,6 +5842,7 @@ mod tests {
         "ok\n",
     )
     .unwrap();
+    std::process::exit(std::env::var("CC_SWITCH_TEST_EXIT_CODE").unwrap().parse().unwrap());
 }
 "#,
         )
@@ -5766,6 +5879,7 @@ mod tests {
             .env("PATHEXT", ".COM;.EXE;.BAT;.CMD")
             .env("CC_SWITCH_CMD_EXPAND", "wrong")
             .env("CC_SWITCH_TEST_CONFIG_COPY", config_copy_path.as_ref())
+            .env("CC_SWITCH_TEST_EXIT_CODE", exit_code.to_string())
             .output()
             .expect("provider batch should start");
 
@@ -5790,6 +5904,91 @@ mod tests {
         );
         assert!(!config.exists(), "provider config should self-delete");
         assert!(!batch.exists(), "provider batch should self-delete");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_lifecycle_restores_user_path_for_npm_and_its_child() {
+        let root = tempfile::tempdir().unwrap();
+        let npm_dir = root.path().join("npm 用户 & tools");
+        let node_dir = root.path().join("node 用户 tools");
+        std::fs::create_dir_all(&npm_dir).unwrap();
+        std::fs::create_dir_all(&node_dir).unwrap();
+        std::fs::write(
+            npm_dir.join("npm.cmd"),
+            "@echo off\r\ncmd /D /C cc_switch_lifecycle_test_node.cmd\r\nexit /b %errorlevel%\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            node_dir.join("cc_switch_lifecycle_test_node.cmd"),
+            "@echo restored-user-path\r\n@exit /b 0\r\n",
+        )
+        .unwrap();
+        let script = root.path().join("update.bat");
+        std::fs::write(&script, "@echo off\r\ncall npm --version\r\n").unwrap();
+
+        // Model an MSI-launched process with only the system directory on PATH.
+        // Inject the registry contribution without modifying the real registry
+        // or the test runner's process environment.
+        let system_path = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        let inherited = system_path.to_str().unwrap();
+        let user_path = format!("{};{}", npm_dir.display(), node_dir.display());
+        let effective = merge_path_segments_win(&[inherited, &user_path]);
+        let parent_path = std::env::var_os("PATH");
+
+        let missing = windows_lifecycle_command(&script, inherited)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(
+            !missing.status.success(),
+            "npm must be absent on the narrow PATH"
+        );
+
+        let restored = windows_lifecycle_command(&script, &effective)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(restored.status.success(), "{restored:?}");
+        assert_eq!(
+            decode_command_output(&restored.stdout).trim(),
+            "restored-user-path"
+        );
+        assert_eq!(std::env::var_os("PATH"), parent_path);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_lifecycle_preserves_process_path_priority_and_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let preferred = root.path().join("process tools");
+        let fallback = root.path().join("registry tools");
+        std::fs::create_dir_all(&preferred).unwrap();
+        std::fs::create_dir_all(&fallback).unwrap();
+        std::fs::write(
+            preferred.join("npm.cmd"),
+            "@echo process-npm-failed 1>&2\r\n@exit /b 23\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            fallback.join("npm.cmd"),
+            "@echo registry-npm\r\n@exit /b 0\r\n",
+        )
+        .unwrap();
+        let script = root.path().join("update.bat");
+        std::fs::write(&script, "@echo off\r\ncall npm --version\r\n").unwrap();
+        let effective =
+            merge_path_segments_win(&[preferred.to_str().unwrap(), fallback.to_str().unwrap()]);
+
+        let output = windows_lifecycle_command(&script, &effective)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(23));
+        assert_eq!(
+            finish_lifecycle_output(&output).unwrap_err(),
+            "process-npm-failed"
+        );
     }
 
     /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。
@@ -5932,27 +6131,82 @@ mod tests {
         );
     }
 
+    #[test]
+    fn posix_provider_launchers_are_independent() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let first_config = write_claude_config(temp.path(), &[]).unwrap();
+        let first_script = write_posix_provider_launcher_script(
+            &first_config,
+            ":",
+            "",
+            "exec /bin/sh -c 'exit 0'",
+        )
+        .unwrap();
+        let first_content = std::fs::read_to_string(&first_script).unwrap();
+        let second_config = write_claude_config(temp.path(), &[]).unwrap();
+        let second_script = write_posix_provider_launcher_script(
+            &second_config,
+            ":",
+            "",
+            "exec /bin/sh -c 'exit 0'",
+        )
+        .unwrap();
+
+        assert_ne!(
+            first_script, second_script,
+            "each launch must own its script"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&first_script).unwrap(),
+            first_content
+        );
+
+        #[cfg(unix)]
+        for (config, script) in [
+            (&first_config, &first_script),
+            (&second_config, &second_script),
+        ] {
+            let output = std::process::Command::new("/bin/sh")
+                .arg(script)
+                .output()
+                .expect("launcher should run");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(!config.exists());
+            assert!(!script.exists());
+            if script == &first_script {
+                assert!(
+                    second_config.exists(),
+                    "pending config must survive the first exit"
+                );
+                assert!(
+                    second_script.exists(),
+                    "pending launcher must survive the first exit"
+                );
+            }
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn posix_provider_launcher_does_not_accumulate_successful_launch_artifacts() {
         let temp = tempfile::tempdir().expect("temp dir should be created");
         let artifact_dir = temp.path().join("provider artifacts O'Brien");
         std::fs::create_dir(&artifact_dir).expect("artifact dir should be created");
-        let script_file = artifact_dir.join("cc_switch_launcher.sh");
-
         for launch in 0..3 {
             let config_file = artifact_dir.join(format!("claude_{launch}.json"));
             std::fs::write(&config_file, r#"{"env":{"TOKEN":"fake-token"}}"#)
                 .expect("config fixture should be written");
-            let script_content = build_posix_provider_launcher_script(
-                &config_file.to_string_lossy(),
-                &script_file.to_string_lossy(),
-                "/bin/true",
+            let script_file = write_posix_provider_launcher_script(
+                &config_file,
+                ":",
                 "",
-                "exec /bin/true",
-            );
-            std::fs::write(&script_file, script_content)
-                .expect("launcher fixture should be written");
+                "exec /bin/sh -c 'exit 0'",
+            )
+            .expect("launcher fixture should be written");
 
             let output = std::process::Command::new("/bin/sh")
                 .arg(&script_file)

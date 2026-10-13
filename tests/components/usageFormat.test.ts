@@ -3,6 +3,7 @@ import {
   SPEED_ESTIMATE_MIN_OUTPUT_TOKENS,
   SPEED_MIN_OUTPUT_TOKENS,
   formatEstimatedTokensPerSecond,
+  formatFirstTokenSeconds,
   formatOutputTokensPerSecond,
   formatTokensCompact,
   formatTokensPerSecond,
@@ -146,6 +147,22 @@ describe("usage format helpers", () => {
     expect(
       getEstimatedTokensPerSecond({ ...session, dataSource: "codex_session" }),
     ).toBe(90);
+    // 推出了首字的会话日志：仍按整段耗时估，不当成精确速度
+    const withFirstToken = { ...session, firstTokenMs: 4_000 };
+    expect(getEstimatedTokensPerSecond(withFirstToken)).toBe(90);
+    expect(getOutputTokensPerSecond(withFirstToken)).toBeNull();
+    expect(sumSpeedTotals([withFirstToken])).toEqual({
+      outputTokens: 0,
+      generationMs: 0,
+    });
+  });
+
+  it("formats first-token time in seconds", () => {
+    expect(formatFirstTokenSeconds(2_640)).toBe("2.6s");
+    expect(formatFirstTokenSeconds(0)).toBe("0.0s");
+    expect(formatFirstTokenSeconds(null)).toBeNull();
+    expect(formatFirstTokenSeconds(undefined)).toBeNull();
+    expect(formatFirstTokenSeconds(-1)).toBeNull();
   });
 
   it("does not estimate speed for routed, short, or untimed requests", () => {

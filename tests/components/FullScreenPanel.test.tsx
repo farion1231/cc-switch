@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { DRAG_REGION_ENABLED } from "@/lib/platform";
@@ -13,6 +13,48 @@ const Panels = ({ innerOpen }: { innerOpen: boolean }) => (
     </FullScreenPanel>
   </>
 );
+
+describe("FullScreenPanel motion", () => {
+  it("is opaque from the first render, including after reopening", async () => {
+    const panel = (isOpen: boolean) => (
+      <FullScreenPanel isOpen={isOpen} title="Editor" onClose={() => undefined}>
+        editor content
+      </FullScreenPanel>
+    );
+    const view = render(panel(true));
+    const surface = () => screen.getByText("editor content").closest(".bg-app");
+    expect(surface()).toHaveStyle({ opacity: "1" });
+
+    view.rerender(panel(false));
+    // If AnimatePresence retains the closing page, it must remain opaque.
+    const closing = screen.queryByText("editor content")?.closest(".bg-app");
+    if (closing) expect(closing).toHaveStyle({ opacity: "1" });
+    await waitFor(() =>
+      expect(screen.queryByText("editor content")).toBeNull(),
+    );
+
+    view.rerender(panel(true));
+    expect(surface()).toHaveStyle({ opacity: "1" });
+  });
+
+  it("keeps the explicit horizontal navigation transition", () => {
+    render(
+      <FullScreenPanel
+        isOpen
+        title="Authorization"
+        onClose={() => undefined}
+        motionPreset="slide-from-right"
+      >
+        authorization content
+      </FullScreenPanel>,
+    );
+    const surface = screen
+      .getByText("authorization content")
+      .closest(".bg-app");
+    expect(surface).toHaveStyle({ transform: "translateX(100%)" });
+    expect(surface).not.toHaveStyle({ opacity: "0" });
+  });
+});
 
 describe("FullScreenPanel body scroll locking", () => {
   afterEach(() => {
