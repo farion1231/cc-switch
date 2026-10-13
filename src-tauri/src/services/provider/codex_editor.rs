@@ -26,7 +26,8 @@ use crate::live::engine::{read_current, LiveFile};
 use crate::live::floor;
 use crate::live::patch::toml::parse;
 use crate::live::project::codex::{
-    is_keyless_fallback, CodexProjection, Route, RowInput, OFFICIAL_PROXY_ROUTE_ID, ROUTE_ID,
+    explicit_official_mirror_supports_websockets, is_keyless_fallback, CodexProjection, Route,
+    RowInput, OFFICIAL_PROXY_ROUTE_ID, ROUTE_ID,
 };
 use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
@@ -454,7 +455,22 @@ fn store_into_row(
                 );
             }
         }
-        Route::Official | Route::Default => {}
+        Route::Official => {
+            // 官方镜像里只有 `supports_websockets` 是用户能定的（安全的布尔偏好）：编辑器里
+            // 显式选过就存回行，之后按它生成镜像。地址、认证字段仍然不开放覆盖。
+            if let Some(supports_websockets) =
+                explicit_official_mirror_supports_websockets(config_text(edited))
+            {
+                let mut table = toml_edit::Table::new();
+                table.insert("supports_websockets", toml_edit::value(supports_websockets));
+                insert_at(
+                    &mut doc,
+                    &["model_providers".to_string(), ROUTE_ID.to_string()],
+                    Item::Table(table),
+                );
+            }
+        }
+        Route::Default => {}
     }
     row["config"] = Value::String(doc.to_string());
     Ok(row)
@@ -644,6 +660,45 @@ mod tests {
             crate::codex_config::extract_codex_base_url(text).as_deref(),
             Some("https://relay.example.com/v1"),
             "the proxy still finds the address"
+        );
+    }
+
+    /// #7959：官方卡的镜像传输偏好（`supports_websockets`）要存回行，切换时才不会被固定
+    /// 模板写回默认值；官方 endpoint 和认证字段仍然不进行。
+    #[test]
+    fn an_official_row_keeps_the_explicit_transport_preference() {
+        let stored = json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" });
+        let mirror = "model = \"gpt-5.4\"\n\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = false\nwire_api = \"responses\"\n";
+        let edited = json!({ "auth": {}, "config": mirror });
+        let plan = plan_save(
+            Some(&stored),
+            &edited,
+            &edited,
+            &Origin::row(&stored).unwrap(),
+            true,
+            false,
+            ConflictPolicy::Refuse,
+        )
+        .unwrap();
+        let text = plan.row_settings["config"].as_str().unwrap();
+        assert_eq!(
+            explicit_official_mirror_supports_websockets(text),
+            Some(false),
+            "the preference is stored in the row: {text}"
+        );
+        let parsed: toml::Table = toml::from_str(text).unwrap();
+        let table = &parsed["model_providers"]["custom"];
+        assert!(
+            table.get("base_url").is_none(),
+            "no endpoint override: {text}"
+        );
+        assert!(
+            table.get("requires_openai_auth").is_none(),
+            "no auth override: {text}"
+        );
+        assert!(
+            table.get("name").is_none() && table.get("wire_api").is_none(),
+            "only the transport preference is provider-owned: {text}"
         );
     }
 }

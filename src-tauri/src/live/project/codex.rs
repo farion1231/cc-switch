@@ -453,7 +453,9 @@ pub enum RouteWrite {
     /// Key）：Codex 按 provider id 给会话分桶，表一删，第三方的旧会话就 resume 不了。
     Official { dormant_base_url: String },
     /// 官方直连且开了「统一会话历史」：选路写 custom，表是官方镜像（认证走官方登录）。
-    OfficialMirror,
+    /// 镜像的 `supports_websockets` 用用户在这张卡里显式选过的传输偏好，见
+    /// [`official_mirror_supports_websockets`]。
+    OfficialMirror { supports_websockets: bool },
     /// 第三方（直连或代理契约）：选路写 custom。
     Custom(Table),
     /// Codex 内置的其他 provider。
@@ -470,7 +472,7 @@ impl RouteWrite {
     fn selector(&self) -> Option<&str> {
         match self {
             Self::Official { .. } | Self::Default => None,
-            Self::OfficialMirror | Self::Custom(_) => Some(ROUTE_ID),
+            Self::OfficialMirror { .. } | Self::Custom(_) => Some(ROUTE_ID),
             Self::BuiltIn { id, .. } => Some(id),
             Self::OfficialProxy { unified, .. } => unified.then_some(ROUTE_ID),
         }
@@ -499,6 +501,29 @@ pub fn official_mirror_table(base_url: Option<&str>, supports_websockets: bool) 
         table.insert("base_url", toml_edit::value(base_url.trim_end_matches('/')));
     }
     table
+}
+
+/// 官方镜像默认开 WebSocket：统一会话历史要还原内置 `openai` provider 的传输能力。
+pub const OFFICIAL_MIRROR_SUPPORTS_WEBSOCKETS: bool = true;
+
+/// 用户在官方卡里显式选过的传输偏好：镜像表里的 `supports_websockets`。只认这一项——
+/// 官方镜像的地址和认证字段不开放覆盖。没写过（或不是布尔）返回 `None`。
+pub fn explicit_official_mirror_supports_websockets(config_text: &str) -> Option<bool> {
+    config_text
+        .parse::<DocumentMut>()
+        .ok()?
+        .get("model_providers")
+        .and_then(Item::as_table_like)
+        .and_then(|providers| providers.get(ROUTE_ID))
+        .and_then(Item::as_table_like)
+        .and_then(|table| table.get("supports_websockets"))
+        .and_then(Item::as_bool)
+}
+
+/// 生成官方镜像时用的偏好值：用户显式选过就用它，否则用默认值。
+pub fn official_mirror_supports_websockets(config_text: &str) -> bool {
+    explicit_official_mirror_supports_websockets(config_text)
+        .unwrap_or(OFFICIAL_MIRROR_SUPPORTS_WEBSOCKETS)
 }
 
 /// 指向本地代理的第三方路由表（代理契约和官方直连的休眠表共用）。
@@ -788,11 +813,13 @@ impl CodexConfigPatch {
             } => {
                 put_table(providers, id, table.clone(), container_inline);
             }
-            RouteWrite::OfficialMirror => {
+            RouteWrite::OfficialMirror {
+                supports_websockets,
+            } => {
                 put_table(
                     providers,
                     ROUTE_ID,
-                    official_mirror_table(None, true),
+                    official_mirror_table(None, *supports_websockets),
                     container_inline,
                 );
             }
@@ -832,7 +859,9 @@ impl CodexConfigPatch {
     fn owned_table(&self) -> Option<(&str, Table)> {
         match &self.route {
             RouteWrite::Custom(table) => Some((ROUTE_ID, table.clone())),
-            RouteWrite::OfficialMirror => Some((ROUTE_ID, official_mirror_table(None, true))),
+            RouteWrite::OfficialMirror {
+                supports_websockets,
+            } => Some((ROUTE_ID, official_mirror_table(None, *supports_websockets))),
             RouteWrite::OfficialProxy {
                 base_url,
                 unified: true,
@@ -998,6 +1027,55 @@ mod tests {
                 "{auth:?} {login}"
             );
         }
+    }
+
+    #[test]
+    fn official_mirror_transport_preference_is_read_from_the_row() {
+        // 没显式写过：用默认值（开），并且区分得出「没写过」。
+        for no_preference in [
+            "",
+            "model = \"gpt-5\"\n",
+            "[model_providers.custom]\nname = \"OpenAI\"\n",
+        ] {
+            assert!(
+                official_mirror_supports_websockets(no_preference),
+                "{no_preference}"
+            );
+            assert_eq!(
+                explicit_official_mirror_supports_websockets(no_preference),
+                None,
+                "{no_preference}"
+            );
+        }
+        // 显式选过：按用户的值生成镜像。
+        let off = "[model_providers.custom]\nsupports_websockets = false\n";
+        assert!(!official_mirror_supports_websockets(off));
+        assert_eq!(
+            explicit_official_mirror_supports_websockets(off),
+            Some(false)
+        );
+        let on = "[model_providers.custom]\nsupports_websockets = true\n";
+        assert!(official_mirror_supports_websockets(on));
+        assert_eq!(explicit_official_mirror_supports_websockets(on), Some(true));
+        // 不是布尔就不算偏好，回落默认值。
+        let junk = "[model_providers.custom]\nsupports_websockets = \"nope\"\n";
+        assert!(official_mirror_supports_websockets(junk));
+        assert_eq!(explicit_official_mirror_supports_websockets(junk), None);
+        // 偏好只影响传输：镜像的认证和接口形状不变。
+        let table = official_mirror_table(None, false);
+        assert_eq!(
+            table.get("supports_websockets").and_then(Item::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            table.get("requires_openai_auth").and_then(Item::as_bool),
+            Some(true)
+        );
+        assert_eq!(table.get("name").and_then(Item::as_str), Some("OpenAI"));
+        assert_eq!(
+            table.get("wire_api").and_then(Item::as_str),
+            Some("responses")
+        );
     }
 
     #[test]

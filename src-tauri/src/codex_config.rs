@@ -2976,6 +2976,8 @@ pub fn codex_config_routes_official_to_proxy(
 }
 
 fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bool {
+    // `supports_websockets` 只要求是显式布尔：镜像会沿用用户在官方卡里选过的传输偏好，
+    // 两个值都算 CC Switch 生成的官方镜像，切走时都要剥掉。
     table.len() == 4
         && table.get("name").and_then(|item| item.as_str()) == Some("OpenAI")
         && table
@@ -2985,7 +2987,7 @@ fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bo
         && table
             .get("supports_websockets")
             .and_then(|item| item.as_bool())
-            == Some(true)
+            .is_some()
         && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
 }
 
@@ -3263,6 +3265,23 @@ requires_openai_auth = true
 "#;
         let untouched = strip_codex_unified_session_bucket(third_party).expect("strip");
         assert_eq!(untouched, third_party);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_accepts_the_users_transport_preference() {
+        // 镜像会沿用用户在官方卡里显式选过的 `supports_websockets = false`（#7959）：
+        // 形态仍然是注入产物，切走时要照样剥掉，不能当成用户自己的表留在行里。
+        let mirror_with_preference = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "OpenAI"
+requires_openai_auth = true
+supports_websockets = false
+wire_api = "responses"
+"#;
+        let stripped = strip_codex_unified_session_bucket(mirror_with_preference).expect("strip");
+        assert!(!stripped.contains("model_provider"), "{stripped}");
+        assert!(!stripped.contains("supports_websockets"), "{stripped}");
     }
 
     #[test]

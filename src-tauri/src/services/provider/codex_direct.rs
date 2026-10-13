@@ -35,9 +35,10 @@ use crate::live::engine::{digest, read_current, DeviceStore, LiveFile};
 use crate::live::patch::toml::{value_text, TomlDocPatch, TomlSteps};
 use crate::live::patch::{Guarded, LivePatch, WholeFile};
 use crate::live::project::codex::{
-    official_mirror_table, proxy_route_table, requires_openai_auth, row_catalog_pointer,
-    without_row_catalog, CodexConfigPatch, CodexProjection, KnownTable, Route, RouteAuth,
-    RouteWrite, RowInput, ROUTE_ID, WEB_SEARCH_DISABLED,
+    official_mirror_supports_websockets, official_mirror_table, proxy_route_table,
+    requires_openai_auth, row_catalog_pointer, without_row_catalog, CodexConfigPatch,
+    CodexProjection, KnownTable, Route, RouteAuth, RouteWrite, RowInput, ROUTE_ID,
+    WEB_SEARCH_DISABLED,
 };
 use crate::mode::contract::CONTRACT_VERSION;
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
@@ -566,7 +567,18 @@ pub(crate) fn plan(
             };
             match &projection.route {
                 Route::Official if crate::settings::unify_codex_session_history() => {
-                    (RouteWrite::OfficialMirror, None, auth)
+                    // 镜像里只有 `supports_websockets` 是用户能选的：显式选过就用它，别被
+                    // 固定模板写回默认值。官方 endpoint 和认证字段仍然不开放覆盖。
+                    let supports_websockets = official_mirror_supports_websockets(
+                        super::editor_toml::config_text(&provider.settings_config),
+                    );
+                    (
+                        RouteWrite::OfficialMirror {
+                            supports_websockets,
+                        },
+                        None,
+                        auth,
+                    )
                 }
                 Route::Official => (
                     RouteWrite::Official {
