@@ -543,11 +543,11 @@ struct CodexCheckpoint {
 fn same_file_identity(a: &ParentFileStamp, b: &ParentFileStamp) -> bool {
     #[cfg(unix)]
     {
-        return a.device == b.device && a.inode == b.inode;
+        a.device == b.device && a.inode == b.inode
     }
     #[cfg(windows)]
     {
-        return a.volume_serial == b.volume_serial && a.file_id == b.file_id;
+        a.volume_serial == b.volume_serial && a.file_id == b.file_id
     }
     #[cfg(not(any(unix, windows)))]
     {
