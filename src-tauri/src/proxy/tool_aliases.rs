@@ -3,7 +3,7 @@
 use super::{
     hyper_client::ProxyResponse,
     response_processor::{read_decoded_body, strip_entity_headers_for_rebuilt_body},
-    sse::{append_utf8_safe, strip_sse_field, take_sse_block},
+    sse::{append_utf8_safe, body_looks_like_sse, strip_sse_field, take_sse_block},
     ProxyError,
 };
 use bytes::Bytes;
@@ -392,15 +392,48 @@ pub(crate) async fn restore_response(
     } else {
         let (mut headers, status, bytes) =
             read_decoded_body(response, "ToolAliases", timeout).await?;
-        let mut body: Value = serde_json::from_slice(&bytes).map_err(|e| {
-            ProxyError::TransformError(format!("Invalid response for tool aliases: {e}"))
-        })?;
-        aliases.restore_json(&mut body);
+        let restored = match serde_json::from_slice::<Value>(&bytes) {
+            Ok(mut body) => {
+                aliases.restore_json(&mut body);
+                body.to_string()
+            }
+            Err(_) if body_looks_like_sse(&String::from_utf8_lossy(&bytes)) => {
+                // Some gateways label forced SSE as JSON. Restore names while
+                // keeping the original Content-Type so the handler still uses
+                // its existing SSE aggregation fallback for non-stream requests.
+                let mut buffer = String::from_utf8_lossy(&bytes)
+                    .trim_start_matches('\u{feff}')
+                    .trim_start()
+                    .to_string();
+                let mut names = HashMap::new();
+                let mut restored = String::new();
+                while let Some(block) = take_sse_block(&mut buffer) {
+                    restored.push_str(&restore_event(&block, &aliases, &mut names));
+                }
+                if !buffer.is_empty() {
+                    restored.push_str(&restore_event(&buffer, &aliases, &mut names));
+                }
+                if names
+                    .values()
+                    .any(|state| !state.emitted && !state.pending.is_empty())
+                {
+                    return Err(ProxyError::TransformError(
+                        "Incomplete aliased tool name in upstream stream".into(),
+                    ));
+                }
+                restored
+            }
+            Err(e) => {
+                return Err(ProxyError::TransformError(format!(
+                    "Invalid response for tool aliases: {e}"
+                )));
+            }
+        };
         strip_entity_headers_for_rebuilt_body(&mut headers);
         Ok(ProxyResponse::buffered(
             status,
             headers,
-            Bytes::from(body.to_string()),
+            Bytes::from(restored),
         ))
     }
 }
