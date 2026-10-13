@@ -31,9 +31,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $home = Join-Path $env:RUNNER_TEMP 'ccswitch8205-home'
-          New-Item -ItemType Directory -Force -Path $home | Out-Null
-          "CC_SWITCH_TEST_HOME=$home" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $testHome = Join-Path $env:RUNNER_TEMP 'ccswitch8205-home'
+          New-Item -ItemType Directory -Force -Path $testHome | Out-Null
+          "CC_SWITCH_TEST_HOME=$testHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CC_SWITCH_WSL_DISTRO=Ubuntu-22.04" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           wsl.exe --list --verbose
           wsl.exe -d Ubuntu-22.04 --exec python3 -c "import sqlite3,sys; print(sys.version); print(sqlite3.sqlite_version)"
