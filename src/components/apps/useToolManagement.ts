@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
 import type {
+  NodeRequirementGap,
   ToolInstallation,
   ToolInstallationReport,
   ToolUninstallPlan,
@@ -33,6 +34,8 @@ export interface ToolVersion {
   installed_but_broken: boolean;
   env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
   wsl_distro: string | null;
+  // 有新版本、但这处安装用的 Node 达不到新版本的要求：不给升级，提示先升级 Node。
+  update_blocked_by_node: NodeRequirementGap | null;
 }
 
 export const TOOL_NAMES = [
@@ -344,6 +347,7 @@ export function useToolManagement() {
         return (
           !busyTools.has(toolName) &&
           !loadingTools[toolName] &&
+          !tool?.update_blocked_by_node &&
           isUpdateAvailable(tool?.version, tool?.latest_version)
         );
       }),
