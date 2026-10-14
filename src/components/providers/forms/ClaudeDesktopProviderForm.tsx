@@ -352,10 +352,13 @@ export function ClaudeDesktopProviderForm({
 
   const presetEntries = useMemo<PresetEntry[]>(
     () =>
-      claudeDesktopProviderPresets.map((preset, index) => ({
-        id: `claude-desktop-${index}`,
-        preset,
-      })),
+      // 先编号再过滤 hidden：AddProviderDialog 按 id 里的原数组下标回查预设
+      claudeDesktopProviderPresets
+        .map((preset, index) => ({
+          id: `claude-desktop-${index}`,
+          preset,
+        }))
+        .filter((entry) => !entry.preset.hidden),
     [],
   );
 

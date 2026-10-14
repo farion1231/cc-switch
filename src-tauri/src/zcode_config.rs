@@ -171,14 +171,24 @@ const ZCODE_TEMPLATES: &[ZCodeTemplate] = &[
         base_url: "https://dashscope.aliyuncs.com/apps/anthropic",
         access_type: "api-key",
         api_type: "anthropic-messages",
-        models: &["qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.5-plus"],
+        models: &[
+            "qwen3.8-max",
+            "qwen3.8-flash",
+            "qwen3.7-max",
+            "qwen3.5-plus",
+        ],
     },
     ZCodeTemplate {
         template_id: "qwen-alibaba-model-studio-intl",
         base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         access_type: "api-key",
         api_type: "openai-chat-completions",
-        models: &["qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.5-plus"],
+        models: &[
+            "qwen3.8-max",
+            "qwen3.8-flash",
+            "qwen3.7-max",
+            "qwen3.5-plus",
+        ],
     },
     ZCodeTemplate {
         template_id: "xiaomi-mimo",
@@ -199,7 +209,11 @@ const ZCODE_TEMPLATES: &[ZCodeTemplate] = &[
         base_url: "https://api.anthropic.com/v1",
         access_type: "api-key",
         api_type: "anthropic-messages",
-        models: &["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+        models: &[
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-haiku-4-5-20251001",
+        ],
     },
     ZCodeTemplate {
         template_id: "xai",
@@ -259,9 +273,7 @@ fn template_by_id(template_id: &str) -> Option<&'static ZCodeTemplate> {
 /// 这些是用户在 ZCode 内登录/添加产生的，CC Switch 不导入、不删除，
 /// 与 OpenCode 等 additive 应用「自管节点跳过」的策略一致。
 pub fn is_zcode_managed_provider_id(id: &str) -> bool {
-    id.starts_with("builtin:")
-        || id.starts_with("account:")
-        || template_by_id(id).is_some()
+    id.starts_with("builtin:") || id.starts_with("account:") || template_by_id(id).is_some()
 }
 
 // ============================================================================
@@ -336,18 +348,24 @@ fn upsert_provider_rule(doc: &mut Value, id: &str, rule: Value) {
         }
     }
 
-    let rules_root = cfg.entry("providerConfigRules").or_insert_with(|| json!({}));
+    let rules_root = cfg
+        .entry("providerConfigRules")
+        .or_insert_with(|| json!({}));
     if !rules_root.is_object() {
         *rules_root = json!({});
     }
     let rules_obj = rules_root
         .as_object_mut()
         .expect("providerConfigRules normalized to object above");
-    let arr = rules_obj.entry("providerRules").or_insert_with(|| json!([]));
+    let arr = rules_obj
+        .entry("providerRules")
+        .or_insert_with(|| json!([]));
     if !arr.is_array() {
         *arr = json!([]);
     }
-    let arr = arr.as_array_mut().expect("providerRules normalized to array");
+    let arr = arr
+        .as_array_mut()
+        .expect("providerRules normalized to array");
     if let Some(slot) = arr
         .iter_mut()
         .find(|r| r.get("providerId").and_then(Value::as_str) == Some(id))
@@ -518,10 +536,16 @@ fn provider_rule_to_config(rule: &Value) -> Option<(String, ZCodeProviderConfig)
 /// 兜底：settings_config 解析不成 ZCodeProviderConfig 时，从原始 JSON 里摘出
 /// 构成规则所需的最小字段（live.rs 的 raw fallback 路径）。
 fn raw_value_to_rule(id: &str, value: &Value) -> Value {
-    let kind = value.get("kind").and_then(Value::as_str).unwrap_or("anthropic");
+    let kind = value
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("anthropic");
     let options = value.get("options").cloned().unwrap_or_else(|| json!({}));
     let fallback_config = ZCodeProviderConfig {
-        name: value.get("name").and_then(Value::as_str).map(str::to_string),
+        name: value
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         kind: kind.to_string(),
         options: serde_json::from_value(options).unwrap_or_default(),
         enabled: value.get("enabled").and_then(Value::as_bool),
@@ -829,7 +853,11 @@ mod tests {
             }
         });
 
-        upsert_provider_rule(&mut doc, "uuid-1", json!({"providerId": "uuid-1", "config": {}}));
+        upsert_provider_rule(
+            &mut doc,
+            "uuid-1",
+            json!({"providerId": "uuid-1", "config": {}}),
+        );
         upsert_provider_rule(
             &mut doc,
             "uuid-1",
@@ -840,10 +868,7 @@ mod tests {
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0]["providerId"], json!("bigmodel-api"));
         // 用户的 coding-plan access 原样保留
-        assert_eq!(
-            rules[0]["config"]["access"]["apiKey"],
-            json!("keep")
-        );
+        assert_eq!(rules[0]["config"]["access"]["apiKey"], json!("keep"));
         assert_eq!(rules[1]["providerId"], json!("uuid-1"));
         assert_eq!(
             doc["config"]["providerOrder"],
@@ -876,7 +901,9 @@ mod tests {
     #[test]
     fn managed_ids_cover_builtin_and_templates() {
         assert!(is_zcode_managed_provider_id("builtin:bigmodel-coding-plan"));
-        assert!(is_zcode_managed_provider_id("account:bigmodel-individual-coding-plan"));
+        assert!(is_zcode_managed_provider_id(
+            "account:bigmodel-individual-coding-plan"
+        ));
         assert!(is_zcode_managed_provider_id("bigmodel-api"));
         assert!(is_zcode_managed_provider_id("deepseek"));
         assert!(!is_zcode_managed_provider_id("dp"));

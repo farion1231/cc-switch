@@ -510,6 +510,7 @@ function ToolRow({
     Boolean(tools.loadingTools[tool]) ||
     (tools.isLoadingTools && !tools.toolVersionByName.has(tool));
   const isOutdated = isUpdateAvailable(info?.version, info?.latest_version);
+  const nodeGap = isOutdated ? info?.update_blocked_by_node : null;
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
@@ -524,7 +525,7 @@ function ToolRow({
         ? null
         : !info?.version
           ? "install"
-          : isOutdated
+          : isOutdated && !nodeGap
             ? "update"
             : null));
   const sourceLabel = defaultInstall
@@ -677,6 +678,18 @@ function ToolRow({
       <ToolErrorMessage message={info.error} />
     ) : null;
 
+  const nodeLine =
+    !isVersionLoading && nodeGap ? (
+      <p className="flex items-start gap-1 text-caption text-warning-text">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        {t("appsPage.updateNeedsNode", {
+          version: info?.latest_version,
+          required: nodeGap.required,
+          current: nodeGap.current,
+        })}
+      </p>
+    ) : null;
+
   const conflictList =
     expanded && installs && installs.length > 1 ? (
       <div className="space-y-1.5 rounded-control bg-warning-soft p-2.5">
@@ -694,9 +707,10 @@ function ToolRow({
     ) : null;
 
   const footer =
-    wslControls || errorLine || conflictList ? (
+    wslControls || errorLine || nodeLine || conflictList ? (
       <div className="space-y-2">
         {errorLine}
+        {nodeLine}
         {wslControls}
         {conflictList}
       </div>
