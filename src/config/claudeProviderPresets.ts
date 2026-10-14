@@ -2891,4 +2891,34 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "aicoming",
   },
+  {
+    name: "MonkeyAI",
+    websiteUrl: "https://github.com/chaitin/MonkeyCode/tree/main/monkeyai",
+    // 自托管网关（monkeyai/backend/internal/proxy/proxy.go 与 proxy_test.go，
+    // 2026-10-14 核对）：入站 POST /v1/messages，只认 Authorization: Bearer，
+    // 测试把 "Bearer runtime-secret" 解成 credential。Claude Code 自己拼
+    // /v1/messages，所以地址是公网 origin，不要加 /v1。模型 ID 必须是后台已启用
+    // 的 ID，代理按请求里的 model 查找，不会把 Anthropic 和 OpenAI 协议互转。
+    // 密钥在用户侧创建，scope 需要 model:invoke。
+    apiKeyField: "ANTHROPIC_AUTH_TOKEN",
+    apiFormat: "anthropic",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://${MONKEYAI_PUBLIC_HOST}",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "your-model-id",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "your-model-id",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "your-model-id",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "your-model-id",
+      },
+    },
+    category: "third_party",
+    templateValues: {
+      MONKEYAI_PUBLIC_HOST: {
+        label: "Public host",
+        placeholder: "monkeyai.example.com",
+        editorValue: "",
+      },
+    },
+  },
 ];
