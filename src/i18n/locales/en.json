@@ -4100,6 +4100,7 @@
     "desktopNotConnected": "Not connected",
     "newVersion": "{{version}} available",
     "notRunnable": "Can't run",
+    "updateNeedsNode": "{{version}} requires Node {{required}}, but this installation runs on Node {{current}}. Upgrade Node first.",
     "otherInstalls": "{{count}} more install(s)",
     "installsFound": "{{count}} installs found",
     "wslFlag": "Flag",

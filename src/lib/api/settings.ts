@@ -272,6 +272,7 @@ export const settingsApi = {
       installed_but_broken: boolean;
       env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
       wsl_distro: string | null;
+      update_blocked_by_node: NodeRequirementGap | null;
     }>
   > {
     return await invoke("get_tool_versions", { tools, wslShellByTool });
@@ -365,6 +366,12 @@ export interface ToolInstallation {
 }
 
 /** 卸载对话框里的一处安装：能自动卸载就带 plan，否则给出原因。对应后端 ToolUninstallCandidate。 */
+/** 新版本要求的 Node（`engines.node` 原文）与这处安装用的 Node 版本。 */
+export interface NodeRequirementGap {
+  required: string;
+  current: string;
+}
+
 export interface ToolUninstallCandidate extends ToolInstallation {
   plan: ToolUninstallPlan | null;
   unavailable_reason: string | null;

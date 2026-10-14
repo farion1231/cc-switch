@@ -1823,6 +1823,33 @@ describe("AppsPage concurrent CLI upgrades", () => {
       expect.anything(),
     );
   });
+  it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
+    const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      (await defaultVersions(tools)).map(
+        (tool: { name: string; version: string | null }) => ({
+          ...tool,
+          update_blocked_by_node:
+            tool.name === "claude" && tool.version === "1.0.0"
+              ? { required: ">=24.16.0 <25 || >=26.1.0", current: "22.23.2" }
+              : null,
+        }),
+      ),
+    );
+    await renderApps();
+    await waitFor(() =>
+      expect(card("Claude Code").getByText("appsPage.updateNeedsNode")).toBeInTheDocument(),
+    );
+    expect(
+      card("Claude Code").queryByRole("button", { name: "settings.toolUpdate" }),
+    ).toBeNull();
+    fireEvent.click(updateAllButton());
+    await waitFor(() => expect(isReady("Codex")).toBe(true));
+    expect(isReady("Gemini CLI")).toBe(true);
+    expect(
+      mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
+    ).toEqual([["codex"], ["gemini"]]);
+  });
   it("shows diagnosed conflicts on the row, refreshes the install report and says so", async () => {
     vi.resetModules();
     const install = (path: string, isDefault: boolean) => ({
