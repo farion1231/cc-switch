@@ -2067,6 +2067,34 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.groq.com/openai/v1"],
   },
   {
+    name: "SambaNova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    // 官方 Claude Code 接入文档 Option A 直连（docs.sambanova.ai/docs/en/
+    // integrations/claude-code，2026-10-14 核对）：base 为 https://api.sambanova.ai、
+    // 不带 /v1（文档排错表写明带 /v1 会 404；实测 /v1/v1/messages 404、
+    // /v1/messages 无 Key 401）。Bearer 与 x-api-key 都收，默认的 AUTH_TOKEN 即可。
+    // 模型照官方文档全档 MiniMax-M3（Preview，官方说可能短期下架，届时改用
+    // Production 的 gpt-oss-120b）；官方强调 haiku 档也要设，否则后台任务失败。
+    // 不加 [1M] 后缀：窗口按 200K 默认处理，比平台声明的 1048576 保守，
+    // context-1m beta 头上游是否接受未证实。OpenAPI 写明 v1 的 thinking
+    // enabled/adaptive 返回 400，与官方文档说可直连矛盾，未经真 Key 实测。
+    // DeepSeek-V3.1 最大输出仅 7168，低于 Claude Code 默认 max_tokens，不用。
+    // /v1/models 公开可读，默认探测即可，不写 modelsUrl
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.sambanova.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "MiniMax-M3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3",
+      },
+    },
+    category: "cloud_provider",
+    endpointCandidates: ["https://api.sambanova.ai"],
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {

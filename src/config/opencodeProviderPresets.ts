@@ -3762,6 +3762,47 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "SambaNova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    // 官方 OpenCode 接入文档（docs.sambanova.ai/docs/en/integrations/opencode，
+    // 2026-10-14 核对）：OpenAI 兼容 base 为 https://api.sambanova.ai/v1，
+    // Bearer 鉴权。窗口取公开 /v1/models 同日值；平台要求输入加输出不超窗，
+    // 输出统一按 MiniMax 官方值 131072 写。MiniMax-M3 在 SambaCloud 上只收文字
+    //（docs.sambanova.ai/docs/en/models/sambacloud-models）
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "SambaNova",
+      options: {
+        baseURL: "https://api.sambanova.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "gpt-oss-120b": {
+          name: "gpt-oss-120b",
+          reasoning: true,
+          limit: { context: 131072, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "cloud_provider",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

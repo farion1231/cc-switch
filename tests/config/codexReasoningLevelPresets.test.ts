@@ -129,6 +129,10 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 无需显式默认
     ["Groq", "openai/gpt-oss-120b", ["low", "medium", "high"]],
     ["Groq", "openai/gpt-oss-20b", ["low", "medium", "high"]],
+    // SambaNova（native Responses）：OpenAPI 声明 reasoning_effort 枚举
+    // low/medium/high（无 none）；MiniMax-M3 的 effort 只是思考开关，只列 high
+    ["SambaNova", "MiniMax-M3", ["high"]],
+    ["SambaNova", "gpt-oss-120b", ["low", "medium", "high"]],
     // 千帆 v2 官方 thinking:{type}（声明已补）→ 两态
     ["Baidu Qianfan Coding Plan", "qianfan-code-latest", ["none", "high"]],
     // 千帆 Token Plan：deepseek-v4-pro/v4-flash 在 thinking+reasoning_effort

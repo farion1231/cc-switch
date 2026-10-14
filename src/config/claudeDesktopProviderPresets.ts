@@ -1809,6 +1809,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://api.groq.com/openai/v1"],
   },
   {
+    name: "SambaNova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    category: "cloud_provider",
+    // 同 Claude Code 预设：Anthropic 兼容端点，base 不带 /v1（docs.sambanova.ai/
+    // docs/en/integrations/claude-code，2026-10-14 核对）；模型名非 Claude，只能
+    // 走路由。MiniMax-M3 窗口 1048576（公开 /v1/models 同日），标 1M。Messages
+    // 不支持 document（PDF）块与 URL 图片（docs.sambanova.ai/docs/en/features/
+    // messages），且 MiniMax-M3 在 SambaCloud 上只收文字，Desktop 里传附件会失败
+    baseUrl: "https://api.sambanova.ai",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes("MiniMax-M3", "MiniMax-M3", "MiniMax-M3", true),
+    endpointCandidates: ["https://api.sambanova.ai"],
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

@@ -26,6 +26,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   QwenCloud: "通义 阿里 qwen",
   "QwenCloud For Coding": "通义 阿里 qwen",
   "QwenCloud Token Plan": "通义 阿里 qwen",
+  SambaNova: "sambacloud",
   SiliconFlow: "硅基流动",
   "SiliconFlow en": "硅基流动",
   StepFun: "阶跃星辰",

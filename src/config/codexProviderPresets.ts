@@ -3839,6 +3839,51 @@ requires_openai_auth = true`,
     category: "aggregator",
   },
   {
+    name: "SambaNova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Codex 接入文档（docs.sambanova.ai/docs/en/integrations/codex，
+    // 2026-10-14 核对）：base_url = https://api.sambanova.ai/v1、
+    // wire_api = "responses" 直连，Bearer 鉴权
+    config: generateThirdPartyConfig(
+      "sambanova",
+      "https://api.sambanova.ai/v1",
+      "MiniMax-M3",
+    ),
+    endpointCandidates: ["https://api.sambanova.ai/v1"],
+    // Responses 只接受 type: "function" 工具，其余类型被服务端静默滤掉（OpenAPI
+    // /responses 的 tools 描述）：NativeResponses 档案不发 freeform apply_patch、
+    // 改用 shell_command 改文件，不受影响；但 web_search 与 namespace 形态的
+    // MCP 工具会被悄悄丢掉。previous_response_id / store 被忽略，Codex 每轮发
+    // 完整历史无碍。支持 Responses 的模型见 docs.sambanova.ai/docs/en/features/
+    // responses；DeepSeek 系列不走 Responses（404），不进目录
+    apiFormat: "openai_responses",
+    // 档位取 OpenAPI 对 Responses 声明的 reasoning_effort 枚举 low/medium/high
+    //（无 none/minimal）：gpt-oss-120b 三档全列；MiniMax-M3 的 effort 只是思考
+    // 开关、非 none 值行为一致，而枚举里没有 none，只列 high。每档都含 high，
+    // 与 config 的 model_reasoning_effort = "high" 一致，无需
+    // defaultReasoningLevel。窗口取公开 /v1/models 同日值，两款均只收文字。
+    // 首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3",
+        displayName: "MiniMax-M3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "gpt-oss-120b",
+        displayName: "gpt-oss-120b",
+        contextWindow: 131072,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "medium", "high"],
+      },
+    ]),
+    category: "cloud_provider",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

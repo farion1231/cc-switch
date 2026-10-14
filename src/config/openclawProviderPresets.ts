@@ -5043,6 +5043,56 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "SambaNova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    // OpenAI 兼容 base 为 https://api.sambanova.ai/v1（docs.sambanova.ai/docs/en/
+    // integrations/opencode，2026-10-14 核对），Bearer 鉴权。窗口与 cost 取公开
+    // /v1/models 同日值（每百万 token，与 cloud.sambanova.ai/plans/pricing 一致）；
+    // 只有 MiniMax-M3 有自动前缀缓存（docs.sambanova.ai/docs/en/features/
+    // prompt-caching）。平台要求输入加输出不超窗，maxTokens 按 MiniMax 官方值
+    // 131072 写，不照平台声明的 1048576
+    settingsConfig: {
+      baseUrl: "https://api.sambanova.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "MiniMax-M3",
+          name: "MiniMax M3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 0.6, output: 2.4, cacheRead: 0.06, cacheWrite: 0 },
+        },
+        {
+          id: "gpt-oss-120b",
+          name: "gpt-oss-120b",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 131072,
+          cost: { input: 0.22, output: 0.59, cacheRead: 0, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "sambanova/MiniMax-M3" },
+      modelCatalog: {
+        "sambanova/MiniMax-M3": { alias: "MiniMax M3" },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

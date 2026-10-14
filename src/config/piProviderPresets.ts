@@ -2185,6 +2185,43 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
   },
   {
+    name: "SambaNova",
+    providerKey: "cc-switch-sambanova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    settingsConfig: {
+      name: "SambaNova",
+      // OpenAI Chat 端点 base 为 /v1（docs.sambanova.ai/docs/en/integrations/
+      // opencode，2026-10-14 核对）。OpenAPI 的 Chat 请求没有 developer 角色与
+      // store 字段，compat 按通用 OpenAI Completions 写。MiniMax-M3 在 SambaCloud
+      // 上只收文字，须覆盖 catalog 的 text+image；窗口取公开 /v1/models 同日值，
+      // maxTokens 同 MiniMax en 预设写 131072，不写 thinkingProfile。gpt-oss-120b
+      // 的 reasoning_effort 枚举为 low/medium/high（OpenAPI 声明）
+      baseUrl: "https://api.sambanova.ai/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("minimax/minimax-m3", {
+            id: "MiniMax-M3",
+            input: ["text"],
+            contextWindow: 1048576,
+            maxTokens: 131072,
+          }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+        {
+          ...piModel("openai/gpt-oss-120b", {
+            id: "gpt-oss-120b",
+            thinkingProfile: "lowMediumHighOnly",
+          }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+      ],
+    },
+    category: "cloud_provider",
+  },
+  {
     name: "PIPELLM",
     providerKey: "cc-switch-pipellm",
     websiteUrl: "https://code.pipellm.ai",

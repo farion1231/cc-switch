@@ -2685,6 +2685,29 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "SambaNova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    settingsConfig: {
+      name: "sambanova",
+      // OpenAI Chat 端点 base 为 /v1（docs.sambanova.ai/docs/en/integrations/
+      // opencode，2026-10-14 核对），Bearer 鉴权，窗口取公开 /v1/models 同日值。
+      // 不选 anthropic_messages（OpenAPI 写明 v1 的 thinking enabled/adaptive
+      // 返回 400），也不选 codex_responses（Responses 只收 function 工具）
+      base_url: "https://api.sambanova.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "MiniMax-M3", name: "MiniMax M3", context_length: 1048576 },
+        { id: "gpt-oss-120b", name: "gpt-oss-120b", context_length: 131072 },
+      ],
+    },
+    category: "cloud_provider",
+    suggestedDefaults: {
+      model: { default: "MiniMax-M3", provider: "sambanova" },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
