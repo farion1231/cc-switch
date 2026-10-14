@@ -7564,6 +7564,7 @@ mod tests {
             let unsupported = ProxyError::UpstreamError {
                 status: 400,
                 body: Some("unsupported input item".to_string()),
+                retry_after_secs: None,
             };
 
             assert_eq!(

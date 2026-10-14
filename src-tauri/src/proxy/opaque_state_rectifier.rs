@@ -144,6 +144,7 @@ pub fn in_stream_rejection(error: &Value, request: &Value) -> Option<ProxyError>
         ProxyError::UpstreamError {
             status: 400,
             body: Some(body.clone()),
+            retry_after_secs: None,
         }
     })
 }
@@ -189,6 +190,7 @@ pub fn unreadable_agent_task_error() -> ProxyError {
             })
             .to_string(),
         ),
+        retry_after_secs: None,
     }
 }
 
