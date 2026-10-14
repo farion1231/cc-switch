@@ -59,6 +59,8 @@ export interface ClaudeDesktopProviderPreset extends PresetFamilyFields {
   modelRoutes?: ClaudeDesktopRoutePreset[];
   providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
   requiresOAuth?: boolean;
+  // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
+  hidden?: boolean;
 
   endpointCandidates?: string[];
   theme?: PresetTheme;
@@ -1945,6 +1947,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     ),
     endpointCandidates: ["https://api.mistral.ai"],
     icon: "mistral",
+    // 先隐藏：同 Claude 预设，转换层风险真 Key 冒烟通过前不展示
+    hidden: true,
   },
   {
     name: "Cloudflare AI Gateway",

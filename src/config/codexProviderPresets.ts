@@ -49,6 +49,8 @@ export interface CodexProviderPreset extends PresetFamilyFields {
   codexChatReasoning?: CodexChatReasoning;
   // Session-based prompt-cache routing override for Chat Completions upstreams
   promptCacheRouting?: PromptCacheRoutingMode;
+  // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
+  hidden?: boolean;
 }
 
 /**
@@ -4104,6 +4106,9 @@ requires_openai_auth = true`,
     ]),
     category: "cn_official",
     icon: "mistral",
+    // 先隐藏：上面的转换层风险（stream_options / 额外字段可能 422、推理分块
+    // 数组）真 Key 冒烟通过前不在列表里展示
+    hidden: true,
   },
   {
     name: "Cloudflare AI Gateway",

@@ -2263,6 +2263,9 @@ export const providerPresets: ProviderPreset[] = [
     apiFormat: "openai_chat",
     endpointCandidates: ["https://api.mistral.ai"],
     icon: "mistral",
+    // 先隐藏：上面两条转换层风险（stream_options 可能 422、推理分块数组）
+    // 真 Key 冒烟通过前不在列表里展示
+    hidden: true,
   },
   {
     name: "Cloudflare AI Gateway",
