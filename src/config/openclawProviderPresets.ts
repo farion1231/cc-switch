@@ -1286,8 +1286,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
     templateValues: {
       apiKey: {
@@ -3898,14 +3896,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "ep-xxx-xxx",
+          id: "kat-coder-pro-v2.5",
           name: "KAT-Coder Pro V2.5",
           contextWindow: 256000,
         },
       ],
     },
     category: "cn_official",
-    icon: "catcoder",
+    icon: "streamlake",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -3926,15 +3924,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "ep-xxx-xxx",
-          name: "KAT-Coder Pro",
-          contextWindow: 128000,
-          cost: { input: 0.3, output: 1.2, cacheRead: 0.06 },
+          id: "kat-coder-pro-v2.5",
+          name: "KAT-Coder Pro V2.5",
+          contextWindow: 256000,
         },
       ],
     },
     category: "cn_official",
-    icon: "catcoder",
+    icon: "streamlake",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -4446,6 +4443,65 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    // OpenAI Chat 端点 /v1/chat/completions（docs.baseten.co/development/
+    // model-apis/overview，2026-10-14 核对）；窗口、最大输出与输入模态取同页
+    // 模型表
+    settingsConfig: {
+      baseUrl: "https://inference.baseten.co/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "zai-org/GLM-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 262144,
+        },
+        {
+          id: "moonshotai/Kimi-K3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 262144,
+        },
+        {
+          id: "zai-org/GLM-5.3-Flash",
+          name: "GLM-5.3 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 262144,
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4.1-Flash",
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 262144,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "baseten/zai-org/GLM-5.3" },
+      modelCatalog: { "baseten/zai-org/GLM-5.3": { alias: "GLM" } },
+    },
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",
@@ -4554,6 +4610,895 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     suggestedDefaults: {
       model: { primary: "nvidia/moonshotai/kimi-k3" },
       modelCatalog: { "nvidia/moonshotai/kimi-k3": { alias: "Kimi" } },
+    },
+  },
+  {
+    name: "Ollama Cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    // 云端 OpenAI 兼容 base 为 https://ollama.com/v1（docs.ollama.com/api/
+    // openai-compatibility，2026-10-14 核对）。cost 取 https://ollama.com/pricing
+    // 同日标准时段价（非 off-peak 半价）；maxTokens 平台未公布，取 models.dev
+    // 的 ollama-cloud 条目，DeepSeek 两款按官方 384K
+    settingsConfig: {
+      baseUrl: "https://ollama.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "glm-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+        },
+        {
+          id: "glm-5.3-flash",
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+        },
+        {
+          id: "kimi-k3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+        },
+        {
+          id: "deepseek-v4-pro:0813",
+          name: "DeepSeek V4 Pro",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 1.32, output: 3.96, cacheRead: 0.044, cacheWrite: 0 },
+        },
+        {
+          id: "deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+        },
+        {
+          id: "minimax-m3",
+          name: "MiniMax M3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 512000,
+          maxTokens: 131072,
+          cost: { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "ollama",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ollama-cloud/glm-5.3" },
+      modelCatalog: {
+        "ollama-cloud/glm-5.3": { alias: "GLM-5.3" },
+      },
+    },
+  },
+  {
+    name: "Meta Model API",
+    websiteUrl: "https://dev.meta.ai",
+    apiKeyUrl: "https://dev.meta.ai",
+    // OpenAI Chat 端点 /v1/chat/completions（dev.meta.ai/docs/coding-agents.md，
+    // 2026-10-14 核对），Bearer 鉴权。cost 取 dev.meta.ai/docs/
+    // pricing-rate-limits.md 同日 Standard mode 价（每百万 token）；缓存自动
+    // 生效、写入不另收故记 0。最大输出取官方 OpenCode 配置的 limit.output
+    settingsConfig: {
+      baseUrl: "https://api.meta.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "muse-wonder-1.0",
+          name: "Muse Wonder 1.0",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 0 },
+        },
+        {
+          id: "muse-spark-1.3",
+          name: "Muse Spark 1.3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "meta",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "meta/muse-wonder-1.0" },
+      modelCatalog: {
+        "meta/muse-wonder-1.0": { alias: "Muse Wonder" },
+      },
+    },
+  },
+  {
+    name: "DeepInfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    // OpenAI Chat 端点 base 为 /v1/openai（docs.deepinfra.com/chat/overview.md，
+    // 2026-10-14 核对），Bearer 鉴权。cost 取 https://api.deepinfra.com/models/<id>
+    // 同日原价（每百万 token）：GLM-5.2 / 5.3 网页另有无截止日期的折扣，促销价
+    // 会变，故记原价；缓存写入不另收记 0。窗口与最大输出同 OpenCode 预设
+    settingsConfig: {
+      baseUrl: "https://api.deepinfra.com/v1/openai",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek-ai/DeepSeek-V4-Flash-0731",
+          name: "DeepSeek V4 Flash 0731",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 0.06, output: 0.18, cacheRead: 0.015, cacheWrite: 0 },
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 1.3, output: 2.6, cacheRead: 0.1, cacheWrite: 0 },
+        },
+        {
+          id: "moonshotai/Kimi-K3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 2.85, output: 14.25, cacheRead: 0.285, cacheWrite: 0 },
+        },
+        {
+          id: "zai-org/GLM-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 0.9, output: 4, cacheRead: 0.2, cacheWrite: 0 },
+        },
+        {
+          id: "zai-org/GLM-5.2",
+          name: "GLM-5.2",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 163840,
+          cost: { input: 0.75, output: 2.4, cacheRead: 0.14, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731" },
+      modelCatalog: {
+        "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731": {
+          alias: "DeepSeek V4 Flash 0731",
+        },
+      },
+    },
+  },
+  {
+    name: "Vercel AI Gateway",
+    websiteUrl: "https://vercel.com/ai-gateway",
+    apiKeyUrl:
+      "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
+    // 官方 OpenClaw 接入文档（vercel.com/docs/ai-gateway/coding-agents/openclaw，
+    // 2026-10-14 核对）原文即 /coding-agent/v1 + openai-completions，且只有写进
+    // models 的模型才能路由。cost 取 GET https://ai-gateway.vercel.sh/v1/models
+    // 同日公开价（每百万 token）的低档价：Haiku 5.5 超 100K、GPT-6 系超 272K
+    // 后单价上浮；Gemini 3.8 Flash 未列缓存写入记 0。窗口与最大输出同 OpenCode
+    // 预设
+    settingsConfig: {
+      baseUrl: "https://ai-gateway.vercel.sh/coding-agent/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "anthropic/claude-opus-5.5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+        },
+        {
+          id: "anthropic/claude-sonnet-5.5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+        },
+        {
+          id: "anthropic/claude-haiku-5.5",
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+        },
+        {
+          id: "openai/gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1050000,
+          maxTokens: 128000,
+          cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+        },
+        {
+          id: "openai/gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1050000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+        },
+        {
+          id: "google/gemini-3.8-flash",
+          name: "Gemini 3.8 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 65535,
+          cost: { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "vercel-ai-gateway/anthropic/claude-opus-5.5",
+        fallbacks: ["vercel-ai-gateway/anthropic/claude-sonnet-5.5"],
+      },
+      modelCatalog: {
+        "vercel-ai-gateway/anthropic/claude-opus-5.5": { alias: "Opus" },
+        "vercel-ai-gateway/anthropic/claude-sonnet-5.5": { alias: "Sonnet" },
+      },
+    },
+    icon: "vercel",
+  },
+  {
+    name: "Nebius Token Factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    // OpenAI Chat 端点 base 为 /v1（docs.tokenfactory.nebius.com/switch.md，
+    // 2026-10-14 核对），Bearer 鉴权。cost 取官方公开目录
+    // tokenfactory.nebius.com/api/public/models_info 同日价（每百万 token）；
+    // 目录里所有模型都没有缓存价，故只写 input / output。窗口与最大输出同
+    // OpenCode 预设
+    settingsConfig: {
+      baseUrl: "https://api.tokenfactory.nebius.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "zai-org/GLM-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1024000,
+          maxTokens: 131072,
+          cost: { input: 1.4, output: 4.4 },
+        },
+        {
+          id: "zai-org/GLM-5.3-Flash",
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1024000,
+          maxTokens: 131072,
+          cost: { input: 0.15, output: 0.5 },
+        },
+        {
+          id: "moonshotai/Kimi-K3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1024000,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15 },
+        },
+        {
+          id: "moonshotai/Kimi-K2.7-Code",
+          name: "Kimi K2.7 Code",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 262144,
+          maxTokens: 262144,
+          cost: { input: 0.95, output: 4 },
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 979000,
+          maxTokens: 384000,
+          cost: { input: 1.32, output: 3.96 },
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "nebius/zai-org/GLM-5.3" },
+      modelCatalog: {
+        "nebius/zai-org/GLM-5.3": { alias: "GLM-5.3" },
+      },
+    },
+  },
+  {
+    name: "Groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    // OpenAI Chat 端点 base 为 https://api.groq.com/openai/v1（console.groq.com/
+    // docs/openai，2026-10-14 核对），Bearer 鉴权。cost 取各模型页同日价
+    //（console.groq.com/docs/model/openai/gpt-oss-120b、.../gpt-oss-20b，每百万
+    // token）；缓存自动生效、命中部分五折（console.groq.com/docs/prompt-caching），
+    // 20b 的缓存价按页面显示值 0.037 填。窗口与最大输出同 OpenCode 预设
+    settingsConfig: {
+      baseUrl: "https://api.groq.com/openai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "openai/gpt-oss-120b",
+          name: "GPT-OSS 120B",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 65536,
+          cost: { input: 0.15, output: 0.6, cacheRead: 0.075, cacheWrite: 0 },
+        },
+        {
+          id: "openai/gpt-oss-20b",
+          name: "GPT-OSS 20B",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 65536,
+          cost: { input: 0.075, output: 0.3, cacheRead: 0.037, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "groq/openai/gpt-oss-120b" },
+      modelCatalog: {
+        "groq/openai/gpt-oss-120b": { alias: "GPT-OSS 120B" },
+      },
+    },
+  },
+  {
+    name: "SambaNova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    // OpenAI 兼容 base 为 https://api.sambanova.ai/v1（docs.sambanova.ai/docs/en/
+    // integrations/opencode，2026-10-14 核对），Bearer 鉴权。窗口与 cost 取公开
+    // /v1/models 同日值（每百万 token，与 cloud.sambanova.ai/plans/pricing 一致）；
+    // 只有 MiniMax-M3 有自动前缀缓存（docs.sambanova.ai/docs/en/features/
+    // prompt-caching）。平台要求输入加输出不超窗，maxTokens 按 MiniMax 官方值
+    // 131072 写，不照平台声明的 1048576
+    settingsConfig: {
+      baseUrl: "https://api.sambanova.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "MiniMax-M3",
+          name: "MiniMax M3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 0.6, output: 2.4, cacheRead: 0.06, cacheWrite: 0 },
+        },
+        {
+          id: "gpt-oss-120b",
+          name: "gpt-oss-120b",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 131072,
+          cost: { input: 0.22, output: 0.59, cacheRead: 0, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "sambanova/MiniMax-M3" },
+      modelCatalog: {
+        "sambanova/MiniMax-M3": { alias: "MiniMax M3" },
+      },
+    },
+  },
+  {
+    name: "DigitalOcean",
+    websiteUrl: "https://www.digitalocean.com/products/ai-platform",
+    apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
+    // 官方 Coding Agents 文档的 OpenClaw 段（docs.digitalocean.com/products/
+    // inference/how-to/use-with-coding-agents，2026-10-14 核对）原文即
+    // digitalocean 供应商 + https://inference.do-ai.run/v1 + openai-completions，
+    // Bearer 鉴权。窗口与最大输出取平台模型表、cost 取平台价目表（每百万
+    // token，docs.digitalocean.com/products/inference/details/pricing 同日）；
+    // Kimi K3 平台未公布最大输出，按 models.dev 写 131072；DeepSeek V4 Pro 0813
+    // 平台表写的最大输出等于窗口，可疑，按 V4 Pro 官方值 384000 写。Sonnet 5.5
+    // 须 Tier 3+ 账号，缓存写入取 5 分钟价。默认 GLM-5.3，所有等级可用
+    settingsConfig: {
+      baseUrl: "https://inference.do-ai.run/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "glm-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 128000,
+          cost: { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+        },
+        {
+          id: "kimi-k3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+        },
+        {
+          id: "deepseek-v4-pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 1.32, output: 3.96, cacheRead: 0.044, cacheWrite: 0 },
+        },
+        {
+          id: "anthropic-claude-sonnet-5.5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "digitalocean/glm-5.3" },
+      modelCatalog: {
+        "digitalocean/glm-5.3": { alias: "GLM-5.3" },
+      },
+    },
+  },
+  {
+    name: "Hugging Face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    // Inference Providers 的 OpenAI Chat 端点 base 为 https://router.huggingface.co/v1
+    //（docs.openclaw.ai/providers/huggingface 与 huggingface.co/docs/
+    // inference-providers/index，2026-10-14 核对），Bearer 鉴权；OpenClaw 官方
+    // 示例的模型引用带 :cheapest 后缀，冒号可用。上游钉 :baseten（同 Claude Code
+    // 预设）；窗口、输入模态与 cost（每百万 token）取公开 /v1/models 对 Baseten
+    // 的同日声明，缓存价未公布故不写 cacheRead；最大输出平台未声明，沿用仓库口径
+    settingsConfig: {
+      baseUrl: "https://router.huggingface.co/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "zai-org/GLM-5.3:baseten",
+          name: "GLM-5.3 (Baseten)",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1.4, output: 4.4 },
+        },
+        {
+          id: "zai-org/GLM-5.3-Flash:baseten",
+          name: "GLM-5.3 Flash (Baseten)",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 0.15, output: 0.5 },
+        },
+        {
+          id: "moonshotai/Kimi-K3:baseten",
+          name: "Kimi K3 (Baseten)",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15 },
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813:baseten",
+          name: "DeepSeek V4 Pro 0813 (Baseten)",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 1.32, output: 3.96 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "huggingface",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "hf_...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "huggingface/zai-org/GLM-5.3:baseten" },
+      modelCatalog: {
+        "huggingface/zai-org/GLM-5.3:baseten": { alias: "GLM-5.3" },
+      },
+    },
+  },
+  {
+    name: "Microsoft Foundry",
+    websiteUrl: "https://azure.microsoft.com/en-us/products/ai-foundry",
+    apiKeyUrl: "https://ai.azure.com/",
+    // OpenClaw 官方 Microsoft Foundry 文档（docs.openclaw.ai/plugins/reference/
+    // microsoft-foundry.md，2026-10-14 核对）：Foundry 上的 Claude 要配成自定义
+    // anthropic-messages 供应商；内置插件占用 microsoft-foundry 这个 ID，供应商
+    // 名请另取（下面引用用 foundry-claude）。base 同 Claude Code 预设，为
+    // https://<资源名>.services.ai.azure.com/anthropic、不带 /v1，API Key 发
+    // x-api-key（learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/
+    // use-foundry-models-claude 同日），资源名用字面占位符。模型 ID 填默认部署名；
+    // 部署名与模型 ID 不一致时须在模型上设 params.canonicalModelId，否则思考档位
+    // 处理会错。窗口与最大输出取微软模型表（.../concepts/claude-models 同日），
+    // cost（每百万 token）取 Anthropic 官方价（Foundry 按同价折 CCU），缓存写入
+    // 取 5 分钟价；Haiku 5.5 取提示词 10 万 token 以内的标准档
+    settingsConfig: {
+      baseUrl: "https://YOUR_RESOURCE_NAME.services.ai.azure.com/anthropic",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+        },
+        {
+          id: "claude-haiku-5-5",
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "azure",
+    iconColor: "#0078D4",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "foundry-claude/claude-opus-5-5",
+        fallbacks: ["foundry-claude/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "foundry-claude/claude-opus-5-5": { alias: "Opus" },
+        "foundry-claude/claude-sonnet-5-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "Fireworks AI",
+    websiteUrl: "https://fireworks.ai",
+    apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
+    // OpenClaw 官方 Fireworks 文档（docs.openclaw.ai/providers/fireworks，
+    // 2026-10-14 核对）：base 为 https://api.fireworks.ai/inference/v1、
+    // openai-completions，Bearer 鉴权，模型引用写 fireworks/accounts/fireworks/
+    // models/<id>。官方 Fireworks 插件（须另装）占用 fireworks / fireworks-ai
+    // 两个 ID，装了插件的话供应商名请另取。引用前缀不能省：rebase 在第一个 /
+    // 处切开，省了会把 accounts 当成供应商键。窗口、输入模态取各模型页，cost
+    //（每百万 token，标准档）取 docs.fireworks.ai/serverless/pricing 同日；
+    // 定价页没列缓存写入价，写 0。最大输出平台写"可到整个上下文"，保守按 131072
+    // 写，DeepSeek V4.1 Flash 取 384000；MiniMax M3 只开 512K、不收图片
+    settingsConfig: {
+      baseUrl: "https://api.fireworks.ai/inference/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "accounts/fireworks/models/glm-5p3",
+          name: "GLM 5.3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+        },
+        {
+          id: "accounts/fireworks/models/kimi-k3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+        },
+        {
+          id: "accounts/fireworks/models/deepseek-v4p1-flash",
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 384000,
+          cost: { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+        },
+        {
+          id: "accounts/fireworks/models/glm-5p3-flash",
+          name: "GLM 5.3 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+        },
+        {
+          id: "accounts/fireworks/models/minimax-m3",
+          name: "MiniMax M3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 512000,
+          maxTokens: 131072,
+          cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "fw_...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "fireworks/accounts/fireworks/models/glm-5p3" },
+      modelCatalog: {
+        "fireworks/accounts/fireworks/models/glm-5p3": { alias: "GLM 5.3" },
+      },
+    },
+  },
+  {
+    name: "Mistral AI",
+    websiteUrl: "https://mistral.ai",
+    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // OpenAI Chat 端点 base 为 https://api.mistral.ai/v1（docs.mistral.ai/
+    // openapi.yaml，2026-10-14 核对），Bearer 鉴权。OpenClaw 的 Mistral 支持是
+    // 须另装的官方插件（docs.openclaw.ai/providers/mistral 同日），装了插件的话
+    // 供应商名请另取。模型用官方模型表（docs.mistral.ai/models.md 同日）的固定
+    // 版本 ID，窗口官方写 256k；cost（每百万 token）取 docs.mistral.ai/inference/
+    // pricing.md 同日，缓存读按官方「缓存 token 按输入价 10% 计」
+    //（docs.mistral.ai/studio/conversations/advanced/prompt-caching.md）推算，
+    // 不收缓存写入费，写 0。官方没有单独的最大输出，规则是 prompt + max_tokens
+    // ≤ 窗口，保守按 32768 写
+    settingsConfig: {
+      baseUrl: "https://api.mistral.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "mistral-medium-3-5",
+          name: "Mistral Medium 3.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 256000,
+          maxTokens: 32768,
+          cost: { input: 1.5, output: 7.5, cacheRead: 0.15, cacheWrite: 0 },
+        },
+        {
+          id: "mistral-small-2603",
+          name: "Mistral Small 4",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 256000,
+          maxTokens: 32768,
+          cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "mistral",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "mistral/mistral-medium-3-5" },
+      modelCatalog: {
+        "mistral/mistral-medium-3-5": { alias: "Mistral Medium 3.5" },
+      },
+    },
+  },
+  {
+    name: "Cloudflare AI Gateway",
+    websiteUrl: "https://developers.cloudflare.com/ai-gateway/",
+    apiKeyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+    // 走 REST 统一 API（developers.cloudflare.com/ai-gateway/usage/rest-api，
+    // 2026-05-21 上线，2026-10-14 核对）：base 为 https://api.cloudflare.com/
+    // client/v4/accounts/<账户 ID>/ai/v1，标准 Bearer 鉴权，默认走 default 网关；
+    // 该页要求 token 带 Workers AI Read（只有 AI Gateway 权限会 401）。表单不替换
+    // 模板变量，账户 ID 用字面占位符，忘了改会 401。旧的 /compat 端点已废弃不用。
+    // OpenClaw 官方插件 @openclaw/cloudflare-ai-gateway-provider 用的 provider ID
+    // 是 cloudflare-ai-gateway（docs.openclaw.ai/providers/cloudflare-ai-gateway
+    // 同日），供应商名请另取（如 cloudflare）免得撞车。模型 ID 为 author/model、
+    // 用点号；Claude 系列在官方目录（developers.cloudflare.com/ai/models 同日）只
+    // 写 Anthropic Messages 格式，Chat 端点不放。窗口、最大输出与 cost（每百万
+    // token）取该目录与 models.dev 的 cloudflare-ai-gateway 条目同日，GPT 取 272K
+    // 内的单价；缓存写入未列，不写。带工具调用加流式的实际行为未经真 Key 实测
+    settingsConfig: {
+      baseUrl:
+        "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "openai/gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1050000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1 },
+        },
+        {
+          id: "openai/gpt-6-luna",
+          name: "GPT-6 Luna",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1050000,
+          maxTokens: 128000,
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01 },
+        },
+        {
+          id: "moonshotai/kimi-k3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15, cacheRead: 0.3 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "cloudflare",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "cloudflare/openai/gpt-6.1-sol" },
+      modelCatalog: {
+        "cloudflare/openai/gpt-6.1-sol": { alias: "GPT-6.1 Sol" },
+      },
     },
   },
   {

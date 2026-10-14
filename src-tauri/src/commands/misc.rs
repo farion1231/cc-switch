@@ -13,6 +13,8 @@ use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
+#[path = "tool_node_requirement.rs"]
+mod tool_node_requirement;
 #[path = "tool_uninstall.rs"]
 mod tool_uninstall;
 
@@ -129,6 +131,8 @@ pub struct ToolVersion {
     env_type: String,
     /// 当 env_type 为 "wsl" 时，返回该工具绑定的 WSL distro（用于按 distro 探测 shells）
     wsl_distro: Option<String>,
+    /// 有新版本、但新版本要求的 Node 比这处安装用的新：前端不给升级按钮，提示先升级 Node。
+    update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
 const VALID_TOOLS: [&str; 9] = [
@@ -261,11 +265,22 @@ pub struct ToolUninstallPlan {
     wsl_distro: Option<String>,
 }
 
+/// One installation offered in the uninstall dialog: a plan, or why it must be removed manually.
+#[derive(Debug, serde::Serialize)]
+pub struct ToolUninstallCandidate {
+    #[serde(flatten)]
+    install: ToolInstallation,
+    plan: Option<ToolUninstallPlan>,
+    unavailable_reason: Option<String>,
+    /// A copy the tool's own updater recreates (Grok in npm mode), so removing it alone is temporary.
+    reinstalled_by_updater: bool,
+}
+
 #[tauri::command]
 pub async fn prepare_tool_uninstall(
     tool: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
-) -> Result<ToolUninstallPlan, String> {
+) -> Result<Vec<ToolUninstallCandidate>, String> {
     if !VALID_TOOLS.contains(&tool.as_str()) {
         return Err(format!("Unsupported tool action target: {tool}"));
     }
@@ -273,7 +288,7 @@ pub async fn prepare_tool_uninstall(
         let pref = wsl_shell_by_tool
             .as_ref()
             .and_then(|prefs| prefs.get(&tool));
-        tool_uninstall::plan(&tool, pref)
+        tool_uninstall::candidates(&tool, pref)
     })
     .await
     .map_err(|e| format!("uninstall plan task join error: {e}"))?
@@ -309,6 +324,11 @@ pub async fn run_tool_lifecycle_action(
             .await;
     }
     let action = ToolLifecycleAction::from_str(&action)?;
+    if matches!(action, ToolLifecycleAction::Update) {
+        for tool in &requested {
+            tool_node_requirement::ensure_update_node(tool).await?;
+        }
+    }
 
     let label = match action {
         ToolLifecycleAction::Install => "tool_install",
@@ -1160,6 +1180,16 @@ async fn get_single_tool_version_impl(
         _ => None,
     };
 
+    // 3. 有新版本时，看新版本要求的 Node 与这处安装用的对不对得上
+    let update_blocked_by_node = match (local, latest_version.as_deref()) {
+        (Some(local), Some(latest))
+            if compare_semver(local, latest) == Some(std::cmp::Ordering::Less) =>
+        {
+            tool_node_requirement::update_node_gap(&client, tool, latest).await
+        }
+        _ => None,
+    };
+
     ToolVersion {
         name: tool.to_string(),
         version: local_version,
@@ -1168,6 +1198,7 @@ async fn get_single_tool_version_impl(
         installed_but_broken,
         env_type,
         wsl_distro,
+        update_blocked_by_node,
     }
 }
 

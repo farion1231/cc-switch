@@ -59,6 +59,8 @@ export interface ClaudeDesktopProviderPreset extends PresetFamilyFields {
   modelRoutes?: ClaudeDesktopRoutePreset[];
   providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
   requiresOAuth?: boolean;
+  // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
+  hidden?: boolean;
 
   endpointCandidates?: string[];
   theme?: PresetTheme;
@@ -535,8 +537,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    isPartner: true,
-    partnerPromotionKey: "claudeapi",
     icon: "claudeapi",
   },
   {
@@ -548,8 +548,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
   },
   {
@@ -1641,6 +1639,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "therouter",
   },
   {
+    name: "Baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    category: "aggregator",
+    // 同 Claude Code 预设：Messages 端点（beta）只认 Bearer，路由按
+    // ANTHROPIC_AUTH_TOKEN 发 Bearer；三个模型窗口均为 1M（docs.baseten.co/
+    // development/model-apis/overview，2026-10-14 核对）。Claude Code 若改走
+    // openai_chat，这里一起改
+    baseUrl: "https://inference.baseten.co",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "zai-org/GLM-5.3",
+      "moonshotai/Kimi-K3",
+      "zai-org/GLM-5.3-Flash",
+      true,
+    ),
+    endpointCandidates: ["https://inference.baseten.co"],
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",
@@ -1656,6 +1674,300 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://api.novita.ai/anthropic"],
     icon: "novita",
     iconColor: "#000000",
+  },
+  {
+    name: "Ollama Cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    category: "cloud_provider",
+    // 云端 Anthropic 兼容层（docs.ollama.com/api/anthropic-compatibility，
+    // 2026-10-14 核对）只认 Bearer，路由按 ANTHROPIC_AUTH_TOKEN 发 Bearer；
+    // 三个模型窗口均为 1M（https://ollama.com/api/show）
+    baseUrl: "https://ollama.com",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes("glm-5.3", "kimi-k3", "glm-5.3-flash", true),
+    endpointCandidates: ["https://ollama.com"],
+    icon: "ollama",
+  },
+  {
+    name: "Meta Model API",
+    websiteUrl: "https://dev.meta.ai",
+    apiKeyUrl: "https://dev.meta.ai",
+    category: "cn_official",
+    // 同 Claude Code 预设：Messages 端点 /v1/messages 只认 Bearer，路由按
+    // ANTHROPIC_AUTH_TOKEN 发 Bearer（dev.meta.ai/docs/coding-agents.md，
+    // 2026-10-14 核对）；模型名非 Claude，只能走路由。两款窗口均为 1M
+    //（dev.meta.ai/docs/models.md）。haiku 与 sonnet 同为 Spark 1.3，按上游
+    // 去重后只剩两条路由
+    baseUrl: "https://api.meta.ai",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "muse-spark-1.3",
+      "muse-wonder-1.0",
+      "muse-spark-1.3",
+      true,
+    ),
+    endpointCandidates: ["https://api.meta.ai"],
+    icon: "meta",
+  },
+  {
+    name: "DeepInfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    category: "aggregator",
+    // 同 Claude Code 预设：Anthropic 兼容端点（docs.deepinfra.com/integrations/
+    // anthropic.md，2026-10-14 核对）；模型名非 Claude，只能走路由。窗口取
+    // https://api.deepinfra.com/models/<id> 同日元数据：两款 DeepSeek 1M、
+    // Ling-3.0-flash 128K，brandedRoutes 的 supports1m 一刀切，故内联逐条写
+    baseUrl: "https://api.deepinfra.com/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+        upstreamModel: "deepseek-ai/DeepSeek-V4-Flash-0731",
+        labelOverride: "deepseek-ai/DeepSeek-V4-Flash-0731",
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+        upstreamModel: "deepseek-ai/DeepSeek-V4-Pro-0813",
+        labelOverride: "deepseek-ai/DeepSeek-V4-Pro-0813",
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
+        upstreamModel: "inclusionAI/Ling-3.0-flash",
+        labelOverride: "inclusionAI/Ling-3.0-flash",
+        supports1m: false,
+      },
+    ],
+    endpointCandidates: ["https://api.deepinfra.com/anthropic"],
+  },
+  {
+    name: "Vercel AI Gateway",
+    websiteUrl: "https://vercel.com/ai-gateway",
+    apiKeyUrl:
+      "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
+    category: "aggregator",
+    // 同 Claude Code 预设：/claude-code 兼容面（vercel.com/docs/ai-gateway/
+    // coding-agents/claude-code，2026-10-14 核对）。上游 ID 带 anthropic/ 前缀，
+    // 网关是否接受 Desktop 发的无前缀 claude-sonnet-5 未证实，照 OpenRouter /
+    // TheRouter 走路由映射；三个模型平台目录窗口均为 1M
+    baseUrl: "https://ai-gateway.vercel.sh/claude-code",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "anthropic/claude-sonnet-5.5",
+      "anthropic/claude-opus-5.5",
+      "anthropic/claude-haiku-5.5",
+      true,
+    ),
+    endpointCandidates: ["https://ai-gateway.vercel.sh/claude-code"],
+    icon: "vercel",
+  },
+  {
+    name: "Nebius Token Factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    category: "aggregator",
+    // 同 Claude Code 预设：官方没有 Anthropic 端点（/v1/messages 实测 404，
+    // api.tokenfactory.nebius.com/openapi.json，2026-10-14 核对），走
+    // openai_chat 路由。GLM-5.3 与 GLM-5.3-Flash 在官方目录
+    // tokenfactory.nebius.com/api/public/models_info 同日窗口均为 1024000
+    baseUrl: "https://api.tokenfactory.nebius.com",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "zai-org/GLM-5.3",
+      "zai-org/GLM-5.3",
+      "zai-org/GLM-5.3-Flash",
+      true,
+    ),
+    endpointCandidates: ["https://api.tokenfactory.nebius.com"],
+  },
+  {
+    name: "Groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    category: "aggregator",
+    // 同 Claude Code 预设：没有可用的 Anthropic 端点（/anthropic/v1/messages
+    // 实测 404，2026-10-14），走 openai_chat 路由。gpt-oss 两款窗口均为
+    // 131072（console.groq.com/docs/models），不标 1M
+    baseUrl: "https://api.groq.com/openai/v1",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+    ),
+    endpointCandidates: ["https://api.groq.com/openai/v1"],
+  },
+  {
+    name: "SambaNova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    category: "cloud_provider",
+    // 同 Claude Code 预设：Anthropic 兼容端点，base 不带 /v1（docs.sambanova.ai/
+    // docs/en/integrations/claude-code，2026-10-14 核对）；模型名非 Claude，只能
+    // 走路由。MiniMax-M3 窗口 1048576（公开 /v1/models 同日），标 1M。Messages
+    // 不支持 document（PDF）块与 URL 图片（docs.sambanova.ai/docs/en/features/
+    // messages），且 MiniMax-M3 在 SambaCloud 上只收文字，Desktop 里传附件会失败
+    baseUrl: "https://api.sambanova.ai",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes("MiniMax-M3", "MiniMax-M3", "MiniMax-M3", true),
+    endpointCandidates: ["https://api.sambanova.ai"],
+  },
+  {
+    name: "DigitalOcean",
+    websiteUrl: "https://www.digitalocean.com/products/ai-platform",
+    apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
+    category: "cloud_provider",
+    // 同 Claude Code 预设：Anthropic 端点 base 不带 /v1，接受 Bearer 与 Claude
+    // 原生模型 ID（docs.digitalocean.com/products/inference/how-to/
+    // use-with-coding-agents 与 reference/api/reference/serverless-inference，
+    // 2026-10-14 核对），直连即可。三个路由在平台上都有对应模型：Sonnet 5 /
+    // Opus 5 为 1M 窗口，Haiku 4.5 为 200K（docs.digitalocean.com/products/
+    // inference/details/models 同日）。官方排障表说 BETA 标记会导致鉴权失败，
+    // Desktop 设不了关 beta 的变量，它自己发的 beta 头是否触发未经真 Key 实测
+    //（同 Soshow）。Tier 1 / Tier 2 账号用不了 Anthropic 模型
+    baseUrl: "https://inference.do-ai.run",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+        upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+        upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
+        upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
+        supports1m: false,
+      },
+    ],
+    endpointCandidates: ["https://inference.do-ai.run"],
+  },
+  {
+    name: "Hugging Face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    category: "aggregator",
+    // 同 Claude Code 预设：Anthropic 端点 base 不带 /v1，发 Bearer
+    //（huggingface.co/docs/inference-providers/integrations/claude-code，
+    // 2026-10-14 核对）；模型名非 Claude，只能走路由。上游钉 :baseten，路由
+    // 模型窗口均为 1048576（公开 /v1/models 同日），标 1M；opus 与 sonnet 相同，
+    // 去重后只剩两条路由
+    baseUrl: "https://router.huggingface.co",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "zai-org/GLM-5.3:baseten",
+      "zai-org/GLM-5.3:baseten",
+      "zai-org/GLM-5.3-Flash:baseten",
+      true,
+    ),
+    endpointCandidates: ["https://router.huggingface.co"],
+    icon: "huggingface",
+  },
+  {
+    name: "Microsoft Foundry",
+    websiteUrl: "https://azure.microsoft.com/en-us/products/ai-foundry",
+    apiKeyUrl: "https://ai.azure.com/",
+    category: "cloud_provider",
+    // 同 Claude Code 预设：base 为 https://<资源名>.services.ai.azure.com/anthropic、
+    // 不带 /v1，API Key 发 x-api-key（learn.microsoft.com/en-us/azure/foundry/
+    // foundry-models/how-to/use-foundry-models-claude，2026-10-14 核对）。表单不支持
+    // 模板变量，资源名用字面占位符（同 Codex 的 Azure OpenAI）。直连只能写 Bearer，
+    // 文档只把 Bearer 写成 Entra token 的用法，故走路由，按 ANTHROPIC_API_KEY 发
+    // x-api-key。上游填默认部署名（自定义了须同步改）；三个 5.5 模型窗口均为 1M
+    //（learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/
+    // claude-models 同日），标 1M
+    baseUrl: "https://YOUR_RESOURCE_NAME.services.ai.azure.com/anthropic",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-5-5",
+      true,
+    ),
+    icon: "azure",
+    iconColor: "#0078D4",
+  },
+  {
+    name: "Fireworks AI",
+    websiteUrl: "https://fireworks.ai",
+    apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
+    category: "cloud_provider",
+    // 同 Claude Code 预设：Anthropic 端点 base 不带 /v1，Bearer 鉴权，模型写全名
+    //（docs.fireworks.ai/tools-sdks/anthropic-compatibility，2026-10-14 核对）；
+    // 模型名非 Claude，只能走路由。官方给 Desktop 的只有本机网关 FireConnect
+    //（docs.fireworks.ai/nexus/harnesses 同日），路由模式即替代它。三个路由
+    // 模型窗口均 ≥ 1M（各模型页与 docs.fireworks.ai/serverless/pricing 同日），
+    // 标 1M
+    baseUrl: "https://api.fireworks.ai/inference",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "accounts/fireworks/models/glm-5p3",
+      "accounts/fireworks/models/kimi-k3",
+      "accounts/fireworks/models/deepseek-v4p1-flash",
+      true,
+    ),
+    endpointCandidates: ["https://api.fireworks.ai/inference"],
+  },
+  {
+    name: "Mistral AI",
+    websiteUrl: "https://mistral.ai",
+    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    category: "cn_official",
+    // 同 Claude Code 预设：官方只文档化 OpenAI Chat 端点（docs.mistral.ai/
+    // openapi.yaml，2026-10-14 核对），走 openai_chat 路由，base 不带 /v1。
+    // Medium 3.5 / Small 4 窗口均为 256k（docs.mistral.ai/models.md 同日），
+    // 不标 1M
+    baseUrl: "https://api.mistral.ai",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "mistral-medium-3-5",
+      "mistral-medium-3-5",
+      "mistral-small-2603",
+    ),
+    endpointCandidates: ["https://api.mistral.ai"],
+    icon: "mistral",
+    // 先隐藏：同 Claude 预设，转换层风险真 Key 冒烟通过前不展示
+    hidden: true,
+  },
+  {
+    name: "Cloudflare AI Gateway",
+    websiteUrl: "https://developers.cloudflare.com/ai-gateway/",
+    apiKeyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+    category: "cloud_provider",
+    // 官方 Claude Desktop 接入页（developers.cloudflare.com/ai-gateway/
+    // integrations/coding-agents/claude-desktop，2026-10-14 核对）：Gateway 连接、
+    // 认证方式 Bearer、Key 填网关 token，base 为 …/v1/<账户 ID>/<网关 ID>/
+    // anthropic、不带 /v1，不需要自定义头（Key 是自己的 Anthropic Key 时才另加
+    // cf-aig-authorization）。上游是 Anthropic 原生透传，直连即可。表单不支持模板
+    // 变量，账户 ID 用字面占位符（同 Codex 的 Azure OpenAI），网关 ID 填自动创建
+    // 的 default，忘了改会 401
+    baseUrl:
+      "https://gateway.ai.cloudflare.com/v1/YOUR_ACCOUNT_ID/default/anthropic",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    icon: "cloudflare",
   },
   {
     name: "Nvidia",

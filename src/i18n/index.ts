@@ -65,7 +65,8 @@ const getInitialLanguage = (): Language => {
     return "en";
   }
 
-  return DEFAULT_LANGUAGE;
+  // 认得出系统语言、但界面没有这种语言（德、法、韩…）时用英文：英文大多数人能读，简中几乎不能
+  return navigatorLang ? "en" : DEFAULT_LANGUAGE;
 };
 
 const resources = {
