@@ -46,6 +46,35 @@ describe("snapshot adapters", () => {
     expect(data.models[0].successRate).toBeUndefined();
     expect(data.daily).toHaveLength(2);
   });
+  it("folds Desktop into Claude for filters and presentation without changing transport rows", () => {
+    const desktop = { ...row, appType: "claude-desktop" };
+    const report = { rows: [desktop, other, row] } as DeviceUsageReport;
+    const selected = selectDeviceUsageRows(report, { preset: "all" }, "claude");
+    expect(selected).toEqual([desktop, other]);
+    const data = deviceUsagePresentation(selected);
+    expect(data.apps).toHaveLength(1);
+    expect(data.apps[0]).toMatchObject({
+      appType: "claude",
+      summary: { totalRequests: 3, realTotalTokens: 200 },
+    });
+    expect(Number(data.apps[0].summary.totalCost)).toBeCloseTo(0.3);
+    expect(data.trends[0].requestCount).toBe(3);
+    expect(data.models[0].requestCount).toBe(3);
+    expect(data.daily.map((r) => r.appType)).toEqual(["claude", "claude"]);
+    expect(desktop.appType).toBe("claude-desktop");
+    expect(selectDeviceUsageRows(report, { preset: "all" }, "codex")).toEqual([
+      row,
+    ]);
+    expect(
+      selectDeviceUsageRows(
+        report,
+        { preset: "all" },
+        "claude",
+        "shared",
+        "verified",
+      ),
+    ).toEqual([desktop]);
+  });
   it("uses UTC date boundaries and provenance without altering the local range resolver", () => {
     const now = Date.parse("2026-10-11T01:00:00Z");
     expect(resolveUsageRange({ preset: "today" }, now, "UTC").startDate).toBe(

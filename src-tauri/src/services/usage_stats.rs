@@ -443,7 +443,7 @@ fn providers_join(log_alias: &str, provider_alias: &str) -> String {
 /// SQL 标量表达式：行的「有效计价模型」—— pricing_model 非空优先，NULL/'' 回落
 /// model。这是 `get_model_stats` 的分组键，也是 Dashboard 模型筛选的匹配口径：
 /// 筛选值来自模型统计列表，两边必须用同一表达式才能选得中。
-fn effective_model_sql(alias: &str) -> String {
+pub(crate) fn effective_model_sql(alias: &str) -> String {
     format!("COALESCE(NULLIF({alias}.pricing_model, ''), {alias}.model)")
 }
 

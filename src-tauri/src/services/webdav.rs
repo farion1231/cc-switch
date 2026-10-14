@@ -595,6 +595,17 @@ fn parse_usage_device_listing(
                     value.push_str(&decoded);
                 }
             }
+            Event::GeneralRef(reference) => {
+                if let Some(value) = &mut href {
+                    let decoded = reference
+                        .decode()
+                        .map_err(|_| AppError::InvalidInput("Invalid WebDAV href".into()))?;
+                    let escaped = format!("&{decoded};");
+                    let decoded = quick_xml::escape::unescape(&escaped)
+                        .map_err(|_| AppError::InvalidInput("Invalid WebDAV href escape".into()))?;
+                    value.push_str(&decoded);
+                }
+            }
             Event::End(e) if e.local_name().as_ref() == b"href" => {
                 if let Some(href) = href.take() {
                     if let Ok(url) = base.join(href.trim()) {
@@ -629,6 +640,36 @@ fn parse_usage_device_listing(
 #[cfg(test)]
 mod usage_listing_tests {
     use super::parse_usage_device_listing;
+    #[test]
+    fn decodes_predefined_and_numeric_href_entities() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        for first in ["&#48;", "&#x30;"] {
+            let xml = format!(
+                "<multistatus><href>/R&amp;D/usage/devices/{first}{}/</href></multistatus>",
+                &id[1..]
+            );
+            assert_eq!(
+                parse_usage_device_listing(
+                    "https://example.test/R&D/usage/devices/",
+                    xml.as_bytes(),
+                    100
+                )
+                .unwrap(),
+                vec![id]
+            );
+        }
+        assert!(parse_usage_device_listing(
+            "https://example.test/usage/devices/",
+            b"<href>/usage/devices/&unknown;</href>",
+            100
+        )
+        .is_err());
+        assert!(parse_usage_device_listing(
+            "https://example.test/usage/devices/",
+            b"<!DOCTYPE x [<!ENTITY id '00000000-0000-4000-8000-000000000001'>]><href>/usage/devices/&id;/</href>",
+            100
+        ).is_err());
+    }
     #[test]
     fn only_lists_direct_devices_on_the_same_server() {
         let id = "00000000-0000-4000-8000-000000000001";

@@ -1,8 +1,10 @@
 //! Independent, opt-in usage snapshots. Never import remote rows into request logs.
 //! Persist minimal event identities before rollup so copies and archives do not add usage.
 use super::{
-    sql_helpers::fresh_input_sql, sync_protocol::sha256_hex,
-    usage_stats::effective_usage_log_filter, webdav,
+    sql_helpers::fresh_input_sql,
+    sync_protocol::sha256_hex,
+    usage_stats::{effective_model_sql, effective_usage_log_filter},
+    webdav,
 };
 use crate::{
     database::{lock_conn, Database},
@@ -264,7 +266,9 @@ fn store_event(
 
 fn capture_history(conn: &Connection) -> Result<(), AppError> {
     let fresh = fresh_input_sql("r");
-    let mut stmt = conn.prepare(&format!("SELECT date, app_type, model, request_count, {fresh}, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, provider_id, request_model, pricing_model FROM usage_daily_rollups r"))?;
+    // Keep raw model fields in the history identity; project only the display model.
+    let model = effective_model_sql("r");
+    let mut stmt = conn.prepare(&format!("SELECT date, app_type, model, request_count, {fresh}, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, provider_id, request_model, pricing_model, {model} FROM usage_daily_rollups r"))?;
     let mut rows = stmt.query([])?;
     while let Some(r) = rows.next()? {
         let fields: Vec<String> = [0, 1, 2, 9, 10, 11]
@@ -279,7 +283,7 @@ fn capture_history(conn: &Connection) -> Result<(), AppError> {
                 key: id.clone(),
                 date: r.get(0)?,
                 app_type: r.get(1)?,
-                model: r.get(2)?,
+                model: r.get(12)?,
                 requests: r.get(3)?,
                 input: r.get(4)?,
                 output: r.get(5)?,
@@ -328,7 +332,8 @@ fn capture_events(
     // If a live session row is now suppressed by proxy dedup, remove its earlier receipt.
     conn.execute(&format!("DELETE FROM usage_sync_events WHERE request_id IN (SELECT l.request_id FROM proxy_request_logs l WHERE NOT ({filter}) AND (?1 IS NULL OR l.created_at < ?1))"), [cutoff])?;
     let fresh = fresh_input_sql("l");
-    let mut stmt = conn.prepare(&format!("SELECT request_id, date(created_at, 'unixepoch'), app_type, model, {fresh}, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, COALESCE(data_source, 'proxy'), input_token_semantics, created_at FROM proxy_request_logs l WHERE {filter} AND (?1 IS NULL OR l.created_at < ?1) ORDER BY request_id"))?;
+    let model = effective_model_sql("l");
+    let mut stmt = conn.prepare(&format!("SELECT request_id, date(created_at, 'unixepoch'), app_type, {model}, {fresh}, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, COALESCE(data_source, 'proxy'), input_token_semantics, created_at FROM proxy_request_logs l WHERE {filter} AND (?1 IS NULL OR l.created_at < ?1) ORDER BY request_id"))?;
     let mut rows = stmt.query([cutoff])?;
     while let Some(r) = rows.next()? {
         let id: String = r.get(0)?;
@@ -922,6 +927,63 @@ mod tests {
     }
     fn combined(snapshots: Vec<UsageSnapshot>, settings: UsageSyncSettings) -> UsageReport {
         aggregate(snapshots, settings, "all", None, None, None, None).unwrap()
+    }
+    #[test]
+    fn snapshot_models_match_local_pricing_models_for_detail_and_history() {
+        for history in [false, true] {
+            let db = Database::memory().unwrap();
+            for (index, pricing) in ["request-a", "request-b", ""].iter().enumerate() {
+                let cost = format!("0.{}", index + 1);
+                if history {
+                    db.conn.lock().unwrap().execute(
+                        "INSERT INTO usage_daily_rollups (date,app_type,provider_id,model,request_model,pricing_model,request_count,success_count,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,input_token_semantics,total_cost_usd,avg_latency_ms) VALUES ('2020-01-01','claude','fixture','upstream-model','',?1,1,1,100,10,30,20,2,?2,1)",
+                        params![pricing, cost],
+                    ).unwrap();
+                } else {
+                    let id = format!("pricing-{index}");
+                    add(&db, &id, "proxy", "claude", 2, 1_700_000_000);
+                    db.conn.lock().unwrap().execute(
+                        "UPDATE proxy_request_logs SET model='upstream-model', pricing_model=?1, total_cost_usd=?3 WHERE request_id=?2",
+                        params![pricing, id, cost],
+                    ).unwrap();
+                }
+            }
+            configure(&db, true, "Pricing fixture").unwrap();
+            let snapshot = build_snapshot(&db).unwrap();
+            let keys: Vec<_> = snapshot.events.iter().map(|e| e.key.clone()).collect();
+            let report = combined(vec![snapshot.clone()], settings(&db).unwrap());
+            let local = db.get_model_stats(None, None, None, None, None).unwrap();
+            assert_eq!(report.rows.len(), 3);
+            assert_eq!(local.len(), 3);
+            for stat in local {
+                let bucket = report.rows.iter().find(|r| r.model == stat.model).unwrap();
+                assert_eq!(bucket.requests, stat.request_count);
+                assert_eq!(
+                    Decimal::from_str(&bucket.cost).unwrap(),
+                    Decimal::from_str(&stat.total_cost).unwrap()
+                );
+            }
+            if history {
+                let conn = db.conn.lock().unwrap();
+                let fields = vec![
+                    "2020-01-01",
+                    "claude",
+                    "upstream-model",
+                    "fixture",
+                    "",
+                    "request-a",
+                ];
+                let expected = format!(
+                    "history:{}",
+                    sha256_hex(json_string(&fields).unwrap().as_bytes())
+                );
+                assert!(keys.contains(&expected));
+                capture_history(&conn).unwrap();
+            } else {
+                assert_eq!(db.rollup_and_prune(30).unwrap(), 3);
+            }
+            assert_eq!(snapshot.events, build_snapshot(&db).unwrap().events);
+        }
     }
     #[test]
     fn local_status_does_not_capture_usage_or_increment_revision() {

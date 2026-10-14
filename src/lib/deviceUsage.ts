@@ -8,6 +8,9 @@ import type {
 import { resolveUsageRange } from "@/lib/usageRange";
 
 export type UsageQuality = "all" | "verified" | "unverified";
+// Match the local dashboard display semantics; transport identities stay raw.
+const displayAppType = (appType: string) =>
+  appType === "claude-desktop" ? "claude" : appType;
 const tokens = (r: DeviceUsageRow) =>
   r.input + r.output + r.cacheRead + r.cacheWrite;
 
@@ -33,7 +36,7 @@ export function selectDeviceUsageRows(
     (r) =>
       (!start || r.date >= start) &&
       (!end || r.date <= end) &&
-      (appType === "all" || r.appType === appType) &&
+      (appType === "all" || displayAppType(r.appType) === appType) &&
       (!model || r.model === model) &&
       (quality === "all" || r.verified === (quality === "verified")),
   );
@@ -45,8 +48,9 @@ export function deviceUsagePresentation(rows: DeviceUsageRow[]) {
   const days = new Map<string, DailyStats>();
   const models = new Map<string, UsageModelStat>();
   for (const row of rows) {
-    const app = apps.get(row.appType) ?? {
-      appType: row.appType,
+    const appType = displayAppType(row.appType);
+    const app = apps.get(appType) ?? {
+      appType,
       summary: {
         totalRequests: 0,
         totalCost: "0",
@@ -75,7 +79,7 @@ export function deviceUsagePresentation(rows: DeviceUsageRow[]) {
     app.summary.cacheHitRate = cacheable
       ? app.summary.totalCacheReadTokens / cacheable
       : 0;
-    apps.set(row.appType, app);
+    apps.set(appType, app);
     const day = days.get(row.date) ?? {
       date: row.date,
       requestCount: 0,
@@ -114,7 +118,7 @@ export function deviceUsagePresentation(rows: DeviceUsageRow[]) {
   const daily: UsageModelStat[] = rows.map((row) => ({
     model: row.model,
     date: row.date,
-    appType: row.appType,
+    appType: displayAppType(row.appType),
     verified: row.verified,
     estimated: !row.verified,
     requestCount: row.requests,
