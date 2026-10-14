@@ -1202,7 +1202,6 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
-            crate::services::api_key_vars::start_worker(app.handle().clone());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
@@ -1294,6 +1293,14 @@ pub fn run() {
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
                 crate::mode::controller::startup(&state).await;
+                // SQLite 中的新 Key 可能已提交，而上次写入客户端文件未完成。
+                // 模式恢复后先补写有效的缓存值，再启动脚本调度，避免重复刷新或并发投影。
+                if let Err(error) =
+                    crate::services::api_key_vars::reconcile_cached_values_on_startup(&state).await
+                {
+                    log::warn!("[ApiKeyVars] 启动时恢复缓存 Key 失败: {error}");
+                }
+                crate::services::api_key_vars::start_worker(app_handle.clone());
                 // 启动流程走完：托盘这时才开始报「路由服务没在运行」，并记下退回直连的应用。
                 crate::tray::mark_startup_settled(&app_handle);
                 // Codex 官方做路由、发布了 Stack 模型时，官方模型列表过期就在后台刷新。

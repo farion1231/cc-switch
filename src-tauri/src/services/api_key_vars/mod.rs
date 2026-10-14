@@ -408,6 +408,76 @@ pub fn ensure_provider_switchable(
     Ok(())
 }
 
+/// Re-project cached API-key values into the live configuration after startup.
+///
+/// Providers are read from the database so their stored `{{NAME}}` templates
+/// remain the source of truth. `sync_api_key_var_for_provider` limits writes
+/// to the current switch-mode provider and already-present additive nodes,
+/// preserving proxy and database-only provider contracts.
+pub fn reconcile_cached_values(state: &AppState) -> Result<Vec<String>, AppError> {
+    let mut errors = Vec::new();
+    let mut updated = 0usize;
+
+    for app in resolve::supported_apps() {
+        let providers = match state.db.get_all_providers(app.as_str()) {
+            Ok(providers) => providers,
+            Err(error) => {
+                let message = format!("{}: {error}", app.as_str());
+                log::warn!("[ApiKeyVars] startup provider loading failed {message}");
+                errors.push(message);
+                continue;
+            }
+        };
+        for provider in providers.values() {
+            if resolve::referenced_vars(&app, &provider.settings_config).is_empty() {
+                continue;
+            }
+
+            // Do not project a provider when any of its references is missing,
+            // disabled, or expired. A valid reference must not mask another
+            // stale value in the same stored template.
+            if let Err(error) =
+                ensure_provider_switchable(&state.db, &app, &provider.settings_config)
+            {
+                let message = format!("{}/{}: {error}", app.as_str(), provider.name);
+                log::warn!("[ApiKeyVars] startup live reconciliation skipped {message}");
+                errors.push(message);
+                continue;
+            }
+
+            match crate::services::ProviderService::sync_api_key_var_for_provider(
+                state,
+                &app,
+                &provider.id,
+            ) {
+                Ok(true) => updated += 1,
+                Ok(false) => {}
+                Err(error) => {
+                    let message = format!("{}/{}: {error}", app.as_str(), provider.name);
+                    log::warn!("[ApiKeyVars] startup live reconciliation failed {message}");
+                    errors.push(message);
+                }
+            }
+        }
+    }
+
+    if updated > 0 {
+        log::info!("[ApiKeyVars] startup live reconciliation updated {updated} provider(s)");
+    }
+    Ok(errors)
+}
+
+/// Retry a startup projection once after a brief delay. The retry uses the
+/// current cache and the same mode/membership guards; it never runs a script.
+pub async fn reconcile_cached_values_on_startup(state: &AppState) -> Result<Vec<String>, AppError> {
+    let errors = reconcile_cached_values(state)?;
+    if errors.is_empty() {
+        return Ok(errors);
+    }
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    reconcile_cached_values(state)
+}
+
 // ---------------------------------------------------------------------------
 // 刷新
 // ---------------------------------------------------------------------------
@@ -814,9 +884,8 @@ pub fn start_worker(app: tauri::AppHandle) {
     }
     tauri::async_runtime::spawn(async move {
         use tauri::Manager;
-        // 缓存已由应用启动流程在注册 AppState 前同步加载，避免异步重载覆盖新值。
-        // 等待启动流程完成
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        // The caller starts this worker only after startup cache recovery and
+        // live reconciliation have settled.
         let mut first = true;
         let mut tasks = JoinSet::new();
         let mut in_flight = HashMap::new();
