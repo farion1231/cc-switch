@@ -89,7 +89,8 @@ pub fn session_roots() -> Vec<PathBuf> {
 
 /// Return candidate JSONL files using Pi's active root and layout rules.
 /// Oversized files remain candidates so the usage importer can report them
-/// instead of silently treating an incomplete import as success.
+/// instead of silently treating an incomplete import as success. Nested
+/// subagent and fork sessions are included.
 pub(crate) fn session_files() -> Result<Vec<PathBuf>, String> {
     session_files_from_resolution(resolve_session_root())
 }
@@ -101,6 +102,11 @@ fn session_files_from_resolution(
         SessionRootResolution::Available { root, layout } => {
             let mut files = Vec::new();
             collect_jsonl_files(&root, layout, &mut files, false);
+            let mut children = Vec::new();
+            for session in &files {
+                collect_child_session_files(&session.with_extension(""), &mut children);
+            }
+            files.extend(children);
             files.sort();
             Ok(files)
         }
@@ -713,6 +719,25 @@ fn push_jsonl_file(entry: &fs::DirEntry, output: &mut Vec<PathBuf>, enforce_size
     }
 }
 
+/// Subagent runs and forks nest under their parent session's extension-less
+/// path, and grandchildren under the child's own. `DirEntry::file_type` does
+/// not follow symlinks, so the walk cannot loop.
+fn collect_child_session_files(dir: &Path, output: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            collect_child_session_files(&entry.path(), output);
+        } else if file_type.is_file() {
+            push_jsonl_file(&entry, output, false);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1011,6 +1036,57 @@ mod tests {
         let mut usage_files = Vec::new();
         collect_jsonl_files(&root, SessionLayout::Flat, &mut usage_files, false);
         assert_eq!(usage_files, vec![path]);
+    }
+
+    #[test]
+    fn usage_discovery_includes_subagent_child_sessions() {
+        for layout in [SessionLayout::Flat, SessionLayout::ProjectDirectories] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let root = temp.path().join("sessions");
+            let base = match layout {
+                SessionLayout::Flat => root.clone(),
+                SessionLayout::ProjectDirectories => root.join("project"),
+            };
+            let parent = base.join("parent.jsonl");
+            let run = base.join("parent").join("run-a").join("run-0");
+            let child = run.join("session.jsonl");
+            let fork = base.join("parent").join("forks").join("fork.jsonl");
+            let grandchild = run
+                .join("session")
+                .join("run-b")
+                .join("run-0")
+                .join("session.jsonl");
+            for (path, id) in [
+                (&parent, "parent"),
+                (&child, "child"),
+                (&fork, "fork"),
+                (&grandchild, "grandchild"),
+            ] {
+                write_session_header(path, id);
+            }
+            let transcript = base
+                .join("subagent-artifacts")
+                .join("run-a_worker_0_transcript.jsonl");
+            fs::create_dir_all(transcript.parent().expect("artifact parent"))
+                .expect("create artifact parent");
+            fs::write(&transcript, "{\"recordType\":\"message\"}\n").expect("write transcript");
+
+            let mut expected = vec![parent, child, fork, grandchild];
+            expected.sort();
+            let resolution = SessionRootResolution::Available {
+                root: root.clone(),
+                layout,
+            };
+            assert_eq!(
+                session_files_from_resolution(resolution).expect("usage files"),
+                expected,
+                "{layout:?}"
+            );
+
+            let sessions = scan_sessions_in_root(&root, layout);
+            assert_eq!(sessions.len(), 1, "{layout:?}");
+            assert_eq!(sessions[0].session_id, "parent");
+        }
     }
 
     #[test]

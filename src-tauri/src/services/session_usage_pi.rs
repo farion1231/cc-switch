@@ -15,6 +15,7 @@ use crate::services::usage_stats::find_model_pricing;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -78,6 +79,7 @@ impl PiCosts {
 
 #[derive(Debug)]
 struct PiUsageRecord {
+    kind: &'static str,
     request_id: String,
     semantic_id: String,
     has_entry_id: bool,
@@ -99,8 +101,15 @@ struct PiUsageRecord {
 #[derive(Debug)]
 struct ParsedPiFile {
     records: Vec<PiUsageRecord>,
+    parent_session: Option<String>,
     last_complete_line: i64,
     incomplete_tail: bool,
+}
+
+#[derive(Debug)]
+struct ParentProjection {
+    canonical_links: Vec<PathBuf>,
+    record: PiUsageRecord,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,8 +142,8 @@ struct PiRequestIdentity {
     has_entry_id: bool,
 }
 
-/// Import usage from every Pi session file discoverable by the session
-/// browser's current root and layout rules.
+/// Import usage from every Pi session file under the session browser's current
+/// root and layout rules, including nested subagent sessions.
 pub fn sync_pi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let files = crate::session_manager::providers::pi::session_files()
         .map_err(|error| AppError::Config(format!("无法发现 Pi 会话: {error}")))?;
@@ -156,8 +165,19 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
         }
     };
 
+    let imported_sessions: HashSet<PathBuf> = files
+        .iter()
+        .filter_map(|file| fs::canonicalize(file).ok())
+        .collect();
+    let mut parent_projections = HashMap::new();
     for file_path in files {
-        match sync_single_pi_file(db, file_path, &cursors) {
+        match sync_single_pi_file(
+            db,
+            file_path,
+            &cursors,
+            &imported_sessions,
+            &mut parent_projections,
+        ) {
             Ok(file_result) => result.merge(file_result),
             Err(error) => {
                 let message = format!("{}: {error}", file_path.display());
@@ -181,7 +201,9 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
 fn sync_single_pi_file(
     db: &Database,
     file_path: &Path,
-    cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
+    cursors: &HashMap<String, crate::services::session_usage::SyncCursor>,
+    imported_sessions: &HashSet<PathBuf>,
+    parent_projections: &mut HashMap<PathBuf, Vec<ParentProjection>>,
 ) -> Result<SessionSyncResult, AppError> {
     let metadata = fs::symlink_metadata(file_path)
         .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件元数据: {error}")))?;
@@ -227,14 +249,28 @@ fn sync_single_pi_file(
         start_at_byte,
         revision.file_size,
         modified,
+        imported_sessions,
     )?;
+    let from_header = start_after_line == 0;
+    let projections: &[ParentProjection] = match parsed.parent_session.as_deref().map(Path::new) {
+        Some(parent) if from_header && parent.is_absolute() => parent_projections
+            .entry(parent.to_path_buf())
+            .or_insert_with(|| read_parent_projections(parent)),
+        _ => &[],
+    };
     let conn = lock_conn!(db.conn);
     let tx = conn
         .unchecked_transaction()
         .map_err(|error| AppError::Database(format!("启动 Pi 用量导入事务失败: {error}")))?;
+    let counted_until = parent_counted_until(&tx, file_path, projections)?;
     let mut result = SessionSyncResult::default();
     for record in &parsed.records {
-        if insert_pi_record(&tx, record)? {
+        if record.kind == "assistant"
+            && counted_until.is_some_and(|until| record.created_at <= until)
+        {
+            mark_pi_record_seen(&tx, record)?;
+            result.skipped = result.skipped.saturating_add(1);
+        } else if insert_pi_record(&tx, record)? {
             result.imported = result.imported.saturating_add(1);
         } else {
             result.skipped = result.skipped.saturating_add(1);
@@ -248,6 +284,29 @@ fn sync_single_pi_file(
         result.deferred_files = 1;
     }
     Ok(result)
+}
+
+fn parent_counted_until(
+    conn: &rusqlite::Connection,
+    file_path: &Path,
+    projections: &[ParentProjection],
+) -> Result<Option<i64>, AppError> {
+    if projections.is_empty() {
+        return Ok(None);
+    }
+    let Ok(file) = fs::canonicalize(file_path) else {
+        return Ok(None);
+    };
+    let mut counted_until = None;
+    for projection in projections
+        .iter()
+        .filter(|projection| projection.canonical_links.contains(&file))
+    {
+        if pi_record_seen(conn, &projection.record)? {
+            counted_until = counted_until.max(Some(projection.record.created_at));
+        }
+    }
+    Ok(counted_until)
 }
 
 /// 从批量预取的游标解码 Pi 同步状态（revision 编码在 `last_synced_at`）。
@@ -348,6 +407,7 @@ fn parse_pi_file(
     start_at_byte: Option<u64>,
     snapshot_size: u64,
     file_modified_nanos: i64,
+    imported_sessions: &HashSet<PathBuf>,
 ) -> Result<ParsedPiFile, AppError> {
     let file = File::open(file_path)
         .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
@@ -357,6 +417,7 @@ fn parse_pi_file(
     let mut bytes_read = 0u64;
     let mut session_id = None;
     let mut session_timestamp = None;
+    let mut parent_session = None;
     let mut records = Vec::new();
     let mut incomplete_tail = false;
 
@@ -427,6 +488,10 @@ fn parse_pi_file(
             }
             let header_timestamp_millis = value.get("timestamp").and_then(parse_timestamp_millis);
             session_timestamp = header_timestamp_millis.map(|timestamp| timestamp / 1000);
+            parent_session = value
+                .get("parentSession")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             if let Some(byte_offset) = start_at_byte.filter(|offset| *offset >= bytes_read) {
                 reader.seek(SeekFrom::Start(byte_offset)).map_err(|error| {
                     AppError::Config(format!("无法定位 Pi 会话增量边界: {error}"))
@@ -434,6 +499,9 @@ fn parse_pi_file(
                 bytes_read = byte_offset;
                 line_number = start_after_line;
             }
+            continue;
+        }
+        if duplicates_imported_sessions(&value, imported_sessions) {
             continue;
         }
         if let Some(record) = parse_usage_record(
@@ -451,9 +519,79 @@ fn parse_pi_file(
     }
     Ok(ParsedPiFile {
         records,
+        parent_session,
         last_complete_line: line_number,
         incomplete_tail,
     })
+}
+
+/// A pi-subagents projection sums the usage of the child sessions it links.
+fn duplicates_imported_sessions(entry: &Value, imported_sessions: &HashSet<PathBuf>) -> bool {
+    let links = projection_session_files(entry);
+    !links.is_empty()
+        && links
+            .into_iter()
+            .all(|link| fs::canonicalize(link).is_ok_and(|path| imported_sessions.contains(&path)))
+}
+
+fn projection_session_files(entry: &Value) -> Vec<&str> {
+    let mut links = Vec::new();
+    let message = entry.get("message").filter(|message| {
+        entry.get("type").and_then(Value::as_str) == Some("message")
+            && message.get("role").and_then(Value::as_str) == Some("toolResult")
+            && message.get("usage").is_some()
+    });
+    if let Some(details) = message.and_then(|message| message.get("details")) {
+        collect_session_files(details, &mut links);
+    }
+    links
+}
+
+fn collect_session_files<'a>(value: &'a Value, links: &mut Vec<&'a str>) {
+    match value {
+        Value::Object(fields) => {
+            for (key, field) in fields {
+                match field {
+                    Value::String(link) if key == "sessionFile" => links.push(link),
+                    _ => collect_session_files(field, links),
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_session_files(item, links);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn read_parent_projections(parent: &Path) -> Vec<ParentProjection> {
+    let Some(file) = File::open(parent).ok().filter(|file| {
+        file.metadata().is_ok_and(|metadata| {
+            metadata.len() <= crate::session_manager::providers::pi::MAX_SESSION_BYTES
+        })
+    }) else {
+        return Vec::new();
+    };
+    BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .filter(|line| line.contains("\"sessionFile\""))
+        .filter_map(|line| {
+            let entry = serde_json::from_str::<Value>(&line).ok()?;
+            let record = parse_usage_record(&entry, "", None, 0)
+                .filter(|record| record.kind == "tool_result")?;
+            let canonical_links: Vec<PathBuf> = projection_session_files(&entry)
+                .into_iter()
+                .filter_map(|link| fs::canonicalize(link).ok())
+                .collect();
+            (!canonical_links.is_empty()).then_some(ParentProjection {
+                canonical_links,
+                record,
+            })
+        })
+        .collect()
 }
 
 fn parse_usage_record(
@@ -572,6 +710,7 @@ fn parse_usage_record(
         .unwrap_or(0);
 
     Some(PiUsageRecord {
+        kind,
         request_id: identity.request_id,
         semantic_id: identity.semantic_id,
         has_entry_id: identity.has_entry_id,
@@ -777,7 +916,7 @@ fn hash_field(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
-fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
+fn pi_record_seen(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
     let request_seen: bool = conn
         .query_row(
             PI_REQUEST_DEDUP_SQL,
@@ -785,21 +924,25 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             |row| row.get(0),
         )
         .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
-    let already_seen = request_seen
-        || conn
-            .query_row(
-                if record.has_entry_id {
-                    PI_LEGACY_SEMANTIC_DEDUP_SQL
-                } else {
-                    PI_SEMANTIC_DEDUP_SQL
-                },
-                rusqlite::params![DATA_SOURCE, record.semantic_id],
-                |row| row.get(0),
-            )
-            .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
-    if already_seen {
-        return Ok(false);
+    if request_seen {
+        return Ok(true);
     }
+    conn.query_row(
+        if record.has_entry_id {
+            PI_LEGACY_SEMANTIC_DEDUP_SQL
+        } else {
+            PI_SEMANTIC_DEDUP_SQL
+        },
+        rusqlite::params![DATA_SOURCE, record.semantic_id],
+        |row| row.get(0),
+    )
+    .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))
+}
+
+fn mark_pi_record_seen(
+    conn: &rusqlite::Connection,
+    record: &PiUsageRecord,
+) -> Result<(), AppError> {
     conn.execute(
         "INSERT OR IGNORE INTO session_usage_dedup
          (data_source, request_id, semantic_id, has_entry_id)
@@ -812,6 +955,14 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
         ],
     )
     .map_err(|error| AppError::Database(format!("写入 Pi 用量去重账本失败: {error}")))?;
+    Ok(())
+}
+
+fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
+    if pi_record_seen(conn, record)? {
+        return Ok(false);
+    }
+    mark_pi_record_seen(conn, record)?;
 
     let usage = TokenUsage {
         input_tokens: record.input_tokens,
@@ -893,6 +1044,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::fs::FileTimes;
     use std::io::Write;
 
@@ -905,6 +1057,71 @@ mod tests {
         for line in lines {
             writeln!(file, "{line}").expect("write session line");
         }
+    }
+
+    fn write_nested_lines(path: &Path, lines: &[&str]) {
+        fs::create_dir_all(path.parent().expect("session parent")).expect("create session parent");
+        write_lines(path, lines);
+    }
+
+    fn session_header(id: &str, parent: Option<&Path>) -> String {
+        let mut header = json!({
+            "type": "session",
+            "version": 3,
+            "id": id,
+            "timestamp": "2023-11-14T22:13:20Z",
+            "cwd": "/work",
+        });
+        if let Some(parent) = parent {
+            header["parentSession"] = Value::from(parent.to_string_lossy());
+        }
+        header.to_string()
+    }
+
+    fn run_session(stem: &Path, run: &str) -> PathBuf {
+        stem.join(run).join("run-0").join("session.jsonl")
+    }
+
+    fn projection_line(
+        id: &str,
+        timestamp: &str,
+        tool_name: &str,
+        details: Value,
+        input: u32,
+    ) -> String {
+        json!({
+            "type": "message",
+            "id": id,
+            "parentId": null,
+            "timestamp": timestamp,
+            "message": {
+                "role": "toolResult",
+                "toolCallId": format!("call-{id}"),
+                "toolName": tool_name,
+                "content": [{"type": "text", "text": "done"}],
+                "details": details,
+                "usage": {
+                    "input": input,
+                    "output": 2,
+                    "cacheRead": 5,
+                    "cacheWrite": 2,
+                    "totalTokens": 999,
+                    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn pi_rows_input_and_unknown(db: &Database) -> Result<(i64, i64, i64), AppError> {
+        let conn = lock_conn!(db.conn);
+        let totals = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(model = 'unknown'), 0)
+             FROM proxy_request_logs WHERE data_source = 'pi_session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        Ok(totals)
     }
 
     fn assistant_line(id: &str, timestamp: &str, input: u32) -> String {
@@ -1539,7 +1756,7 @@ mod tests {
             writeln!(file, "{second}").expect("append second record");
         }
 
-        let parsed = parse_pi_file(&path, 0, None, snapshot_size, modified)?;
+        let parsed = parse_pi_file(&path, 0, None, snapshot_size, modified, &HashSet::new())?;
         assert_eq!(parsed.records.len(), 1);
         assert_eq!(parsed.last_complete_line, 2);
         Ok(())
@@ -1767,6 +1984,226 @@ mod tests {
         assert_eq!(result.files_scanned, 1);
         assert_eq!(result.errors.len(), 1);
         assert!(result.errors[0].contains("安全上限"));
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn subagent_usage_is_counted_once_from_the_child_sessions() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let agent_dir = temp.path().join("agent");
+        let _agent = crate::pi_config::test_support::TestAgentDir::at(&agent_dir);
+        let project = agent_dir.join("sessions").join("project");
+        let parent = session_path(&project, "parent");
+        let native_fork = session_path(&project, "native-fork");
+        let stem = parent.with_extension("");
+        let child_a = run_session(&stem, "run-a");
+        let grandchild = run_session(&child_a.with_extension(""), "run-g");
+        let child_b = run_session(&stem, "run-b");
+        let child_c = run_session(&stem, "run-c");
+        let fork = stem.join("forks").join("fork.jsonl");
+        let parent_call = assistant_line("p1", "2023-11-14T22:13:21Z", 100);
+        let projection_a = projection_line(
+            "t-a",
+            "2023-11-14T22:13:40Z",
+            "subagent",
+            json!({"results": [{"sessionFile": child_a.to_string_lossy()}]}),
+            10,
+        );
+
+        write_nested_lines(
+            &parent,
+            &[
+                &session_header("session-parent", None),
+                &parent_call,
+                &projection_a,
+                &projection_line(
+                    "t-b",
+                    "2023-11-14T22:13:41Z",
+                    "bg_wait",
+                    json!({"completions": [{"results": [{"sessionFile": child_b.to_string_lossy()}]}]}),
+                    20,
+                ),
+                r#"{"type":"custom_message","id":"notice","parentId":null,"timestamp":"2023-11-14T22:13:50Z","customType":"subagent-notify","content":"run-c finished","display":true}"#,
+                &projection_line(
+                    "t-f",
+                    "2023-11-14T22:13:55Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": fork.to_string_lossy()}]}),
+                    80,
+                ),
+            ],
+        );
+        write_nested_lines(
+            &child_a,
+            &[
+                &session_header("session-a", Some(&parent)),
+                &assistant_line("a1", "2023-11-14T22:13:25Z", 10),
+                &projection_line(
+                    "t-g",
+                    "2023-11-14T22:13:27Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": grandchild.to_string_lossy()}]}),
+                    7,
+                ),
+            ],
+        );
+        write_nested_lines(
+            &grandchild,
+            &[
+                &session_header("session-g", Some(&child_a)),
+                &assistant_line("g1", "2023-11-14T22:13:26Z", 7),
+            ],
+        );
+        write_nested_lines(
+            &child_b,
+            &[
+                &session_header("session-b", Some(&parent)),
+                &assistant_line("b1", "2023-11-14T22:13:32Z", 20),
+            ],
+        );
+        write_nested_lines(
+            &child_c,
+            &[
+                &session_header("session-c", Some(&parent)),
+                &assistant_line("c1", "2023-11-14T22:13:37Z", 40),
+            ],
+        );
+        write_nested_lines(
+            &fork,
+            &[
+                &session_header("session-fork", Some(&parent)),
+                &parent_call,
+                &projection_a,
+                &assistant_line("f1", "2023-11-14T22:13:47Z", 80),
+            ],
+        );
+        write_nested_lines(
+            &native_fork,
+            &[
+                &session_header("session-native-fork", Some(&parent)),
+                &parent_call,
+                &projection_a,
+            ],
+        );
+
+        let db = Database::memory()?;
+        let result = sync_pi_usage(&db)?;
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (6, 257, 0));
+
+        let again = sync_pi_usage(&db)?;
+        assert!(again.errors.is_empty(), "{:?}", again.errors);
+        assert_eq!(again.imported, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn projections_counted_before_children_were_discovered_are_not_counted_twice(
+    ) -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let parent = session_path(temp.path(), "parent");
+        let stem = parent.with_extension("");
+        let child_a = run_session(&stem, "run-a");
+        let child_c = run_session(&stem, "run-c");
+        write_lines(
+            &parent,
+            &[
+                &session_header("session-parent", None),
+                &assistant_line("p1", "2023-11-14T22:13:21Z", 100),
+                &projection_line(
+                    "t-a",
+                    "2023-11-14T22:13:30Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": child_a.to_string_lossy()}]}),
+                    10,
+                ),
+            ],
+        );
+
+        let db = Database::memory()?;
+        let first = sync_pi_files(&db, std::slice::from_ref(&parent));
+        assert!(first.errors.is_empty(), "{:?}", first.errors);
+        assert_eq!(first.imported, 2);
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (2, 110, 1));
+
+        write_nested_lines(
+            &child_a,
+            &[
+                &session_header("session-a", Some(&parent)),
+                &assistant_line("a1", "2023-11-14T22:13:25Z", 10),
+                &assistant_line("a2", "2023-11-14T22:14:00Z", 5),
+            ],
+        );
+        write_nested_lines(
+            &child_c,
+            &[
+                &session_header("session-c", Some(&parent)),
+                &assistant_line("c1", "2023-11-14T22:13:35Z", 40),
+            ],
+        );
+        let second = sync_pi_files(&db, &[parent.clone(), child_a.clone(), child_c.clone()]);
+        assert!(second.errors.is_empty(), "{:?}", second.errors);
+        assert_eq!((second.imported, second.skipped), (2, 1));
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (4, 155, 1));
+
+        fs::remove_file(&parent).expect("remove parent");
+        let modified = fs::metadata(&child_a)
+            .expect("child metadata")
+            .modified()
+            .expect("child mtime");
+        set_modified(&child_a, modified + std::time::Duration::from_secs(2));
+        let rescan = sync_pi_files(&db, std::slice::from_ref(&child_a));
+        assert!(rescan.errors.is_empty(), "{:?}", rescan.errors);
+        assert_eq!((rescan.imported, rescan.skipped), (0, 2));
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (4, 155, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn projections_of_children_outside_the_imported_files_are_still_counted() -> Result<(), AppError>
+    {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let parent = session_path(temp.path(), "parent");
+        let inside = run_session(&parent.with_extension(""), "run-a");
+        let relocated = session_path(&temp.path().join("moved"), "session");
+        write_nested_lines(&inside, &[&session_header("session-a", Some(&parent))]);
+        write_nested_lines(&relocated, &[&session_header("session-m", Some(&parent))]);
+        write_lines(
+            &parent,
+            &[
+                &session_header("session-parent", None),
+                &projection_line(
+                    "t-in",
+                    "2023-11-14T22:13:30Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": inside.to_string_lossy()}]}),
+                    10,
+                ),
+                &projection_line(
+                    "t-out",
+                    "2023-11-14T22:13:31Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": relocated.to_string_lossy()}]}),
+                    20,
+                ),
+                &projection_line(
+                    "t-mixed",
+                    "2023-11-14T22:13:32Z",
+                    "subagent",
+                    json!({"results": [
+                        {"sessionFile": inside.to_string_lossy()},
+                        {"sessionFile": relocated.to_string_lossy()}
+                    ]}),
+                    30,
+                ),
+            ],
+        );
+
+        let db = Database::memory()?;
+        let result = sync_pi_files(&db, &[parent.clone(), inside.clone()]);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (2, 50, 2));
         Ok(())
     }
 }
