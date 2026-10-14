@@ -2011,6 +2011,32 @@ export const providerPresets: ProviderPreset[] = [
     icon: "vercel",
   },
   {
+    name: "Nebius Token Factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    // 原 Nebius AI Studio。官方 OpenAPI（api.tokenfactory.nebius.com/
+    // openapi.json，2026-10-14 核对）只有 /v1/chat/completions、/v1/responses
+    // 等 OpenAI 路径，鉴权只声明 HTTPBearer；POST /v1/messages 实测 404，没有
+    // Anthropic 端点，只能走 openai_chat 路由。base 不带 /v1，适配器自拼
+    // /v1/chat/completions（同 Nvidia）。模型取官方公开目录
+    // tokenfactory.nebius.com/api/public/models_info 同日快照，用固定版本 ID：
+    // 主力 GLM-5.3、haiku 档 GLM-5.3-Flash（均 1024000 窗口）。通用候选的
+    // /v1/models 存在（无 Key 401），不覆写 modelsUrl
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.tokenfactory.nebius.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "zai-org/GLM-5.3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/GLM-5.3-Flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/GLM-5.3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/GLM-5.3",
+      },
+    },
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    endpointCandidates: ["https://api.tokenfactory.nebius.com"],
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {

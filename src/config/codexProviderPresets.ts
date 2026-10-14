@@ -3723,6 +3723,71 @@ requires_openai_auth = true`,
     icon: "vercel",
   },
   {
+    name: "Nebius Token Factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    auth: generateThirdPartyAuth(""),
+    // 官方 base 为 https://api.tokenfactory.nebius.com/v1（docs.tokenfactory.
+    // nebius.com/switch.md，2026-10-14 核对），OpenAPI（api.tokenfactory.
+    // nebius.com/openapi.json）有 POST /v1/responses，Bearer 鉴权，无 Key 401
+    config: generateThirdPartyConfig(
+      "nebius",
+      "https://api.tokenfactory.nebius.com/v1",
+      "zai-org/GLM-5.3",
+    ),
+    endpointCandidates: ["https://api.tokenfactory.nebius.com/v1"],
+    // Responses schema 收 custom / namespace / apply_patch 工具与
+    // reasoning.encrypted_content，但照搬自 OpenAI SDK，真实模型是否处理未经
+    // 真 Key 实测；NativeResponses 档案不发 freeform apply_patch，改用
+    // shell_command 改文件
+    apiFormat: "openai_responses",
+    // 模型、窗口与模态取官方公开目录 tokenfactory.nebius.com/api/public/
+    // models_info 同日快照，只收 use_cases 含 responses_api 的固定版本 ID。
+    // 平台不按模型声明档位，Responses 的 reasoning.effort 枚举又没有 max，
+    // 厂商官方 low/high/max 照抄会被拒，故每档只钉 high（与 config 的
+    // model_reasoning_effort = "high" 一致），真 Key 实测出枚举后再扩。
+    // Kimi K2.7 Code 目录 type 为 text2text、use_cases 却含 image，保守按纯文本。
+    // 首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "zai-org/GLM-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1024000,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "zai-org/GLM-5.3-Flash",
+        displayName: "GLM-5.3-Flash",
+        contextWindow: 1024000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "moonshotai/Kimi-K3",
+        displayName: "Kimi K3",
+        contextWindow: 1024000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "moonshotai/Kimi-K2.7-Code",
+        displayName: "Kimi K2.7 Code",
+        contextWindow: 262144,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "deepseek-ai/DeepSeek-V4-Pro-0813",
+        displayName: "DeepSeek V4 Pro 0813",
+        contextWindow: 979000,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+    ]),
+    category: "aggregator",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

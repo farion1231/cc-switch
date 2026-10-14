@@ -3659,6 +3659,68 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "vercel",
   },
   {
+    name: "Nebius Token Factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    // OpenAI Chat 端点 base 为 /v1（docs.tokenfactory.nebius.com/switch.md，
+    // 2026-10-14 核对），Bearer 鉴权。窗口与模态取官方公开目录
+    // tokenfactory.nebius.com/api/public/models_info 同日快照；平台不声明最大
+    // 输出，且 Chat 不传 max_tokens 时只给 8192（api.tokenfactory.nebius.com/
+    // openapi.json），故 output 必须写，取厂商口径（GLM / Kimi K3 131072、
+    // Kimi K2.7 Code 262144、DeepSeek V4 384000）。ChatCompletionRequest 的
+    // additionalProperties 为 true，setCacheKey 不会触发 422。models.dev 已有
+    // nebius 供应商，供应商 ID 别填 nebius 以免遮蔽内置定义
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Nebius Token Factory",
+      options: {
+        baseURL: "https://api.tokenfactory.nebius.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "zai-org/GLM-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1024000, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "zai-org/GLM-5.3-Flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1024000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "moonshotai/Kimi-K3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1024000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "moonshotai/Kimi-K2.7-Code": {
+          name: "Kimi K2.7 Code",
+          reasoning: true,
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          name: "DeepSeek V4 Pro 0813",
+          reasoning: true,
+          limit: { context: 979000, output: 384000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

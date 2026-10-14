@@ -1771,6 +1771,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "vercel",
   },
   {
+    name: "Nebius Token Factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    category: "aggregator",
+    // 同 Claude Code 预设：官方没有 Anthropic 端点（/v1/messages 实测 404，
+    // api.tokenfactory.nebius.com/openapi.json，2026-10-14 核对），走
+    // openai_chat 路由。GLM-5.3 与 GLM-5.3-Flash 在官方目录
+    // tokenfactory.nebius.com/api/public/models_info 同日窗口均为 1024000
+    baseUrl: "https://api.tokenfactory.nebius.com",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "zai-org/GLM-5.3",
+      "zai-org/GLM-5.3",
+      "zai-org/GLM-5.3-Flash",
+      true,
+    ),
+    endpointCandidates: ["https://api.tokenfactory.nebius.com"],
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

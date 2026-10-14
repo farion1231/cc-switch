@@ -22,6 +22,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   MiniMax: "海螺",
   "MiniMax en": "海螺",
   ModelScope: "魔搭",
+  "Nebius Token Factory": "ai studio nbis",
   QwenCloud: "通义 阿里 qwen",
   "QwenCloud For Coding": "通义 阿里 qwen",
   "QwenCloud Token Plan": "通义 阿里 qwen",

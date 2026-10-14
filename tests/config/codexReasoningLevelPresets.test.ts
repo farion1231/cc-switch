@@ -249,6 +249,14 @@ describe("Codex preset pre-filled reasoning levels", () => {
       "anthropic/claude-opus-5.5",
       ["low", "medium", "high", "xhigh"],
     ],
+    // Nebius Token Factory（原生 Responses 直连）：平台不按模型声明档位，
+    // Responses 的 reasoning.effort 枚举无 max（api.tokenfactory.nebius.com/
+    // openapi.json，2026-10-14），实测前只钉单档 high
+    ["Nebius Token Factory", "zai-org/GLM-5.3", ["high"]],
+    ["Nebius Token Factory", "zai-org/GLM-5.3-Flash", ["high"]],
+    ["Nebius Token Factory", "moonshotai/Kimi-K3", ["high"]],
+    ["Nebius Token Factory", "moonshotai/Kimi-K2.7-Code", ["high"]],
+    ["Nebius Token Factory", "deepseek-ai/DeepSeek-V4-Pro-0813", ["high"]],
   ];
 
   it.each(EXPECTED)(

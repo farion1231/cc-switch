@@ -4918,6 +4918,82 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "vercel",
   },
   {
+    name: "Nebius Token Factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    // OpenAI Chat 端点 base 为 /v1（docs.tokenfactory.nebius.com/switch.md，
+    // 2026-10-14 核对），Bearer 鉴权。cost 取官方公开目录
+    // tokenfactory.nebius.com/api/public/models_info 同日价（每百万 token）；
+    // 目录里所有模型都没有缓存价，故只写 input / output。窗口与最大输出同
+    // OpenCode 预设
+    settingsConfig: {
+      baseUrl: "https://api.tokenfactory.nebius.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "zai-org/GLM-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1024000,
+          maxTokens: 131072,
+          cost: { input: 1.4, output: 4.4 },
+        },
+        {
+          id: "zai-org/GLM-5.3-Flash",
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1024000,
+          maxTokens: 131072,
+          cost: { input: 0.15, output: 0.5 },
+        },
+        {
+          id: "moonshotai/Kimi-K3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1024000,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15 },
+        },
+        {
+          id: "moonshotai/Kimi-K2.7-Code",
+          name: "Kimi K2.7 Code",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 262144,
+          maxTokens: 262144,
+          cost: { input: 0.95, output: 4 },
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 979000,
+          maxTokens: 384000,
+          cost: { input: 1.32, output: 3.96 },
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "nebius/zai-org/GLM-5.3" },
+      modelCatalog: {
+        "nebius/zai-org/GLM-5.3": { alias: "GLM-5.3" },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

@@ -2618,6 +2618,43 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Nebius Token Factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    settingsConfig: {
+      name: "nebius",
+      // OpenAI Chat 端点 base 为 /v1（docs.tokenfactory.nebius.com/switch.md，
+      // 2026-10-14 核对），Bearer 鉴权。窗口取官方公开目录
+      // tokenfactory.nebius.com/api/public/models_info 同日快照
+      base_url: "https://api.tokenfactory.nebius.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "zai-org/GLM-5.3", name: "GLM-5.3", context_length: 1024000 },
+        {
+          id: "zai-org/GLM-5.3-Flash",
+          name: "GLM-5.3-Flash",
+          context_length: 1024000,
+        },
+        { id: "moonshotai/Kimi-K3", name: "Kimi K3", context_length: 1024000 },
+        {
+          id: "moonshotai/Kimi-K2.7-Code",
+          name: "Kimi K2.7 Code",
+          context_length: 262144,
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          context_length: 979000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "zai-org/GLM-5.3", provider: "nebius" },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

@@ -2116,6 +2116,47 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "vercel",
   },
   {
+    name: "Nebius Token Factory",
+    // models.dev 已有 nebius 供应商，加前缀以免撞上可能的内置同名 ID
+    providerKey: "cc-switch-nebius-token-factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    settingsConfig: {
+      name: "Nebius Token Factory",
+      // OpenAI Chat 端点 base 为 /v1（docs.tokenfactory.nebius.com/switch.md，
+      // 2026-10-14 核对）。窗口与模态按官方公开目录
+      // tokenfactory.nebius.com/api/public/models_info 同日快照覆盖；同 Novita /
+      // Nvidia，聚合平台不假定厂商私有参数，不写 thinkingProfile / compat
+      baseUrl: "https://api.tokenfactory.nebius.com/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", {
+          id: "zai-org/GLM-5.3",
+          contextWindow: 1_024_000,
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "zai-org/GLM-5.3-Flash",
+          contextWindow: 1_024_000,
+        }),
+        piModel("moonshotai/kimi-k3", {
+          id: "moonshotai/Kimi-K3",
+          contextWindow: 1_024_000,
+        }),
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "moonshotai/Kimi-K2.7-Code",
+          input: ["text"],
+        }),
+        piModel("deepseek/deepseek-v4-pro", {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          contextWindow: 979_000,
+        }),
+      ],
+    },
+    category: "aggregator",
+  },
+  {
     name: "PIPELLM",
     providerKey: "cc-switch-pipellm",
     websiteUrl: "https://code.pipellm.ai",
