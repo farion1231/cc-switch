@@ -506,13 +506,13 @@ export const piModelCatalog = {
       maxTokens: 256_000,
     },
   },
-  "streamlake/kat-coder-pro": {
+  "streamlake/kat-coder-pro-v2.5": {
     capabilities: {
-      name: "KAT-Coder Pro",
+      name: "KAT-Coder Pro V2.5",
       reasoning: true,
       input: ["text"],
       contextWindow: 256_000,
-      maxTokens: 32_000,
+      maxTokens: 80_000,
     },
   },
   "volcengine/ark-code-latest": {

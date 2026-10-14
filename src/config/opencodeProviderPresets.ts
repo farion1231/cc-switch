@@ -2784,7 +2784,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "ep-xxx-xxx": {
+        "kat-coder-pro-v2.5": {
           name: "KAT-Coder Pro V2.5",
           limit: { context: 256000, output: 80000 },
         },
@@ -2798,7 +2798,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
-    icon: "catcoder",
+    icon: "streamlake",
   },
   {
     name: "StreamLake en",
@@ -2815,7 +2815,10 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "ep-xxx-xxx": { name: "KAT-Coder Pro" },
+        "kat-coder-pro-v2.5": {
+          name: "KAT-Coder Pro V2.5",
+          limit: { context: 256000, output: 80000 },
+        },
       },
     },
     category: "cn_official",
@@ -2826,7 +2829,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
-    icon: "catcoder",
+    icon: "streamlake",
   },
   {
     name: "Longcat",

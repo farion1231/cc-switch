@@ -35,6 +35,7 @@ import _tokenflux from "./tokenflux.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
 import _soruxgpt from "./soruxgpt.jpg";
 import _soshow from "./soshow.png";
+import _streamlake from "./streamlake.svg?url";
 import _sub2api from "./sub2api.svg?url";
 import _subrouter from "./subrouter.svg?url";
 import _sudocode from "./sudocode.png";
@@ -169,6 +170,7 @@ export const iconUrls: Record<string, string> = {
   shengsuanyun: _shengsuanyun,
   soruxgpt: _soruxgpt,
   soshow: _soshow,
+  streamlake: _streamlake,
   sub2api: _sub2api,
   subrouter: _subrouter,
   sudocode: _sudocode,

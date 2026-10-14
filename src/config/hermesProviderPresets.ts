@@ -2156,26 +2156,15 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     settingsConfig: {
       name: "streamlake",
       base_url:
-        "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
+        "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints/kat-coder-pro-v2.5/claude-code-proxy",
       api_key: "",
       api_mode: "anthropic_messages",
-      models: [
-        { id: "KAT-Coder-Pro-V2.5", name: "KAT-Coder Pro V2.5" },
-        { id: "KAT-Coder-Air-V2.5", name: "KAT-Coder Air V2.5" },
-      ],
+      models: [{ id: "kat-coder-pro-v2.5", name: "KAT-Coder Pro V2.5" }],
     },
     category: "cn_official",
-    templateValues: {
-      ENDPOINT_ID: {
-        label: "Vanchin Endpoint ID",
-        placeholder: "ep-xxx-xxx",
-        defaultValue: "",
-        editorValue: "",
-      },
-    },
-    icon: "catcoder",
+    icon: "streamlake",
     suggestedDefaults: {
-      model: { default: "KAT-Coder-Pro-V2.5", provider: "streamlake" },
+      model: { default: "kat-coder-pro-v2.5", provider: "streamlake" },
     },
   },
   {
@@ -2187,26 +2176,15 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     settingsConfig: {
       name: "streamlake_en",
       base_url:
-        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
+        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/kat-coder-pro-v2.5/claude-code-proxy",
       api_key: "",
       api_mode: "anthropic_messages",
-      models: [
-        { id: "KAT-Coder-Pro V1", name: "KAT-Coder Pro V1" },
-        { id: "KAT-Coder-Air V1", name: "KAT-Coder Air V1" },
-      ],
+      models: [{ id: "kat-coder-pro-v2.5", name: "KAT-Coder Pro V2.5" }],
     },
     category: "cn_official",
-    templateValues: {
-      ENDPOINT_ID: {
-        label: "Vanchin Endpoint ID",
-        placeholder: "ep-xxx-xxx",
-        defaultValue: "",
-        editorValue: "",
-      },
-    },
-    icon: "catcoder",
+    icon: "streamlake",
     suggestedDefaults: {
-      model: { default: "KAT-Coder-Pro V1", provider: "streamlake_en" },
+      model: { default: "kat-coder-pro-v2.5", provider: "streamlake_en" },
     },
   },
   {

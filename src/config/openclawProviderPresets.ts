@@ -3898,14 +3898,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "ep-xxx-xxx",
+          id: "kat-coder-pro-v2.5",
           name: "KAT-Coder Pro V2.5",
           contextWindow: 256000,
         },
       ],
     },
     category: "cn_official",
-    icon: "catcoder",
+    icon: "streamlake",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -3926,15 +3926,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "ep-xxx-xxx",
-          name: "KAT-Coder Pro",
-          contextWindow: 128000,
-          cost: { input: 0.3, output: 1.2, cacheRead: 0.06 },
+          id: "kat-coder-pro-v2.5",
+          name: "KAT-Coder Pro V2.5",
+          contextWindow: 256000,
         },
       ],
     },
     category: "cn_official",
-    icon: "catcoder",
+    icon: "streamlake",
     templateValues: {
       apiKey: {
         label: "API Key",

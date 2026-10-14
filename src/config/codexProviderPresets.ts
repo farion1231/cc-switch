@@ -2911,6 +2911,67 @@ requires_openai_auth = true`,
     iconColor: "#624AFF",
   },
   {
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "streamlake",
+      "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
+      "kat-coder-pro-v2.5",
+    ),
+    endpointCandidates: [
+      "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
+    ],
+    // 万擎「Responses API 协议」与 Chat 共用按量 base（/api/gateway/v1/endpoints），
+    // 原生 Responses，无需路由接管转换。模型 ID 照抄官方 KwaiKAT 接入指南的
+    // kat-coder-pro-v2.5（公共推理点，免建 ep-）；订阅 Coding Plan 改用 /api/gateway/coding/v1
+    apiFormat: "openai_responses",
+    // 官方只写支持 reasoning.effort、未列档位：同 LongCat 只给 high，不提供 none 假开关
+    modelCatalog: modelCatalog([
+      {
+        model: "kat-coder-pro-v2.5",
+        displayName: "KAT-Coder Pro V2.5",
+        contextWindow: 262144,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+    ]),
+    category: "cn_official",
+    icon: "streamlake",
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
+    websiteUrl: "https://console.streamlake.ai",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "streamlake_en",
+      "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+      "kat-coder-pro-v2.5",
+    ),
+    endpointCandidates: [
+      "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+    ],
+    // 国际站接入形态同国内版
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      {
+        model: "kat-coder-pro-v2.5",
+        displayName: "KAT-Coder Pro V2.5",
+        contextWindow: 262144,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+    ]),
+    category: "cn_official",
+    icon: "streamlake",
+  },
+  {
     name: "Longcat",
     websiteUrl: "https://longcat.chat/platform",
     apiKeyUrl: "https://longcat.chat/platform/api_keys",

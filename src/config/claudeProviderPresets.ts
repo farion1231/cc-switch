@@ -1633,24 +1633,16 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
-          "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
+          "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints/kat-coder-pro-v2.5/claude-code-proxy",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "KAT-Coder-Pro-V2.5",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "KAT-Coder-Air-V2.5",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "KAT-Coder-Pro-V2.5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "KAT-Coder-Pro-V2.5",
+        ANTHROPIC_MODEL: "kat-coder-pro-v2.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kat-coder-pro-v2.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kat-coder-pro-v2.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kat-coder-pro-v2.5",
       },
     },
     category: "cn_official",
-    templateValues: {
-      ENDPOINT_ID: {
-        label: "Vanchin Endpoint ID",
-        placeholder: "ep-xxx-xxx",
-        defaultValue: "",
-        editorValue: "",
-      },
-    },
-    icon: "catcoder",
+    icon: "streamlake",
   },
   {
     name: "StreamLake en",
@@ -1661,24 +1653,16 @@ export const providerPresets: ProviderPreset[] = [
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
+          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/kat-coder-pro-v2.5/claude-code-proxy",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "KAT-Coder-Pro V1",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "KAT-Coder-Air V1",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "KAT-Coder-Pro V1",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "KAT-Coder-Pro V1",
+        ANTHROPIC_MODEL: "kat-coder-pro-v2.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kat-coder-pro-v2.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kat-coder-pro-v2.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kat-coder-pro-v2.5",
       },
     },
     category: "cn_official",
-    templateValues: {
-      ENDPOINT_ID: {
-        label: "Vanchin Endpoint ID",
-        placeholder: "ep-xxx-xxx",
-        defaultValue: "",
-        editorValue: "",
-      },
-    },
-    icon: "catcoder",
+    icon: "streamlake",
   },
   {
     name: "Longcat",

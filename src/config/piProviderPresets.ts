@@ -1525,15 +1525,13 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("streamlake/kat-coder-pro", {
-          id: "ep-xxx-xxx",
-          name: "KAT-Coder Pro V2.5",
-          maxTokens: 80_000,
+        piModel("streamlake/kat-coder-pro-v2.5", {
+          id: "kat-coder-pro-v2.5",
         }),
       ],
     },
     category: "cn_official",
-    icon: "catcoder",
+    icon: "streamlake",
   },
   {
     name: "StreamLake en",
@@ -1548,13 +1546,13 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("streamlake/kat-coder-pro", {
-          id: "ep-xxx-xxx",
+        piModel("streamlake/kat-coder-pro-v2.5", {
+          id: "kat-coder-pro-v2.5",
         }),
       ],
     },
     category: "cn_official",
-    icon: "catcoder",
+    icon: "streamlake",
   },
   {
     name: "Longcat",
