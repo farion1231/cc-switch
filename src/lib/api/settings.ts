@@ -294,14 +294,14 @@ export const settingsApi = {
     });
   },
 
-  /** Generate a read-only uninstall preview; execution checks that it is still current. */
+  /** List every installation with its read-only uninstall preview; execution checks the chosen one is still current. */
   async prepareToolUninstall(
     tool: string,
     wslShellByTool?: Record<
       string,
       { wslShell?: string | null; wslShellFlag?: string | null }
     >,
-  ): Promise<ToolUninstallPlan> {
+  ): Promise<ToolUninstallCandidate[]> {
     return await invoke("prepare_tool_uninstall", { tool, wslShellByTool });
   },
 
@@ -362,6 +362,14 @@ export interface ToolInstallation {
   error: string | null;
   source: string;
   is_path_default: boolean;
+}
+
+/** 卸载对话框里的一处安装：能自动卸载就带 plan，否则给出原因。对应后端 ToolUninstallCandidate。 */
+export interface ToolUninstallCandidate extends ToolInstallation {
+  plan: ToolUninstallPlan | null;
+  unavailable_reason: string | null;
+  /** 工具自己的更新程序会把这份装回来（Grok 的 npm 模式），单独删掉只是暂时的。 */
+  reinstalled_by_updater: boolean;
 }
 
 /** 一次"探测工具安装分布"的结果。字段对应后端 ToolInstallationReport。 */

@@ -261,11 +261,22 @@ pub struct ToolUninstallPlan {
     wsl_distro: Option<String>,
 }
 
+/// One installation offered in the uninstall dialog: a plan, or why it must be removed manually.
+#[derive(Debug, serde::Serialize)]
+pub struct ToolUninstallCandidate {
+    #[serde(flatten)]
+    install: ToolInstallation,
+    plan: Option<ToolUninstallPlan>,
+    unavailable_reason: Option<String>,
+    /// A copy the tool's own updater recreates (Grok in npm mode), so removing it alone is temporary.
+    reinstalled_by_updater: bool,
+}
+
 #[tauri::command]
 pub async fn prepare_tool_uninstall(
     tool: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
-) -> Result<ToolUninstallPlan, String> {
+) -> Result<Vec<ToolUninstallCandidate>, String> {
     if !VALID_TOOLS.contains(&tool.as_str()) {
         return Err(format!("Unsupported tool action target: {tool}"));
     }
@@ -273,7 +284,7 @@ pub async fn prepare_tool_uninstall(
         let pref = wsl_shell_by_tool
             .as_ref()
             .and_then(|prefs| prefs.get(&tool));
-        tool_uninstall::plan(&tool, pref)
+        tool_uninstall::candidates(&tool, pref)
     })
     .await
     .map_err(|e| format!("uninstall plan task join error: {e}"))?
