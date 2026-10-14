@@ -74,6 +74,10 @@ struct Usage {
     cache_read_input_tokens: Option<u32>,
     #[serde(default)]
     cache_creation_input_tokens: Option<u32>,
+    /// DeepSeek 风格文档化缓存命中字段（部分中转把标准字段硬编码为桩 0、
+    /// 真值只放这里，#8041）
+    #[serde(default)]
+    prompt_cache_hit_tokens: Option<u32>,
 }
 
 /// Nested token details from OpenAI format
@@ -204,6 +208,36 @@ fn non_tool_block_events(
     events
 }
 
+/// 终止边界（[DONE] / 流末尾发终止事件前）为仍开着的块生成配对的
+/// content_block_stop：当前非工具块一个 + 所有仍开的工具块（按 index 排序）。
+/// finish_reason 正常到达时这些块已在该路径关闭，此处为空操作；
+/// finish 缺失或其后又来迟到增量时，靠这里补齐 Anthropic 协议要求的
+/// 「每个 content_block_start 都有配对 content_block_stop」不变量。
+fn open_block_stop_events(
+    current_non_tool_block_index: &mut Option<u32>,
+    current_non_tool_block_type: &mut Option<&'static str>,
+    open_tool_block_indices: &mut HashSet<u32>,
+) -> Vec<String> {
+    let mut events = Vec::new();
+    if let Some(index) = current_non_tool_block_index.take() {
+        events.push(sse_event_string(json!({
+            "type": "content_block_stop",
+            "index": index
+        })));
+    }
+    *current_non_tool_block_type = None;
+    let mut tool_indices: Vec<u32> = open_tool_block_indices.iter().copied().collect();
+    tool_indices.sort_unstable();
+    for index in tool_indices {
+        events.push(sse_event_string(json!({
+            "type": "content_block_stop",
+            "index": index
+        })));
+    }
+    open_tool_block_indices.clear();
+    events
+}
+
 /// 创建 Anthropic SSE 流
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
@@ -265,6 +299,17 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 yield Ok(Bytes::from(sse_data));
                                             }
                                         }
+                                    }
+
+                                    // [DONE] 边界：补关仍开着的块。finish_reason 缺失
+                                    //（部分上游只发 [DONE]）或其后又来迟到增量重开了块时，
+                                    // 终止事件前必须有配对的 content_block_stop。
+                                    for sse_data in open_block_stop_events(
+                                        &mut current_non_tool_block_index,
+                                        &mut current_non_tool_block_type,
+                                        &mut open_tool_block_indices,
+                                    ) {
+                                        yield Ok(Bytes::from(sse_data));
                                     }
 
                                     // 流正常结束，发出缓存的 message_delta（含完整 usage）。
@@ -753,10 +798,19 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
         // 流自然结束但未收到 [DONE] 时，确保发送缓存的 message_delta 和 message_stop。
         // 若上游已显式报错，则只保留 error 事件，避免把失败伪装成成功完成。
+        // 无 finish_reason 的纯截断不发终止事件（既有方向），也不在此补关块。
         if !stream_ended_with_error {
             let emitted_pending_message_delta = if let Some((stop_reason, usage_json)) =
                 pending_message_delta.take()
             {
+                // 发终止事件前补关仍开着的块（finish 处理完后又来迟到增量重开块的场景）。
+                for sse_data in open_block_stop_events(
+                    &mut current_non_tool_block_index,
+                    &mut current_non_tool_block_type,
+                    &mut open_tool_block_indices,
+                ) {
+                    yield Ok(Bytes::from(sse_data));
+                }
                 let event = build_message_delta_event(stop_reason, usage_json);
                 let sse_data = format!("event: message_delta\ndata: {}\n\n",
                     serde_json::to_string(&event).unwrap_or_default());
@@ -778,18 +832,23 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     }
 }
 
-/// Extract cache_read tokens from Usage, checking both direct field and nested details
+/// Extract cache_read tokens from Usage, checking both direct field and nested details.
+/// 每环要求「存在且非 0」：显式 0 按未上报处理继续向后找（#8041：部分中转把
+/// 靠前字段硬编码为桩 0，真值只在低顺位字段）；全 0/缺失仍读 0。
 fn extract_cache_read_tokens(usage: &Usage) -> Option<u32> {
-    // Direct field takes priority (compatible servers)
-    if let Some(v) = usage.cache_read_input_tokens {
-        return Some(v);
+    fn provided_nonzero(value: Option<u32>) -> Option<u32> {
+        value.filter(|&tokens| tokens > 0)
     }
-    // OpenAI standard: prompt_tokens_details.cached_tokens
-    usage
-        .prompt_tokens_details
-        .as_ref()
-        .map(|d| d.cached_tokens)
-        .filter(|&v| v > 0)
+    // Direct field takes priority (compatible servers), then the OpenAI standard
+    // nested details, then the documented DeepSeek cache-hit field as last fallback.
+    provided_nonzero(usage.cache_read_input_tokens)
+        .or_else(|| {
+            usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|details| provided_nonzero(Some(details.cached_tokens)))
+        })
+        .or_else(|| provided_nonzero(usage.prompt_cache_hit_tokens))
 }
 
 /// Extract cache-write tokens from direct compatibility fields or OpenAI details.
@@ -1272,6 +1331,39 @@ mod tests {
                 .pointer("/usage/cache_creation_input_tokens")
                 .and_then(|v| v.as_u64()),
             Some(300)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_usage_chunk_stub_zero_cache_read_falls_through_to_deepseek_hit_tokens() {
+        // #8041 报告者 payload：中转把首环 cache_read_input_tokens 硬编码为桩 0，
+        // 真值只在 prompt_cache_hit_tokens。显式 0 按「未上报」处理继续向后找，
+        // 不能 Some(0) 短路候选链；cache_read 修正后 fresh input = 6650 - 6400 = 250。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_stub0\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"tool-1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_stub0\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":6650,\"completion_tokens\":16,\"cache_read_input_tokens\":0,\"prompt_cache_hit_tokens\":6400}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let message_delta = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_delta"))
+            .expect("should emit message_delta with usage");
+
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_read_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(6400)
+        );
+        // fresh input = 6650 - 6400 - 0 = 250
+        assert_eq!(
+            message_delta
+                .pointer("/usage/input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(250)
         );
     }
 
@@ -1879,5 +1971,134 @@ mod tests {
                 "content {content:?}"
             );
         }
+    }
+
+    /// 断言第一个 index 为 N 的 content_block_stop 出现在第一个指定类型事件之前。
+    fn assert_block_stop_precedes_event(events: &[Value], index: u64, later_event: &str) {
+        let stop_position = events
+            .iter()
+            .position(|event| {
+                event_type(event) == Some("content_block_stop")
+                    && event.get("index").and_then(|v| v.as_u64()) == Some(index)
+            })
+            .unwrap_or_else(|| panic!("content_block_stop for index {index} must be emitted"));
+        let later_position = events
+            .iter()
+            .position(|event| event_type(event) == Some(later_event))
+            .unwrap_or_else(|| panic!("{later_event} must be emitted"));
+        assert!(
+            stop_position < later_position,
+            "content_block_stop for index {index} must precede {later_event}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_done_without_finish_reason_still_closes_open_text_block() {
+        // 上游不发 finish_reason、只发 [DONE] 时，finish 路径的关块逻辑不会执行，
+        // 仍开着的 text 块必须在 [DONE] 边界补配对的 content_block_stop——
+        // Anthropic 协议要求每个 start 都有 stop，否则客户端 SDK 丢弃未闭合块。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_nofin\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking hard\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_nofin\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "thinking hard"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "hello"
+        );
+        assert_eq!(
+            block_boundaries(&events),
+            vec![
+                "start:0:thinking".to_string(),
+                "stop:0".to_string(),
+                "start:1:text".to_string(),
+                "stop:1".to_string(),
+            ]
+        );
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn test_late_content_after_finish_reason_reopened_block_closed_at_done() {
+        // finish_reason 处理完之后上游又补了一条正文增量（部分中转的收尾形状）：
+        // 迟到增量会重开一个 text 块，[DONE] 边界必须把它关上，且先于终止事件。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_late\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"plan\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_late\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"main text\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_late\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_late\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\" trailing\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "main text trailing"
+        );
+        assert_eq!(
+            block_boundaries(&events),
+            vec![
+                "start:0:thinking".to_string(),
+                "stop:0".to_string(),
+                "start:1:text".to_string(),
+                "stop:1".to_string(),
+                "start:2:text".to_string(),
+                "stop:2".to_string(),
+            ]
+        );
+        assert_block_stop_precedes_event(&events, 2, "message_delta");
+        assert_block_stop_precedes_event(&events, 2, "message_stop");
+    }
+
+    #[tokio::test]
+    async fn test_reasoning_then_text_with_finish_pairs_all_block_stops() {
+        // 常规形状（推理→正文→finish→[DONE]）本就双停；锁住配对不变量，
+        // 同时验证 [DONE] 边界补关不会在 finish 路径已关块后重复发 stop。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_pair\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"plan\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_pair\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_pair\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            block_boundaries(&events),
+            vec![
+                "start:0:thinking".to_string(),
+                "stop:0".to_string(),
+                "start:1:text".to_string(),
+                "stop:1".to_string(),
+            ]
+        );
+        assert_block_stop_precedes_event(&events, 1, "message_delta");
+        assert_block_stop_precedes_event(&events, 1, "message_stop");
+    }
+
+    #[tokio::test]
+    async fn test_done_without_finish_reason_still_closes_open_tool_block() {
+        // 工具块同理：finish_reason 缺失时工具块也只能靠 [DONE] 边界补关。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_tool\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{}\"}}]}}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            block_boundaries(&events),
+            vec!["start:0:tool_use".to_string(), "stop:0".to_string()]
+        );
     }
 }

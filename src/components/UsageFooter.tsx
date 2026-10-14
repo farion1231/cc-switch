@@ -11,6 +11,7 @@ import {
 import type { QuotaTier } from "@/types/subscription";
 import { isAdditiveAppId } from "@/config/appConfig";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 import {
   balanceLine,
   expiredLine,
@@ -88,7 +89,7 @@ function planLine(
     return {
       key,
       left: Infinity,
-      tone: "normal",
+      tone: "plain",
       text: `${t("usage.used")} ${amount(data.used)}`,
       detail: detail || undefined,
     };
@@ -106,6 +107,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   inline = false,
 }) => {
   const { t } = useTranslation();
+  const display = useQuotaDisplay();
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
 
@@ -168,13 +170,16 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   const usageDataList = usage.data || [];
   if (usageDataList.length === 0) return null;
 
-  // Token Plan：按档写剩余百分比
+  // Token Plan：按档写剩余（或已用）百分比
   if (isTokenPlan) {
     const tiers = usageDataList.map((d) => toQuotaTier(d));
     const planLabel = tiers[0]?.planLabel;
     const rows = tiers.map((tier, index) => {
       const label = tierLabel(t, tier.name);
-      const line = tierLine(t, tier, label, tierShortLabel(t, tier.name));
+      const line = tierLine(t, tier, label, {
+        short: tierShortLabel(t, tier.name),
+        display,
+      });
       return {
         label,
         line: {

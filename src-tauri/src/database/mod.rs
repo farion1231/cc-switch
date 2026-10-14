@@ -32,6 +32,7 @@ mod schema;
 mod tests;
 
 // DAO 类型导出供外部使用
+pub use dao::custom_icons::{CustomIconEntry, CUSTOM_ICONS_KEY};
 pub(crate) use dao::providers_seed::{
     is_official_seed_id, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, CODEX_OFFICIAL_PROVIDER_ID,
     GROKBUILD_OFFICIAL_PROVIDER_ID,

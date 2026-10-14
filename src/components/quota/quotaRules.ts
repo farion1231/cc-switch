@@ -2,11 +2,16 @@ import type { TFunction } from "i18next";
 import type { QuotaTier, ResetCredits } from "@/types/subscription";
 
 /**
- * 额度的文字和颜色（v7 QuotaSpec）：一律写「剩余」，平时灰色；任一档剩余不到 10% 加深加粗
- * （不用橙色，见 TONE_TEXT；余额不算，见 balanceLine）；用完 / 过期 / 没查到红色。卡片最多两行：
+ * 额度的文字和颜色（v7 QuotaSpec）：按档的百分比默认写「剩余」，设置里可改成「已用」（见 QuotaDisplay）；
+ * 余额、Credits、重置次数始终写剩下的。颜色一律按剩余算，只给数值上色（见 emphasis）：平时绿色；
+ * 任一档剩余不到 20% 橙色（余额不算，见 balanceLine）；用完 / 过期 / 没查到整句红色。卡片最多两行：
  * 档数更多时，第一行固定写窗口最短的那档，其余并成一行（见 cardRows）。
  */
-export type QuotaTone = "normal" | "warning" | "danger" | "muted";
+/** 按档的百分比写剩余还是已用（设置 `quotaDisplay`，#8024） */
+export type QuotaDisplay = "left" | "used";
+
+/** plain：数值不表示额度好坏（「已用 $3.20」），不上色 */
+export type QuotaTone = "normal" | "warning" | "danger" | "muted" | "plain";
 
 export interface QuotaLine {
   key: string;
@@ -14,8 +19,12 @@ export interface QuotaLine {
   /** 不带档名的值（「剩余 62%」），额度条里档名单独一列 */
   value?: string;
   tone: QuotaTone;
+  /** 句子里按 tone 上色的那段数值（「62%」「¥82.10」），其余字保持灰色；没有时整句上色 */
+  emphasis?: string;
   /** 剩余百分比；余额没有总额时是 Infinity，失败 / 过期是负数（排在最前） */
   left: number;
+  /** 额度条画多长（0–100）；不给时按剩余画（见 barPercent） */
+  bar?: number;
   /** 悬停时补充的一句（套餐名、失败原因）；重置时间不写这里，见 resetsAt */
   detail?: string;
   /** 档名（「5 小时」），悬停说明里接在重置倒计时前面 */
@@ -52,7 +61,7 @@ export interface QuotaBreakdownItem {
   tone: QuotaTone;
 }
 
-export const WARN_BELOW_PERCENT = 10;
+export const WARN_BELOW_PERCENT = 20;
 
 export function toneForLeft(left: number): QuotaTone {
   if (left <= 0) return "danger";
@@ -101,32 +110,51 @@ const TIER_WINDOW_ORDER: Record<string, number> = {
 };
 const UNKNOWN_WINDOW = 9;
 
-/** `shortLabel` 给了才能并进卡片的合并行（英日用短档名，放得下 136px 那一列） */
+/**
+ * 一档额度 → 额度行。`short` 给了才能并进卡片的合并行（英日用短档名，放得下 136px 那一列）；
+ * `display` 为 used 时数值和额度条都按已用写，颜色、挑哪几档仍按剩余
+ */
 export function tierLine(
   t: TFunction,
   tier: Pick<QuotaTier, "name" | "utilization" | "resetsAt">,
   label: string,
-  shortLabel?: string,
+  { short, display = "left" }: { short?: string; display?: QuotaDisplay } = {},
 ): QuotaLine {
   const left = Math.max(0, Math.round(100 - (tier.utilization ?? 0)));
+  const used = display === "used";
+  const shown = used ? 100 - left : left;
   const params = labelParams(label);
   return {
     key: tier.name,
     left,
+    bar: shown,
     tone: toneForLeft(left),
+    emphasis: left <= 0 ? undefined : `${shown}%`,
     text:
       left <= 0
         ? t("quota.tierUsedUp", params)
-        : t("quota.tierLeft", { ...params, value: left }),
-    value: left <= 0 ? t("quota.usedUp") : t("quota.left", { value: left }),
+        : t(used ? "quota.tierUsed" : "quota.tierLeft", {
+            ...params,
+            value: shown,
+          }),
+    value:
+      left <= 0
+        ? t("quota.usedUp")
+        : t(used ? "quota.used" : "quota.left", { value: shown }),
     label,
     resetsAt: tier.resetsAt,
     short:
-      shortLabel === undefined
+      short === undefined
         ? undefined
-        : t("quota.tierShort", { label: shortLabel, value: left }),
+        : t("quota.tierShort", { label: short, value: shown }),
     window: TIER_WINDOW_ORDER[tier.name] ?? UNKNOWN_WINDOW,
   };
+}
+
+/** 额度条的长度（0–100）：按档的行跟着显示方式，其余按剩余；没有比例的（余额无总额）画满 */
+export function barPercent(line: Pick<QuotaLine, "bar" | "left">): number {
+  const value = line.bar ?? line.left;
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 100;
 }
 
 /** 「2h30m后重置」；没有重置时间或已经过了时为 null */
@@ -203,6 +231,7 @@ export function resetCreditsLine(
     key: "reset_credits",
     left: Infinity,
     tone: expiringSoon ? "warning" : "normal",
+    emphasis: String(count),
     text: t("quota.resetCredits.left", { count }),
     value: t("quota.resetCredits.value", { count }),
     short: t("quota.resetCredits.short", { count }),
@@ -262,6 +291,7 @@ export function creditsLine(
     key: "credits_balance",
     left: Infinity,
     tone: "normal",
+    emphasis: dollars,
     text: t("quota.credits.text", { usd: dollars }),
     value: t("quota.credits.usd", { usd: dollars }),
     short: dollars,
@@ -346,6 +376,7 @@ export function balanceLine(
     key,
     left,
     tone: remaining <= 0 ? "danger" : "normal",
+    emphasis: remaining <= 0 ? undefined : value,
     text:
       remaining <= 0 ? t("quota.balanceUsedUp") : t("quota.balance", { value }),
     detail,

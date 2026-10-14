@@ -83,6 +83,7 @@ describe("UsageDashboard (smoke)", () => {
     usageApiMock.getProviderStats.mockResolvedValue([
       {
         providerId: "p1",
+        appType: "claude",
         providerName: "DeepSeek",
         requestCount: 720,
         totalTokens: 4_300_000,

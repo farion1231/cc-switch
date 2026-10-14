@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::codex_config::{get_codex_config_dir, read_codex_config_text};
+use crate::codex_rollout_file;
 use crate::codex_state_db::{codex_state_db_is_lockable, codex_state_db_paths};
 use crate::session_manager::model::{
     project_content, ContentRef, EventKind, ImageRef, MessageMeta, SessionBlock, ToolKind,
@@ -79,6 +80,7 @@ fn scan_sessions_in_roots_with_titles(
     for root in roots {
         collect_jsonl_files(root, &mut files);
     }
+    let files = codex_rollout_file::dedupe_siblings(files);
 
     // 缓存里只放文件本身解析出的结果；线程标题来自外部索引 / 数据库，
     // 每轮重新读取后再覆盖上去，和逐个调用 parse_session_with_titles 等价。
@@ -244,8 +246,9 @@ const INJECTED_USER_PREFIXES: [&str; 4] = [
 ];
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
-    let mut lines = LineSpans::new(BufReader::with_capacity(1 << 20, file));
+    let reader = codex_rollout_file::open_reader(path)
+        .map_err(|e| format!("Failed to open session file: {e}"))?;
+    let mut lines = LineSpans::new(reader);
     let mut parser = RolloutParser::default();
     while let Some(line) = lines
         .next_line()
@@ -1882,6 +1885,19 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
             path.display()
         )
     })?;
+    // 压缩 / 解压的瞬间两种形态可能并存，只删一份会话会从另一份复活
+    if let Some(sibling) = codex_rollout_file::sibling(path) {
+        match std::fs::remove_file(&sibling) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(format!(
+                    "Failed to delete Codex session file {}: {e}",
+                    sibling.display()
+                ))
+            }
+        }
+    }
 
     Ok(true)
 }
@@ -1893,24 +1909,67 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 /// 列表扫描用：读不了返回 `Err`，不进解析缓存、下轮重试；读到了但不是会话返回 `Ok(None)`。
 /// 线程标题由调用方在拿到结果后覆盖，这里不带。
 fn scan_session_file(path: &Path) -> std::io::Result<Option<SessionMeta>> {
-    let (head, tail) = read_head_tail_lines(path, 10, 30)?;
-    Ok(parse_session_lines(path, head, tail, &HashMap::new()))
+    let lines = read_session_lines(path)?;
+    Ok(parse_session_lines(path, lines, &HashMap::new()))
 }
 
 fn parse_session_with_titles(
     path: &Path,
     thread_titles: &HashMap<String, String>,
 ) -> Option<SessionMeta> {
-    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
-    parse_session_lines(path, head, tail, thread_titles)
+    let lines = read_session_lines(path).ok()?;
+    parse_session_lines(path, lines, thread_titles)
+}
+
+/// 列表元数据要读的行：开头取 id / 项目 / 首条消息，结尾取最后活跃时间与预览。
+struct SessionLines {
+    head: Vec<String>,
+    tail: Vec<String>,
+    /// 结尾没读到时间时的兜底（毫秒）
+    fallback_last_active: Option<i64>,
+}
+
+const HEAD_LINES: usize = 10;
+const TAIL_LINES: usize = 30;
+
+/// 压缩文件没法跳到结尾，整份解压又太慢（几十 GB 的会话目录每次打开都要等），
+/// 所以只解压开头；最后活跃时间用文件 mtime（Codex 压缩时保留了它），不出预览。
+fn read_session_lines(path: &Path) -> std::io::Result<SessionLines> {
+    if !codex_rollout_file::is_compressed(path) {
+        let (head, tail) = read_head_tail_lines(path, HEAD_LINES, TAIL_LINES)?;
+        return Ok(SessionLines {
+            head,
+            tail,
+            fallback_last_active: None,
+        });
+    }
+    let head = codex_rollout_file::open_reader(path)?
+        .lines()
+        .take(HEAD_LINES)
+        .map_while(Result::ok)
+        .collect();
+    let fallback_last_active = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok());
+    Ok(SessionLines {
+        head,
+        tail: Vec::new(),
+        fallback_last_active,
+    })
 }
 
 fn parse_session_lines(
     path: &Path,
-    head: Vec<String>,
-    tail: Vec<String>,
+    lines: SessionLines,
     thread_titles: &HashMap<String, String>,
 ) -> Option<SessionMeta> {
+    let SessionLines {
+        head,
+        tail,
+        fallback_last_active,
+    } = lines;
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
@@ -1998,6 +2057,7 @@ fn parse_session_lines(
         }
     }
 
+    let last_active_at = last_active_at.or(fallback_last_active);
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
     let session_id = session_id?;
 
@@ -2127,7 +2187,7 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect_jsonl_files(&path, files);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+        } else if codex_rollout_file::is_rollout_file(&path) {
             files.push(path);
         }
     }
@@ -2195,6 +2255,95 @@ mod tests {
             .expect("delete session");
 
         assert!(!path.exists());
+    }
+
+    /// 把普通 rollout 压成 Codex 的 `.jsonl.zst`（单帧 zstd）并删掉原文件，返回压缩后的路径。
+    fn compress_like_codex(plain: &Path) -> PathBuf {
+        let compressed = PathBuf::from(format!("{}.zst", plain.display()));
+        let bytes = std::fs::read(plain).expect("read plain");
+        let encoded = zstd::stream::encode_all(bytes.as_slice(), 3).expect("encode");
+        std::fs::write(&compressed, encoded).expect("write zst");
+        std::fs::remove_file(plain).expect("remove plain");
+        compressed
+    }
+
+    fn set_mtime(path: &Path, time: std::time::SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open")
+            .set_times(std::fs::FileTimes::new().set_modified(time))
+            .expect("set mtime");
+    }
+
+    #[test]
+    fn scan_lists_compressed_sessions_with_mtime_as_last_active() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        std::fs::create_dir_all(&root).expect("dir");
+        let plain = root.join("rollout-2026-03-06T21-50-12-zst-id.jsonl");
+        write_codex_session(&plain, "zst-id", "Compressed session");
+        let compressed = compress_like_codex(&plain);
+        let mtime = std::time::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        set_mtime(&compressed, mtime);
+
+        let sessions = scan_sessions_in_roots(&[root]);
+        assert_eq!(sessions.len(), 1);
+        let meta = &sessions[0];
+        assert_eq!(meta.session_id, "zst-id");
+        assert_eq!(meta.title.as_deref(), Some("Compressed session"));
+        assert_eq!(meta.project_dir.as_deref(), Some("/tmp/project"));
+        assert_eq!(meta.last_active_at, Some(1_800_000_000_000));
+        assert_eq!(meta.summary, None);
+        assert_eq!(
+            meta.source_path.as_deref(),
+            Some(compressed.to_string_lossy().as_ref())
+        );
+    }
+
+    #[test]
+    fn scan_shows_one_session_when_plain_and_compressed_coexist() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        std::fs::create_dir_all(&root).expect("dir");
+        let plain = root.join("rollout-both-id.jsonl");
+        write_codex_session(&plain, "both-id", "Both forms");
+        let bytes = std::fs::read(&plain).expect("read");
+        let compressed = compress_like_codex(&plain);
+        std::fs::write(&plain, bytes).expect("restore plain");
+
+        let sessions = scan_sessions_in_roots(&[root]);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].source_path.as_deref(),
+            Some(plain.to_string_lossy().as_ref())
+        );
+        assert!(compressed.exists());
+    }
+
+    #[test]
+    fn load_messages_reads_compressed_rollout_identically() {
+        let (_tmp, plain, expected) = load_fixture(&rollout_fixture());
+        let compressed = compress_like_codex(&plain);
+        assert_eq!(load_messages(&compressed).expect("load zst"), expected);
+    }
+
+    #[test]
+    fn delete_session_removes_compressed_and_sibling() {
+        let temp = tempdir().expect("tempdir");
+        let id = "019cc369-bd7c-7891-b371-7b20b4fe0b18";
+        let plain = temp
+            .path()
+            .join(format!("rollout-2026-03-06T21-50-12-{id}.jsonl"));
+        write_codex_session(&plain, id, "hello");
+        let bytes = std::fs::read(&plain).expect("read");
+        let compressed = compress_like_codex(&plain);
+        std::fs::write(&plain, bytes).expect("restore plain");
+
+        delete_session(temp.path(), &compressed, id).expect("delete session");
+
+        assert!(!compressed.exists());
+        assert!(!plain.exists());
     }
 
     #[test]
