@@ -2348,7 +2348,7 @@
       "justNow": "工作階段日誌 · 剛剛同步",
       "minutesAgo": "工作階段日誌 · {{count}} 分鐘前同步",
       "off": "工作階段日誌 · 自動掃描已關閉",
-      "tipAuto": "每 60 秒自動掃描一次工作階段日誌",
+      "tipAuto": "背景每 60 秒重新整理；用量統計依右側設定的間隔重新整理",
       "tipOff": "只在手動同步時掃描工作階段日誌"
     },
     "refreshMenu": {
@@ -2444,7 +2444,7 @@
       "scanHelpTitle": "工作階段日誌是什麼",
       "scanHelp": "各應用程式寫在本機的工作階段記錄。CC Switch 從中讀取用量，不開路由也有資料。",
       "coverage": "涵蓋 7 個應用程式：{{apps}}",
-      "cadenceOn": "啟動時掃描一次，之後每 60 秒一次",
+      "cadenceOn": "啟動時及背景每 60 秒掃描；用量頁可見時也依自動重新整理間隔同步",
       "cadenceOff": "自動掃描已關閉，只在點「立即同步」時掃描",
       "unsupported": "Hermes、OpenClaw 暫不支援用量統計",
       "loggingHelpTitle": "記錄請求用量是什麼",

@@ -2319,7 +2319,7 @@
       "justNow": "Oturum günlükleri · az önce eşitle edildi",
       "minutesAgo": "Oturum günlükleri · {{count}} dakika önce eşitle edildi",
       "off": "Oturum günlükleri · otomatik tarama kapalı",
-      "tipAuto": "Oturum günlükleri her 60 saniyede bir taranır",
+      "tipAuto": "Arka planda her 60 saniyede bir yenilenir; kullanım istatistikleri sağdaki ayarda belirtilen aralıkla yenilenir",
       "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır"
     },
     "refreshMenu": {
@@ -2409,7 +2409,7 @@
       "scanHelpTitle": "Oturum günlükleri nedir?",
       "scanHelp": "Konuşma, bu bilgisayara yazılan her uygulamanın kaydını tutar. CC Switch bunların kullanımını okur, böylece yönlendirme olmadan bile veri alırsınız.",
       "coverage": "7 uygulamayı kapsar: {{apps}}",
-      "cadenceOn": "Başlangıçta bir kez, ardından her 60 saniyede bir tarar",
+      "cadenceOn": "Başlangıçta ve arka planda her 60 saniyede bir tarar; kullanım sayfası görünürken otomatik yenileme aralığında da eşitler",
       "cadenceOff": "Otomatik tarama kapalı; günlükler yalnızca Şimdi Eşitle'ye tıkladığınızda taranır",
       "unsupported": "Hermes ve OpenClaw henüz kullanım istatistiklerini desteklemiyor",
       "loggingHelpTitle": "Kayıt isteği kullanımı ne işe yarar?",

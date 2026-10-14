@@ -39,6 +39,7 @@ import {
   useSessionUsageLastSync,
 } from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
+import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
 import { usageApi } from "@/lib/api/usage";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { cn } from "@/lib/utils";
@@ -180,7 +181,14 @@ export function UsageDashboard({
   const [lastManualSyncAt, setLastManualSyncAt] = useState(
     lastManualSessionSyncAt,
   );
-  const { data: lastScanAt } = useSessionUsageLastSync();
+  const { data: lastScanAt } = useSessionUsageLastSync({
+    refetchInterval: false,
+  });
+  const { syncSessionUsage } = useUsageAutoRefresh({
+    refreshIntervalMs,
+    sessionAutoSyncEnabled,
+    paused: rebuildingCodex,
+  });
   const lastSyncAt = Math.max(lastManualSyncAt ?? 0, lastScanAt ?? 0) || null;
   const [containerRef, measuredWidth] = useContainerWidth<HTMLDivElement>();
   const now = useMinuteTicker();
@@ -217,13 +225,12 @@ export function UsageDashboard({
   };
 
   // 后端写入新日志时 emit `usage-log-recorded`，立刻 invalidate 所有 usage 查询
-  useUsageEventBridge();
+  useUsageEventBridge(refreshIntervalMs > 0);
 
   const changeRefreshInterval = async (next: number) => {
     const normalized = normalizeRefreshInterval(next);
     const previous = refreshIntervalMs;
     setRefreshIntervalMs(normalized);
-    queryClient.invalidateQueries({ queryKey: usageKeys.all });
     try {
       const saved = await onRefreshIntervalChange?.(normalized);
       if (saved === false) {
@@ -265,7 +272,7 @@ export function UsageDashboard({
   const runManualSessionSync = async () => {
     setSyncingSession(true);
     try {
-      const result = await usageApi.syncSessionUsage();
+      const result = await syncSessionUsage();
       await queryClient.invalidateQueries({ queryKey: usageKeys.all });
       lastManualSessionSyncAt = Date.now();
       setLastManualSyncAt(lastManualSessionSyncAt);
@@ -306,11 +313,10 @@ export function UsageDashboard({
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
 
   // 筛选下拉的选项池：供应商列表只跟应用/时间范围走（不受自身选中值影响），
-  // 模型列表随所选供应商级联。refetchInterval 跟随面板的刷新设置——未筛选时
-  // 这两个查询与统计表共享 query key，落下的话会按默认 30s 拖着同 key 查询轮询。
+  // 模型列表随所选供应商级联。所有查询（含子组件）关闭各自的轮询，
+  // 由 useUsageAutoRefresh 在会话导入后统一刷新，避免先查询再导入的时序问题。
   const refetch = {
-    refetchInterval:
-      refreshIntervalMs > 0 ? refreshIntervalMs : (false as const),
+    refetchInterval: false as const,
   };
   const { data: providerOptionsData } = useProviderStats(
     range,
@@ -701,7 +707,7 @@ export function UsageDashboard({
             providerName={providerName}
             model={model}
             statusCode={statusCode}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
             onOpenDetail={setDetailRequestId}
           />
         )}
@@ -711,7 +717,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         )}
         {tab === "models" && (
@@ -720,7 +726,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         )}
         {tab === "pricing" && <PricingConfigPanel />}
@@ -785,7 +791,7 @@ export function UsageDashboard({
           appType={scopedAppType}
           providerName={providerName}
           model={model}
-          refreshIntervalMs={refreshIntervalMs}
+          refreshIntervalMs={0}
           compact={compact}
         />
 
@@ -795,7 +801,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         ) : (
           <UsageTrendChart
@@ -804,7 +810,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         )}
 
