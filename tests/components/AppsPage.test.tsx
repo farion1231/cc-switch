@@ -20,6 +20,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   settingsApi,
   ToolInstallationReport,
+  ToolUninstallCandidate,
   ToolUninstallPlan,
 } from "@/lib/api/settings";
 
@@ -88,6 +89,24 @@ function uninstallPlan(tool: string): ToolUninstallPlan {
     command: `npm uninstall -g --prefix C:/tools ${tool}`,
     native: false,
     wsl_distro: null,
+  };
+}
+
+function candidate(
+  plan: ToolUninstallPlan | null,
+  overrides: Partial<ToolUninstallCandidate> = {},
+): ToolUninstallCandidate {
+  return {
+    path: plan?.path ?? "C:/tools/unknown.exe",
+    version: "1.0.0",
+    runnable: true,
+    error: null,
+    source: "system",
+    is_path_default: true,
+    plan,
+    unavailable_reason: null,
+    reinstalled_by_updater: false,
+    ...overrides,
   };
 }
 
@@ -202,7 +221,9 @@ describe("AppsPage concurrent CLI upgrades", () => {
       );
     mocks.prepareToolUninstall
       .mockReset()
-      .mockImplementation(async (tool: string) => uninstallPlan(tool));
+      .mockImplementation(async (tool: string) => [
+        candidate(uninstallPlan(tool)),
+      ]);
     mocks.runToolLifecycleAction
       .mockReset()
       .mockImplementation(async ([tool]: string[]) => {
@@ -572,7 +593,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
   });
 
   it("shows the selected path and command while retaining the resolved target for uninstall validation", async () => {
-    const pending = deferred<ToolUninstallPlan>();
+    const pending = deferred<ToolUninstallCandidate[]>();
     mocks.prepareToolUninstall.mockReturnValueOnce(pending.promise);
     await renderApps();
     fireEvent.click(
@@ -593,7 +614,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       real_path: "C:/Users/me/.local/share/claude/versions/2.0.0",
       native: true,
     };
-    await act(async () => pending.resolve(plan));
+    await act(async () => pending.resolve([candidate(plan)]));
     expect(dialog.getByText(plan.path)).toBeInTheDocument();
     expect(dialog.queryByText(plan.real_path)).not.toBeInTheDocument();
     expect(dialog.getByText(plan.command)).toBeInTheDocument();
@@ -641,8 +662,88 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
   });
 
+  it("lists every installation and uninstalls only the one the user picks", async () => {
+    const native = {
+      ...uninstallPlan("grok"),
+      path: "/Users/me/.grok/bin/grok",
+      real_path: "/Users/me/.grok/bin/grok-1.0.50",
+      command:
+        "rm -- '/Users/me/.grok/bin/grok' '/Users/me/.grok/bin/grok-1.0.50'",
+      native: true,
+    };
+    const npm = {
+      ...uninstallPlan("grok"),
+      path: "/Users/me/.nvm/versions/node/v22/bin/grok",
+      command:
+        "npm uninstall -g --prefix /Users/me/.nvm/versions/node/v22 @xai-official/grok",
+    };
+    mocks.prepareToolUninstall.mockResolvedValueOnce([
+      candidate(native, { version: "1.0.50" }),
+      candidate(npm, {
+        version: "1.0.50",
+        source: "nvm",
+        is_path_default: false,
+        reinstalled_by_updater: true,
+      }),
+      candidate(null, {
+        path: "/opt/tools/grok",
+        version: "0.9.0",
+        is_path_default: false,
+        unavailable_reason:
+          "Cannot automatically uninstall Grok Build at /opt/tools/grok.",
+      }),
+    ]);
+    await renderApps();
+    fireEvent.click(
+      card("Grok Build").getByRole("button", {
+        name: "settings.toolUninstall",
+      }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    const npmRadio = await dialog.findByRole("radio", { name: npm.path });
+    const nativeRadio = dialog.getByRole("radio", { name: native.path });
+    const manualRadio = dialog.getByRole("radio", { name: "/opt/tools/grok" });
+    expect(nativeRadio).not.toBeChecked();
+    expect(npmRadio).not.toBeChecked();
+    expect(manualRadio).toBeDisabled();
+    expect(
+      dialog.getByText(
+        "Cannot automatically uninstall Grok Build at /opt/tools/grok.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      dialog.getByText("settings.toolUninstallReinstalledByUpdater"),
+    ).toBeInTheDocument();
+    expect(
+      dialog.getByRole("button", { name: "settings.manualUninstallCommands" }),
+    ).toBeInTheDocument();
+    const confirm = dialog.getByRole("button", {
+      name: "settings.toolUninstall",
+    });
+    expect(confirm).toBeDisabled();
+    expect(dialog.queryByText(native.command)).toBeNull();
+
+    fireEvent.click(npmRadio);
+    expect(dialog.getByText(npm.command)).toBeInTheDocument();
+    expect(dialog.queryByText("settings.toolUninstallNativeHint")).toBeNull();
+    fireEvent.click(nativeRadio);
+    expect(dialog.getByText(native.command)).toBeInTheDocument();
+    expect(
+      dialog.getByText("settings.toolUninstallNativeHint"),
+    ).toBeInTheDocument();
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+        ["grok"],
+        "uninstall",
+        {},
+        native,
+      ),
+    );
+  });
+
   it("discards a cancelled preview instead of showing it for another tool", async () => {
-    const first = deferred<ToolUninstallPlan>();
+    const first = deferred<ToolUninstallCandidate[]>();
     mocks.prepareToolUninstall.mockReturnValueOnce(first.promise);
     await renderApps();
     fireEvent.click(
@@ -662,7 +763,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(
       await dialog.findByText(uninstallPlan("codex").path),
     ).toBeInTheDocument();
-    await act(async () => first.resolve(uninstallPlan("claude")));
+    await act(async () => first.resolve([candidate(uninstallPlan("claude"))]));
     expect(dialog.queryByText(uninstallPlan("claude").path)).toBeNull();
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
   });
@@ -828,6 +929,165 @@ describe("AppsPage concurrent CLI upgrades", () => {
       errorLog.mockRestore();
     }
   });
+
+  it.each(["rejected", "empty"])(
+    "warns when uninstall succeeds but installation diagnostics are %s",
+    async (result) => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await renderApps();
+        mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+          missing.add("claude");
+          if (result === "rejected") {
+            mocks.probeToolInstallations.mockRejectedValueOnce(
+              new Error("diagnostics failed"),
+            );
+          } else {
+            mocks.probeToolInstallations.mockResolvedValueOnce([]);
+          }
+        });
+        fireEvent.click(
+          card("Claude Code").getByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        fireEvent.click(
+          await within(screen.getByRole("dialog")).findByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        await waitFor(() =>
+          expect(mocks.warning).toHaveBeenCalledWith(
+            "settings.toolUninstallWarningTitle",
+            {
+              description: "settings.toolUninstallCheckFailed",
+              closeButton: true,
+            },
+          ),
+        );
+        expect(mocks.error).not.toHaveBeenCalled();
+        expect(mocks.success).not.toHaveBeenCalled();
+        expect(
+          card("Claude Code").getByRole("button", {
+            name: "settings.toolInstall",
+          }),
+        ).toBeEnabled();
+      } finally {
+        errorLog.mockRestore();
+      }
+    },
+  );
+
+  it.each(["rejected", "empty"])(
+    "warns when uninstall succeeds but the status refresh is %s",
+    async (result) => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await renderApps();
+        mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+          if (result === "rejected") {
+            mocks.getToolVersions.mockRejectedValueOnce(
+              new Error("refresh failed"),
+            );
+          } else {
+            mocks.getToolVersions.mockResolvedValueOnce([]);
+          }
+        });
+        fireEvent.click(
+          card("Claude Code").getByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        fireEvent.click(
+          await within(screen.getByRole("dialog")).findByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        await waitFor(() =>
+          expect(mocks.warning).toHaveBeenCalledWith(
+            "settings.toolUninstallWarningTitle",
+            {
+              description: "settings.toolUninstallCheckFailed",
+              closeButton: true,
+            },
+          ),
+        );
+        expect(mocks.error).not.toHaveBeenCalled();
+        expect(mocks.success).not.toHaveBeenCalled();
+        expect(
+          card("Claude Code").getByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        ).toBeEnabled();
+      } finally {
+        errorLog.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    ["Windows NT 10.0", null, true],
+    ["Windows NT 10.0", "Ubuntu", false],
+    ["X11; Linux x86_64", null, false],
+  ])(
+    "warns about Hermes leftovers only on native Windows (%s, %s)",
+    async (userAgent, distro, warn) => {
+      const platform = vi
+        .spyOn(navigator, "userAgent", "get")
+        .mockReturnValue(userAgent);
+      try {
+        mocks.prepareToolUninstall.mockResolvedValueOnce([
+          candidate({
+            ...uninstallPlan("hermes"),
+            command: "hermes uninstall --yes",
+            wsl_distro: distro,
+          }),
+        ]);
+        mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+          missing.add("hermes");
+        });
+        await renderApps();
+        fireEvent.click(
+          card("Hermes").getByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        const dialog = within(screen.getByRole("dialog"));
+        const confirm = await dialog.findByRole("button", {
+          name: "settings.toolUninstall",
+        });
+        expect(
+          dialog.queryByText("settings.toolUninstallHermesWindowsHint") !==
+            null,
+        ).toBe(warn);
+        expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+        fireEvent.click(confirm);
+        await waitFor(() =>
+          expect(
+            card("Hermes").getByRole("button", {
+              name: "settings.toolInstall",
+            }),
+          ).toBeEnabled(),
+        );
+        if (warn) {
+          expect(mocks.warning).toHaveBeenCalledWith(
+            "settings.toolUninstallWarningTitle",
+            {
+              description: "settings.toolUninstallHermesWindowsHint",
+              closeButton: true,
+            },
+          );
+          expect(mocks.success).not.toHaveBeenCalled();
+        } else {
+          expect(mocks.warning).not.toHaveBeenCalled();
+          expect(mocks.success).toHaveBeenCalledOnce();
+        }
+        expect(mocks.error).not.toHaveBeenCalled();
+      } finally {
+        platform.mockRestore();
+      }
+    },
+  );
 
   it("refreshes the remaining installation after uninstall instead of reporting a broken install", async () => {
     await renderApps();
@@ -1562,6 +1822,33 @@ describe("AppsPage concurrent CLI upgrades", () => {
       "settings.toolUpgradeUnmanagedTitle",
       expect.anything(),
     );
+  });
+  it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
+    const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      (await defaultVersions(tools)).map(
+        (tool: { name: string; version: string | null }) => ({
+          ...tool,
+          update_blocked_by_node:
+            tool.name === "claude" && tool.version === "1.0.0"
+              ? { required: ">=24.16.0 <25 || >=26.1.0", current: "22.23.2" }
+              : null,
+        }),
+      ),
+    );
+    await renderApps();
+    await waitFor(() =>
+      expect(card("Claude Code").getByText("appsPage.updateNeedsNode")).toBeInTheDocument(),
+    );
+    expect(
+      card("Claude Code").queryByRole("button", { name: "settings.toolUpdate" }),
+    ).toBeNull();
+    fireEvent.click(updateAllButton());
+    await waitFor(() => expect(isReady("Codex")).toBe(true));
+    expect(isReady("Gemini CLI")).toBe(true);
+    expect(
+      mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
+    ).toEqual([["codex"], ["gemini"]]);
   });
   it("shows diagnosed conflicts on the row, refreshes the install report and says so", async () => {
     vi.resetModules();

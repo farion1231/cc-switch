@@ -1123,8 +1123,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
     templateValues: {
       apiKey: {
@@ -2784,7 +2782,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "ep-xxx-xxx": {
+        "kat-coder-pro-v2.5": {
           name: "KAT-Coder Pro V2.5",
           limit: { context: 256000, output: 80000 },
         },
@@ -2798,7 +2796,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
-    icon: "catcoder",
+    icon: "streamlake",
   },
   {
     name: "StreamLake en",
@@ -2815,7 +2813,10 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "ep-xxx-xxx": { name: "KAT-Coder Pro" },
+        "kat-coder-pro-v2.5": {
+          name: "KAT-Coder Pro V2.5",
+          limit: { context: 256000, output: 80000 },
+        },
       },
     },
     category: "cn_official",
@@ -2826,7 +2827,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
-    icon: "catcoder",
+    icon: "streamlake",
   },
   {
     name: "Longcat",
@@ -3105,6 +3106,83 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SiliconFlow",
+    family: "siliconflow",
+    regionKey: "cn",
+    websiteUrl: "https://siliconflow.cn",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "SiliconFlow",
+      options: {
+        baseURL: "https://api.siliconflow.cn/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek-ai/DeepSeek-V4-Flash": {
+          name: "DeepSeek V4 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "siliconflow",
+    icon: "siliconflow",
+    iconColor: "#6E29F6",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SiliconFlow en",
+    family: "siliconflow",
+    regionKey: "intl",
+    websiteUrl: "https://siliconflow.com",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "SiliconFlow en",
+      options: {
+        baseURL: "https://api.siliconflow.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "MiniMaxAI/MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "deepseek-ai/DeepSeek-V4.1-Flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "siliconflow",
+    icon: "siliconflow",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
         editorValue: "",
       },
     },

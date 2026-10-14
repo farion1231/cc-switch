@@ -129,16 +129,6 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
-<td>Dieses Projekt wird von <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">Claude API</a> gesponsert. Direkter Claude-API-Zugriff — verbinden Sie Claude Code und Agent-Apps in 3 Minuten. Neukunden können ein kostenloses Testguthaben einlösen. Betrieben mit offiziellen Anthropic-API-Schlüsseln + offiziellen AWS-Bedrock-Kanälen. Kein Reverse Engineering, keine Modellverschlechterung. Volle Unterstützung der Modellreihe Opus / Sonnet / Haiku, mit erhaltenen offiziellen Fähigkeiten einschließlich Tool Use, 1M-Kontextfenster und mehr. Entwickelt für Claude-Code-Power-User, Agent-Ingenieure und technische Unternehmensteams. Rechnungsstellung und dedizierter Team-Support verfügbar. Klicken Sie <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">hier</a>, um sich zu registrieren!</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
-<td>Vielen Dank an <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai</a> für die Unterstützung dieses Projekts! code0.ai ist eine für Entwickler entwickelte AI-Coding-Service-Plattform, die Claude Code, Codex, Gemini und weitere gängige AI-Coding-Funktionen unterstützt. Sie hilft einzelnen Entwicklern und Teams, AI-Agents stabiler und effizienter für Programmierung, Debugging, Refactoring und Automatisierungs-Workflows zu nutzen. ccswitch-Nutzer können über die <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai-Website</a> den Kundensupport kontaktieren, um Testguthaben zu erhalten und einen zuverlässigen AI-Coding-Service zu erleben.</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
 <td>Danke an TeamoRouter für die Unterstützung dieses Projekts! TeamoRouter ist ein Agentic-LLM-Gateway in Enterprise-Qualität, das für Entwickler, KI-Teams und Unternehmen entwickelt wurde. Ganz ohne Abonnement können Sie über eine einzige einheitliche API auf Claude Code, Codex, Gemini CLI, OpenAI Codex und weitere beliebte KI-Agenten zugreifen — bei API-Preisen mit Rabatten von bis zu 90 %.
 Anders als typische API-Relay-Dienste bündelt TeamoRouter Hunderte offizieller Modellanbieter und vertrauenswürdiger Infrastrukturpartner, darunter OpenAI, Anthropic, Vertex, Azure und AWS Bedrock. Jeder Anbieter wird auf 100%ige Kompatibilität mit dem Agent-Protokoll, Cache-Performance und Nachverfolgbarkeit von Anfragen geprüft und liefert so stabile Qualität statt reverse-engineerter oder verwässerter Endpunkte. Die Plattform bietet nahezu offizielle TTFT, 99,6 % SLA, Durchsatz in Unternehmensgröße von bis zu 5.000 QPM und branchenführende Cache-Trefferquoten, die die Token-Kosten für langlaufende Agent-Workflows drastisch senken.
@@ -411,7 +401,7 @@ Ausführliche Anleitungen zu allen Funktionen finden Sie im **[Benutzerhandbuch]
 - **CLI-Werkzeugverwaltung** — Auf der Seite „Apps“ in der Seitenleiste sehen Sie die installierte und die neueste Version von Kommandozeilenwerkzeugen wie Claude Code und Codex, können sie mit einem Klick installieren, aktualisieren oder alle auf einmal aktualisieren und doppelte Installationen diagnostizieren; unter Windows lassen sich auch Werkzeuge in WSL verwalten (siehe FAQ)
 - **Deep Link** (`ccswitch://`) — Anbieter, MCP-Server und Prompts per Link mit einem Klick importieren oder Skill-Repositorys hinzufügen; Links lassen sich mit dem [Online-Generator](https://ccswitch.io/deplink.html) erstellen; Website-Betreiber, die einen Import-Button einbauen möchten, finden alles im [Integrationsleitfaden (Englisch)](https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-en.md)
 - **Hilfsprogramme** — Überspringen der Erststart-Bestätigung von Claude Code, Ausblenden der KI-Attribution, Übernahme des in CC Switch gewählten Anbieters durch die Claude-Code-Erweiterung für VS Code und mehr
-- Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups (unter „Settings → Data“ sehen Sie Speicherort und Platzbedarf aller Backups), i18n (zh/zh-TW/en/ja)
+- Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups (unter „Settings → Data“ sehen Sie Speicherort und Platzbedarf aller Backups), i18n (zh/zh-TW/en/ja, dazu Türkisch als Community-Übersetzung)
 
 ## FAQ
 
