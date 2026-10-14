@@ -3357,6 +3357,11 @@
     "importSuccess": "{{count}} 件のスキルをインポートしました",
     "importSelected": "選択をインポート ({{count}})",
     "noUnmanagedFound": "インポートするスキルが見つかりませんでした。すべてのスキルは CC Switch で管理されています。",
+    "localSourceScan": {
+      "completed": "{{count}} 個の Skill のプロジェクトソースを補完しました",
+      "none": "一意に確認できるローカルプロジェクトソースは見つかりませんでした",
+      "ambiguous": "{{count}} 個の Skill は複数プロジェクトに一致したため、未分類のままです。"
+    },
     "unmanagedAvailable": "インポート可能なスキルがあります",
     "foundIn": "発見場所",
     "local": "ローカル",
@@ -4639,6 +4644,7 @@
     },
     "moreMenu": {
       "restore": "バックアップから復元",
+      "scanLocalSources": "ローカルプロジェクトのソースをスキャン",
       "repos": "リポジトリの管理"
     },
     "viewAria": "Skills の表示",

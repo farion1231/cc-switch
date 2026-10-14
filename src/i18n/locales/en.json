@@ -3357,6 +3357,11 @@
     "importSuccess": "Successfully imported {{count}} skills",
     "importSelected": "Import Selected ({{count}})",
     "noUnmanagedFound": "No skills to import found. All skills are already managed by CC Switch.",
+    "localSourceScan": {
+      "completed": "Completed project sources for {{count}} Skills",
+      "none": "No uniquely identifiable local project source found",
+      "ambiguous": "{{count}} Skills matched multiple projects and remain ungrouped."
+    },
     "unmanagedAvailable": "Skills available to import",
     "foundIn": "Found in",
     "local": "Local",
@@ -4639,6 +4644,7 @@
     },
     "moreMenu": {
       "restore": "Restore from backup",
+      "scanLocalSources": "Scan local project sources",
       "repos": "Manage repositories"
     },
     "viewAria": "Skills view",
