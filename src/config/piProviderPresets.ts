@@ -1923,6 +1923,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "baseten",
   },
   {
     name: "Novita AI",
@@ -2078,6 +2079,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "deepinfra",
   },
   {
     name: "Vercel AI Gateway",
@@ -2153,6 +2155,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "nebius",
   },
   {
     name: "Groq",
@@ -2181,6 +2184,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "groq",
   },
   {
     name: "SambaNova",
@@ -2218,6 +2222,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "sambanova",
   },
   {
     name: "DigitalOcean",
@@ -2244,6 +2249,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "digitalocean",
   },
   {
     name: "Hugging Face",

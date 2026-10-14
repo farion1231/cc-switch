@@ -1871,6 +1871,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
+    icon: "baseten",
     endpointCandidates: ["https://inference.baseten.co"],
   },
   {
@@ -1975,6 +1976,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
+    icon: "deepinfra",
     endpointCandidates: ["https://api.deepinfra.com/anthropic"],
   },
   {
@@ -2029,6 +2031,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
+    icon: "nebius",
     apiFormat: "openai_chat",
     endpointCandidates: ["https://api.tokenfactory.nebius.com"],
   },
@@ -2059,6 +2062,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
+    icon: "groq",
     apiFormat: "openai_chat",
     endpointCandidates: ["https://api.groq.com/openai/v1"],
   },
@@ -2088,6 +2092,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cloud_provider",
+    icon: "sambanova",
     endpointCandidates: ["https://api.sambanova.ai"],
   },
   {
@@ -2116,6 +2121,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cloud_provider",
+    icon: "digitalocean",
     endpointCandidates: ["https://inference.do-ai.run"],
   },
   {
@@ -2226,6 +2232,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cloud_provider",
+    icon: "fireworks",
     endpointCandidates: ["https://api.fireworks.ai/inference"],
   },
   {

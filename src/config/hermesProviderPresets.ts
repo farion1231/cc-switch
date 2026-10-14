@@ -2391,6 +2391,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "baseten",
     suggestedDefaults: {
       model: { default: "zai-org/GLM-5.3", provider: "baseten" },
     },
@@ -2552,6 +2553,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "deepinfra",
     suggestedDefaults: {
       model: {
         default: "deepseek-ai/DeepSeek-V4-Flash-0731",
@@ -2648,6 +2650,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "nebius",
     suggestedDefaults: {
       model: { default: "zai-org/GLM-5.3", provider: "nebius" },
     },
@@ -2678,6 +2681,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "groq",
     suggestedDefaults: {
       model: { default: "openai/gpt-oss-120b", provider: "groq" },
     },
@@ -2701,6 +2705,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "sambanova",
     suggestedDefaults: {
       model: { default: "MiniMax-M3", provider: "sambanova" },
     },
@@ -2735,6 +2740,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "digitalocean",
     suggestedDefaults: {
       model: { default: "glm-5.3", provider: "digitalocean" },
     },
@@ -2834,6 +2840,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "fireworks",
     suggestedDefaults: {
       model: {
         default: "accounts/fireworks/models/glm-5p3",

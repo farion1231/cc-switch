@@ -1643,6 +1643,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://www.baseten.co",
     apiKeyUrl: "https://app.baseten.co/settings/api_keys",
     category: "aggregator",
+    icon: "baseten",
     // 同 Claude Code 预设：Messages 端点（beta）只认 Bearer，路由按
     // ANTHROPIC_AUTH_TOKEN 发 Bearer；三个模型窗口均为 1M（docs.baseten.co/
     // development/model-apis/overview，2026-10-14 核对）。Claude Code 若改走
@@ -1717,6 +1718,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://deepinfra.com",
     apiKeyUrl: "https://deepinfra.com/dash/api_keys",
     category: "aggregator",
+    icon: "deepinfra",
     // 同 Claude Code 预设：Anthropic 兼容端点（docs.deepinfra.com/integrations/
     // anthropic.md，2026-10-14 核对）；模型名非 Claude，只能走路由。窗口取
     // https://api.deepinfra.com/models/<id> 同日元数据：两款 DeepSeek 1M、
@@ -1773,6 +1775,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://nebius.com/token-factory",
     apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
     category: "aggregator",
+    icon: "nebius",
     // 同 Claude Code 预设：官方没有 Anthropic 端点（/v1/messages 实测 404，
     // api.tokenfactory.nebius.com/openapi.json，2026-10-14 核对），走
     // openai_chat 路由。GLM-5.3 与 GLM-5.3-Flash 在官方目录
@@ -1793,6 +1796,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://groq.com",
     apiKeyUrl: "https://console.groq.com/keys",
     category: "aggregator",
+    icon: "groq",
     // 同 Claude Code 预设：没有可用的 Anthropic 端点（/anthropic/v1/messages
     // 实测 404，2026-10-14），走 openai_chat 路由。gpt-oss 两款窗口均为
     // 131072（console.groq.com/docs/models），不标 1M
@@ -1811,6 +1815,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://sambanova.ai",
     apiKeyUrl: "https://cloud.sambanova.ai/apis",
     category: "cloud_provider",
+    icon: "sambanova",
     // 同 Claude Code 预设：Anthropic 兼容端点，base 不带 /v1（docs.sambanova.ai/
     // docs/en/integrations/claude-code，2026-10-14 核对）；模型名非 Claude，只能
     // 走路由。MiniMax-M3 窗口 1048576（公开 /v1/models 同日），标 1M。Messages
@@ -1827,6 +1832,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://www.digitalocean.com/products/ai-platform",
     apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
     category: "cloud_provider",
+    icon: "digitalocean",
     // 同 Claude Code 预设：Anthropic 端点 base 不带 /v1，接受 Bearer 与 Claude
     // 原生模型 ID（docs.digitalocean.com/products/inference/how-to/
     // use-with-coding-agents 与 reference/api/reference/serverless-inference，
@@ -1911,6 +1917,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://fireworks.ai",
     apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
     category: "cloud_provider",
+    icon: "fireworks",
     // 同 Claude Code 预设：Anthropic 端点 base 不带 /v1，Bearer 鉴权，模型写全名
     //（docs.fireworks.ai/tools-sdks/anthropic-compatibility，2026-10-14 核对）；
     // 模型名非 Claude，只能走路由。官方给 Desktop 的只有本机网关 FireConnect

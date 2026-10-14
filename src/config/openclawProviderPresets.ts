@@ -4489,6 +4489,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "baseten",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -4807,6 +4808,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "deepinfra",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -4977,6 +4979,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "nebius",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5026,6 +5029,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "groq",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5076,6 +5080,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "sambanova",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5146,6 +5151,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "digitalocean",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5366,6 +5372,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "fireworks",
     templateValues: {
       apiKey: {
         label: "API Key",
