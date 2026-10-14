@@ -877,11 +877,15 @@ function ProviderFormFull({
   );
 
   const presetEntries = useMemo(() => {
+    // 先编号再过滤 hidden：id 里的序号是原数组下标，AddProviderDialog /
+    // useProviderCategory 按它回查预设，先过滤会让隐藏项之后的预设全部错位
     if (appId === "codex") {
-      return codexProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `codex-${index}`,
-        preset,
-      }));
+      return codexProviderPresets
+        .map<PresetEntry>((preset, index) => ({
+          id: `codex-${index}`,
+          preset,
+        }))
+        .filter((entry) => !(entry.preset as CodexProviderPreset).hidden);
     } else if (appId === "gemini") {
       return geminiProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `gemini-${index}`,
@@ -904,11 +908,11 @@ function ProviderFormFull({
       }));
     }
     return providerPresets
-      .filter((p) => !p.hidden)
       .map<PresetEntry>((preset, index) => ({
         id: `claude-${index}`,
         preset,
-      }));
+      }))
+      .filter((entry) => !(entry.preset as ProviderPreset).hidden);
   }, [appId]);
 
   const selectedPresetEntry = useMemo(

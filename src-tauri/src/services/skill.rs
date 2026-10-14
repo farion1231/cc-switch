@@ -2601,6 +2601,14 @@ impl SkillService {
         }
 
         let sync_method = Self::get_sync_method();
+        // WSL targets reject directory symlinks outright (ERROR_ACCESS_DENIED),
+        // so Auto skips the doomed symlink attempt and goes straight to copy.
+        let sync_method =
+            if matches!(sync_method, SyncMethod::Auto) && crate::config::is_wsl_path(&dest) {
+                SyncMethod::Copy
+            } else {
+                sync_method
+            };
 
         match sync_method {
             SyncMethod::Auto => {
