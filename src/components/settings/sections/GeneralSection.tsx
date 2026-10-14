@@ -27,6 +27,7 @@ const LANGUAGES: { value: Language; labelKey: string }[] = [
   { value: "zh-TW", labelKey: "settings.languageOptionTraditionalChinese" },
   { value: "en", labelKey: "settings.languageOptionEnglish" },
   { value: "ja", labelKey: "settings.languageOptionJapanese" },
+  { value: "tr", labelKey: "settings.languageOptionTurkish" },
 ];
 
 interface GeneralSectionProps {
@@ -100,6 +101,33 @@ export function GeneralSection({
               />
             }
           />
+          <SettingsRow
+            label={t("settings.general.quotaDisplay")}
+            help={{
+              title: t("settings.general.quotaDisplay"),
+              body: t("settings.general.quotaDisplayHelp"),
+            }}
+            control={
+              <SegmentedControl
+                size="sm"
+                aria-label={t("settings.general.quotaDisplay")}
+                value={settings.quotaDisplay ?? "left"}
+                onValueChange={(value) =>
+                  void onAutoSave({ quotaDisplay: value })
+                }
+                items={[
+                  {
+                    value: "left",
+                    label: t("settings.general.quotaDisplayLeft"),
+                  },
+                  {
+                    value: "used",
+                    label: t("settings.general.quotaDisplayUsed"),
+                  },
+                ]}
+              />
+            }
+          />
         </SettingsCard>
       </SettingsBlock>
 
@@ -123,6 +151,17 @@ export function GeneralSection({
             checked={settings.showProfileSwitcher ?? false}
             onCheckedChange={(value) =>
               void onAutoSave({ showProfileSwitcher: value })
+            }
+          />
+          <SettingsSwitchRow
+            label={t("settings.appVisibility.showProviderSearch")}
+            help={{
+              title: t("settings.appVisibility.showProviderSearch"),
+              body: t("settings.appVisibility.showProviderSearchDescription"),
+            }}
+            checked={settings.showProviderSearch ?? true}
+            onCheckedChange={(value) =>
+              void onAutoSave({ showProviderSearch: value })
             }
           />
         </SettingsCard>

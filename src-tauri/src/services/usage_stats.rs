@@ -7,7 +7,7 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::{
     fresh_input_sql, real_total_tokens_sql, INPUT_TOKEN_SEMANTICS_FRESH,
-    INPUT_TOKEN_SEMANTICS_TOTAL,
+    INPUT_TOKEN_SEMANTICS_LEGACY, INPUT_TOKEN_SEMANTICS_TOTAL,
 };
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -118,6 +118,7 @@ pub struct DailyStats {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderStats {
     pub provider_id: String,
+    pub app_type: String,
     pub provider_name: String,
     pub request_count: u64,
     /// 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径。
@@ -136,6 +137,11 @@ pub struct ProviderStats {
     pub est_speed_output_tokens: u64,
     /// 估算速度的分母：同一批请求的 latency_ms 之和，单位毫秒。
     pub est_speed_duration_ms: u64,
+    /// 首字时间中位数（毫秒）：经路由服务、成功的流式明细请求；没有这样的请求时为 None。
+    pub first_token_median_ms: Option<u64>,
+    /// 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的明细请求。
+    /// 和上面分开：口径不同，界面上只在没有精确值时显示，带 ≈。
+    pub est_first_token_median_ms: Option<u64>,
 }
 
 /// 计速度的门槛：输出少于这个数的请求（工具调用这类）不算速度，避免 0.1 秒回 15 个 token 算出离谱的数。
@@ -145,10 +151,13 @@ pub const SPEED_MIN_OUTPUT_TOKENS: i64 = 100;
 /// 或短回复整段落在同一个网络包里，算出来的是传输突发而不是生成速度。
 pub const SPEED_MIN_GENERATION_MS: i64 = 100;
 
-/// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。
+/// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。会话日志导入的行
+/// 也可能有首字（按时间戳推出来的），所以先按来源分开，不能只看有没有首字。
 fn speed_eligible_sql(alias: &str) -> String {
+    let data_source = data_source_expr(alias);
     format!(
-        "{alias}.first_token_ms IS NOT NULL AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
+        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
+         AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms - {alias}.first_token_ms >= {SPEED_MIN_GENERATION_MS}"
     )
 }
@@ -162,14 +171,81 @@ pub const SPEED_ESTIMATE_MIN_OUTPUT_TOKENS: i64 = 200;
 pub const SPEED_ESTIMATE_MIN_DURATION_MS: i64 = 1000;
 
 /// 明细行能不能估速度的 SQL 条件（和前端 `isSpeedEstimateEligible` 同口径）：
-/// 会话日志导入的行（没有首字计时），耗时是导入时按日志时间戳估的。
+/// 会话日志导入的行，耗时是导入时按日志时间戳估的。估算速度仍按整段耗时算（含首字
+/// 等待），不减推出来的首字：只有部分请求推得出首字，减了会让同一行里两种算法混在一起。
 fn speed_estimate_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
     format!(
-        "{alias}.first_token_ms IS NULL AND {data_source} <> 'proxy' \
+        "{data_source} <> 'proxy' \
          AND {alias}.output_tokens >= {SPEED_ESTIMATE_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS}"
     )
+}
+
+/// 明细行能不能计首字时间的 SQL 条件：经路由服务、成功、有首字计时（流式请求）。
+fn first_token_eligible_sql(alias: &str) -> String {
+    let data_source = data_source_expr(alias);
+    format!(
+        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
+         AND {alias}.status_code >= 200 AND {alias}.status_code < 300"
+    )
+}
+
+/// 估算首字的 SQL 条件：会话日志导入、导入时按时间戳推出了首字的行。
+/// 和路由的精确首字分开取中位数：估算的起点是上一条日志写盘的时刻，含客户端
+/// 组装请求的时间，系统性偏高。
+fn est_first_token_eligible_sql(alias: &str) -> String {
+    let data_source = data_source_expr(alias);
+    format!("{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL")
+}
+
+/// 按分组键取首字时间的中位数（毫秒）。首字时间长尾明显，偶尔一次排队就是十几秒，
+/// 平均值会被拉高，所以用中位数；SQLite 没有中位数函数，取出排好序的值在这里算。
+/// `key_sql` 是分组键表达式，`from_sql` 是 `FROM ... JOIN ...`，`detail_where` 是统计查询
+/// 明细部分的 `WHERE ...`（可为空），`params` 是它的参数。
+fn first_token_medians(
+    conn: &Connection,
+    key_sql: &str,
+    from_sql: &str,
+    detail_where: &str,
+    eligible_sql: &str,
+    params: &[&dyn rusqlite::ToSql],
+) -> Result<HashMap<String, u64>, AppError> {
+    let connector = if detail_where.is_empty() {
+        "WHERE"
+    } else {
+        "AND"
+    };
+    let sql = format!(
+        "SELECT {key_sql} AS k, l.first_token_ms {from_sql} {detail_where} {connector} {eligible_sql}
+         ORDER BY k, l.first_token_ms"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params, |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?.max(0) as u64,
+        ))
+    })?;
+
+    let mut grouped: HashMap<String, Vec<u64>> = HashMap::new();
+    for row in rows {
+        let (key, ms) = row?;
+        grouped.entry(key).or_default().push(ms);
+    }
+    Ok(grouped
+        .into_iter()
+        .map(|(key, values)| {
+            // 已按值升序取出
+            let mid = values.len() / 2;
+            let median = if values.len() % 2 == 0 {
+                (values[mid - 1] + values[mid]) / 2
+            } else {
+                values[mid]
+            };
+            (key, median)
+        })
+        .collect())
 }
 
 /// 模型统计
@@ -188,6 +264,9 @@ pub struct ModelStats {
     pub speed_generation_ms: u64,
     pub est_speed_output_tokens: u64,
     pub est_speed_duration_ms: u64,
+    /// 首字时间中位数，口径同 [`ProviderStats`] 的那两个字段。
+    pub first_token_median_ms: Option<u64>,
+    pub est_first_token_median_ms: Option<u64>,
 }
 
 /// 请求日志过滤器
@@ -419,6 +498,11 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                           {log_alias}.cache_creation_tokens = 0
                           AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
                       )
+                      OR (
+                          proxy_dedup.cache_creation_tokens = 0
+                          AND proxy_dedup.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}
+                          AND {data_source} = 'codex_session'
+                      )
                   )
                   AND proxy_dedup.created_at BETWEEN
                       {log_alias}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
@@ -505,6 +589,11 @@ pub(crate) fn effective_usage_log_filter_for_range(
                      dedup_s.cache_creation_tokens = 0
                      AND {ds_source} IN ('codex_session', 'gemini_session', 'opencode_session')
                  )
+                 OR (
+                     dedup_p.cache_creation_tokens = 0
+                     AND dedup_p.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}
+                     AND {ds_source} = 'codex_session'
+                 )
              )
              AND (
                  LOWER(dedup_p.model) = LOWER(dedup_s.model)
@@ -582,8 +671,10 @@ fn cached_log_count(
 
 /// 跨源去重指纹键。
 ///
-/// `cache_creation_tokens`：Codex/Gemini session 日志不暴露该字段，调用方传 0
-/// 表示"未知"，匹配器会放行 proxy 侧任意 cache_creation_tokens 值。
+/// `cache_creation_tokens`：Gemini/OpenCode 会话日志和旧版 Codex rollout 不暴露
+/// 该字段，调用方传 0 表示"未知"，匹配器会放行 proxy 侧任意 cache_creation_tokens
+/// 值。反过来，v3.17.0 之前的代理不记录 Codex 缓存写入，legacy 语义且写入量为 0
+/// 的 Codex 代理行也放行任意 session 写入量。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DedupKey<'a> {
     pub app_type: &'a str,
@@ -632,7 +723,15 @@ static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
               AND l.input_tokens = ?3
               AND l.output_tokens = ?4
               AND l.cache_read_tokens = ?5
-              AND (l.cache_creation_tokens = ?6 OR ?9 = 1)
+              AND (
+                  l.cache_creation_tokens = ?6
+                  OR ?9 = 1
+                  OR (
+                      ?10 = 1
+                      AND l.cache_creation_tokens = 0
+                      AND l.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}
+                  )
+              )
               AND l.created_at BETWEEN ?7 - ?8 AND ?7 + ?8
               AND (
                   LOWER(l.model) = LOWER(?2)
@@ -649,6 +748,7 @@ pub(crate) fn has_matching_proxy_usage_log(
 ) -> Result<bool, AppError> {
     let allow_missing_cache_creation =
         matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+    let allow_legacy_proxy_cache_creation = key.app_type == "codex";
 
     conn.prepare_cached(&MATCHING_PROXY_USAGE_LOG_SQL)
         .and_then(|mut stmt| {
@@ -663,6 +763,7 @@ pub(crate) fn has_matching_proxy_usage_log(
                     key.created_at,
                     SESSION_PROXY_DEDUP_WINDOW_SECONDS,
                     allow_missing_cache_creation as i64,
+                    allow_legacy_proxy_cache_creation as i64,
                 ],
                 |row| row.get::<_, bool>(0),
             )
@@ -1509,6 +1610,100 @@ impl Database {
         Ok(stats)
     }
 
+    /// 最早有用量记录的那一天（本地日期 `YYYY-MM-DD`），明细和日聚合一起看；没有记录时为 `None`。
+    ///
+    /// 给「全部」的按年热力图定起始年份用，所以不套跨源去重：被去重掉的会话行
+    /// 和对应的代理行只差几分钟，不会改变最早的日期。
+    pub fn get_first_usage_date(
+        &self,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<Option<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let mut detail_conditions = Vec::new();
+        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(at) = app_type {
+            detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
+            detail_params.push(Box::new(at.to_string()));
+        }
+        push_provider_model_filters(
+            &mut detail_conditions,
+            &mut detail_params,
+            "l",
+            "p",
+            provider_name,
+            model,
+        );
+        let detail_where = if detail_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", detail_conditions.join(" AND "))
+        };
+        let detail_join = if provider_name.is_some() {
+            providers_join("l", "p")
+        } else {
+            String::new()
+        };
+        let detail_param_refs: Vec<&dyn rusqlite::ToSql> =
+            detail_params.iter().map(|p| p.as_ref()).collect();
+        let first_detail_ts: Option<i64> = conn.query_row(
+            &format!(
+                "SELECT MIN(l.created_at) FROM proxy_request_logs l {detail_join} {detail_where}"
+            ),
+            detail_param_refs.as_slice(),
+            |row| row.get(0),
+        )?;
+        let first_detail = first_detail_ts
+            .map(|ts| local_datetime_from_timestamp(ts).map(|dt| dt.date_naive()))
+            .transpose()?;
+
+        let mut rollup_conditions = Vec::new();
+        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(at) = app_type {
+            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
+            rollup_params.push(Box::new(at.to_string()));
+        }
+        push_provider_model_filters(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r",
+            "p2",
+            provider_name,
+            model,
+        );
+        let rollup_where = if rollup_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", rollup_conditions.join(" AND "))
+        };
+        let rollup_join = if provider_name.is_some() {
+            providers_join("r", "p2")
+        } else {
+            String::new()
+        };
+        let rollup_param_refs: Vec<&dyn rusqlite::ToSql> =
+            rollup_params.iter().map(|p| p.as_ref()).collect();
+        let first_rollup_raw: Option<String> = conn.query_row(
+            &format!("SELECT MIN(r.date) FROM usage_daily_rollups r {rollup_join} {rollup_where}"),
+            rollup_param_refs.as_slice(),
+            |row| row.get(0),
+        )?;
+        let first_rollup = first_rollup_raw
+            .map(|raw| {
+                NaiveDate::parse_from_str(&raw, "%Y-%m-%d")
+                    .map_err(|err| AppError::Database(format!("解析 rollup 日期失败: {err}")))
+            })
+            .transpose()?;
+
+        let first = match (first_detail, first_rollup) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        Ok(first.map(|day| day.format("%Y-%m-%d").to_string()))
+    }
+
     /// 获取 Provider 统计
     pub fn get_provider_stats(
         &self,
@@ -1635,12 +1830,38 @@ impl Database {
             ORDER BY total_cost DESC"
         );
 
+        // 分组键用不会出现在 ID 里的 0x1F 拼接，和下面主查询的 (provider_id, app_type) 对上
+        let (first_token_ms, est_first_token_ms) = {
+            let detail_refs: Vec<&dyn rusqlite::ToSql> =
+                detail_params.iter().map(|p| p.as_ref()).collect();
+            let medians = |eligible_sql: String| {
+                first_token_medians(
+                    &conn,
+                    "l.provider_id || char(31) || l.app_type",
+                    "FROM proxy_request_logs l
+                     LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type",
+                    &detail_where,
+                    &eligible_sql,
+                    &detail_refs,
+                )
+            };
+            (
+                medians(first_token_eligible_sql("l"))?,
+                medians(est_first_token_eligible_sql("l"))?,
+            )
+        };
+
         let mut stmt = conn.prepare(&sql)?;
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = detail_params;
         params.extend(rollup_params);
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let row_mapper = |row: &rusqlite::Row| {
             let request_count: i64 = row.get(3)?;
+            let provider_id: String = row.get(0)?;
+            let app_type: String = row.get(1)?;
+            let key = format!("{provider_id}\u{1f}{app_type}");
+            let first_token_median_ms = first_token_ms.get(&key).copied();
+            let est_first_token_median_ms = est_first_token_ms.get(&key).copied();
             let success_count: i64 = row.get(6)?;
             let success_rate = if request_count > 0 {
                 (success_count as f32 / request_count as f32) * 100.0
@@ -1649,7 +1870,8 @@ impl Database {
             };
 
             Ok(ProviderStats {
-                provider_id: row.get(0)?,
+                provider_id,
+                app_type,
                 provider_name: row.get(2)?,
                 request_count: request_count as u64,
                 total_tokens: row.get::<_, i64>(4)? as u64,
@@ -1660,6 +1882,8 @@ impl Database {
                 speed_generation_ms: row.get::<_, i64>(9)?.max(0) as u64,
                 est_speed_output_tokens: row.get::<_, i64>(10)?.max(0) as u64,
                 est_speed_duration_ms: row.get::<_, i64>(11)?.max(0) as u64,
+                first_token_median_ms,
+                est_first_token_median_ms,
             })
         };
 
@@ -1807,12 +2031,35 @@ impl Database {
             ORDER BY total_cost DESC"
         );
 
+        let (first_token_ms, est_first_token_ms) = {
+            let detail_refs: Vec<&dyn rusqlite::ToSql> =
+                detail_params.iter().map(|p| p.as_ref()).collect();
+            let from_sql = format!("FROM proxy_request_logs l {detail_join}");
+            let medians = |eligible_sql: String| {
+                first_token_medians(
+                    &conn,
+                    &detail_model,
+                    &from_sql,
+                    &detail_where,
+                    &eligible_sql,
+                    &detail_refs,
+                )
+            };
+            (
+                medians(first_token_eligible_sql("l"))?,
+                medians(est_first_token_eligible_sql("l"))?,
+            )
+        };
+
         let mut stmt = conn.prepare(&sql)?;
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = detail_params;
         params.extend(rollup_params);
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let row_mapper = |row: &rusqlite::Row| {
             let request_count: i64 = row.get(1)?;
+            let model: String = row.get(0)?;
+            let first_token_median_ms = first_token_ms.get(&model).copied();
+            let est_first_token_median_ms = est_first_token_ms.get(&model).copied();
             let total_cost: f64 = row.get(3)?;
             let avg_cost = if request_count > 0 {
                 total_cost / request_count as f64
@@ -1827,7 +2074,7 @@ impl Database {
             };
 
             Ok(ModelStats {
-                model: row.get(0)?,
+                model,
                 request_count: request_count as u64,
                 total_tokens: row.get::<_, i64>(2)? as u64,
                 total_cost: format!("{total_cost:.6}"),
@@ -1837,6 +2084,8 @@ impl Database {
                 speed_generation_ms: row.get::<_, i64>(6)?.max(0) as u64,
                 est_speed_output_tokens: row.get::<_, i64>(7)?.max(0) as u64,
                 est_speed_duration_ms: row.get::<_, i64>(8)?.max(0) as u64,
+                first_token_median_ms,
+                est_first_token_median_ms,
             })
         };
 
@@ -2748,7 +2997,8 @@ mod tests {
                 cache_creation_tokens INTEGER NOT NULL,
                 status_code INTEGER NOT NULL,
                 created_at INTEGER NOT NULL,
-                data_source TEXT
+                data_source TEXT,
+                input_token_semantics INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )?;
@@ -3864,6 +4114,78 @@ mod tests {
         Ok(())
     }
 
+    /// 最早日期：明细和日聚合取较早的一天，筛选与 Dashboard 同口径（claude 包含 claude-desktop）。
+    #[test]
+    fn test_get_first_usage_date_spans_rollups_and_logs() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        assert_eq!(db.get_first_usage_date(None, None, None)?, None);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES ('2024-03-05', 'claude', 'p1', 'claude-3', 1, 1, 10, 5, 0, 0, '0', 100)",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "codex-1",
+                "codex",
+                "p2",
+                "gpt-5.5",
+                "proxy",
+                local_ts(2025, 1, 2, 10, 0, 0),
+                10,
+                5,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            insert_usage_log(
+                &conn,
+                "desktop-1",
+                "claude-desktop",
+                "p3",
+                "claude-3",
+                "proxy",
+                local_ts(2023, 12, 31, 23, 30, 0),
+                10,
+                5,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        assert_eq!(
+            db.get_first_usage_date(None, None, None)?.as_deref(),
+            Some("2023-12-31")
+        );
+        assert_eq!(
+            db.get_first_usage_date(Some("claude"), None, None)?
+                .as_deref(),
+            Some("2023-12-31")
+        );
+        assert_eq!(
+            db.get_first_usage_date(Some("codex"), None, None)?
+                .as_deref(),
+            Some("2025-01-02")
+        );
+        assert_eq!(
+            db.get_first_usage_date(None, None, Some("claude-3"))?
+                .as_deref(),
+            Some("2023-12-31")
+        );
+        assert_eq!(db.get_first_usage_date(Some("gemini"), None, None)?, None);
+
+        Ok(())
+    }
+
     #[test]
     fn test_get_usage_summary_excludes_partial_rollup_boundary_days() -> Result<(), AppError> {
         let db = Database::memory()?;
@@ -4598,6 +4920,74 @@ mod tests {
     }
 
     #[test]
+    fn test_effective_usage_dedup_matches_legacy_codex_proxy_without_cache_writes(
+    ) -> Result<(), AppError> {
+        // v3.17.0 之前的代理不记录 Codex 缓存写入；新语义代理行仍要求写入量一致。
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (request_id, provider_id, data_source, created_at, cache_creation) in [
+                ("legacy-proxy", "openai", "proxy", 10_000, 0),
+                (
+                    "session-vs-legacy",
+                    "_codex_session",
+                    "codex_session",
+                    10_060,
+                    600,
+                ),
+                ("total-proxy", "openai", "proxy", 20_000, 0),
+                (
+                    "session-vs-total",
+                    "_codex_session",
+                    "codex_session",
+                    20_060,
+                    600,
+                ),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    request_id,
+                    "codex",
+                    provider_id,
+                    "gpt-5.6",
+                    data_source,
+                    created_at,
+                    1000,
+                    50,
+                    300,
+                    cache_creation,
+                    200,
+                    "0.01",
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET input_token_semantics = ?1
+                 WHERE request_id != 'legacy-proxy'",
+                [INPUT_TOKEN_SEMANTICS_TOTAL],
+            )?;
+        }
+
+        // 逐行 EXISTS 和按窗口的 rowid NOT IN 两种写法都要去掉 session-vs-legacy。
+        let conn = lock_conn!(db.conn);
+        let ranged = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        assert!(ranged.contains("NOT IN"));
+        for filter in [effective_usage_log_filter("l"), ranged] {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+            ))?;
+            let request_ids = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(
+                request_ids,
+                ["legacy-proxy", "session-vs-total", "total-proxy"]
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_get_model_stats() -> Result<(), AppError> {
         let db = Database::memory()?;
 
@@ -4683,6 +5073,96 @@ mod tests {
     }
 
     #[test]
+    fn test_stats_first_token_median_only_counts_successful_proxy_streams() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            let insert = |id: &str,
+                          provider: &str,
+                          model: &str,
+                          first: Option<i64>,
+                          status: i64,
+                          source: &str| {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, first_token_ms, status_code, created_at, data_source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        id,
+                        provider,
+                        "codex",
+                        model,
+                        10,
+                        // 会话日志的用量和路由的一样会被当成重复记录滤掉，错开
+                        if source == "proxy" { 500 } else { 777 },
+                        "0",
+                        20_000,
+                        first,
+                        status,
+                        1000,
+                        source
+                    ],
+                )
+            };
+            // p1 / m1：奇数个样本取中间那个，长尾不拉高
+            insert("a", "p1", "m1", Some(1_000), 200, "proxy")?;
+            insert("b", "p1", "m1", Some(2_000), 200, "proxy")?;
+            insert("c", "p1", "m1", Some(15_000), 200, "proxy")?;
+            // 不计：失败、非流式、会话日志
+            insert("err", "p1", "m1", Some(100), 500, "proxy")?;
+            insert("non-stream", "p1", "m1", None, 200, "proxy")?;
+            insert("session", "p1", "m1", Some(50), 200, "codex_session")?;
+            // 会话日志推出来的首字：单独取中位数
+            insert("est-a", "p1", "m1", Some(3_000), 200, "codex_session")?;
+            // p2 / m2：偶数个样本取中间两个的平均
+            insert("d", "p2", "m2", Some(1_000), 200, "proxy")?;
+            insert("e", "p2", "m2", Some(3_000), 200, "proxy")?;
+            // p3 / m3：没有可计的请求
+            insert("f", "p3", "m3", None, 200, "proxy")?;
+        }
+
+        let providers = db.get_provider_stats(None, None, None, None, None)?;
+        let median_of = |id: &str| {
+            providers
+                .iter()
+                .find(|s| s.provider_id == id)
+                .expect(id)
+                .first_token_median_ms
+        };
+        assert_eq!(median_of("p1"), Some(2_000));
+        assert_eq!(median_of("p2"), Some(2_000));
+        assert_eq!(median_of("p3"), None);
+        let p1 = providers.iter().find(|s| s.provider_id == "p1").unwrap();
+        // 会话日志两条：50 和 3000
+        assert_eq!(p1.est_first_token_median_ms, Some(1_525));
+        // 会话日志推出来的首字不算精确速度：进速度的只有路由的 a、b、c、err 四条
+        assert_eq!(p1.speed_output_tokens, 2_000);
+
+        let models = db.get_model_stats(None, None, None, None, None)?;
+        let median_of = |m: &str| {
+            models
+                .iter()
+                .find(|s| s.model == m)
+                .expect(m)
+                .first_token_median_ms
+        };
+        assert_eq!(median_of("m1"), Some(2_000));
+        assert_eq!(median_of("m2"), Some(2_000));
+        assert_eq!(median_of("m3"), None);
+
+        // 带筛选条件时 WHERE 要接上，不能拼出两个 WHERE
+        let filtered = db.get_provider_stats(None, None, Some("codex"), None, Some("m2"))?;
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].first_token_median_ms, Some(2_000));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_get_provider_stats_with_time_filter() -> Result<(), AppError> {
         let db = Database::memory()?;
 
@@ -4709,8 +5189,93 @@ mod tests {
         let stats = db.get_provider_stats(Some(1500), Some(2500), Some("claude"), None, None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].provider_id, "p1");
+        assert_eq!(stats[0].app_type, "claude");
         assert_eq!(stats[0].request_count, 1);
         assert_eq!(stats[0].total_tokens, 275);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_provider_stats_preserves_app_type_identity_across_apps() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config) VALUES (?, ?, ?, '{}')",
+                params!["shared-p1", "claude", "Shared Provider"],
+            )?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config) VALUES (?, ?, ?, '{}')",
+                params!["shared-p1", "claude-desktop", "Shared Provider"],
+            )?;
+
+            // Detail log under claude
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "req-1",
+                    "shared-p1",
+                    "claude",
+                    "m1",
+                    100,
+                    50,
+                    "0.01",
+                    100,
+                    200,
+                    1000
+                ],
+            )?;
+
+            // Rollup under claude-desktop
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, input_tokens, output_tokens,
+                    cache_creation_tokens, cache_read_tokens, total_cost_usd,
+                    success_count, avg_latency_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    "2026-10-08",
+                    "claude-desktop",
+                    "shared-p1",
+                    "m1",
+                    10,
+                    1000,
+                    500,
+                    0,
+                    0,
+                    "0.10",
+                    10,
+                    120
+                ],
+            )?;
+        }
+
+        // Folded query for "claude" matches both claude and claude-desktop
+        let stats = db.get_provider_stats(None, None, Some("claude"), None, None)?;
+        assert_eq!(stats.len(), 2);
+
+        let claude_stat = stats
+            .iter()
+            .find(|s| s.app_type == "claude")
+            .expect("claude stat");
+        assert_eq!(claude_stat.provider_id, "shared-p1");
+        assert_eq!(claude_stat.provider_name, "Shared Provider");
+        assert_eq!(claude_stat.request_count, 1);
+
+        let desktop_stat = stats
+            .iter()
+            .find(|s| s.app_type == "claude-desktop")
+            .expect("claude-desktop stat");
+        assert_eq!(desktop_stat.provider_id, "shared-p1");
+        assert_eq!(desktop_stat.provider_name, "Shared Provider");
+        assert_eq!(desktop_stat.request_count, 10);
 
         Ok(())
     }

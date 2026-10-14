@@ -214,16 +214,86 @@ export function getModelExtraFields(
   return extra;
 }
 
+export function formatOpencodeExtraOptionValue(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 export function toOpencodeExtraOptions(
   options: OpenCodeProviderConfig["options"],
 ): Record<string, string> {
   const extra: Record<string, string> = {};
   for (const [k, v] of Object.entries(options || {})) {
     if (!isKnownOpencodeOptionKey(k)) {
-      extra[k] = typeof v === "string" ? v : JSON.stringify(v);
+      extra[k] = formatOpencodeExtraOptionValue(v);
     }
   }
   return extra;
+}
+
+/**
+ * Reconciles the extra-option row editor's string map into the stored
+ * `options` object in place. Rows whose text still matches the stored
+ * value's display form were not touched by the user, so their stored
+ * values (types included) are kept as-is; a renamed row carries its old
+ * display text under the new key, so its stored value is re-homed from
+ * the key that vanished from the rows. Only added, edited and removed
+ * rows are rewritten.
+ */
+export function mergeOpencodeExtraOptionRows(
+  options: Record<string, unknown>,
+  rows: Record<string, string>,
+): void {
+  const nextRows: Record<string, string> = {};
+  for (const [k, v] of Object.entries(rows)) {
+    const trimmedKey = k.trim();
+    if (trimmedKey && !k.startsWith(OPENCODE_EXTRA_OPTION_DRAFT_PREFIX)) {
+      nextRows[trimmedKey] = v;
+    }
+  }
+
+  // Keys that vanished from the rows were deleted or renamed away. Keep
+  // their stored values around: a renamed row's untouched display text is
+  // matched against them below to re-home the value with its type.
+  const renamedAway: Array<[string, unknown]> = [];
+  for (const k of Object.keys(options)) {
+    // Own-property check: `k in nextRows` would also match inherited
+    // Object.prototype keys such as "constructor" or "toString", keeping
+    // rows the user deleted.
+    if (
+      !isKnownOpencodeOptionKey(k) &&
+      !Object.prototype.hasOwnProperty.call(nextRows, k)
+    ) {
+      renamedAway.push([k, options[k]]);
+      delete options[k];
+    }
+  }
+
+  for (const [k, v] of Object.entries(nextRows)) {
+    const existing = options[k];
+    if (
+      existing !== undefined &&
+      formatOpencodeExtraOptionValue(existing) === v
+    ) {
+      continue;
+    }
+    // A key unknown to `options` can still be an untouched row, namely a
+    // rename: the editor moves the display text to the new key verbatim.
+    // Inherit the vanished key's stored value instead of re-parsing the
+    // text; same-text vanished keys render identically, so any match has
+    // the same display form and usually the same type.
+    const source = renamedAway.find(
+      ([, stored]) => formatOpencodeExtraOptionValue(stored) === v,
+    );
+    if (source) {
+      options[k] = source[1];
+      continue;
+    }
+    try {
+      options[k] = JSON.parse(v);
+    } catch {
+      options[k] = v;
+    }
+  }
 }
 
 export { buildOmoProfilePreview } from "@/types/omo";

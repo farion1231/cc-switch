@@ -828,6 +828,14 @@ impl ProviderAdapter for ClaudeAdapter {
             ProviderType::OpenRouter => Some(AuthInfo::new(key, AuthStrategy::Bearer)),
             ProviderType::ClaudeAuth => Some(AuthInfo::new(key, AuthStrategy::ClaudeAuth)),
             _ => {
+                // OpenAI Chat / Responses 协议只认 Authorization: Bearer；变量名推断只对
+                // Anthropic Messages 上游有意义，选了 ANTHROPIC_API_KEY 也不能发 x-api-key。
+                if matches!(
+                    self.get_api_format(provider),
+                    "openai_chat" | "openai_responses"
+                ) {
+                    return Some(AuthInfo::new(key, AuthStrategy::Bearer));
+                }
                 // 按 env 中的变量名推断鉴权策略，对齐 Anthropic SDK 语义：
                 // ANTHROPIC_AUTH_TOKEN → Authorization: Bearer
                 // ANTHROPIC_API_KEY    → x-api-key
@@ -930,51 +938,7 @@ impl ProviderAdapter for ClaudeAdapter {
                 vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
             }
             AuthStrategy::GitHubCopilot => {
-                // 生成请求追踪 ID
-                let request_id = uuid::Uuid::new_v4().to_string();
-                vec![
-                    (HeaderName::from_static("authorization"), hv(&bearer)?),
-                    (
-                        HeaderName::from_static("editor-version"),
-                        HeaderValue::from_static(super::copilot_auth::COPILOT_EDITOR_VERSION),
-                    ),
-                    (
-                        HeaderName::from_static("editor-plugin-version"),
-                        HeaderValue::from_static(super::copilot_auth::COPILOT_PLUGIN_VERSION),
-                    ),
-                    (
-                        HeaderName::from_static("copilot-integration-id"),
-                        HeaderValue::from_static(super::copilot_auth::COPILOT_INTEGRATION_ID),
-                    ),
-                    (
-                        HeaderName::from_static("user-agent"),
-                        HeaderValue::from_static(super::copilot_auth::COPILOT_USER_AGENT),
-                    ),
-                    (
-                        HeaderName::from_static("x-github-api-version"),
-                        HeaderValue::from_static(super::copilot_auth::COPILOT_API_VERSION),
-                    ),
-                    // 26-04-01新增的copilot关键 headers
-                    (
-                        HeaderName::from_static("openai-intent"),
-                        HeaderValue::from_static("conversation-agent"),
-                    ),
-                    (
-                        HeaderName::from_static("x-initiator"),
-                        HeaderValue::from_static("user"),
-                    ),
-                    (
-                        HeaderName::from_static("x-interaction-type"),
-                        HeaderValue::from_static("conversation-agent"),
-                    ),
-                    // x-interaction-id 由 forwarder 按需注入（仅在有 session 时）
-                    (
-                        HeaderName::from_static("x-vscode-user-agent-library-version"),
-                        HeaderValue::from_static("electron-fetch"),
-                    ),
-                    (HeaderName::from_static("x-request-id"), hv(&request_id)?),
-                    (HeaderName::from_static("x-agent-task-id"), hv(&request_id)?),
-                ]
+                super::copilot_auth::build_copilot_request_headers(&auth.api_key)?
             }
         })
     }
@@ -1116,6 +1080,58 @@ mod tests {
 
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-ant-test-key");
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+    }
+
+    #[test]
+    fn test_extract_auth_openai_formats_always_use_bearer() {
+        // 认证字段选了 ANTHROPIC_API_KEY、上游却是 OpenAI 协议：x-api-key 会被拒，必须发 Bearer。
+        let adapter = ClaudeAdapter::new();
+        for format in ["openai_chat", "openai_responses"] {
+            for env in [
+                json!({
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "sk-test"
+                }),
+                json!({
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test"
+                }),
+            ] {
+                let provider = create_provider_with_meta(
+                    json!({ "env": env }),
+                    ProviderMeta {
+                        api_format: Some(format.to_string()),
+                        ..Default::default()
+                    },
+                );
+                let auth = adapter.extract_auth(&provider).unwrap();
+                assert_eq!(auth.strategy, AuthStrategy::Bearer, "{format}");
+                let headers = adapter.get_auth_headers(&auth).unwrap();
+                assert_eq!(headers.len(), 1);
+                assert_eq!(headers[0].0.as_str(), "authorization");
+                assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-test");
+            }
+        }
+    }
+
+    #[test]
+    fn test_extract_auth_anthropic_format_keeps_env_var_semantics() {
+        // Anthropic Messages 上游照旧按变量名区分（bdc4c1e8b 修的严格端点不能回退）。
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "sk-test"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            },
+        );
+        let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.strategy, AuthStrategy::Anthropic);
     }
 

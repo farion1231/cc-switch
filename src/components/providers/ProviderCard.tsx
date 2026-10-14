@@ -24,8 +24,8 @@ import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
-  extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
+  extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
@@ -155,43 +155,7 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
     return provider.websiteUrl;
   }
 
-  const config = provider.settingsConfig;
-
-  if (config && typeof config === "object") {
-    const object = config as Record<string, any>;
-    const envBase =
-      object?.env?.ANTHROPIC_BASE_URL || object?.env?.GOOGLE_GEMINI_BASE_URL;
-    if (typeof envBase === "string" && envBase.trim()) {
-      return envBase;
-    }
-
-    const directBaseUrl =
-      object.baseUrl ||
-      object.base_url ||
-      object.options?.baseURL ||
-      (Array.isArray(object.models)
-        ? object.models.find(
-            (model: unknown) =>
-              model &&
-              typeof model === "object" &&
-              typeof (model as Record<string, unknown>).baseUrl === "string",
-          )?.baseUrl
-        : undefined);
-    if (typeof directBaseUrl === "string" && directBaseUrl.trim()) {
-      return directBaseUrl;
-    }
-
-    const baseUrl = object.config;
-
-    if (typeof baseUrl === "string" && baseUrl.includes("base_url")) {
-      const extractedBaseUrl = extractCodexBaseUrl(baseUrl);
-      if (extractedBaseUrl) {
-        return extractedBaseUrl;
-      }
-    }
-  }
-
-  return fallbackText;
+  return extractProviderBaseUrl(provider.settingsConfig) ?? fallbackText;
 };
 
 export function ProviderCard({

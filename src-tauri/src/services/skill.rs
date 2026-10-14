@@ -2601,6 +2601,14 @@ impl SkillService {
         }
 
         let sync_method = Self::get_sync_method();
+        // WSL targets reject directory symlinks outright (ERROR_ACCESS_DENIED),
+        // so Auto skips the doomed symlink attempt and goes straight to copy.
+        let sync_method =
+            if matches!(sync_method, SyncMethod::Auto) && crate::config::is_wsl_path(&dest) {
+                SyncMethod::Copy
+            } else {
+                sync_method
+            };
 
         match sync_method {
             SyncMethod::Auto => {
@@ -4927,6 +4935,16 @@ mod tests {
         use zip::write::SimpleFileOptions;
 
         const ENTRIES: usize = 13_248;
+        // 9P 上逐个建文件太慢，13k 个文件超过 180 秒单测超时。生产环境解压到系统
+        // TEMP，只有 WSL2 夜间测试才把 TEMP 指到 \\wsl.localhost，这里测的是条目上限。
+        let temp_root = std::env::temp_dir();
+        if crate::config::is_wsl_path(&temp_root) {
+            eprintln!(
+                "temp dir {} is a WSL share, too slow for 13k files; skipping",
+                temp_root.display()
+            );
+            return;
+        }
         let mut buf = Vec::new();
         {
             let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));

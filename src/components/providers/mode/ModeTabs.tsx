@@ -51,6 +51,8 @@ interface ModeTabsProps {
     onChange: (enabled: boolean) => void;
   };
   onOpenRouteSettings?: () => void;
+  /** 供应商搜索框挂在状态行右侧（由列表通过 portal 渲染进来） */
+  searchSlotRef?: (node: HTMLDivElement | null) => void;
 }
 
 /**
@@ -66,6 +68,7 @@ export function ModeTabs({
   status,
   failover,
   onOpenRouteSettings,
+  searchSlotRef,
 }: ModeTabsProps) {
   const { t } = useTranslation();
   const indicator = useSlidingIndicator<HTMLDivElement>(
@@ -143,6 +146,12 @@ export function ModeTabs({
         </div>
       )}
       {!status && <div className="flex-1" />}
+      {searchSlotRef && (
+        <div
+          ref={searchSlotRef}
+          className="flex min-w-0 shrink items-center empty:hidden"
+        />
+      )}
 
       {failover && (
         <HoverTip content={t("mode.failover")}>

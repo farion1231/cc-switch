@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -11,6 +11,7 @@ import {
   Loader2,
   MoreHorizontal,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
@@ -49,6 +50,8 @@ import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
+import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
+import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   ENV_BADGE_CONFIG,
   ONE_CLICK_INSTALL_COMMANDS,
@@ -85,6 +88,10 @@ const ROWS: Row[] = [
   ),
 ];
 
+// 表头和应用行共用列宽；操作列按当前可见按钮的最大宽度收缩。
+const APP_ROW_GRID =
+  "grid grid-cols-[minmax(0,1fr)_168px_var(--apps-actions-width,0px)_56px] items-center gap-x-4";
+
 function formatCheckedAt(timestamp: number, locale: string): string {
   const date = new Date(timestamp);
   const now = new Date();
@@ -98,14 +105,41 @@ function formatCheckedAt(timestamp: number, locale: string): string {
 }
 
 /**
- * 「应用」页（v7）：每个应用一行 = 安装状态 / 版本 + 安装 / 升级 + 在侧栏显示的开关。
+ * 「应用」页（v7）：每个应用一行 = 安装状态 / 版本 + 安装 / 升级 / 卸载 + 在侧栏显示的开关。
  * 隐藏一个应用只影响界面（侧栏、MCP / Skills 的列、提示词和会话的下拉），配置照常同步。
  */
 export function AppsPage() {
   const { t, i18n } = useTranslation();
   const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    const actions = Array.from(
+      table.querySelectorAll<HTMLElement>("[data-tool-actions]"),
+    );
+    const updateActionWidth = () => {
+      const width = Math.max(
+        0,
+        ...actions.map((action) => action.getBoundingClientRect().width),
+      );
+      table.style.setProperty("--apps-actions-width", `${width}px`);
+    };
+    updateActionWidth();
+    // 按钮增减、文案或字体变化时同步整列，避免各行自行收缩后版本列错位。
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateActionWidth);
+    actions.forEach((action) => observer.observe(action));
+    return () => observer.disconnect();
+  }, []);
+
   const [showCommands, setShowCommands] = useState(false);
+  const [showUninstallCommands, setShowUninstallCommands] = useState(false);
+  const [pendingUninstall, setPendingUninstall] = useState<ToolName | null>(
+    null,
+  );
   const [expanded, setExpanded] = useState<Partial<Record<ToolName, boolean>>>(
     {},
   );
@@ -147,7 +181,6 @@ export function AppsPage() {
   const visibilitySwitch = (app: AppId) => (
     <Switch
       size="sm"
-      tone="neutral"
       checked={visibleApps[app]}
       disabled={!settings || (visibleApps[app] && visibleCount <= 1)}
       onCheckedChange={(checked) => setVisible(app, checked)}
@@ -243,6 +276,12 @@ export function AppsPage() {
                 <DropdownMenuItem onSelect={() => setShowCommands(true)}>
                   {t("appsPage.manualCommands")}
                 </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-red-500 focus:text-red-500 dark:text-red-400 dark:focus:text-red-400"
+                  onSelect={() => setShowUninstallCommands(true)}
+                >
+                  {t("settings.manualUninstallCommands")}
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </>
@@ -253,14 +292,17 @@ export function AppsPage() {
         id="main-content"
         className="min-h-0 flex-1 overflow-y-auto scroll-stable"
       >
-        <div className="px-6 pb-10 pt-4">
-          <div className="flex h-8 items-center px-4 text-caption font-medium text-fg-2">
-            <span className="flex-1">{t("appsPage.columnApp")}</span>
-            <span className="w-[168px] text-end">
-              {t("appsPage.columnVersion")}
-            </span>
-            <span className="w-[104px]" />
-            <span className="flex w-[56px] items-center justify-end gap-0.5">
+        <div ref={tableRef} className="px-6 pb-10 pt-4">
+          <div
+            className={cn(
+              APP_ROW_GRID,
+              "mx-px h-8 px-4 text-caption font-medium text-fg-2",
+            )}
+          >
+            <span>{t("appsPage.columnApp")}</span>
+            <span className="text-end">{t("appsPage.columnVersion")}</span>
+            <span />
+            <span className="flex items-center justify-end gap-0.5">
               {t("appsPage.columnVisible")}
               <HelpTip title={t("appsPage.columnVisible")} align="end">
                 {t("appsPage.visibleHelp")}
@@ -298,6 +340,7 @@ export function AppsPage() {
                   key={row.tool}
                   tool={row.tool}
                   tools={tools}
+                  onUninstall={() => setPendingUninstall(row.tool)}
                   expanded={expanded[row.tool] ?? false}
                   onToggleExpanded={() =>
                     setExpanded((prev) => ({
@@ -346,6 +389,30 @@ export function AppsPage() {
         </DialogContent>
       </Dialog>
 
+      <ManualUninstallDialog
+        open={showUninstallCommands}
+        onOpenChange={setShowUninstallCommands}
+        toolVersionByName={tools.toolVersionByName}
+      />
+
+      {pendingUninstall && (
+        <ToolUninstallConfirmDialog
+          tool={pendingUninstall}
+          wslShellByTool={tools.wslShellByTool}
+          onConfirm={(uninstallPlan) => {
+            void tools.handleRunToolAction([pendingUninstall], "uninstall", {
+              uninstallPlan,
+            });
+            setPendingUninstall(null);
+          }}
+          onCancel={() => setPendingUninstall(null)}
+          onManualUninstall={() => {
+            setPendingUninstall(null);
+            setShowUninstallCommands(true);
+          }}
+        />
+      )}
+
       <ToolUpgradeConfirmDialog
         isOpen={tools.pendingUpgrade !== null}
         plans={tools.pendingUpgrade?.plans ?? []}
@@ -376,21 +443,28 @@ function AppRow({
 }) {
   return (
     <div data-tool-row className="px-4 py-3">
-      <div className="flex items-center gap-4">
-        <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
-            {name}
-          </div>
-          {meta && (
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
-              {meta}
+      <div className={cn(APP_ROW_GRID, "min-h-10")}>
+        <div className="flex min-w-0 items-center gap-4">
+          <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
+              {name}
             </div>
-          )}
+            {meta && (
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
+                {meta}
+              </div>
+            )}
+          </div>
         </div>
-        <div className="w-[168px] shrink-0 text-end">{version}</div>
-        <div className="flex w-[104px] shrink-0 justify-end">{action}</div>
-        <div className="flex w-[56px] shrink-0 justify-end">{visibility}</div>
+        <div className="text-end">{version}</div>
+        <div
+          data-tool-actions
+          className="flex w-max items-center justify-self-end gap-2 [&>button]:shrink-0"
+        >
+          {action}
+        </div>
+        <div className="flex justify-end">{visibility}</div>
       </div>
       {footer && <div className="ms-9 mt-2">{footer}</div>}
     </div>
@@ -408,12 +482,14 @@ function Pill({ children }: { children: React.ReactNode }) {
 function ToolRow({
   tool,
   tools,
+  onUninstall,
   expanded,
   onToggleExpanded,
   visibility,
 }: {
   tool: ToolName;
   tools: ReturnType<typeof useToolManagement>;
+  onUninstall: () => void;
   expanded: boolean;
   onToggleExpanded: () => void;
   visibility: React.ReactNode;
@@ -433,15 +509,18 @@ function ToolRow({
     Boolean(tools.loadingTools[tool]) ||
     (tools.isLoadingTools && !tools.toolVersionByName.has(tool));
   const isOutdated = isUpdateAvailable(info?.version, info?.latest_version);
+  const nodeGap = isOutdated ? info?.update_blocked_by_node : null;
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
-  const action: ToolLifecycleAction | null =
-    tools.busyTools.get(tool) ??
+  const busyAction = tools.busyTools.get(tool);
+  const canUninstall = Boolean(info?.version || broken || defaultInstall);
+  const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
+    (busyAction !== "uninstall" ? busyAction : undefined) ??
     (isVersionLoading || broken
       ? null
       : !info?.version
         ? "install"
-        : isOutdated
+        : isOutdated && !nodeGap
           ? "update"
           : null);
   const sourceLabel = defaultInstall
@@ -488,7 +567,7 @@ function ToolRow({
       disabled={isVersionLoading || isBusy}
       aria-busy={isBusy}
     >
-      {isBusy ? (
+      {isBusy && busyAction !== "uninstall" ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
       ) : action === "install" ? (
         <Download className="h-3.5 w-3.5" />
@@ -501,6 +580,7 @@ function ToolRow({
     </Button>
   ) : null;
 
+  const installHint = t(`appsPage.installHint.${tool}`, { defaultValue: "" });
   const meta = defaultInstall ? (
     <>
       <span className="min-w-0 truncate font-mono" title={defaultInstall.path}>
@@ -524,7 +604,9 @@ function ToolRow({
       )}
     </>
   ) : !info?.version && !isVersionLoading ? (
-    <span>{t(`appsPage.installHint.${tool}`, { defaultValue: "" })}</span>
+    <span className="truncate" title={installHint}>
+      {installHint}
+    </span>
   ) : null;
 
   const wslControls =
@@ -578,6 +660,18 @@ function ToolRow({
       <ToolErrorMessage message={info.error} />
     ) : null;
 
+  const nodeLine =
+    !isVersionLoading && nodeGap ? (
+      <p className="flex items-start gap-1 text-caption text-warning-text">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        {t("appsPage.updateNeedsNode", {
+          version: info?.latest_version,
+          required: nodeGap.required,
+          current: nodeGap.current,
+        })}
+      </p>
+    ) : null;
+
   const conflictList =
     expanded && installs && installs.length > 1 ? (
       <div className="space-y-1.5 rounded-control bg-warning-soft p-2.5">
@@ -595,9 +689,10 @@ function ToolRow({
     ) : null;
 
   const footer =
-    wslControls || errorLine || conflictList ? (
+    wslControls || errorLine || nodeLine || conflictList ? (
       <div className="space-y-2">
         {errorLine}
+        {nodeLine}
         {wslControls}
         {conflictList}
       </div>
@@ -615,7 +710,28 @@ function ToolRow({
       }
       meta={meta}
       version={version}
-      action={actionButton}
+      action={
+        <>
+          {actionButton}
+          {(canUninstall || busyAction === "uninstall") && (
+            <Button
+              variant="neutral"
+              size="compact"
+              className="border-red-200 text-danger-text hover:border-red-300 hover:bg-danger-soft dark:border-red-400/40 dark:hover:border-red-400/60"
+              onClick={onUninstall}
+              disabled={isVersionLoading || isBusy}
+              aria-busy={busyAction === "uninstall"}
+            >
+              {busyAction === "uninstall" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+              {t("settings.toolUninstall")}
+            </Button>
+          )}
+        </>
+      }
       visibility={visibility}
       footer={footer}
     />

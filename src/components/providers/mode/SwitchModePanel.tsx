@@ -48,6 +48,8 @@ type ListCallbacks = Pick<
   | "onOpenWebsite"
   | "onOpenTerminal"
   | "onCreate"
+  | "searchOpen"
+  | "onSearchOpenChange"
 >;
 
 interface SwitchModePanelProps extends ListCallbacks {
@@ -106,6 +108,7 @@ export function SwitchModePanel({
 
   // 离开页面再回来、或生效的模式变了，一律落在生效的那格（「查看中」不持久化）
   const [view, setView] = useState<AppMode>(active);
+  const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     setView(active);
   }, [app, active]);
@@ -129,7 +132,12 @@ export function SwitchModePanel({
   const [dialog, setDialog] = useState<ModeDialogState | null>(null);
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
   const [confirmFailover, setConfirmFailover] = useState(false);
-  const [staleDismissed, setStaleDismissed] = useState(false);
+  // 关掉的是哪一份提示（后端的 staleRevision）：目录或登录又变了就是新的一份，重新显示。
+  const [staleDismissed, setStaleDismissed] = useState<string | null>(null);
+  useEffect(() => {
+    setStaleDismissed(null);
+  }, [app, active, directId, routeId, stack?.staleClients?.auth]);
+  const staleRevision = stack?.staleRevision ?? "";
 
   // 供应商还没加载完时先等着，到了再弹
   useEffect(() => {
@@ -443,22 +451,28 @@ export function SwitchModePanel({
             </Button>
           ) : undefined
         }
-      />,
+      >
+        {stack.noticeReasons?.length
+          ? stack.noticeReasons.map((reason) => (
+              <div key={reason}>
+                {t(`provider.officialModelsReason.${reason}`)}
+              </div>
+            ))
+          : undefined}
+      </Notice>,
     );
   }
   if (
-    view === "stack" &&
-    active === "stack" &&
     app === "codex" &&
     stack?.staleClients &&
     (stack.staleClients.daemon || stack.staleClients.others) &&
-    !staleDismissed
+    staleDismissed !== staleRevision
   ) {
     notices.push(
       <CodexStaleClientsNotice
         key="stale"
         staleClients={stack.staleClients}
-        onDismiss={() => setStaleDismissed(true)}
+        onDismiss={() => setStaleDismissed(staleRevision)}
       />,
     );
   }
@@ -522,6 +536,7 @@ export function SwitchModePanel({
             ? () => setRouteSettingsOpen(true)
             : undefined
         }
+        searchSlotRef={setSearchSlot}
       />
       <div
         ref={scrollRef}
@@ -541,6 +556,7 @@ export function SwitchModePanel({
           isLoading={isLoading}
           onSwitch={(provider) => void onSwitch(provider)}
           switchMode={switchMode}
+          searchSlot={searchSlot}
         />
       </div>
 

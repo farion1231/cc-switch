@@ -60,6 +60,17 @@ describe("mcodeProviderPresets", () => {
     ).toContain("kimi-k3");
   });
 
+  it("inherits both Volcengine plans with their own endpoints", () => {
+    const baseUrl = (name: string) =>
+      mcodePreset(name)?.settingsConfig.options.baseURL;
+    expect(baseUrl("火山 Agent Plan")).toBe(
+      "https://ark.cn-beijing.volces.com/api/plan/v3",
+    );
+    expect(baseUrl("火山 Coding Plan")).toBe(
+      "https://ark.cn-beijing.volces.com/api/coding/v3",
+    );
+  });
+
   it("excludes presets on APIs MCode does not support", () => {
     expect(mcodePreset("AWS Bedrock")).toBeUndefined();
   });

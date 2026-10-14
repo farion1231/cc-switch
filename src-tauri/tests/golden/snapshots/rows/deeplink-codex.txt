@@ -8,6 +8,6 @@ notes: NULL
 icon: openai
 icon_color: NULL
 meta: {"commonConfigEnabled":true}
-is_current: true
+is_current: false
 in_failover_queue: false
 
