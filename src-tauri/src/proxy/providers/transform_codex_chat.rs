@@ -2036,7 +2036,10 @@ fn chat_legacy_function_call_to_response_item(
 /// item_id 与 call_id 都从这里取值，保证两条出处始终一致。
 /// 注意：不同上游 id 消毒后可能撞车（如 `a:1` 与 `a_1`），概率极低，可接受。
 pub(crate) fn sanitize_upstream_id(id: &str) -> String {
-    if id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
+    if id
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
         return id.to_string();
     }
     id.chars()
