@@ -1923,6 +1923,33 @@ export const providerPresets: ProviderPreset[] = [
     icon: "ollama",
   },
   {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    // 本机 Ollama（docs.ollama.com/integrations/claude-code，2026-10-14 核对）：
+    // /v1/messages 自 v0.14.0 起支持，服务端不校验 Key，官方写法是
+    // AUTH_TOKEN=ollama、ANTHROPIC_API_KEY 置空；默认只监听 127.0.0.1:11434
+    //（OLLAMA_HOST 可改）。模型由用户自己 ollama pull：qwen3.5 是官方示例，
+    // 换成自己已下载的模型，或用「获取模型」从 /v1/models 拉取（id 带 :latest
+    // 等 tag）。实际窗口受服务端限制：显存低于 24 GiB 时默认只有 4k，官方要求
+    // 编程工具至少 64k（OLLAMA_CONTEXT_LENGTH=64000 ollama serve，
+    // docs.ollama.com/context-length）。兼容层不支持 cache_control、
+    // count_tokens 与 tool_choice（docs.ollama.com/api/anthropic-compatibility）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "http://localhost:11434",
+        ANTHROPIC_AUTH_TOKEN: "ollama",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "qwen3.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.5",
+      },
+    },
+    category: "local",
+    endpointCandidates: ["http://localhost:11434", "http://127.0.0.1:11434"],
+    icon: "ollama",
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     // Key 在 dev.meta.ai 登录后的「API keys」标签页（dev.meta.ai/docs/

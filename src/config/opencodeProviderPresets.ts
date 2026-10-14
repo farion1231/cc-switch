@@ -3561,6 +3561,48 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    // 本机 OpenAI 兼容端点（docs.ollama.com/integrations/opencode、
+    // opencode.ai/docs/providers，2026-10-14 核对）；models.dev 只有
+    // ollama-cloud 没有本机 ollama，OpenCode 文档也要求手动配置，不算内置。
+    // 服务端不校验 Key，填占位值 ollama。OpenCode 要求窗口至少 64k，工具调用
+    // 不灵时先调大服务端窗口（OLLAMA_CONTEXT_LENGTH）。模型换成自己已下载的；
+    // qwen3.5 的 output 取 Qwen 官方建议值，gpt-oss 沿用 Pi 目录口径
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Ollama",
+      options: {
+        baseURL: "http://localhost:11434/v1",
+        apiKey: "ollama",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.5": {
+          name: "Qwen3.5",
+          reasoning: true,
+          limit: { context: 262144, output: 32768 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-oss:20b": {
+          name: "GPT-OSS 20B",
+          reasoning: true,
+          limit: { context: 131072, output: 65536 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "local",
+    icon: "ollama",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "ollama",
+        editorValue: "ollama",
+      },
+    },
+  },
+  {
     name: "Oh My OpenCode",
     websiteUrl: "https://github.com/code-yeongyu/oh-my-openagent",
     settingsConfig: {

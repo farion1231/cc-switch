@@ -2494,6 +2494,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    settingsConfig: {
+      // Hermes 里 ollama / local 都是指向 custom 的别名（hermes_cli/auth.py），
+      // 照 ollama_cloud 先例换名避开
+      name: "ollama-local",
+      // Hermes 官方本机写法：base http://localhost:11434/v1、Key 留空
+      //（hermes-agent.nousresearch.com/docs/integrations/providers，2026-10-14
+      // 核对）。Hermes 启动时拒绝小于 64000 的窗口：这里填模型原生值，服务端
+      // 实际窗口也要至少 64k（OLLAMA_CONTEXT_LENGTH 或 model.ollama_num_ctx）。
+      // 模型换成自己已下载的
+      base_url: "http://localhost:11434/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "qwen3.5", name: "Qwen3.5", context_length: 262144 },
+        { id: "gpt-oss:20b", name: "GPT-OSS 20B", context_length: 131072 },
+      ],
+    },
+    category: "local",
+    icon: "ollama",
+    suggestedDefaults: {
+      model: { default: "qwen3.5", provider: "ollama-local" },
+    },
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

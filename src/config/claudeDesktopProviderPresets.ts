@@ -1692,6 +1692,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "ollama",
   },
   {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    category: "local",
+    // 同 Claude Code 预设：本机 /v1/messages（v0.14.0 起，docs.ollama.com/api/
+    // anthropic-compatibility，2026-10-14 核对）。服务端不校验 Key，但表单要求
+    // 必填，选预设后手填 ollama 即可。模型名不是 Claude，只能走路由；qwen3.5 是
+    // 官方示例，换成自己已下载的模型或用「获取模型」拉取。原生窗口 262144
+    // 小于 1M，不开 1M
+    baseUrl: "http://localhost:11434",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes("qwen3.5", "qwen3.5", "qwen3.5"),
+    endpointCandidates: ["http://localhost:11434", "http://127.0.0.1:11434"],
+    icon: "ollama",
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

@@ -2003,6 +2003,28 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "ollama",
   },
   {
+    // Pi 运行时没有内置本机 Ollama provider，Pi 文档自己就用 models.json 写它
+    name: "Ollama",
+    providerKey: "cc-switch-ollama",
+    websiteUrl: "https://ollama.com",
+    settingsConfig: {
+      name: "Ollama",
+      // Pi 文档（pi-mono packages/coding-agent/docs/models.md，2026-10-14
+      // 核对）的本机写法：openai-completions + http://localhost:11434/v1。
+      // 服务端不校验 Key，但 Pi 文档说要填一个占位 Key 模型才会出现在列表里，
+      // 添加后手填 ollama。模型换成自己已下载的
+      baseUrl: "http://localhost:11434/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("qwen/qwen3.5", { id: "qwen3.5" }),
+        piModel("openai/gpt-oss-20b", { id: "gpt-oss:20b" }),
+      ],
+    },
+    category: "local",
+    icon: "ollama",
+  },
+  {
     name: "Meta Model API",
     providerKey: "cc-switch-meta",
     websiteUrl: "https://dev.meta.ai",

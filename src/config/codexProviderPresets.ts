@@ -3548,6 +3548,65 @@ requires_openai_auth = true`,
     icon: "ollama",
   },
   {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    // 本机服务端不校验 Key，但表单要求必填，预填占位值 ollama（同官方示例）
+    auth: generateThirdPartyAuth("ollama"),
+    // 本机 /v1/responses（docs.ollama.com/api/openai-compatibility，2026-10-14
+    // 核对）：文档写 v0.13.3 起，Codex 自己对 --oss 要求 0.13.4+；只支持无状态
+    // 请求（不认 previous_response_id），disable_response_storage 下每轮发完整
+    // input，不受影响。默认只监听 127.0.0.1:11434。gpt-oss:20b 是 codex --oss
+    // 的默认模型（docs.ollama.com/integrations/codex），需先 ollama pull，或换成
+    // 自己已下载的模型 / 用「获取模型」从 /v1/models 拉取
+    config: generateThirdPartyConfig(
+      "ollama",
+      "http://localhost:11434/v1",
+      "gpt-oss:20b",
+    ),
+    endpointCandidates: [
+      "http://localhost:11434/v1",
+      "http://127.0.0.1:11434/v1",
+    ],
+    // 本机 Responses 不认 custom 工具，回放 custom_tool_call 直接报 unknown
+    // input item type（ollama 源码 openai/responses.go）：NativeResponses 档案
+    // 不发 freeform apply_patch，改用 shell_command。Ollama 自己生成的 Codex
+    // 目录也是不带工具、不并行（cmd/launch/codex.go）
+    apiFormat: "openai_responses",
+    // 窗口取模型原生值；实际受服务端限制（显存低于 24 GiB 默认只有 4k），
+    // 官方要求编程工具至少 64k（docs.ollama.com/context-length）。gpt-oss 档位
+    // 取 ollama.com/api/show 的 thinking.values；qwen3.5 只支持开关，文档写
+    // none 映射为关、其余档位映射为开，故两态。都含 high，沿用模板默认 high。
+    // 首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "gpt-oss:20b",
+        displayName: "GPT-OSS 20B",
+        contextWindow: 131072,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        model: "gpt-oss:120b",
+        displayName: "GPT-OSS 120B",
+        contextWindow: 131072,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        model: "qwen3.5",
+        displayName: "Qwen3.5",
+        contextWindow: 262144,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["none", "high"],
+      },
+    ]),
+    category: "local",
+    icon: "ollama",
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",
