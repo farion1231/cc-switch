@@ -1337,7 +1337,9 @@ pub fn run() {
                             if !crate::settings::get_settings().session_auto_sync_enabled {
                                 return crate::services::session_usage::SessionSyncResult::default();
                             }
-                            crate::services::session_usage::sync_all_unlocked(&db)
+                            let result = crate::services::session_usage::sync_all_unlocked(&db);
+                            crate::services::session_usage_pi::spawn_pi_timing_backfill(db);
+                            result
                         });
                         match task.await {
                             Ok(result) if !result.errors.is_empty() => {

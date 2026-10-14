@@ -318,7 +318,9 @@ pub async fn sync_session_usage(
         .lock()
         .await;
     tauri::async_runtime::spawn_blocking(move || {
-        crate::services::session_usage::sync_all_unlocked(&db)
+        let result = crate::services::session_usage::sync_all_unlocked(&db);
+        crate::services::session_usage_pi::spawn_pi_timing_backfill(db);
+        result
     })
     .await
     .map_err(|error| AppError::Message(format!("会话用量同步任务失败: {error}")))
