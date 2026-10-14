@@ -47,6 +47,7 @@ import {
 import { RouteSettingsSheet } from "./RouteSettingsSheet";
 import { StackSettingsSheet } from "./StackSettingsSheet";
 import { useDesktopConfigMessages } from "./useDesktopConfigMessages";
+import { RoleBindingsSheet } from "./RoleBindingsSheet";
 
 type ListCallbacks = Pick<
   React.ComponentProps<typeof ProviderList>,
@@ -144,6 +145,7 @@ export function SwitchModePanel({
   const [dialog, setDialog] = useState<ModeDialogState | null>(null);
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
   const [stackSettingsOpen, setStackSettingsOpen] = useState(false);
+  const [roleBindingsOpen, setRoleBindingsOpen] = useState(false);
   const [confirmFailover, setConfirmFailover] = useState(false);
   // 关掉的是哪一份提示（后端的 staleRevision）：目录或登录又变了就是新的一份，重新显示。
   const [staleDismissed, setStaleDismissed] = useState<string | null>(null);
@@ -568,6 +570,11 @@ export function SwitchModePanel({
             : undefined
         }
         searchSlotRef={setSearchSlot}
+        onOpenRoleBindings={
+          view === "stack" && app === "claude"
+            ? () => setRoleBindingsOpen(true)
+            : undefined
+        }
       />
       <div
         ref={scrollRef}
@@ -650,6 +657,13 @@ export function SwitchModePanel({
             (routeId === CODEX_OFFICIAL_PROVIDER_ID ||
               providers[routeId]?.category === "official")
           }
+        />
+      )}
+
+      {app === "claude" && (
+        <RoleBindingsSheet
+          open={roleBindingsOpen}
+          onOpenChange={setRoleBindingsOpen}
         />
       )}
 

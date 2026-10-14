@@ -8,6 +8,7 @@ import type {
   AppProxyConfig,
   ProxyStackWriteError,
   ProxyTakeoverStatus,
+  StackRoleBindings,
 } from "@/types/proxy";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { getAppLabel } from "@/config/appConfig";
@@ -154,6 +155,54 @@ export function useSetProxyStackMember() {
       queryClient.invalidateQueries({
         queryKey: ["providers", variables.appType],
       });
+    },
+  });
+}
+
+/**
+ * 保存 Claude Code 聚合的四档模型绑定（一次提交；缺的档跟随当前默认供应商）。
+ * Claude Code 运行中就会读到改过的 settings.json，立即生效。失败和增删 Stack 模型一样
+ * 分两种：什么都没改（弹后端的错误），已部分写入（下次操作或重启 CC Switch 时补完）。
+ */
+export function useSetProxyStackRoleBindings() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      bindings,
+    }: {
+      appType: string;
+      bindings: StackRoleBindings;
+    }) => proxyApi.setProxyStackRoleBindings(appType, bindings),
+    onSuccess: async (_data, variables) => {
+      // 等服务端的新状态进入缓存再关闭 Sheet；重开时不能用旧草稿覆盖刚保存的档位。
+      await queryClient.invalidateQueries({
+        queryKey: ["providers", variables.appType],
+      });
+      toast.success(t("provider.roleBindingsSaved"), { closeButton: true });
+    },
+    onError: (error: unknown) => {
+      if (isStackWriteError(error) && error.partial) {
+        toast.warning(t("provider.stackPartial"), {
+          description: error.message,
+          closeButton: true,
+        });
+        return;
+      }
+      toast.error(
+        t("provider.roleBindingsFailed", {
+          error: extractErrorMessage(error),
+        }),
+      );
+    },
+    onSettled: (_data, error, variables) => {
+      if (error) {
+        queryClient.invalidateQueries({
+          queryKey: ["providers", variables.appType],
+        });
+      }
     },
   });
 }

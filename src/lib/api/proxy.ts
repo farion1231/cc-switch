@@ -10,6 +10,7 @@ import type {
   CodexDaemonRestartOutcome,
   AppModeView,
   StartupAttachFailure,
+  StackRoleBindings,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -100,6 +101,15 @@ export const proxyApi = {
     enabled: boolean,
   ): Promise<ProxyStackNotice | null> {
     return invoke("set_proxy_stack_member", { appType, providerId, enabled });
+  },
+
+  // Claude Code 聚合的四档模型绑定，四档一次提交；缺（undefined）的档跟随当前默认供应商。
+  // 失败时抛出 ProxyStackWriteError
+  async setProxyStackRoleBindings(
+    appType: string,
+    bindings: StackRoleBindings,
+  ): Promise<void> {
+    return invoke("set_proxy_stack_role_bindings", { appType, bindings });
   },
 
   // Codex 聚合的模型被别的模型目录挡住时，改用 CC Switch 生成的目录（去掉指向别的文件的
