@@ -2321,7 +2321,7 @@
       "justNow": "Oturum günlükleri · az önce eşitle edildi",
       "minutesAgo": "Oturum günlükleri · {{count}} dakika önce eşitle edildi",
       "off": "Oturum günlükleri · otomatik tarama kapalı",
-      "tipAuto": "Oturum günlükleri arka planda her 60 saniyede bir, kullanım sayfası görünürken de otomatik yenileme aralığında taranır",
+      "tipAuto": "Arka planda her 60 saniyede bir yenilenir; kullanım istatistikleri sağdaki ayarda belirtilen aralıkla yenilenir",
       "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır"
     },
     "refreshMenu": {

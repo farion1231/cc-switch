@@ -2344,7 +2344,7 @@
       "justNow": "Session logs · synced just now",
       "minutesAgo": "Session logs · synced {{count}} min ago",
       "off": "Session logs · auto scan off",
-      "tipAuto": "Session logs are scanned every 60 seconds in the background and at the auto-refresh interval while the usage page is visible",
+      "tipAuto": "Background refresh runs every 60 seconds; usage statistics refresh at the interval set on the right",
       "tipOff": "Session logs are scanned only when you sync manually"
     },
     "refreshMenu": {
