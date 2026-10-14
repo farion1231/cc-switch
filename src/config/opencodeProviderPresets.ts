@@ -3128,7 +3128,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "deepseek-ai/DeepSeek-V4-Flash": {
           name: "DeepSeek V4 Flash",
           reasoning: true,
-          limit: { context: 1048576 },
+          limit: { context: 1048576, output: 384000 },
         },
       },
     },
@@ -3163,12 +3163,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "MiniMaxAI/MiniMax-M3": {
           name: "MiniMax M3",
           reasoning: true,
-          limit: { context: 1048576 },
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
         },
         "deepseek-ai/DeepSeek-V4.1-Flash": {
           name: "DeepSeek V4.1 Flash",
           reasoning: true,
-          limit: { context: 1048576 },
+          limit: { context: 1048576, output: 384000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
