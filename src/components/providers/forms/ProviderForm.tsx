@@ -74,6 +74,7 @@ import {
   setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
+import { codexModelProviderIdError } from "@/utils/providerConfigUtils";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
 import GeminiConfigEditor from "./GeminiConfigEditor";
@@ -712,6 +713,8 @@ function ProviderFormFull({
     codexApiKey,
     codexBaseUrl,
     codexModel,
+    codexProviderId,
+    codexProviderIdEdited,
     codexSubagentModel,
     codexSubagentReasoningEffort,
     codexCatalogModels,
@@ -722,6 +725,7 @@ function ProviderFormFull({
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
+    handleCodexProviderIdChange,
     handleCodexSubagentModelChange,
     handleCodexSubagentReasoningEffortChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
@@ -1654,6 +1658,27 @@ function ProviderFormFull({
         }),
       );
       return;
+    }
+
+    // Provider ID 保留名不当场拦下，后端会按旧规则静默归一回 custom——那正是
+    // issue #7856 要避免的静默覆盖，所以保存前给出明确错误。只校验用户输入过的自定义
+    // id：已有供应商合法选择内置路由（如 amazon-bedrock，后端 BuiltIn 分支支持）时，
+    // 字段里的保留名是从 TOML 回显的选路，不是用户新建的自定义表，不能拦住保存。
+    if (appId === "codex" && codexProviderIdEdited) {
+      const providerIdIssue = codexModelProviderIdError(codexProviderId);
+      if (providerIdIssue) {
+        toast.error(
+          providerIdIssue === "reserved"
+            ? t("codexConfig.providerIdReservedError", {
+                defaultValue:
+                  "该标识是 Codex 保留名，请换一个（区分大小写，OpenAI 是合法的自定义 ID）。",
+              })
+            : t("codexConfig.providerIdControlError", {
+                defaultValue: "Provider ID 不能包含控制字符。",
+              }),
+        );
+        return;
+      }
     }
 
     let settingsConfig: string;
@@ -2682,6 +2707,9 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               codexModel={codexModel}
               onModelChange={handleCodexModelChange}
+              codexProviderId={codexProviderId}
+              providerIdEdited={codexProviderIdEdited}
+              onProviderIdChange={handleCodexProviderIdChange}
               subagentModel={codexSubagentModel}
               onSubagentModelChange={handleCodexSubagentModelChange}
               subagentReasoningEffort={codexSubagentReasoningEffort}

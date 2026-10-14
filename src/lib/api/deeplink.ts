@@ -31,6 +31,8 @@ export interface DeepLinkImportRequest {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  /** Optional Codex model provider id (Codex only); absent keeps `custom` */
+  modelProvider?: string;
   /** 接口格式，后端按应用换算成各自的字段 */
   apiFormat?:
     | "anthropic"

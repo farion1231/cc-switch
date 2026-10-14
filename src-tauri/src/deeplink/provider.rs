@@ -618,6 +618,24 @@ fn extract_claude_config_env(
 }
 
 /// Build Codex settings configuration
+/// TOML 表键的 token：裸键直接用，其余（空格、中文、引号…）按 toml_edit 转义成
+/// 带引号的键（`[model_providers."My Provider"]`）。
+fn toml_table_key_token(key: &str) -> String {
+    toml_edit::Key::from(key).to_string()
+}
+
+/// 解析 deeplink 里的可选 Provider ID：留空回退 `None`（生成 `custom`），保留名和控制
+/// 字符在这里给出明确错误（issue #7856 第 4 点）。
+fn resolved_codex_provider_id(request: &DeepLinkImportRequest) -> Result<Option<String>, AppError> {
+    request
+        .model_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(crate::codex_config::validate_codex_model_provider_id)
+        .transpose()
+}
+
 ///
 /// 链接附带了 `config.toml` 时，按白名单收下其中属于这个供应商的部分（[`codex_link`]）；
 /// 没带时用固定模板。模板的字节由 golden 测试锁住：降级后旧版会把行里的 config 整份写进
@@ -651,6 +669,13 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> Result<serde_json::V
         .trim_end_matches('/')
         .to_string();
 
+    // Optional explicit Provider ID; absent keeps the legacy `custom` id so the
+    // generated TOML stays byte-identical to previous versions.
+    let provider_id = resolved_codex_provider_id(request)?.unwrap_or_else(|| "custom".to_string());
+
+    let provider_id_value = toml_edit::Value::from(provider_id.as_str()).to_string();
+    let provider_table_key = toml_table_key_token(&provider_id);
+
     let link_config = match decode_link_config(request)? {
         Some(config) => codex_link::config_text(&config)?,
         None => None,
@@ -676,12 +701,12 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> Result<serde_json::V
 
     // Build config.toml content
     let config_toml = format!(
-        r#"model_provider = "custom"
+        r#"model_provider = {provider_id_value}
 model = {model_name}
 model_reasoning_effort = "high"
 disable_response_storage = true
 
-[model_providers.custom]
+[model_providers.{provider_table_key}]
 name = {provider_display_name}
 base_url = {endpoint}
 wire_api = "responses"
@@ -689,12 +714,17 @@ requires_openai_auth = true
 "#
     );
 
-    Ok(json!({
+    // 显式指定的标识单独记进 settings_config（投影按它放行；缺省行保持旧行为）。
+    let mut settings = json!({
         "auth": {
             "OPENAI_API_KEY": request.api_key,
         },
         "config": config_toml
-    }))
+    });
+    if provider_id != "custom" {
+        settings["modelProvider"] = json!(provider_id);
+    }
+    Ok(settings)
 }
 
 /// Build Gemini settings configuration
@@ -1504,5 +1534,151 @@ mod tests {
         let obj = settings.as_object().unwrap();
         assert!(obj.contains_key("baseUrl"));
         assert!(obj.contains_key("apiKey"));
+    }
+
+    // ===== Codex Provider ID（issue #7856）=====
+
+    fn codex_request(model_provider: Option<&str>) -> DeepLinkImportRequest {
+        DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("BenszAPI".to_string()),
+            endpoint: Some("https://api.example.com/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model_provider: model_provider.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// 验收第 1 条：不传 `modelProvider` 时生成的 TOML 与旧版逐字节一致。
+    #[test]
+    fn codex_deeplink_without_provider_id_is_byte_identical_to_the_legacy_template() {
+        let settings = build_codex_settings(&codex_request(None)).unwrap();
+        assert_eq!(
+            settings.get("config").and_then(|value| value.as_str()),
+            Some(
+                r#"model_provider = "custom"
+model = "gpt-5-codex"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "BenszAPI"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            )
+        );
+        // 缺省不带标记：存量形态不变。
+        assert!(
+            settings.get("modelProvider").is_none(),
+            "no marker without an explicit Provider ID: {settings}"
+        );
+    }
+
+    /// 验收第 2 条：显式 `BenszAPI` 时顶层选路和表键都是它，标记单独入库。
+    #[test]
+    fn codex_deeplink_writes_an_explicit_provider_id_into_selector_table_and_marker() {
+        let settings = build_codex_settings(&codex_request(Some("BenszAPI"))).unwrap();
+        let config_text = settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap();
+        let parsed: toml::Value = toml::from_str(config_text).expect("valid Codex config");
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("BenszAPI"),
+            "{config_text}"
+        );
+        assert_eq!(
+            parsed["model_providers"]["BenszAPI"]["base_url"].as_str(),
+            Some("https://api.example.com/v1"),
+            "{config_text}"
+        );
+        assert!(
+            parsed["model_providers"].get("custom").is_none(),
+            "{config_text}"
+        );
+        assert_eq!(
+            settings
+                .get("modelProvider")
+                .and_then(|value| value.as_str()),
+            Some("BenszAPI")
+        );
+    }
+
+    /// 验收第 4 条：空格、中文、引号等名称生成合法 TOML（带引号的表键）。
+    #[test]
+    fn codex_deeplink_escapes_provider_ids_that_need_quoted_toml_keys() {
+        for id in ["My Provider", "中文名", "A\"B"] {
+            let settings = build_codex_settings(&codex_request(Some(id))).unwrap();
+            let config_text = settings
+                .get("config")
+                .and_then(|value| value.as_str())
+                .unwrap();
+            let parsed: toml::Value = toml::from_str(config_text).expect("valid Codex config");
+            assert_eq!(
+                parsed
+                    .get("model_provider")
+                    .and_then(|value| value.as_str()),
+                Some(id),
+                "{config_text}"
+            );
+            assert_eq!(
+                parsed["model_providers"][id]["wire_api"].as_str(),
+                Some("responses"),
+                "{config_text}"
+            );
+        }
+    }
+
+    /// 验收第 4 条：保留名给出明确错误；大小写敏感，`OpenAI` 合法。
+    #[test]
+    fn codex_deeplink_rejects_reserved_provider_ids_but_keeps_casing_variants() {
+        for reserved in ["openai", "ollama", "lmstudio"] {
+            let err = build_codex_settings(&codex_request(Some(reserved)))
+                .expect_err("reserved id must be rejected");
+            assert!(
+                err.to_string().contains(reserved),
+                "the rejection must name the id: {err}"
+            );
+        }
+        let settings = build_codex_settings(&codex_request(Some("OpenAI"))).unwrap();
+        assert_eq!(
+            settings
+                .get("modelProvider")
+                .and_then(|value| value.as_str()),
+            Some("OpenAI")
+        );
+    }
+
+    /// 留空（纯空白）等同未提供，回退 `custom`。
+    #[test]
+    fn codex_deeplink_blank_provider_id_falls_back_to_custom() {
+        let settings = build_codex_settings(&codex_request(Some("   "))).unwrap();
+        let config_text = settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap();
+        assert!(
+            config_text.contains("model_provider = \"custom\""),
+            "{config_text}"
+        );
+        assert!(settings.get("modelProvider").is_none(), "{settings}");
+    }
+
+    /// URL 参数 `modelProvider` 进 request（camelCase 命名约定）。
+    #[test]
+    fn codex_deeplink_url_param_parses_into_the_request() {
+        let url = "ccswitch://v1/import?resource=provider&app=codex&name=BenszAPI&modelProvider=BenszAPI&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test&homepage=https%3A%2F%2Fexample.com";
+        let request = super::super::parser::parse_deeplink_url(url).unwrap();
+        assert_eq!(request.model_provider.as_deref(), Some("BenszAPI"));
+
+        let without = "ccswitch://v1/import?resource=provider&app=codex&name=BenszAPI&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test&homepage=https%3A%2F%2Fexample.com";
+        let request = super::super::parser::parse_deeplink_url(without).unwrap();
+        assert!(request.model_provider.is_none());
     }
 }
