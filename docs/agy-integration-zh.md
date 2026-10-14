@@ -112,3 +112,21 @@ pnpm build:renderer
 无界面 `--print` 模式不会弹出权限确认。Skill 若需要 `read_file`，必须有对应读取许可，否则 CLI 可能退出为成功、JSON 的 response 却为空并带有 `denied_actions`。测试仅为临时 Skill 的实际路径及 SSOT 路径授予精确读取许可，保留正常运行时的用户权限决策。
 
 模型 ID 必须精确匹配所用接口。实测 Gemini API 接受 `gemini-3.8-flash`，而 `gemini-3-8-flash` 返回 404；不应通过全局替换连字符“修复”任意供应商模型名。原生 `agy models` 的档位别名与 Google API 模型列表也并不完全相同，表单按登录模式选择对应来源。
+
+## 深链接导入
+
+统一入口是 `ccswitch://v1/import`，agy 使用独立的 `app=agy` / `apps=agy`：
+
+- **供应商**：`resource=provider&app=agy`，支持 `name`、`apiKey`、`endpoint`、`model`、`config` 与 `apiFormat=gemini_native`。不支持 OpenAI/Anthropic 协议。确认框关闭「导入后立即切换」时只保存数据库，不创建原生配置、启动器或修改 shell；开启时走正常供应商切换。Windows 仍受供应商启动器的既有限制。
+- **内联配置**：`config` 是 Base64 编码 JSON，可用上文 CCS 的 `{env, config:{model:{name}}}` 结构，或扁平 `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`（兼容 `GEMINI_BASE_URL`）、`GEMINI_MODEL`。模型优先级为 URL 的 `model` > `config.model.name` > `GEMINI_MODEL`。只提取密钥、地址、模型，其他环境变量与原生选项不导入；预览中的密钥打码。远程 `configUrl` 仍不支持。
+- **MCP**：`resource=mcp&apps=agy`；`apps=agy,codex` 可同时指定多个应用。`config` 为 Base64 编码的 `{"mcpServers":{...}}`。同 ID 已存在时保留数据库中的服务器定义，仅合并应用开关，再走统一 MCP 同步；agy 不支持的 SSE 会报告导入失败。
+- **Prompt**：`resource=prompt&app=agy`，`content` 为 Base64 Markdown，确认后保存到 agy 提示词列表；启用时使用既有 Prompt 路径解析和写入逻辑。
+- **Skills**：`resource=skill&repo=owner/name&branch=main` 只添加所有应用共享的技能仓库，不下载或安装技能，也不会因附带 `app=agy` 自动启用。随后在 Skills 页面选择技能并为 agy 启用。
+
+供应商示例（所有凭据都是占位值；链接参数需 URL 编码）：
+
+```text
+ccswitch://v1/import?resource=provider&app=agy&name=Antigravity&endpoint=https%3A%2F%2Fgenerativelanguage.googleapis.com&apiKey=YOUR_KEY&model=YOUR_MODEL&apiFormat=gemini_native&enabled=false
+```
+
+深链接供应商沿用现有 API Key 导入规则，需要密钥和端点；不通过链接导入或接管 OAuth 登录。会话预览、Token 统计和会话恢复不是导入资源，没有新增对应 `resource` 类型。
