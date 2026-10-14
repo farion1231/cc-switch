@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 
 /**
@@ -64,6 +64,7 @@ const summary = {
 
 describe("UsageDashboard (smoke)", () => {
   beforeEach(() => {
+    usageApiMock.syncSessionUsage.mockReset();
     usageApiMock.getUsageSummary.mockResolvedValue(summary);
     usageApiMock.getUsageSummaryByApp.mockResolvedValue([
       { appType: "claude", summary },
@@ -131,6 +132,71 @@ describe("UsageDashboard (smoke)", () => {
         lastSyncError: null,
       },
     });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it("imports new session usage before refreshing metrics at the selected interval", async () => {
+    vi.useFakeTimers();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    usageApiMock.syncSessionUsage.mockImplementation(async () => {
+      usageApiMock.getUsageSummaryByApp.mockResolvedValue([
+        { appType: "claude", summary: { ...summary, totalCost: "43.1" } },
+      ]);
+      return { imported: 1, filesScanned: 1, errors: [] };
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <UsageDashboard refreshIntervalMs={5000} />
+      </QueryClientProvider>,
+    );
+    await act(() => vi.advanceTimersByTimeAsync(10));
+    expect(screen.getByText("$42.10")).toBeInTheDocument();
+
+    await act(() => vi.advanceTimersByTimeAsync(4990));
+    expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(10));
+    expect(screen.getByText("$43.10")).toBeInTheDocument();
+    client.clear();
+  });
+
+  it("stops every dashboard query timer when auto refresh is turned off", async () => {
+    vi.useFakeTimers();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <UsageDashboard refreshIntervalMs={5000} />
+      </QueryClientProvider>,
+    );
+    await act(() => vi.advanceTimersByTimeAsync(10));
+    rerender(
+      <QueryClientProvider client={client}>
+        <UsageDashboard refreshIntervalMs={0} />
+      </QueryClientProvider>,
+    );
+    await act(() => vi.advanceTimersByTimeAsync(10));
+    const queries = [
+      usageApiMock.getUsageSummary,
+      usageApiMock.getUsageSummaryByApp,
+      usageApiMock.getUsageTrends,
+      usageApiMock.getProviderStats,
+      usageApiMock.getModelStats,
+      usageApiMock.getRequestLogs,
+      usageApiMock.getSessionUsageLastSync,
+    ];
+    const counts = queries.map((query) => query.mock.calls.length);
+    expect(counts.every((count) => count > 0)).toBe(true);
+    await act(() => vi.advanceTimersByTimeAsync(60000));
+    expect(queries.map((query) => query.mock.calls.length)).toEqual(counts);
+    expect(usageApiMock.syncSessionUsage).not.toHaveBeenCalled();
+    client.clear();
   });
 
   it("renders metrics, trend, and every tab with real children", async () => {

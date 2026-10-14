@@ -2344,7 +2344,7 @@
       "justNow": "Session logs · synced just now",
       "minutesAgo": "Session logs · synced {{count}} min ago",
       "off": "Session logs · auto scan off",
-      "tipAuto": "Session logs are scanned every 60 seconds",
+      "tipAuto": "Session logs are scanned every 60 seconds in the background and at the auto-refresh interval while the usage page is visible",
       "tipOff": "Session logs are scanned only when you sync manually"
     },
     "refreshMenu": {
@@ -2440,7 +2440,7 @@
       "scanHelpTitle": "What are session logs?",
       "scanHelp": "The conversation records each app writes on this computer. CC Switch reads usage from them, so you get data even without routing.",
       "coverage": "Covers 7 apps: {{apps}}",
-      "cadenceOn": "Scans once at startup, then every 60 seconds",
+      "cadenceOn": "Scans at startup and every 60 seconds in the background; also syncs at the auto-refresh interval while the usage page is visible",
       "cadenceOff": "Auto scan is off; logs are scanned only when you click Sync Now",
       "unsupported": "Hermes and OpenClaw don't support usage stats yet",
       "loggingHelpTitle": "What does recording request usage do?",
