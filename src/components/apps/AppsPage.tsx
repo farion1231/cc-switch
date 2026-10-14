@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -89,6 +89,10 @@ const ROWS: Row[] = [
   ),
 ];
 
+// 表头和应用行共用列宽；操作列按当前可见按钮的最大宽度收缩。
+const APP_ROW_GRID =
+  "grid grid-cols-[minmax(0,1fr)_168px_var(--apps-actions-width,0px)_56px] items-center gap-x-4";
+
 function formatCheckedAt(timestamp: number, locale: string): string {
   const date = new Date(timestamp);
   const now = new Date();
@@ -109,6 +113,29 @@ export function AppsPage() {
   const { t, i18n } = useTranslation();
   const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    const actions = Array.from(
+      table.querySelectorAll<HTMLElement>("[data-tool-actions]"),
+    );
+    const updateActionWidth = () => {
+      const width = Math.max(
+        0,
+        ...actions.map((action) => action.getBoundingClientRect().width),
+      );
+      table.style.setProperty("--apps-actions-width", `${width}px`);
+    };
+    updateActionWidth();
+    // 按钮增减、文案或字体变化时同步整列，避免各行自行收缩后版本列错位。
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateActionWidth);
+    actions.forEach((action) => observer.observe(action));
+    return () => observer.disconnect();
+  }, []);
+
   const [showCommands, setShowCommands] = useState(false);
   const [showUninstallCommands, setShowUninstallCommands] = useState(false);
   const [pendingUninstall, setPendingUninstall] = useState<ToolName | null>(
@@ -266,14 +293,17 @@ export function AppsPage() {
         id="main-content"
         className="min-h-0 flex-1 overflow-y-auto scroll-stable"
       >
-        <div className="px-6 pb-10 pt-4">
-          <div className="flex h-8 items-center px-4 text-caption font-medium text-fg-2">
-            <span className="flex-1">{t("appsPage.columnApp")}</span>
-            <span className="w-[168px] text-end">
-              {t("appsPage.columnVersion")}
-            </span>
-            <span className="w-[200px]" />
-            <span className="flex w-[56px] items-center justify-end gap-0.5">
+        <div ref={tableRef} className="px-6 pb-10 pt-4">
+          <div
+            className={cn(
+              APP_ROW_GRID,
+              "mx-px h-8 px-4 text-caption font-medium text-fg-2",
+            )}
+          >
+            <span>{t("appsPage.columnApp")}</span>
+            <span className="text-end">{t("appsPage.columnVersion")}</span>
+            <span />
+            <span className="flex items-center justify-end gap-0.5">
               {t("appsPage.columnVisible")}
               <HelpTip title={t("appsPage.columnVisible")} align="end">
                 {t("appsPage.visibleHelp")}
@@ -414,23 +444,28 @@ function AppRow({
 }) {
   return (
     <div data-tool-row className="px-4 py-3">
-      <div className="flex items-center gap-4">
-        <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
-            {name}
-          </div>
-          {meta && (
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
-              {meta}
+      <div className={cn(APP_ROW_GRID, "min-h-10")}>
+        <div className="flex min-w-0 items-center gap-4">
+          <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
+              {name}
             </div>
-          )}
+            {meta && (
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
+                {meta}
+              </div>
+            )}
+          </div>
         </div>
-        <div className="w-[168px] shrink-0 text-end">{version}</div>
-        <div className="flex w-[200px] shrink-0 flex-wrap justify-end gap-2">
+        <div className="text-end">{version}</div>
+        <div
+          data-tool-actions
+          className="flex w-max items-center justify-self-end gap-2 [&>button]:shrink-0"
+        >
           {action}
         </div>
-        <div className="flex w-[56px] shrink-0 justify-end">{visibility}</div>
+        <div className="flex justify-end">{visibility}</div>
       </div>
       {footer && <div className="ms-9 mt-2">{footer}</div>}
     </div>
@@ -549,6 +584,7 @@ function ToolRow({
     </Button>
   ) : null;
 
+  const installHint = t(`appsPage.installHint.${tool}`, { defaultValue: "" });
   const meta = defaultInstall ? (
     <>
       <span className="min-w-0 truncate font-mono" title={defaultInstall.path}>
@@ -584,7 +620,9 @@ function ToolRow({
         })}
       </a>
     ) : (
-      <span>{t(`appsPage.installHint.${tool}`, { defaultValue: "" })}</span>
+      <span className="truncate" title={installHint}>
+        {installHint}
+      </span>
     )
   ) : null;
 
