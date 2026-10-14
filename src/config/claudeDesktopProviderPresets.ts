@@ -1658,6 +1658,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "Ollama Cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    category: "cloud_provider",
+    // 云端 Anthropic 兼容层（docs.ollama.com/api/anthropic-compatibility，
+    // 2026-10-14 核对）只认 Bearer，路由按 ANTHROPIC_AUTH_TOKEN 发 Bearer；
+    // 三个模型窗口均为 1M（https://ollama.com/api/show）
+    baseUrl: "https://ollama.com",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes("glm-5.3", "kimi-k3", "glm-5.3-flash", true),
+    endpointCandidates: ["https://ollama.com"],
+    icon: "ollama",
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

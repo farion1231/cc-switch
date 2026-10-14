@@ -1876,6 +1876,32 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "Ollama Cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    // 官方 Claude Code 直连文档（docs.ollama.com/integrations/claude-code，
+    // 2026-10-14 核对）：base 为 https://ollama.com、Key 填 AUTH_TOKEN、
+    // ANTHROPIC_API_KEY 置空。云端只认 Authorization: Bearer，不认单独的
+    // x-api-key（docs.ollama.com/api/anthropic-compatibility），默认的
+    // AUTH_TOKEN 正好是 Bearer。兼容层不支持 cache_control 与 count_tokens。
+    // 模型 ID 调 API 时不带 :cloud 后缀（docs.ollama.com/cloud）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://ollama.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "glm-5.3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3",
+      },
+    },
+    category: "cloud_provider",
+    // api.ollama.com / www.ollama.com 都 301/308 跳回 ollama.com，不另列候选
+    endpointCandidates: ["https://ollama.com"],
+    icon: "ollama",
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {

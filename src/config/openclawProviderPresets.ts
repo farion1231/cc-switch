@@ -4556,6 +4556,91 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Ollama Cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    // 云端 OpenAI 兼容 base 为 https://ollama.com/v1（docs.ollama.com/api/
+    // openai-compatibility，2026-10-14 核对）。cost 取 https://ollama.com/pricing
+    // 同日标准时段价（非 off-peak 半价）；maxTokens 平台未公布，取 models.dev
+    // 的 ollama-cloud 条目，DeepSeek 两款按官方 384K
+    settingsConfig: {
+      baseUrl: "https://ollama.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "glm-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+        },
+        {
+          id: "glm-5.3-flash",
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+        },
+        {
+          id: "kimi-k3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+        },
+        {
+          id: "deepseek-v4-pro:0813",
+          name: "DeepSeek V4 Pro",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 1.32, output: 3.96, cacheRead: 0.044, cacheWrite: 0 },
+        },
+        {
+          id: "deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+        },
+        {
+          id: "minimax-m3",
+          name: "MiniMax M3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 512000,
+          maxTokens: 131072,
+          cost: { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "ollama",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ollama-cloud/glm-5.3" },
+      modelCatalog: {
+        "ollama-cloud/glm-5.3": { alias: "GLM-5.3" },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

@@ -2424,6 +2424,46 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Ollama Cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    settingsConfig: {
+      // Hermes 自带内置 provider ollama-cloud（读 OLLAMA_API_KEY），用下划线
+      // 名避免与之同名，确保走这里的 custom_providers 与 api_key
+      name: "ollama_cloud",
+      // 云端 OpenAI 兼容 base（docs.ollama.com/api/openai-compatibility，
+      // 2026-10-14 核对）；窗口取 https://ollama.com/api/show
+      base_url: "https://ollama.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "glm-5.3", name: "GLM-5.3", context_length: 1048576 },
+        {
+          id: "glm-5.3-flash",
+          name: "GLM-5.3-Flash",
+          context_length: 1048576,
+        },
+        { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+        {
+          id: "deepseek-v4-pro:0813",
+          name: "DeepSeek V4 Pro",
+          context_length: 1048576,
+        },
+        {
+          id: "deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          context_length: 1048576,
+        },
+        { id: "minimax-m3", name: "MiniMax M3", context_length: 512000 },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "ollama",
+    suggestedDefaults: {
+      model: { default: "glm-5.3", provider: "ollama_cloud" },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

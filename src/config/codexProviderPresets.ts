@@ -3416,6 +3416,70 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
+    name: "Ollama Cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    auth: generateThirdPartyAuth(""),
+    // 官方 OpenAI 兼容文档（docs.ollama.com/api/openai-compatibility，
+    // 2026-10-14 核对）：云端 base 为 https://ollama.com/v1，/v1/responses
+    // 只支持无状态（不认 previous_response_id，disable_response_storage 下
+    // Codex 每轮发完整 input，不受影响）
+    config: generateThirdPartyConfig(
+      "ollama_cloud",
+      "https://ollama.com/v1",
+      "glm-5.3",
+    ),
+    endpointCandidates: ["https://ollama.com/v1"],
+    // 云端不支持 custom/freeform 工具回放与内置 web search：NativeResponses
+    // 档案不发 freeform apply_patch，改用 shell_command 改文件
+    apiFormat: "openai_responses",
+    // 档位取平台自己声明的 https://ollama.com/api/show thinking.values
+    //（2026-10-14）；平台声明的关闭值是 false 而非 none，Codex 的 none 能否
+    // 映射过去未证实，故不列 none。每档都含 high，后端保留模板默认 high，与
+    // config 的 model_reasoning_effort = "high" 一致，无需 defaultReasoningLevel。
+    // minimax-m3 平台未声明档位，不收。首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "glm-5.3-flash",
+        displayName: "GLM-5.3-Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        // 不带日期的 deepseek-v4-pro 是会漂移的别名，不在 /v1/models 列表里
+        model: "deepseek-v4-pro:0813",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "deepseek-v4.1-flash",
+        displayName: "DeepSeek V4.1 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+    ]),
+    category: "cloud_provider",
+    icon: "ollama",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

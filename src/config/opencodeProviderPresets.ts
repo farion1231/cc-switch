@@ -3357,6 +3357,72 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Ollama Cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    // 云端 OpenAI 兼容 base 为 https://ollama.com/v1（docs.ollama.com/api/
+    // openai-compatibility，2026-10-14 核对）；Chat 只缺 tool_choice，选它而非
+    // 仅无状态的 Responses。窗口与输入模态取 https://ollama.com/api/show 与
+    // 模型 tag 页；最大输出平台未公布，取 models.dev 的 ollama-cloud 条目，
+    // DeepSeek 两款按官方 384K
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Ollama Cloud",
+      options: {
+        baseURL: "https://ollama.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "kimi-k3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "deepseek-v4-pro:0813": {
+          name: "DeepSeek V4 Pro",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "minimax-m3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 512000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "cloud_provider",
+    icon: "ollama",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

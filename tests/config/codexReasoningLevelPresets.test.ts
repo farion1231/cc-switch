@@ -176,6 +176,14 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["千问AI平台", "qwen3.8-27b", ["low", "medium", "xhigh"], "xhigh"],
     ["QwenCloud", "qwen3.8-2.4t-a95b", ["low", "medium", "xhigh"], "xhigh"],
     ["QwenCloud", "qwen3.8-27b", ["low", "medium", "xhigh"], "xhigh"],
+    // Ollama Cloud（原生 Responses 直连）：平台 /api/show 的 thinking.values
+    //（2026-10-14）。关闭值是 false 而非 none，映射未证实故不列 none；每档
+    // 都含 high，沿用模板默认 high，不声明 default
+    ["Ollama Cloud", "glm-5.3", ["low", "high", "max"]],
+    ["Ollama Cloud", "glm-5.3-flash", ["low", "high", "max"]],
+    ["Ollama Cloud", "kimi-k3", ["low", "high", "max"]],
+    ["Ollama Cloud", "deepseek-v4-pro:0813", ["low", "high", "max"]],
+    ["Ollama Cloud", "deepseek-v4.1-flash", ["low", "high", "max"]],
   ];
 
   it.each(EXPECTED)(

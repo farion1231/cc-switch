@@ -1933,6 +1933,38 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    // Pi 运行时没有内置 Ollama provider（pi-mono models.generated.ts 搜不到），
+    // 不违反「勿写内置节点」契约
+    name: "Ollama Cloud",
+    providerKey: "cc-switch-ollama-cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    settingsConfig: {
+      name: "Ollama Cloud",
+      // 云端 OpenAI 兼容 base（docs.ollama.com/api/openai-compatibility，
+      // 2026-10-14 核对）；窗口取 https://ollama.com/api/show
+      baseUrl: "https://ollama.com/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", { id: "glm-5.3" }),
+        piModel("zai/glm-5.3-flash", { id: "glm-5.3-flash" }),
+        piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+        piModel("deepseek/deepseek-v4-pro", {
+          id: "deepseek-v4-pro:0813",
+          contextWindow: 1_048_576,
+        }),
+        // 目录默认 1M，Ollama 云端只开 512K，必须覆盖
+        piModel("minimax/minimax-m3", {
+          id: "minimax-m3",
+          contextWindow: 512_000,
+        }),
+      ],
+    },
+    category: "cloud_provider",
+    icon: "ollama",
+  },
+  {
     name: "PIPELLM",
     providerKey: "cc-switch-pipellm",
     websiteUrl: "https://code.pipellm.ai",
