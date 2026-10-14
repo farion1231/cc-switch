@@ -390,15 +390,9 @@ export function SettingsPage({
             onBrowseDirectory={browseDirectory}
             onResetDirectory={resetDirectory}
             onSaveDirectories={handleSave}
-            onDeepseekHarnessSessionDirChange={
-              updateDeepseekHarnessSessionDir
-            }
-            onBrowseDeepseekHarnessSessionDir={
-              browseDeepseekHarnessSessionDir
-            }
-            onResetDeepseekHarnessSessionDir={
-              resetDeepseekHarnessSessionDir
-            }
+            onDeepseekHarnessSessionDirChange={updateDeepseekHarnessSessionDir}
+            onBrowseDeepseekHarnessSessionDir={browseDeepseekHarnessSessionDir}
+            onResetDeepseekHarnessSessionDir={resetDeepseekHarnessSessionDir}
           />
         );
       case "routing":
