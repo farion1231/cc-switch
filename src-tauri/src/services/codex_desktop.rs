@@ -8,17 +8,24 @@ pub struct DesktopRestartOutcome {
 
 #[cfg(target_os = "windows")]
 pub fn restart() -> Result<DesktopRestartOutcome, String> {
+    // Serialize requests so two button clicks cannot close the newly opened app.
+    static RESTART_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = RESTART_LOCK
+        .try_lock()
+        .map_err(|_| "Codex desktop is already restarting".to_string())?;
+    let output = run_powershell_script(include_bytes!("codex_desktop_windows.ps1"), "Restart")?;
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Invalid Codex desktop restart receipt: {e}"))
+}
+
+#[cfg(target_os = "windows")]
+fn run_powershell_script(source: &[u8], mode: &str) -> Result<std::process::Output, String> {
     use std::{
         io::Write,
         os::windows::process::CommandExt,
         process::{Command, Stdio},
         time::{Duration, Instant},
     };
-    // Serialize requests so two button clicks cannot close the newly opened app.
-    static RESTART_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = RESTART_LOCK
-        .try_lock()
-        .map_err(|_| "Codex desktop is already restarting".to_string())?;
     let mut script = tempfile::Builder::new()
         .suffix(".ps1")
         .tempfile()
@@ -27,10 +34,11 @@ pub fn restart() -> Result<DesktopRestartOutcome, String> {
     script
         .write_all(b"\xef\xbb\xbf")
         .map_err(|e| e.to_string())?;
-    script
-        .write_all(include_bytes!("codex_desktop_windows.ps1"))
-        .map_err(|e| e.to_string())?;
+    script.write_all(source).map_err(|e| e.to_string())?;
     script.flush().map_err(|e| e.to_string())?;
+    // PowerShell cannot read a Windows delete-on-close file while its handle is
+    // open. Keep the path's cleanup guard, but release the handle before launch.
+    let script = script.into_temp_path();
     let mut child = Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -39,8 +47,8 @@ pub fn restart() -> Result<DesktopRestartOutcome, String> {
             "Bypass",
             "-File",
         ])
-        .arg(script.path())
-        .args(["-Mode", "Restart"])
+        .arg(&script)
+        .args(["-Mode", mode])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -63,8 +71,7 @@ pub fn restart() -> Result<DesktopRestartOutcome, String> {
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("Invalid Codex desktop restart receipt: {e}"))
+    Ok(output)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -84,6 +91,26 @@ mod tests {
         assert!(
             serde_json::from_str::<DesktopRestartOutcome>(r#"{"action":"restarted"}"#).is_err()
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn materialized_script_runs_in_powershell_and_cleans_up() {
+        // Exercise the same temp-file handoff as production, with no real app
+        // close or activation. Directly running a checked-in script misses the
+        // Windows delete-on-close sharing regression.
+        let source = r#"param([string]$Mode)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+if ($Mode -ne 'Plan') { throw 'Unexpected execution mode' }
+@{ action = 'restarted'; desktop_pid = 42; script_path = $PSCommandPath; label = '桌面' } | ConvertTo-Json -Compress
+"#;
+        let output = run_powershell_script(source.as_bytes(), "Plan").unwrap();
+        let receipt: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(receipt["action"], "restarted");
+        assert_eq!(receipt["desktop_pid"], 42);
+        assert_eq!(receipt["label"], "桌面");
+        let path = receipt["script_path"].as_str().unwrap();
+        assert!(!std::path::Path::new(path).exists());
     }
 
     #[cfg(target_os = "windows")]
