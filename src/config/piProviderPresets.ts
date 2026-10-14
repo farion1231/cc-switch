@@ -2082,6 +2082,40 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
   },
   {
+    name: "Vercel AI Gateway",
+    // vercel-ai-gateway 是 Pi 内置供应商 ID，同名节点会遮蔽内置定义，故加前缀
+    providerKey: "cc-switch-vercel-ai-gateway",
+    websiteUrl: "https://vercel.com/ai-gateway",
+    apiKeyUrl:
+      "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
+    settingsConfig: {
+      name: "Vercel AI Gateway",
+      // 走 /coding-agent/v1 Chat（vercel.com/docs/ai-gateway/coding-agents/pi 与
+      // vercel.com/docs/cli/ai-gateway，2026-10-14 核对）。Gemini 3.8 Flash 按
+      // GET https://ai-gateway.vercel.sh/v1/models 同日元数据覆盖窗口与最大输出；
+      // Haiku 5.5、GPT-6.1 Sol 目录里还没有条目，暂不收
+      baseUrl: "https://ai-gateway.vercel.sh/coding-agent/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", {
+          id: "anthropic/claude-opus-5.5",
+        }),
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic/claude-sonnet-5.5",
+        }),
+        piModel("openai/gpt-6-astra", { id: "openai/gpt-6-astra" }),
+        piModel("google/gemini-3.8-flash", {
+          id: "google/gemini-3.8-flash",
+          contextWindow: 1_000_000,
+          maxTokens: 65_535,
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "vercel",
+  },
+  {
     name: "PIPELLM",
     providerKey: "cc-switch-pipellm",
     websiteUrl: "https://code.pipellm.ai",

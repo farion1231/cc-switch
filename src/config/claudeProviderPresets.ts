@@ -1982,6 +1982,35 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.deepinfra.com/anthropic"],
   },
   {
+    name: "Vercel AI Gateway",
+    websiteUrl: "https://vercel.com/ai-gateway",
+    apiKeyUrl:
+      "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
+    // 官方 Claude Code 接入文档（vercel.com/docs/ai-gateway/coding-agents/
+    // claude-code，2026-10-14 核对）：base 为 /claude-code、不带 /v1（SDK 自拼
+    // /v1/messages，再加即 404），Key 放 AUTH_TOKEN 发 Bearer，并要求把
+    // ANTHROPIC_API_KEY 置空。模型 ID 带 anthropic/ 前缀，档位取平台目录同日
+    // 最新的 Sonnet / Opus / Haiku 5.5（均 1M）。官方 CLI 另写的
+    // CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY 照仓库惯例不加。
+    // /claude-code/v1/models 返回带 claude-code/…[1m] 显示前后缀的 ID，改用
+    // /coding-agent/v1/models（公开可读、ID 干净、只含语言模型）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh/claude-code",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "anthropic/claude-sonnet-5.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-5.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-5.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-5.5",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://ai-gateway.vercel.sh/claude-code"],
+    modelsUrl: "https://ai-gateway.vercel.sh/coding-agent/v1/models",
+    icon: "vercel",
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {

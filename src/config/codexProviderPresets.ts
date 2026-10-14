@@ -3652,6 +3652,77 @@ requires_openai_auth = true`,
     category: "aggregator",
   },
   {
+    name: "Vercel AI Gateway",
+    websiteUrl: "https://vercel.com/ai-gateway",
+    apiKeyUrl:
+      "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Codex 接入文档（vercel.com/docs/ai-gateway/coding-agents/openai-codex，
+    // 2026-10-14 核对）：base 为 /codex/v1、wire_api 只能是 responses，默认模型
+    // openai/gpt-6-astra。/codex/v1/models 按 Codex ModelsResponse 返回，其余
+    // 路径落回标准 /v1
+    config: generateThirdPartyConfig(
+      "vercel",
+      "https://ai-gateway.vercel.sh/codex/v1",
+      "openai/gpt-6-astra",
+    ),
+    endpointCandidates: ["https://ai-gateway.vercel.sh/codex/v1"],
+    // 平台目录对全部模型声明 apply_patch_tool_type = freeform（含 Claude），
+    // 但未经真 Key 实测非 OpenAI 模型经 Responses 收 custom 工具
+    apiFormat: "openai_responses",
+    // 窗口、模态、并行工具与档位取 GET https://ai-gateway.vercel.sh/codex/v1/models
+    // 同日公开快照：GPT-6 系 272000（/v1/models 写 1050000，但 Codex 面给
+    // 272000，且 272K 以上计费翻倍），Claude 5.5 系 1000000。档位按 Codex 面的
+    // supported_reasoning_levels，GPT-6 Astra / 6.1 Sol 另声明的 ultra（自动
+    // 分派任务）不放。每档都含 high，与 config 的 model_reasoning_effort =
+    // "high" 一致，无需 defaultReasoningLevel。首行 = 默认模型，须与 config 的
+    // model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "openai/gpt-6-astra",
+        displayName: "GPT-6 Astra",
+        contextWindow: 272000,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+      },
+      {
+        model: "openai/gpt-6.1-sol",
+        displayName: "GPT-6.1 Sol",
+        contextWindow: 272000,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+      },
+      {
+        model: "openai/gpt-6-luna",
+        displayName: "GPT-6 Luna",
+        contextWindow: 272000,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+      },
+      {
+        model: "anthropic/claude-sonnet-5.5",
+        displayName: "Claude Sonnet 5.5",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+      },
+      {
+        model: "anthropic/claude-opus-5.5",
+        displayName: "Claude Opus 5.5",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+      },
+    ]),
+    category: "aggregator",
+    icon: "vercel",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

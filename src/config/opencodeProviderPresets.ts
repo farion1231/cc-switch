@@ -3591,6 +3591,74 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Vercel AI Gateway",
+    websiteUrl: "https://vercel.com/ai-gateway",
+    apiKeyUrl:
+      "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
+    // 走 /coding-agent/v1：原样透传到 /v1，只把流量标为编程工具，Vercel 建议
+    // 没有专属端点的工具都用它（vercel.com/docs/cli/ai-gateway，2026-10-14
+    // 核对）；Chat 面支持 reasoning_effort（openai-chat-completions/reasoning）。
+    // OpenCode 自带 vercel 供应商，这里是显式的自定义节点，照 OpenRouter 先例。
+    // 窗口、最大输出与模态取 GET https://ai-gateway.vercel.sh/v1/models 同日
+    // 公开元数据
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Vercel AI Gateway",
+      options: {
+        baseURL: "https://ai-gateway.vercel.sh/coding-agent/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-opus-5.5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-sonnet-5.5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-haiku-5.5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "openai/gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "openai/gpt-6.1-sol": {
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "google/gemini-3.8-flash": {
+          name: "Gemini 3.8 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 65535 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "vercel",
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

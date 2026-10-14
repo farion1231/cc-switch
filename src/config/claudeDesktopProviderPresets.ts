@@ -1749,6 +1749,28 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://api.deepinfra.com/anthropic"],
   },
   {
+    name: "Vercel AI Gateway",
+    websiteUrl: "https://vercel.com/ai-gateway",
+    apiKeyUrl:
+      "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
+    category: "aggregator",
+    // 同 Claude Code 预设：/claude-code 兼容面（vercel.com/docs/ai-gateway/
+    // coding-agents/claude-code，2026-10-14 核对）。上游 ID 带 anthropic/ 前缀，
+    // 网关是否接受 Desktop 发的无前缀 claude-sonnet-5 未证实，照 OpenRouter /
+    // TheRouter 走路由映射；三个模型平台目录窗口均为 1M
+    baseUrl: "https://ai-gateway.vercel.sh/claude-code",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "anthropic/claude-sonnet-5.5",
+      "anthropic/claude-opus-5.5",
+      "anthropic/claude-haiku-5.5",
+      true,
+    ),
+    endpointCandidates: ["https://ai-gateway.vercel.sh/claude-code"],
+    icon: "vercel",
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

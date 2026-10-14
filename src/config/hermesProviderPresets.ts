@@ -2562,6 +2562,62 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Vercel AI Gateway",
+    websiteUrl: "https://vercel.com/ai-gateway",
+    apiKeyUrl:
+      "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
+    settingsConfig: {
+      // 与 Vercel CLI 写的自定义供应商同名（vercel.com/docs/ai-gateway/
+      // coding-agents/hermes，2026-10-14 核对）；Hermes 内置的 ai-gateway 默认
+      // 走裸 /v1，文档推荐改成 /coding-agent/v1。窗口取 GET
+      // https://ai-gateway.vercel.sh/v1/models 同日公开元数据
+      name: "vercel-ai-gateway",
+      base_url: "https://ai-gateway.vercel.sh/coding-agent/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "anthropic/claude-opus-5.5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "anthropic/claude-sonnet-5.5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "anthropic/claude-haiku-5.5",
+          name: "Claude Haiku 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "openai/gpt-6-astra",
+          name: "GPT-6 Astra",
+          context_length: 1050000,
+        },
+        {
+          id: "openai/gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          context_length: 1050000,
+        },
+        {
+          id: "google/gemini-3.8-flash",
+          name: "Gemini 3.8 Flash",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "vercel",
+    suggestedDefaults: {
+      model: {
+        default: "anthropic/claude-sonnet-5.5",
+        provider: "vercel-ai-gateway",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

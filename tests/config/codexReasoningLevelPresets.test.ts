@@ -221,6 +221,34 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["DeepInfra", "deepseek-ai/DeepSeek-V4-Pro-0813", ["low", "high", "max"]],
     ["DeepInfra", "moonshotai/Kimi-K3", ["low", "high", "max"]],
     ["DeepInfra", "zai-org/GLM-5.3", ["low", "high", "max"]],
+    // Vercel AI Gateway（原生 Responses 直连）：GET ai-gateway.vercel.sh/codex/
+    // v1/models 的 supported_reasoning_levels（2026-10-14）；GPT-6 Astra /
+    // 6.1 Sol 另声明的 ultra 不放
+    [
+      "Vercel AI Gateway",
+      "openai/gpt-6-astra",
+      ["low", "medium", "high", "xhigh", "max"],
+    ],
+    [
+      "Vercel AI Gateway",
+      "openai/gpt-6.1-sol",
+      ["low", "medium", "high", "xhigh", "max"],
+    ],
+    [
+      "Vercel AI Gateway",
+      "openai/gpt-6-luna",
+      ["low", "medium", "high", "xhigh", "max"],
+    ],
+    [
+      "Vercel AI Gateway",
+      "anthropic/claude-sonnet-5.5",
+      ["low", "medium", "high", "xhigh"],
+    ],
+    [
+      "Vercel AI Gateway",
+      "anthropic/claude-opus-5.5",
+      ["low", "medium", "high", "xhigh"],
+    ],
   ];
 
   it.each(EXPECTED)(
