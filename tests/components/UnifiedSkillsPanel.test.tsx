@@ -1056,6 +1056,39 @@ describe("UnifiedSkillsPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("scans only the workspace explicitly picked by the user", async () => {
+    const pickDirectory = vi
+      .spyOn(settingsApi, "pickDirectory")
+      .mockResolvedValue("/tmp/local-projects");
+    const scanLocalSources = vi.spyOn(skillsApi, "scanLocalSources").mockResolvedValue({
+      updated: 2,
+      ambiguous: 1,
+      scannedRepositories: 3,
+      scannedSkills: 8,
+    });
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "skillsPage.moreMenu.scanLocalSources",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(scanLocalSources).toHaveBeenCalledWith("/tmp/local-projects"),
+    );
+    expect(pickDirectory).toHaveBeenCalledOnce();
+    expect(m.toastSuccess).toHaveBeenCalledWith(
+      "skillsPage.localSourceScan.completed",
+      expect.objectContaining({ description: "skillsPage.localSourceScan.ambiguous" }),
+    );
+    pickDirectory.mockRestore();
+    scanLocalSources.mockRestore();
+  });
+
   it("says which ZIP Skills were skipped because the folder name is taken", async () => {
     m.installed = [makeSkill()];
     const dialog = vi

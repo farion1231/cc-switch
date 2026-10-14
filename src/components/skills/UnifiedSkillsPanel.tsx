@@ -780,6 +780,35 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
   };
 
+  const handleScanLocalSources = async () => {
+    if (!beginWrite()) return;
+    try {
+      const root = await settingsApi.pickDirectory();
+      if (!root) return;
+      const result = await skillsApi.scanLocalSources(root);
+      await refetch();
+      toast.success(
+        result.updated > 0
+          ? t("skillsPage.localSourceScan.completed", {
+              count: result.updated,
+            })
+          : t("skillsPage.localSourceScan.none"),
+        result.ambiguous > 0
+          ? {
+              description: t("skillsPage.localSourceScan.ambiguous", {
+                count: result.ambiguous,
+              }),
+              closeButton: true,
+            }
+          : { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      endWrite();
+    }
+  };
+
   const reportEnableFailures = (
     failures: Array<{ id: string; app: AppId; error: unknown }>,
   ) => {
@@ -1096,6 +1125,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                 onSelect={() => void handleOpenRestoreFromBackup()}
               >
                 {t("skillsPage.moreMenu.restore")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={controlsDisabled}
+                onSelect={() => void handleScanLocalSources()}
+              >
+                {t("skillsPage.moreMenu.scanLocalSources")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={controlsDisabled}

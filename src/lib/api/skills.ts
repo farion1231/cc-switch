@@ -20,6 +20,13 @@ export interface SkillProjectGroup {
   skillIds: string[];
 }
 
+export interface LocalSkillSourceScanResult {
+  updated: number;
+  ambiguous: number;
+  scannedRepositories: number;
+  scannedSkills: number;
+}
+
 /** Skill 应用启用状态 */
 export interface SkillApps {
   claude: boolean;
@@ -257,6 +264,11 @@ export const skillsApi = {
   /** 扫描未管理的 Skills */
   async scanUnmanaged(): Promise<UnmanagedSkill[]> {
     return await invoke("scan_unmanaged_skills");
+  },
+
+  /** 扫描用户选择的本地 Git 工作区，补全可唯一确认的 Skill 来源。 */
+  async scanLocalSources(root: string): Promise<LocalSkillSourceScanResult> {
+    return await invoke("scan_local_skill_sources", { root });
   },
 
   /** 从应用目录导入 Skills */
