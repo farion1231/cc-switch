@@ -209,6 +209,10 @@ mod tests {
     #[test]
     fn agy_binary_only_sessions_keep_index_metadata_without_fabricated_transcripts() {
         let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project space");
+        let workspace_uris =
+            serde_json::to_string(&[url::Url::from_file_path(&project).unwrap().to_string()])
+                .unwrap();
         let db = rusqlite::Connection::open(dir.path().join("conversation_summaries.db")).unwrap();
         db.execute_batch("CREATE TABLE conversation_summaries(conversation_id TEXT,title TEXT,workspace_uris TEXT,preview TEXT,last_modified_time TEXT);").unwrap();
         db.execute(
@@ -216,7 +220,7 @@ mod tests {
             rusqlite::params![
                 "abc-123",
                 "Test title",
-                r#"["file:///tmp/project%20space"]"#,
+                workspace_uris,
                 "Preview",
                 "2026-10-13T17:26:12Z"
             ],
@@ -227,7 +231,7 @@ mod tests {
         assert_eq!(sessions[0].title.as_deref(), Some("Test title"));
         assert_eq!(
             sessions[0].project_dir.as_deref(),
-            Some("/tmp/project space")
+            Some(project.to_string_lossy().as_ref())
         );
         assert!(sessions[0].source_path.is_none());
         assert!(sessions[0].last_active_at.is_some());

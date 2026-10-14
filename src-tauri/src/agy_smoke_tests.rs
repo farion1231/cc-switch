@@ -47,7 +47,13 @@ async fn agy_live_provider_skill_session_and_tokens() {
     db.save_provider("agy", &row).unwrap();
     crate::services::provider::agy_direct::switch_to(&db, &row).unwrap();
     assert_eq!(
-        db.get_current_provider("agy").unwrap().as_deref(),
+        crate::mode::current::provider_for(
+            &db,
+            &AppType::Agy,
+            crate::mode::current::Purpose::Direct
+        )
+        .unwrap()
+        .as_deref(),
         Some("smoke")
     );
     let bin = agy_config::agy_dir().join("bin/agy");
