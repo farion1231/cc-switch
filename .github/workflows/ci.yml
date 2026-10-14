@@ -178,6 +178,9 @@ jobs:
       - name: Run tests
         run: cargo nextest run --manifest-path src-tauri/Cargo.toml --profile ci
 
+      - name: Run test-hooks integration tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features test-hooks loopback_upstream -- --test-threads=1
+
   backend-windows-wsl2:
     name: Backend Checks (Windows + WSL2 home)
     runs-on: windows-2025
