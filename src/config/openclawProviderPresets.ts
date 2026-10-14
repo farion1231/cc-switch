@@ -668,6 +668,54 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "GrooRoute Pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    settingsConfig: {
+      baseUrl: "https://grooroute.pro",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "grooroute/claude-opus-5-5",
+        fallbacks: ["grooroute/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "grooroute/claude-opus-5-5": { alias: "Opus" },
+        "grooroute/claude-sonnet-5-5": { alias: "Sonnet" },
+      },
+    },
+    isPartner: true,
+    icon: "grooroute",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -733,10 +781,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
-      baseUrl: "https://api.aigocode.app",
+      baseUrl: "https://api.aigocode.dev",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -3839,17 +3887,46 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "KAT-Coder",
-    websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
     settingsConfig: {
-      baseUrl:
-        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
+      baseUrl: "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
       apiKey: "",
       api: "openai-completions",
       models: [
         {
-          id: "KAT-Coder-Pro",
+          id: "ep-xxx-xxx",
+          name: "KAT-Coder Pro V2.5",
+          contextWindow: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "catcoder",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
+    websiteUrl: "https://console.streamlake.ai",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    settingsConfig: {
+      baseUrl: "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ep-xxx-xxx",
           name: "KAT-Coder Pro",
           contextWindow: 128000,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06 },
@@ -3859,28 +3936,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     category: "cn_official",
     icon: "catcoder",
     templateValues: {
-      baseUrl: {
-        label: "Base URL",
-        placeholder:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
-        defaultValue:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
-        editorValue: "",
-      },
-      ENDPOINT_ID: {
-        label: "Endpoint ID",
-        placeholder: "",
-        editorValue: "",
-      },
       apiKey: {
         label: "API Key",
         placeholder: "",
         editorValue: "",
       },
-    },
-    suggestedDefaults: {
-      model: { primary: "katcoder/KAT-Coder-Pro" },
-      modelCatalog: { "katcoder/KAT-Coder-Pro": { alias: "KAT-Coder" } },
     },
   },
   {
@@ -5201,5 +5261,58 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     icon: "nekocode",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      baseUrl: "https://api.aicoming.top",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "aicoming/claude-opus-5-5",
+        fallbacks: ["aicoming/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "aicoming/claude-opus-5-5": { alias: "Opus" },
+        "aicoming/claude-sonnet-5-5": { alias: "Sonnet" },
+        "aicoming/claude-haiku-4-5-20251001": { alias: "Haiku" },
+      },
+    },
+    icon: "aicoming",
   },
 ];
