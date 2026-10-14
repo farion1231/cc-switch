@@ -56,6 +56,13 @@ fn apply_in(root: &Path, settings: &Value, install_shell: bool) -> Result<(), Ap
 /// 从 live 读回编辑器用的 `{ env, config }`。
 pub fn read_live_settings() -> Result<Value, AppError> {
     let settings_file = settings_path();
+    if !settings_file.exists() && !env_path().exists() {
+        return Err(AppError::localized(
+            "agy.config.missing",
+            "Antigravity 配置文件不存在",
+            "Antigravity configuration files are missing",
+        ));
+    }
     let settings: Value = if settings_file.exists() {
         let raw = fs::read(&settings_file).map_err(|e| AppError::io(&settings_file, e))?;
         serde_json::from_slice(&raw)

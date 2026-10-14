@@ -16,6 +16,47 @@ use support::{
 };
 
 #[test]
+fn deleting_other_app_mcp_preserves_matching_unmanaged_disabled_agy_entry() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".gemini/config/mcp_config.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let original = r#"{"mcpServers":{"shared":{"command":"echo","args":["fixture"],"disabled":true,"timeout":12345,"description":"user-owned"}}}"#;
+    fs::write(&path, original).unwrap();
+    let server: McpServer = serde_json::from_value(json!({
+        "id":"shared", "name":"Shared", "server":{"command":"echo","args":["fixture"]},
+        "apps":{"claude":true}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&server).unwrap();
+    assert!(McpService::delete_server(&state, "shared").unwrap());
+    assert!(!state
+        .db
+        .get_all_mcp_servers()
+        .unwrap()
+        .contains_key("shared"));
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+}
+
+#[test]
+fn deleting_enabled_agy_mcp_removes_its_native_entry() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let server: McpServer = serde_json::from_value(json!({
+        "id":"managed", "name":"Managed", "server":{"command":"echo"}, "apps":{"agy":true}
+    }))
+    .unwrap();
+    McpService::upsert_server(&state, server).unwrap();
+    assert!(McpService::delete_server(&state, "managed").unwrap());
+    let path = ensure_test_home().join(".gemini/config/mcp_config.json");
+    let native: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert!(native["mcpServers"].get("managed").is_none());
+}
+
+#[test]
 fn mcode_import_ignores_native_metadata_and_continues_after_conflicts() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();

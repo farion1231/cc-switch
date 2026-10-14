@@ -120,11 +120,8 @@ impl McpService {
             } else {
                 delete_with_pi()?;
             }
-            if !server.apps.agy {
-                if let Err(err) = mcp::agy::remove_disabled_if_managed(id, &server.server) {
-                    log::warn!("Cleaning disabled Antigravity MCP '{id}' failed: {err}");
-                }
-            }
+            // A false agy flag carries no ownership history. Even an identical disabled
+            // native entry may belong to the user; leave it intact without proof of ownership.
             if !server.apps.pi {
                 // 取消勾选只在 Pi 里禁用、条目还留着：服务器删了就一并清掉（尽力而为）
                 if let Err(err) = mcp::pi::remove_disabled_if_managed(id, &server.server) {

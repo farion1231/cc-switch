@@ -364,7 +364,6 @@
       "confirm": "关闭"
     },
     "usage": {
-      "agyUsageHint": "Antigravity 显示会话日志的原始 Token；缺失的历史模型记为 unknown。日志未提供可靠计费信息，显示的 0 费用不代表免费。",
       "title": "配置用量查询",
       "message": "用量查询需要配置专用的查询脚本或 API 参数，请确保您已从供应商处获取相关信息。\n\n如不确定如何配置，请先查阅供应商文档。",
       "confirm": "我已了解，继续配置"
@@ -2480,7 +2479,8 @@
       "cacheWrite": "缓存写入"
     },
     "prevMonth": "上个月",
-    "nextMonth": "下个月"
+    "nextMonth": "下个月",
+    "agyUsageHint": "Antigravity 显示会话日志的原始 Token；缺失的历史模型记为 unknown。日志未提供可靠计费信息，显示的 0 费用不代表免费。"
   },
   "usageScript": {
     "title": "配置用量查询",

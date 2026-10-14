@@ -104,21 +104,6 @@ fn sync_file(path: &Path, id: &str, change: AgyChange<'_>) -> Result<(), AppErro
     )
 }
 
-/// Disabled entries remain native; only remove a matching managed entry on deletion.
-pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
-    let path = crate::agy_config::customizations_dir().join("mcp_config.json");
-    let document = read(&path)?;
-    if let Some(native) = document["mcpServers"].get(id) {
-        if native["disabled"] == true && transport_spec(native) == transport_spec(spec) {
-            sync_file(&path, id, AgyChange::Remove)?;
-        }
-    }
-    Ok(())
-}
-
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read(&crate::agy_config::customizations_dir().join("mcp_config.json"))?;
     let mut existing = state.db.get_all_mcp_servers()?;

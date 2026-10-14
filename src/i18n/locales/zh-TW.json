@@ -2475,7 +2475,8 @@
       "cacheWrite": "快取寫入"
     },
     "prevMonth": "上個月",
-    "nextMonth": "下個月"
+    "nextMonth": "下個月",
+    "agyUsageHint": "Antigravity 顯示工作階段日誌的原始 Token；缺失的歷史模型記為 unknown。日誌未提供可靠計費資訊，顯示的 0 費用不代表免費。"
   },
   "usageScript": {
     "title": "設定用量查詢",

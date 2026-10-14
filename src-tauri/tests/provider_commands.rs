@@ -19,6 +19,74 @@ fn settings_path(home: &Path) -> PathBuf {
     home.join(".cc-switch").join("settings.json")
 }
 
+#[test]
+fn agy_missing_native_config_is_not_imported_or_created_by_full_sync() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let shell_files = [
+        ".zshenv",
+        ".bashrc",
+        ".bash_profile",
+        ".bash_login",
+        ".profile",
+    ];
+    for name in shell_files {
+        std::fs::write(home.join(name), "# existing user shell configuration\n").unwrap();
+    }
+    let state = create_test_state().unwrap();
+    let error = import_default_config_test_hook(&state, AppType::Agy).unwrap_err();
+    assert!(matches!(
+        error,
+        AppError::Localized {
+            key: "agy.config.missing",
+            ..
+        }
+    ));
+    assert!(state.db.get_all_providers("agy").unwrap().is_empty());
+    assert!(cc_switch_lib::mode::current::provider_for(
+        &state.db,
+        &AppType::Agy,
+        cc_switch_lib::mode::current::Purpose::Direct
+    )
+    .unwrap()
+    .is_none());
+    ProviderService::sync_current_to_live(&state).unwrap();
+    assert!(!home.join(".gemini/antigravity-cli").exists());
+    for name in shell_files {
+        assert_eq!(
+            std::fs::read_to_string(home.join(name)).unwrap(),
+            "# existing user shell configuration\n"
+        );
+    }
+}
+
+#[test]
+fn agy_existing_empty_settings_and_env_only_configs_can_be_imported() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    for (file, content, has_key) in [
+        ("settings.json", "{}", false),
+        ("env", "GEMINI_API_KEY='fixture'\n", true),
+    ] {
+        reset_test_fs();
+        let root = ensure_test_home().join(".gemini/antigravity-cli");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(file), content).unwrap();
+        let state = create_test_state().unwrap();
+        assert!(import_default_config_test_hook(&state, AppType::Agy).unwrap());
+        let provider = state
+            .db
+            .get_provider_by_id("default", "agy")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            provider.settings_config["env"]["GEMINI_API_KEY"].is_string(),
+            has_key
+        );
+        assert!(!root.join("bin").exists());
+    }
+}
+
 fn grokbuild_config(name: &str, endpoint: &str, api_key: &str) -> String {
     format!(
         r#"[models]
