@@ -2708,6 +2708,40 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "DigitalOcean",
+    websiteUrl: "https://www.digitalocean.com/products/ai-platform",
+    apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
+    settingsConfig: {
+      name: "digitalocean",
+      // OpenAI Chat 端点 base 为 /v1（docs.digitalocean.com/products/inference/
+      // how-to/use-with-coding-agents，2026-10-14 核对），Bearer 鉴权；窗口取
+      // 平台模型表（docs.digitalocean.com/products/inference/details/models
+      // 同日）。四款都支持 Chat 与工具调用；Sonnet 5.5 须 Tier 3+ 账号，默认
+      // 用所有等级可用的 GLM-5.3
+      base_url: "https://inference.do-ai.run/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "glm-5.3", name: "GLM-5.3", context_length: 1048576 },
+        { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+        {
+          id: "deepseek-v4-pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          context_length: 1048576,
+        },
+        {
+          id: "anthropic-claude-sonnet-5.5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "cloud_provider",
+    suggestedDefaults: {
+      model: { default: "glm-5.3", provider: "digitalocean" },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

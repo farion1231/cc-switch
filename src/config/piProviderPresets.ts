@@ -2222,6 +2222,32 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "cloud_provider",
   },
   {
+    name: "DigitalOcean",
+    providerKey: "cc-switch-digitalocean",
+    websiteUrl: "https://www.digitalocean.com/products/ai-platform",
+    apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
+    settingsConfig: {
+      name: "DigitalOcean",
+      // OpenAI Chat 端点 base 为 /v1（docs.digitalocean.com/products/inference/
+      // how-to/use-with-coding-agents，2026-10-14 核对），Bearer 鉴权，不加
+      // compat（同 Novita 等聚合平台）。Pi 内置供应商里没有 DigitalOcean。
+      // catalog 没有 V4 Pro 0813，借 V4 Pro 的能力值。Sonnet 5.5 须 Tier 3+
+      // 账号，首行用所有等级可用的 GLM-5.3
+      baseUrl: "https://inference.do-ai.run/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", { id: "glm-5.3" }),
+        piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro-0813" }),
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic-claude-sonnet-5.5",
+        }),
+      ],
+    },
+    category: "cloud_provider",
+  },
+  {
     name: "PIPELLM",
     providerKey: "cc-switch-pipellm",
     websiteUrl: "https://code.pipellm.ai",

@@ -2095,6 +2095,34 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.sambanova.ai"],
   },
   {
+    name: "DigitalOcean",
+    websiteUrl: "https://www.digitalocean.com/products/ai-platform",
+    apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
+    // 原 Gradient，现名 DigitalOcean AI Platform，推理服务文档里叫 Inference。
+    // 官方 Coding Agents 文档（docs.digitalocean.com/products/inference/how-to/
+    // use-with-coding-agents，2026-10-14 核对）：base 为 https://inference.do-ai.run、
+    // 不带 /v1（另一篇 Messages 文档写 .../v1/messages 是完整路径，照填会拼成
+    // /v1/v1/messages，实测 404；/v1/messages 无 Key 401）。API 参考的 Messages
+    // 示例用 Bearer，默认的 AUTH_TOKEN 即可；Key 以 doo-v1- 开头。排障表写明
+    // BETA 标记会导致鉴权失败，须设 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS。
+    // 官方配置只设 base、用 haiku/sonnet/opus/fable 别名，API 参考说 model 可填
+    // claude-opus-4-6 这类 Claude 原生 ID，故不写四档模型变量，按原生 ID 透传，
+    // Claude Code 能照常识别 1M 窗口与思考档位；新原生 ID（如 Sonnet / Haiku
+    // 5.5）能否被映射未经真 Key 实测。Tier 1 / Tier 2 账号用不了任何 Anthropic
+    // 模型（docs.digitalocean.com/products/inference/details/limits）。
+    // /v1/messages/count_tokens 实测 404。/v1/models 存在（无 Key 401），默认
+    // 探测即可，不写 modelsUrl
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://inference.do-ai.run",
+        ANTHROPIC_AUTH_TOKEN: "",
+        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
+      },
+    },
+    category: "cloud_provider",
+    endpointCandidates: ["https://inference.do-ai.run"],
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {

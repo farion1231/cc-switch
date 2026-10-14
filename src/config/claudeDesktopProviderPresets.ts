@@ -1825,6 +1825,41 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://api.sambanova.ai"],
   },
   {
+    name: "DigitalOcean",
+    websiteUrl: "https://www.digitalocean.com/products/ai-platform",
+    apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
+    category: "cloud_provider",
+    // 同 Claude Code 预设：Anthropic 端点 base 不带 /v1，接受 Bearer 与 Claude
+    // 原生模型 ID（docs.digitalocean.com/products/inference/how-to/
+    // use-with-coding-agents 与 reference/api/reference/serverless-inference，
+    // 2026-10-14 核对），直连即可。三个路由在平台上都有对应模型：Sonnet 5 /
+    // Opus 5 为 1M 窗口，Haiku 4.5 为 200K（docs.digitalocean.com/products/
+    // inference/details/models 同日）。官方排障表说 BETA 标记会导致鉴权失败，
+    // Desktop 设不了关 beta 的变量，它自己发的 beta 头是否触发未经真 Key 实测
+    //（同 Soshow）。Tier 1 / Tier 2 账号用不了 Anthropic 模型
+    baseUrl: "https://inference.do-ai.run",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+        upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+        upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
+        upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
+        supports1m: false,
+      },
+    ],
+    endpointCandidates: ["https://inference.do-ai.run"],
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

@@ -3884,6 +3884,61 @@ requires_openai_auth = true`,
     category: "cloud_provider",
   },
   {
+    name: "DigitalOcean",
+    websiteUrl: "https://www.digitalocean.com/products/ai-platform",
+    apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Coding Agents 文档的 Codex 段（docs.digitalocean.com/products/
+    // inference/how-to/use-with-coding-agents，2026-10-14 核对）：
+    // base_url = https://inference.do-ai.run/v1、wire_api = "responses"，
+    // env_key 发 Bearer
+    config: generateThirdPartyConfig(
+      "digitalocean",
+      "https://inference.do-ai.run/v1",
+      "openai-gpt-6-1-sol",
+    ),
+    endpointCandidates: ["https://inference.do-ai.run/v1"],
+    // 平台 ID 带 openai- 等前缀，对不上官方条目，落到中性模板：不发 freeform
+    // apply_patch、改用 shell_command 改文件。平台的 Apply Patch 只透传给
+    // OpenAI 模型，web_search 由平台托管、全部模型可用（docs.digitalocean.com/
+    // products/inference/how-to/use-server-side-tools 同日）
+    apiFormat: "openai_responses",
+    // 只收平台模型表（docs.digitalocean.com/products/inference/details/models
+    // 同日）写明支持 Responses 的模型：GPT-5.6 三款与 Kimi K3 只支持 Chat，
+    // GPT-5.3-Codex 未写端点，不收。档位：GPT-6.1 Sol 平台写 low 到 max（OpenAI
+    // 官方列 low/medium/high/xhigh/max，无 none/minimal）；GLM-5.3 平台声明
+    // low/high/max；DeepSeek V4 Pro 0813 平台未写，退回 DeepSeek 官方
+    // low/high/max。每档都含 high，与 config 的 model_reasoning_effort = "high"
+    // 一致，无需 defaultReasoningLevel。窗口取平台模型表；GPT-6.1 Sol 超 272K
+    // 按长上下文价计费（docs.digitalocean.com/products/inference/details/
+    // pricing）。Tier 1 / Tier 2 账号只能用 gpt-oss，GPT-6.1 Sol 须 Tier 3+。
+    // 首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "openai-gpt-6-1-sol",
+        displayName: "GPT-6.1 Sol",
+        contextWindow: 1050000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+      },
+      {
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "deepseek-v4-pro-0813",
+        displayName: "DeepSeek V4 Pro 0813",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+    ]),
+    category: "cloud_provider",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",
