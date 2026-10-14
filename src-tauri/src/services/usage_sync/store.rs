@@ -129,6 +129,96 @@ pub(crate) fn commit_nonce(conn: &Connection, nonce: &str, seq: u64) -> Result<(
     Ok(())
 }
 
+/// Make `namespace` (see `UsageTransport::namespace_key`) the active remote
+/// namespace. Returns `true` when it changed.
+///
+/// Writer nonces and the sequence belong to one remote directory, so they are
+/// kept per namespace: the previous namespace's state is parked in
+/// `usage_sync_namespaces` and the new one's restored (switching A → B → A
+/// therefore never looks like an identity conflict). The remote cache only
+/// ever holds the active namespace: it is cleared on a switch and re-imported
+/// by the same sync, so All-devices totals never mix two namespaces. Hidden
+/// devices are remembered per namespace.
+pub(crate) fn enter_namespace(conn: &Connection, namespace: &str) -> Result<bool, AppError> {
+    let current: Option<Option<String>> = conn
+        .query_row(
+            "SELECT namespace FROM usage_sync_identity WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let previous = match current {
+        None => return Ok(false),
+        Some(Some(active)) if active == namespace => return Ok(false),
+        // First sync after the upgrade (or after a new identity): the cache
+        // and writer state belong to the namespace being synced.
+        Some(None) => {
+            conn.execute(
+                "UPDATE usage_sync_identity SET namespace = ?1 WHERE id = 1",
+                [namespace],
+            )?;
+            return Ok(false);
+        }
+        Some(Some(active)) => active,
+    };
+
+    let tx = conn.unchecked_transaction()?;
+    let hidden: Vec<String> = tx
+        .prepare("SELECT device_id FROM usage_sync_devices WHERE status = ?1 ORDER BY device_id")?
+        .query_map([DEVICE_STATUS_HIDDEN], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    tx.execute(
+        "INSERT OR REPLACE INTO usage_sync_namespaces
+            (namespace, committed_nonce, pending_nonce, manifest_seq, hidden_devices)
+         SELECT ?1, committed_nonce, pending_nonce, manifest_seq, ?2
+         FROM usage_sync_identity WHERE id = 1",
+        params![
+            previous,
+            serde_json::to_string(&hidden).map_err(|source| AppError::JsonSerialize { source })?
+        ],
+    )?;
+    let (committed, pending, seq, hidden_json): (Option<String>, Option<String>, i64, String) = tx
+        .query_row(
+            "SELECT committed_nonce, pending_nonce, manifest_seq, hidden_devices
+             FROM usage_sync_namespaces WHERE namespace = ?1",
+            [namespace],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?
+        .unwrap_or((None, None, 0, "[]".to_string()));
+    tx.execute(
+        "UPDATE usage_sync_identity
+         SET namespace = ?1, committed_nonce = ?2, pending_nonce = ?3, manifest_seq = ?4
+         WHERE id = 1",
+        params![namespace, committed, pending, seq],
+    )?;
+    tx.execute(
+        "DELETE FROM usage_sync_namespaces WHERE namespace = ?1",
+        [namespace],
+    )?;
+    for table in REMOTE_PARTITIONED_TABLES
+        .iter()
+        .copied()
+        .chain(["usage_sync_remote_multi", "usage_sync_devices"])
+    {
+        tx.execute(&format!("DELETE FROM {table}"), [])?;
+    }
+    let hidden: Vec<String> = serde_json::from_str(&hidden_json).unwrap_or_default();
+    for device_id in hidden
+        .iter()
+        .filter(|id| super::protocol::is_valid_device_id(id))
+    {
+        tx.execute(
+            "INSERT OR IGNORE INTO usage_sync_devices (device_id, device_name, status)
+             VALUES (?1, ?1, ?2)",
+            params![device_id, DEVICE_STATUS_HIDDEN],
+        )?;
+    }
+    tx.commit()?;
+    refresh_ledger_suppression(conn)?;
+    Ok(true)
+}
+
 /// Start a brand-new identity to resolve a cloned-profile conflict.
 ///
 /// The copied database holds history that the previous identity (the parent)
@@ -143,10 +233,27 @@ pub(crate) fn reset_identity(conn: &Connection) -> Result<DeviceIdentity, AppErr
     // The new identity descends from the previous one only if that one ever
     // published; an identity that never uploaded anything (e.g. a reset done
     // twice while offline) is skipped so the real, published ancestor stays.
+    // Published in any namespace (parked namespaces keep their own nonces).
+    let published_elsewhere: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM usage_sync_namespaces
+         WHERE committed_nonce IS NOT NULL OR pending_nonce IS NOT NULL OR manifest_seq > 0)",
+        [],
+        |row| row.get(0),
+    )?;
+    let active_namespace: Option<String> = conn
+        .query_row(
+            "SELECT namespace FROM usage_sync_identity WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
     let ancestors: Vec<String> = match &previous {
-        Some(prev) if prev.was_published() => std::iter::once(prev.device_id.clone())
-            .chain(prev.ancestors.iter().cloned())
-            .collect(),
+        Some(prev) if prev.was_published() || published_elsewhere => {
+            std::iter::once(prev.device_id.clone())
+                .chain(prev.ancestors.iter().cloned())
+                .collect()
+        }
         Some(prev) => prev.ancestors.clone(),
         None => Vec::new(),
     };
@@ -200,8 +307,8 @@ pub(crate) fn reset_identity(conn: &Connection) -> Result<DeviceIdentity, AppErr
     tx.execute(
         "INSERT INTO usage_sync_identity (
             id, device_id, device_name, created_at, manifest_seq, parent_device_id, forked_at,
-            ancestors
-         ) VALUES (1, ?1, ?2, ?3, 0, ?4, ?3, ?5)",
+            ancestors, namespace
+         ) VALUES (1, ?1, ?2, ?3, 0, ?4, ?3, ?5, ?6)",
         params![
             new_device_id(),
             previous.as_ref().and_then(|p| p.custom_name.clone()),
@@ -209,7 +316,14 @@ pub(crate) fn reset_identity(conn: &Connection) -> Result<DeviceIdentity, AppErr
             ancestors.first().cloned(),
             serde_json::to_string(&ancestors)
                 .map_err(|source| AppError::JsonSerialize { source })?,
+            active_namespace,
         ],
+    )?;
+    // Parked writer state belonged to the previous id's directories.
+    tx.execute(
+        "UPDATE usage_sync_namespaces
+         SET committed_nonce = NULL, pending_nonce = NULL, manifest_seq = 0",
+        [],
     )?;
     tx.commit()?;
     refresh_ledger_suppression(conn)?;
@@ -1168,7 +1282,7 @@ pub(crate) const DEVICE_STATUS_INCOMPATIBLE: &str = "incompatible";
 pub(crate) const DEVICE_STATUS_MISSING: &str = "missing";
 pub(crate) const DEVICE_STATUS_HIDDEN: &str = "hidden";
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CachedDevice {
     pub manifest_seq: u64,
     pub manifest_sha256: Option<String>,
@@ -1239,6 +1353,12 @@ fn delete_device_partition(
 /// Atomically replace the changed/removed partitions of one remote device and
 /// record its new manifest. Any failure rolls back the whole device so the
 /// cache never mixes two manifest generations.
+/// Commit a downloaded device update. `planned_from` is the cache state the
+/// download was planned against (which partitions to fetch or keep). The user
+/// can hide or restore the device while the download runs (those commands do
+/// not wait for a sync); if the state changed, the plan is stale and nothing
+/// is written — the next sync plans again from the current state. Returns
+/// whether the update was applied.
 pub(crate) fn apply_remote_device(
     conn: &Connection,
     manifest: &DeviceManifest,
@@ -1246,9 +1366,14 @@ pub(crate) fn apply_remote_device(
     changed: &[(String, PartitionMeta, Segment)],
     removed: &[String],
     now: i64,
-) -> Result<(), AppError> {
+    planned_from: Option<&CachedDevice>,
+) -> Result<bool, AppError> {
     let tx = conn.unchecked_transaction()?;
     let device_id = manifest.device_id.as_str();
+    if load_cached_device(&tx, device_id)?.as_ref() != planned_from {
+        log::info!("[UsageSync] {device_id} changed during download (hidden or restored); skipped");
+        return Ok(false);
+    }
 
     for key in removed.iter().chain(changed.iter().map(|(key, _, _)| key)) {
         delete_device_partition(&tx, device_id, key)?;
@@ -1513,7 +1638,7 @@ pub(crate) fn apply_remote_device(
     )?;
 
     tx.commit()?;
-    Ok(())
+    Ok(true)
 }
 
 /// Note a successful check where the manifest was unchanged.

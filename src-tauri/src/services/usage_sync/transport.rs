@@ -96,6 +96,41 @@ impl UsageTransport {
         }
     }
 
+    /// Stable identifier of the remote namespace this transport reads and
+    /// writes: backend, server location (scheme, host, port, path; never
+    /// user info, credentials or query), bucket and the namespace path
+    /// (remote root, `usage-v1`, profile). Hashed, so it can be stored and
+    /// compared without keeping the location itself.
+    pub(crate) fn namespace_key(&self) -> String {
+        fn location(raw: &str) -> String {
+            match url::Url::parse(raw.trim()) {
+                Ok(url) => format!(
+                    "{}://{}:{}{}",
+                    url.scheme(),
+                    url.host_str().unwrap_or_default().to_ascii_lowercase(),
+                    url.port_or_known_default().unwrap_or_default(),
+                    url.path().trim_end_matches('/')
+                ),
+                Err(_) => raw.trim().trim_end_matches('/').to_string(),
+            }
+        }
+        let raw = match self {
+            Self::WebDav { base_url, root, .. } => {
+                format!("webdav\n{}\n{}", location(base_url), root.join("/"))
+            }
+            Self::S3 { creds, prefix } => format!(
+                "s3\n{}\n{}\n{}\n{}",
+                location(&creds.endpoint),
+                creds.region.trim(),
+                creds.bucket.trim(),
+                prefix
+            ),
+            #[cfg(test)]
+            Self::Memory(store) => format!("memory\n{:p}", std::sync::Arc::as_ptr(store)),
+        };
+        crate::services::sync_protocol::sha256_hex(raw.as_bytes())
+    }
+
     /// Human-readable remote location (no credentials, no query).
     pub(crate) fn display_location(&self) -> String {
         match self {
@@ -131,6 +166,26 @@ impl UsageTransport {
         }
     }
 
+    /// Relative object paths are built from protocol names only; refuse any
+    /// path that could be normalized out of the usage namespace (`.`, `..`,
+    /// empty segments, backslashes, control characters) before it reaches a
+    /// URL parser or a request signer.
+    fn check_rel(rel: &str) -> Result<(), AppError> {
+        let bad = rel.is_empty()
+            || rel.starts_with('/')
+            || rel.contains('\\')
+            || rel.chars().any(|c| c.is_control())
+            || rel
+                .split('/')
+                .any(|segment| segment.is_empty() || segment == "." || segment == "..");
+        if bad {
+            return Err(AppError::Message(format!(
+                "refusing unsafe usage sync path {rel:?}"
+            )));
+        }
+        Ok(())
+    }
+
     fn webdav_url(base_url: &str, root: &[String], rel: &str) -> Result<String, AppError> {
         let mut segments = root.to_vec();
         segments.extend(webdav::path_segments(rel).map(str::to_string));
@@ -150,6 +205,7 @@ impl UsageTransport {
         rel: &str,
         max_bytes: usize,
     ) -> Result<Option<Vec<u8>>, AppError> {
+        Self::check_rel(rel)?;
         match self {
             Self::WebDav {
                 base_url,
@@ -210,6 +266,7 @@ impl UsageTransport {
         bytes: Vec<u8>,
         content_type: &str,
     ) -> Result<(), AppError> {
+        Self::check_rel(rel)?;
         match self {
             Self::WebDav {
                 base_url,
@@ -325,6 +382,7 @@ impl UsageTransport {
     }
 
     pub(crate) async fn delete(&self, rel: &str) -> Result<(), AppError> {
+        Self::check_rel(rel)?;
         match self {
             Self::WebDav {
                 base_url,
@@ -401,6 +459,10 @@ pub(crate) mod memory {
         pub fail_delete_containing: Mutex<Option<String>>,
         pub put_count: Mutex<usize>,
         pub get_count: Mutex<usize>,
+        /// Runs once, before the first GET whose path contains the needle
+        /// (simulates a user action while a download is in flight).
+        #[allow(clippy::type_complexity)]
+        pub before_get: Mutex<Option<(String, Box<dyn FnOnce() + Send>)>>,
     }
 
     fn transport_error(op: &str, path: &str) -> AppError {
@@ -410,6 +472,16 @@ pub(crate) mod memory {
     impl MemoryStore {
         pub fn get(&self, path: &str, max_bytes: usize) -> Result<Option<Vec<u8>>, AppError> {
             *self.get_count.lock().unwrap() += 1;
+            let hook = {
+                let mut slot = self.before_get.lock().unwrap();
+                match slot.as_ref() {
+                    Some((needle, _)) if path.contains(needle.as_str()) => slot.take(),
+                    _ => None,
+                }
+            };
+            if let Some((_, action)) = hook {
+                action();
+            }
             if let Some(needle) = self.fail_get_containing.lock().unwrap().as_deref() {
                 if path.contains(needle) {
                     return Err(transport_error("GET", path));

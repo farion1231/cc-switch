@@ -261,6 +261,23 @@ async fn read_own_manifest(
     }
 }
 
+/// Delete one of this device's own part objects. Every delete of the usage
+/// sync goes through here: the object must be a strict part name
+/// (`parts/{partition}-{hash16}.json.gz`) under a valid device id, whatever a
+/// (possibly tampered) manifest listed.
+async fn delete_own_part(
+    transport: &UsageTransport,
+    device_id: &str,
+    object: &str,
+) -> Result<(), AppError> {
+    if !protocol::is_valid_device_id(device_id) || protocol::partition_of_object(object).is_none() {
+        return Err(AppError::Message(format!(
+            "refusing to delete non-part object {object:?}"
+        )));
+    }
+    transport.delete(&object_path(device_id, object)).await
+}
+
 async fn upload_phase(
     db: &Arc<Database>,
     transport: &UsageTransport,
@@ -407,7 +424,7 @@ async fn upload_phase(
     // manifest, so they can go before the manifest write. Only objects that
     // were actually deleted leave the list; failures are retried next sync.
     for object in expired {
-        if let Err(error) = transport.delete(&object_path(&device_id, &object)).await {
+        if let Err(error) = delete_own_part(transport, &device_id, &object).await {
             log::debug!("[UsageSync] retired object cleanup failed, will retry: {error}");
             retired.push(RetiredObject {
                 object,
@@ -549,7 +566,7 @@ async fn upload_phase(
     outcome.manifest_written = true;
 
     for object in overflow_objects {
-        if let Err(error) = transport.delete(&object_path(&device_id, &object)).await {
+        if let Err(error) = delete_own_part(transport, &device_id, &object).await {
             log::debug!("[UsageSync] retired overflow cleanup failed: {error}");
         }
     }
@@ -594,6 +611,7 @@ async fn sync_remote_device(
         return Ok(DeviceResult::Unchanged);
     };
     let manifest_sha = sha256_hex(&bytes);
+    let planned_from = cached.clone();
     let cached = cached.unwrap_or_default();
     if cached.manifest_sha256.as_deref() == Some(manifest_sha.as_str())
         && cached.status == store::DEVICE_STATUS_OK
@@ -651,11 +669,23 @@ async fn sync_remote_device(
         .cloned()
         .collect();
 
-    blocking(db, move |conn| {
-        store::apply_remote_device(conn, &manifest, &manifest_sha, &changed, &removed, now)
+    let applied = blocking(db, move |conn| {
+        store::apply_remote_device(
+            conn,
+            &manifest,
+            &manifest_sha,
+            &changed,
+            &removed,
+            now,
+            planned_from.as_ref(),
+        )
     })
     .await?;
-    Ok(DeviceResult::Updated)
+    Ok(if applied {
+        DeviceResult::Updated
+    } else {
+        DeviceResult::Unchanged
+    })
 }
 
 async fn download_phase(
@@ -722,7 +752,13 @@ pub(crate) async fn sync_with(
     transport: &UsageTransport,
     options: &SyncOptions,
 ) -> Result<UsageSyncReport, AppError> {
-    let identity = blocking(db, store::load_or_create_identity).await?;
+    let namespace = transport.namespace_key();
+    let identity = blocking(db, move |conn| {
+        store::load_or_create_identity(conn)?;
+        store::enter_namespace(conn, &namespace)?;
+        store::load_or_create_identity(conn)
+    })
+    .await?;
     let mut report = UsageSyncReport::default();
 
     match upload_phase(db, transport, options, &identity).await {

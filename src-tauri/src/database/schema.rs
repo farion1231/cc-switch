@@ -1934,9 +1934,23 @@ impl Database {
             ("usage_sync_devices", "parent_device_id", "TEXT"),
             ("usage_sync_identity", "ancestors", "TEXT"),
             ("usage_sync_devices", "ancestors", "TEXT"),
+            ("usage_sync_identity", "namespace", "TEXT"),
         ] {
             Self::add_column_if_missing(conn, table, column, ty)?;
         }
+        // Writer state and hidden devices of remote namespaces (backend +
+        // location + profile) this installation is not currently syncing
+        // with; the active namespace's state lives in usage_sync_identity.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS usage_sync_namespaces (
+                namespace TEXT PRIMARY KEY,
+                committed_nonce TEXT,
+                pending_nonce TEXT,
+                manifest_seq INTEGER NOT NULL DEFAULT 0,
+                hidden_devices TEXT NOT NULL DEFAULT '[]'
+             )",
+        )
+        .map_err(|error| AppError::Database(format!("创建用量同步命名空间表失败: {error}")))?;
         Ok(())
     }
 

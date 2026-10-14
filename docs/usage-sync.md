@@ -128,7 +128,12 @@ source device.
    pending nonce, not reported as a conflict.
 5. Superseded objects are listed in `retired` and deleted after a 24 h grace
    period, so a reader that fetched the previous manifest can still finish.
-   A failed delete keeps the object listed and is retried.
+   A failed delete keeps the object listed and is retried. Every `retired`
+   entry must be a strict part name (`parts/{partition}-{hash16}.json.gz`) —
+   readers reject other manifests — and every delete re-checks that, so a
+   tampered manifest can never steer a DELETE outside the device's own
+   `parts/`. The transport also refuses any relative path with empty, `.` or
+   `..` segments before it reaches a URL parser or request signer.
 6. Unchanged data does not rewrite the manifest, except for an hourly
    heartbeat so other devices can tell idle from offline.
 
@@ -174,9 +179,12 @@ today's).
    eventually consistent stores).
 4. Download changed partitions, verify size + SHA-256 of the object and of the
    decompressed content, validate every row.
-5. In **one transaction**: delete changed/removed partitions of that device,
-   insert the new rows, record the per-partition cursor and the device row.
-   Any failure rolls back the whole device; previously imported data stays.
+5. In **one transaction**: re-check that the device's cached state is still
+   the one the download was planned against (hide/restore do not wait for a
+   running sync; a changed state drops the whole update and the next sync
+   plans again), delete changed/removed partitions of that device, insert the
+   new rows, record the per-partition cursor and the device row. Any failure
+   rolls back the whole device; previously imported data stays.
 
 A newer protocol version is reported as _Newer version_ and the cached data is
 kept; a corrupt or missing object is reported as _Error_ and retried next sync.
@@ -194,6 +202,27 @@ Devices whose directory vanished stay cached and are flagged _Not found_.
 - `seq` uses checked arithmetic and must stay within `i64`; a manifest outside
   that range is rejected by readers and an exhausted own sequence is an error,
   never a wrap-around.
+
+### Remote namespaces
+
+Switching the backend (WebDAV ↔ S3), the server, the bucket, the remote root
+or the profile points usage sync at a different remote namespace. The
+namespace is identified by a SHA-256 of backend, server location (scheme,
+host, port, path; never user info, credentials or query), region and bucket,
+and the namespace path; changing only credentials keeps it.
+
+- The device id is per installation and the same everywhere. Writer nonces
+  and `seq` belong to one remote directory, so they are kept **per
+  namespace**: the inactive namespaces' state is parked in
+  `usage_sync_namespaces` and restored when it becomes active again. Switching
+  A → B → A therefore never reports a false identity conflict, while a real
+  second writer within one namespace is still detected.
+- The remote cache only ever holds the active namespace. A switch clears it in
+  the same transaction and the same sync re-imports the new namespace, so All
+  devices totals never mix profiles. Hidden devices are remembered per
+  namespace.
+- The switch takes effect at the next sync; until then the Usage page shows
+  the cache of the last synced namespace.
 
 ### Copied installations
 
@@ -250,6 +279,7 @@ chooses:
 | `usage_sync_inherited_effective` | Per-group inherited subtraction actually applied (rebuilt with the suppression)           |
 | `usage_sync_partition_versions`  | Trigger-maintained change versions of month partitions and provider names                 |
 | `usage_sync_export_cache`        | Content hash and versions of the last exported month partitions                           |
+| `usage_sync_namespaces`          | Writer nonces, `seq` and hidden devices of the inactive remote namespaces                 |
 | `usage_rollup_ledger`            | Identity ledger of this device's rolled-up requests                                       |
 
 - `usage_rollup_ledger` is written by `rollup_and_prune` in the same savepoint
@@ -270,7 +300,7 @@ chooses:
 - Migration v20 → v21 only creates these tables (idempotent DDL shared with
   fresh databases); existing data is untouched, and the usual pre-migration
   backup runs. History rolled up before the upgrade has no ledger entries.
-- All fourteen tables are in `SYNC_SKIP_TABLES` (rows never enter `db.sql`);
+- All fifteen tables are in `SYNC_SKIP_TABLES` (rows never enter `db.sql`);
   all but `usage_sync_export_cache` are in `SYNC_PRESERVE_TABLES` (a snapshot
   download keeps the local rows).
 - Restoring an older full backup recreates empty tables; the next sync

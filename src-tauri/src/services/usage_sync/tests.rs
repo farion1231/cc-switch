@@ -1183,6 +1183,7 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
         "usage_sync_inherited_effective",
         "usage_sync_partition_versions",
         "usage_sync_export_cache",
+        "usage_sync_namespaces",
         "usage_sync_inherited",
         "usage_rollup_ledger",
     ] {
@@ -1213,6 +1214,7 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
         "usage_sync_inherited_effective",
         "usage_sync_partition_versions",
         "usage_sync_export_cache",
+        "usage_sync_namespaces",
         "usage_sync_inherited",
         "usage_rollup_ledger",
     ] {
@@ -3155,4 +3157,385 @@ async fn export_by_month_ranges_ignores_malformed_dates_without_overlap() {
     assert_eq!(shas(&before), shas(&after));
     a.sync(&cloud).await;
     assert_manifest_is_full_export(&a, &cloud);
+}
+
+// ─── Review: retired objects must stay inside the own parts directory ──
+
+#[test]
+fn manifest_with_foreign_or_traversing_retired_objects_is_rejected() {
+    let id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    let mut manifest = DeviceManifest {
+        format: protocol::USAGE_SYNC_FORMAT.into(),
+        version: protocol::USAGE_PROTOCOL_VERSION,
+        device_id: id.into(),
+        device_name: "x".into(),
+        platform: String::new(),
+        app_version: String::new(),
+        seq: 1,
+        writer_nonce: "n".into(),
+        updated_at: 0,
+        detail_level: protocol::DETAIL_LEVEL_RECORDS.into(),
+        utc_offset_minutes: 0,
+        coverage: Default::default(),
+        partitions: Default::default(),
+        retired: vec![protocol::RetiredObject {
+            object: protocol::object_name("m-2026-01", &"a".repeat(64)),
+            retired_at: 0,
+        }],
+        lineage: None,
+    };
+    assert!(protocol::validate_manifest(&manifest, id).is_ok());
+    for bad in [
+        "../../../../v2/db-v6/default/db.sql",
+        "parts/../../other-device/manifest.json",
+        "parts/m-2026-01-aaaaaaaaaaaaaaaa.json.gz/../../x",
+        "parts/notes.txt",
+        "manifest.json",
+        "/parts/m-2026-01-aaaaaaaaaaaaaaaa.json.gz",
+        "",
+    ] {
+        manifest.retired[0].object = bad.into();
+        assert!(
+            protocol::validate_manifest(&manifest, id).is_err(),
+            "{bad:?} accepted"
+        );
+    }
+    manifest.retired[0].object = protocol::object_name("m-2026-01", &"a".repeat(64));
+    manifest.retired[0].retired_at = -1;
+    assert!(protocol::validate_manifest(&manifest, id).is_err());
+    manifest.retired[0].retired_at = 0;
+    manifest.retired = vec![manifest.retired[0].clone(); protocol::MAX_RETIRED_OBJECTS + 1];
+    assert!(protocol::validate_manifest(&manifest, id).is_err());
+}
+
+#[tokio::test]
+async fn tampered_retired_entries_never_delete_outside_the_parts_directory() {
+    let cloud = remote();
+    let mut a = Device::new("A");
+    a.log("a1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    a.sync(&cloud).await;
+    let id = a.id();
+
+    // Victims at the literal keys a traversing entry would address (the
+    // memory store does not normalize, so a DELETE would hit these exactly).
+    let traversal = "../../../../v2/db-v6/default/db.sql";
+    let victims = [
+        protocol::object_path(&id, traversal),
+        protocol::object_path(&id, "parts/notes.txt"),
+        protocol::object_path(&id, "manifest.json.bak"),
+    ];
+    for victim in &victims {
+        cloud.put(victim, b"keep".to_vec()).unwrap();
+    }
+
+    // Keep the valid writer nonce, inject expired foreign entries.
+    let mut manifest = read_manifest(&cloud, &id);
+    for object in [traversal, "parts/notes.txt", "manifest.json.bak"] {
+        manifest.retired.push(protocol::RetiredObject {
+            object: object.into(),
+            retired_at: 0,
+        });
+    }
+    cloud
+        .put(&manifest_path(&id), serde_json::to_vec(&manifest).unwrap())
+        .unwrap();
+
+    a.now += protocol::RETIRED_GRACE_SECS + 1;
+    a.log("a2", "proxy", NOW - 30, "m", 1, 1, "0.01", 200);
+    let report = a.sync(&cloud).await;
+    assert!(report.manifest_written, "the tampered manifest is replaced");
+    for victim in &victims {
+        assert!(cloud.keys().contains(victim), "{victim} was deleted");
+    }
+    let rewritten = read_manifest(&cloud, &id);
+    assert!(rewritten
+        .retired
+        .iter()
+        .all(|r| protocol::partition_of_object(&r.object).is_some()));
+    assert!(protocol::validate_manifest(&rewritten, &id).is_ok());
+}
+
+#[tokio::test]
+async fn transport_refuses_paths_that_could_leave_the_namespace() {
+    let cloud = remote();
+    let transport = UsageTransport::Memory(cloud.clone());
+    cloud.put("a/../b", b"x".to_vec()).unwrap();
+    for rel in [
+        "a/../b", "../b", "a//b", "./a", "/a", "a\\b", "", "a/\u{0}b",
+    ] {
+        assert!(transport.delete(rel).await.is_err(), "delete {rel:?}");
+        assert!(transport.get(rel, 16).await.is_err(), "get {rel:?}");
+        assert!(
+            transport.put(rel, b"y".to_vec(), "x").await.is_err(),
+            "put {rel:?}"
+        );
+    }
+    assert!(cloud.keys().contains(&"a/../b".to_string()));
+}
+
+// ─── Review: remote namespaces are isolated (backend / location / profile) ──
+
+fn listed_devices(device: &Device) -> Vec<(String, String)> {
+    let conn = device.db.conn.lock().unwrap();
+    store::list_remote_devices(&conn)
+        .unwrap()
+        .into_iter()
+        .map(|d| (d.device_id, d.status))
+        .collect()
+}
+
+#[tokio::test]
+async fn switching_namespaces_a_b_a_keeps_writer_state_and_never_mixes_caches() {
+    let space_a = remote();
+    let space_b = remote();
+    let me = Device::new("Me");
+    let x = Device::new("X"); // only in namespace A
+    let y = Device::new("Y"); // only in namespace B
+    let z = Device::new("Z"); // only in namespace A, hidden by me
+    me.log("me-1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    x.log("x-1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    y.log("y-1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    z.log("z-1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    x.sync(&space_a).await;
+    z.sync(&space_a).await;
+    y.sync(&space_b).await;
+
+    // A: me + X (Z hidden).
+    me.sync(&space_a).await;
+    {
+        let conn = me.db.conn.lock().unwrap();
+        store::set_device_hidden(&conn, &z.id(), true).unwrap();
+    }
+    assert_eq!(me.total_requests(UsageDeviceScope::All), 2);
+
+    // B: me + Y only; A's devices are gone from the cache and the list.
+    let report = me.sync(&space_b).await;
+    assert!(!report.identity_conflict, "{report:?}");
+    assert!(report.manifest_written);
+    assert_eq!(me.total_requests(UsageDeviceScope::All), 2);
+    let listed = listed_devices(&me);
+    assert!(listed.iter().all(|(id, _)| id != &x.id() && id != &z.id()));
+    assert!(listed.iter().any(|(id, _)| id == &y.id()));
+
+    // Back to A: no false identity conflict, uploads continue, Z still hidden.
+    me.log("me-2", "proxy", NOW - 30, "m", 1, 1, "0.01", 200);
+    let report = me.sync(&space_a).await;
+    assert!(!report.identity_conflict, "{report:?}");
+    assert!(report.upload_error.is_none(), "{report:?}");
+    assert!(report.manifest_written);
+    assert_eq!(me.total_requests(UsageDeviceScope::All), 3, "me ×2 + X");
+    let listed = listed_devices(&me);
+    assert!(listed.iter().all(|(id, _)| id != &y.id()));
+    assert!(listed
+        .iter()
+        .any(|(id, status)| id == &z.id() && status == "hidden"));
+    // Viewers of A see my new request: the manifest really advanced.
+    x.sync(&space_a).await;
+    assert_eq!(
+        x.total_requests(UsageDeviceScope::All),
+        4,
+        "me ×2 + X + Z (X does not hide Z)"
+    );
+
+    // And B again: still no conflict, sequence continues from B's own state.
+    let before = read_manifest(&space_b, &me.id()).seq;
+    let report = me.sync(&space_b).await;
+    assert!(!report.identity_conflict, "{report:?}");
+    assert!(read_manifest(&space_b, &me.id()).seq > before);
+}
+
+#[tokio::test]
+async fn a_real_second_writer_is_still_detected_within_one_namespace() {
+    let cloud = remote();
+    let other = remote();
+    let a = Device::new("A");
+    a.log("a1", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    a.sync(&cloud).await;
+    let copy = Device::new("Copy");
+    clone_identity(&a, &copy);
+    copy.log("c1", "proxy", NOW - 50, "m", 1, 1, "0.01", 200);
+    copy.sync(&cloud).await;
+    // A visits another namespace and comes back: the copy's write is still
+    // a conflict, not hidden by the namespace switch.
+    a.sync(&other).await;
+    let report = a.sync(&cloud).await;
+    assert!(report.identity_conflict, "{report:?}");
+}
+
+#[test]
+fn namespace_key_tracks_location_not_credentials() {
+    use crate::settings::{S3SyncSettings, WebDavSyncSettings};
+    let dav = |url: &str, user: &str, pass: &str, root: &str, profile: &str| {
+        UsageTransport::from_webdav(&WebDavSyncSettings {
+            base_url: url.into(),
+            username: user.into(),
+            password: pass.into(),
+            remote_root: root.into(),
+            profile: profile.into(),
+            ..WebDavSyncSettings::default()
+        })
+        .unwrap()
+        .namespace_key()
+    };
+    let base = dav(
+        "https://dav.example.com/remote.php/dav",
+        "u",
+        "p1",
+        "sync",
+        "default",
+    );
+    assert_eq!(
+        base,
+        dav(
+            "https://DAV.example.com:443/remote.php/dav/",
+            "other",
+            "p2",
+            "sync",
+            "default"
+        ),
+        "credentials, host case, default port and trailing slash do not matter"
+    );
+    assert!(!base.contains("example") && base.len() == 64);
+    for other in [
+        dav(
+            "https://dav.example.com/remote.php/dav",
+            "u",
+            "p1",
+            "sync",
+            "work",
+        ),
+        dav(
+            "https://dav.example.com/remote.php/dav",
+            "u",
+            "p1",
+            "other",
+            "default",
+        ),
+        dav(
+            "https://nas.example.com/remote.php/dav",
+            "u",
+            "p1",
+            "sync",
+            "default",
+        ),
+    ] {
+        assert_ne!(base, other);
+    }
+    let s3 = |bucket: &str, ak: &str, profile: &str| {
+        UsageTransport::from_s3(&S3SyncSettings {
+            region: "us-east-1".into(),
+            bucket: bucket.into(),
+            access_key_id: ak.into(),
+            secret_access_key: format!("{ak}-secret"),
+            endpoint: "https://s3.example.com".into(),
+            remote_root: "sync".into(),
+            profile: profile.into(),
+            ..S3SyncSettings::default()
+        })
+        .unwrap()
+        .namespace_key()
+    };
+    assert_eq!(s3("b1", "AK1", "default"), s3("b1", "AK2", "default"));
+    assert_ne!(s3("b1", "AK1", "default"), s3("b2", "AK1", "default"));
+    assert_ne!(s3("b1", "AK1", "default"), s3("b1", "AK1", "work"));
+    assert_ne!(s3("b1", "AK1", "default"), base);
+}
+
+// ─── Review: hiding or restoring a device while its data downloads ──────
+
+fn remote_rows_of(viewer: &Device, device_id: &str) -> i64 {
+    let conn = viewer.db.conn.lock().unwrap();
+    conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM usage_sync_remote_logs WHERE device_id = ?1)
+              + (SELECT COUNT(*) FROM usage_sync_remote_partitions WHERE device_id = ?1)",
+        [device_id],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// D has two day partitions cached on V; D then changes only one of them.
+/// Returns the object name of the changed partition.
+async fn two_partitions_one_changed(cloud: &Arc<MemoryStore>, d: &Device, v: &Device) -> String {
+    d.log("d-old", "proxy", NOW - 3 * 86_400, "m", 1, 1, "0.01", 200);
+    d.log("d-new", "proxy", NOW - 60, "m", 1, 1, "0.01", 200);
+    d.sync(cloud).await;
+    v.sync(cloud).await;
+    assert_eq!(v.total_requests(UsageDeviceScope::All), 2);
+    let before = read_manifest(cloud, &d.id()).partitions;
+    assert_eq!(before.len(), 2);
+    d.log("d-new-2", "proxy", NOW - 30, "m", 1, 1, "0.01", 200);
+    d.sync(cloud).await;
+    let after = read_manifest(cloud, &d.id()).partitions;
+    let changed: Vec<_> = after
+        .iter()
+        .filter(|(key, meta)| before.get(*key).map(|m| &m.sha256) != Some(&meta.sha256))
+        .collect();
+    assert_eq!(changed.len(), 1, "only one partition changed");
+    changed[0].1.object.clone()
+}
+
+#[tokio::test]
+async fn hiding_a_device_during_its_download_is_not_overwritten() {
+    let cloud = remote();
+    let d = Device::new("D");
+    let v = Device::new("V");
+    let changed_object = two_partitions_one_changed(&cloud, &d, &v).await;
+
+    let (db, id) = (v.db.clone(), d.id());
+    *cloud.before_get.lock().unwrap() = Some((
+        changed_object,
+        Box::new(move || {
+            let conn = db.conn.lock().unwrap();
+            store::set_device_hidden(&conn, &id, true).unwrap();
+        }),
+    ));
+    v.sync(&cloud).await;
+    assert!(cloud.before_get.lock().unwrap().is_none(), "hook ran");
+
+    assert_eq!(v.remote_device(&d.id()).unwrap().status, "hidden");
+    assert_eq!(remote_rows_of(&v, &d.id()), 0, "nothing re-inserted");
+    assert_eq!(v.total_requests(UsageDeviceScope::All), 0);
+    // Staying hidden across later syncs.
+    v.sync(&cloud).await;
+    assert_eq!(v.total_requests(UsageDeviceScope::All), 0);
+
+    // Restoring imports both partitions again, including the one that was
+    // not re-downloaded when the hide happened.
+    {
+        let conn = v.db.conn.lock().unwrap();
+        store::set_device_hidden(&conn, &d.id(), false).unwrap();
+    }
+    v.sync(&cloud).await;
+    assert_eq!(v.total_requests(UsageDeviceScope::All), 3);
+    v.sync(&cloud).await;
+    assert_eq!(v.total_requests(UsageDeviceScope::All), 3);
+}
+
+#[tokio::test]
+async fn hide_and_restore_during_a_download_never_loses_unchanged_partitions() {
+    let cloud = remote();
+    let d = Device::new("D");
+    let v = Device::new("V");
+    let changed_object = two_partitions_one_changed(&cloud, &d, &v).await;
+
+    let (db, id) = (v.db.clone(), d.id());
+    *cloud.before_get.lock().unwrap() = Some((
+        changed_object,
+        Box::new(move || {
+            let conn = db.conn.lock().unwrap();
+            store::set_device_hidden(&conn, &id, true).unwrap();
+            store::set_device_hidden(&conn, &id, false).unwrap();
+        }),
+    ));
+    v.sync(&cloud).await;
+    assert!(cloud.before_get.lock().unwrap().is_none(), "hook ran");
+    // The stale plan (keep the unchanged partition, fetch one) was dropped:
+    // no partial cache that a later "unchanged manifest" would freeze.
+    let cached = v.remote_device(&d.id()).unwrap();
+    assert_eq!(cached.status, "ok");
+    v.sync(&cloud).await;
+    assert_eq!(v.total_requests(UsageDeviceScope::All), 3);
+    v.sync(&cloud).await;
+    assert_eq!(v.total_requests(UsageDeviceScope::All), 3);
 }

@@ -105,6 +105,7 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_sync_remote_multi",
     "usage_sync_inherited_effective",
     "usage_sync_partition_versions",
+    "usage_sync_namespaces",
     "usage_sync_export_cache",
     "usage_sync_inherited",
     "usage_rollup_ledger",
@@ -130,6 +131,7 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_sync_remote_multi",
     "usage_sync_inherited_effective",
     "usage_sync_partition_versions",
+    "usage_sync_namespaces",
     // usage_sync_export_cache is deliberately not preserved: an import can
     // change provider names without bumping the preserved versions, so the
     // next usage sync re-encodes every partition once.

@@ -506,6 +506,21 @@ pub(crate) fn validate_manifest(
     if manifest.partitions.len() > MAX_PARTITIONS {
         return Err(invalid("too many partitions"));
     }
+    // Retired entries name objects the owner later deletes: each must be a
+    // part object of this device's own `parts/` directory (strict name, no
+    // path separators beyond `parts/`, no `..`), so a tampered manifest can
+    // never steer a DELETE outside it.
+    if manifest.retired.len() > MAX_RETIRED_OBJECTS {
+        return Err(invalid("too many retired objects"));
+    }
+    for item in &manifest.retired {
+        if partition_of_object(&item.object).is_none() {
+            return Err(invalid("bad retired object name"));
+        }
+        if item.retired_at < 0 {
+            return Err(invalid("bad retired timestamp"));
+        }
+    }
     for (key, meta) in &manifest.partitions {
         if !is_valid_partition_key(key) {
             return Err(invalid(format!("bad partition key {key}")));
