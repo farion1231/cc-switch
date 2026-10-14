@@ -9,6 +9,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   "Baidu Qianfan Token Plan": "百度 千帆 文心",
   BaiLing: "蚂蚁 百灵 ling",
   Codex: "chatgpt openai gpt",
+  DeepInfra: "deep infra",
   DeepSeek: "深度求索",
   "Gemini Native": "google 谷歌",
   "GitHub Copilot": "copilot",

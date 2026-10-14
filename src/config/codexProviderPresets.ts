@@ -3590,6 +3590,68 @@ requires_openai_auth = true`,
     icon: "meta",
   },
   {
+    name: "DeepInfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Responses 文档（docs.deepinfra.com/api-reference/responses/
+    // openai-responses.md，2026-10-14 核对）路径为 POST /v1/responses，Bearer
+    // 鉴权；/v1/openai/responses 也存在（无 Key 401）但文档未写，按文档用 /v1
+    config: generateThirdPartyConfig(
+      "deepinfra",
+      "https://api.deepinfra.com/v1",
+      "deepseek-ai/DeepSeek-V4-Flash-0731",
+    ),
+    endpointCandidates: ["https://api.deepinfra.com/v1"],
+    // 文档列了 function / web_search / namespace 工具，没写 custom 工具：
+    // NativeResponses 档案不发 freeform apply_patch，改用 shell_command 改文件。
+    // 文档未列支持 Responses 的模型清单，逐模型可用性未经真 Key 实测
+    apiFormat: "openai_responses",
+    // 平台没有逐模型档位声明（docs.deepinfra.com/chat/reasoning.md 只给通用
+    // 枚举），退回厂商官方档位：DeepSeek 同 DeepSeek 直连预设，Kimi K3、
+    // GLM-5.3 同各自官方预设，均为 low/high/max。GLM-5.2 档位口径不一，暂不
+    // 填。每档都含 high，与 config 的 model_reasoning_effort = "high" 一致，
+    // 无需 defaultReasoningLevel。窗口取 https://api.deepinfra.com/models/<id>
+    // 同日元数据。首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "deepseek-ai/DeepSeek-V4-Flash-0731",
+        displayName: "DeepSeek V4 Flash 0731",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "deepseek-ai/DeepSeek-V4-Pro-0813",
+        displayName: "DeepSeek V4 Pro 0813",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "moonshotai/Kimi-K3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "zai-org/GLM-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "zai-org/GLM-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+      },
+    ]),
+    category: "aggregator",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

@@ -4749,6 +4749,83 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "DeepInfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    // OpenAI Chat 端点 base 为 /v1/openai（docs.deepinfra.com/chat/overview.md，
+    // 2026-10-14 核对），Bearer 鉴权。cost 取 https://api.deepinfra.com/models/<id>
+    // 同日原价（每百万 token）：GLM-5.2 / 5.3 网页另有无截止日期的折扣，促销价
+    // 会变，故记原价；缓存写入不另收记 0。窗口与最大输出同 OpenCode 预设
+    settingsConfig: {
+      baseUrl: "https://api.deepinfra.com/v1/openai",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek-ai/DeepSeek-V4-Flash-0731",
+          name: "DeepSeek V4 Flash 0731",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 0.06, output: 0.18, cacheRead: 0.015, cacheWrite: 0 },
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 1.3, output: 2.6, cacheRead: 0.1, cacheWrite: 0 },
+        },
+        {
+          id: "moonshotai/Kimi-K3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 2.85, output: 14.25, cacheRead: 0.285, cacheWrite: 0 },
+        },
+        {
+          id: "zai-org/GLM-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 0.9, output: 4, cacheRead: 0.2, cacheWrite: 0 },
+        },
+        {
+          id: "zai-org/GLM-5.2",
+          name: "GLM-5.2",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 163840,
+          cost: { input: 0.75, output: 2.4, cacheRead: 0.14, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731" },
+      modelCatalog: {
+        "deepinfra/deepseek-ai/DeepSeek-V4-Flash-0731": {
+          alias: "DeepSeek V4 Flash 0731",
+        },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

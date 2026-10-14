@@ -2525,6 +2525,43 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "DeepInfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    settingsConfig: {
+      name: "deepinfra",
+      // 官方 Hermes 接入文档给旧版 Hermes 的自定义端点即 /v1/openai Chat
+      //（docs.deepinfra.com/integrations/hermes-agent.md，2026-10-14 核对）。
+      // Hermes 已内置 deepinfra，同名写法照 openrouter / deepseek 先例；窗口取
+      // https://api.deepinfra.com/models/<id> 同日元数据
+      base_url: "https://api.deepinfra.com/v1/openai",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "deepseek-ai/DeepSeek-V4-Flash-0731",
+          name: "DeepSeek V4 Flash 0731",
+          context_length: 1048576,
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          context_length: 1048576,
+        },
+        { id: "moonshotai/Kimi-K3", name: "Kimi K3", context_length: 1048576 },
+        { id: "zai-org/GLM-5.3", name: "GLM-5.3", context_length: 1048576 },
+        { id: "zai-org/GLM-5.2", name: "GLM-5.2", context_length: 1048576 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: {
+        default: "deepseek-ai/DeepSeek-V4-Flash-0731",
+        provider: "deepinfra",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

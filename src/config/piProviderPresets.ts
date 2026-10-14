@@ -2032,6 +2032,56 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "meta",
   },
   {
+    name: "DeepInfra",
+    providerKey: "cc-switch-deepinfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    settingsConfig: {
+      name: "DeepInfra",
+      // 官方 Pi 接入文档（docs.deepinfra.com/integrations/pi.md，2026-10-14
+      // 核对）：Pi 未内置 DeepInfra，base 为 /v1/openai Chat。DeepSeek 两款须带
+      // supportsDeveloperRole: false（否则 developer 角色报 422）与
+      // thinkingFormat: "deepseek"，其余模型不加。目录里没有带日期的 DeepSeek
+      // key，用不带日期的条目覆盖 id；窗口取 https://api.deepinfra.com/models/<id>
+      // 同日元数据，GLM-5.2 最大输出按平台 163840 覆盖
+      baseUrl: "https://api.deepinfra.com/v1/openai",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-ai/DeepSeek-V4-Flash-0731",
+            name: "DeepSeek V4 Flash 0731",
+            contextWindow: 1_048_576,
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { supportsDeveloperRole: false, thinkingFormat: "deepseek" },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+            name: "DeepSeek V4 Pro 0813",
+            contextWindow: 1_048_576,
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { supportsDeveloperRole: false, thinkingFormat: "deepseek" },
+        },
+        // KIMI_K3_COMPAT 是 Moonshot 官方端点的口径，DeepInfra 未证实，不抄
+        piModel("moonshotai/kimi-k3", {
+          id: "moonshotai/Kimi-K3",
+          thinkingProfile: "kimi3",
+        }),
+        piModel("zai/glm-5.3", { id: "zai-org/GLM-5.3" }),
+        piModel("zai/glm-5.2", {
+          id: "zai-org/GLM-5.2",
+          contextWindow: 1_048_576,
+          maxTokens: 163_840,
+        }),
+      ],
+    },
+    category: "aggregator",
+  },
+  {
     name: "PIPELLM",
     providerKey: "cc-switch-pipellm",
     websiteUrl: "https://code.pipellm.ai",

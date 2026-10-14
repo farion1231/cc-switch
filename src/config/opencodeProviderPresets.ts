@@ -3532,6 +3532,65 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "DeepInfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    // OpenAI Chat 端点 base 为 /v1/openai（docs.deepinfra.com/chat/overview.md，
+    // 2026-10-14 核对），Bearer 鉴权。窗口、最大输出与输入模态取
+    // https://api.deepinfra.com/models/<id> 同日元数据；V4 Pro 0813 平台未给
+    // 最大输出、Kimi K3 平台值等于窗口不可信，取 models.dev 与 DeepSeek / Kimi
+    // 官方口径（384000 / 131072）
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "DeepInfra",
+      options: {
+        baseURL: "https://api.deepinfra.com/v1/openai",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek-ai/DeepSeek-V4-Flash-0731": {
+          name: "DeepSeek V4 Flash 0731",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          name: "DeepSeek V4 Pro 0813",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "moonshotai/Kimi-K3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "zai-org/GLM-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "zai-org/GLM-5.2": {
+          name: "GLM-5.2",
+          reasoning: true,
+          limit: { context: 1048576, output: 163840 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

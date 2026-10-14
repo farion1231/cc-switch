@@ -1715,6 +1715,40 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "meta",
   },
   {
+    name: "DeepInfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    category: "aggregator",
+    // 同 Claude Code 预设：Anthropic 兼容端点（docs.deepinfra.com/integrations/
+    // anthropic.md，2026-10-14 核对）；模型名非 Claude，只能走路由。窗口取
+    // https://api.deepinfra.com/models/<id> 同日元数据：两款 DeepSeek 1M、
+    // Ling-3.0-flash 128K，brandedRoutes 的 supports1m 一刀切，故内联逐条写
+    baseUrl: "https://api.deepinfra.com/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+        upstreamModel: "deepseek-ai/DeepSeek-V4-Flash-0731",
+        labelOverride: "deepseek-ai/DeepSeek-V4-Flash-0731",
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+        upstreamModel: "deepseek-ai/DeepSeek-V4-Pro-0813",
+        labelOverride: "deepseek-ai/DeepSeek-V4-Pro-0813",
+        supports1m: true,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
+        upstreamModel: "inclusionAI/Ling-3.0-flash",
+        labelOverride: "inclusionAI/Ling-3.0-flash",
+        supports1m: false,
+      },
+    ],
+    endpointCandidates: ["https://api.deepinfra.com/anthropic"],
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

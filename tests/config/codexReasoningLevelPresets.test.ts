@@ -210,6 +210,17 @@ describe("Codex preset pre-filled reasoning levels", () => {
       "muse-spark-1.3",
       ["minimal", "low", "medium", "high", "xhigh", "max"],
     ],
+    // DeepInfra（原生 Responses 直连）：平台无逐模型档位声明
+    //（docs.deepinfra.com/chat/reasoning.md，2026-10-14），退回厂商官方档位，
+    // 同 DeepSeek / Kimi / Zhipu GLM 直连预设
+    [
+      "DeepInfra",
+      "deepseek-ai/DeepSeek-V4-Flash-0731",
+      ["low", "high", "max"],
+    ],
+    ["DeepInfra", "deepseek-ai/DeepSeek-V4-Pro-0813", ["low", "high", "max"]],
+    ["DeepInfra", "moonshotai/Kimi-K3", ["low", "high", "max"]],
+    ["DeepInfra", "zai-org/GLM-5.3", ["low", "high", "max"]],
   ];
 
   it.each(EXPECTED)(
@@ -237,6 +248,8 @@ describe("Codex preset pre-filled reasoning levels", () => {
       ["Baidu Qianfan Token Plan", "deepseek-v4-flash-0731"],
       ["Baidu Qianfan Token Plan", "glm-5.2"],
       ["Baidu Qianfan Token Plan", "kimi-k2.6"],
+      // DeepInfra GLM-5.2：平台未声明、各处口径不一，未实测前不造档位
+      ["DeepInfra", "zai-org/GLM-5.2"],
     ];
     for (const [presetName, modelId] of UNFILLED) {
       const model = catalogModel(presetName, modelId);

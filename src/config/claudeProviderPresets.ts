@@ -1958,6 +1958,30 @@ export const providerPresets: ProviderPreset[] = [
     icon: "meta",
   },
   {
+    name: "DeepInfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    // 官方 Claude Code 接入文档（docs.deepinfra.com/integrations/anthropic.md，
+    // 2026-10-14 核对）：base 为 /anthropic、不带 /v1，Bearer 与 x-api-key 都
+    // 收，默认的 AUTH_TOKEN 即可。档位与 ANTHROPIC_MODEL 照抄官方表：opus
+    // V4 Pro 0813、sonnet/主循环 V4 Flash 0731、haiku Ling-3.0-flash；不带日期
+    // 的 V4 Pro/Flash 是已被取代的早期预览，不用。官方另写的 fable、子代理与
+    // 最大输出变量照仓库惯例不加。/anthropic/v1/models 404，通用候选剥掉
+    // /anthropic 后的 /v1/models 公开可读，不覆写 modelsUrl
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.deepinfra.com/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-ai/DeepSeek-V4-Flash-0731",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "inclusionAI/Ling-3.0-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-ai/DeepSeek-V4-Flash-0731",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-ai/DeepSeek-V4-Pro-0813",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.deepinfra.com/anthropic"],
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {
