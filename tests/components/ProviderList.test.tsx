@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { http, HttpResponse } from "msw";
 import type { Provider } from "@/types";
 import {
@@ -341,6 +341,183 @@ describe("ProviderList Component", () => {
     fireEvent.click(screen.getByTestId("add-a"));
     expect(onSwitch).toHaveBeenCalledWith(providerA);
   });
+
+  it.each([{ ctrlKey: true }, { metaKey: true }])(
+    "keeps search in the list flow and restores cards on close (%o)",
+    async (shortcut) => {
+      const alpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+      const beta = createProvider({ id: "beta", name: "Beta Works" });
+      const onEdit = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [alpha, beta],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+
+      const { container } = renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ alpha, beta }}
+          appId="codex"
+          switchMode={switchMode()}
+          onEdit={onEdit}
+        />,
+      );
+
+      fireEvent.keyDown(window, { key: "f", ...shortcut });
+      const input = screen.getByRole("textbox", { name: "Search providers" });
+      // A body portal with fixed positioning covers the first card's actions.
+      // Keep the panel before the cards in the list's normal document flow.
+      expect(container).toContainElement(input);
+      const list = container.firstElementChild!;
+      const panel = list.firstElementChild!;
+      expect(panel).toContainElement(input);
+      expect(panel).not.toHaveClass("fixed");
+      expect(panel).not.toHaveClass("absolute");
+      expect(panel.nextElementSibling).toContainElement(
+        screen.getByTestId("provider-card-alpha"),
+      );
+      await waitFor(() => expect(input).toHaveFocus());
+
+      fireEvent.change(input, { target: { value: "beta" } });
+      expect(
+        screen.queryByTestId("provider-card-alpha"),
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("edit-beta"));
+      expect(onEdit).toHaveBeenCalledWith(beta);
+
+      fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() => expect(input).not.toBeInTheDocument());
+      expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: "f", ...shortcut });
+      const reopened = screen.getByRole("textbox", {
+        name: "Search providers",
+      });
+      expect(reopened).toHaveValue("beta");
+      fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+      expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Close provider search" }),
+      );
+      await waitFor(() => expect(reopened).not.toBeInTheDocument());
+    },
+  );
+
+  it.each([
+    { shortcut: { ctrlKey: true }, controlled: false },
+    { shortcut: { metaKey: true }, controlled: false },
+    { shortcut: { ctrlKey: true }, controlled: true },
+    { shortcut: { metaKey: true }, controlled: true },
+  ])(
+    "refocuses an already open search panel (%o)",
+    async ({ shortcut, controlled }) => {
+      const providers = Array.from({ length: 30 }, (_, index) =>
+        createProvider({ id: `provider-${index}`, name: `Provider ${index}` }),
+      );
+      useDragSortMock.mockReturnValue({
+        sortedProviders: providers,
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      function SearchList() {
+        const [open, setOpen] = useState(false);
+        return (
+          <div
+            data-testid="scroll-container"
+            style={{ height: 200, overflowY: "auto" }}
+          >
+            <ProviderList
+              {...baseProps}
+              providers={Object.fromEntries(
+                providers.map((provider) => [provider.id, provider]),
+              )}
+              appId="claude"
+              {...(controlled
+                ? { searchOpen: open, onSearchOpenChange: setOpen }
+                : {})}
+            />
+          </div>
+        );
+      }
+      renderWithQueryClient(<SearchList />);
+      fireEvent.keyDown(window, { key: "f", ...shortcut });
+      const input = screen.getByRole("textbox", {
+        name: "Search providers",
+      }) as HTMLInputElement;
+      await waitFor(() => expect(input).toHaveFocus());
+      fireEvent.change(input, { target: { value: "Provider" } });
+      const scrollIntoView = vi.fn();
+      input.scrollIntoView = scrollIntoView;
+
+      // jsdom has no layout: model scrolling away and assert the browser scroll request.
+      const scrollContainer = screen.getByTestId("scroll-container");
+      for (let invocation = 1; invocation <= 2; invocation++) {
+        scrollContainer.scrollTop = 1000;
+        screen.getByTestId("edit-provider-29").focus();
+        expect(input).not.toHaveFocus();
+        const event = new KeyboardEvent("keydown", {
+          key: "f",
+          ...shortcut,
+          cancelable: true,
+        });
+        fireEvent(window, event);
+        expect(event.defaultPrevented).toBe(true);
+        await waitFor(() => expect(input).toHaveFocus());
+        expect(input.selectionStart).toBe(0);
+        expect(input.selectionEnd).toBe("Provider".length);
+        expect(scrollIntoView).toHaveBeenCalledTimes(invocation);
+        expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+      }
+    },
+  );
+
+  it.each(["input", "textarea", "select", "contenteditable"])(
+    "does not steal the search shortcut from another %s",
+    async (targetType) => {
+      const provider = createProvider();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [provider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ [provider.id]: provider }}
+          appId="claude"
+        />,
+      );
+      fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+      const input = screen.getByRole("textbox", { name: "Search providers" });
+      await waitFor(() => expect(input).toHaveFocus());
+      const scrollIntoView = vi.fn();
+      input.scrollIntoView = scrollIntoView;
+      const target = document.createElement(
+        targetType === "contenteditable" ? "div" : targetType,
+      );
+      if (targetType === "contenteditable") {
+        target.tabIndex = 0;
+        // jsdom does not implement isContentEditable.
+        Object.defineProperty(target, "isContentEditable", { value: true });
+      }
+      document.body.appendChild(target);
+      try {
+        target.focus();
+        const event = new KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          cancelable: true,
+        });
+        fireEvent(window, event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(target).toHaveFocus();
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      } finally {
+        target.remove();
+      }
+    },
+  );
 
   it("filters providers with the search input", () => {
     const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
