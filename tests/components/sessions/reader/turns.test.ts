@@ -615,6 +615,44 @@ describe("搜索", () => {
     expect(findMatchPositionForMessage(turns, hits, 99)).toBe(1);
   });
 
+  it.each([false, true])(
+    "正文摘录优先定位正文，跳过同消息思考块（中途说明：%s）",
+    (intermediate) => {
+      const turns = buildTurns(
+        [
+          msg("user", [text("question")], { turnId: "t1" }),
+          msg(
+            "assistant",
+            [
+              thinking("needle thought"),
+              text("needle body"),
+              ...(intermediate ? [call("c")] : []),
+            ],
+            { turnId: "t1" },
+          ),
+          ...(intermediate
+            ? [
+                msg("tool", [result("c")], { turnId: "t1" }),
+                msg("assistant", [text("done")], { turnId: "t1" }),
+              ]
+            : []),
+        ],
+        { style: AGENT_READER_STYLES.codex },
+      );
+      const hits = findSearchHits(turns, "needle")!;
+      expect(hits.total).toBe(2);
+      expect(findMatchPositionForMessage(turns, hits, 1)).toBe(2);
+      // 只有思考命中时仍有可靠回退。
+      expect(
+        findMatchPositionForMessage(
+          turns,
+          findSearchHits(turns, "thought")!,
+          1,
+        ),
+      ).toBe(1);
+    },
+  );
+
   it("stepSearchText 覆盖每种步骤", () => {
     const [turn] = buildTurns([
       msg("user", [text("q")]),

@@ -3,13 +3,14 @@ pub mod content;
 pub mod model;
 pub mod providers;
 pub mod search;
+mod search_revision;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
@@ -56,7 +57,31 @@ pub struct DeleteSessionOutcome {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    scan_sessions_with_status().sessions
+    let scan = scan_sessions_with_status();
+    let sessions = scan.sessions.clone();
+    *RECENT_SCAN.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), scan));
+    sessions
+}
+
+// The index request follows list_sessions. Reuse that scan once, including its
+// completeness flags; enabling from a cached page or a queued rerun scans afresh.
+static RECENT_SCAN: LazyLock<Mutex<Option<(Instant, SessionScan)>>> =
+    LazyLock::new(|| Mutex::new(None));
+const SCAN_REUSE_WINDOW: Duration = Duration::from_secs(5);
+
+pub(crate) fn scan_for_index() -> SessionScan {
+    take_recent_scan(&RECENT_SCAN, Instant::now()).unwrap_or_else(scan_sessions_with_status)
+}
+
+fn take_recent_scan(
+    slot: &Mutex<Option<(Instant, SessionScan)>>,
+    now: Instant,
+) -> Option<SessionScan> {
+    slot.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .filter(|(created, _)| now.saturating_duration_since(*created) <= SCAN_REUSE_WINDOW)
+        .map(|(_, scan)| scan)
 }
 
 pub(crate) struct SessionScan {
@@ -297,6 +322,30 @@ where
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn index_reuses_a_fresh_scan_once_and_preserves_incomplete_providers() {
+        let now = Instant::now();
+        let slot = Mutex::new(Some((
+            now,
+            SessionScan {
+                sessions: Vec::new(),
+                // Claude failed; Codex really has no sessions. These flags must
+                // survive reuse so only Codex's old index is eligible for pruning.
+                complete_providers: HashSet::from(["codex".into()]),
+            },
+        )));
+        let scan = take_recent_scan(&slot, now).unwrap();
+        assert!(scan.sessions.is_empty());
+        assert_eq!(scan.complete_providers, HashSet::from(["codex".into()]));
+        assert!(take_recent_scan(&slot, now).is_none());
+
+        *slot.lock().unwrap() = Some((now, scan));
+        assert!(
+            take_recent_scan(&slot, now + SCAN_REUSE_WINDOW + Duration::from_secs(1)).is_none()
+        );
+        assert!(slot.lock().unwrap().is_none());
+    }
 
     fn write_codex_session(path: &Path, session_id: &str) {
         std::fs::write(

@@ -9,7 +9,7 @@
 //!   注入内容（AGENTS.md、system-reminder…）不收
 //! - trigram 分词：中文、代码标识符都能按子串命中；不足 3 个字符的查询 trigram
 //!   用不上，对规范化正文做精确子串扫描
-//! - 增量：按会话源的 `(mtime, len)` 指纹判断，没变的会话不再解析
+//! - 增量：文件使用 `(mtime, len)`，SQLite 使用会话原始行 revision；没变的会话不再解析
 //!
 //! FTS 行的 rowid 由「源 id × 2^24 + 消息序号」组成，重建一个会话时按 rowid 区间删除，
 //! 不必扫全表。
@@ -49,7 +49,7 @@ const SNIPPET_BEFORE: usize = 30;
 const SNIPPET_AFTER: usize = 90;
 /// 同步时每处理多少个会话上报一次进度
 const PROGRESS_EVERY: usize = 25;
-/// 一次同步重建了这么多会话后整理索引（合并 FTS 段、VACUUM）；
+/// 首次建库收录了这么多会话后整理索引（合并 FTS 段、VACUUM）；
 /// 实测 1600 多个会话首次建库后，整理能把文件从约 170MB 缩到约 100MB
 const COMPACT_AFTER_CHANGES: usize = 50;
 
@@ -702,7 +702,7 @@ fn set_status(status: IndexStatus, on_status: &dyn Fn(IndexStatus)) {
 
 fn run_sync(on_status: &dyn Fn(IndexStatus)) {
     let mut seen = HashSet::new();
-    let scan = super::scan_sessions_with_status();
+    let scan = super::scan_for_index();
     let sources: Vec<(String, String)> = scan
         .sessions
         .into_iter()
@@ -717,16 +717,25 @@ fn run_sync(on_status: &dyn Fn(IndexStatus)) {
     };
     set_status(status, on_status);
 
+    let initially_empty = with_index(|index| {
+        index.conn.query_row(
+            "SELECT NOT EXISTS(SELECT 1 FROM indexed_sources)",
+            [],
+            |row| row.get(0),
+        )
+    })
+    .unwrap_or(false);
     if let Err(e) = with_index(|index| index.retain_sources(&seen, &scan.complete_providers)) {
         log::warn!("清理会话正文索引失败: {e}");
     }
 
     let mut changed = 0;
+    let mut revisions = super::search_revision::SqliteRevisions::default();
     for (provider_id, source_path) in &sources {
         if !enabled() {
             break;
         }
-        if index_source(provider_id, source_path) {
+        if index_source(provider_id, source_path, &mut revisions) {
             changed += 1;
         }
         status.processed += 1;
@@ -735,7 +744,7 @@ fn run_sync(on_status: &dyn Fn(IndexStatus)) {
         }
     }
 
-    let tidy = if changed >= COMPACT_AFTER_CHANGES {
+    let tidy = if should_compact(initially_empty, changed) {
         with_index(|index| index.compact())
     } else {
         with_index(|index| index.checkpoint())
@@ -748,15 +757,29 @@ fn run_sync(on_status: &dyn Fn(IndexStatus)) {
     set_status(status, on_status);
 }
 
+/// 仅首次批量建库后压缩，常规增量同步不触发全库 VACUUM。
+fn should_compact(initially_empty: bool, changed: usize) -> bool {
+    initially_empty && changed >= COMPACT_AFTER_CHANGES
+}
+
 /// 指纹没变就跳过；变了（或从没收录过）就重新解析并替换。返回是否重建过
-fn index_source(provider_id: &str, source_path: &str) -> bool {
+fn index_source(
+    provider_id: &str,
+    source_path: &str,
+    revisions: &mut super::search_revision::SqliteRevisions,
+) -> bool {
     let Ok(source) = content::validate_source(provider_id, source_path) else {
         return false;
     };
-    let Ok(fingerprint) = cache::source_fingerprint(&source) else {
+    let fingerprint = match &source.location {
+        content::SourceLocation::Sqlite { .. } => revisions.fingerprint(&source),
+        _ => cache::source_fingerprint(&source)
+            .map(StoredFingerprint::from)
+            .map_err(|e| e.to_string()),
+    };
+    let Ok(fingerprint) = fingerprint else {
         return false;
     };
-    let fingerprint = StoredFingerprint::from(fingerprint);
     let stored = with_index(|index| index.stored_fingerprint(provider_id, source_path))
         .ok()
         .flatten();
@@ -830,6 +853,97 @@ mod tests {
         })
     }
 
+    #[test]
+    fn sqlite_sync_only_rebuilds_the_changed_session() {
+        for (provider, table) in [
+            ("opencode", "part"),
+            ("hermes", "messages"),
+            ("mcode", "local_runtime_messages"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let db = dir.path().join("sessions.db");
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(&format!(
+                "PRAGMA journal_mode=WAL;
+                 CREATE TABLE {table}(session_id TEXT, content TEXT, timestamp INTEGER);"
+            ))
+            .unwrap();
+            for i in 0..50 {
+                conn.execute(
+                    &format!("INSERT INTO {table} VALUES (?1, 'original', NULL)"),
+                    [i.to_string()],
+                )
+                .unwrap();
+            }
+            let mut index = SessionIndex::open_in_memory().unwrap();
+            for (pass, expected) in [50, 0, 1, 0].into_iter().enumerate() {
+                if pass == 2 {
+                    // The source DB/WAL fingerprint changes for all 50 sessions,
+                    // but only one session changed; no activity timestamp changes.
+                    conn.execute(
+                        &format!("UPDATE {table} SET content='edited' WHERE session_id='7'"),
+                        [],
+                    )
+                    .unwrap();
+                }
+                let mut revisions = super::super::search_revision::SqliteRevisions::default();
+                let mut loads = 0;
+                let mut changed = 0;
+                for i in 0..50 {
+                    let id = i.to_string();
+                    let source = content::ValidatedSource {
+                        provider_id: provider.into(),
+                        raw: id.clone(),
+                        location: content::SourceLocation::Sqlite {
+                            db: db.clone(),
+                            session_id: id.clone(),
+                        },
+                    };
+                    let fingerprint = revisions.fingerprint(&source).unwrap();
+                    let stored = index.stored_fingerprint(provider, &id).unwrap();
+                    changed += usize::from(index_changed_source(
+                        stored,
+                        fingerprint,
+                        || {
+                            loads += 1;
+                            let body: String = conn
+                                .query_row(
+                                    &format!("SELECT content FROM {table} WHERE session_id=?1"),
+                                    [&id],
+                                    |row| row.get(0),
+                                )
+                                .unwrap();
+                            Ok(vec![SessionMessage::from_blocks(
+                                "user",
+                                None,
+                                vec![SessionBlock::text(body)],
+                            )])
+                        },
+                        |rows| {
+                            index
+                                .replace_source(provider, &id, fingerprint, rows)
+                                .map_err(|e| e.to_string())
+                        },
+                    ));
+                }
+                assert_eq!(
+                    (loads, changed),
+                    (expected, expected),
+                    "{provider} pass {pass}"
+                );
+                assert_eq!(
+                    revisions.opened_databases(),
+                    usize::from(pass == 0 || pass == 2),
+                    "unchanged databases must not be opened or rehashed"
+                );
+                assert_eq!(should_compact(pass == 0, changed), pass == 0);
+            }
+            assert_eq!(index.search("edited", None, 10).unwrap().len(), 1);
+        }
+        assert!(!should_compact(false, 50));
+        assert!(!should_compact(true, 49));
+    }
+
     fn retain_scanned_claude(index: &mut SessionIndex, root: &Path) -> (usize, bool) {
         let mut status = super::super::providers::utils::ScanStatus::default();
         let sessions = super::super::providers::claude::scan_sessions_in_root(root, &mut status);
@@ -864,7 +978,7 @@ mod tests {
             .unwrap();
 
         let permissions = std::fs::metadata(&root).unwrap().permissions();
-        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0)).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o0)).unwrap();
         let read_error = std::fs::read_dir(&root).err();
         // Both the list refresh and the background sync encounter the outage.
         let list = super::super::providers::claude::scan_sessions_in_root(

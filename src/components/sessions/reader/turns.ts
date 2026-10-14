@@ -730,6 +730,7 @@ export const findMatchPositionForMessage = (
 ): number => {
   let position = 1;
   let sameTurn: number | null = null;
+  let sameMessage: number | null = null;
   for (const match of hits.matches) {
     const turn = turns[match.turn];
     if (
@@ -742,13 +743,20 @@ export const findMatchPositionForMessage = (
         at === messageIndex ||
         (match.target === "final" && at !== undefined && messageIndex >= at)
       ) {
-        return position;
+        const isText =
+          match.target === "question" ||
+          match.target === "final" ||
+          turn.steps.some(
+            (step) => step.kind === "note" && step.id === match.targetId,
+          );
+        if (isText) return position;
+        sameMessage ??= position;
       }
       sameTurn ??= position;
     }
     position += match.count;
   }
-  return sameTurn ?? 1;
+  return sameMessage ?? sameTurn ?? 1;
 };
 
 // ─── 行模型 ───────────────────────────────────────────────────────────────
