@@ -16,6 +16,7 @@ pub(crate) mod gemini_direct;
 mod gemini_editor;
 pub(crate) mod grok_direct;
 mod grok_editor;
+pub(crate) mod icon;
 mod live;
 #[cfg(test)]
 mod opencode_tests;
@@ -3247,12 +3248,10 @@ wire_api = "responses"
                             .unwrap();
                     }
                     runtime
-                        .block_on(
-                            crate::commands::remove_codex_oauth_account_with_switch_lock(
-                                state,
-                                "old-local-id",
-                            ),
-                        )
+                        .block_on(remove_codex_account_leaving_dangling_bindings(
+                            state,
+                            "old-local-id",
+                        ))
                         .unwrap();
                     let restarted = (mode == "direct").then(|| AppState::new(state.db.clone()));
                     let state = restarted.as_ref().unwrap_or(state);
@@ -3358,6 +3357,230 @@ wire_api = "responses"
         }
     }
 
+    /// 删号但不解绑供应商：模拟旧版删号留下的悬空行。解绑失败、别的设备同步来的行
+    /// 同样会悬空，恢复路径仍要能处理。
+    async fn remove_codex_account_leaving_dangling_bindings(
+        state: &AppState,
+        account_id: &str,
+    ) -> Result<(), String> {
+        let _switch_guard = state
+            .proxy_service
+            .lock_switch_for_app(AppType::Codex.as_str())
+            .await;
+        state
+            .codex_oauth_manager
+            .remove_account(account_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    fn seed_codex_recovery_accounts(state: &AppState) {
+        tauri::async_runtime::block_on(async {
+            for (id, user) in [("acct-old", "old-user"), ("acct-new", "new-user")] {
+                state
+                    .codex_oauth_manager
+                    .add_test_account_with_user_identity(id, "access", user)
+                    .await
+                    .expect("seed account");
+            }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn codex_account_removal_and_logout_unbind_current_and_inactive_cards() {
+        for logout_all in [false, true] {
+            with_test_home(|state, _| {
+                crate::settings::reload_settings().unwrap();
+                seed_codex_recovery_accounts(state);
+                let current = managed_codex_provider("current", "acct-old");
+                let mut legacy = managed_codex_provider("legacy", "acct-old");
+                legacy.category = None;
+                legacy.notes = Some("keep notes".into());
+                legacy.settings_config["auth"] =
+                    json!({"tokens": {"refresh_token": "stale-snapshot"}});
+                legacy.settings_config["model"] = json!("keep-model");
+                let other = managed_codex_provider("other", "acct-new");
+                // 从另一台设备同步来的行：绑的是那台设备的本地账号，本机删号或登出都不能动它，
+                // 否则解绑会随云同步回去，弄坏那台设备上正常的绑定。
+                let foreign = managed_codex_provider("foreign", "acct-other-device");
+                let mut unrelated = managed_codex_provider("unrelated", "acct-old");
+                unrelated
+                    .meta
+                    .as_mut()
+                    .unwrap()
+                    .auth_binding
+                    .as_mut()
+                    .unwrap()
+                    .source = AuthBindingSource::ProviderConfig;
+                for provider in [&current, &legacy, &other, &foreign, &unrelated] {
+                    state.db.save_provider("codex", provider).unwrap();
+                }
+                state.db.save_provider("claude", &current).unwrap();
+                state
+                    .db
+                    .conn
+                    .lock()
+                    .unwrap()
+                    .execute(
+                        "UPDATE providers SET meta = json_set(meta, '$.futureField', 'keep') WHERE id = 'legacy'",
+                        [],
+                    )
+                    .unwrap();
+                ProviderService::switch(state, AppType::Codex, &current.id).unwrap();
+                if logout_all {
+                    tauri::async_runtime::block_on(
+                        crate::commands::logout_codex_oauth_with_switch_lock(state),
+                    )
+                    .unwrap();
+                } else {
+                    tauri::async_runtime::block_on(
+                        crate::commands::remove_codex_oauth_account_with_switch_lock(
+                            state, "acct-old",
+                        ),
+                    )
+                    .unwrap();
+                }
+                for id in ["current", "legacy"] {
+                    let saved = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+                    assert!(saved.meta.unwrap().auth_binding.is_none());
+                    assert_eq!(saved.settings_config["auth"], json!({}));
+                    assert_eq!(saved.category.as_deref(), Some("official"));
+                }
+                let saved_legacy = state
+                    .db
+                    .get_provider_by_id("legacy", "codex")
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(saved_legacy.notes, legacy.notes);
+                assert_eq!(saved_legacy.settings_config["model"], "keep-model");
+                let future: String = state
+                    .db
+                    .conn
+                    .lock()
+                    .unwrap()
+                    .query_row(
+                        "SELECT json_extract(meta, '$.futureField') FROM providers WHERE id = 'legacy'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(future, "keep");
+                let bound_to = |id: &str, app: &str| {
+                    state
+                        .db
+                        .get_provider_by_id(id, app)
+                        .unwrap()
+                        .unwrap()
+                        .meta
+                        .unwrap()
+                        .managed_account_id_for("codex_oauth")
+                };
+                assert_eq!(bound_to("other", "codex").is_none(), logout_all);
+                assert_eq!(
+                    bound_to("foreign", "codex").as_deref(),
+                    Some("acct-other-device")
+                );
+                assert!(state
+                    .db
+                    .get_provider_by_id("unrelated", "codex")
+                    .unwrap()
+                    .unwrap()
+                    .meta
+                    .unwrap()
+                    .auth_binding
+                    .is_some());
+                assert!(state
+                    .db
+                    .get_provider_by_id("current", "claude")
+                    .unwrap()
+                    .unwrap()
+                    .meta
+                    .unwrap()
+                    .auth_binding
+                    .is_some());
+                assert_eq!(
+                    crate::settings::get_current_provider(&AppType::Codex).as_deref(),
+                    Some("current")
+                );
+                assert!(!crate::codex_config::get_codex_auth_path().exists());
+                assert!(!crate::codex_config::codex_managed_oauth_live_auth_marker_exists());
+                ProviderService::switch(state, AppType::Codex, "legacy").unwrap();
+                assert!(
+                    !crate::codex_config::get_codex_auth_path().exists(),
+                    "unbound legacy card must not resurrect stored credentials"
+                );
+                assert!(state
+                    .db
+                    .unbind_codex_managed_accounts(&["acct-old".to_string()])
+                    .unwrap()
+                    .is_empty());
+            });
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn codex_failed_batch_unbinding_rolls_back_and_leaves_a_recovery_path() {
+        for rebind in [false, true] {
+            with_test_home(|state, _| {
+                crate::settings::reload_settings().unwrap();
+                seed_codex_recovery_accounts(state);
+                let current = managed_codex_provider("a-current", "acct-old");
+                let second = managed_codex_provider("z-second", "acct-old");
+                let target = managed_codex_provider("target", "acct-new");
+                for provider in [&current, &second, &target] {
+                    state.db.save_provider("codex", provider).unwrap();
+                }
+                ProviderService::switch(state, AppType::Codex, &current.id).unwrap();
+                state
+                    .db
+                    .conn
+                    .lock()
+                    .unwrap()
+                    .execute_batch(
+                        "CREATE TRIGGER reject_unbind BEFORE UPDATE OF meta ON providers
+                     WHEN OLD.id = 'z-second' AND json_extract(NEW.meta, '$.authBinding') IS NULL
+                     BEGIN SELECT RAISE(FAIL, 'injected unbind failure'); END;",
+                    )
+                    .unwrap();
+                let error = tauri::async_runtime::block_on(
+                    crate::commands::remove_codex_oauth_account_with_switch_lock(state, "acct-old"),
+                )
+                .unwrap_err();
+                assert!(error.contains("账号已删除") && error.contains("解绑失败"));
+                for id in [&current.id, &second.id] {
+                    assert_eq!(
+                        state
+                            .db
+                            .get_provider_by_id(id, "codex")
+                            .unwrap()
+                            .unwrap()
+                            .meta
+                            .unwrap()
+                            .managed_account_id_for("codex_oauth")
+                            .as_deref(),
+                        Some("acct-old")
+                    );
+                }
+                assert!(
+                    !tauri::async_runtime::block_on(state.codex_oauth_manager.list_accounts())
+                        .iter()
+                        .any(|account| account.id == "acct-old")
+                );
+                if rebind {
+                    let replacement = managed_codex_provider(&current.id, "acct-new");
+                    ProviderService::update(state, AppType::Codex, None, replacement).unwrap();
+                } else {
+                    ProviderService::switch(state, AppType::Codex, &target.id).unwrap();
+                }
+                let auth: Value =
+                    read_json_file(&crate::codex_config::get_codex_auth_path()).unwrap();
+                assert_eq!(auth["tokens"]["account_id"], "acct-new");
+            });
+        }
+    }
+
     #[test]
     #[serial]
     fn deleted_codex_account_recovers_after_persisted_startup() {
@@ -3391,12 +3614,9 @@ wire_api = "responses"
                 crate::mode::controller::enter(&state, &AppType::Codex, false)
                     .await
                     .unwrap();
-                crate::commands::remove_codex_oauth_account_with_switch_lock(
-                    &state,
-                    "old-local-id",
-                )
-                .await
-                .unwrap();
+                remove_codex_account_leaving_dangling_bindings(&state, "old-local-id")
+                    .await
+                    .unwrap();
                 state
                     .codex_oauth_manager
                     .add_test_account_with_workspace_and_access_token(
@@ -4413,6 +4633,35 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn universal_provider_icon_is_validated_on_save_and_sync() {
+        with_test_home(|state, _home| {
+            let mut universal = UniversalProvider::new(
+                "icon".into(),
+                "Icon".into(),
+                "custom".into(),
+                "https://api.example".into(),
+                "key".into(),
+            );
+            universal.apps.claude = true;
+            // 只有文件头、没有像素数据的「PNG」
+            universal.icon =
+                Some("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAAA=".into());
+            assert!(ProviderService::upsert_universal(state, universal.clone()).is_err());
+            assert!(state.db.get_universal_provider("icon").unwrap().is_none());
+
+            // 绕过保存直接写进库的坏图标，同步到应用时也不会复制给子供应商
+            state.db.save_universal_provider(&universal).unwrap();
+            assert!(ProviderService::sync_universal_to_apps(state, "icon").is_err());
+            assert!(state
+                .db
+                .get_provider_by_id("universal-claude-icon", "claude")
+                .unwrap()
+                .is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
     fn sync_universal_to_apps_preserves_child_metadata() {
         with_test_home(|state, _home| {
             let mut universal = UniversalProvider::new(
@@ -4722,11 +4971,7 @@ wire_api = "responses"
                         });
                     }
                     runtime
-                        .block_on(
-                            crate::commands::remove_codex_oauth_account_with_switch_lock(
-                                state, "old",
-                            ),
-                        )
+                        .block_on(remove_codex_account_leaving_dangling_bindings(state, "old"))
                         .unwrap();
                     // A stale marker must not claim a later native login of the same user.
                     auth["tokens"]["refresh_token"] = json!("native-rotated-token");
@@ -5276,6 +5521,38 @@ impl ProviderService {
         Ok(true)
     }
 
+    /// 新增供应商之前的规范化和校验，`add` 和 `add_without_switching` 共用。
+    fn prepare_new_provider(app_type: &AppType, provider: &mut Provider) -> Result<(), AppError> {
+        // Normalize Claude model keys
+        Self::normalize_provider_if_claude(app_type, provider);
+        Self::validate_provider_settings(app_type, provider)?;
+        Self::normalize_usage_script_credential_overrides(app_type, provider);
+        if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
+            keep_common_config_for_old_versions(provider);
+        }
+        Ok(())
+    }
+
+    /// 只把供应商存进列表，不写客户端配置、不动当前指针（切换式应用）。
+    ///
+    /// `add` 在还没有当前供应商时会让新的这家直接生效；深链接导入时用户关掉了「导入后立即
+    /// 切换」，就不能这样，交给用户之后自己切换。
+    pub fn add_without_switching(
+        state: &AppState,
+        app_type: AppType,
+        provider: Provider,
+    ) -> Result<bool, AppError> {
+        if app_type.is_additive_mode() {
+            return Self::add(state, app_type, provider, false);
+        }
+        let mut provider = provider;
+        Self::prepare_new_provider(&app_type, &mut provider)?;
+        // 和切换互斥：等着的切换不能看到只存了一半的行
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
+        state.db.save_provider(app_type.as_str(), &provider)?;
+        Ok(true)
+    }
+
     /// Add a new provider
     pub fn add(
         state: &AppState,
@@ -5288,15 +5565,9 @@ impl ProviderService {
         }
 
         let mut provider = provider;
-        // Normalize Claude model keys
-        Self::normalize_provider_if_claude(&app_type, &mut provider);
-        Self::validate_provider_settings(&app_type, &provider)?;
-        Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        Self::prepare_new_provider(&app_type, &mut provider)?;
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
-        }
-        if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
-            keep_common_config_for_old_versions(&mut provider);
         }
 
         if matches!(app_type, AppType::Codex) {
@@ -7345,6 +7616,7 @@ impl ProviderService {
     }
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+        icon::validate_icon(provider.icon.as_deref())?;
         match app_type {
             AppType::Claude => {
                 if !provider.settings_config.is_object() {
@@ -7813,6 +8085,7 @@ impl ProviderService {
         state: &AppState,
         provider: UniversalProvider,
     ) -> Result<bool, AppError> {
+        icon::validate_icon(provider.icon.as_deref())?;
         // 保存统一供应商
         state.db.save_universal_provider(&provider)?;
 
@@ -7852,6 +8125,8 @@ impl ProviderService {
             .db
             .get_universal_provider(id)?
             .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
+        // 子供应商经 save_provider 直接入库，不走保存校验，图标在这里把关
+        icon::validate_icon(provider.icon.as_deref())?;
 
         // Keep DB and live projections in sync independently per application:
         // one broken config file must not prevent the other two apps from being

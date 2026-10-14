@@ -664,6 +664,86 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "OpenModel",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "OpenModel",
+      options: {
+        baseURL: "https://api.openmodel.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-4-5-20251001": {
+          name: "Claude Haiku 4.5",
+          reasoning: true,
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    icon: "openmodel",
+  },
+  {
+    name: "GrooRoute Pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "GrooRoute Pro",
+      options: {
+        baseURL: "https://grooroute.pro/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    icon: "grooroute",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -710,13 +790,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AIGoCode",
       options: {
-        baseURL: "https://api.aigocode.app",
+        baseURL: "https://api.aigocode.dev",
         apiKey: "",
         setCacheKey: true,
       },
@@ -2690,38 +2770,56 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "KAT-Coder",
-    websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "KAT-Coder",
+      name: "StreamLake",
       options: {
-        baseURL:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
+        baseURL: "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "KAT-Coder-Pro": { name: "KAT-Coder Pro" },
+        "ep-xxx-xxx": {
+          name: "KAT-Coder Pro V2.5",
+          limit: { context: 256000, output: 80000 },
+        },
       },
     },
     category: "cn_official",
     templateValues: {
-      baseURL: {
-        label: "Base URL",
-        placeholder:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
-        defaultValue:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
         editorValue: "",
       },
-      ENDPOINT_ID: {
-        label: "Vanchin Endpoint ID",
-        placeholder: "ep-xxx-xxx",
-        defaultValue: "",
-        editorValue: "",
+    },
+    icon: "catcoder",
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
+    websiteUrl: "https://console.streamlake.ai",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "StreamLake en",
+      options: {
+        baseURL: "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+        apiKey: "",
+        setCacheKey: true,
       },
+      models: {
+        "ep-xxx-xxx": { name: "KAT-Coder Pro" },
+      },
+    },
+    category: "cn_official",
+    templateValues: {
       apiKey: {
         label: "API Key",
         placeholder: "",
@@ -3544,5 +3642,337 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
+  },
+  {
+    name: "SoruxGPT",
+    websiteUrl: "https://ai.soruxgpt.com",
+    apiKeyUrl: "https://ai.soruxgpt.com/console/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "SoruxGPT",
+      options: {
+        baseURL: "https://ai.soruxgpt.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-4-5-20251001": {
+          name: "Claude Haiku 4.5",
+          reasoning: true,
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "IKunCode",
+      options: {
+        baseURL: "https://api.ikuncode.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-4-5-20251001": {
+          name: "Claude Haiku 4.5",
+          reasoning: true,
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "ikuncode",
+  },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "RunToken",
+      options: {
+        baseURL: "https://www.runtoken.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-4-5-20251001": {
+          name: "Claude Haiku 4.5",
+          reasoning: true,
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "runtoken",
+  },
+  {
+    name: "BotCF",
+    websiteUrl: "https://botcf.com",
+    apiKeyUrl: "https://botcf.com/console/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "BotCF",
+      options: {
+        baseURL: "https://botcf.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-4-5-20251001": {
+          name: "Claude Haiku 4.5",
+          reasoning: true,
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "botcf",
+  },
+  {
+    name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "YYLX",
+      options: {
+        baseURL: "https://app.yylx.io/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5": {
+          name: "Claude Sonnet 5",
+          reasoning: true,
+          limit: { context: 1000000, output: 64000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-4-5-20251001": {
+          name: "Claude Haiku 4.5",
+          reasoning: true,
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "yylx",
+  },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "TokenFlux",
+      options: {
+        baseURL: "https://tokenflux.dev/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-4-5": {
+          name: "Claude Haiku 4.5",
+          reasoning: true,
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "tokenflux",
+  },
+  {
+    name: "NekoCode",
+    websiteUrl: "https://nekoapi.ai",
+    apiKeyUrl: "https://nekoapi.ai/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "NekoCode",
+      options: {
+        baseURL: "https://nekoapi.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+        headers: {
+          "User-Agent": "claude-cli/2.1.161 (external, cli)",
+        },
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-4-5-20251001": {
+          name: "Claude Haiku 4.5",
+          reasoning: true,
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "nekocode",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "AIComing",
+      options: {
+        baseURL: "https://api.aicoming.top/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-4-5-20251001": {
+          name: "Claude Haiku 4.5",
+          reasoning: true,
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "aicoming",
   },
 ];

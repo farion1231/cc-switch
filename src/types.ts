@@ -199,8 +199,9 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
-  // Missing means automatic capability routing, including legacy Copilot cards.
-  codexCopilotApiFormat?: CodexCopilotApiFormat;
+  // Managed Codex Copilot uses this instead of apiFormat. Missing/unknown means auto.
+  // Keep the raw string so selections from newer versions survive an edit/save.
+  codexCopilotApiFormat?: string;
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
@@ -400,6 +401,8 @@ export interface Settings {
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header
   showProfileSwitcher?: boolean;
+  // 供应商页页头显示搜索按钮（默认开；关掉后 ⌘F 仍可用）
+  showProviderSearch?: boolean;
   // 启动时检查已安装的命令行应用有没有新版本（默认关）
   checkToolUpdatesOnStartup?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
@@ -409,6 +412,9 @@ export interface Settings {
   unifyCodexSessionHistory?: boolean;
   // User opted in (enable dialog checkbox) to migrate existing official sessions
   unifyCodexMigrateExisting?: boolean;
+  // Codex aggregation: every catalog row uses the classic (v1) sub-agent tools,
+  // so a sub-agent on another provider can read its task (off by default)
+  codexStackClassicSubagents?: boolean;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice
@@ -423,6 +429,8 @@ export interface Settings {
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "zh-TW" | "ja";
+  // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
+  quotaDisplay?: "left" | "used";
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;

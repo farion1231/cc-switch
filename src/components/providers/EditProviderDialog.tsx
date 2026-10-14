@@ -358,7 +358,10 @@ export function EditProviderDialog({
 
   return (
     <FullScreenPanel
-      isOpen={open}
+      // Keep the list visible until the initial projection is ready.
+      // Showing a loading page first causes a flash for fast local reads.
+      isOpen={open && !waitingForEditorView}
+      motionPreset="none"
       trackUnsavedChanges
       title={t("provider.editProviderNamed", { name: provider.name })}
       subtitle={

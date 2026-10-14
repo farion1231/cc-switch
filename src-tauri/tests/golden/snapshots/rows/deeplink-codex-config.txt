@@ -1,0 +1,13 @@
+id: relaycodexconfig-<ts>
+name: Relay Codex Config
+settings_config: {"auth":{"OPENAI_API_KEY":"sk-relay-codex"},"config":"model_provider = \"custom\"\nmodel = \"gpt-5.5\"\nmodel_reasoning_effort = \"medium\"\nweb_search = \"live\"\n\n[model_providers.custom]\nname = \"Relay Upstream\"\nbase_url = \"https://api.relay.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = false\nexperimental_bearer_token = \"sk-relay-codex\"\nmodel_catalog_url = \"https://api.relay.example/v1/models?format=codex\"\nhttp_headers = { \"x-relay-client\" = \"cc-switch\" }\nsupports_websockets = true\n"}
+website_url: https://relay.example
+category: NULL
+sort_index: NULL
+notes: NULL
+icon: NULL
+icon_color: NULL
+meta: {"commonConfigEnabled":true}
+is_current: false
+in_failover_queue: false
+
