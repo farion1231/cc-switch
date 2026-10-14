@@ -1122,6 +1122,17 @@ for action in sys.stdin:
         c.execute('BEGIN IMMEDIATE')
         c.execute("INSERT INTO messages VALUES(2,'s1','assistant','second',2)")
     elif action=='commit': c.execute('COMMIT')
+    elif action=='large':
+        import json
+        for i in range(9):
+            sid='image'+str(i)
+            c.execute("INSERT INTO sessions VALUES(?, '/tmp', NULL, 1, 1)",(sid,))
+            content='\0json:'+json.dumps([{'type':'image_url','image_url':{'url':'data:image/png;base64,'+'A'*(2*1024*1024)}},{'type':'text','text':'visible text'}])
+            c.execute("INSERT INTO messages(session_id,role,content,timestamp) VALUES(?,'user',?,1)",(sid,content))
+        c.execute("INSERT INTO sessions VALUES('tools','/tmp',NULL,1,1)")
+        for i in range(40):
+            # Distinct outputs preserve the native duplicate-selection semantics.
+            c.execute("INSERT INTO messages(session_id,role,content,timestamp) VALUES('tools','tool',?,?)",(str(i)+'\n'+('x'*1024*1024),i+1))
     elif action=='exit': break
     print(action,flush=True)
 c.close()
@@ -1250,6 +1261,37 @@ print(json.dumps([row[0] for row in rows]))
             assert_eq!(read_native(), expected);
             verify_production(&expected);
         }
+        // Review regression: small display projections must not disappear when
+        // the raw image edges or aggregate tool transcript exceed 32 MiB.
+        writeln!(writer.stdin.as_mut().unwrap(), "large").unwrap();
+        line.clear();
+        output.read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "large");
+        let sessions = scan_sessions_sqlite_at(&unc);
+        for i in 0..9 {
+            let session = sessions
+                .iter()
+                .find(|s| s.session_id == format!("image{i}"))
+                .unwrap();
+            assert_eq!(session.title.as_deref(), Some("visible text"));
+            assert_eq!(session.summary.as_deref(), Some("visible text"));
+        }
+        let tools = load_messages_sqlite(&format!("sqlite:{}#tools", unc.display())).unwrap();
+        assert_eq!(tools.len(), 40);
+        assert!(tools.iter().all(|m| m.content.chars().count() < 1300));
+        let tool_ref = messages_cell(12, "content", String::new());
+        let validated = crate::session_manager::content::ValidatedSource {
+            provider_id: "hermes".into(),
+            raw: format!("sqlite:{}#tools", unc.display()),
+            location: crate::session_manager::content::SourceLocation::Sqlite {
+                db: unc.canonicalize().unwrap(),
+                session_id: "tools".into(),
+            },
+        };
+        let expanded =
+            crate::session_manager::content::resolve_content_ref(&validated, &tool_ref).unwrap();
+        assert!(expanded.len() > 1024 * 1024);
+        assert!(expanded.starts_with("0\n"));
         writeln!(writer.stdin.as_mut().unwrap(), "exit").unwrap();
         assert!(writer.wait().unwrap().success());
     }

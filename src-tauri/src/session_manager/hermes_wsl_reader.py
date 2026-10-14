@@ -6,7 +6,7 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-MAX_RESPONSE = 32 * 1024 * 1024
+FRAME_CHARS = 128 * 1024
 request = json.loads(sys.argv[2])
 connection = sqlite3.connect(
     pathlib.Path(sys.argv[1]).as_uri() + "?mode=ro", uri=True, timeout=2.0,
@@ -19,12 +19,8 @@ connection.execute("BEGIN")
 
 def rows(sql, parameters=()):
     result = []
-    size = 0
     for row in connection.execute(sql, parameters):
         item = {key: (None if isinstance(row[key], bytes) else row[key]) for key in row.keys()}
-        size += len(json.dumps(item, ensure_ascii=False).encode("utf-8"))
-        if size > MAX_RESPONSE:
-            raise ValueError("Hermes WSL response exceeds 32 MiB")
         result.append(item)
     return result
 
@@ -83,7 +79,10 @@ else:
     raise ValueError("Unsupported Hermes read operation")
 connection.rollback()
 connection.close()
-encoded = json.dumps(response, ensure_ascii=False)
-if len(encoded.encode("utf-8")) > MAX_RESPONSE:
-    raise ValueError("Hermes WSL response exceeds 32 MiB")
-print(encoded)
+# Frame the JSON stream, rather than rejecting a whole scan/session before
+# Rust can apply its display projection. Each frame is bounded even when JSON
+# escaping expands a cell; cell expansion retains its separate max_bytes guard.
+# All queries above still use the same fresh, read-only SQLite transaction.
+for part in json.JSONEncoder(ensure_ascii=False).iterencode(response):
+    for start in range(0, len(part), FRAME_CHARS):
+        print(json.dumps(part[start:start + FRAME_CHARS], ensure_ascii=False))
