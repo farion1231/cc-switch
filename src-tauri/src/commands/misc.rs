@@ -5241,6 +5241,8 @@ pub(super) const WINDOWS_POWERSHELL_BATCH_COMMAND: &str =
 // rest of the command stream. Environment values stay Unicode inside Windows.
 // A child CMD returns even for claude.cmd shims. Doubled percent signs defer
 // config-path expansion to that child, without CALL's second expansion pass.
+// The final (goto) ends batch processing before deletion so CMD won't try to
+// read another line from the deleted file; the calling shell stays alive.
 #[cfg(any(target_os = "windows", test))]
 const WINDOWS_PROVIDER_BATCH: &str = "@echo off\r\n\
 setlocal DisableDelayedExpansion\r\n\
@@ -5259,7 +5261,7 @@ echo \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\"\r\n\
 \"%ComSpec%\" /D /V:OFF /C claude --settings \"%%CC_SWITCH_INTERNAL_CONFIG_PATH%%\"\r\n\
 del \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" >nul 2>&1\r\n\
 set \"CC_SWITCH_INTERNAL_CONFIG_PATH=\"\r\n\
-del \"%~f0\" >nul 2>&1\r\n";
+(goto) 2>nul & del \"%~f0\" >nul 2>&1\r\n";
 
 #[cfg(any(target_os = "windows", test))]
 pub(super) fn quote_windows_batch_path_for_env(path: &str) -> String {
@@ -5781,20 +5783,45 @@ mod tests {
     }
 
     #[cfg(target_os = "windows")]
+    #[derive(Clone, Copy, Debug)]
+    enum ProviderBatchTestLauncher {
+        Cmd,
+        CmdKeepOpen,
+        PowerShell,
+    }
+
+    #[cfg(target_os = "windows")]
     #[test]
     fn windows_provider_batch_keeps_unicode_paths_out_of_batch_bytes() {
-        assert_windows_provider_batch_cleanup(false, 0);
+        for launcher in [
+            ProviderBatchTestLauncher::Cmd,
+            ProviderBatchTestLauncher::CmdKeepOpen,
+            ProviderBatchTestLauncher::PowerShell,
+        ] {
+            assert_windows_provider_batch_cleanup(false, 0, launcher);
+            assert_windows_provider_batch_cleanup(false, 7, launcher);
+        }
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_provider_batch_cleans_up_after_cmd_shim_exits() {
-        assert_windows_provider_batch_cleanup(true, 0);
-        assert_windows_provider_batch_cleanup(true, 7);
+        for launcher in [
+            ProviderBatchTestLauncher::Cmd,
+            ProviderBatchTestLauncher::CmdKeepOpen,
+            ProviderBatchTestLauncher::PowerShell,
+        ] {
+            assert_windows_provider_batch_cleanup(true, 0, launcher);
+            assert_windows_provider_batch_cleanup(true, 7, launcher);
+        }
     }
 
     #[cfg(target_os = "windows")]
-    fn assert_windows_provider_batch_cleanup(cmd_shim: bool, exit_code: i32) {
+    fn assert_windows_provider_batch_cleanup(
+        cmd_shim: bool,
+        exit_code: i32,
+        launcher: ProviderBatchTestLauncher,
+    ) {
         assert!(WINDOWS_PROVIDER_BATCH.is_ascii());
 
         let temp = tempfile::tempdir().expect("probe directory should be created");
@@ -5812,7 +5839,8 @@ mod tests {
         let config = config_dir.join("设置.json");
         let config_copy = temp.path().join("settings-copy.json");
         let marker = cwd.join("cc-switch-provider-marker.txt");
-        let batch = temp.path().join("provider.bat");
+        let parent_marker = temp.path().join("parent-resumed.txt");
+        let batch = config_dir.join("启动 & %CC_SWITCH_CMD_EXPAND% ^ ! (test) and O'Brien.bat");
         std::fs::write(&config, "{}\n").expect("provider config should be written");
         std::fs::write(&batch, WINDOWS_PROVIDER_BATCH.as_bytes())
             .expect("ASCII provider batch should be written");
@@ -5842,7 +5870,11 @@ mod tests {
         "ok\n",
     )
     .unwrap();
-    std::process::exit(std::env::var("CC_SWITCH_TEST_EXIT_CODE").unwrap().parse().unwrap());
+    let exit_code: i32 = std::env::var("CC_SWITCH_TEST_EXIT_CODE").unwrap().parse().unwrap();
+    if exit_code != 0 {
+        eprintln!("cc-switch-test-provider-error");
+    }
+    std::process::exit(exit_code);
 }
 "#,
         )
@@ -5872,20 +5904,72 @@ mod tests {
             (WINDOWS_CONFIG_PATH_ENV, config_path.as_ref()),
             (WINDOWS_CWD_ENV, cwd_path.as_ref()),
         ];
-        let mut command = std::process::Command::new("cmd");
-        configure_windows_cmd_batch_with(&mut command, "/C", &bat_path, &launch_env);
-        let output = command
+        let mut command = match launcher {
+            ProviderBatchTestLauncher::Cmd | ProviderBatchTestLauncher::CmdKeepOpen => {
+                let mut command = std::process::Command::new("cmd");
+                let action = if matches!(launcher, ProviderBatchTestLauncher::CmdKeepOpen) {
+                    "/K"
+                } else {
+                    "/C"
+                };
+                configure_windows_cmd_batch_with(&mut command, action, &bat_path, &launch_env);
+                command
+            }
+            ProviderBatchTestLauncher::PowerShell => {
+                let mut command = std::process::Command::new(
+                    super::super::windows_console::system_powershell_path().unwrap(),
+                );
+                configure_windows_batch_env_with(&mut command, &bat_path, &launch_env);
+                command.args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &format!(
+                        "{WINDOWS_POWERSHELL_BATCH_COMMAND}; $code = $LASTEXITCODE; \
+                         [System.IO.File]::WriteAllText($env:CC_SWITCH_TEST_PARENT_MARKER, \
+                         'parent-resumed'); exit $code"
+                    ),
+                ]);
+                command
+            }
+        };
+        command
             .env("PATH", path)
             .env("PATHEXT", ".COM;.EXE;.BAT;.CMD")
             .env("CC_SWITCH_CMD_EXPAND", "wrong")
             .env("CC_SWITCH_TEST_CONFIG_COPY", config_copy_path.as_ref())
             .env("CC_SWITCH_TEST_EXIT_CODE", exit_code.to_string())
-            .output()
-            .expect("provider batch should start");
+            .env("CC_SWITCH_TEST_PARENT_MARKER", &parent_marker);
+        let output = if matches!(launcher, ProviderBatchTestLauncher::CmdKeepOpen) {
+            use std::io::Write;
+            use std::process::Stdio;
+
+            // CMD /K needs its own console state when the test runner is detached.
+            let mut child = command
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("interactive CMD should start");
+            let mut input = child.stdin.take().unwrap();
+            input
+                .write_all(
+                    b"@echo parent-resumed>\"%CC_SWITCH_TEST_PARENT_MARKER%\"\r\n@exit 0\r\n",
+                )
+                .expect("parent CMD should accept commands after the provider exits");
+            let output = child.wait_with_output().unwrap();
+            drop(input);
+            output
+        } else {
+            command.output().expect("provider batch should start")
+        };
 
         let diagnostics = || {
             format!(
-                "status: {}\nstdout: {}\nstderr: {}",
+                "launcher: {launcher:?}, shim: {cmd_shim}, provider exit: {exit_code}\n\
+                 status: {}\nstdout: {}\nstderr: {}",
                 output.status,
                 decode_command_output(&output.stdout),
                 decode_command_output(&output.stderr)
@@ -5904,6 +5988,28 @@ mod tests {
         );
         assert!(!config.exists(), "provider config should self-delete");
         assert!(!batch.exists(), "provider batch should self-delete");
+        assert!(output.status.success(), "{}", diagnostics());
+        assert_eq!(
+            decode_command_output(&output.stderr).trim(),
+            if exit_code == 0 {
+                ""
+            } else {
+                "cc-switch-test-provider-error"
+            },
+            "{}",
+            diagnostics()
+        );
+        if !matches!(launcher, ProviderBatchTestLauncher::Cmd) {
+            assert_eq!(
+                std::fs::read_to_string(parent_marker)
+                    .unwrap_or_else(|error| panic!(
+                        "parent shell did not resume: {error}\n{}",
+                        diagnostics()
+                    ))
+                    .trim(),
+                "parent-resumed"
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]
