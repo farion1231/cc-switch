@@ -380,6 +380,78 @@ mod tests {
     }
 
     #[test]
+    fn direct_policy_reachability_ignores_inherited_proxy() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "services::stream_check::tests::direct_policy_reachability_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "invoked only by the isolated parent test"]
+    fn direct_policy_reachability_child() {
+        use std::io::{Read, Write};
+        fn server(status: &str) -> String {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let response =
+                format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            std::thread::spawn(move || {
+                for mut socket in listener.incoming().flatten() {
+                    socket
+                        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                        .unwrap();
+                    let _ = socket.read(&mut [0; 2048]);
+                    let _ = socket.write_all(response.as_bytes());
+                }
+            });
+            format!("http://{address}/")
+        }
+        let origin = server("401 Unauthorized");
+        let proxy = server("502 Bad Gateway");
+        for key in [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+            "REQUEST_METHOD",
+        ] {
+            std::env::remove_var(key);
+        }
+        std::env::set_var("HTTP_PROXY", &proxy);
+        std::env::set_var("HTTPS_PROXY", &proxy);
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let provider = make_provider(serde_json::json!({
+                "config": format!("model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"{origin}\""),
+                "auth": {"OPENAI_API_KEY": "synthetic-only"}
+            }));
+            crate::proxy::http_client::init_with_policy(None, true).unwrap();
+            let via_proxy = StreamCheckService::check_with_retry(&AppType::Codex, &provider, &StreamCheckConfig::default(), None).await.unwrap();
+            assert_eq!(via_proxy.http_status, Some(502));
+            crate::proxy::http_client::set_follow_system_proxy(false).unwrap();
+            let direct = StreamCheckService::check_with_retry(&AppType::Codex, &provider, &StreamCheckConfig::default(), None).await.unwrap();
+            assert!(direct.success);
+            assert_eq!(direct.http_status, Some(401));
+            assert_eq!(direct.message, "Reachable");
+        });
+    }
+
+    #[test]
     fn test_default_config_uses_reachability_friendly_values() {
         let config = StreamCheckConfig::default();
         assert_eq!(config.timeout_secs, 8);
