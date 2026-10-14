@@ -398,6 +398,25 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "GrooRoute Pro",
+    providerKey: "cc-switch-grooroute-pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    settingsConfig: {
+      name: "GrooRoute Pro",
+      baseUrl: "https://grooroute.pro",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    icon: "grooroute",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     providerKey: "cc-switch-shengsuanyun",
@@ -431,11 +450,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "AIGoCode",
     providerKey: "cc-switch-aigo-code",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       name: "AIGoCode",
-      baseUrl: "https://api.aigocode.app",
+      baseUrl: "https://api.aigocode.dev",
       api: "anthropic-messages",
       apiKey: "",
       models: [
@@ -1494,19 +1513,43 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#624AFF",
   },
   {
-    name: "KAT-Coder",
-    providerKey: "cc-switch-kat-coder",
-    websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    providerKey: "cc-switch-streamlake",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
     settingsConfig: {
-      name: "KAT-Coder",
-      baseUrl:
-        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
+      name: "StreamLake",
+      baseUrl: "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
       api: "openai-completions",
       apiKey: "",
       models: [
         piModel("streamlake/kat-coder-pro", {
-          id: "KAT-Coder-Pro",
+          id: "ep-xxx-xxx",
+          name: "KAT-Coder Pro V2.5",
+          maxTokens: 80_000,
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "catcoder",
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
+    providerKey: "cc-switch-kat-coder",
+    websiteUrl: "https://console.streamlake.ai",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    settingsConfig: {
+      name: "StreamLake en",
+      baseUrl: "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("streamlake/kat-coder-pro", {
+          id: "ep-xxx-xxx",
         }),
       ],
     },
@@ -2697,6 +2740,27 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     },
     category: "aggregator",
     icon: "nekocode",
+  },
+  {
+    name: "AIComing",
+    providerKey: "cc-switch-aicoming",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      name: "AIComing",
+      baseUrl: "https://api.aicoming.top",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-4.5", {
+          id: "claude-haiku-4-5-20251001",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "aicoming",
   },
 ];
 

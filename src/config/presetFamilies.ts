@@ -34,7 +34,12 @@ export const PRESET_FAMILIES = {
   qianwen: { name: "千问AI平台" },
   qwencloud: { name: "QwenCloud" },
   siliconflow: { name: "SiliconFlow" },
+  soruxgpt: {
+    name: "SoruxGPT",
+    planOrder: ["payg", "codingPlan"],
+  },
   stepfun: { name: "StepFun" },
+  streamlake: { name: "StreamLake" },
   sudocode: { name: "SudoCode" },
   tencent: {
     name: "Tencent Cloud",

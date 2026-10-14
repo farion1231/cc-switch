@@ -433,6 +433,35 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "GrooRoute Pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    settingsConfig: {
+      name: "grooroute_pro",
+      base_url: "https://grooroute.pro",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "grooroute_pro" },
+    },
+    isPartner: true,
+    icon: "grooroute",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -461,11 +490,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       name: "aigocode",
-      base_url: "https://api.aigocode.app",
+      base_url: "https://api.aigocode.dev",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -2119,11 +2148,44 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "KAT-Coder",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    settingsConfig: {
+      name: "streamlake",
+      base_url:
+        "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "KAT-Coder-Pro-V2.5", name: "KAT-Coder Pro V2.5" },
+        { id: "KAT-Coder-Air-V2.5", name: "KAT-Coder Air V2.5" },
+      ],
+    },
+    category: "cn_official",
+    templateValues: {
+      ENDPOINT_ID: {
+        label: "Vanchin Endpoint ID",
+        placeholder: "ep-xxx-xxx",
+        defaultValue: "",
+        editorValue: "",
+      },
+    },
+    icon: "catcoder",
+    suggestedDefaults: {
+      model: { default: "KAT-Coder-Pro-V2.5", provider: "streamlake" },
+    },
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
     websiteUrl: "https://console.streamlake.ai",
     apiKeyUrl: "https://console.streamlake.ai/console/api-key",
     settingsConfig: {
-      name: "kat_coder",
+      name: "streamlake_en",
       base_url:
         "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
       api_key: "",
@@ -2144,7 +2206,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
     icon: "catcoder",
     suggestedDefaults: {
-      model: { default: "KAT-Coder-Pro V1", provider: "kat_coder" },
+      model: { default: "KAT-Coder-Pro V1", provider: "streamlake_en" },
     },
   },
   {
@@ -2762,5 +2824,38 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "claude-opus-5-5", provider: "nekocode" },
     },
     icon: "nekocode",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      name: "aicoming",
+      base_url: "https://api.aicoming.top",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "aicoming" },
+    },
+    icon: "aicoming",
   },
 ];
