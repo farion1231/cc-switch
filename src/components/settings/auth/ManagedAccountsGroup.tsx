@@ -75,6 +75,7 @@ interface ManagedAccountsGroupProps {
   onAdd: () => void;
   /** Copilot 选部署类型的那块；有它时不显示空状态那行 */
   chooser?: React.ReactNode;
+  loginOptions?: React.ReactNode;
   /** ⋯ 里有没有「重新登录」（Copilot 没有） */
   canReauth: boolean;
   onReauth: (accountId: string) => void;
@@ -111,6 +112,7 @@ export function ManagedAccountsGroup({
   loginLabel,
   onAdd,
   chooser,
+  loginOptions,
   canReauth,
   onReauth,
   onSetDefault,
@@ -344,6 +346,7 @@ export function ManagedAccountsGroup({
       )}
 
       {chooser}
+      {loginOptions}
 
       <div role="status">
         {busy && (
@@ -368,7 +371,7 @@ export function ManagedAccountsGroup({
                 {t("common.cancel", { defaultValue: "取消" })}
               </Button>
             </div>
-            {login.deviceCode && (
+            {login.deviceCode?.user_code && (
               <>
                 <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
                   <span>
@@ -422,6 +425,17 @@ export function ManagedAccountsGroup({
                   })}
                 </span>
               </>
+            )}
+            {login.deviceCode && !login.deviceCode.user_code && (
+              <Button
+                type="button"
+                variant="quiet"
+                size="compact"
+                onClick={openPage}
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                {t("codexOauth.openBrowserLogin")}
+              </Button>
             )}
           </div>
         )}

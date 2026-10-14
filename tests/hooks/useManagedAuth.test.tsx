@@ -59,6 +59,48 @@ function createWrapper(
 }
 
 describe("useManagedAuth", () => {
+  it("opens browser login without copying a device code and keeps the reauth target", async () => {
+    const { copyText } = await import("@/lib/clipboard");
+    const { settingsApi } = await import("@/lib/api");
+    vi.mocked(copyText).mockClear();
+    vi.mocked(settingsApi.openExternal).mockClear();
+    apiMocks.authStartLogin.mockResolvedValue({
+      provider: "codex_oauth",
+      device_code: "browser:flow",
+      user_code: "",
+      verification_uri: "https://auth.openai.com/oauth/authorize?state=random",
+      expires_in: 900,
+      interval: 1,
+    });
+    const { result, unmount } = renderHook(
+      () => useManagedAuth("codex_oauth", undefined, "browser"),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+    act(() => result.current.reauthAccount("acct-1"));
+    await waitFor(() => expect(result.current.isPolling).toBe(true));
+    expect(apiMocks.authStartLogin).toHaveBeenCalledWith(
+      "codex_oauth",
+      undefined,
+      "acct-1",
+      "browser",
+    );
+    await waitFor(() =>
+      expect(settingsApi.openExternal).toHaveBeenCalledWith(
+        "https://auth.openai.com/oauth/authorize?state=random",
+      ),
+    );
+    expect(copyText).not.toHaveBeenCalled();
+    act(() => result.current.cancelAuth());
+    await waitFor(() =>
+      expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
+        "codex_oauth",
+        "browser:flow",
+      ),
+    );
+    unmount();
+  });
+
   beforeEach(() => {
     apiMocks.authGetStatus.mockReset().mockResolvedValue({
       provider: "codex_oauth",

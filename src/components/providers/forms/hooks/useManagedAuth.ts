@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { authApi, settingsApi } from "@/lib/api";
 import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
+import type { CodexLoginMethod } from "@/lib/api/auth";
 import { copyText } from "@/lib/clipboard";
 import type {
   ManagedAuthProvider,
@@ -15,11 +16,13 @@ type PollingState = "idle" | "polling" | "success" | "error";
 type LoginRequest = {
   targetAccountId?: string;
   generation: number;
+  loginMethod?: CodexLoginMethod;
 };
 
 export function useManagedAuth(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
+  loginMethod?: CodexLoginMethod,
 ) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -112,8 +115,15 @@ export function useManagedAuth(
   }, [cancelBackendFlow, stopPolling]);
 
   const startLoginMutation = useMutation({
-    mutationFn: ({ targetAccountId }: LoginRequest) =>
-      authApi.authStartLogin(authProvider, githubDomain, targetAccountId),
+    mutationFn: ({ targetAccountId, loginMethod: method }: LoginRequest) =>
+      method
+        ? authApi.authStartLogin(
+            authProvider,
+            githubDomain,
+            targetAccountId,
+            method,
+          )
+        : authApi.authStartLogin(authProvider, githubDomain, targetAccountId),
     onSuccess: async (response, request) => {
       if (request.generation !== flowGenerationRef.current) {
         void cancelBackendFlow(response.device_code);
@@ -125,7 +135,7 @@ export function useManagedAuth(
       setError(null);
 
       try {
-        await copyText(response.user_code);
+        if (response.user_code) await copyText(response.user_code);
       } catch (e) {
         console.debug("[ManagedAuth] Failed to copy user code:", e);
       }
@@ -140,22 +150,31 @@ export function useManagedAuth(
 
       // Add a small buffer on top of GitHub's suggested interval to avoid
       // hitting slow_down responses too aggressively during device polling.
-      const interval = Math.max((response.interval || 5) + 3, 8) * 1000;
+      const interval = response.user_code
+        ? Math.max((response.interval || 5) + 3, 8) * 1000
+        : 1000;
+      let pollInFlight = false;
       const expiresAt = Date.now() + response.expires_in * 1000;
 
       const pollOnce = async () => {
         if (request.generation !== flowGenerationRef.current) return;
+        if (pollInFlight) return;
         if (Date.now() > expiresAt) {
           stopPolling();
           activeDeviceCodeRef.current = null;
           void cancelBackendFlow(response.device_code);
           flowGenerationRef.current += 1;
           setPollingState("error");
-          setError("Device code expired. Please try again.");
+          setError(
+            t("codexOauth.loginExpired", {
+              defaultValue: "Login expired. Please try again.",
+            }),
+          );
           return;
         }
 
         try {
+          pollInFlight = true;
           const newAccount = await authApi.authPollForAccount(
             authProvider,
             response.device_code,
@@ -195,6 +214,8 @@ export function useManagedAuth(
                 : errorMessage,
             );
           }
+        } finally {
+          pollInFlight = false;
         }
       };
 
@@ -206,7 +227,11 @@ export function useManagedAuth(
         void cancelBackendFlow(response.device_code);
         flowGenerationRef.current += 1;
         setPollingState("error");
-        setError("Device code expired. Please try again.");
+        setError(
+          t("codexOauth.loginExpired", {
+            defaultValue: "Login expired. Please try again.",
+          }),
+        );
       }, response.expires_in * 1000);
       void pollOnce();
     },
@@ -301,10 +326,10 @@ export function useManagedAuth(
       stopPolling();
       void queueBackendCancellation(previousDeviceCode).then(() => {
         if (generation !== flowGenerationRef.current) return;
-        startLoginMutation.mutate({ targetAccountId, generation });
+        startLoginMutation.mutate({ targetAccountId, generation, loginMethod });
       });
     },
-    [queueBackendCancellation, startLoginMutation, stopPolling],
+    [queueBackendCancellation, startLoginMutation, stopPolling, loginMethod],
   );
 
   const startAuth = useCallback(() => beginLogin(), [beginLogin]);
