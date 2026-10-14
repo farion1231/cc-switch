@@ -1,5 +1,10 @@
 import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter } from "@dnd-kit/core";
+import {
+  DndContext,
+  closestCenter,
+  type CollisionDetection,
+  type Modifier,
+} from "@dnd-kit/core";
 import {
   SortableContext,
   useSortable,
@@ -58,6 +63,37 @@ import {
 
 /** 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）的模式状态和动作，由供应商页传入。 */
 export type SwitchModeProps = Omit<SwitchModeInput, "app" | "t" | "providers">;
+
+const verticalDragModifiers: Modifier[] = [
+  ({ transform }) => ({ ...transform, x: 0 }),
+];
+
+export const providerDragCollision: CollisionDetection = (args) => {
+  const { active, collisionRect, droppableRects, pointerCoordinates } = args;
+  const activeRect = droppableRects.get(active.id);
+
+  // Keyboard sorting positions the card at the target's edge, not its center.
+  if (!pointerCoordinates || !activeRect) return closestCenter(args);
+
+  const originCenter = activeRect.top + activeRect.height / 2;
+  const dragCenter = collisionRect.top + collisionRect.height / 2;
+
+  return closestCenter({
+    ...args,
+    droppableContainers: args.droppableContainers.filter(({ id }) => {
+      if (id === active.id) return true;
+      const rect = droppableRects.get(id);
+      if (!rect) return false;
+
+      // Wait until the dragged center crosses a neighbor's original center.
+      // Using untransformed rects keeps the threshold stable as neighbors move.
+      const center = rect.top + rect.height / 2;
+      return dragCenter > originCenter
+        ? center > originCenter && center <= dragCenter
+        : center < originCenter && center >= dragCenter;
+    }),
+  });
+};
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -560,7 +596,8 @@ export function ProviderList({
       ) : (
         <DndContext
           sensors={sensors}
-          collisionDetection={closestCenter}
+          modifiers={verticalDragModifiers}
+          collisionDetection={providerDragCollision}
           onDragEnd={handleDragEnd}
         >
           {sections.map((section, index) => (
@@ -616,11 +653,21 @@ function SortableProviderCard(props: SortableProviderCardProps) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: props.provider.id });
+  } = useSortable({
+    id: props.provider.id,
+    transition: {
+      duration: 280,
+      easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+    },
+  });
 
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    // Unequal-height cards should move without scaling to the drop target.
+    transform: CSS.Translate.toString(transform),
     transition,
+    // The transformed wrapper owns the stacking context, not the inner card.
+    position: "relative",
+    zIndex: isDragging ? 10 : undefined,
   };
 
   return (

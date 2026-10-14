@@ -3,9 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState, type ReactElement } from "react";
 import { http, HttpResponse } from "msw";
+import type { ClientRect, CollisionDetection } from "@dnd-kit/core";
 import type { Provider } from "@/types";
 import {
   ProviderList,
+  providerDragCollision,
   type SwitchModeProps,
 } from "@/components/providers/ProviderList";
 import { server } from "../msw/server";
@@ -145,6 +147,97 @@ beforeEach(() => {
     sortedProviders: [],
     sensors: [],
     handleDragEnd: vi.fn(),
+  });
+});
+
+describe("ProviderList drag collision", () => {
+  const rect = (top: number, height: number): ClientRect => ({
+    top,
+    bottom: top + height,
+    left: 0,
+    right: 800,
+    width: 800,
+    height,
+  });
+
+  // Two compact cards surround an expanded usage card, followed by another card.
+  const layout = new Map([
+    ["a", rect(0, 60)],
+    ["b", rect(68, 200)],
+    ["c", rect(276, 60)],
+    ["d", rect(344, 60)],
+  ]);
+
+  function collisionAt(
+    activeId: string,
+    centerY: number,
+    { keyboard = false, scroll = 0 } = {},
+  ) {
+    const droppableRects = new Map(
+      [...layout].map(([id, bounds]) => [
+        id,
+        rect(bounds.top - scroll, bounds.height),
+      ]),
+    );
+    const initial = droppableRects.get(activeId)!;
+    const collisionRect = rect(centerY - initial.height / 2, initial.height);
+    const args: Parameters<CollisionDetection>[0] = {
+      active: {
+        id: activeId,
+        data: { current: {} },
+        rect: { current: { initial, translated: collisionRect } },
+      },
+      collisionRect,
+      droppableRects,
+      droppableContainers: [...droppableRects].map(([id, bounds]) => ({
+        id,
+        key: id,
+        disabled: false,
+        data: { current: {} },
+        node: { current: null },
+        rect: { current: bounds },
+      })),
+      pointerCoordinates: keyboard ? null : { x: 20, y: centerY },
+    };
+    return providerDragCollision(args)[0]?.id;
+  }
+
+  it.each([
+    ["a", 110, "a"], // Past the old nearest-center threshold, still before B.
+    ["a", 167, "a"],
+    ["a", 168, "b"],
+    ["c", 230, "c"], // Upward drag must also reach the tall card's center.
+    ["c", 169, "c"],
+    ["c", 168, "b"],
+    ["b", 250, "b"], // The expanded card must not displace a compact card early.
+    ["b", 306, "c"],
+    ["c", 350, "c"], // Equal-height cards use the same crossing threshold.
+    ["c", 374, "d"],
+  ])("dragging %s to center %i selects %s", (active, center, expected) => {
+    expect(collisionAt(active, center)).toBe(expected);
+  });
+
+  it("selects the last crossed card during a fast drag across several cards", () => {
+    expect(collisionAt("a", 340)).toBe("c");
+    expect(collisionAt("a", 450)).toBe("d");
+    expect(collisionAt("d", 20)).toBe("a");
+  });
+
+  it("restores the original position when the pointer reverses before dropping", () => {
+    expect([180, 165, 40].map((center) => collisionAt("a", center))).toEqual([
+      "b",
+      "a",
+      "a",
+    ]);
+  });
+
+  it("uses viewport measurements consistently while scrolling", () => {
+    expect(collisionAt("a", 67, { scroll: 100 })).toBe("a");
+    expect(collisionAt("a", 68, { scroll: 100 })).toBe("b");
+  });
+
+  it("keeps keyboard sorting independent of the pointer crossing threshold", () => {
+    expect(collisionAt("a", 110, { keyboard: true })).toBe("b");
   });
 });
 

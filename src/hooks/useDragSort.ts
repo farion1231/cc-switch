@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   KeyboardSensor,
   PointerSensor,
@@ -14,11 +14,19 @@ import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
 import { isProxyAppId } from "@/config/appConfig";
 
+interface PendingOrder {
+  appId: AppId;
+  ids: string[];
+  saved: boolean;
+}
+
 export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
+  const [pendingOrder, setPendingOrder] = useState<PendingOrder | null>(null);
+  const saveQueue = useRef(Promise.resolve());
 
-  const sortedProviders = useMemo(() => {
+  const savedProviders = useMemo(() => {
     const locale =
       i18n.language === "zh"
         ? "zh-CN"
@@ -41,6 +49,31 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
       return a.name.localeCompare(b.name, locale);
     });
   }, [providers, i18n.language]);
+
+  const sortedProviders = useMemo(() => {
+    if (!pendingOrder || pendingOrder.appId !== appId) return savedProviders;
+    const indices = new Map(pendingOrder.ids.map((id, index) => [id, index]));
+    return [...savedProviders].sort(
+      (a, b) =>
+        (indices.get(a.id) ?? indices.size) -
+        (indices.get(b.id) ?? indices.size),
+    );
+  }, [savedProviders, pendingOrder, appId]);
+
+  // Keep the dropped order until refreshed props confirm it, including the gap
+  // between invalidateQueries resolving and React Query notifying its observers.
+  useEffect(() => {
+    if (
+      pendingOrder &&
+      (pendingOrder.appId !== appId ||
+        (pendingOrder.saved &&
+          sortedProviders.every(
+            (provider, index) => provider.id === savedProviders[index]?.id,
+          )))
+    ) {
+      setPendingOrder(null);
+    }
+  }, [appId, pendingOrder, sortedProviders, savedProviders]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -75,41 +108,62 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         sortIndex: index,
       }));
 
-      try {
-        await providersApi.updateSortOrder(updates, appId);
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", appId],
-        });
+      // Update in the same React batch as dnd-kit's drag cleanup so the cards
+      // settle into the new slots instead of animating back while IPC is pending.
+      const order = {
+        appId,
+        ids: reordered.map((provider) => provider.id),
+        saved: false,
+      };
+      setPendingOrder(order);
 
-        // Routing apps derive failover order from sort_index.
-        if (isProxyAppId(appId)) {
-          await queryClient.invalidateQueries({
-            queryKey: ["failoverQueue", appId],
-          });
-        }
-
-        // 更新托盘菜单以反映新的排序（失败不影响主操作）
+      // Persist rapid consecutive drops in order; an older response must not
+      // overwrite a newer drop or clear its pending visual order.
+      const save = saveQueue.current.then(async () => {
         try {
-          await providersApi.updateTrayMenu();
-        } catch (trayError) {
-          console.error("Failed to update tray menu after sort", trayError);
-          // 托盘菜单更新失败不影响排序成功
-        }
+          await providersApi.updateSortOrder(updates, appId);
+          await queryClient.invalidateQueries({
+            queryKey: ["providers", appId],
+          });
+          setPendingOrder((current) =>
+            current === order ? { ...order, saved: true } : current,
+          );
 
-        toast.success(
-          t("provider.sortUpdated", {
-            defaultValue: "排序已更新",
-          }),
-          { closeButton: true },
-        );
-      } catch (error) {
-        console.error("Failed to update provider sort order", error);
-        toast.error(
-          t("provider.sortUpdateFailed", {
-            defaultValue: "排序更新失败",
-          }),
-        );
-      }
+          // Routing apps derive failover order from sort_index.
+          if (isProxyAppId(appId)) {
+            await queryClient.invalidateQueries({
+              queryKey: ["failoverQueue", appId],
+            });
+          }
+
+          // 更新托盘菜单以反映新的排序（失败不影响主操作）
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (trayError) {
+            console.error("Failed to update tray menu after sort", trayError);
+            // 托盘菜单更新失败不影响排序成功
+          }
+
+          toast.success(
+            t("provider.sortUpdated", {
+              defaultValue: "排序已更新",
+            }),
+            { closeButton: true },
+          );
+        } catch (error) {
+          setPendingOrder((current) =>
+            current?.ids === order.ids ? null : current,
+          );
+          console.error("Failed to update provider sort order", error);
+          toast.error(
+            t("provider.sortUpdateFailed", {
+              defaultValue: "排序更新失败",
+            }),
+          );
+        }
+      });
+      saveQueue.current = save;
+      await save;
     },
     [sortedProviders, appId, queryClient, t],
   );
