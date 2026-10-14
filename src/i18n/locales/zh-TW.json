@@ -4092,7 +4092,7 @@
     "columnApp": "應用",
     "columnVersion": "版本",
     "columnVisible": "顯示",
-    "visibleHelp": "關掉後，這個應用不再出現在側欄、MCP / Skills 的應用欄，以及提示詞和工作階段的應用下拉選單裡。既有設定不變，照常同步。",
+    "visibleHelp": "關掉後，這個應用不再出現在側欄、系統匣選單、MCP / Skills 的應用欄，以及提示詞和工作階段的應用下拉選單裡。只是不顯示：它的供應商、MCP 等設定都還在，它自己的設定檔也不會被改動。",
     "desktopHelp": "Claude Desktop 是桌面應用，不能在這裡安裝或升級；CC Switch 透過它的設定檔接入。",
     "desktopUnsupported": "目前系統不支援",
     "desktopConnected": "已接入",
