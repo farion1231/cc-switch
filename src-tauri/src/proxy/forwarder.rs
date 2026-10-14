@@ -227,6 +227,7 @@ fn prepare_codex_tool_search_context(
     provider: &Provider,
     endpoint: &str,
     format: Option<CodexUpstreamFormat>,
+    apply_body_overrides: bool,
     body: &mut Value,
 ) -> Option<super::providers::transform_codex_chat::CodexToolContext> {
     if !matches!(app_type, AppType::Codex)
@@ -239,12 +240,13 @@ fn prepare_codex_tool_search_context(
             format,
             Some(CodexUpstreamFormat::ChatCompletions | CodexUpstreamFormat::Anthropic)
         )
-        // Saved overrides run after conversion; do not synthesize a capability
+        // Applied overrides run after conversion; do not synthesize a capability
         // that a later override could replace or restrict under the same name.
-        || provider.meta.as_ref()
+        // Copilot ignores saved body overrides on this forwarding attempt.
+        || (apply_body_overrides && provider.meta.as_ref()
             .and_then(|meta| meta.local_proxy_request_overrides.as_ref())
             .and_then(|overrides| overrides.body.as_ref())
-            .is_some_and(|body| body.get("tools").is_some() || body.get("tool_choice").is_some())
+            .is_some_and(|body| body.get("tools").is_some() || body.get("tool_choice").is_some()))
         || !super::providers::transform_codex_chat::inject_missing_tool_search(body)
     {
         return None;
@@ -1442,6 +1444,8 @@ impl RequestForwarder {
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = is_managed_copilot_request(app_type, provider, &base_url);
+        // Share the attempt decision with the shim gate and final body overrides.
+        let apply_body_overrides = !is_copilot;
 
         // Codex upstream conversion mode — computed early because the [1m]-suffix strip
         // below must be skipped on the Anthropic path (the marker has to survive to
@@ -1886,6 +1890,7 @@ impl RequestForwarder {
                 provider,
                 endpoint,
                 codex_upstream_format,
+                apply_body_overrides,
                 &mut mapped_body,
             );
             let reasoning_config =
@@ -1934,6 +1939,7 @@ impl RequestForwarder {
                 provider,
                 endpoint,
                 codex_upstream_format,
+                apply_body_overrides,
                 &mut mapped_body,
             );
             const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
@@ -2104,7 +2110,7 @@ impl RequestForwarder {
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let mut filtered_body = prepare_upstream_request_body(request_body);
-        if !is_copilot {
+        if apply_body_overrides {
             if let Some(overrides) = provider
                 .meta
                 .as_ref()
@@ -6416,6 +6422,7 @@ mod tests {
                 &provider,
                 endpoint,
                 format,
+                true,
                 &mut request
             )
             .is_none());
@@ -6430,6 +6437,7 @@ mod tests {
             &official,
             "/responses",
             chat,
+            true,
             &mut request
         )
         .is_none());
@@ -6453,6 +6461,7 @@ mod tests {
                 &provider,
                 "/responses",
                 chat,
+                true,
                 &mut request
             )
             .is_none());
@@ -6472,6 +6481,7 @@ mod tests {
             &harmless,
             "/responses",
             chat,
+            true,
             &mut request,
         )
         .is_some());
@@ -6486,9 +6496,90 @@ mod tests {
             &provider,
             "/v1/responses?beta=true",
             chat,
+            true,
             &mut request
         )
         .is_some());
+    }
+
+    #[test]
+    fn managed_tool_search_gate_ignores_dormant_copilot_overrides() {
+        let body = json!({"tools": [{"type": "function", "name": "existing_tool"}]});
+        for override_body in [json!({"tools": []}), json!({"tool_choice": "none"})] {
+            let mut provider = test_provider_with_type(Some("github_copilot"));
+            provider
+                .meta
+                .as_mut()
+                .unwrap()
+                .local_proxy_request_overrides = Some(LocalProxyRequestOverrides {
+                body: Some(override_body.clone()),
+                ..Default::default()
+            });
+            let apply_body_overrides = !is_managed_copilot_request(
+                &AppType::Codex,
+                &provider,
+                "https://api.githubcopilot.com",
+            );
+            assert!(!apply_body_overrides);
+            for (format, request_body, expected) in [
+                (CodexUpstreamFormat::ChatCompletions, body.clone(), true),
+                (CodexUpstreamFormat::NativeResponses, body.clone(), false),
+                (
+                    CodexUpstreamFormat::ChatCompletions,
+                    json!({"tools": body["tools"].clone(), "tool_choice": "none"}),
+                    false,
+                ),
+                (CodexUpstreamFormat::ChatCompletions, json!({}), false),
+            ] {
+                let original = request_body.clone();
+                let mut request = request_body;
+                let context = prepare_codex_tool_search_context(
+                    &AppType::Codex,
+                    &provider,
+                    "/responses",
+                    Some(format),
+                    apply_body_overrides,
+                    &mut request,
+                );
+                assert_eq!(
+                    context.is_some(),
+                    expected,
+                    "dormant override: {override_body}"
+                );
+                if expected {
+                    assert_eq!(request["tools"][0], body["tools"][0]);
+                    assert_eq!(request["tools"].as_array().unwrap().len(), 2);
+                    assert_eq!(request["tools"][1], json!({"type": "tool_search"}));
+                    assert_eq!(
+                        context
+                            .unwrap()
+                            .lookup_chat_name("tool_search")
+                            .unwrap()
+                            .kind,
+                        super::super::providers::transform_codex_chat::CodexToolKind::ToolSearch
+                    );
+                } else {
+                    assert_eq!(request, original);
+                }
+            }
+            let mut ordinary = test_provider_with_type(None);
+            ordinary.meta = provider.meta.clone();
+            ordinary.meta.as_mut().unwrap().provider_type = None;
+            let apply_body_overrides =
+                !is_managed_copilot_request(&AppType::Codex, &ordinary, "https://example.test/v1");
+            assert!(apply_body_overrides);
+            let mut request = body.clone();
+            assert!(prepare_codex_tool_search_context(
+                &AppType::Codex,
+                &ordinary,
+                "/responses",
+                Some(CodexUpstreamFormat::ChatCompletions),
+                apply_body_overrides,
+                &mut request,
+            )
+            .is_none());
+            assert_eq!(request, body);
+        }
     }
 
     #[tokio::test]
