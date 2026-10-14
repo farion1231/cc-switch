@@ -8,7 +8,7 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
+    estimated_latency_ms, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::find_model_pricing;
@@ -31,7 +31,10 @@ const REVISION_TAIL_BYTES: u64 = 4096;
 const REVISION_MARKER_SHIFT: u32 = 61;
 const REVISION_COMPLETE_SHIFT: u32 = 60;
 const REVISION_SIZE_SHIFT: u32 = 32;
+// Keep the original cursor format so existing history stays incremental.
 const REVISION_MARKER: u64 = 0b101;
+// Earlier builds of the timing fix wrote this tag with the same cursor layout.
+const COMPAT_REVISION_MARKER: u64 = 0b110;
 const REVISION_SIZE_MASK: u64 = (1 << 28) - 1;
 const PI_REQUEST_DEDUP_SQL: &str = "SELECT EXISTS(
          SELECT 1 FROM session_usage_dedup
@@ -86,6 +89,7 @@ struct PiUsageRecord {
     cache_read_tokens: u32,
     cache_write_tokens: u32,
     costs: PiCosts,
+    latency_ms: i64,
     status_code: i64,
     error_message: Option<String>,
     created_at: i64,
@@ -253,7 +257,8 @@ fn decode_pi_sync_state(
     let cursor = cursor?;
     let last_line_offset = cursor.last_line_offset;
     let encoded_revision = cursor.last_synced_at as u64;
-    if encoded_revision >> REVISION_MARKER_SHIFT != REVISION_MARKER {
+    let marker = encoded_revision >> REVISION_MARKER_SHIFT;
+    if marker != REVISION_MARKER && marker != COMPAT_REVISION_MARKER {
         return None;
     }
     let file_size = (encoded_revision >> REVISION_SIZE_SHIFT) & REVISION_SIZE_MASK;
@@ -553,6 +558,19 @@ fn parse_usage_record(
 
     let identity = pi_request_identity(entry, kind, usage_value, message);
 
+    // Pi initializes an assistant message's timestamp before the request and
+    // appends the entry on message_end. Their difference includes first-token
+    // waiting, so it is an estimate, not an exact generation time. Other usage
+    // carriers have no equivalent request-start timestamp.
+    let latency_ms = (kind == "assistant")
+        .then(|| {
+            let start = message?.get("timestamp").and_then(parse_timestamp_millis)?;
+            let end = entry.get("timestamp").and_then(parse_timestamp_millis)?;
+            estimated_latency_ms(start, end)
+        })
+        .flatten()
+        .unwrap_or(0);
+
     Some(PiUsageRecord {
         request_id: identity.request_id,
         semantic_id: identity.semantic_id,
@@ -565,6 +583,7 @@ fn parse_usage_record(
         cache_read_tokens,
         cache_write_tokens,
         costs,
+        latency_ms,
         status_code,
         error_message,
         created_at,
@@ -855,7 +874,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             cache_read_cost.to_string(),
             cache_write_cost.to_string(),
             total_cost.to_string(),
-            0i64,
+            record.latency_ms,
             Option::<i64>::None,
             record.status_code,
             record.error_message,
@@ -1111,6 +1130,221 @@ mod tests {
         let record =
             parse_usage_record(&entry, "session", Some(1_700_000_000), 0).expect("usage record");
         assert_eq!(record.created_at, 1_700_000_000);
+    }
+
+    #[test]
+    fn estimates_assistant_latency_from_its_own_timestamps() {
+        let mut entry: Value =
+            serde_json::from_str(&assistant_line("timed", "2023-11-14T22:13:22.250Z", 1))
+                .expect("assistant entry");
+        for start in [
+            Value::from(1_700_000_000_000i64),
+            Value::from(1_700_000_000i64),
+            Value::from("2023-11-14T22:13:20Z"),
+        ] {
+            entry["message"]["timestamp"] = start;
+            for end in [
+                Value::from("2023-11-14T22:13:22.250Z"),
+                Value::from(1_700_000_002_250i64),
+            ] {
+                entry["timestamp"] = end;
+                let record = parse_usage_record(&entry, "session", None, 0).expect("usage record");
+                assert_eq!(record.latency_ms, 2_250);
+                assert_eq!(record.created_at, 1_700_000_002);
+            }
+        }
+    }
+
+    #[test]
+    fn missing_or_implausible_timestamps_do_not_estimate_latency() {
+        let mut entry: Value =
+            serde_json::from_str(&assistant_line("untimed", "2023-11-14T22:13:22Z", 1))
+                .expect("assistant entry");
+        let start_ms = 1_700_000_000_000i64;
+        for (start, end) in [
+            (Value::Null, Value::from(start_ms + 2_000)),
+            (Value::from(start_ms), Value::Null),
+            (Value::from("invalid"), Value::from(start_ms + 2_000)),
+            (Value::from(start_ms), Value::from("invalid")),
+            (Value::from(start_ms), Value::from(start_ms)),
+            (Value::from(start_ms), Value::from(start_ms - 1_000)),
+            (Value::from(start_ms), Value::from(start_ms + 99)),
+            (Value::from(start_ms), Value::from(start_ms + 3_600_001)),
+            (Value::from(i64::MIN), Value::from(i64::MAX)),
+        ] {
+            entry["message"]["timestamp"] = start;
+            entry["timestamp"] = end;
+            // Header/mtime fallbacks are for created_at only, never latency.
+            let record = parse_usage_record(&entry, "session", Some(1_700_000_000), 1_700_000_000)
+                .expect("usage record");
+            assert_eq!(record.latency_ms, 0, "{entry}");
+        }
+    }
+
+    #[test]
+    fn non_assistant_usage_does_not_infer_request_timing() {
+        let mut entry: Value =
+            serde_json::from_str(&assistant_line("tool", "2023-11-14T22:13:22Z", 1))
+                .expect("assistant entry");
+        entry["message"]["role"] = Value::from("toolResult");
+        let record = parse_usage_record(&entry, "session", None, 0).expect("tool usage");
+        assert_eq!(record.latency_ms, 0);
+
+        entry["usage"] = entry["message"]["usage"].clone();
+        for kind in ["compaction", "branch_summary"] {
+            entry["type"] = Value::from(kind);
+            let record = parse_usage_record(&entry, "session", None, 0).expect("summary usage");
+            assert_eq!(record.latency_ms, 0);
+        }
+    }
+
+    #[test]
+    fn imports_timing_on_initial_and_incremental_sync_for_speed_stats() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "timing");
+        let first = assistant_line("first", "2023-11-14T22:13:30Z", 1)
+            .replace(r#""output":2"#, r#""output":900"#);
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-timing","timestamp":"2023-11-14T22:00:00Z","cwd":"/work"}"#,
+                &first,
+            ],
+        );
+        let db = Database::memory()?;
+        let initial = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(initial.errors.is_empty());
+        assert_eq!(initial.imported, 1);
+
+        let second = assistant_line("second", "2023-11-14T22:14:20Z", 1)
+            .replace("1700000000000", &1_700_000_040_000i64.to_string())
+            .replace(r#""output":2"#, r#""output":600"#);
+        {
+            let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(file, "{second}").unwrap();
+        }
+        let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(appended.errors.is_empty());
+        assert_eq!((appended.imported, appended.skipped), (1, 0));
+        {
+            let conn = lock_conn!(db.conn);
+            let mut statement = conn.prepare(
+                "SELECT latency_ms, first_token_ms FROM proxy_request_logs ORDER BY created_at",
+            )?;
+            let timings = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(timings, vec![(10_000, None), (20_000, None)]);
+        }
+        let stats = db.get_provider_stats(None, None, Some(APP_TYPE), None, None)?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].est_speed_output_tokens, 1_500);
+        assert_eq!(stats[0].est_speed_duration_ms, 30_000);
+        assert_eq!(stats[0].speed_output_tokens, 0);
+        assert_eq!(stats[0].speed_generation_ms, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn compatible_cursors_stay_incremental_without_changing_history() -> Result<(), AppError> {
+        for marker in [0b101u64, 0b110] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = session_path(temp.path(), "compatible-cursor");
+            let header = r#"{"type":"session","version":3,"id":"compatible-cursor"}"#;
+            let first = assistant_line("untimed", "2023-11-14T22:13:30Z", 1);
+            let second = assistant_line("timed", "2023-11-14T22:13:40Z", 2);
+            write_lines(&path, &[header, &first, &second]);
+            let db = Database::memory()?;
+            assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 2);
+            lock_conn!(db.conn).execute(
+                "UPDATE proxy_request_logs SET latency_ms = CASE input_tokens WHEN 1 THEN 0 ELSE 1234 END,
+                    total_cost_usd = '0.42'",
+                [],
+            )?;
+            let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
+            let cursor = cursors[path.to_string_lossy().as_ref()];
+            let revision = (cursor.last_synced_at as u64 & ((1 << REVISION_MARKER_SHIFT) - 1))
+                | (marker << REVISION_MARKER_SHIFT);
+            lock_conn!(db.conn).execute(
+                "UPDATE session_log_sync SET last_synced_at = ?1 WHERE file_path = ?2",
+                rusqlite::params![revision as i64, path.to_string_lossy()],
+            )?;
+
+            let unchanged = sync_pi_files(&db, std::slice::from_ref(&path));
+            assert!(unchanged.errors.is_empty());
+            assert_eq!((unchanged.imported, unchanged.skipped), (0, 0));
+
+            let third = assistant_line("new", "2023-11-14T22:13:50Z", 3);
+            {
+                let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+                writeln!(file, "{third}").unwrap();
+            }
+            let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+            assert!(appended.errors.is_empty());
+            assert_eq!((appended.imported, appended.skipped), (1, 0));
+            let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
+            let cursor = cursors[path.to_string_lossy().as_ref()];
+            assert_eq!(cursor.last_line_offset, 4);
+            assert_eq!(cursor.last_synced_at as u64 >> REVISION_MARKER_SHIFT, 0b101);
+
+            // A normal rewrite may revisit old requests, but deduplication must
+            // leave their missing or previously recorded timing untouched.
+            write_lines(&path, &[&format!("{header} "), &first, &second, &third]);
+            let rewritten = sync_pi_files(&db, std::slice::from_ref(&path));
+            assert!(rewritten.errors.is_empty());
+            assert_eq!((rewritten.imported, rewritten.skipped), (0, 3));
+            let conn = lock_conn!(db.conn);
+            let mut stmt = conn.prepare(
+                "SELECT latency_ms, total_cost_usd FROM proxy_request_logs ORDER BY input_tokens",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(
+                rows,
+                vec![
+                    (0, "0.42".into()),
+                    (1234, "0.42".into()),
+                    (30_000, "0".into())
+                ]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_entry_id_migration_preserves_existing_timing() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "legacy-timing");
+        let header = r#"{"type":"session","version":1,"id":"session-legacy","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#;
+        let migrated = assistant_line("generated", "2023-11-14T22:13:30Z", 1);
+        let legacy = migrated.replace(r#""id":"generated","parentId":null,"#, "");
+        write_lines(&path, &[header, &legacy]);
+        let db = Database::memory()?;
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        lock_conn!(db.conn).execute("UPDATE proxy_request_logs SET latency_ms = 0", [])?;
+
+        write_lines(
+            &path,
+            &[
+                &header.replace(r#""version":1"#, r#""version":3"#),
+                &migrated,
+            ],
+        );
+        let migrated = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(migrated.errors.is_empty());
+        assert_eq!((migrated.imported, migrated.skipped), (0, 1));
+        let totals: (i64, i64) = lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*), SUM(latency_ms) FROM proxy_request_logs",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(totals, (1, 0));
+        Ok(())
     }
 
     #[test]

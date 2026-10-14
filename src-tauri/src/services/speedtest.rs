@@ -1,5 +1,5 @@
 use futures::future::join_all;
-use reqwest::{Client, Url};
+use reqwest::Url;
 use serde::Serialize;
 use std::time::Instant;
 
@@ -65,10 +65,11 @@ impl SpeedtestService {
         }
 
         let timeout = Self::sanitize_timeout(timeout_secs);
-        let (client, request_timeout) = Self::build_client(timeout)?;
+        let request_timeout = std::time::Duration::from_secs(timeout);
 
         let tasks = valid_targets.into_iter().map(|(idx, trimmed, parsed_url)| {
-            let client = client.clone();
+            // 使用全局 HTTP 客户端（已包含代理配置）；本机地址直连
+            let client = crate::proxy::http_client::get_for_url(&trimmed);
             async move {
                 // 先进行一次热身请求，忽略结果，仅用于复用连接/绕过首包惩罚。
                 let _ = client
@@ -114,13 +115,6 @@ impl SpeedtestService {
         }
 
         Ok(results.into_iter().flatten().collect::<Vec<_>>())
-    }
-
-    fn build_client(timeout_secs: u64) -> Result<(Client, std::time::Duration), AppError> {
-        // 使用全局 HTTP 客户端（已包含代理配置）
-        // 返回 timeout Duration 供请求级别使用
-        let timeout = std::time::Duration::from_secs(timeout_secs);
-        Ok((crate::proxy::http_client::get(), timeout))
     }
 
     fn sanitize_timeout(timeout_secs: Option<u64>) -> u64 {

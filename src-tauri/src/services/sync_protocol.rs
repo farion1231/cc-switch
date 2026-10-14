@@ -18,7 +18,7 @@ use crate::services::skill::{skill_state_read_guard, skill_state_write_guard};
 
 // Re-export archive functions for use by transport layers.
 pub(crate) use super::webdav_sync::archive::{
-    backup_current_skills, restore_skills_from_backup, restore_skills_zip, zip_skills_ssot,
+    backup_current_skills, restore_skills_zip, zip_skills_ssot,
 };
 
 // ─── Protocol constants ──────────────────────────────────────
@@ -375,16 +375,7 @@ pub(crate) fn apply_snapshot(
     restore_skills_zip(skills_zip)?;
 
     if let Err(db_err) = db.import_sql_string_for_sync(sql_str) {
-        if let Err(rollback_err) = restore_skills_from_backup(&skills_backup) {
-            return Err(localized(
-                "sync.db_import_and_rollback_failed",
-                format!("导入数据库失败: {db_err}; 同时回滚 Skills 失败: {rollback_err}"),
-                format!(
-                    "Database import failed: {db_err}; skills rollback also failed: {rollback_err}"
-                ),
-            ));
-        }
-        return Err(db_err);
+        return Err(skills_backup.rollback_after_import_error(db_err));
     }
 
     Ok(())
